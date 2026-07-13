@@ -260,18 +260,32 @@ async def call_with_wait_heartbeat(
             except TimeoutError:
                 elapsed += WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS
                 progress = min(elapsed, timeout) if timeout is not None else elapsed
-                await ctx.report_progress(
-                    progress=progress,
-                    total=timeout,
-                    message=f"{tool_name} still waiting for daemon result",
-                )
+                try:
+                    await ctx.report_progress(
+                        progress=progress,
+                        total=timeout,
+                        message=f"{tool_name} still waiting for daemon result",
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to report %s wait heartbeat",
+                        tool_name,
+                        exc_info=True,
+                    )
 
     heartbeat_task = asyncio.create_task(_heartbeat(), name=f"{tool_name}-heartbeat")
     try:
         return await _await_with_guard(tool_call, tool_name=tool_name, timeout=timeout)
     finally:
         stop_event.set()
+        heartbeat_task.cancel()
         try:
             await heartbeat_task
         except asyncio.CancelledError:
             pass
+        except Exception:
+            logger.warning(
+                "%s wait heartbeat task failed during cleanup",
+                tool_name,
+                exc_info=True,
+            )

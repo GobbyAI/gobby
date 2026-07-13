@@ -7,18 +7,22 @@ import logging
 import time
 from pathlib import Path
 from shutil import copy2
-from typing import Any
+from typing import Any, Final
 
 import tomlkit
 from tomlkit.items import Table
 from tomlkit.toml_document import TOMLDocument
 
 from gobby.cli.utils import get_install_dir
+from gobby.install.bin_freshness_models import is_at_least_version
+from gobby.utils.deps import get_ghook_version
 
 from .hook_commands import build_hook_command
 from .shared import install_global_hooks, install_shared_content
 
 logger = logging.getLogger(__name__)
+
+_MIN_GHOOK_VERSION_FOR_GROK: Final[str] = "0.5.0"
 
 _HOOK_TYPE_MAP = {
     "SessionStart": "session_start",
@@ -31,6 +35,22 @@ _HOOK_TYPE_MAP = {
     "Stop": "stop",
     "Notification": "notification",
 }
+
+
+def _grok_ghook_support_error() -> str | None:
+    """Return an actionable error when ghook cannot route native Grok hooks."""
+    installed = get_ghook_version()
+    if is_at_least_version(installed, _MIN_GHOOK_VERSION_FOR_GROK):
+        return None
+
+    if installed is None:
+        detail = "the installed version could not be determined"
+    else:
+        detail = f"found {installed!r}"
+    return (
+        f"Grok hooks require ghook >= {_MIN_GHOOK_VERSION_FOR_GROK}; {detail}. "
+        "Run `gobby update` and retry."
+    )
 
 
 def install_grok(project_path: Path, mode: str = "global") -> dict[str, Any]:
@@ -49,6 +69,10 @@ def install_grok(project_path: Path, mode: str = "global") -> dict[str, Any]:
         "messages": [],
         "error": None,
     }
+
+    if support_error := _grok_ghook_support_error():
+        result["error"] = support_error
+        return result
 
     install_dir = get_install_dir()
     source_hooks_template = install_dir / "grok" / "hooks-template.json"

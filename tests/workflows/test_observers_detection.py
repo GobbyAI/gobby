@@ -19,6 +19,7 @@ from gobby.workflows.observers import (
     _extract_shell_output_text,
     _is_git_commit_command,
     _looks_like_commit_success,
+    _shell_tool_succeeded,
     detect_bash_commit,
     detect_commit_link,
     detect_mcp_call,
@@ -1207,7 +1208,7 @@ def _make_bash_event(
     *,
     tool_name: str = "Bash",
     command: str = "git commit -m 'msg'",
-    is_error: bool = False,
+    is_error: bool | None = False,
     cwd: str | None = None,
 ) -> HookEvent:
     """Helper to create a Bash AFTER_TOOL event with string output."""
@@ -1216,8 +1217,8 @@ def _make_bash_event(
         "tool_input": {"command": command},
         "tool_output": tool_output,
     }
-    if is_error:
-        data["is_error"] = True
+    if is_error is not None:
+        data["is_error"] = is_error
     return HookEvent(
         event_type=HookEventType.AFTER_TOOL,
         source=SessionSource.CLAUDE,
@@ -1531,6 +1532,27 @@ class TestDetectVerificationEvidence:
         assert variables["verification_evidence"][-1]["evidence_type"] == "validation_command"
         assert variables["verification_evidence"][-1]["success"] is False
 
+    def test_unknown_dict_tool_response_does_not_record_readiness(self, variables) -> None:
+        raw_data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": "uv run pytest tests/workflows/test_hooks.py -v"},
+            "tool_response": {"output": "a test failed without an exit-code signal"},
+        }
+        normalize_tool_fields(raw_data)
+        event = HookEvent(
+            event_type=HookEventType.AFTER_TOOL,
+            source=SessionSource.UNKNOWN,
+            session_id=AGENT_SESSION_ID,
+            timestamp=datetime.now(UTC),
+            data=raw_data,
+            metadata={"_platform_session_id": SESSION_ID},
+        )
+
+        detect_verification_evidence(event, variables, SESSION_ID)
+
+        assert "verification_evidence_recorded" not in variables
+        assert variables["verification_evidence"][-1]["success"] is None
+
     @pytest.mark.parametrize(
         "command",
         [
@@ -1661,6 +1683,32 @@ class TestExtractShellOutputText:
 
     def test_list(self) -> None:
         assert _extract_shell_output_text(["hello"]) == ""
+
+
+class TestShellToolSucceeded:
+    """Verify shell outcomes stay unknown until an adapter supplies a signal."""
+
+    @pytest.mark.parametrize(
+        ("tool_output", "expected"),
+        [
+            ({"exitCode": 0}, True),
+            ({"exit_code": 2}, False),
+            ({"success": True}, True),
+            ({"status": "failed"}, False),
+            ({"output": "failed but outcome is not structured"}, None),
+        ],
+    )
+    def test_dict_outcomes_are_three_valued(
+        self, tool_output: dict[str, object], expected: bool | None
+    ) -> None:
+        event = _make_bash_event_dict(tool_output)
+
+        assert _shell_tool_succeeded(event) is expected
+
+    def test_explicit_failure_wins_over_success_signal(self) -> None:
+        event = _make_bash_event_dict({"exitCode": 0}, is_error=True)
+
+        assert _shell_tool_succeeded(event) is False
 
 
 class TestIsGitCommitCommand:

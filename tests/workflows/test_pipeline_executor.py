@@ -49,6 +49,8 @@ class TestStartDetached:
             project_id="proj-123",
         )
 
+        assert mock_execution_manager.create_execution.call_args.kwargs["project_id"] == "proj-123"
+
         # Returned immediately with a RUNNING record; the record was created
         # by start_detached, not by the background execute() resume path.
         assert execution.status == ExecutionStatus.RUNNING

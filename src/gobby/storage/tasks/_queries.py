@@ -205,7 +205,7 @@ def list_tasks(
         params.append(f"%{title_like}%")
 
     valid_sorts = {
-        "hierarchy": "priority ASC, created_at ASC",
+        "hierarchy": "priority ASC, created_at ASC, id ASC",
         "updated_at": "updated_at",
         "created_at": "created_at",
         "priority": "priority",
@@ -215,7 +215,10 @@ def list_tasks(
     if sort_by == "hierarchy":
         query += f" ORDER BY {order_clause} LIMIT %s OFFSET %s"
     else:
-        query += f" ORDER BY {order_clause} {direction}, priority ASC, created_at DESC LIMIT %s OFFSET %s"
+        query += (
+            f" ORDER BY {order_clause} {direction}, priority ASC, created_at DESC, id ASC "
+            "LIMIT %s OFFSET %s"
+        )
     params.extend([limit, offset])
 
     rows = db.fetchall(query, tuple(params))
@@ -304,10 +307,9 @@ def list_ready_tasks(
         query += " AND t.parent_task_id = %s"
         params.append(parent_task_id)
 
-    # Fetch all matching tasks (no SQL limit) so we can order hierarchically first
-    internal_limit = 1000
-    query += " ORDER BY t.priority ASC, t.created_at ASC LIMIT %s"
-    params.append(internal_limit)
+    # Fetch every matching task so hierarchical ordering and caller pagination
+    # cannot silently discard rows beyond an internal cap.
+    query += " ORDER BY t.priority ASC, t.created_at ASC, t.id ASC"
 
     rows = db.fetchall(query, tuple(params))
     tasks = [Task.from_row(row) for row in rows]

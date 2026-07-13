@@ -39,6 +39,47 @@ def find_qwen_transcript(
     )
 
 
+def ensure_qwen_transcript_tracking(
+    handler: Any,
+    event: Any,
+    platform_session_id: str,
+) -> str | None:
+    """Derive and register a Qwen transcript on the first hook after creation."""
+    if event.source.value != "qwen":
+        return None
+
+    session = (
+        handler._session_manager.get(platform_session_id) if handler._session_manager else None
+    )
+    transcript_path = getattr(session, "transcript_path", None)
+    if not isinstance(transcript_path, str) or not transcript_path:
+        transcript_path = find_qwen_transcript(
+            handler,
+            event.data,
+            str(event.session_id or "").strip(),
+        )
+        if not transcript_path:
+            return None
+        if handler._session_manager:
+            handler._session_manager.update(
+                platform_session_id,
+                transcript_path=transcript_path,
+            )
+        event.data["transcript_path"] = transcript_path
+
+    if handler._session_coordinator:
+        handler._session_coordinator.register_session(
+            str(event.session_id or "").strip() or platform_session_id
+        )
+    if handler._message_processor:
+        handler._message_processor.register_session(
+            platform_session_id,
+            transcript_path,
+            source="qwen",
+        )
+    return transcript_path
+
+
 def find_grok_transcript(
     handler: Any,
     input_data: dict[str, Any],
@@ -95,27 +136,10 @@ def find_json_session_transcript(
             handler.logger.debug("Found %s transcript by prefix: %s", cli_label, matches[0])
             return str(matches[0])
 
-    session_candidates = []
-    for path in chats_dir.glob("session-*.json"):
-        try:
-            session_candidates.append((path.stat().st_mtime, path))
-        except OSError:
-            handler.logger.debug(
-                "Skipping %s transcript that could not be statted: %s",
-                cli_label,
-                path,
-            )
-    all_sessions = [
-        path
-        for _mtime, path in sorted(
-            session_candidates,
-            key=lambda candidate: candidate[0],
-            reverse=True,
-        )
-    ]
-    if all_sessions:
-        handler.logger.debug("Found %s transcript (most recent): %s", cli_label, all_sessions[0])
-        return str(all_sessions[0])
-
-    handler.logger.debug("No %s session files in %s", cli_label, chats_dir)
+    handler.logger.debug(
+        "No %s session file matching prefix %s in %s",
+        cli_label,
+        prefix or "<missing>",
+        chats_dir,
+    )
     return None

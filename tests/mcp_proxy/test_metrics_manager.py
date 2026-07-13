@@ -15,6 +15,7 @@ pytestmark = pytest.mark.unit
 
 PROJECT_1 = "66666666-6666-4666-8666-666666666666"
 PROJECT_2 = "77777777-7777-4777-8777-777777777777"
+OLD_METRICS_ID = "55555555-5555-4555-8555-555555555555"
 
 
 @pytest.fixture
@@ -444,16 +445,16 @@ class TestGetFailingTools:
 class TestResetMetrics:
     """Tests for reset_metrics method."""
 
-    def test_reset_all_metrics(self, metrics_manager: ToolMetricsManager) -> None:
-        """Test resetting all metrics."""
+    def test_reset_all_metrics_requires_filter(self, metrics_manager: ToolMetricsManager) -> None:
+        """An unfiltered reset cannot delete metrics across all projects."""
         metrics_manager.record_call("server1", "tool1", PROJECT_1, 100.0, True)
         metrics_manager.record_call("server2", "tool2", PROJECT_2, 100.0, True)
 
-        deleted = metrics_manager.reset_metrics()
-        assert deleted == 2
+        with pytest.raises(ValueError, match="at least one filter"):
+            metrics_manager.reset_metrics()
 
         result = metrics_manager.get_metrics()
-        assert result["summary"]["total_calls"] == 0
+        assert result["summary"]["total_calls"] == 2
 
     def test_reset_by_project(self, metrics_manager: ToolMetricsManager) -> None:
         """Test resetting metrics for specific project."""
@@ -482,6 +483,16 @@ class TestResetMetrics:
 class TestCleanupOldMetrics:
     """Tests for cleanup_old_metrics method."""
 
+    def test_cleanup_passes_one_cutoff_to_store(self, metrics_manager: ToolMetricsManager) -> None:
+        now = datetime(2026, 7, 12, 12, 0, tzinfo=UTC)
+        with (
+            patch("gobby.mcp_proxy.metrics.utc_now", return_value=now),
+            patch.object(metrics_manager.store, "cleanup_old_metrics", return_value=3) as cleanup,
+        ):
+            assert metrics_manager.cleanup_old_metrics(retention_days=7) == 3
+
+        cleanup.assert_called_once_with(now - timedelta(days=7))
+
     def test_cleanup_old_metrics(
         self, metrics_manager: ToolMetricsManager, temp_db: "HubDatabase"
     ) -> None:
@@ -498,7 +509,7 @@ class TestCleanupOldMetrics:
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
-                "tm-old",
+                OLD_METRICS_ID,
                 PROJECT_1,
                 "server1",
                 "old_tool",

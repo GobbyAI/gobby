@@ -164,6 +164,7 @@ class LocalLLMProvider:
         prompt: str,
         system_prompt: str | None = None,
         model: str | None = None,
+        max_tokens: int | None = None,
         *,
         reasoning_effort: str | None = None,
         caller: str | None = None,
@@ -175,6 +176,7 @@ class LocalLLMProvider:
             prompt,
             system_prompt=system_prompt,
             model=resolved,
+            max_tokens=max_tokens,
             reasoning_effort=reasoning_effort,
         )
 

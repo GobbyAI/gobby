@@ -40,7 +40,7 @@ class TestProviderRoutes:
 
     def test_provider_available_when_binary_found(self, client: TestClient) -> None:
         """Provider is marked available when shutil.which finds the binary."""
-        with patch("gobby.providers.registry.shutil.which") as mock_which:
+        with patch("gobby.servers.routes.providers.shutil.which") as mock_which:
             mock_which.side_effect = lambda b: "/usr/bin/claude" if b == "claude" else None
             response = client.get("/api/providers")
             data = response.json()
@@ -61,7 +61,7 @@ class TestProviderRoutes:
 
     def test_all_providers_unavailable(self, client: TestClient) -> None:
         """All providers unavailable when no binaries found."""
-        with patch("gobby.providers.registry.shutil.which", return_value=None):
+        with patch("gobby.servers.routes.providers.shutil.which", return_value=None):
             response = client.get("/api/providers")
             data = response.json()
             for p in data["providers"]:
@@ -79,7 +79,7 @@ class TestProviderRoutes:
             "agy": "/usr/local/bin/agy",
         }
         with patch(
-            "gobby.providers.registry.shutil.which",
+            "gobby.servers.routes.providers.shutil.which",
             side_effect=lambda b: paths.get(b),
         ):
             response = client.get("/api/providers")
@@ -110,7 +110,7 @@ class TestProviderRoutes:
         client = TestClient(app)
 
         with patch(
-            "gobby.providers.registry.shutil.which",
+            "gobby.servers.routes.providers.shutil.which",
             side_effect=lambda b: f"/usr/local/bin/{b}",
         ):
             response = client.get("/api/providers")
@@ -150,7 +150,7 @@ class TestProviderModelsRoute:
         }
         claude_by_id = {m["value"]: m for m in providers["claude"]["models"]}
         assert claude_by_id["fable"]["context_length"] == 1_000_000
-        assert claude_by_id["sonnet"]["context_length"] == 200_000
+        assert claude_by_id["sonnet"]["context_length"] == 1_000_000
 
         # Qwen intentionally owns its provider slot even before a static model catalog exists
         qwen = providers["qwen"]["models"]
@@ -239,6 +239,7 @@ class TestProviderModelsRoute:
             "default_effort": "high",
         }
         assert droid_by_id["claude-opus-4-7"]["context_length"] == 1_000_000
+        assert droid_by_id["claude-sonnet-4-6"]["context_length"] == 200_000
         assert droid_by_id["gpt-5.4"]["context_length"] == 200_000
         assert droid_by_id["gemini-3.5-flash"]["label"] == "Gemini 3.5 Flash"
         assert droid_by_id["gemini-3.5-flash"]["context_length"] == 1_048_576
@@ -254,7 +255,7 @@ class TestProviderModelsRoute:
     def test_availability_reflects_binary_presence(self, client: TestClient) -> None:
         """Provider availability matches shutil.which results."""
         with patch(
-            "gobby.providers.registry.shutil.which",
+            "gobby.servers.routes.providers.shutil.which",
             side_effect=lambda b: "/bin/claude" if b == "claude" else None,
         ):
             response = client.get("/api/providers/models")
@@ -283,7 +284,7 @@ class TestProviderModelsRoute:
         client = TestClient(app)
 
         with patch(
-            "gobby.providers.registry.shutil.which",
+            "gobby.servers.routes.providers.shutil.which",
             side_effect=lambda b: f"/usr/local/bin/{b}",
         ):
             response = client.get("/api/providers/models")
@@ -310,7 +311,7 @@ class TestProviderModelsRoute:
         client = TestClient(app)
 
         with patch(
-            "gobby.providers.registry.shutil.which",
+            "gobby.servers.routes.providers.shutil.which",
             side_effect=lambda b: f"/usr/local/bin/{b}",
         ):
             response = client.get("/api/providers/models")
@@ -345,7 +346,7 @@ class TestProviderModelsRoute:
         client = TestClient(app)
 
         with patch(
-            "gobby.providers.registry.shutil.which",
+            "gobby.servers.routes.providers.shutil.which",
             side_effect=lambda b: f"/usr/local/bin/{b}",
         ):
             response = client.get("/api/providers/models")
@@ -629,7 +630,7 @@ class TestProviderModelsRoute:
         client = TestClient(app)
 
         with patch(
-            "gobby.providers.registry.shutil.which",
+            "gobby.servers.routes.providers.shutil.which",
             side_effect=lambda b: f"/usr/local/bin/{b}",
         ):
             response = client.get("/api/providers/models")

@@ -274,6 +274,46 @@ class SessionVariableManager:
                 )
         return True
 
+    def adjust_counter_and_derive_boolean(
+        self,
+        session_id: str,
+        counter_name: str,
+        delta: int,
+        *,
+        boolean_name: str,
+    ) -> int:
+        """Atomically adjust a non-negative counter and derive its boolean flag."""
+        now = datetime.now(UTC).isoformat()
+        with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
+            row = conn.execute(
+                "SELECT variables FROM session_variables WHERE session_id = %s",
+                (session_id,),
+            ).fetchone()
+            current_vars = _decode_variables_payload(row["variables"]) if row else {}
+            raw_count = current_vars.get(counter_name, 0)
+            stored_count: int
+            if isinstance(raw_count, int) and not isinstance(raw_count, bool):
+                stored_count = raw_count
+            else:
+                stored_count = 0
+            count = max(0, stored_count + delta)
+            current_vars[counter_name] = count
+            current_vars[boolean_name] = count > 0
+
+            if row:
+                conn.execute(
+                    "UPDATE session_variables SET variables = %s, updated_at = %s "
+                    "WHERE session_id = %s",
+                    (json.dumps(current_vars), now, session_id),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO session_variables (session_id, variables, updated_at) "
+                    "VALUES (%s, %s, %s)",
+                    (session_id, json.dumps(current_vars), now),
+                )
+        return count
+
     def append_to_set_variable(self, session_id: str, name: str, values: list[str]) -> bool:
         """Atomically append values to a list variable (deduped, sorted).
 
@@ -316,6 +356,57 @@ class SessionVariableManager:
                     (session_id, json.dumps(current_vars), now),
                 )
         return True
+
+    def claim_set_variable_values(
+        self,
+        session_id: str,
+        name: str,
+        values: list[str],
+    ) -> list[str]:
+        """Atomically store and return values that were not already present.
+
+        The returned values preserve input order and contain no duplicates. The
+        transaction serializes the read and write so concurrent callers cannot
+        both claim the same value.
+        """
+        if not values:
+            return []
+
+        now = datetime.now(UTC).isoformat()
+        with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
+            row = conn.execute(
+                "SELECT variables FROM session_variables WHERE session_id = %s",
+                (session_id,),
+            ).fetchone()
+            current_vars = _decode_variables_payload(row["variables"]) if row else {}
+            stored = current_vars.get(name, [])
+            if not isinstance(stored, list):
+                stored = [stored] if stored else []
+
+            existing = set(stored)
+            claimed: list[str] = []
+            for value in values:
+                if value not in existing:
+                    existing.add(value)
+                    claimed.append(value)
+
+            if not claimed:
+                return []
+
+            current_vars[name] = sorted(existing)
+            if row:
+                conn.execute(
+                    "UPDATE session_variables SET variables = %s, updated_at = %s "
+                    "WHERE session_id = %s",
+                    (json.dumps(current_vars), now, session_id),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO session_variables (session_id, variables, updated_at) "
+                    "VALUES (%s, %s, %s)",
+                    (session_id, json.dumps(current_vars), now),
+                )
+        return claimed
 
     def append_to_set_variable_and_conditional_merge(
         self,

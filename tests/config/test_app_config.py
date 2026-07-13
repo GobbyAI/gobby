@@ -1862,7 +1862,7 @@ class TestWorkflowConfig:
         """Test default workflow config."""
         config = WorkflowConfig()
         assert config.enabled is True
-        assert config.timeout == 0.0
+        assert config.timeout == 15.0
 
     def test_timeout_validation(self) -> None:
         """Test timeout must be positive."""
@@ -1900,11 +1900,18 @@ class TestSessionLifecycleConfig:
         assert config.expire_check_interval_minutes == 60
         assert config.transcript_processing_interval_minutes == 5
         assert config.transcript_processing_batch_size == 10
+        assert config.workflow_audit_retention_days == 7
 
     def test_positive_validation(self) -> None:
         """Test positive values validation."""
         with pytest.raises(ValidationError):
             SessionLifecycleConfig(stale_session_timeout_hours=0)
+        with pytest.raises(ValidationError):
+            SessionLifecycleConfig(workflow_audit_retention_days=0)
+
+    def test_workflow_audit_retention_is_configurable(self) -> None:
+        config = SessionLifecycleConfig(workflow_audit_retention_days=21)
+        assert config.workflow_audit_retention_days == 21
 
 
 class TestMemoryConfig:

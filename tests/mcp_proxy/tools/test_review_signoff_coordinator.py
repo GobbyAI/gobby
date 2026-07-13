@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sqlite3
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -93,7 +95,7 @@ def _coordinated_review_fixture(
     def resolve_session_id(_session_ref: str) -> str:
         return reviewer.id
 
-    ctx.resolve_session_id = resolve_session_id
+    cast(Any, ctx).resolve_session_id = resolve_session_id
     registry = create_stage_ops_registry(ctx)
     return registry, coordinator, reviewer, task
 
@@ -111,11 +113,11 @@ async def _wait_for_messages(
     pytest.fail(f"Timed out waiting for signoff message to {to_session}")
 
 
-def test_schedule_signoff_warning_includes_project_and_exception(
+def test_signoff_relay_warning_includes_project_and_exception(
     temp_db: HubDatabase,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Scheduling failures log enough context for review signoff diagnostics."""
+    """Persistence failures log enough context for review signoff diagnostics."""
     from gobby.mcp_proxy.tools.tasks._stage_review import _schedule_signoff_relay
 
     _registry, _coordinator, reviewer, task = _coordinated_review_fixture(
@@ -125,8 +127,8 @@ def test_schedule_signoff_warning_includes_project_and_exception(
 
     with (
         patch(
-            "gobby.mcp_proxy.tools.tasks._stage_review.asyncio.get_running_loop",
-            side_effect=RuntimeError("no loop"),
+            "gobby.mcp_proxy.tools.tasks._stage_review._relay_signoff_to_build_coordinator_sync",
+            side_effect=sqlite3.OperationalError("database unavailable"),
         ),
         caplog.at_level(logging.WARNING, logger="gobby.mcp_proxy.tools.tasks._stage_review"),
     ):
@@ -141,7 +143,7 @@ def test_schedule_signoff_warning_includes_project_and_exception(
         )
 
     record = caplog.records[0]
-    assert record.project_id == task.project_id
+    assert cast(Any, record).project_id == task.project_id
     assert record.exc_info is not None
 
 

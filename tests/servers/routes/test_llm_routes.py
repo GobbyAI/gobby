@@ -4,7 +4,7 @@ import os
 import stat
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -28,27 +28,42 @@ from gobby.ai import (
 from gobby.config.ai import AIConfig, GenerationConfig, LocalGenerationConfig
 from gobby.config.app import DaemonConfig
 from gobby.config.feature_base import FeatureCandidateConfig
-from gobby.llm.base import LLMTextResult
+from gobby.llm.base import LLMTextResult, VisionInputError, VisionProviderError
+from gobby.llm.image_payloads import MAX_IMAGE_BYTES
 from gobby.servers.routes.llm import create_llm_router
 
 pytestmark = pytest.mark.unit
 
 
 class _FakeVisionService:
-    def __init__(self, *, ocr_text: str | None = "Button label") -> None:
+    def __init__(
+        self,
+        *,
+        text: str = "Screen text",
+        ocr_text: str | None = "Button label",
+    ) -> None:
         self.request: VisionExtractRequest | None = None
+        self.text = text
         self.ocr_text = ocr_text
 
     async def extract(self, request: VisionExtractRequest) -> VisionExtractResult:
         assert Path(request.image_path).exists()
         self.request = request
         return VisionExtractResult(
-            text="Screen text",
+            text=self.text,
             capability=AICapability.VISION_EXTRACT,
             provider=request.provider or "local:lm-studio",
             model=request.model or "llava",
             ocr_text=self.ocr_text,
         )
+
+
+class _FailingVisionService:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    async def extract(self, request: VisionExtractRequest) -> VisionExtractResult:
+        raise self.error
 
 
 class _FakeTextAdapter:
@@ -938,6 +953,79 @@ def test_vision_extract_upload_preserves_missing_ocr_text(
     assert data["description"] == "Screen text"
     assert data["ocr_text"] is None
     assert data["ocr_text"] != data["description"]
+
+
+@pytest.mark.asyncio
+async def test_bounded_vision_upload_read_accepts_exact_limit() -> None:
+    upload = MagicMock()
+    upload.read = AsyncMock(return_value=b"x" * MAX_IMAGE_BYTES)
+
+    image_bytes = await llm_module._read_bounded_image_upload(upload)
+
+    assert len(image_bytes) == MAX_IMAGE_BYTES
+    upload.read.assert_awaited_once_with(MAX_IMAGE_BYTES + 1)
+
+
+def test_vision_extract_rejects_oversize_before_temp_write(client: TestClient) -> None:
+    with patch.object(llm_module, "_write_temp_image") as write_temp_image:
+        response = client.post(
+            "/api/llm/vision/extract",
+            files={
+                "file": (
+                    "oversize.png",
+                    b"x" * (MAX_IMAGE_BYTES + 1),
+                    "image/png",
+                )
+            },
+        )
+
+    assert response.status_code == 413
+    assert response.json() == {"detail": f"Image exceeds {MAX_IMAGE_BYTES} byte limit"}
+    write_temp_image.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("error", "status_code", "detail"),
+    [
+        (VisionInputError("Image not found"), 400, "Image not found"),
+        (VisionProviderError("provider crashed"), 500, "Vision extraction failed"),
+    ],
+)
+def test_vision_extract_maps_structured_provider_errors(
+    client: TestClient,
+    error: Exception,
+    status_code: int,
+    detail: str,
+) -> None:
+    with patch(
+        "gobby.servers.routes.llm.build_daemon_vision_extract_service",
+        return_value=_FailingVisionService(error),
+    ):
+        response = client.post(
+            "/api/llm/vision/extract",
+            files={"file": ("screen.png", b"image bytes", "image/png")},
+        )
+
+    assert response.status_code == status_code
+    assert response.json() == {"detail": detail}
+    assert "description" not in response.json()
+
+
+def test_vision_extract_never_returns_error_sentinel_as_200(client: TestClient) -> None:
+    service = _FakeVisionService(text="Image description failed: provider crashed")
+
+    with patch(
+        "gobby.servers.routes.llm.build_daemon_vision_extract_service",
+        return_value=service,
+    ):
+        response = client.post(
+            "/api/llm/vision/extract",
+            files={"file": ("screen.png", b"image bytes", "image/png")},
+        )
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Vision extraction failed"}
+    assert "Image description failed" not in response.text
 
 
 def test_vision_extract_rejects_unproven_provider(client: TestClient) -> None:

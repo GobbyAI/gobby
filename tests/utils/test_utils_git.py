@@ -16,17 +16,65 @@ import pytest
 
 from gobby.utils.git import (
     GitMetadata,
+    get_checkout_mutation_lock,
     get_git_branch,
     get_git_metadata,
     get_github_url,
     git_subprocess_env,
     is_path_gitignored,
     is_valid_sha_format,
+    new_stash_marker,
     normalize_commit_sha,
     run_git_command,
+    stash_oid_for_marker,
 )
 
 pytestmark = pytest.mark.unit
+
+
+class TestCheckoutMutationLock:
+    """Tests for checkout-scoped mutation serialization."""
+
+    @pytest.mark.asyncio
+    async def test_same_canonical_checkout_shares_lock(self, tmp_path: Path) -> None:
+        checkout = tmp_path / "repo"
+        checkout.mkdir()
+
+        direct = get_checkout_mutation_lock(checkout)
+        equivalent = get_checkout_mutation_lock(checkout / ".." / "repo")
+
+        assert direct is equivalent
+
+    @pytest.mark.asyncio
+    async def test_different_checkouts_use_different_locks(self, tmp_path: Path) -> None:
+        first = tmp_path / "first"
+        second = tmp_path / "second"
+        first.mkdir()
+        second.mkdir()
+
+        assert get_checkout_mutation_lock(first) is not get_checkout_mutation_lock(second)
+
+
+class TestStashMarkers:
+    """Tests for operation-owned stash marker helpers."""
+
+    def test_new_marker_is_unique_and_namespaced(self) -> None:
+        first = new_stash_marker("merge-clone")
+        second = new_stash_marker("merge-clone")
+
+        assert first.startswith("gobby-merge-clone:")
+        assert second.startswith("gobby-merge-clone:")
+        assert first != second
+
+    def test_resolves_marker_below_interleaved_head(self) -> None:
+        stash_list = (
+            "other-oid\x00On main: other-operation\nowned-oid\x00On main: exact-operation-marker\n"
+        )
+
+        assert stash_oid_for_marker(stash_list, "exact-operation-marker") == "owned-oid"
+
+    def test_missing_marker_returns_none(self) -> None:
+        assert stash_oid_for_marker("other-oid\x00On main: other", "missing") is None
 
 
 class TestRunGitCommand:

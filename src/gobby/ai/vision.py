@@ -13,6 +13,7 @@ from gobby.ai.registry import (
     build_daemon_ai_capability_registry,
 )
 from gobby.config.app import DaemonConfig
+from gobby.llm.base import validate_vision_description
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -72,7 +73,7 @@ class VisionExtractService:
             raise RuntimeError(
                 f"No vision_extract adapter registered for provider {binding.provider!r}"
             )
-        text = await adapter.extract(request)
+        text = validate_vision_description(await adapter.extract(request))
         return VisionExtractResult(
             text=text,
             capability=AICapability.VISION_EXTRACT,

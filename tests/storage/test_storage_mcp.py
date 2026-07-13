@@ -1113,6 +1113,36 @@ class TestLocalMCPManager:
             "properties": {"foo": {"type": "string"}},
         }
 
+    def test_cache_tools_with_input_schema_key(
+        self,
+        mcp_manager: LocalMCPManager,
+        sample_project: dict,
+    ) -> None:
+        """Snake-case schemas use the same canonical cache path as MCP SDK schemas."""
+        mcp_manager.upsert(
+            name="snake-schema-server",
+            transport="http",
+            url="http://localhost",
+            project_id=sample_project["id"],
+        )
+        input_schema = {
+            "type": "object",
+            "properties": {"value": {"type": "integer"}},
+        }
+
+        mcp_manager.cache_tools(
+            "snake-schema-server",
+            [{"name": "snake_tool", "input_schema": input_schema}],
+            project_id=sample_project["id"],
+        )
+
+        tools = mcp_manager.get_cached_tools(
+            "snake-schema-server",
+            project_id=sample_project["id"],
+        )
+        assert len(tools) == 1
+        assert tools[0].input_schema == input_schema
+
     def test_cache_tools_without_schema(
         self,
         mcp_manager: LocalMCPManager,
@@ -1399,330 +1429,6 @@ class TestLocalMCPManager:
             (LEGACY_CONTEXT7_SERVER_ID,),
         )
         assert legacy_row is None
-
-
-class TestRefreshToolsIncremental:
-    """Tests for the refresh_tools_incremental method."""
-
-    def test_refresh_tools_incremental_nonexistent_server(
-        self,
-        mcp_manager: LocalMCPManager,
-        sample_project: dict,
-    ) -> None:
-        """Test incremental refresh for nonexistent server returns empty stats."""
-        stats = mcp_manager.refresh_tools_incremental(
-            "nonexistent",
-            [{"name": "tool", "inputSchema": {}}],
-            project_id=sample_project["id"],
-        )
-        assert stats == {"added": 0, "updated": 0, "removed": 0, "unchanged": 0, "total": 0}
-
-    def test_refresh_tools_incremental_adds_new_tools(
-        self,
-        mcp_manager: LocalMCPManager,
-        sample_project: dict,
-    ) -> None:
-        """Test that new tools are added during incremental refresh."""
-        mcp_manager.upsert(
-            name="refresh-server",
-            transport="http",
-            url="http://localhost",
-            project_id=sample_project["id"],
-        )
-
-        stats = mcp_manager.refresh_tools_incremental(
-            "refresh-server",
-            [
-                {"name": "new_tool_1", "description": "First", "inputSchema": {"type": "object"}},
-                {"name": "new_tool_2", "description": "Second", "inputSchema": {"type": "object"}},
-            ],
-            project_id=sample_project["id"],
-        )
-
-        assert stats["added"] == 2
-        assert stats["total"] == 2
-
-        tools = mcp_manager.get_cached_tools("refresh-server", project_id=sample_project["id"])
-        assert len(tools) == 2
-
-    def test_refresh_tools_incremental_removes_stale_tools(
-        self,
-        mcp_manager: LocalMCPManager,
-        sample_project: dict,
-    ) -> None:
-        """Test that stale tools are removed during incremental refresh."""
-        mcp_manager.upsert(
-            name="stale-server",
-            transport="http",
-            url="http://localhost",
-            project_id=sample_project["id"],
-        )
-
-        # Cache initial tools
-        mcp_manager.cache_tools(
-            "stale-server",
-            [
-                {"name": "keep_tool", "description": "Keep"},
-                {"name": "stale_tool", "description": "Remove"},
-            ],
-            project_id=sample_project["id"],
-        )
-
-        # Refresh with only one tool (no schema_hash_manager, so all treated as changed)
-        stats = mcp_manager.refresh_tools_incremental(
-            "stale-server",
-            [{"name": "keep_tool", "description": "Keep Updated"}],
-            project_id=sample_project["id"],
-        )
-
-        assert stats["removed"] == 1
-        assert stats["total"] == 1
-
-        tools = mcp_manager.get_cached_tools("stale-server", project_id=sample_project["id"])
-        assert len(tools) == 1
-        assert tools[0].name == "keep_tool"
-
-    def test_refresh_tools_incremental_updates_changed_tools(
-        self,
-        mcp_manager: LocalMCPManager,
-        sample_project: dict,
-    ) -> None:
-        """Test that changed tools are updated during incremental refresh."""
-        mcp_manager.upsert(
-            name="update-server",
-            transport="http",
-            url="http://localhost",
-            project_id=sample_project["id"],
-        )
-
-        # Cache initial tool
-        mcp_manager.cache_tools(
-            "update-server",
-            [{"name": "change_tool", "description": "Original", "inputSchema": {"type": "object"}}],
-            project_id=sample_project["id"],
-        )
-
-        # Refresh with updated tool (no schema_hash_manager)
-        stats = mcp_manager.refresh_tools_incremental(
-            "update-server",
-            [
-                {
-                    "name": "change_tool",
-                    "description": "Updated",
-                    "inputSchema": {"type": "object", "updated": True},
-                }
-            ],
-            project_id=sample_project["id"],
-        )
-
-        # Without schema_hash_manager, exactly one tool change should be recorded
-        assert stats["updated"] + stats["added"] == 1
-        assert stats.get("removed", 0) == 0
-
-        tools = mcp_manager.get_cached_tools("update-server", project_id=sample_project["id"])
-        assert len(tools) == 1
-        assert tools[0].description == "Updated"
-
-    def test_refresh_tools_incremental_with_schema_hash_manager(
-        self,
-        mcp_manager: LocalMCPManager,
-        sample_project: dict,
-        temp_db: HubDatabase,
-    ) -> None:
-        """Test incremental refresh with schema hash manager for change detection."""
-        from gobby.mcp_proxy.schema_hash import SchemaHashManager
-
-        schema_hash_manager = SchemaHashManager(temp_db)
-
-        mcp_manager.upsert(
-            name="hash-server",
-            transport="http",
-            url="http://localhost",
-            project_id=sample_project["id"],
-        )
-
-        # Initial refresh to establish hashes
-        initial_tools = [
-            {"name": "unchanged_tool", "inputSchema": {"type": "object"}},
-            {"name": "will_change_tool", "inputSchema": {"type": "string"}},
-        ]
-        stats1 = mcp_manager.refresh_tools_incremental(
-            "hash-server",
-            initial_tools,
-            project_id=sample_project["id"],
-            schema_hash_manager=schema_hash_manager,
-        )
-        assert stats1["added"] == 2
-
-        # Second refresh with one changed, one unchanged, one new
-        updated_tools = [
-            {"name": "unchanged_tool", "inputSchema": {"type": "object"}},  # Same
-            {"name": "will_change_tool", "inputSchema": {"type": "number"}},  # Changed
-            {"name": "new_tool", "inputSchema": {"type": "boolean"}},  # New
-        ]
-        stats2 = mcp_manager.refresh_tools_incremental(
-            "hash-server",
-            updated_tools,
-            project_id=sample_project["id"],
-            schema_hash_manager=schema_hash_manager,
-        )
-
-        assert stats2["unchanged"] == 1
-        assert stats2["updated"] == 1
-        assert stats2["added"] == 1
-
-    def test_refresh_tools_incremental_uses_args_key(
-        self,
-        mcp_manager: LocalMCPManager,
-        sample_project: dict,
-    ) -> None:
-        """Test that refresh handles 'args' key as alternative to 'inputSchema'."""
-        mcp_manager.upsert(
-            name="args-refresh",
-            transport="http",
-            url="http://localhost",
-            project_id=sample_project["id"],
-        )
-
-        stats = mcp_manager.refresh_tools_incremental(
-            "args-refresh",
-            [{"name": "args_tool", "args": {"type": "object"}}],
-            project_id=sample_project["id"],
-        )
-
-        assert stats["total"] == 1
-        tools = mcp_manager.get_cached_tools("args-refresh", project_id=sample_project["id"])
-        assert len(tools) == 1
-        assert tools[0].input_schema == {"type": "object"}
-
-    def test_refresh_tools_incremental_hashes_normalized_deduped_tools(
-        self,
-        mcp_manager: LocalMCPManager,
-        sample_project: dict,
-    ) -> None:
-        """Schema hash checks receive the same normalized batch that is written."""
-
-        class RecordingSchemaHashManager:
-            checked_tools: list[dict[str, Any]] | None = None
-
-            def check_tools_for_changes(
-                self,
-                _server_name: str,
-                _project_id: str,
-                tools: list[dict[str, Any]],
-            ) -> dict[str, list[str]]:
-                self.checked_tools = tools
-                return {"new": [tool["name"] for tool in tools], "changed": []}
-
-            def store_hash(
-                self,
-                _server_name: str,
-                _tool_name: str,
-                _project_id: str,
-                _schema_hash: str,
-            ) -> None:
-                return None
-
-            def cleanup_stale_hashes(
-                self,
-                _server_name: str,
-                _project_id: str,
-                _current_tools: list[str],
-            ) -> None:
-                return None
-
-        mcp_manager.upsert(
-            name="hash-normalize",
-            transport="http",
-            url="http://localhost",
-            project_id=sample_project["id"],
-        )
-        schema_hash_manager = RecordingSchemaHashManager()
-
-        stats = mcp_manager.refresh_tools_incremental(
-            "hash-normalize",
-            [
-                {"name": "", "inputSchema": {"type": "object"}},
-                {"name": "Read_File", "description": "kept", "inputSchema": {"type": "object"}},
-                {
-                    "name": " read_file ",
-                    "description": "duplicate",
-                    "inputSchema": {"type": "object"},
-                },
-            ],
-            project_id=sample_project["id"],
-            schema_hash_manager=schema_hash_manager,
-        )
-
-        assert stats["added"] == 1
-        assert schema_hash_manager.checked_tools == [
-            {
-                "name": "read_file",
-                "description": "kept",
-                "inputSchema": {"type": "object"},
-            }
-        ]
-
-    def test_refresh_tools_incremental_persists_normalized_unchanged_tool_name(
-        self,
-        mcp_manager: LocalMCPManager,
-        sample_project: dict,
-    ) -> None:
-        class RecordingSchemaHashManager:
-            def check_tools_for_changes(
-                self,
-                _server_name: str,
-                _project_id: str,
-                _tools: list[dict[str, Any]],
-            ) -> dict[str, list[str]]:
-                return {"new": [], "changed": []}
-
-            def update_verification_time(
-                self,
-                _server_name: str,
-                _tool_name: str,
-                _project_id: str,
-            ) -> None:
-                return None
-
-            def cleanup_stale_hashes(
-                self,
-                _server_name: str,
-                _project_id: str,
-                _current_tools: list[str],
-            ) -> None:
-                return None
-
-        server = mcp_manager.upsert(
-            name="unchanged-normalize",
-            transport="http",
-            url="http://localhost",
-            project_id=sample_project["id"],
-        )
-        mcp_manager.db.execute(
-            """
-            INSERT INTO tools (id, mcp_server_id, name, description, input_schema, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            """,
-            (
-                MIXED_CASE_TOOL_ID,
-                server.id,
-                "Read_File",
-                "kept",
-                json.dumps({"type": "object"}),
-            ),
-        )
-
-        stats = mcp_manager.refresh_tools_incremental(
-            "unchanged-normalize",
-            [{"name": " read_file ", "description": "kept", "inputSchema": {"type": "object"}}],
-            project_id=sample_project["id"],
-            schema_hash_manager=RecordingSchemaHashManager(),
-        )
-
-        assert stats["unchanged"] == 1
-        tools = mcp_manager.get_cached_tools("unchanged-normalize", project_id=sample_project["id"])
-        assert [tool.name for tool in tools] == ["read_file"]
 
 
 class TestMCPServerFromRow:

@@ -10,6 +10,7 @@ import pytest
 
 import gobby.mcp_proxy.tools.tasks._stage_ops as stage_ops
 from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks._stage_types import IllegalStageTransitionError
 from tests.phase2_stage_contract_helpers import register_contract_tests
 from tests.storage.tasks._stage_test_helpers import (
     create_task,
@@ -109,6 +110,40 @@ def test_approved_calls_approve_review_no_advance(
         notes="looks good",
     )
     ctx.task_manager.stage_states.complete_stage.assert_not_called()
+
+
+def test_approved_transition_failure_does_not_write_ready_to_merge(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    ctx = _context(temp_db, sample_project)
+    ctx.task_manager.stage_states.approve_review.side_effect = IllegalStageTransitionError(
+        "pr",
+        "in_progress",
+        "approve_review",
+        "required",
+    )
+    delivery = Mock()
+    monkeypatch.setattr(stage_ops, "TaskDeliveryStateManager", Mock(return_value=delivery))
+    release = Mock()
+    monkeypatch.setattr(stage_ops, "_release_current_agent_dispatch_mutex", release)
+
+    with pytest.raises(IllegalStageTransitionError):
+        _record_pr_verdict(ctx)(
+            task_id="task-1",
+            verdict="approve",
+            findings="approved",
+        )
+
+    assert delivery.record_campaign.call_count == 0
+    assert release.call_count == 0
+    assert ctx.task_manager.stage_states.approve_review.call_count == 1
+    assert ctx.task_manager.stage_states.approve_review.call_args.args == ("task-1", "pr")
+    assert ctx.task_manager.stage_states.approve_review.call_args.kwargs == {
+        "by_session_id": None,
+        "notes": "approved",
+    }
 
 
 def test_approved_writes_artifacts(

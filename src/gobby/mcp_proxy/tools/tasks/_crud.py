@@ -28,6 +28,24 @@ IMPLEMENTATION_DOMAIN_ENUM = tuple(sorted(IMPLEMENTATION_DOMAINS))
 TASK_TYPE_ENUM = TASK_TYPE_CHOICES
 
 
+def _code_task_invariant_error(
+    category: str | None,
+    validation_criteria: str | None,
+    implementation_domain: str | None,
+) -> str | None:
+    """Return the code-task invariant error for the effective task state."""
+    if category != "code":
+        return None
+    if not validation_criteria:
+        return (
+            "Code tasks require validation_criteria. "
+            "Describe what 'done' looks like so validate_task can check your diff against it."
+        )
+    if implementation_domain is None:
+        return "Code tasks require implementation_domain ('backend', 'frontend', or 'fullstack')."
+    return None
+
+
 def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
     """Create a registry with task CRUD tools.
 
@@ -94,10 +112,11 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         # Resolve session_id — needed for project resolution and DB insert
         try:
             resolved_session_id = ctx.resolve_session_id(session_id)
-        except ValueError as e:
+        except Exception as e:
+            logger.warning("Cannot resolve session %s for task creation", session_id, exc_info=True)
             return {"error": f"Cannot resolve session '{session_id}': {e}"}
 
-        # Resolve project: explicit param > session (authoritative) > context > personal
+        # Resolve project: explicit parameter or the authoritative session project.
         if project:
             try:
                 resolved = ctx.resolve_project_filter(project)
@@ -105,7 +124,15 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 return {"error": str(e)}
             project_id: str = resolved or PERSONAL_PROJECT_ID
         else:
-            project_id = ctx.resolve_project_from_session(session_id)
+            try:
+                project_id = ctx.resolve_project_from_session(session_id)
+            except Exception as e:
+                logger.warning(
+                    "Cannot resolve project for session %s during task creation",
+                    session_id,
+                    exc_info=True,
+                )
+                return {"error": f"Cannot resolve project for session '{session_id}': {e}"}
 
         # Resolve parent_task_id if it's a reference format
         if parent_task_id:
@@ -116,17 +143,11 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             except (TaskNotFoundError, ValueError) as e:
                 return {"error": f"Invalid parent_task_id: {e}"}
 
-        # Enforce validation_criteria for code tasks
-        if category == "code" and not validation_criteria:
-            return {
-                "error": "Code tasks require validation_criteria. "
-                "Describe what 'done' looks like so validate_task can check your diff against it."
-            }
-        if category == "code" and implementation_domain is None:
-            return {
-                "error": "Code tasks require implementation_domain "
-                "('backend', 'frontend', or 'fullstack')."
-            }
+        invariant_error = _code_task_invariant_error(
+            category, validation_criteria, implementation_domain
+        )
+        if invariant_error:
+            return {"error": invariant_error}
 
         # Create task
         create_result = ctx.task_manager.create_task_with_decomposition(
@@ -195,7 +216,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     ctx.session_task_manager.link_task(resolved_session_id, task.id, "claimed")
                 except Exception as e:
                     logger.warning(f"Failed to link claimed task {task.id}: {e}")
-                    pass  # nosec B110 # best-effort linking
+                    pass
 
             # Set session variables for Claude Code (CC doesn't include tool results in PostToolUse)
             # This mirrors claim_task behavior in _lifecycle.py
@@ -458,6 +479,29 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             return {"error": str(e)}
         except ValueError as e:
             return {"error": str(e)}
+
+        current_task = ctx.task_manager.get_task(resolved_id)
+        if current_task is None:
+            return {"error": f"Task {task_id} not found"}
+
+        effective_category = category if category is not None else current_task.category
+        effective_validation_criteria = (
+            validation_criteria
+            if validation_criteria is not None
+            else current_task.validation_criteria
+        )
+        effective_implementation_domain = (
+            implementation_domain
+            if implementation_domain is not None
+            else current_task.implementation_domain
+        )
+        invariant_error = _code_task_invariant_error(
+            effective_category,
+            effective_validation_criteria,
+            effective_implementation_domain,
+        )
+        if invariant_error:
+            return {"error": invariant_error}
 
         # Build kwargs only for non-None values to avoid overwriting with NULL
         kwargs: dict[str, Any] = {}
@@ -766,7 +810,7 @@ def build_task_tree(
     """
     from gobby.tasks.tree_builder import TaskTreeBuilder
 
-    # Resolve project: explicit param > session (authoritative) > context > personal
+    # Resolve project: explicit param > session (authoritative).
     if project:
         try:
             resolved = ctx.resolve_project_filter(project)
@@ -774,7 +818,20 @@ def build_task_tree(
             return {"success": False, "error": str(e)}
         project_id: str = resolved or PERSONAL_PROJECT_ID
     else:
-        project_id = ctx.resolve_project_from_session(session_id)
+        try:
+            project_id = ctx.resolve_project_from_session(session_id)
+        except Exception as e:
+            logger.warning(
+                "Cannot resolve project for session %s during task-tree creation",
+                session_id,
+                exc_info=True,
+            )
+            return {
+                "success": False,
+                "error": f"Cannot resolve project for session '{session_id}': {e}",
+                "tasks_created": 0,
+                "task_refs": [],
+            }
 
     # Build the tree
     builder = TaskTreeBuilder(

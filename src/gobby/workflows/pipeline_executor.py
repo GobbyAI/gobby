@@ -142,6 +142,7 @@ class PipelineExecutor(
         pipeline: PipelineDefinition,
         inputs: dict[str, Any],
         session_id: str | None,
+        project_id: str,
     ) -> PipelineExecution:
         """Create an execution record with a snapshot of the definition."""
         try:
@@ -155,6 +156,7 @@ class PipelineExecutor(
             inputs_json=json_dumps(inputs),
             session_id=session_id,
             definition_json=definition_snapshot,
+            project_id=project_id,
         )
         return execution
 
@@ -178,7 +180,7 @@ class PipelineExecutor(
         if not pipeline.enabled:
             raise ValueError(f"Pipeline '{pipeline.name}' is disabled")
 
-        execution = self._create_execution_record(pipeline, inputs, session_id)
+        execution = self._create_execution_record(pipeline, inputs, session_id, project_id)
         updated = self.execution_manager.update_execution_status(
             execution_id=execution.id,
             status=ExecutionStatus.RUNNING,
@@ -332,7 +334,12 @@ class PipelineExecutor(
                             f"Start a new execution instead."
                         )
                 else:
-                    execution = self._create_execution_record(pipeline, inputs, session_id)
+                    execution = self._create_execution_record(
+                        pipeline,
+                        inputs,
+                        session_id,
+                        project_id,
+                    )
                     if span.is_recording():
                         span.set_attribute("execution_id", str(execution.id))
                     execution_id = execution.id

@@ -156,6 +156,29 @@ class TestCompletionEvidenceReady:
             is False
         )
 
+    def test_unknown_validation_neither_satisfies_nor_clears_failure(self) -> None:
+        unknown = {
+            "evidence_type": "validation_command",
+            "command": "uv run pytest unknown.py",
+            "success": None,
+        }
+        assert completion_evidence_ready({"verification_evidence": [unknown]}) is False
+        assert (
+            completion_evidence_ready(
+                {
+                    "verification_evidence": [
+                        {
+                            "evidence_type": "validation_command",
+                            "command": "uv run pytest failing.py",
+                            "success": False,
+                        },
+                        unknown,
+                    ]
+                }
+            )
+            is False
+        )
+
     def test_manual_evidence_satisfies_without_failed_validation(self) -> None:
         assert (
             completion_evidence_ready(
@@ -171,6 +194,56 @@ class TestCompletionEvidenceReady:
             )
             is True
         )
+
+    def test_task_scoped_failure_does_not_poison_other_task(self) -> None:
+        variables = {
+            "verification_evidence": [
+                {
+                    "evidence_type": "test",
+                    "supports": "task_id:#42",
+                    "task_id": "#42",
+                    "success": True,
+                },
+                {
+                    "evidence_type": "validation_command",
+                    "task_id": "#99",
+                    "success": False,
+                },
+            ]
+        }
+
+        assert completion_evidence_ready(variables, "#42") is True
+        assert completion_evidence_ready(variables, "#99") is False
+
+    def test_same_task_failure_still_blocks_scoped_success(self) -> None:
+        variables = {
+            "verification_evidence": [
+                {
+                    "evidence_type": "validation_command",
+                    "task_id": "#42",
+                    "success": True,
+                },
+                {
+                    "evidence_type": "validation_command",
+                    "supports": "task_id:42",
+                    "success": False,
+                },
+            ]
+        }
+
+        assert completion_evidence_ready(variables, 42) is False
+
+    def test_target_task_uses_legacy_unscoped_evidence_as_fallback(self) -> None:
+        variables = {
+            "verification_evidence": [
+                {
+                    "evidence_type": "validation_command",
+                    "success": True,
+                }
+            ]
+        }
+
+        assert completion_evidence_ready(variables, "#42") is True
 
 
 class TestNormalizeTaskId:

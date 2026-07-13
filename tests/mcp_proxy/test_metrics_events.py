@@ -1,7 +1,11 @@
 """Tests for MetricsEventStore — event log, queries, and archiving."""
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -301,6 +305,98 @@ class TestArchive:
         event_store.record_event(event_type="tool_call", name="Read")
         assert event_store.archive_old_events(retention_days=30) == 0
 
+    def test_archive_rolls_back_if_commit_is_interrupted(
+        self, event_store: MetricsEventStore, temp_db: "HubDatabase"
+    ) -> None:
+        old_date = datetime.now(UTC) - timedelta(days=60)
+        temp_db.execute(
+            """INSERT INTO metrics_events
+               (event_type, name, server_name, success, latency_ms, created_at)
+               VALUES (%s, %s, %s, %s, %s, %s)""",
+            ("tool_call", "Read", "gobby-tasks", True, 10.0, old_date),
+        )
+        original_transaction = temp_db.transaction
+
+        @contextmanager
+        def interrupted_transaction():
+            with original_transaction() as txn:
+                original_execute = txn.execute
+
+                def execute_then_interrupt(sql, params=()):
+                    original_execute(sql, params)
+                    raise RuntimeError("simulated process interruption before commit")
+
+                with patch.object(txn, "execute", side_effect=execute_then_interrupt):
+                    yield txn
+
+        with (
+            patch.object(temp_db, "transaction", side_effect=interrupted_transaction),
+            pytest.raises(RuntimeError, match="process interruption"),
+        ):
+            event_store.archive_old_events(retention_days=30)
+
+        assert len(event_store.query_events(event_type="tool_call")) == 1
+        assert event_store.get_archive_totals(event_type="tool_call") == []
+
+    def test_archive_preserves_concurrent_old_event(
+        self, event_store: MetricsEventStore, temp_db: "HubDatabase"
+    ) -> None:
+        old_date = datetime.now(UTC) - timedelta(days=60)
+        temp_db.execute(
+            """INSERT INTO metrics_events
+               (event_type, name, server_name, success, latency_ms, created_at)
+               VALUES (%s, %s, %s, %s, %s, %s)""",
+            ("tool_call", "first", "gobby-tasks", True, 10.0, old_date),
+        )
+        rollup_finished = threading.Event()
+        release_commit = threading.Event()
+        writer_transaction_open = threading.Event()
+        original_transaction = temp_db.transaction
+
+        @contextmanager
+        def coordinated_transaction():
+            with original_transaction() as txn:
+                if threading.current_thread().name.startswith("archive-job"):
+                    original_execute = txn.execute
+
+                    def execute_and_signal(sql, params=()):
+                        cursor = original_execute(sql, params)
+                        rollup_finished.set()
+                        return cursor
+
+                    with patch.object(txn, "execute", side_effect=execute_and_signal):
+                        yield txn
+                    assert release_commit.wait(timeout=5)
+                else:
+                    writer_transaction_open.set()
+                    yield txn
+
+        def insert_concurrent_event() -> None:
+            temp_db.execute(
+                """INSERT INTO metrics_events
+                   (event_type, name, server_name, success, latency_ms, created_at)
+                   VALUES (%s, %s, %s, %s, %s, %s)""",
+                ("tool_call", "concurrent", "gobby-tasks", True, 20.0, old_date),
+            )
+
+        with (
+            patch.object(temp_db, "transaction", side_effect=coordinated_transaction),
+            ThreadPoolExecutor(max_workers=1, thread_name_prefix="archive-job") as archive_pool,
+            ThreadPoolExecutor(max_workers=1, thread_name_prefix="event-writer") as writer_pool,
+        ):
+            archive_future = archive_pool.submit(event_store.archive_old_events, 30)
+            assert rollup_finished.wait(timeout=5)
+            writer_future = writer_pool.submit(insert_concurrent_event)
+            assert writer_transaction_open.wait(timeout=5)
+            writer_future.result(timeout=5)
+            release_commit.set()
+            assert archive_future.result(timeout=5) == 1
+
+        totals = event_store.get_archive_totals(event_type="tool_call")
+        assert totals[0]["call_count"] == 1
+        remaining = event_store.query_events(event_type="tool_call")
+        assert [row["name"] for row in remaining] == ["concurrent"]
+
 
 class TestPostgresArchive:
     """PostgreSQL regressions for ON CONFLICT archive upserts."""
@@ -417,6 +513,51 @@ class TestMCPTools:
             metrics_manager=manager,
             event_store=manager.event_store,
         )
+
+    @pytest.mark.asyncio
+    async def test_reset_metrics_requires_project_context(self) -> None:
+        from gobby.mcp_proxy.tools.metrics import create_metrics_registry
+
+        manager = MagicMock()
+        registry = create_metrics_registry(metrics_manager=manager)
+
+        with patch("gobby.utils.project_context.get_project_context", return_value=None):
+            result = await registry.call("reset_metrics", {})
+
+        assert result["success"] is False
+        assert "project context" in result["error"]
+        manager.reset_metrics.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_reset_metrics_tools_force_calling_project_scope(self) -> None:
+        from gobby.mcp_proxy.tools.metrics import create_metrics_registry
+
+        manager = MagicMock()
+        manager.reset_metrics.side_effect = [3, 2, 1]
+        registry = create_metrics_registry(metrics_manager=manager)
+
+        with patch(
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "calling-project"},
+        ):
+            reset_result = await registry.call("reset_metrics", {"server_name": "server-a"})
+            tool_result = await registry.call(
+                "reset_tool_metrics",
+                {"server_name": "server-a", "tool_name": "tool-a"},
+            )
+            cross_project_result = await registry.call(
+                "reset_metrics",
+                {"project_id": "other-project"},
+            )
+
+        assert reset_result["success"] is True
+        assert tool_result["success"] is True
+        assert cross_project_result["success"] is True
+        assert manager.reset_metrics.call_args_list == [
+            call(project_id="calling-project", server_name="server-a", tool_name=None),
+            call(project_id="calling-project", server_name="server-a", tool_name="tool-a"),
+            call(project_id="calling-project", server_name=None, tool_name=None),
+        ]
 
     @pytest.mark.asyncio
     async def test_get_session_tools(self, registry, temp_db: "HubDatabase") -> None:

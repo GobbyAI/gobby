@@ -17,7 +17,6 @@ from gobby.storage.tasks._stage_state_mutex import StageStateMutexFactory
 from gobby.storage.tasks._stage_state_rows import StageStateRows
 from gobby.storage.tasks._stage_types import IllegalStageTransitionError, StageState, StageState5
 from gobby.storage.tasks._stage_utils import _close_task_in_txn, _now
-from gobby.utils.sql import sql_placeholders
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +75,8 @@ class StageStateTransitions:
         artifact_updates: Mapping[str, str] | None = None,
         validation_override_reason: str | None = None,
         cited_subtasks: Sequence[str] | None = None,
+        dispatch_run_id: str | None = None,
+        preheld_mutex_run_id: str | None = None,
     ) -> StageState:
         holder = by_session_id or "system"
         session_uuid = _session_uuid_or_none(by_session_id)
@@ -86,6 +87,8 @@ class StageStateTransitions:
             holder,
             f"{stage_name}:{verb}",
             expected_stage=snapshot,
+            dispatch_run_id=dispatch_run_id,
+            preheld_run_id=preheld_mutex_run_id,
         ):
             current = self.rows.current_stage(task_id)
             row = self.rows.get(task_id, stage_name)
@@ -329,9 +332,8 @@ class StageStateTransitions:
         cited_ids = tuple(dict.fromkeys(cited_subtasks))
         if not cited_ids:
             return
-        placeholders = sql_placeholders(len(cited_ids))
         rows = conn.execute(
-            f"""
+            """
             WITH RECURSIVE subtree(id) AS (
                 SELECT id FROM tasks WHERE parent_task_id = %s
                 UNION ALL
@@ -339,9 +341,9 @@ class StageStateTransitions:
                   FROM tasks
                   JOIN subtree ON tasks.parent_task_id = subtree.id
             )
-            SELECT id FROM subtree WHERE id IN ({placeholders})
-            """,  # nosec B608 # placeholder count is derived from cited_ids length.
-            (task_id, *cited_ids),
+            SELECT id FROM subtree WHERE id = ANY(%s::uuid[])
+            """,
+            (task_id, list(cited_ids)),
         ).fetchall()
         descendant_ids = {str(row["id"]) for row in rows}
         missing = [cited_id for cited_id in cited_ids if cited_id not in descendant_ids]
@@ -428,18 +430,17 @@ class StageStateTransitions:
     ) -> None:
         if not cited_subtasks:
             return
-        placeholders = sql_placeholders(len(cited_subtasks))
         conn.execute(
-            f"""
+            """
             UPDATE worktrees
                SET status = 'active',
                    merged_at = NULL,
                    cleanup_after = NULL,
                    updated_at = %s
-             WHERE task_id IN ({placeholders})
+             WHERE task_id = ANY(%s::uuid[])
                AND status = 'merged'
-            """,  # nosec B608 # placeholder count is derived from cited_subtasks length.
-            (now, *cited_subtasks),
+            """,
+            (now, list(cited_subtasks)),
         )
 
     def append_holistic_failure_comments(

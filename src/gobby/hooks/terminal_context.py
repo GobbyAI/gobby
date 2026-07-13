@@ -6,6 +6,11 @@ from collections.abc import Mapping
 from typing import Any
 
 
+def is_gobby_acp_child(terminal_context: object) -> bool:
+    """Return whether terminal metadata marks a daemon-owned ACP child process."""
+    return isinstance(terminal_context, Mapping) and terminal_context.get("gobby_acp_child") == "1"
+
+
 def hook_cwd(data: Mapping[str, Any], event_cwd: Any = None) -> str | None:
     """Return the first non-empty cwd supplied by hook data or event metadata."""
     return _non_empty_str(data.get("cwd")) or _non_empty_str(event_cwd)
@@ -28,5 +33,6 @@ def enrich_terminal_context_with_cwd(
 
 def _non_empty_str(value: Any) -> str | None:
     if isinstance(value, str):
-        return value if value else None
+        stripped = value.strip()
+        return stripped if stripped else None
     return None

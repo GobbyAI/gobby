@@ -104,6 +104,30 @@ def test_record_machine_ingress_upserts_payload_metadata(
 class TestHandleInternalDaemonNotReady:
     """Tests for _handle_internal when daemon is not ready."""
 
+    @pytest.mark.parametrize("event_type", [HookEventType.STOP, HookEventType.AFTER_AGENT])
+    def test_terminal_hook_blocks_before_rule_evaluation(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable[..., HookEvent],
+        event_type: HookEventType,
+    ) -> None:
+        manager = manager_with_mocks
+        manager._health_monitor.get_cached_status.return_value = (
+            False,
+            None,
+            "unreachable",
+            "Connection refused",
+        )
+        manager._health_monitor.check_now.return_value = False
+        manager._workflow_handler.handle.reset_mock()
+
+        with patch("time.sleep"), patch.object(manager, "_handle_after_daemon_ready") as downstream:
+            response = manager._handle_internal(make_event(event_type=event_type))
+
+        assert response.decision == "block"
+        downstream.assert_not_called()
+        manager._workflow_handler.handle.assert_not_called()
+
     def test_handle_returns_allow_when_daemon_not_ready_for_non_critical(
         self,
         manager_with_mocks: HookManager,
@@ -307,6 +331,37 @@ class TestHandleSessionStart:
 class TestHandleNonSessionStart:
     """Tests for non-SESSION_START handler ordering (rules before handler)."""
 
+    def test_rules_and_webhooks_share_blocking_deadline(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable,
+    ) -> None:
+        manager = manager_with_mocks
+        manager._event_handlers.get_handler.return_value = MagicMock(
+            return_value=HookResponse(decision="allow")
+        )
+        manager._session_lookup.resolve.return_value = None
+
+        with (
+            patch.object(
+                manager,
+                "_evaluate_workflow_rules",
+                return_value=(None, None),
+            ) as evaluate_rules,
+            patch.object(
+                manager,
+                "_evaluate_blocking_webhooks",
+                return_value=None,
+            ) as evaluate_webhooks,
+            patch("gobby.hooks.hook_manager.time.monotonic", return_value=100.0),
+        ):
+            manager._handle_internal(make_event(event_type=HookEventType.BEFORE_TOOL))
+
+        rules_deadline = evaluate_rules.call_args.args[1]
+        webhooks_deadline = evaluate_webhooks.call_args.args[1]
+        assert rules_deadline == webhooks_deadline
+        assert 100.0 < rules_deadline < 120.0
+
     def test_non_session_start_runs_rules_before_handler(
         self,
         manager_with_mocks: HookManager,
@@ -415,6 +470,25 @@ class TestHandlePostProcessing:
 
         # The flag should have been consumed (popped)
         assert "_input_coerced" not in event.data
+
+    def test_raw_tool_input_is_not_copied_to_response_metadata(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable,
+    ) -> None:
+        manager = manager_with_mocks
+        manager._event_handlers.get_handler.return_value = MagicMock(
+            return_value=HookResponse(decision="allow")
+        )
+        manager._session_lookup.resolve.return_value = None
+        manager._workflow_handler.handle.return_value = HookResponse(decision="allow")
+        manager._enricher.enrich = MagicMock()
+        event = make_event(event_type=HookEventType.BEFORE_TOOL)
+        event.metadata["raw_tool_input"] = {"secret": "unneeded-copy"}
+
+        response = manager._handle_internal(event)
+
+        assert "_raw_tool_input" not in response.metadata
 
 
 class TestHookManagerHelpers:

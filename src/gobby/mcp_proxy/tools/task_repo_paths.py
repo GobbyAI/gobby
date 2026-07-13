@@ -10,9 +10,9 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
 
-from gobby.storage.clones import LocalCloneManager
+from gobby.storage.clones import CloneStatus, LocalCloneManager
 from gobby.storage.tasks import TaskNotFoundError
-from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.storage.worktrees import LocalWorktreeManager, WorktreeStatus
 from gobby.utils.project_context import get_project_context
 
 if TYPE_CHECKING:
@@ -76,10 +76,9 @@ def _task_allowed_roots(
         yield default_repo
 
     tasks = list(_task_and_ancestors(task_manager, task))
-    task_ids = {ancestor.id for ancestor in tasks}
     for ancestor in tasks:
         yield from _artifact_roots(task_manager, ancestor.id)
-    yield from _registered_isolation_roots(task_manager, task.project_id, task_ids)
+    yield from _registered_isolation_roots(task_manager)
 
 
 def _task_and_ancestors(task_manager: LocalTaskManager, task: Task) -> Iterable[Task]:
@@ -105,16 +104,18 @@ def _artifact_roots(task_manager: LocalTaskManager, task_id: str) -> Iterable[st
 
 def _registered_isolation_roots(
     task_manager: LocalTaskManager,
-    project_id: str,
-    task_ids: set[str],
 ) -> Iterable[str]:
     db = task_manager.db
-    for worktree in LocalWorktreeManager(db).list_worktrees(project_id=project_id, limit=1000):
-        if worktree.task_id in task_ids:
-            yield worktree.worktree_path
-    for clone in LocalCloneManager(db).list_clones(project_id=project_id, limit=1000):
-        if clone.task_id in task_ids:
-            yield clone.clone_path
+    for worktree in LocalWorktreeManager(db).list_worktrees(
+        status=WorktreeStatus.ACTIVE.value,
+        limit=1000,
+    ):
+        yield worktree.worktree_path
+    for clone in LocalCloneManager(db).list_clones(
+        status=CloneStatus.ACTIVE.value,
+        limit=1000,
+    ):
+        yield clone.clone_path
 
 
 def _registered_project_roots(project_manager: LocalProjectManager | None) -> Iterable[str]:

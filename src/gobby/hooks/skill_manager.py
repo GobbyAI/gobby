@@ -9,6 +9,8 @@ Supports DB-backed loading (preferred) with filesystem fallback.
 from __future__ import annotations
 
 import logging
+import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -93,6 +95,8 @@ class HookSkillManager:
         db: HubDatabase | None = None,
         metrics_event_store: MetricsEventStore | None = None,
         project_id: str | None = None,
+        cache_ttl_seconds: float = 5.0,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         """Initialize the skill manager.
 
@@ -106,6 +110,8 @@ class HookSkillManager:
         self._db = db
         self._event_store = metrics_event_store
         self._project_id = project_id
+        self._cache_ttl_seconds = cache_ttl_seconds
+        self._clock = clock
 
         # Path to built-in skills: src/gobby/hooks/ -> src/gobby/install/shared/skills/
         self._base_dir = Path(__file__).parent.parent
@@ -115,36 +121,46 @@ class HookSkillManager:
         self._loader = SkillLoader(default_source_type="filesystem")
 
         # Cache of discovered skills
-        self._core_skills: list[ParsedSkill] | None = None
+        self._skill_cache: dict[str | None, tuple[float, list[ParsedSkill]]] = {}
 
         # Cache of trigger index: list of (trigger_words: list[str], skill) tuples
-        self._trigger_index: list[tuple[list[str], ParsedSkill]] | None = None
+        self._trigger_indexes: dict[str | None, list[tuple[list[str], ParsedSkill]]] = {}
 
-    def discover_core_skills(self) -> list[ParsedSkill]:
+        if db is not None:
+            from gobby.storage.skills import get_skill_change_notifier
+
+            get_skill_change_notifier(db).add_listener(lambda _event: self.refresh())
+
+    def discover_core_skills(self, project_id: str | None = None) -> list[ParsedSkill]:
         """Discover skills — from DB (installed + enabled) or filesystem fallback.
 
         Returns:
             List of ParsedSkill objects for all valid core skills.
             Invalid skills are logged as warnings and skipped.
         """
-        if self._core_skills is not None:
-            return self._core_skills
+        scope = project_id if project_id is not None else self._project_id
+        cached = self._skill_cache.get(scope)
+        now = self._clock()
+        if cached is not None and cached[0] > now:
+            return cached[1]
 
         # Try DB-backed loading first
         if self._db is not None:
             try:
-                skills = self._load_from_db()
+                skills = self._load_from_db(scope)
                 if skills is not None:
-                    self._core_skills = skills
-                    logger.debug(f"Discovered {len(self._core_skills)} core skills from DB")
-                    return self._core_skills
+                    self._trigger_indexes.pop(scope, None)
+                    self._skill_cache[scope] = (now + self._cache_ttl_seconds, skills)
+                    logger.debug("Discovered %s hook skills from DB for %s", len(skills), scope)
+                    return skills
             except Exception as e:
                 logger.debug(f"DB skill loading failed, falling back to filesystem: {e}")
 
         # Filesystem fallback
+        self._trigger_indexes.pop(scope, None)
         return self._load_from_filesystem()
 
-    def _load_from_db(self) -> list[ParsedSkill] | None:
+    def _load_from_db(self, project_id: str | None) -> list[ParsedSkill] | None:
         """Load installed, enabled skills from the database.
 
         Returns:
@@ -157,7 +173,7 @@ class HookSkillManager:
 
         storage = LocalSkillManager(self._db)
         db_skills = storage.list_skills(
-            project_id=self._project_id,
+            project_id=project_id,
             enabled=True,
             include_deleted=False,
             limit=_MAX_SKILL_FETCH,
@@ -169,19 +185,18 @@ class HookSkillManager:
         """Load skills from the filesystem (fallback path)."""
         if not self._core_skills_path.exists():
             logger.warning(f"Core skills path not found: {self._core_skills_path}")
-            self._core_skills = []
-            return self._core_skills
+            return []
 
         # Load all skills from the core directory
-        self._core_skills = self._loader.load_directory(
+        skills = self._loader.load_directory(
             self._core_skills_path,
             validate=True,
         )
 
-        logger.debug(f"Discovered {len(self._core_skills)} core skills from filesystem")
-        return self._core_skills
+        logger.debug("Discovered %s core skills from filesystem fallback", len(skills))
+        return skills
 
-    def get_skill_by_name(self, name: str) -> ParsedSkill | None:
+    def get_skill_by_name(self, name: str, project_id: str | None = None) -> ParsedSkill | None:
         """Get a skill by name.
 
         Args:
@@ -191,7 +206,7 @@ class HookSkillManager:
             ParsedSkill if found, None otherwise.
         """
         # Ensure skills are discovered
-        skills = self.discover_core_skills()
+        skills = self.discover_core_skills(project_id)
 
         for skill in skills:
             if skill.name == name:
@@ -199,7 +214,12 @@ class HookSkillManager:
 
         return None
 
-    def resolve_skill_name(self, name: str, session_id: str | None = None) -> ParsedSkill | None:
+    def resolve_skill_name(
+        self,
+        name: str,
+        session_id: str | None = None,
+        project_id: str | None = None,
+    ) -> ParsedSkill | None:
         """Resolve a skill name using a resolution chain.
 
         Resolution order:
@@ -214,7 +234,7 @@ class HookSkillManager:
         Returns:
             ParsedSkill if resolved, None otherwise.
         """
-        skills = self.discover_core_skills()
+        skills = self.discover_core_skills(project_id)
         name_lower = name.lower()
         resolved: ParsedSkill | None = None
 
@@ -259,6 +279,7 @@ class HookSkillManager:
         prompt: str,
         threshold: float = 0.5,
         session_id: str | None = None,
+        project_id: str | None = None,
     ) -> list[tuple[ParsedSkill, float]]:
         """Match a prompt against skill trigger keywords.
 
@@ -277,18 +298,18 @@ class HookSkillManager:
             return []
 
         # Build trigger index on first call
-        if self._trigger_index is None:
-            self._build_trigger_index()
-
-        if self._trigger_index is None:
-            raise RuntimeError("trigger_index not built")
+        scope = project_id if project_id is not None else self._project_id
+        self.discover_core_skills(scope)
+        if scope not in self._trigger_indexes:
+            self._build_trigger_index(scope)
+        trigger_index = self._trigger_indexes[scope]
 
         import re
 
         prompt_words = {start.lower() for start in re.findall(r"\w+", prompt.lower())}
         results: list[tuple[ParsedSkill, float]] = []
 
-        for trigger_words, skill in self._trigger_index:
+        for trigger_words, skill in trigger_index:
             if not trigger_words:
                 continue
             overlap = sum(1 for w in trigger_words if w in prompt_words)
@@ -317,10 +338,11 @@ class HookSkillManager:
 
         return results
 
-    def _build_trigger_index(self) -> None:
+    def _build_trigger_index(self, project_id: str | None = None) -> None:
         """Build the trigger index from discovered skills."""
-        skills = self.discover_core_skills()
-        self._trigger_index = []
+        scope = project_id if project_id is not None else self._project_id
+        skills = self.discover_core_skills(scope)
+        trigger_index: list[tuple[list[str], ParsedSkill]] = []
 
         for skill in skills:
             triggers: list[str] = []
@@ -357,14 +379,24 @@ class HookSkillManager:
                     seen.add(w)
                     unique_words.append(w)
 
-            self._trigger_index.append((unique_words, skill))
+            trigger_index.append((unique_words, skill))
 
-    def refresh(self) -> None:
+        self._trigger_indexes[scope] = trigger_index
+
+    def refresh(self, project_id: str | None = None) -> None:
         """Clear the cache and rediscover skills."""
-        self._core_skills = None
-        self._trigger_index = None
+        if project_id is None:
+            self._skill_cache.clear()
+            self._trigger_indexes.clear()
+            return
+        self._skill_cache.pop(project_id, None)
+        self._trigger_indexes.pop(project_id, None)
 
-    def recommend_skills(self, category: str | None = None) -> list[str]:
+    def recommend_skills(
+        self,
+        category: str | None = None,
+        project_id: str | None = None,
+    ) -> list[str]:
         """Recommend relevant skills based on task category.
 
         Maps task categories to relevant core skills that would be helpful
@@ -391,7 +423,7 @@ class HookSkillManager:
         recommended = category_skills.get(category or "", [])
 
         # Always include alwaysApply skills
-        skills = self.discover_core_skills()
+        skills = self.discover_core_skills(project_id)
         always_apply = [s.name for s in skills if s.is_always_apply()]
 
         # Combine and dedupe while preserving order

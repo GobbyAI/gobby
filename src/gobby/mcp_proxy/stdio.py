@@ -121,6 +121,7 @@ def _proxy_dependencies() -> DaemonProxyDependencies:
         check_daemon_http_health=check_daemon_http_health,
         read_project_id=read_project_id,
         resolve_session_id_from_terminal_context=resolve_session_id_from_terminal_context,
+        http_client_factory=httpx.AsyncClient,
         logger=logger,
     )
 

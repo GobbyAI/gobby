@@ -60,8 +60,8 @@ def mock_session() -> MagicMock:
 class ConcreteTransportConnection(BaseTransportConnection):
     """Concrete implementation of BaseTransportConnection for testing."""
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, config: MCPServerConfig) -> None:
+        super().__init__(config)
         self._connect_called = False
         self._disconnect_called = False
         self._should_fail_connect = False
@@ -101,52 +101,11 @@ class TestBaseTransportConnectionInit:
         transport = BaseTransportConnection(config=http_config)
 
         assert transport.config == http_config
-        assert transport._auth_token is None
-        assert transport._token_refresh_callback is None
         assert transport._session is None
         assert transport._transport_context is None
         assert transport._state == ConnectionState.DISCONNECTED
         assert transport._last_health_check is None
         assert transport._consecutive_failures == 0
-
-    def test_init_with_auth_token(self, http_config: MCPServerConfig) -> None:
-        """Test initialization with auth token."""
-        transport = BaseTransportConnection(
-            config=http_config,
-            auth_token="test-token-123",
-        )
-
-        assert transport._auth_token == "test-token-123"
-        assert transport._token_refresh_callback is None
-
-    def test_init_with_token_refresh_callback(self, http_config: MCPServerConfig) -> None:
-        """Test initialization with token refresh callback."""
-
-        async def refresh_token() -> str:
-            return "new-token"
-
-        transport = BaseTransportConnection(
-            config=http_config,
-            token_refresh_callback=refresh_token,
-        )
-
-        assert transport._token_refresh_callback is refresh_token
-
-    def test_init_with_all_parameters(self, http_config: MCPServerConfig) -> None:
-        """Test initialization with all parameters."""
-
-        async def refresh_token() -> str:
-            return "refreshed-token"
-
-        transport = BaseTransportConnection(
-            config=http_config,
-            auth_token="initial-token",
-            token_refresh_callback=refresh_token,
-        )
-
-        assert transport.config == http_config
-        assert transport._auth_token == "initial-token"
-        assert transport._token_refresh_callback is refresh_token
 
     def test_init_with_stdio_config(self, stdio_config: MCPServerConfig) -> None:
         """Test initialization with stdio config."""
@@ -226,35 +185,6 @@ class TestBaseTransportConnectionProperties:
         base_transport._session = mock_session
 
         assert base_transport.session is mock_session
-
-
-class TestBaseTransportConnectionSetAuthToken:
-    """Tests for set_auth_token method."""
-
-    def test_set_auth_token(self, base_transport: BaseTransportConnection) -> None:
-        """Test set_auth_token updates the auth token."""
-        assert base_transport._auth_token is None
-
-        base_transport.set_auth_token("new-token")
-
-        assert base_transport._auth_token == "new-token"
-
-    def test_set_auth_token_overwrites_existing(self, http_config: MCPServerConfig) -> None:
-        """Test set_auth_token overwrites existing token."""
-        transport = BaseTransportConnection(
-            config=http_config,
-            auth_token="old-token",
-        )
-
-        transport.set_auth_token("new-token")
-
-        assert transport._auth_token == "new-token"
-
-    def test_set_auth_token_empty_string(self, base_transport: BaseTransportConnection) -> None:
-        """Test set_auth_token with empty string."""
-        base_transport.set_auth_token("")
-
-        assert base_transport._auth_token == ""
 
 
 class TestBaseTransportConnectionAbstractMethods:
@@ -524,58 +454,6 @@ class TestConnectionStateTransitions:
         assert base_transport.state == ConnectionState.DISCONNECTED
 
 
-class TestTokenRefreshCallback:
-    """Tests for token refresh callback functionality."""
-
-    @pytest.mark.asyncio
-    async def test_token_refresh_callback_is_callable(self, http_config: MCPServerConfig) -> None:
-        """Test token refresh callback can be awaited."""
-        call_count = 0
-
-        async def refresh_token() -> str:
-            nonlocal call_count
-            call_count += 1
-            return f"token-{call_count}"
-
-        transport = BaseTransportConnection(
-            config=http_config,
-            token_refresh_callback=refresh_token,
-        )
-
-        # Verify callback is stored and can be called
-        assert transport._token_refresh_callback is not None
-        result = await transport._token_refresh_callback()
-        assert result == "token-1"
-        assert call_count == 1
-
-    @pytest.mark.asyncio
-    async def test_token_refresh_callback_multiple_calls(
-        self, http_config: MCPServerConfig
-    ) -> None:
-        """Test token refresh callback can be called multiple times."""
-        tokens = ["token-a", "token-b", "token-c"]
-        token_index = 0
-
-        async def refresh_token() -> str:
-            nonlocal token_index
-            token = tokens[token_index]
-            token_index += 1
-            return token
-
-        transport = BaseTransportConnection(
-            config=http_config,
-            token_refresh_callback=refresh_token,
-        )
-
-        result1 = await transport._token_refresh_callback()
-        result2 = await transport._token_refresh_callback()
-        result3 = await transport._token_refresh_callback()
-
-        assert result1 == "token-a"
-        assert result2 == "token-b"
-        assert result3 == "token-c"
-
-
 class TestEdgeCases:
     """Tests for edge cases and boundary conditions."""
 
@@ -629,17 +507,6 @@ class TestEdgeCases:
 
         # Result depends on execution speed, but should not raise
         assert result in (True, False)
-
-    def test_multiple_set_auth_token_calls(self, base_transport: BaseTransportConnection) -> None:
-        """Test multiple set_auth_token calls update correctly."""
-        base_transport.set_auth_token("token-1")
-        assert base_transport._auth_token == "token-1"
-
-        base_transport.set_auth_token("token-2")
-        assert base_transport._auth_token == "token-2"
-
-        base_transport.set_auth_token("token-3")
-        assert base_transport._auth_token == "token-3"
 
     @pytest.mark.asyncio
     async def test_health_check_with_very_large_consecutive_failures(

@@ -1,4 +1,5 @@
 import json
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -6,7 +7,9 @@ import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.worktrees import create_worktrees_registry
+from gobby.mcp_proxy.tools.worktrees._helpers import copy_project_json_to_worktree
 from gobby.storage.worktrees import Worktree
+from gobby.worktrees.git import WorktreeGitManager
 
 STORED_AT = "2026-01-01T00:00:00+00:00"
 
@@ -127,6 +130,105 @@ async def test_create_worktree_preserves_project_json_trailing_newline(
 
     assert result["success"] is True
     assert worktree_path.joinpath(".gobby", "project.json").read_text() == expected_project_json
+
+
+@pytest.mark.asyncio
+async def test_create_worktree_actual_git_path_preserves_project_json_bytes_and_clean_status(
+    mock_worktree_storage: MagicMock,
+    tmp_path: Path,
+) -> None:
+    repo_path = tmp_path / "repo"
+    worktree_path = tmp_path / "worktree"
+    repo_path.joinpath(".gobby").mkdir(parents=True)
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main"],
+        cwd=repo_path,
+        check=True,
+        timeout=10,
+    )
+    project_id = "11111111-1111-4111-8111-111111110001"
+    project_data = {
+        "id": project_id,
+        "name": "test-project",
+        "parent_project_path": str(repo_path.resolve()),
+        "parent_project_id": project_id,
+        "unrelated_metadata": {"preserve": True},
+    }
+    project_bytes = (json.dumps(project_data, separators=(",", ":")) + "\n").encode()
+    repo_path.joinpath(".gobby", "project.json").write_bytes(project_bytes)
+    subprocess.run(
+        ["git", "add", ".gobby/project.json"],
+        cwd=repo_path,
+        check=True,
+        timeout=10,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Gobby Tests",
+            "-c",
+            "user.email=gobby-tests@example.com",
+            "commit",
+            "--no-gpg-sign",
+            "-q",
+            "-m",
+            "initial",
+        ],
+        cwd=repo_path,
+        check=True,
+        timeout=10,
+    )
+
+    mock_worktree_storage.get_by_branch.return_value = None
+    mock_worktree_storage.create.return_value = Worktree(
+        id="wt-actual-newline",
+        project_id=project_id,
+        task_id=None,
+        branch_name="feature/actual-newline",
+        worktree_path=str(worktree_path),
+        base_branch="main",
+        agent_session_id=None,
+        status="active",
+        created_at=STORED_AT,
+        updated_at=STORED_AT,
+        merged_at=None,
+    )
+    registry = create_worktrees_registry(
+        worktree_storage=mock_worktree_storage,
+        git_manager=WorktreeGitManager(repo_path),
+        project_id=project_id,
+    )
+
+    with patch(
+        "gobby.mcp_proxy.tools.worktrees._create.emit_worktree_event",
+        return_value={"event_type": "worktree_created", "worktree_id": "wt-actual-newline"},
+    ):
+        result = await registry.call(
+            "create_worktree",
+            {
+                "branch_name": "feature/actual-newline",
+                "base_branch": "main",
+                "worktree_path": str(worktree_path),
+                "use_local": True,
+            },
+        )
+
+    assert result["success"] is True
+    assert worktree_path.joinpath(".gobby", "project.json").read_bytes() == project_bytes
+
+    worktree_path.joinpath(".gobby", "project.json").write_bytes(project_bytes.rstrip(b"\n"))
+    copy_project_json_to_worktree(repo_path, worktree_path)
+    status = subprocess.run(
+        ["git", "status", "--porcelain=v1"],
+        cwd=worktree_path,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert worktree_path.joinpath(".gobby", "project.json").read_bytes() == project_bytes
+    assert status.stdout == ""
 
 
 @pytest.mark.asyncio

@@ -5,6 +5,10 @@
 - **Commit / branch:** b17e2e2e9 / 0.5.0
 - **Summary:** 6 Blocker · 22 Important · 24 Nit — the provider stack is structurally sound but leaks failures as in-band success at every adapter seam, and the wiki cron/watcher wiring turns single bad rows or files into silent permanent outages. The single highest-value fix is a whitespace/empty guard plus typed error propagation in the candidate fallback loop; it subsumes four separate empty-success findings.
 
+> This is the original review snapshot. Its source locations describe commit
+> `b17e2e2e9`; use the residual disposition table near the end for the current
+> task-linked audit rather than treating the historical line numbers as HEAD.
+
 ## Findings
 
 ### [BLOCKER] One bad audio binding collapses the whole AI capability registry → `llm_service = None` → every LLM feature dies
@@ -246,35 +250,31 @@
 - **Minimal fix:** `await asyncio.to_thread(...)` for read+encode and enforce a max-size check (Anthropic vision caps are a few MB) before encoding.
 - **Confidence:** high for the blocking call, medium on impact magnitude.
 
-## Nits
+## Residual disposition (2026-07-12)
 
-- **claude.py `_retry_async` returns None when `max_retries=0`** (`:276-289`) — the `for attempt in range(max_retries)` body never runs and the function falls through to `None`, propagated as a "successful" result. Latent (callers pass 1/3); validate `max_retries >= 1`.
-- **claude.py `_is_transient_error` matches substrings over the whole message** (`:163-181`) — "404"/"401"/"not_found" anywhere in embedded stderr/payload text flips a transient error to permanent (and vice versa). Prefer typed SDK exceptions/exit codes. Same brittleness in `_extract_exit_code_from_message` (`:214-225`) and `_is_error_result_success` (`:184-186`).
-- **claude.py `max_tokens` emulated by char truncation** (`:492-494`) — `result[: max_tokens * 4]` chops mid-token after full generation with no marker; full spend still incurred, `usage` reflects the untruncated run.
-- **claude.py `captured_usage` can carry usage from a failed retry attempt** (`:457-483`) — nonlocal across attempts; reset to `None` at the top of `_run_query`.
-- **claude.py unbounded stderr accumulation per query** (`:325`) — `stderr_lines.append` grows without bound and is dumped wholesale into logs/exceptions; cap with a `deque(maxlen=...)`.
-- **claude.py dead tool-enabled generation path was removed** — no production caller remains for hidden Claude tool use.
-- **claude.py `ClaudeSDKProviderFailure` is a distinction nothing consumes** (`:102-103,368`) — raised once, never caught; the fallback loop catches bare `Exception`.
-- **claude.py redundant double `_verify_cli_path` per call** (`:420/441`, `:551/568`) — public then private re-verification doubles worst-case retry latency.
-- **local.py `__init__` swallows client construction failures** (`:134-137`) — `_client=None` leaves every later call raising a generic error instead of failing fast at construction where the factory would wrap it clearly.
-- **local.py `describe_image` returns error sentinel strings as success** (`:296-302,339-341`) — consumed verbatim by `vision.py:108-113`; corrupt error text persists into memory image descriptions. (IMPORTANT-adjacent; grouped here as the Claude variant is the Blocker.)
-- **local.py sync image read on the event loop** (`:305`) — `await asyncio.to_thread(path.read_bytes)`.
-- **service.py `call_json_feature` cannot pass `max_tokens`; local JSON path hardcodes 8000** (`:112-132`, `local.py:243,262`) — the text path plumbs it end-to-end, the JSON path silently ignores it.
-- **claude_cli.py `ResultEvent` drops `cost_usd` that tests feed it** (`stream_json_parser.py:136-144`) — unnoticed because nothing consumes it.
-- **context_windows.py catalog candidates with source "registry" are silently discarded** (`:327-341`) — a legal `ContextLengthSource` member dropped entirely; treat like `static_default`.
-- **context_windows.py provider gating asymmetry** (`:214-220,360-388`) — enumerated `claude-*` keys leak cross-provider while the family fallback doesn't; gate `key.startswith("claude-")` to `{None, "claude", "droid"}`.
-- **context_windows.py empty-string override key matches every model** (`:306-309`) — `substr.lower() in model_lower` with `substr=""` pins every window; guard `if substr and ...`.
-- **context_windows.py legacy duck-typed catalogs misclassified as authoritative** (`:421-425`) — a catalog exposing only `get_context_window` gets labeled `provider_reported`.
-- **model_costs PK on stripped model id** (`postgres_baseline_schema.sql:1297-1304`) — two providers with the same suffix collide on the PK and abort the whole refresh (swallowed to a warning at `runner_init/storage.py:98-102`); `_` in stored keys acts as a LIKE wildcard. Use `(provider, model)` PK or `ON CONFLICT DO UPDATE`, and escape LIKE metacharacters.
-- **resolver.py drops workflow `model` when set without `provider`** (`:172-185`) — dead today; the contract gap would surprise a future caller.
-- **providers/registry.py dead public API** (`:90-92,104-110,113-123`, field `installed_only`) — `provider_ids`, `installed_provider_metadata`, `provider_status_metadata`, `get_provider_metadata` have zero callers outside the package; `provider_status_metadata` already omits `installed`/`path` with no consumer to notice.
-- **wiki `scheduled_scopes` config plumbing reads fields on no config model** (`scheduled_jobs.py:229-239`) — `wiki_config.scheduled_scopes`/`config.wiki_scheduled_scopes` always return None (`WikiConfig` has no such field; `app.py:201` is `extra: "ignore"`), so multi-scope scheduled jobs are unconfigurable dead plumbing.
-- **wiki watcher debounce not applied to changes recorded during an in-flight flush** (`watcher.py:82-85,108-110`) — stale `_pending_since` makes leftover paths flush on the next poll with no debounce.
-- **wiki watcher `ignore_globs=[]` silently restores defaults** (`watcher.py:45`) — `ignore_globs or [...]`; use `is not None`.
-- **wiki dead branch in `_ensure_wiki_cron_job`** (`scheduled_jobs.py:314`) — `if existing.is_system:` is always true after the preceding non-system return.
-- **wiki registration failure logged without traceback; sync DB calls in async registration** (`runner_lifecycle_subsystems.py:303-304`, `scheduled_jobs.py:162,215-224,267-322`) — add `exc_info=True`; optionally `to_thread` the storage calls.
-- **Doc drift:** `CLAUDE.md` "llm/" section lists `gemini.py` and `litellm.py` which do not exist on disk (litellm removal recorded in `docs/plans/completed/litellm-drawdown.md`) and calls `service.py` a multi-provider "manager" though it is a thin facade over `ai/text_generation`. `docs/guides/llm-features.md:8-12` profile table omits the third `local/<model>` candidate per profile; `:59-60` documents expansion/validation as `call_feature` but the code uses `call_json_feature` (`tasks/expansion/_compile.py:227`, `tasks/validation.py:708`).
-- **Missing load-bearing tests:** sonnet/haiku `[1m]` marker; registry returning 0; catalog candidate with source `"registry"`; `describe_image` on the local provider (no coverage at all); the duplicate-audio-binding registry construction; the zero-messages `generate_text` path; the >64 KiB / unexpected-shape stream-parser cases.
+This table is the current audit for coordination task #16598. Duplicate bullets
+were linked to their canonical focused tasks; independent residuals were split,
+implemented, validated, and closed under coordination epic #17824. No independent
+live residual remains in this sweep.
+
+| Residual group | Current disposition |
+| --- | --- |
+| Claude retry budget, failed-attempt usage, and bounded stderr capture | Audited with #17976: usage was already attempt-local and covered by focused tests; the task added budget validation and bounded stderr retention. |
+| Claude retry classification | Closed by #17994; missing CLI is typed permanent, connection failures remain retryable, and status matching is boundary-aware. |
+| Claude `max_tokens * 4` character slicing | Closed by #17993; complete SDK output is preserved rather than silently truncated. |
+| Claude dead CLI/tool paths, stream parser, typed provider failure, and repeated CLI verification | Duplicate/stale after #16321, #16340, and #16394. `execute_sdk_query` now consumes and logs `ClaudeSDKProviderFailure`; the removed parser/tool paths have no live API to patch. |
+| Local provider construction, timeout/retry behavior, vision error handling, and event-loop image reads | Closed by #16105, #16367, and #16409. |
+| JSON `max_tokens` plumbing | Closed by #17977 across the service, facade, protocol, and local adapters. |
+| Context marker/zero/Sonnet behavior | Duplicate of closed #16355, #16380, and #16422. |
+| Context catalog provenance, empty overrides, and provider gating | Closed by #17981. |
+| Provider-scoped model metadata primary key and literal prefix matching | Closed by #17982; migration-inventory fallout was closed by #17985. |
+| Dead resolver model-only contract | Duplicate of closed #16308; the dead resolver was removed rather than extended. |
+| Dead provider-registry public helpers and `installed_only` | Closed by #17986; the live executable-path API was retained. |
+| Wiki degraded handoffs, scan isolation, scope reconciliation, and cross-project scheduling | Duplicate of closed #16742, #15950, #16690, #16705, #16719, #17965, and related focused wiki tasks. |
+| Wiki concurrent debounce and explicit empty ignore policy | Closed by #17988. |
+| Wiki dead scheduled-scope config, redundant system-row branch, and traceback logging | Closed by #17990; the already-closed #17965 owns synchronous storage offload. |
+| LLM feature-routing guide drift | Closed by #17992; the guide now matches current candidates, reasoning pins, JSON helper calls, and verification date. The obsolete root `CLAUDE.md` entries were already absent. |
+| Missing focused tests | Covered by #15831 (duplicate audio), #16118 (blank/zero-message output), #16340 (retired parser), #16367 (local vision), #16380/#16422 (context edge cases), #17981 (registry-source catalog), and the focused tests added by #17976–#17994. |
 
 ## Systemic patterns
 

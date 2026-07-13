@@ -1,6 +1,7 @@
 """Tests for shared MCP field normalization."""
 
 import json
+from typing import Any
 
 import pytest
 
@@ -11,6 +12,7 @@ from gobby.hooks._normalization_shell import (
     tokenize_shell_command,
 )
 from gobby.hooks.normalization import normalize_mcp_fields, normalize_tool_fields
+from gobby.mcp_proxy._call_tool_wrapper import canonicalize_call_tool_wrapper
 
 pytestmark = pytest.mark.unit
 
@@ -202,6 +204,130 @@ class TestCallToolExtraction:
         result = normalize_mcp_fields(data)
         assert result["mcp_server"] == "gobby-tasks"
         assert result["mcp_tool"] == "list_tasks"
+
+    @pytest.mark.parametrize("argument_field", ["arguments", "args"])
+    def test_nested_wrapper_route_matches_proxy_aliases(self, argument_field: str) -> None:
+        data = {
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                argument_field: {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "escalate_task",
+                    "arguments": {"task_id": "#42"},
+                }
+            },
+        }
+
+        result = normalize_mcp_fields(data)
+
+        assert result["mcp_server"] == "gobby-tasks"
+        assert result["mcp_tool"] == "escalate_task"
+
+    def test_nested_arguments_take_precedence_over_args_alias(self) -> None:
+        data = {
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "arguments": {
+                    "server_name": "arguments-server",
+                    "tool_name": "arguments-tool",
+                },
+                "args": {"server_name": "args-server", "tool_name": "args-tool"},
+            },
+        }
+
+        result = normalize_mcp_fields(data)
+
+        assert result["mcp_server"] == "arguments-server"
+        assert result["mcp_tool"] == "arguments-tool"
+
+    def test_top_level_route_fields_independently_override_nested_route(self) -> None:
+        data = {
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": "top-server",
+                "arguments": {
+                    "server_name": "nested-server",
+                    "tool_name": "nested-tool",
+                },
+            },
+        }
+
+        result = normalize_mcp_fields(data)
+
+        assert result["mcp_server"] == "top-server"
+        assert result["mcp_tool"] == "nested-tool"
+
+    @pytest.mark.parametrize(
+        "tool_input",
+        [
+            {
+                "arguments": {"server_name": "arguments-server", "tool_name": "arguments-tool"},
+                "args": {"server_name": "args-server", "tool_name": "args-tool"},
+            },
+            {
+                "server_name": "top-server",
+                "arguments": {"server_name": "nested-server", "tool_name": "nested-tool"},
+            },
+            {
+                "arguments": None,
+                "args": {"server_name": "args-server", "tool_name": "args-tool"},
+            },
+            {
+                "arguments": {},
+                "args": {"server_name": "ignored-server", "tool_name": "ignored-tool"},
+            },
+        ],
+    )
+    def test_route_precedence_matches_proxy_canonicalizer(self, tool_input: dict[str, Any]) -> None:
+        data = {"tool_name": "mcp__gobby__call_tool", "tool_input": tool_input}
+
+        result = normalize_mcp_fields(data)
+        canonical = canonicalize_call_tool_wrapper(
+            server_name=tool_input.get("server_name"),
+            tool_name=tool_input.get("tool_name"),
+            arguments=tool_input.get("arguments"),
+            args=tool_input.get("args"),
+        )
+
+        assert result.get("mcp_server") == (canonical.server_name or "gobby")
+        assert result.get("mcp_tool") == (canonical.tool_name or "call_tool")
+
+    def test_stringified_nested_wrapper_route_matches_proxy(self) -> None:
+        data = {
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "arguments": '{"server_name":"gobby-tasks","tool_name":"escalate_task"}'
+            },
+        }
+
+        result = normalize_mcp_fields(data)
+
+        assert result["mcp_server"] == "gobby-tasks"
+        assert result["mcp_tool"] == "escalate_task"
+
+    def test_malformed_nested_wrapper_preserves_top_level_route(self) -> None:
+        data = {
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": "gobby-tasks",
+                "tool_name": "escalate_task",
+                "arguments": "{not-json",
+            },
+        }
+
+        result = normalize_mcp_fields(data)
+
+        assert result["mcp_server"] == "gobby-tasks"
+        assert result["mcp_tool"] == "escalate_task"
+
+    @pytest.mark.parametrize("tool_input", ["not-an-object", ["not", "an", "object"]])
+    def test_malformed_tool_input_is_safe(self, tool_input: object) -> None:
+        data = {"tool_name": "mcp__gobby__call_tool", "tool_input": tool_input}
+
+        result = normalize_mcp_fields(data)
+
+        assert result["mcp_server"] == "gobby"
+        assert result["mcp_tool"] == "call_tool"
 
     def test_plain_call_tool_preserves_existing(self) -> None:
         data = {
@@ -1464,6 +1590,23 @@ class TestEndToEndRuleMatch:
         # Simulate rule engine `when` evaluation
         assert data.get("mcp_tool") == "create_memory"
         assert data.get("mcp_server") == "gobby-memory"
+
+    def test_nested_call_tool_target_is_rule_visible(self) -> None:
+        data = {
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "arguments": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "escalate_task",
+                    "arguments": {"task_id": "#42", "reason": "blocked"},
+                }
+            },
+        }
+
+        normalize_tool_fields(data)
+
+        assert data.get("mcp_server") == "gobby-tasks"
+        assert data.get("mcp_tool") == "escalate_task"
 
     def test_gemini_create_memory_rule_match(self) -> None:
         """Same rule match, but with Gemini-style fields."""

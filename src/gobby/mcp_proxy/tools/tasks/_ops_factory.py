@@ -26,6 +26,7 @@ from gobby.mcp_proxy.tools.tasks._delivery import create_delivery_registry
 from gobby.mcp_proxy.tools.tasks._expansion import create_expansion_registry
 from gobby.mcp_proxy.tools.tasks._search import create_reindex_registry
 from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
+from gobby.mcp_proxy.tools.tasks._stage_registry_ops import create_stage_registry_ops_registry
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.tasks import TaskSyncManager
 from gobby.tasks.validation import TaskValidator
@@ -100,6 +101,9 @@ def create_task_ops_registry(
 
     # Merge mutating stage manifest tools (read-only stage tools live in gobby-tasks)
     registry.merge_from(create_stage_ops_registry(ctx))
+
+    # Merge stage-registry configuration tools
+    registry.merge_from(create_stage_registry_ops_registry(ctx))
 
     # Merge PR/merge delivery-state tools
     registry.merge_from(create_delivery_registry(ctx))

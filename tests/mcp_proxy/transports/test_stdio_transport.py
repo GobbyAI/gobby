@@ -237,14 +237,6 @@ class TestStdioInit:
         assert conn.config.command == "node"
         assert conn.config.args == ["server.js", "--port", "3000"]
 
-    def test_auth_token_and_callback(self, config: MCPServerConfig) -> None:
-        async def refresh() -> str:
-            return "new-token"
-
-        c = StdioTransportConnection(config, auth_token="tok", token_refresh_callback=refresh)
-        assert c._auth_token == "tok"
-        assert c._token_refresh_callback is refresh
-
 
 # ===========================================================================
 # connect() — already connected

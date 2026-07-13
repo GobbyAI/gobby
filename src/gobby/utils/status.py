@@ -438,6 +438,16 @@ def format_status_message(
     if control_plane_error:
         health_issues.append(f"Daemon control plane: {control_plane_error}")
 
+    hook_runtime = data.get("hook_runtime")
+    if isinstance(hook_runtime, dict):
+        runtime_state = _safe_status_text(hook_runtime.get("state"))
+        if runtime_state not in {None, "absent", "compatible"}:
+            runtime_detail = _safe_status_text(hook_runtime.get("detail"))
+            hook_issue = f"Hook runtime: {runtime_state}"
+            if runtime_detail:
+                hook_issue += f" — {runtime_detail}"
+            health_issues.append(hook_issue)
+
     # Config mismatches
     if config_issues:
         for issue in config_issues:

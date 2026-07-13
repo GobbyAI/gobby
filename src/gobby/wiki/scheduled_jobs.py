@@ -575,19 +575,6 @@ async def _register_enabled_wiki_row_handlers(
     return registered
 
 
-def configured_wiki_cron_scopes(config: object | None, project_id: str) -> list[str]:
-    if config is None:
-        return [project_scope(project_id)]
-
-    wiki_config = getattr(config, "wiki", None)
-    scopes = _scopes_from_config_value(getattr(wiki_config, "scheduled_scopes", None))
-    if scopes:
-        return scopes
-
-    scopes = _scopes_from_config_value(getattr(config, "wiki_scheduled_scopes", None))
-    return scopes or [project_scope(project_id)]
-
-
 def wiki_handler_name(command: str, scope: str) -> str:
     return f"{WIKI_HANDLER_NAME_PREFIX}{command}:{scope}"
 
@@ -689,20 +676,19 @@ def _ensure_wiki_cron_job(
         cron_storage.mark_as_system_job(existing.id)
         return
 
-    if existing.is_system:
-        reconciled = cron_storage.reconcile_system_job_definition(
-            existing.id,
-            action_type="handler",
-            action_config=action_config,
-            description=description,
-            schedule_type=schedule_type,
-            cron_expr=cron_expr,
-            interval_seconds=interval_seconds,
-        )
-        if reconciled is not None and reconciled.enabled and reconciled.next_run_at is None:
-            # A previous startup parked this row while its scope was
-            # unresolvable; the scope is registering again, so wake it.
-            cron_storage.wake_system_job(existing.id)
+    reconciled = cron_storage.reconcile_system_job_definition(
+        existing.id,
+        action_type="handler",
+        action_config=action_config,
+        description=description,
+        schedule_type=schedule_type,
+        cron_expr=cron_expr,
+        interval_seconds=interval_seconds,
+    )
+    if reconciled is not None and reconciled.enabled and reconciled.next_run_at is None:
+        # A previous startup parked this row while its scope was
+        # unresolvable; the scope is registering again, so wake it.
+        cron_storage.wake_system_job(existing.id)
 
 
 def purge_legacy_wiki_research_jobs(cron_storage: CronJobStorage) -> int:
@@ -882,13 +868,3 @@ def _scope_project_id(scope: str, fallback_project_id: str) -> str:
         if candidate:
             return candidate
     return fallback_project_id
-
-
-def _scopes_from_config_value(value: object) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, str):
-        return _configured_scopes([value], "")
-    if isinstance(value, Iterable):
-        return _configured_scopes([str(item) for item in value], "")
-    return []

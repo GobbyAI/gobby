@@ -213,7 +213,7 @@ def activate_default_agent(
     all_skills = SkillManager(handler._session_manager.db).list_skills()
 
     _ta_build = time.monotonic()
-    changes, active_rules, _ = handler._build_agent_changes(
+    changes, active_rules, active_skills = handler._build_agent_changes(
         agent_body,
         session_id,
         enabled_rules,
@@ -259,8 +259,15 @@ def activate_default_agent(
     if agent_body.personality:
         identity_parts.append(f"## Personality\n{agent_body.personality}")
 
-    skills_count = 0
-    injected_names: list[str] = []
+    if active_skills is None:
+        injected_names = sorted(
+            skill.name
+            for skill in all_skills
+            if isinstance(getattr(skill, "name", None), str) and skill.name
+        )
+    else:
+        injected_names = sorted(active_skills)
+    skills_count = len(injected_names)
 
     def _ms(a: float, b: float) -> int:
         return int((b - a) * 1000)
