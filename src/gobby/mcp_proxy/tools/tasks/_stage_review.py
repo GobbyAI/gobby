@@ -4,10 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 from typing import TYPE_CHECKING, Any
-
-import psycopg
 
 from gobby.build.coordinator import summary_allows_cross_project_coordinator
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -194,7 +191,7 @@ def _schedule_signoff_relay(
             from_session_id=from_session_id,
             signoff_message=signoff_message,
         )
-    except (sqlite3.DatabaseError, psycopg.Error):
+    except Exception:
         logger.warning(
             "Failed to relay review signoff to build coordinator",
             extra={

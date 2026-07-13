@@ -1,4 +1,4 @@
-"""Background-task lifecycle coverage for task notifications and signoff relays."""
+"""Lifecycle coverage for task notifications and synchronous signoff relays."""
 
 import asyncio
 import logging
@@ -13,22 +13,19 @@ from gobby.mcp_proxy.tools.tasks._notifications import (
     notify_parent_on_task_state_change,
 )
 from gobby.mcp_proxy.tools.tasks._stage_review import (
-    _relay_signoff_to_build_coordinator,
     _schedule_signoff_relay,
-    _signoff_relay_tasks,
 )
 
 
 @pytest.fixture(autouse=True)
 async def clear_notification_tasks():
     yield
-    tasks = [*_notification_tasks.values(), *_signoff_relay_tasks.values()]
+    tasks = list(_notification_tasks.values())
     for task in tasks:
         task.cancel()
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
     _notification_tasks.clear()
-    _signoff_relay_tasks.clear()
 
 
 @pytest.mark.asyncio
@@ -69,22 +66,20 @@ async def test_parent_notification_is_retained_until_completion() -> None:
     assert _notification_tasks == {}
 
 
-@pytest.mark.asyncio
-async def test_signoff_relay_is_retained_until_completion() -> None:
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def pending_relay(*_args, **_kwargs) -> None:
-        started.set()
-        await release.wait()
-
+def test_signoff_relay_runs_synchronously() -> None:
     task = SimpleNamespace(project_id="project-1")
+    ctx = MagicMock()
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def relay_sync(*args: object, **kwargs: object) -> None:
+        calls.append((args, kwargs))
+
     with patch(
-        "gobby.mcp_proxy.tools.tasks._stage_review._relay_signoff_to_build_coordinator",
-        new=pending_relay,
+        "gobby.mcp_proxy.tools.tasks._stage_review._relay_signoff_to_build_coordinator_sync",
+        side_effect=relay_sync,
     ):
         _schedule_signoff_relay(
-            MagicMock(),
+            ctx,
             task=task,
             task_id="task-1",
             stage_name="review",
@@ -92,23 +87,23 @@ async def test_signoff_relay_is_retained_until_completion() -> None:
             from_session_id="session-1",
             signoff_message="approved",
         )
-        await asyncio.wait_for(started.wait(), timeout=1)
 
-        assert len(_signoff_relay_tasks) == 1
-        background_task = next(iter(_signoff_relay_tasks.values()))
-        assert background_task.done() is False
-        assert background_task.get_name() == "gobby-review-signoff-relay-approve_review"
-        cleanup_finished = asyncio.Event()
-        background_task.add_done_callback(lambda _task: cleanup_finished.set())
+    assert calls == [
+        (
+            (ctx,),
+            {
+                "task": task,
+                "task_id": "task-1",
+                "stage_name": "review",
+                "action": "approve_review",
+                "from_session_id": "session-1",
+                "signoff_message": "approved",
+            },
+        )
+    ]
 
-        release.set()
-        await asyncio.wait_for(cleanup_finished.wait(), timeout=1)
 
-    assert _signoff_relay_tasks == {}
-
-
-@pytest.mark.asyncio
-async def test_signoff_relay_surfaces_non_database_errors(
+def test_signoff_relay_surfaces_non_database_errors(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     task = SimpleNamespace(project_id="project-1")
@@ -119,7 +114,7 @@ async def test_signoff_relay_surfaces_non_database_errors(
         ),
         caplog.at_level(logging.WARNING, logger="gobby.mcp_proxy.tools.tasks._stage_review"),
     ):
-        await _relay_signoff_to_build_coordinator(
+        _schedule_signoff_relay(
             MagicMock(),
             task=task,
             task_id="task-1",
