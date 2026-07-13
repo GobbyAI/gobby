@@ -658,6 +658,48 @@ class TestRegistryIntegration:
         assert "UNKNOWN_MCP_TOOL" in codes
         assert FakeLoader.project_ids == [project_id]
 
+    async def test_evaluate_agent_definition_uses_project_scope(
+        self,
+        db: HubDatabase,
+        def_manager: LocalWorkflowDefinitionManager,
+        monkeypatch,
+    ) -> None:
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
+        from gobby.workflows.definitions import AgentDefinitionBody
+
+        project_id = "11111111-1111-4111-8111-111111110002"
+        db.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at) "
+            "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            (project_id, "Agent Evaluation Project"),
+        )
+        def_manager.create(
+            name="scoped-agent",
+            definition_json=AgentDefinitionBody(
+                name="global-agent",
+                blocked_mcp_tools=["missing-server:missing-tool"],
+            ).model_dump_json(),
+            workflow_type="agent",
+        )
+        def_manager.create(
+            name="scoped-agent",
+            definition_json=AgentDefinitionBody(name="project-agent").model_dump_json(),
+            workflow_type="agent",
+            project_id=project_id,
+        )
+        monkeypatch.setattr(
+            "gobby.mcp_proxy.tools.workflows.get_project_context",
+            lambda: {"id": project_id},
+        )
+        registry = create_workflows_registry(db=db)
+
+        result = await registry.call("evaluate_workflow", {"name": "scoped-agent"})
+
+        assert result["valid"] is True
+        assert result["workflow_name"] == "project-agent"
+        assert result["workflow_type"] == "agent"
+        assert all(item["code"] != "UNKNOWN_MCP_SERVER" for item in result["items"])
+
 
 # =============================================================================
 # No-database error paths

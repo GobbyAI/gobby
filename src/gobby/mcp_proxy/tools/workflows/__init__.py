@@ -234,7 +234,11 @@ def create_workflows_registry(
         # Fall back to agent-definition evaluation when the name is an agent,
         # so `gobby workflows check <agent>` lints agent-level tool gates.
         if not eval_result.valid and any(i.code == "WORKFLOW_NOT_FOUND" for i in eval_result.items):
-            agent_row = _def_manager.get_by_name(name) if _def_manager is not None else None
+            agent_row = (
+                _def_manager.get_by_name(name, project_id=project_id)
+                if _def_manager is not None
+                else None
+            )
             if agent_row is not None and agent_row.workflow_type == "agent":
                 import json as _json
 
