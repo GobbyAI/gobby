@@ -58,6 +58,10 @@ class SecretKeyUnavailable(RuntimeError):
     """Raised when the configured KEK cannot be loaded or cannot unwrap the DEK."""
 
 
+class InvalidSecretSaltError(RuntimeError):
+    """Raised when the legacy secret salt does not have the required length."""
+
+
 class SecretMigrationError(RuntimeError):
     """Raised when required legacy secrets cannot be migrated."""
 
@@ -159,23 +163,63 @@ class SecretInfo:
         }
 
 
+def _read_secret_salt(salt_file: Path) -> bytes:
+    salt = salt_file.read_bytes()
+    if len(salt) != 16:
+        raise InvalidSecretSaltError(
+            f"Invalid secret salt file {salt_file}: expected 16 bytes, found {len(salt)}"
+        )
+    return salt
+
+
+def _write_all(fd: int, data: bytes) -> None:
+    remaining = memoryview(data)
+    while remaining:
+        written = os.write(fd, remaining)
+        if written <= 0:
+            raise OSError("Failed to write secret salt")
+        remaining = remaining[written:]
+
+
+def _publish_secret_salt(salt_file: Path, salt: bytes) -> bool:
+    """Publish a complete salt without replacing a racing process's winner."""
+    temp_file = salt_file.with_name(f".{salt_file.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    fd = os.open(temp_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        try:
+            os.fchmod(fd, 0o600)
+            _write_all(fd, salt)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+        try:
+            # A hard link is an atomic, no-clobber publication within one directory.
+            # os.rename()/os.replace() would let a later racer overwrite the winner.
+            os.link(temp_file, salt_file)
+        except FileExistsError:
+            return False
+        return True
+    finally:
+        temp_file.unlink(missing_ok=True)
+
+
 def _get_or_create_salt() -> bytes:
-    """Get or create the legacy machine_id encryption salt."""
+    """Get or atomically create the legacy machine_id encryption salt."""
     salt_file = get_gobby_home() / _SALT_FILENAME
     salt_file.parent.mkdir(parents=True, exist_ok=True)
 
-    if salt_file.exists():
-        return salt_file.read_bytes()
+    try:
+        return _read_secret_salt(salt_file)
+    except FileNotFoundError:
+        pass
 
     salt = os.urandom(16)
-    fd = os.open(salt_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        os.write(fd, salt)
-    finally:
-        os.close(fd)
+    if _publish_secret_salt(salt_file, salt):
+        logger.info("Generated new legacy secret encryption salt")
+        return salt
 
-    logger.info("Generated new legacy secret encryption salt")
-    return salt
+    return _read_secret_salt(salt_file)
 
 
 def _derive_fernet_key(machine_id: str, salt: bytes) -> bytes:

@@ -7,6 +7,7 @@ is mocked.
 
 from __future__ import annotations
 
+import multiprocessing
 import os
 import uuid
 from pathlib import Path
@@ -23,6 +24,7 @@ from gobby.storage.secrets import (
     SECRET_KEK_PASSPHRASE_ENV,
     SECRET_REF_PATTERN,
     VALID_CATEGORIES,
+    InvalidSecretSaltError,
     SecretInfo,
     SecretKeyUnavailable,
     SecretMigrationError,
@@ -33,6 +35,94 @@ from gobby.storage.secrets import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+def _create_salt_with_publish_barrier(
+    home: str,
+    candidate: bytes,
+    barrier: Any,
+    result_queue: Any,
+) -> None:
+    """Create a salt after synchronizing both processes at atomic publication."""
+    os.environ["GOBBY_HOME"] = home
+    from gobby.storage import secrets as secrets_module
+
+    original_link = secrets_module.os.link
+    original_urandom = secrets_module.os.urandom
+    original_exists = secrets_module.Path.exists
+    original_read_bytes = secrets_module.Path.read_bytes
+    salt_file = secrets_module.Path(home) / ".secret_salt"
+    is_first_lookup = True
+
+    def deterministic_urandom(size: int) -> bytes:
+        return candidate if size == len(candidate) else original_urandom(size)
+
+    def synchronized_exists(path: Path) -> bool:
+        nonlocal is_first_lookup
+        exists = original_exists(path)
+        if is_first_lookup and path == salt_file:
+            is_first_lookup = False
+            barrier.wait(timeout=10)
+        return exists
+
+    def synchronized_read_bytes(path: Path) -> bytes:
+        nonlocal is_first_lookup
+        if not is_first_lookup or path != salt_file:
+            return original_read_bytes(path)
+
+        try:
+            salt = original_read_bytes(path)
+        except FileNotFoundError:
+            is_first_lookup = False
+            barrier.wait(timeout=10)
+            raise
+        is_first_lookup = False
+        barrier.wait(timeout=10)
+        return salt
+
+    def synchronized_link(src: Any, dst: Any, *args: Any, **kwargs: Any) -> None:
+        barrier.wait(timeout=10)
+        original_link(src, dst, *args, **kwargs)
+
+    secrets_module.os.urandom = deterministic_urandom
+    secrets_module.Path.exists = synchronized_exists
+    secrets_module.Path.read_bytes = synchronized_read_bytes
+    secrets_module.os.link = synchronized_link
+    try:
+        result_queue.put(("ok", secrets_module._get_or_create_salt()))
+    except Exception as exc:
+        result_queue.put(("error", repr(exc)))
+
+
+def _create_salt_with_paused_write(
+    home: str,
+    partial_ready: Any,
+    release_write: Any,
+    result_queue: Any,
+) -> None:
+    """Pause a real child process after its first byte reaches the temp file."""
+    os.environ["GOBBY_HOME"] = home
+    from gobby.storage import secrets as secrets_module
+
+    original_write = secrets_module.os.write
+    is_first_write = True
+
+    def paused_write(fd: int, data: Any) -> int:
+        nonlocal is_first_write
+        if is_first_write:
+            is_first_write = False
+            written = original_write(fd, data[:1])
+            partial_ready.set()
+            if not release_write.wait(timeout=10):
+                raise TimeoutError("test did not release the paused salt write")
+            return written
+        return original_write(fd, data)
+
+    secrets_module.os.write = paused_write
+    try:
+        result_queue.put(("ok", secrets_module._get_or_create_salt()))
+    except Exception as exc:
+        result_queue.put(("error", repr(exc)))
 
 
 # =============================================================================
@@ -160,6 +250,104 @@ class TestGetOrCreateSalt:
         salt_file = salt_dir / ".secret_salt"
         mode = oct(salt_file.stat().st_mode & 0o777)
         assert mode == "0o600"
+
+    @pytest.mark.parametrize("invalid_salt", [b"", b"x" * 15, b"x" * 17])
+    def test_rejects_invalid_salt_length(self, salt_dir: Path, invalid_salt: bytes) -> None:
+        salt_file = salt_dir / ".secret_salt"
+        salt_file.write_bytes(invalid_salt)
+
+        with pytest.raises(
+            InvalidSecretSaltError,
+            match=rf"expected 16 bytes, found {len(invalid_salt)}",
+        ):
+            _get_or_create_salt()
+
+    def test_racing_processes_converge_on_one_salt(self, salt_dir: Path) -> None:
+        context = multiprocessing.get_context("spawn")
+        barrier = context.Barrier(2)
+        result_queue = context.Queue()
+        candidates = [b"a" * 16, b"b" * 16]
+        processes = [
+            context.Process(
+                target=_create_salt_with_publish_barrier,
+                args=(str(salt_dir), candidate, barrier, result_queue),
+            )
+            for candidate in candidates
+        ]
+
+        try:
+            for process in processes:
+                process.start()
+            for process in processes:
+                process.join(timeout=15)
+
+            assert [process.exitcode for process in processes] == [0, 0]
+            results = [result_queue.get(timeout=2) for _ in processes]
+        finally:
+            for process in processes:
+                if process.is_alive():
+                    process.terminate()
+                    process.join(timeout=5)
+            result_queue.close()
+            result_queue.join_thread()
+
+        assert [status for status, _ in results] == ["ok", "ok"]
+        salts = [value for _, value in results]
+        assert salts[0] == salts[1]
+        assert salts[0] in candidates
+        assert (salt_dir / ".secret_salt").read_bytes() == salts[0]
+        assert list(salt_dir.glob("..secret_salt.*.tmp")) == []
+
+    def test_failed_write_removes_temp_file(
+        self,
+        salt_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def fail_write(fd: int, data: Any) -> int:
+            raise OSError("injected write failure")
+
+        monkeypatch.setattr(os, "write", fail_write)
+
+        with pytest.raises(OSError, match="injected write failure"):
+            _get_or_create_salt()
+
+        assert not (salt_dir / ".secret_salt").exists()
+        assert list(salt_dir.glob("..secret_salt.*.tmp")) == []
+
+    def test_partial_temp_write_is_never_observable_as_salt(self, salt_dir: Path) -> None:
+        context = multiprocessing.get_context("spawn")
+        partial_ready = context.Event()
+        release_write = context.Event()
+        result_queue = context.Queue()
+        process = context.Process(
+            target=_create_salt_with_paused_write,
+            args=(str(salt_dir), partial_ready, release_write, result_queue),
+        )
+
+        try:
+            process.start()
+            assert partial_ready.wait(timeout=10)
+            assert not (salt_dir / ".secret_salt").exists()
+            temp_files = list(salt_dir.glob("..secret_salt.*.tmp"))
+            assert len(temp_files) == 1
+            assert temp_files[0].stat().st_size == 1
+
+            release_write.set()
+            process.join(timeout=15)
+            assert process.exitcode == 0
+            status, salt = result_queue.get(timeout=2)
+        finally:
+            release_write.set()
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5)
+            result_queue.close()
+            result_queue.join_thread()
+
+        assert status == "ok"
+        assert len(salt) == 16
+        assert (salt_dir / ".secret_salt").read_bytes() == salt
+        assert list(salt_dir.glob("..secret_salt.*.tmp")) == []
 
 
 class TestGetOrCreateKekFile:
