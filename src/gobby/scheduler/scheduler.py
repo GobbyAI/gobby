@@ -14,6 +14,7 @@ from gobby.config.cron import CronConfig
 from gobby.scheduler.executor import CronExecutor
 from gobby.storage.cron import CronJobStorage, compute_next_run, is_removed_automation_job
 from gobby.storage.cron_models import CronJob, CronRun
+from gobby.storage.hub.protocol import CronRunAdmission
 from gobby.utils.project_context import (
     get_project_context,
     reset_project_context,
@@ -146,7 +147,9 @@ class CronScheduler:
     def _create_scheduled_run(self, job: CronJob) -> CronRun | None:
         """Create a run and advance its schedule in one database transaction."""
         next_run = compute_next_run(job)
-        with self.storage.db.transaction():
+        with self.storage.db.transaction_immediate(lock=CronRunAdmission()):
+            if self.storage.count_running() >= self.config.max_concurrent_jobs:
+                return None
             run = self.storage.create_run(job.id, scheduler_owner=self._scheduler_owner)
             if run is None:
                 return None

@@ -917,7 +917,7 @@ async def test_run_now_racing_heartbeat_admits_exactly_one_run(
 
     admission_barrier = threading.Barrier(2)
     release_execution = asyncio.Event()
-    create_scheduled_run = cron_storage.create_run
+    create_scheduled_run = scheduler._create_scheduled_run
     create_manual_run = cron_storage.create_run_if_admitted
 
     async def hold_admitted_run(_job: CronJob, run: CronRun) -> CronRun:
@@ -929,13 +929,9 @@ async def test_run_now_racing_heartbeat_admits_exactly_one_run(
         )
         return updated or run
 
-    def racing_scheduled_create(
-        cron_job_id: str,
-        *,
-        scheduler_owner: str | None = None,
-    ) -> CronRun | None:
+    def racing_scheduled_create(job: CronJob) -> CronRun | None:
         admission_barrier.wait(timeout=2)
-        return create_scheduled_run(cron_job_id, scheduler_owner=scheduler_owner)
+        return create_scheduled_run(job)
 
     def racing_manual_create(
         cron_job_id: str,
@@ -950,7 +946,7 @@ async def test_run_now_racing_heartbeat_admits_exactly_one_run(
             scheduler_owner=scheduler_owner,
         )
 
-    monkeypatch.setattr(cron_storage, "create_run", racing_scheduled_create)
+    monkeypatch.setattr(scheduler, "_create_scheduled_run", racing_scheduled_create)
     monkeypatch.setattr(cron_storage, "create_run_if_admitted", racing_manual_create)
     mock_executor.execute.side_effect = hold_admitted_run
 
@@ -971,6 +967,91 @@ async def test_run_now_racing_heartbeat_admits_exactly_one_run(
         mock_executor.execute.assert_awaited_once()
     finally:
         release_execution.set()
+        await asyncio.gather(*scheduler._active_tasks)
+
+
+@pytest.mark.asyncio
+async def test_run_now_racing_heartbeat_respects_global_capacity(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Manual and scheduled admission share the global capacity guard."""
+    scheduler = CronScheduler(
+        storage=cron_storage,
+        executor=mock_executor,
+        config=CronConfig(check_interval_seconds=60, max_concurrent_jobs=1),
+    )
+    scheduled_job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Scheduled capacity race",
+        schedule_type="cron",
+        action_type="handler",
+        action_config={"handler": "test"},
+        cron_expr="0 * * * *",
+    )
+    manual_job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Manual capacity race",
+        schedule_type="cron",
+        action_type="handler",
+        action_config={"handler": "test"},
+        cron_expr="0 * * * *",
+    )
+    cron_storage.update_job(
+        scheduled_job.id,
+        next_run_at=datetime.now(UTC) - timedelta(minutes=1),
+    )
+
+    scheduled_admission_ready = threading.Event()
+    release_scheduled_admission = threading.Event()
+    release_execution = asyncio.Event()
+    create_scheduled_run = scheduler._create_scheduled_run
+
+    def delayed_scheduled_create(job: CronJob) -> CronRun | None:
+        scheduled_admission_ready.set()
+        if not release_scheduled_admission.wait(timeout=2):
+            raise TimeoutError("manual admission did not complete")
+        return create_scheduled_run(job)
+
+    async def hold_admitted_run(_job: CronJob, run: CronRun) -> CronRun:
+        await release_execution.wait()
+        updated = cron_storage.update_run(
+            run.id,
+            status="completed",
+            completed_at=datetime.now(UTC),
+        )
+        return updated or run
+
+    monkeypatch.setattr(scheduler, "_create_scheduled_run", delayed_scheduled_create)
+    mock_executor.execute.side_effect = hold_admitted_run
+
+    heartbeat = asyncio.create_task(scheduler._check_due_jobs())
+    try:
+        ready = await asyncio.to_thread(scheduled_admission_ready.wait, 2)
+        assert ready, "heartbeat did not reach scheduled admission"
+
+        manual_run = await scheduler.run_now(manual_job.id)
+        assert manual_run is not None
+        release_scheduled_admission.set()
+        await heartbeat
+        await wait_for_async_condition(
+            lambda: mock_executor.execute.await_count == 1,
+            description="single cron execution at global capacity",
+        )
+
+        runs = cron_storage.list_runs(scheduled_job.id, limit=10) + cron_storage.list_runs(
+            manual_job.id,
+            limit=10,
+        )
+        assert len(runs) == 1
+        assert runs[0].id == manual_run.id
+        assert cron_storage.count_running() == 1
+        mock_executor.execute.assert_awaited_once()
+    finally:
+        release_scheduled_admission.set()
+        release_execution.set()
+        await heartbeat
         await asyncio.gather(*scheduler._active_tasks)
 
 
