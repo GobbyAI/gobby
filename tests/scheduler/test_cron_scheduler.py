@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
@@ -256,6 +258,42 @@ async def test_check_due_jobs_dispatches(
     mock_executor.execute.assert_called_once()
     assert mock_executor.execute.call_count == 1
     assert mock_executor.execute.call_args is not None
+
+
+@pytest.mark.asyncio
+async def test_check_due_jobs_keeps_loop_responsive_during_db_latency(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+    config: CronConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A blocked heartbeat query runs on a worker while the loop keeps ticking."""
+    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    loop = asyncio.get_running_loop()
+    started: asyncio.Future[None] = loop.create_future()
+    release = threading.Event()
+    blocked_at: list[float] = []
+
+    def slow_cleanup() -> int:
+        blocked_at.append(time.monotonic())
+        loop.call_soon_threadsafe(started.set_result, None)
+        failsafe = threading.Timer(0.5, release.set)
+        failsafe.start()
+        try:
+            release.wait()
+        finally:
+            failsafe.cancel()
+        return 0
+
+    monkeypatch.setattr(cron_storage, "delete_removed_automation_jobs", slow_cleanup)
+    heartbeat = asyncio.create_task(scheduler._check_due_jobs())
+    try:
+        await asyncio.wait_for(started, timeout=1)
+        assert time.monotonic() - blocked_at[0] < 0.2
+        assert not heartbeat.done()
+    finally:
+        release.set()
+    await asyncio.wait_for(heartbeat, timeout=1)
 
 
 @pytest.mark.asyncio

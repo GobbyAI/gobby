@@ -186,6 +186,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
             pipeline_executor=runner.pipeline_executor,
             services=runner,
             config=runner.config.cron,
+            run_db=runner.db_executor.run,
         )
         pipeline_heartbeat = None
         try:
@@ -417,6 +418,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
             storage=runner.cron_storage,
             executor=cron_executor,
             config=runner.config.cron,
+            run_db=runner.db_executor.run,
         )
         logger.debug("CronScheduler initialized")
     except Exception as e:
