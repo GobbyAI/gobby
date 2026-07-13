@@ -198,6 +198,7 @@ def _matching_plan_entries(
         SELECT plan_id, project_id, root_task_ref
         FROM plans
         WHERE project_id = %s
+          AND state = 'active'
           AND (root_task_ref = %s OR root_task_ref = %s)
         ORDER BY updated_at DESC, plan_id ASC
         """,

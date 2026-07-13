@@ -13,6 +13,7 @@ from gobby.plans.bootstrap_ledger import (
 )
 from gobby.plans.coverage_manifest import coverage_manifest_path
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.plans import LocalPlanManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager, Task
 
@@ -46,7 +47,7 @@ def test_close_blocked_on_ledger_mismatch(temp_db: HubDatabase, tmp_path: Path) 
     )
 
     with pytest.raises(BootstrapLedgerMismatchError) as exc_info:
-        verify_bootstrap_ledger(temp_db, root.id)
+        LocalTaskManager(temp_db).close_task(root.id, force=True)
 
     assert "A1:A1.1" in str(exc_info.value)
     assert exc_info.value.to_response()["error"] == "bootstrap_ledger_mismatch"
@@ -82,6 +83,60 @@ def test_close_succeeds_on_ledger_match(temp_db: HubDatabase, tmp_path: Path) ->
         repo / ".gobby" / "plans" / "task-100-plan.coverage-ledger.yaml"
     )
     verify_bootstrap_ledger(temp_db, root.id)
+
+
+def test_archived_plan_companions_do_not_block_normal_root_close(
+    temp_db: HubDatabase, tmp_path: Path
+) -> None:
+    root, leaf, project_id = _seed_plan_task_tree(
+        temp_db, tmp_path, expected_leaf_title="Expected leaf"
+    )
+    repo = tmp_path / "repo"
+    plan_id = "task-100-plan"
+    _write_plan_row(
+        temp_db,
+        project_id=project_id,
+        root_ref=str(root.seq_num),
+        plan_id=plan_id,
+    )
+    _write_ledger(
+        repo,
+        project_id=project_id,
+        root_ref=str(root.seq_num),
+        plan_id=plan_id,
+        title=leaf.title,
+    )
+    manifest_path = _write_manifest(
+        repo,
+        project_id=project_id,
+        root_ref=str(root.seq_num),
+        plan_id=plan_id,
+        leaf_ref="#999999",
+    )
+    ledger_path = repo / ".gobby" / "plans" / f"{plan_id}.coverage-ledger.yaml"
+    plan_path = repo / ".gobby" / "plans" / f"{plan_id}.md"
+    plan_path.write_text("# Archived plan\n", encoding="utf-8")
+
+    archived = LocalPlanManager(temp_db).archive_plan(plan_id, project_id=project_id)
+
+    assert archived.state == "archived"
+    assert not manifest_path.exists()
+    assert not ledger_path.exists()
+
+    # A stale pre-fix ledger must not reactivate verification for an archived plan.
+    _write_ledger(
+        repo,
+        project_id=project_id,
+        root_ref=str(root.seq_num),
+        plan_id=plan_id,
+        title=leaf.title,
+    )
+    task_manager = LocalTaskManager(temp_db)
+    task_manager.close_task(leaf.id, force=True)
+
+    closed_root = task_manager.close_task(root.id)
+
+    assert closed_root.closed_at is not None
 
 
 def _seed_plan_task_tree(
@@ -162,7 +217,7 @@ def _write_ledger(repo: Path, *, project_id: str, root_ref: str, plan_id: str, t
 
 def _write_manifest(
     repo: Path, *, project_id: str, root_ref: str, plan_id: str, leaf_ref: str
-) -> None:
+) -> Path:
     manifest = coverage_manifest_path(
         repo,
         project_id=project_id,
@@ -199,3 +254,4 @@ def _write_manifest(
         ),
         encoding="utf-8",
     )
+    return manifest
