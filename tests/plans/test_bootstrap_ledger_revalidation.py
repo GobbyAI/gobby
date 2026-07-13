@@ -85,6 +85,92 @@ def test_close_succeeds_on_ledger_match(temp_db: HubDatabase, tmp_path: Path) ->
     verify_bootstrap_ledger(temp_db, root.id)
 
 
+@pytest.mark.parametrize("mismatch_field", ["plan_id", "root_task_ref"])
+def test_close_blocks_on_ledger_identity_mismatch(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    mismatch_field: str,
+) -> None:
+    from gobby.tasks.state_semantics import serialize_task_state
+
+    root, leaf, project_id = _seed_plan_task_tree(
+        temp_db, tmp_path, expected_leaf_title="Expected leaf"
+    )
+    repo = tmp_path / "repo"
+    entry_plan_id = "task-100-plan"
+    entry_root_ref = str(root.seq_num)
+    ledger_plan_id = "copied-task-plan" if mismatch_field == "plan_id" else entry_plan_id
+    ledger_root_ref = "999999" if mismatch_field == "root_task_ref" else entry_root_ref
+    _write_plan_row(
+        temp_db,
+        project_id=project_id,
+        root_ref=entry_root_ref,
+        plan_id=entry_plan_id,
+    )
+    _write_ledger(
+        repo,
+        project_id=project_id,
+        root_ref=ledger_root_ref,
+        plan_id=ledger_plan_id,
+        filename_plan_id=entry_plan_id,
+        title=leaf.title,
+    )
+    _write_manifest(
+        repo,
+        project_id=project_id,
+        root_ref=ledger_root_ref,
+        plan_id=ledger_plan_id,
+        leaf_ref=f"#{leaf.seq_num}",
+    )
+
+    with pytest.raises(BootstrapLedgerMismatchError) as exc_info:
+        LocalTaskManager(temp_db).close_task(root.id, force=True)
+
+    assert f"ledger {mismatch_field}" in str(exc_info.value)
+    assert "locating plan entry" in str(exc_info.value)
+    assert serialize_task_state(LocalTaskManager(temp_db).get_task(root.id))["is_closed"] is False
+
+
+@pytest.mark.parametrize("omitted_field", ["plan_id", "root_task_ref"])
+def test_ledger_identity_omission_uses_plan_entry_fallback(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    omitted_field: str,
+) -> None:
+    root, leaf, project_id = _seed_plan_task_tree(
+        temp_db, tmp_path, expected_leaf_title="Expected leaf"
+    )
+    repo = tmp_path / "repo"
+    entry_plan_id = "task-100-plan"
+    entry_root_ref = str(root.seq_num)
+    _write_plan_row(
+        temp_db,
+        project_id=project_id,
+        root_ref=entry_root_ref,
+        plan_id=entry_plan_id,
+    )
+    _write_ledger(
+        repo,
+        project_id=project_id,
+        root_ref=None if omitted_field == "root_task_ref" else entry_root_ref,
+        plan_id=None if omitted_field == "plan_id" else entry_plan_id,
+        filename_plan_id=entry_plan_id,
+        title=leaf.title,
+    )
+    _write_manifest(
+        repo,
+        project_id=project_id,
+        root_ref=entry_root_ref,
+        plan_id=entry_plan_id,
+        leaf_ref=f"#{leaf.seq_num}",
+    )
+
+    assert bootstrap_ledger_path_for_task(temp_db, root.id) == (
+        repo / ".gobby" / "plans" / "task-100-plan.coverage-ledger.yaml"
+    )
+    verify_bootstrap_ledger(temp_db, root.id)
+
+
 def test_archived_plan_companions_do_not_block_normal_root_close(
     temp_db: HubDatabase, tmp_path: Path
 ) -> None:
@@ -184,33 +270,44 @@ def _write_plan_row(temp_db: HubDatabase, *, project_id: str, root_ref: str, pla
     )
 
 
-def _write_ledger(repo: Path, *, project_id: str, root_ref: str, plan_id: str, title: str) -> None:
+def _write_ledger(
+    repo: Path,
+    *,
+    project_id: str,
+    root_ref: str | None,
+    plan_id: str | None,
+    title: str,
+    filename_plan_id: str | None = None,
+) -> None:
     (repo / ".gobby" / "plans").mkdir(parents=True, exist_ok=True)
-    (repo / ".gobby" / "plans" / f"{plan_id}.coverage-ledger.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "project_id": project_id,
-                "plan_id": plan_id,
-                "plan_hash": "hash-1",
-                "root_task_ref": root_ref,
-                "sections": {
-                    "A1": {
-                        "acceptance_items": {
-                            "A1.1": {
-                                "expected_leaves": [
-                                    {
-                                        "title": title,
-                                        "owner_agent": "backend-developer",
-                                        "validation_criteria_summary": "expected",
-                                    }
-                                ]
+    ledger_plan_id = filename_plan_id or plan_id
+    if ledger_plan_id is None:
+        raise ValueError("ledger filename requires a plan ID")
+    ledger: dict[str, object] = {
+        "project_id": project_id,
+        "plan_hash": "hash-1",
+        "sections": {
+            "A1": {
+                "acceptance_items": {
+                    "A1.1": {
+                        "expected_leaves": [
+                            {
+                                "title": title,
+                                "owner_agent": "backend-developer",
+                                "validation_criteria_summary": "expected",
                             }
-                        }
+                        ]
                     }
-                },
-            },
-            sort_keys=False,
-        ),
+                }
+            }
+        },
+    }
+    if plan_id is not None:
+        ledger["plan_id"] = plan_id
+    if root_ref is not None:
+        ledger["root_task_ref"] = root_ref
+    (repo / ".gobby" / "plans" / f"{ledger_plan_id}.coverage-ledger.yaml").write_text(
+        yaml.safe_dump(ledger, sort_keys=False),
         encoding="utf-8",
     )
 
