@@ -19,7 +19,7 @@ from gobby.project_verification.candidates import (
     select_best_candidates,
     verification_dict_from_candidates,
 )
-from gobby.project_verification.evidence import EvidenceBundle, collect_evidence
+from gobby.project_verification.evidence import MAX_FILE_BYTES, collect_evidence
 from gobby.project_verification.synthesis import RejectedCommand, synthesize_verification_commands
 
 AIMode = Literal["auto", "on", "off"]
@@ -77,7 +77,6 @@ class RefreshResult:
 def refresh_project_verification_deterministic(root: Path, *, fix: bool = False) -> RefreshResult:
     """Refresh using deterministic evidence only."""
     bundle = collect_evidence(root)
-    _require_intact_project_json_for_fix(bundle, fix=fix)
     candidates = generate_candidates(bundle)
     selected = select_best_candidates(candidates)
     after = verification_dict_from_candidates(selected)
@@ -90,6 +89,7 @@ def refresh_project_verification_deterministic(root: Path, *, fix: bool = False)
         ai_mode="off",
         warnings=bundle.warnings,
     )
+    result.changed = result.changed or not bundle.existing_project_json_intact
     if fix and result.changed:
         _write_verification(result.project_json_path, after)
         result.written = True
@@ -106,7 +106,6 @@ async def refresh_project_verification(
 ) -> RefreshResult:
     """Refresh verification commands with optional AI synthesis."""
     bundle = collect_evidence(root)
-    _require_intact_project_json_for_fix(bundle, fix=fix)
     candidates = generate_candidates(bundle)
     selected = select_best_candidates(candidates)
     ai_error: str | None = None
@@ -157,6 +156,7 @@ async def refresh_project_verification(
         ai_rejected=rejected,
         warnings=bundle.warnings,
     )
+    result.changed = result.changed or not bundle.existing_project_json_intact
     if fix and result.changed:
         _write_verification(result.project_json_path, after)
         result.written = True
@@ -195,18 +195,13 @@ def _build_result(
     )
 
 
-def _require_intact_project_json_for_fix(bundle: EvidenceBundle, *, fix: bool) -> None:
-    if not fix or bundle.existing_project_json_intact:
-        return
-    detail = bundle.warnings[0] if bundle.warnings else "Existing project metadata is unreadable."
-    raise ProjectVerificationReadError(f"Refusing to update {bundle.project_json_path}: {detail}")
-
-
 def _write_verification(project_json_path: Path, verification: dict[str, Any]) -> None:
     project_json_path.parent.mkdir(parents=True, exist_ok=True)
     data: dict[str, Any] = {}
     if project_json_path.exists():
-        data = json.loads(project_json_path.read_text(encoding="utf-8"))
+        data, corrupt_content = _read_project_json_for_write(project_json_path)
+        if corrupt_content is not None:
+            _backup_corrupt_project_json(project_json_path, corrupt_content)
     data["verification"] = verification
 
     fd, tmp_name = tempfile.mkstemp(
@@ -226,6 +221,41 @@ def _write_verification(project_json_path: Path, verification: dict[str, Any]) -
         except OSError as exc:
             logger.debug("Failed to clean up temp file %s: %s", tmp_name, exc)
         raise
+
+
+def _read_project_json_for_write(project_json_path: Path) -> tuple[dict[str, Any], bytes | None]:
+    try:
+        with project_json_path.open("rb") as project_file:
+            content = project_file.read(MAX_FILE_BYTES + 1)
+    except OSError as exc:
+        raise ProjectVerificationReadError(
+            f"Refusing to update {project_json_path}: could not read file ({exc})"
+        ) from exc
+
+    if len(content) > MAX_FILE_BYTES:
+        raise ProjectVerificationReadError(
+            f"Refusing to update {project_json_path}: file exceeds MAX_FILE_BYTES "
+            f"({MAX_FILE_BYTES} bytes)"
+        )
+
+    try:
+        data = json.loads(content)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return {}, content
+    if not isinstance(data, dict):
+        return {}, content
+    return data, None
+
+
+def _backup_corrupt_project_json(project_json_path: Path, content: bytes) -> None:
+    backup_path = project_json_path.with_suffix(f"{project_json_path.suffix}.bak")
+    try:
+        backup_path.write_bytes(content)
+    except OSError as exc:
+        raise ProjectVerificationReadError(
+            f"Refusing to update {project_json_path}: could not back up corrupt metadata "
+            f"to {backup_path} ({exc})"
+        ) from exc
 
 
 def _verification_diff(before: dict[str, Any], after: dict[str, Any]) -> str:
