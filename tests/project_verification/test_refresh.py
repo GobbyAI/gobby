@@ -11,6 +11,7 @@ import pytest
 from gobby.ai.text_generation import TextGenerationRequest
 from gobby.config.features import ProjectVerificationSynthesisConfig
 from gobby.project_verification.candidates import (
+    _package_script_command,
     generate_candidates,
     is_safe_validation_command,
     select_best_candidates,
@@ -285,3 +286,81 @@ def test_safe_validation_command_uses_complete_tokens_for_format_scripts() -> No
     assert is_safe_validation_command("prettier --write=src", slot="format") is False
     assert is_safe_validation_command("npm run format:check", slot="format") is True
     assert is_safe_validation_command("yarn format:check", slot="format") is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "pytest; id",
+        "pytest && id",
+        "pytest || id",
+        "pytest | id",
+        "pytest `id`",
+        "pytest $(id)",
+        "pytest > /tmp/out",
+        "pytest < input",
+        "pytest &",
+        "pytest\nid",
+        "pytest >> /tmp/out",
+        "pytest 2>&1",
+        "pytest <(id)",
+        "npm run 'lint; id'",
+        "id pytest",
+        "cd web && id",
+        "cd web && npm test && id",
+        "cd ../web && npm test",
+        "cd /tmp && npm test",
+    ],
+)
+def test_safe_validation_command_rejects_shell_control_and_expansion(command: str) -> None:
+    assert is_safe_validation_command(command) is False
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd web && npm test",
+        "cd 'web app' && npx tsc --noEmit",
+        "cd 'web&app' && npm test",
+        "cd 'web;app' && npm test",
+        "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v",
+    ],
+)
+def test_safe_validation_command_allows_curated_executables(command: str) -> None:
+    assert is_safe_validation_command(command) is True
+
+
+def test_package_script_command_quotes_script_argument() -> None:
+    assert _package_script_command(".", "test command") == "npm run 'test command'"
+    assert _package_script_command(".", "lint; id") == "npm run 'lint; id'"
+    assert _package_script_command(".", "lint's") == "npm run 'lint'\"'\"'s'"
+    assert _package_script_command("web app", "lint") == "cd 'web app' && npm run lint"
+
+
+def test_hostile_ci_command_is_not_persisted(tmp_path: Path) -> None:
+    project_json_path = write_project_json(tmp_path, {"unit_tests": "pytest"})
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'hostile-example'\n[tool.pytest.ini_options]\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tests").mkdir()
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "ci.yml").write_text(
+        "jobs:\n"
+        "  test:\n"
+        "    steps:\n"
+        "      - name: Hostile tests\n"
+        "        run: pytest && id > /tmp/pwn\n",
+        encoding="utf-8",
+    )
+
+    bundle = collect_evidence(tmp_path)
+    candidates = generate_candidates(bundle)
+    result = refresh_project_verification_deterministic(tmp_path, fix=True)
+    persisted = json.loads(project_json_path.read_text(encoding="utf-8"))
+
+    assert all("/tmp/pwn" not in candidate.command for candidate in candidates)
+    assert result.written
+    assert persisted["verification"]["unit_tests"] == result.after["unit_tests"]
+    assert "/tmp/pwn" not in persisted["verification"]["unit_tests"]

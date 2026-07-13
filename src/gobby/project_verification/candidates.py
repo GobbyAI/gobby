@@ -18,6 +18,42 @@ GENERIC_EXISTING_COMMANDS = {
     "uv run pytest",
 }
 
+SHELL_CONTROL_CHARACTERS = frozenset(";&|<>")
+VALIDATION_EXECUTABLES = frozenset(
+    {
+        "bandit",
+        "bun",
+        "cargo",
+        "deno",
+        "eslint",
+        "go",
+        "hatch",
+        "just",
+        "make",
+        "mypy",
+        "nox",
+        "npm",
+        "npx",
+        "pdm",
+        "pipenv",
+        "pnpm",
+        "poetry",
+        "prettier",
+        "pytest",
+        "python",
+        "python3",
+        "ruff",
+        "safety",
+        "semgrep",
+        "task",
+        "tox",
+        "tsc",
+        "uv",
+        "vitest",
+        "yarn",
+    }
+)
+
 SOURCE_RANK = {
     "ai": 7,
     "existing": 6,
@@ -145,6 +181,9 @@ def classify_command(command: str) -> str | None:
 
 def is_safe_validation_command(command: str, slot: str | None = None) -> bool:
     """Reject mutating forms that are inappropriate for verification."""
+    invocation = _validation_invocation(command)
+    if not invocation:
+        return False
     lowered = command.lower()
     tokens = _command_tokens(lowered)
     if _has_mutating_option(tokens):
@@ -160,6 +199,55 @@ def is_safe_validation_command(command: str, slot: str | None = None) -> bool:
     if "prettier" in lowered and "--check" not in lowered and slot == "format":
         return False
     return True
+
+
+def _validation_invocation(command: str) -> list[str] | None:
+    if any(marker in command for marker in ("`", "$(", "\n", "\r")):
+        return None
+
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|<>")
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return None
+    if not tokens:
+        return None
+
+    contains_control_character = not SHELL_CONTROL_CHARACTERS.isdisjoint(command)
+    control_positions = [
+        index for index, token in enumerate(tokens) if _is_shell_control_token(token)
+    ]
+    if control_positions:
+        if control_positions != [2] or tokens[:1] != ["cd"] or tokens[2] != "&&":
+            return None
+        if len(tokens) < 4 or not _is_safe_subdir(tokens[1]):
+            return None
+        tokens = tokens[3:]
+    elif contains_control_character:
+        return None
+
+    while tokens and _is_environment_assignment(tokens[0]):
+        tokens = tokens[1:]
+    if not tokens or tokens[0].lower() not in VALIDATION_EXECUTABLES:
+        return None
+    return tokens
+
+
+def _is_safe_subdir(subdir: str) -> bool:
+    if not subdir or subdir.startswith(("/", "~", "-")):
+        return False
+    return ".." not in subdir.replace("\\", "/").split("/")
+
+
+def _is_shell_control_token(token: str) -> bool:
+    return bool(token) and set(token) <= SHELL_CONTROL_CHARACTERS
+
+
+def _is_environment_assignment(token: str) -> bool:
+    name, separator, _value = token.partition("=")
+    return bool(separator and name and name.replace("_", "a").isalnum() and not name[0].isdigit())
 
 
 def _command_tokens(command: str) -> list[str]:
@@ -377,7 +465,7 @@ def _ordered_scripts(scripts: dict[str, str]) -> list[str]:
 
 
 def _package_script_command(subdir: str, script: str) -> str:
-    command = "npm test" if script == "test" else f"npm run {script}"
+    command = "npm test" if script == "test" else f"npm run {shlex.quote(script)}"
     return command if subdir == "." else f"cd {shlex.quote(subdir)} && {command}"
 
 
