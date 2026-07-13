@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+import threading
 import warnings
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -179,7 +180,7 @@ class TestChatterboxTurboProvider:
                 "max_gen_len": 1000,
             }
         ]
-        assert mock_model.t3.inference_turbo is inference_turbo
+        assert mock_model.t3.inference_turbo is not inference_turbo
 
     @pytest.mark.asyncio
     async def test_synthesize_stream_honors_generation_token_override(self, tmp_path: Path) -> None:
@@ -549,6 +550,84 @@ class TestChatterboxTurboProvider:
             with pytest.raises(asyncio.CancelledError):
                 async for _ in provider.synthesize_stream("Hello"):
                     pass
+
+    async def test_cancelled_synthesis_keeps_generate_serialized_and_token_cap_fresh(
+        self, voice_config: VoiceConfig
+    ) -> None:
+        from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
+
+        provider = ChatterboxTurboProvider(voice_config)
+        provider._config.tts_chatterbox_max_generation_tokens = 8
+
+        mock_wav = MagicMock()
+        mock_wav.squeeze.return_value = mock_wav
+        mock_wav.cpu.return_value = mock_wav
+        mock_wav.numpy.return_value = np.zeros(100, dtype=np.float32)
+
+        first_started = threading.Event()
+        second_started = threading.Event()
+        release_first = threading.Event()
+        counter_lock = threading.Lock()
+        active_generates = 0
+        max_active_generates = 0
+        inference_caps: dict[str, int] = {}
+
+        def inference_turbo(*args: object, **kwargs: Any) -> str:
+            inference_caps[str(kwargs["text_tokens"])] = int(kwargs["max_gen_len"])
+            return "speech_tokens"
+
+        def generate(text: str, **kwargs: Any) -> Any:
+            nonlocal active_generates, max_active_generates
+            with counter_lock:
+                active_generates += 1
+                max_active_generates = max(max_active_generates, active_generates)
+            try:
+                if text == "first":
+                    first_started.set()
+                    assert release_first.wait(timeout=2)
+                else:
+                    second_started.set()
+                mock_model.t3.inference_turbo(
+                    t3_cond="conds",
+                    text_tokens=text,
+                    temperature=kwargs["temperature"],
+                )
+                return mock_wav
+            finally:
+                with counter_lock:
+                    active_generates -= 1
+
+        mock_model = MagicMock()
+        mock_model.sr = 24000
+        mock_model.t3 = SimpleNamespace(inference_turbo=inference_turbo)
+        mock_model.generate.side_effect = generate
+        provider._model = mock_model
+        provider._conditioning_ready = True
+
+        async def consume(text: str) -> None:
+            async for _ in provider.synthesize_stream(text):
+                pass
+
+        first_task = asyncio.create_task(consume("first"))
+        assert await asyncio.to_thread(first_started.wait, 1)
+        installed_inference = mock_model.t3.inference_turbo
+
+        first_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first_task
+
+        provider._config.tts_chatterbox_max_generation_tokens = 144
+        second_task = asyncio.create_task(consume("second"))
+        try:
+            second_entered_before_release = await asyncio.to_thread(second_started.wait, 0.1)
+        finally:
+            release_first.set()
+        await second_task
+
+        assert not second_entered_before_release
+        assert max_active_generates == 1
+        assert inference_caps == {"first": 8, "second": 144}
+        assert mock_model.t3.inference_turbo is installed_inference
 
 
 class TestAutoDevice:
