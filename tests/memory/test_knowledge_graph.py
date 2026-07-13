@@ -508,6 +508,76 @@ class TestAddToGraph:
         )
 
     @pytest.mark.asyncio
+    async def test_supersede_selection_compares_normalized_new_and_stored_relation_types(
+        self,
+        service: KnowledgeGraphService,
+        mock_falkor: AsyncMock,
+        mock_llm: AsyncMock,
+        mock_prompt_loader: MagicMock,
+    ) -> None:
+        """The delete selector sees the exact relation type Falkor stores and deletes."""
+        mock_falkor.query = AsyncMock(
+            return_value=[
+                {"source": "Josh", "rel_type": "works_with", "target": "Python 3.12"},
+            ]
+        )
+        delete_context: dict[str, str] = {}
+
+        def render(template: str, context: dict[str, str]) -> str:
+            if template == "memory/delete_relations":
+                delete_context.update(context)
+            return "rendered prompt"
+
+        async def call_json_feature(
+            _config: object,
+            _prompt: str,
+            *,
+            system_prompt: str | None = None,
+            caller: str,
+        ) -> dict[str, object]:
+            del system_prompt
+            if caller == "memory.kg.extract_entities":
+                return {
+                    "entities": [
+                        {"entity": "Josh", "entity_type": "person"},
+                        {"entity": "Python 3.13", "entity_type": "tool"},
+                    ]
+                }
+            if caller == "memory.kg.extract_relationships":
+                return {
+                    "relations": [
+                        {
+                            "source": "Josh",
+                            "relationship": "works-with",
+                            "destination": "Python 3.13",
+                        }
+                    ]
+                }
+            if caller == "memory.kg.select_outdated_relations":
+                new_relations = json.loads(delete_context["new_relations"])
+                existing_relations = json.loads(delete_context["existing_relations"])
+                if new_relations[0]["relationship"] == existing_relations[0]["relationship"]:
+                    return {"relations_to_delete": [existing_relations[0]]}
+                return {"relations_to_delete": []}
+            raise AssertionError(f"Unexpected caller: {caller}")
+
+        mock_prompt_loader.render.side_effect = render
+        mock_llm.call_json_feature.side_effect = call_json_feature
+
+        await service.add_to_graph("Josh works with Python 3.13")
+
+        new_relations = json.loads(delete_context["new_relations"])
+        existing_relations = json.loads(delete_context["existing_relations"])
+        assert new_relations[0]["relationship"] == "works_with"
+        assert existing_relations[0]["relationship"] == "works_with"
+        delete_calls = [
+            call for call in mock_falkor.query.call_args_list if "DELETE" in call.args[0]
+        ]
+        assert len(delete_calls) == 1
+        assert delete_calls[0].args[1]["rel_type"] == "works_with"
+        assert mock_falkor.merge_relationship.await_args.kwargs["rel_type"] == "works_with"
+
+    @pytest.mark.asyncio
     async def test_add_to_graph_no_entities_returns_early(
         self,
         service: KnowledgeGraphService,
@@ -1234,6 +1304,39 @@ class TestRemoveMemoryFromGraph:
         mock_falkor.query.side_effect = FalkorConnectionError("connection refused")
         await service.remove_memory_from_graph("mem-1")
         assert mock_falkor.query.await_count == 1
+
+
+class TestRemoveOrphanedEntities:
+    @pytest.mark.asyncio
+    async def test_code_linked_entity_survives_without_memory_edges(
+        self,
+        service: KnowledgeGraphService,
+        mock_falkor: AsyncMock,
+    ) -> None:
+        async def query(cypher: str, _params: dict[str, object]) -> list[dict[str, int]]:
+            if "RETURN count(e) AS total" in cypher:
+                return [{"total": 0 if "RELATES_TO_CODE" in cypher else 1}]
+            raise AssertionError("Code-linked entity must not reach DETACH DELETE")
+
+        mock_falkor.query.side_effect = query
+
+        assert await service.remove_orphaned_entities(scope="all") == 0
+        assert all("DETACH DELETE" not in call.args[0] for call in mock_falkor.query.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_entity_without_memory_or_code_edges_is_deleted(
+        self,
+        service: KnowledgeGraphService,
+        mock_falkor: AsyncMock,
+    ) -> None:
+        mock_falkor.query.side_effect = [[{"total": 1}], []]
+
+        assert await service.remove_orphaned_entities(scope="all") == 1
+        assert len(mock_falkor.query.await_args_list) == 2
+        for call in mock_falkor.query.await_args_list:
+            cypher = call.args[0]
+            assert "NOT (e)-[:MENTIONED_IN]->(:Memory)" in cypher
+            assert "NOT (e)-[:RELATES_TO_CODE]->(:CodeSymbol)" in cypher
 
 
 class _FakeFalkorGraph:

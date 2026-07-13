@@ -6,6 +6,7 @@ import logging
 import re
 import unicodedata
 
+from gobby.memory.falkor_client import normalize_relationship_type
 from gobby.memory.identity import entity_key, normalize_entity_name
 
 from .models import Entity, Relationship, _GraphEntity
@@ -56,12 +57,13 @@ def normalize_relationships(
     entities: list[_GraphEntity],
     project_id: str | None,
 ) -> list[Relationship]:
-    """Normalize relationships to stable entity keys."""
+    """Normalize relationships to stable entity keys and stored Cypher types."""
     entity_map = {entity.entity_key: entity for entity in entities}
     deduped: dict[tuple[str, str, str], Relationship] = {}
     for relationship in relationships:
         source_key = entity_key(project_id, relationship.source)
         target_key = entity_key(project_id, relationship.target)
+        relationship_type = normalize_relationship_type(relationship.relationship)
         if source_key not in entity_map or target_key not in entity_map:
             logger.debug(
                 "Skipped relationship with missing endpoint: %s -> %s (%s)",
@@ -70,10 +72,10 @@ def normalize_relationships(
                 relationship.relationship,
             )
             continue
-        dedupe_key = (source_key, relationship.relationship, target_key)
+        dedupe_key = (source_key, relationship_type, target_key)
         deduped[dedupe_key] = Relationship(
             source=source_key,
             target=target_key,
-            relationship=relationship.relationship,
+            relationship=relationship_type,
         )
     return list(deduped.values())

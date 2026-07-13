@@ -105,7 +105,8 @@ def _constraint_properties(value: Any) -> list[str]:
     return [_as_string(value)]
 
 
-def _normalize_relationship_type(rel_type: str) -> str:
+def normalize_relationship_type(rel_type: str) -> str:
+    """Normalize a relationship label to the exact Cypher type Falkor stores."""
     normalized = re.sub(r"[^A-Za-z0-9_]", "_", rel_type)
     if normalized and normalized[0].isdigit():
         normalized = "_" + normalized
@@ -624,7 +625,7 @@ class FalkorClient:
         ``updated_at`` timestamp. Callers that omit ``weight`` keep the exact
         prior behavior (``r += $props`` only), so existing callers are unchanged.
         """
-        rel_type = _normalize_relationship_type(rel_type)
+        rel_type = normalize_relationship_type(rel_type)
         props = dict(properties or {})
         match_clause = (
             "MATCH (a:_Entity {entity_key: $source_key}), (b:_Entity {entity_key: $target_key}) "

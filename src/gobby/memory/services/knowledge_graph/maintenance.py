@@ -101,17 +101,20 @@ class KnowledgeGraphMaintenance:
         scope: str = "all",
         project_id: str | None = None,
     ) -> int:
-        """Delete Entity nodes with no MENTIONED_IN edges. Return count deleted."""
+        """Delete entities with neither memory nor code-symbol backing edges."""
+        orphan_predicate = (
+            "NOT (e)-[:MENTIONED_IN]->(:Memory) AND NOT (e)-[:RELATES_TO_CODE]->(:CodeSymbol)"
+        )
         if scope == "project":
             if project_id is None:
                 raise ValueError("project_id is required when scope='project'")
-            where_clause = "e.project_id = $project_id AND NOT (e)-[:MENTIONED_IN]->(:Memory)"
+            where_clause = f"e.project_id = $project_id AND {orphan_predicate}"
             params: dict[str, Any] = {"project_id": project_id}
         elif scope == "global":
-            where_clause = "e.project_id IS NULL AND NOT (e)-[:MENTIONED_IN]->(:Memory)"
+            where_clause = f"e.project_id IS NULL AND {orphan_predicate}"
             params = {}
         elif scope == "all":
-            where_clause = "NOT (e)-[:MENTIONED_IN]->(:Memory)"
+            where_clause = orphan_predicate
             params = {}
         else:
             raise ValueError(f"Unsupported orphan cleanup scope: {scope}")
