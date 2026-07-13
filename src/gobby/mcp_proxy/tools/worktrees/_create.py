@@ -133,7 +133,7 @@ def create_create_registry(ctx: RegistryContext) -> InternalToolRegistry:
                         resolved_git_mgr.delete_worktree,
                         worktree_path,
                         force=True,
-                        delete_branch=True,
+                        delete_branch=create_branch,
                         branch_name=branch_name,
                     )
                 except Exception as cleanup_err:
@@ -157,7 +157,7 @@ def create_create_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     resolved_git_mgr.delete_worktree,
                     worktree_path,
                     force=True,
-                    delete_branch=True,
+                    delete_branch=create_branch,
                     branch_name=branch_name,
                 )
             except Exception as cleanup_err:

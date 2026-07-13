@@ -630,6 +630,32 @@ class TestLocalWorktreeManagerUpdate:
         assert worktree is not None
         mock_db.execute.assert_not_called()
 
+    def test_touch_refreshes_timestamp_and_clears_staleness(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, object],
+    ) -> None:
+        manager = LocalWorktreeManager(temp_db)
+        worktree = manager.create(
+            project_id=str(sample_project["id"]),
+            branch_name="feature/recently-synced",
+            worktree_path="/tmp/gobby-recently-synced",
+        )
+        stale_timestamp = datetime.now(UTC) - timedelta(hours=48)
+        temp_db.execute(
+            "UPDATE worktrees SET updated_at = %s WHERE id = %s",
+            (stale_timestamp, worktree.id),
+        )
+        assert [item.id for item in manager.find_stale(str(sample_project["id"]), hours=24)] == [
+            worktree.id
+        ]
+
+        touched = manager.touch(worktree.id)
+
+        assert touched is not None
+        assert touched.updated_at > stale_timestamp
+        assert manager.find_stale(str(sample_project["id"]), hours=24) == []
+
     def test_update_single_field(
         self,
         manager: LocalWorktreeManager,

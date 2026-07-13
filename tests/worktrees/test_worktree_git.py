@@ -419,6 +419,62 @@ class TestWorktreeGitManagerDeleteWorktree:
         assert "branch" in result.message
 
     @patch("subprocess.run")
+    def test_force_worktree_removal_does_not_force_branch_deletion(
+        self, mock_run, manager, tmp_path
+    ) -> None:
+        worktree_path = tmp_path / "worktrees" / "feature-test"
+        mock_run.side_effect = [
+            subprocess.CompletedProcess(
+                args=["git", "worktree", "remove", "--force"],
+                returncode=0,
+                stdout="",
+                stderr="",
+            ),
+            subprocess.CompletedProcess(
+                args=["git", "branch", "-d"], returncode=0, stdout="", stderr=""
+            ),
+        ]
+
+        result = manager.delete_worktree(
+            worktree_path,
+            force=True,
+            delete_branch=True,
+            branch_name="feature/test",
+        )
+
+        assert result.success is True
+        assert mock_run.call_args_list[0].args[0][-3:-1] == ["remove", "--force"]
+        assert mock_run.call_args_list[1].args[0][-3:] == ["branch", "-d", "feature/test"]
+
+    @patch("subprocess.run")
+    def test_branch_force_deletion_requires_explicit_flag(
+        self, mock_run, manager, tmp_path
+    ) -> None:
+        worktree_path = tmp_path / "worktrees" / "feature-test"
+        mock_run.side_effect = [
+            subprocess.CompletedProcess(
+                args=["git", "worktree", "remove", "--force"],
+                returncode=0,
+                stdout="",
+                stderr="",
+            ),
+            subprocess.CompletedProcess(
+                args=["git", "branch", "-D"], returncode=0, stdout="", stderr=""
+            ),
+        ]
+
+        result = manager.delete_worktree(
+            worktree_path,
+            force=True,
+            delete_branch=True,
+            force_delete_branch=True,
+            branch_name="feature/test",
+        )
+
+        assert result.success is True
+        assert mock_run.call_args_list[1].args[0][-3:] == ["branch", "-D", "feature/test"]
+
+    @patch("subprocess.run")
     def test_delete_handles_failure(self, mock_run, manager, tmp_path) -> None:
         """Delete handles git failure."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
@@ -1133,7 +1189,7 @@ class TestWorktreeGitManagerDeleteWorktreeEdgeCases:
         assert result.success is True
         assert "and branch feature/test" in result.message
         assert mock_run.call_args_list[1].args[0][-2:] == ["worktree", "prune"]
-        assert mock_run.call_args_list[2].args[0][-3:] == ["branch", "-D", "feature/test"]
+        assert mock_run.call_args_list[2].args[0][-3:] == ["branch", "-d", "feature/test"]
 
     @patch("subprocess.run")
     def test_delete_timeout(self, mock_run, manager, tmp_path) -> None:

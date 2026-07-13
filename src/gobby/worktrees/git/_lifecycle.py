@@ -152,6 +152,7 @@ def delete_worktree(
     worktree_path: str | Path,
     force: bool = False,
     delete_branch: bool = False,
+    force_delete_branch: bool = False,
     branch_name: str | None = None,
 ) -> GitOperationResult:
     """
@@ -161,6 +162,7 @@ def delete_worktree(
         worktree_path: Path to the worktree to delete
         force: Force removal even if dirty
         delete_branch: Also delete the associated branch
+        force_delete_branch: Force-delete the branch even if it is unmerged
         branch_name: Optional explicit branch name (if not provided, attempts to discover)
 
     Returns:
@@ -240,7 +242,7 @@ def delete_worktree(
         # Optionally delete the branch
         if delete_branch and branch_name:
             branch_result = runner._run_git(
-                ["branch", "-D" if force else "-d", branch_name],
+                ["branch", "-D" if force_delete_branch else "-d", branch_name],
                 timeout=10,
             )
 
