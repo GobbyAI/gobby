@@ -259,6 +259,40 @@ async def test_check_due_jobs_dispatches(
 
 
 @pytest.mark.asyncio
+async def test_bookkeeping_failure_rolls_back_pending_run_on_repeated_heartbeats(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+    config: CronConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed schedule advance never leaves or accumulates pending rows."""
+    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Bookkeeping failure",
+        schedule_type="cron",
+        action_type="handler",
+        action_config={"handler": "test"},
+        cron_expr="0 * * * *",
+    )
+    due_at = datetime.now(UTC) - timedelta(minutes=5)
+    cron_storage.update_job(job.id, next_run_at=due_at)
+    bookkeeping = MagicMock(side_effect=RuntimeError("bookkeeping unavailable"))
+    monkeypatch.setattr(scheduler, "_update_job_bookkeeping", bookkeeping)
+
+    await scheduler._check_due_jobs()
+    await scheduler._check_due_jobs()
+
+    persisted_job = cron_storage.get_job(job.id)
+    assert bookkeeping.call_count == 2
+    assert persisted_job is not None
+    assert persisted_job.next_run_at == due_at
+    assert cron_storage.list_runs(job.id, limit=10) == []
+    assert cron_storage.count_running() == 0
+    mock_executor.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_respects_max_concurrent(
     cron_storage: CronJobStorage,
     mock_executor: CronExecutor,

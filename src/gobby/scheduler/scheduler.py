@@ -134,6 +134,21 @@ class CronScheduler:
             logger.warning("Marked %s stale cron run(s) failed before dispatch", swept)
         return swept
 
+    def _create_scheduled_run(self, job: CronJob) -> CronRun | None:
+        """Create a run and advance its schedule in one database transaction."""
+        next_run = compute_next_run(job)
+        with self.storage.db.transaction():
+            run = self.storage.create_run(job.id, scheduler_owner=self._scheduler_owner)
+            if run is None:
+                return None
+            updated = self._update_job_bookkeeping(
+                job,
+                next_run_at=next_run.isoformat() if next_run else None,
+            )
+            if updated is None:
+                raise RuntimeError(f"Cron job {job.id} disappeared during dispatch bookkeeping")
+        return run
+
     async def stop(self) -> None:
         """Stop the scheduler loops gracefully."""
         self._running = False
@@ -224,8 +239,9 @@ class CronScheduler:
                             )
                             continue
 
-                # Create run and advance next_run_at immediately to prevent re-dispatch
-                run = self.storage.create_run(job.id, scheduler_owner=self._scheduler_owner)
+                # Commit run admission and schedule advancement together so a
+                # bookkeeping failure cannot strand a pending run.
+                run = self._create_scheduled_run(job)
                 if run is None:
                     logger.debug(
                         "Skipping cron job %s (%s): previous run still active",
@@ -233,11 +249,6 @@ class CronScheduler:
                         job.name,
                     )
                     continue
-                next_run = compute_next_run(job)
-                self._update_job_bookkeeping(
-                    job,
-                    next_run_at=next_run.isoformat() if next_run else None,
-                )
                 logger.info(f"Dispatching cron job {job.id} ({job.name}), run {run.id}")
 
                 # Track background task to prevent GC and await on stop
