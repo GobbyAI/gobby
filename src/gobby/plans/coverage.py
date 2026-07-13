@@ -319,7 +319,7 @@ def _evaluate_records(
     store = _TaskRecordStore(records)
     rows: list[CoverageRow] = []
     for section in plan_doc.sections:
-        for item in section.acceptance_items:
+        for item in _coverage_items(section):
             rows.append(
                 _evaluate_item(
                     plan_doc=plan_doc,
@@ -484,7 +484,7 @@ def _reconcile_matrix_rows(
     plan_items = {
         (section.section_id, item.item_id): (section, item)
         for section in plan_doc.sections
-        for item in section.acceptance_items
+        for item in _coverage_items(section)
     }
     seen: set[tuple[str, str]] = set()
     reconciled: list[CoverageRow] = []
@@ -516,6 +516,12 @@ def _reconcile_matrix_rows(
         if key not in seen
     )
     return tuple(reconciled)
+
+
+def _coverage_items(section: PlanSection) -> tuple[AcceptanceItem, ...]:
+    if section.deferral is not None:
+        return section.deferral.original_acceptance_items
+    return section.acceptance_items
 
 
 def _leaf_from_manifest(raw: object) -> CoverageRowLeaf:
