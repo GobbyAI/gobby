@@ -134,6 +134,55 @@ class TestPipelineResume:
 
         assert len(step2_calls) > 0, "Pipeline execution did not resume to step2 after approval"
 
+    async def test_approve_disabled_pipeline_cancels_execution(
+        self, mock_db, mock_execution_manager, mock_llm_service, mock_loader
+    ) -> None:
+        pipeline = PipelineDefinition(
+            name="disabled-resume-pipeline",
+            enabled=False,
+            steps=[
+                PipelineStep(
+                    id="step1",
+                    exec="echo step1",
+                    approval=PipelineApproval(required=True),
+                )
+            ],
+        )
+        mock_loader.load_pipeline.return_value = pipeline
+
+        waiting_step = MagicMock(
+            id=101,
+            execution_id="pe-disabled-123",
+            step_id="step1",
+            approval_token="disabled-token",
+            status=StepStatus.WAITING_APPROVAL,
+        )
+        mock_execution_manager.get_step_by_approval_token.return_value = waiting_step
+
+        execution = MagicMock(
+            id="pe-disabled-123",
+            pipeline_name=pipeline.name,
+            status=ExecutionStatus.WAITING_APPROVAL,
+            project_id="test-project",
+        )
+        mock_execution_manager.get_execution.return_value = execution
+
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            loader=mock_loader,
+        )
+
+        with pytest.raises(ValueError, match="disabled"):
+            await executor.approve("disabled-token")
+
+        mock_execution_manager.update_execution_status.assert_called_once_with(
+            execution_id=execution.id,
+            status=ExecutionStatus.CANCELLED,
+        )
+        mock_execution_manager.create_step_execution.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_cancelled_execution_rejects_resume(
         self, mock_db, mock_execution_manager, mock_llm_service, mock_loader
