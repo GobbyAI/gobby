@@ -306,8 +306,8 @@ class TestRegistryIntegration:
             schema_info = task_ops_registry.get_schema(name)
             assert schema_info is not None
             schema = schema_info["outputSchema"]
-            assert schema["required"] == ["ok", "stage"]
-            assert set(schema["properties"]) == {"ok", "stage"}
+            assert schema["required"] == ["ok"]
+            assert set(schema["properties"]) == {"ok", "stage", "error", "message"}
 
     def test_set_task_type_defaults_rejects_invalid_payload(self, task_ops_registry: Any) -> None:
         tool = task_ops_registry.get_tool("set_task_type_defaults")
