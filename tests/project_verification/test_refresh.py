@@ -16,7 +16,7 @@ from gobby.project_verification.candidates import (
     select_best_candidates,
     verification_dict_from_candidates,
 )
-from gobby.project_verification.evidence import collect_evidence
+from gobby.project_verification.evidence import _split_run_commands, collect_evidence
 from gobby.project_verification.refresh import refresh_project_verification_deterministic
 from gobby.project_verification.synthesis import synthesize_verification_commands
 
@@ -128,6 +128,41 @@ jobs:
     result = refresh_project_verification_deterministic(tmp_path)
 
     assert result.after["unit_tests"] == "uv run pytest tests/ -v"
+
+
+def test_split_run_commands_joins_backslash_continuations() -> None:
+    run = "uv run pytest \\\n  --cov=gobby tests/unit"
+
+    assert _split_run_commands(run) == ["uv run pytest --cov=gobby tests/unit"]
+
+
+@pytest.mark.parametrize("run", ["uv run pytest \\", r"uv run pytest \\"])
+def test_split_run_commands_rejects_trailing_backslash(run: str) -> None:
+    assert _split_run_commands(run) == []
+
+
+def test_ci_backslash_continuation_preserves_command_flags(tmp_path: Path) -> None:
+    project_json_path = write_project_json(tmp_path, {"unit_tests": "pytest"})
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "ci.yml").write_text(
+        "jobs:\n"
+        "  test:\n"
+        "    steps:\n"
+        "      - name: Run tests\n"
+        "        run: |\n"
+        "          uv run pytest \\\n"
+        "            --cov=gobby tests/unit\n",
+        encoding="utf-8",
+    )
+
+    result = refresh_project_verification_deterministic(tmp_path, fix=True)
+    persisted = json.loads(project_json_path.read_text(encoding="utf-8"))
+
+    assert result.written
+    assert result.after["unit_tests"] == "uv run pytest --cov=gobby tests/unit"
+    assert persisted["verification"]["unit_tests"] == result.after["unit_tests"]
+    assert not persisted["verification"]["unit_tests"].endswith("\\")
 
 
 def test_recipe_ci_and_doc_evidence_generate_candidates(tmp_path: Path) -> None:

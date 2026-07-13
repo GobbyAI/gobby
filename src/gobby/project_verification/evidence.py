@@ -406,13 +406,32 @@ def _workflow_commands(data: Any) -> list[tuple[str, str]]:
 
 def _split_run_commands(run: str) -> list[str]:
     commands: list[str] = []
+    continued = ""
+    awaiting_continuation = False
+    rejected_trailing_backslash = False
     for raw_line in run.splitlines():
         line = raw_line.strip()
-        if not line or line.startswith("#"):
+        if awaiting_continuation:
+            line = f"{continued} {line}".strip()
+            awaiting_continuation = False
+        elif not line:
+            continue
+
+        trailing_backslashes = len(line) - len(line.rstrip("\\"))
+        if trailing_backslashes % 2 == 1:
+            continued = line[:-1].rstrip()
+            awaiting_continuation = True
+            continue
+        if line.endswith("\\"):
+            rejected_trailing_backslash = True
+            continue
+        if line.startswith("#"):
             continue
         if line.startswith(("set ", "export ", "echo ")):
             continue
         commands.append(line)
+    if awaiting_continuation or rejected_trailing_backslash:
+        return commands
     if commands:
         return commands
     folded = run.strip()
