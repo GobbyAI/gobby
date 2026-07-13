@@ -226,6 +226,42 @@ class TestWorkflowEvaluation:
         mock_workflow_loader.load_workflow.assert_awaited_once_with("worker", project_id)
 
     @pytest.mark.asyncio
+    async def test_explicit_project_path_overrides_ambient_workflow_scope(
+        self, temp_db: HubDatabase, mock_workflow_loader: MagicMock, monkeypatch, tmp_path
+    ) -> None:
+        """An explicit target path determines workflow scoping for cross-project dry runs."""
+        db = _setup_db(temp_db)
+        _create_agent(db, pipeline="worker")
+        mock_workflow_loader.load_workflow.return_value = WorkflowDefinition(
+            name="worker",
+            steps=[WorkflowStep(name="done")],
+        )
+        ambient_id = "11111111-1111-4111-8111-111111111111"
+        target_id = "22222222-2222-4222-8222-222222222222"
+
+        def fake_project_context(cwd=None):
+            return {"id": target_id} if cwd == tmp_path else {"id": ambient_id}
+
+        monkeypatch.setattr(
+            "gobby.utils.project_context.get_project_context",
+            fake_project_context,
+        )
+
+        result = await evaluate_spawn(
+            agent="test-agent",
+            project_path=str(tmp_path),
+            db=db,
+            workflow_loader=mock_workflow_loader,
+        )
+
+        assert result.workflow_evaluation is not None
+        assert result.workflow_evaluation.valid is True
+        mock_workflow_loader.validate_workflow_for_agent.assert_awaited_once_with(
+            "worker", target_id
+        )
+        mock_workflow_loader.load_workflow.assert_awaited_once_with("worker", target_id)
+
+    @pytest.mark.asyncio
     async def test_workflow_invalid_for_agent(
         self, temp_db: HubDatabase, mock_workflow_loader: MagicMock
     ) -> None:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.workflows.dry_run import EvaluationItem, WorkflowEvaluation
@@ -117,7 +118,7 @@ async def evaluate_spawn(
 
     from gobby.utils.project_context import get_project_context
 
-    project_ctx = get_project_context()
+    project_ctx = get_project_context(Path(project_path)) if project_path else get_project_context()
     workflow_project_id = project_ctx.get("id") if project_ctx else None
 
     # ---- Layer 1: Agent Definition Resolution ----
