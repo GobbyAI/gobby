@@ -37,6 +37,12 @@ from gobby.utils.session_context import get_current_session_id
 
 logger = logging.getLogger(__name__)
 
+# Recall builds at most two queries and searches ordinary and review-lesson
+# scopes for each query, so this caps one request at 80 backend searches.
+MAX_RECALL_FINDINGS = 20
+# Matches also appear in per-finding groups; cap the flattened duplicate view.
+MAX_RECALL_FLAT_MATCHES = 100
+
 _SPACE_RE = re.compile(r"\s+")
 _LESSON_FIELD_RE = re.compile(r"^-\s+(?P<key>[a-zA-Z_]+):\s*(?P<value>.*)$")
 _LEGACY_SCAN_LIMIT = 200
@@ -130,7 +136,9 @@ class ReviewLearningService:
                 )
                 matches = []
             grouped.append({"finding_index": index, "matches": matches})
-            flat_matches.extend(matches)
+            remaining_flat_matches = MAX_RECALL_FLAT_MATCHES - len(flat_matches)
+            if remaining_flat_matches > 0:
+                flat_matches.extend(matches[:remaining_flat_matches])
         return {"findings": grouped, "matches": flat_matches}
 
     async def recall_review_lessons_for_files(
@@ -438,12 +446,14 @@ def build_recall_queries(
 
 
 def _normalize_recall_findings(findings: list[dict[str, Any] | str]) -> list[dict[str, Any]]:
-    """Normalize supported recall finding shapes before backend fail-open handling."""
+    """Normalize supported finding shapes up to the documented recall cap."""
     if not isinstance(findings, list):
         raise ValueError("findings must be an array")
 
     normalized: list[dict[str, Any]] = []
     for index, finding in enumerate(findings):
+        if index >= MAX_RECALL_FINDINGS:
+            break
         if isinstance(finding, dict):
             normalized.append(copy.deepcopy(finding))
             continue
