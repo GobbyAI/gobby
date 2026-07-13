@@ -51,12 +51,17 @@ class FakeStore:
         return self.dependencies.get(task_ref, [])
 
 
-def _deferral(*, reason: str = "covered elsewhere", owner: str = "owner") -> Deferral:
+def _deferral(
+    *,
+    reason: str = "covered elsewhere",
+    owner: str = "owner",
+    item: AcceptanceItem = ITEM,
+) -> Deferral:
     return Deferral(
         task_ref=DEFERRED_TASK_REF,
         reason=reason,
         owner=owner,
-        original_acceptance_items=(ITEM,),
+        original_acceptance_items=(item,),
         raw_block="",
     )
 
@@ -122,6 +127,70 @@ def test_validate_criteria_does_not_duplicate() -> None:
 
     assert result.status == "validation_criteria_does_not_duplicate"
     assert store.dependency_calls == []
+
+
+@pytest.mark.parametrize(
+    ("item", "criteria", "expected_status"),
+    [
+        (
+            AcceptanceItem(
+                item_id="A1.1",
+                prose="deferred symbol",
+                artifact_kind=ArtifactKind.symbol,
+                artifact_ref="gobby.plans.parser.parse",
+                source_line=9,
+            ),
+            "The parser is great.",
+            "validation_criteria_does_not_duplicate",
+        ),
+        (
+            AcceptanceItem(
+                item_id="A1.1",
+                prose="deferred file",
+                artifact_kind=ArtifactKind.file,
+                artifact_ref="test.py",
+                source_line=9,
+            ),
+            "Run latest.py.",
+            "validation_criteria_does_not_duplicate",
+        ),
+        (
+            AcceptanceItem(
+                item_id="A1.1",
+                prose="deferred symbol",
+                artifact_kind=ArtifactKind.symbol,
+                artifact_ref="gobby.plans.parser.parse",
+                source_line=9,
+            ),
+            "Call parse().",
+            "valid",
+        ),
+        (
+            AcceptanceItem(
+                item_id="A1.1",
+                prose="deferred file",
+                artifact_kind=ArtifactKind.file,
+                artifact_ref="test.py",
+                source_line=9,
+            ),
+            "Run tests/test.py.",
+            "valid",
+        ),
+    ],
+    ids=["symbol-prefix", "file-suffix", "bounded-symbol", "bounded-file"],
+)
+def test_validate_criteria_uses_artifact_boundaries(
+    item: AcceptanceItem, criteria: str, expected_status: str
+) -> None:
+    store = FakeStore(
+        tasks={DEFERRED_TASK_REF: _task(criteria=criteria)},
+        labels={DEFERRED_TASK_REF: [PROVENANCE_LABEL]},
+        dependencies={RECOVERY_EPIC_REF: [DEFERRED_TASK_REF]},
+    )
+
+    result = _validate(_deferral(item=item), store)
+
+    assert result.status == expected_status
 
 
 def test_validate_missing_reason_or_owner() -> None:
