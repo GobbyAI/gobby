@@ -30,6 +30,9 @@ def normalize_entities(
     deduped: dict[str, _GraphEntity] = {}
     for entity in entities:
         display_name = display_entity_name(entity.name)
+        if not display_name:
+            logger.debug("Dropped entity with empty display name: %r", entity.name)
+            continue
         normalized_name = normalize_entity_name(display_name)
         if not normalized_name:
             logger.debug("Dropped entity with empty normalized name: %r", entity.name)

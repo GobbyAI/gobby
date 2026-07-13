@@ -292,6 +292,32 @@ class TestGraphDelegation:
         assert result["noop_no_entities"] == 1
         assert result["errors"] == 1
 
+    async def test_rebuild_whitespace_entity_marks_memory_processed_without_retry(self) -> None:
+        llm_service = _mock_llm_service()
+        llm_service.call_json_feature = AsyncMock(
+            return_value={"entities": [{"entity": "  \t ", "entity_type": "concept"}]}
+        )
+        manager = _make_manager(
+            falkordb_host="127.0.0.1",
+            llm_service=llm_service,
+            vector_store=AsyncMock(),
+            embed_fn=AsyncMock(return_value=[0.1]),
+        )
+        memory = MagicMock(id="mem-empty", content="Malformed extraction", project_id="proj-1")
+        manager._fetch_all_project_memories = AsyncMock(return_value=[memory])
+        manager._kg_service._extractor._prompt_loader.render = MagicMock(
+            return_value="extract entities"
+        )
+        manager.mark_graph_processed = MagicMock()
+        manager.storage.mark_pending_graph = MagicMock()
+
+        result = await manager.rebuild_knowledge_graph(project_id="proj-1")
+
+        manager.mark_graph_processed.assert_called_once_with("mem-empty")
+        assert result["noop_no_entities"] == 1
+        assert result["memories_marked_processed"] == 1
+        assert result["errors"] == 0
+
     async def test_rebuild_knowledge_graph_reports_progress_and_failed_memory_ids(self) -> None:
         """Rebuild progress snapshots and final result should identify failing rows."""
         manager = _make_manager(

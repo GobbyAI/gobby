@@ -132,7 +132,10 @@ class KnowledgeGraphExtractor:
         entities = [
             Entity(name=e["entity"], entity_type=e["entity_type"])
             for e in raw_entities
-            if isinstance(e, dict) and "entity" in e and "entity_type" in e
+            if isinstance(e, dict)
+            and isinstance(e.get("entity"), str)
+            and bool(e["entity"].strip())
+            and "entity_type" in e
         ]
         dropped = len(raw_entities) - len(entities)
         if dropped:

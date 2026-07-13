@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import asdict
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -15,6 +15,7 @@ from gobby.memory.falkor_client import FalkorConnectionError, FalkorQueryError
 from gobby.memory.identity import entity_key
 from gobby.memory.services.knowledge_graph import (
     Entity,
+    KnowledgeGraphResult,
     KnowledgeGraphService,
     KnowledgeGraphStatus,
     Relationship,
@@ -513,16 +514,51 @@ class TestAddToGraph:
         mock_falkor: AsyncMock,
         mock_llm: AsyncMock,
     ) -> None:
-        """add_to_graph returns early when no entities are extracted."""
+        """Whitespace-only extracted names produce a typed no-op result."""
         mock_llm.call_json_feature = AsyncMock(
-            return_value={"entities": []},
+            return_value={"entities": [{"entity": "  \t ", "entity_type": "concept"}]},
         )
 
-        await service.add_to_graph("nothing useful")
+        result = await service.add_to_graph("nothing useful")
 
+        assert isinstance(result, KnowledgeGraphResult)
+        assert result.status is KnowledgeGraphStatus.NOOP_NO_ENTITIES
         mock_falkor.merge_node.assert_not_called()
         assert mock_falkor.merge_node.call_count == 0
         assert not mock_falkor.merge_node.called
+
+    async def test_extract_entities_filters_empty_names_before_normalization(
+        self,
+        service: KnowledgeGraphService,
+        mock_llm: AsyncMock,
+    ) -> None:
+        mock_llm.call_json_feature = AsyncMock(
+            return_value={
+                "entities": [
+                    {"entity": "   ", "entity_type": "concept"},
+                    {"entity": "Gobby", "entity_type": "project"},
+                ]
+            }
+        )
+
+        entities = await service._extract_entities("content")
+
+        assert entities == [Entity(name="Gobby", entity_type="project")]
+
+    def test_normalize_entities_skips_whitespace_before_identity_normalization(
+        self,
+        service: KnowledgeGraphService,
+    ) -> None:
+        with patch(
+            "gobby.memory.services.knowledge_graph.normalization.normalize_entity_name"
+        ) as normalize_name:
+            entities = service._normalize_entities(
+                [Entity(name=" \t ", entity_type="concept")],
+                project_id="proj-1",
+            )
+
+        assert entities == []
+        normalize_name.assert_not_called()
 
 
 # ===========================================================================
