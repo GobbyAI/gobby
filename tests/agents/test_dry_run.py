@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gobby.agents.dry_run import SpawnEvaluation, evaluate_spawn
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import (
     AgentDefinitionBody,
@@ -33,6 +35,7 @@ def _create_agent(
     isolation: str | None = None,
     pipeline: str | None = None,
     base_branch: str = "main",
+    project_id: str | None = None,
 ) -> None:
     """Create an agent definition in the DB."""
     body = AgentDefinitionBody(
@@ -48,6 +51,7 @@ def _create_agent(
         definition_json=body.model_dump_json(),
         workflow_type="agent",
         source="template",
+        project_id=project_id,
     )
 
 
@@ -76,6 +80,28 @@ class TestAgentNotFound:
             agent="nonexistent",
             db=db,
         )
+
+        assert result.can_spawn is False
+        assert result.agent_found is False
+        assert len(result.errors) == 1
+        assert result.errors[0].code == "AGENT_NOT_FOUND"
+
+    @pytest.mark.asyncio
+    async def test_unrelated_project_agent_is_not_visible(
+        self, temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A same-name agent from another project must not leak into dry-run resolution."""
+        db = _setup_db(temp_db)
+        project_manager = LocalProjectManager(db)
+        target_id = project_manager.create("dry-run-target").id
+        unrelated_id = project_manager.create("dry-run-unrelated").id
+        _create_agent(db, project_id=unrelated_id)
+        monkeypatch.setattr(
+            "gobby.utils.project_context.get_project_context",
+            lambda: {"id": target_id},
+        )
+
+        result = await evaluate_spawn(agent="test-agent", db=db)
 
         assert result.can_spawn is False
         assert result.agent_found is False
@@ -188,7 +214,10 @@ class TestRuntimeEnvironment:
 class TestWorkflowEvaluation:
     @pytest.mark.asyncio
     async def test_workflow_eval_embedded(
-        self, temp_db: HubDatabase, mock_workflow_loader: MagicMock, monkeypatch
+        self,
+        temp_db: HubDatabase,
+        mock_workflow_loader: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """workflow_evaluation populated with structural results."""
         db = _setup_db(temp_db)
@@ -227,19 +256,24 @@ class TestWorkflowEvaluation:
 
     @pytest.mark.asyncio
     async def test_explicit_project_path_overrides_ambient_workflow_scope(
-        self, temp_db: HubDatabase, mock_workflow_loader: MagicMock, monkeypatch, tmp_path
+        self,
+        temp_db: HubDatabase,
+        mock_workflow_loader: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         """An explicit target path determines workflow scoping for cross-project dry runs."""
         db = _setup_db(temp_db)
-        _create_agent(db, pipeline="worker")
         mock_workflow_loader.load_workflow.return_value = WorkflowDefinition(
             name="worker",
             steps=[WorkflowStep(name="done")],
         )
         ambient_id = "11111111-1111-4111-8111-111111111111"
-        target_id = "22222222-2222-4222-8222-222222222222"
+        target_id = LocalProjectManager(db).create("explicit-dry-run-target").id
+        _create_agent(db, pipeline="wrong-global-workflow")
+        _create_agent(db, pipeline="worker", project_id=target_id)
 
-        def fake_project_context(cwd=None):
+        def fake_project_context(cwd: Path | None = None) -> dict[str, str]:
             return {"id": target_id} if cwd == tmp_path else {"id": ambient_id}
 
         monkeypatch.setattr(
