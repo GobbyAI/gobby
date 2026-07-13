@@ -486,12 +486,15 @@ class MemoryCrudMixin(MemoryStoreBase):
                 cursor = conn.execute(
                     """
                     UPDATE memories
-                    SET vector_needs_reindex = FALSE
-                    WHERE id = %s AND content = %s
+                    SET vector_needs_reindex = (content IS DISTINCT FROM %s)
+                    WHERE id = %s
+                    RETURNING content IS NOT DISTINCT FROM %s AS content_matched
                     """,
-                    (memory_id, content),
+                    (content, memory_id, content),
                 )
-                cleared += cursor.rowcount
+                row = cursor.fetchone()
+                if row is not None and row["content_matched"]:
+                    cleared += 1
         return cleared
 
     def update_memory_project(self, memory_id: str, project_id: str) -> Memory:

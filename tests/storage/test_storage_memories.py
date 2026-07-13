@@ -79,6 +79,8 @@ def test_content_update_tracks_and_clears_stale_vector_state(memory_manager) -> 
     assert memory_manager.get_memory(memory.id).vector_needs_reindex is True
     assert memory_manager.mark_vectors_reindexed({memory.id: updated.content}) == 1
     assert memory_manager.get_memory(memory.id).vector_needs_reindex is False
+    assert memory_manager.mark_vectors_reindexed({memory.id: "obsolete content"}) == 0
+    assert memory_manager.get_memory(memory.id).vector_needs_reindex is True
 
 
 def test_rescope_memory_to_global_does_not_bump_updated_at(memory_manager, db) -> None:
