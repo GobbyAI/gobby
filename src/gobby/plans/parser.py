@@ -171,10 +171,17 @@ def parse_plan(
     source_bytes = path.read_bytes()
     source_hash = hashlib.sha256(source_bytes).hexdigest()
     lines = source_bytes.decode("utf-8").splitlines()
-    mask = _compute_fence_mask(lines)
+    mask, unclosed_fence_line = _compute_fence_mask(lines)
     headings = _collect_headings(lines, mask)
 
     errors: list[tuple[int, str]] = []
+    if unclosed_fence_line is not None:
+        errors.append(
+            (
+                unclosed_fence_line,
+                f"unclosed fence opened at line {unclosed_fence_line}",
+            )
+        )
     warnings: list[str] = []
     identity = _resolve_document_plan_id(
         path=path,
@@ -302,9 +309,10 @@ def parse_plan(
     )
 
 
-def _compute_fence_mask(lines: list[str]) -> list[bool]:
+def _compute_fence_mask(lines: list[str]) -> tuple[list[bool], int | None]:
     mask = [False] * len(lines)
     open_fence: _Fence | None = None
+    open_fence_line: int | None = None
 
     for index, line in enumerate(lines):
         if open_fence is None:
@@ -313,13 +321,15 @@ def _compute_fence_mask(lines: list[str]) -> list[bool]:
                 continue
             mask[index] = True
             open_fence = opener
+            open_fence_line = index + 1
             continue
 
         mask[index] = True
         if _is_fence_closer(line, open_fence):
             open_fence = None
+            open_fence_line = None
 
-    return mask
+    return mask, open_fence_line
 
 
 def _match_fence_opener(line: str) -> _Fence | None:

@@ -793,6 +793,31 @@ def test_fenced_headings_are_masked(tmp_path: Path) -> None:
     assert len(document.sections[0].acceptance_items) == 1
 
 
+def test_unclosed_fence_names_opening_line_in_draft_parse_error(tmp_path: Path) -> None:
+    plan = _write_plan(
+        tmp_path,
+        """
+        ## A1
+        `kind: deliverable`
+        **Acceptance:**
+        - A1.1 — real item. file: a.py.
+
+        ```markdown
+        ignored fenced content
+        ## A2
+        `kind: deliverable`
+        **Acceptance:**
+        - A2.1 — swallowed item. file: b.py.
+        """,
+    )
+
+    with pytest.raises(
+        PlanParseError,
+        match=r"line 6: unclosed fence opened at line 6",
+    ):
+        parse_plan(plan, parse_mode="draft")
+
+
 def test_fenced_plan_id_is_masked(tmp_path: Path) -> None:
     plan = _write_plan(
         tmp_path,

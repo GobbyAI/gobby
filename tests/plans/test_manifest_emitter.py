@@ -193,21 +193,24 @@ def test_fresh_emission(tmp_path: Path) -> None:
 def test_fresh_emission_restores_body_after_post_write_validation_failure(
     tmp_path: Path,
 ) -> None:
-    plan = _plan_two_deliverables(tmp_path, name="unclosed-fence.md")
-    original_body = plan.read_text(encoding="utf-8").rstrip() + "\n\n```\n"
-    plan.write_text(original_body, encoding="utf-8")
+    plan = _plan_two_deliverables(tmp_path, name="post-write-validation-error.md")
+    original_body = plan.read_text(encoding="utf-8")
 
-    first_outcome = emit_stub_manifest(plan)
-    first_text = plan.read_text(encoding="utf-8")
+    with patch(
+        "gobby.plans.manifest_emitter._write_manifest_section",
+        return_value=original_body,
+    ):
+        first_outcome = emit_stub_manifest(plan)
+        first_text = plan.read_text(encoding="utf-8")
 
-    assert first_outcome == "fallback_force_approve"
-    restored_body, failure_note = first_text.split("\n\n## Yolo Fallbacks\n", maxsplit=1)
-    assert restored_body == original_body.rstrip()
-    assert "synthesized manifest failed draft validation" in failure_note
-    assert "## M1 Task Manifest" not in first_text
-    assert "`kind: manifest`" not in first_text
+        assert first_outcome == "fallback_force_approve"
+        restored_body, failure_note = first_text.split("\n\n## Yolo Fallbacks\n", maxsplit=1)
+        assert restored_body == original_body.rstrip()
+        assert "synthesized manifest failed draft validation" in failure_note
+        assert "## M1 Task Manifest" not in first_text
+        assert "`kind: manifest`" not in first_text
 
-    second_outcome = emit_stub_manifest(plan)
+        second_outcome = emit_stub_manifest(plan)
 
     assert second_outcome == "fallback_force_approve"
     assert plan.read_text(encoding="utf-8") == first_text
