@@ -699,6 +699,64 @@ class TestEmbeddingBackend:
             assert results[0][0] == "id1"
 
     @pytest.mark.asyncio
+    async def test_search_during_threaded_refit_uses_one_complete_index(self) -> None:
+        backend = EmbeddingBackend()
+        old_items = [("old-a", "old alpha"), ("old-b", "old beta")]
+        new_items = [
+            ("new-a", "new alpha"),
+            ("new-b", "new beta"),
+            ("new-c", "new gamma"),
+        ]
+        refit_started = threading.Event()
+        release_refit = threading.Event()
+
+        async def generate_embeddings(
+            _service: object,
+            contents: list[str],
+        ) -> list[list[float]]:
+            if contents == [content for _item_id, content in old_items]:
+                return [[1.0, 0.0], [0.0, 1.0]]
+
+            assert contents == [content for _item_id, content in new_items]
+            refit_started.set()
+            await asyncio.to_thread(release_refit.wait)
+            return [[1.0, 0.0], [0.5, 0.5], [0.0, 1.0]]
+
+        async def generate_query_embedding(
+            _service: object,
+            _query: str,
+            **_kwargs: object,
+        ) -> list[float]:
+            return [1.0, 0.0]
+
+        def refit_in_worker_thread() -> None:
+            asyncio.run(backend.fit_async(new_items))
+
+        with (
+            patch(
+                "gobby.search.backends.embedding.EmbeddingService.generate_embeddings",
+                new=generate_embeddings,
+            ),
+            patch(
+                "gobby.search.backends.embedding.EmbeddingService.generate_embedding",
+                new=generate_query_embedding,
+            ),
+        ):
+            await backend.fit_async(old_items)
+            refit_task = asyncio.create_task(asyncio.to_thread(refit_in_worker_thread))
+            try:
+                assert await asyncio.to_thread(refit_started.wait, 5.0)
+                during_refit = await backend.search_async("query", top_k=10)
+            finally:
+                release_refit.set()
+                await refit_task
+
+            after_refit = await backend.search_async("query", top_k=10)
+
+        assert [item_id for item_id, _score in during_refit] == ["old-a"]
+        assert [item_id for item_id, _score in after_refit] == ["new-a", "new-b"]
+
+    @pytest.mark.asyncio
     async def test_normalized_scan_matches_cosine_and_preserves_ties(self) -> None:
         backend = EmbeddingBackend()
         item_embeddings = [

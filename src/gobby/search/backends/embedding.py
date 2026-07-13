@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import threading
 from typing import TYPE_CHECKING, Any
 
 from gobby.ai.embeddings import EmbeddingService
@@ -75,6 +76,7 @@ class EmbeddingBackend:
         self._item_contents: dict[str, str] = {}  # For reindexing
         self._fitted = False
         self._needs_refit = False
+        self._state_lock = threading.Lock()
 
     @classmethod
     def from_config(cls, config: EmbeddingsConfig) -> EmbeddingBackend:
@@ -105,36 +107,41 @@ class EmbeddingBackend:
             RuntimeError: If embedding generation fails
         """
         if not items:
-            self._item_ids = []
-            self._item_embeddings = []
-            self._item_contents = {}
-            self._fitted = True
-            self._needs_refit = False
+            with self._state_lock:
+                self._item_ids = []
+                self._item_embeddings = []
+                self._item_contents = {}
+                self._fitted = True
+                self._needs_refit = False
             logger.debug("Embedding index cleared (no items)")
             return
 
-        # Store contents for potential reindexing
-        self._item_ids = [item_id for item_id, _ in items]
-        self._item_contents = dict(items)
+        item_ids = [item_id for item_id, _ in items]
+        item_contents = dict(items)
         contents = [content for _, content in items]
 
         # Generate embeddings in batch
         try:
             embeddings = await self._embedding_service.generate_embeddings(contents)
             if _embedding_float_count(embeddings) >= _SCAN_OFFLOAD_MIN_FLOAT_OPS:
-                self._item_embeddings = await asyncio.to_thread(_normalize_vectors, embeddings)
+                item_embeddings = await asyncio.to_thread(_normalize_vectors, embeddings)
             else:
-                self._item_embeddings = _normalize_vectors(embeddings)
-            self._fitted = True
-            self._needs_refit = False
+                item_embeddings = _normalize_vectors(embeddings)
+            with self._state_lock:
+                self._item_ids = item_ids
+                self._item_contents = item_contents
+                self._item_embeddings = item_embeddings
+                self._fitted = True
+                self._needs_refit = False
             logger.info(f"Embedding index built with {len(items)} items")
         except Exception as e:
             # Clear stale state to prevent inconsistent data
-            self._item_ids = []
-            self._item_contents = {}
-            self._item_embeddings = []
-            self._fitted = False
-            self._needs_refit = False
+            with self._state_lock:
+                self._item_ids = []
+                self._item_contents = {}
+                self._item_embeddings = []
+                self._fitted = False
+                self._needs_refit = False
             logger.error(f"Failed to build embedding index: {e}")
             raise
 
@@ -159,8 +166,11 @@ class EmbeddingBackend:
         Raises:
             RuntimeError: If embedding generation fails
         """
-        if not self._fitted or not self._item_embeddings:
-            return []
+        with self._state_lock:
+            if not self._fitted or not self._item_embeddings:
+                return []
+            item_ids = self._item_ids
+            item_embeddings = self._item_embeddings
 
         # Generate query embedding
         try:
@@ -173,47 +183,51 @@ class EmbeddingBackend:
             raise
 
         normalized_query = _normalize_vector(query_embedding)
-        scan_float_ops = len(self._item_embeddings) * len(normalized_query)
+        scan_float_ops = len(item_embeddings) * len(normalized_query)
         if scan_float_ops >= _SCAN_OFFLOAD_MIN_FLOAT_OPS:
             return await asyncio.to_thread(
                 _rank_embeddings,
-                self._item_ids,
-                self._item_embeddings,
+                item_ids,
+                item_embeddings,
                 normalized_query,
                 top_k,
             )
         return _rank_embeddings(
-            self._item_ids,
-            self._item_embeddings,
+            item_ids,
+            item_embeddings,
             normalized_query,
             top_k,
         )
 
     def needs_refit(self) -> bool:
         """Check if the search index needs rebuilding."""
-        return not self._fitted or self._needs_refit
+        with self._state_lock:
+            return not self._fitted or self._needs_refit
 
     def mark_update(self) -> None:
         """Mark that indexed item data changed after the last fit."""
-        self._needs_refit = True
+        with self._state_lock:
+            self._needs_refit = True
 
     def get_stats(self) -> dict[str, Any]:
         """Get statistics about the search index."""
-        return {
-            "backend_type": "embedding",
-            "fitted": self._fitted,
-            "item_count": len(self._item_ids),
-            "model": self._model,
-            "has_api_base": self._api_base is not None,
-        }
+        with self._state_lock:
+            return {
+                "backend_type": "embedding",
+                "fitted": self._fitted,
+                "item_count": len(self._item_ids),
+                "model": self._model,
+                "has_api_base": self._api_base is not None,
+            }
 
     def clear(self) -> None:
         """Clear the search index."""
-        self._item_ids = []
-        self._item_embeddings = []
-        self._item_contents = {}
-        self._fitted = False
-        self._needs_refit = False
+        with self._state_lock:
+            self._item_ids = []
+            self._item_embeddings = []
+            self._item_contents = {}
+            self._fitted = False
+            self._needs_refit = False
 
     def get_item_contents(self) -> dict[str, str]:
         """Get stored item contents.
@@ -223,7 +237,8 @@ class EmbeddingBackend:
         Returns:
             Dict mapping item_id to content
         """
-        return self._item_contents.copy()
+        with self._state_lock:
+            return self._item_contents.copy()
 
 
 def _embedding_float_count(embeddings: list[list[float]]) -> int:
