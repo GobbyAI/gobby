@@ -18,6 +18,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from weakref import WeakKeyDictionary
 
 from gobby.config.persistence import MemoryDreamConfig
 from gobby.memory.dream.apply import apply_dream_plan, revert_dream_run
@@ -34,6 +35,19 @@ from gobby.memory.dream.truth_digest import (
 from gobby.storage.projects import LocalProjectManager
 
 logger = logging.getLogger(__name__)
+
+_EXECUTION_LOCKS: WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = WeakKeyDictionary()
+
+
+def _execution_lock() -> asyncio.Lock:
+    """Return the daemon-wide dream lock for the current event loop."""
+    loop = asyncio.get_running_loop()
+    lock = _EXECUTION_LOCKS.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        _EXECUTION_LOCKS[loop] = lock
+    return lock
+
 
 DEFAULT_PAGE_SIZE = 200
 DEFAULT_REDREAM_AFTER_HOURS = 20
@@ -167,6 +181,10 @@ class MemoryDreamService:
         self._schema_ready = False
 
     async def run(self, options: DreamRunOptions) -> dict[str, Any]:
+        async with _execution_lock():
+            return await self._run_without_execution_lock(options)
+
+    async def _run_without_execution_lock(self, options: DreamRunOptions) -> dict[str, Any]:
         if not self.dream_config.enabled:
             return {"success": False, "error": "memory dream is disabled"}
 
@@ -174,9 +192,25 @@ class MemoryDreamService:
         if not started.get("success"):
             return started
         run_id = str(started["run_id"])
-        return await self.execute_run(run_id, options)
+        return await self._execute_run_locked(run_id, options)
 
     async def run_all_due_projects(
+        self,
+        *,
+        dry_run: bool = False,
+        skip_consolidation: bool = False,
+        memory_type: str | None = None,
+        full_sweep: bool = False,
+    ) -> dict[str, Any]:
+        async with _execution_lock():
+            return await self._run_all_due_projects_locked(
+                dry_run=dry_run,
+                skip_consolidation=skip_consolidation,
+                memory_type=memory_type,
+                full_sweep=full_sweep,
+            )
+
+    async def _run_all_due_projects_locked(
         self,
         *,
         dry_run: bool = False,
@@ -257,7 +291,7 @@ class MemoryDreamService:
                         include_global=False,
                         full_sweep=full_sweep,
                     )
-                result = await self.run(options)
+                result = await self._run_without_execution_lock(options)
                 target_mutations = _completed_mutation_count(result)
                 mutations += target_mutations
                 completed += 1
@@ -565,6 +599,10 @@ class MemoryDreamService:
         return project.repo_path if project is not None else None
 
     async def execute_run(self, run_id: str, options: DreamRunOptions) -> dict[str, Any]:
+        async with _execution_lock():
+            return await self._execute_run_locked(run_id, options)
+
+    async def _execute_run_locked(self, run_id: str, options: DreamRunOptions) -> dict[str, Any]:
         await self._ensure_schema_async()
         try:
             run_started = datetime.now(UTC)

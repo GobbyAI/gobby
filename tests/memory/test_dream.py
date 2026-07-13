@@ -1144,6 +1144,152 @@ async def test_memory_dream_service_persists_interrupted_status_on_cancellation(
     assert run["completed_at"] is not None
 
 
+def _execution_test_service() -> MemoryDreamService:
+    service = MemoryDreamService(
+        memory_manager=_FakeMemoryManager(_FakeDreamDB()),
+        dream_config=SimpleNamespace(
+            enabled=True,
+            page_size=2,
+            redream_after_hours=20,
+            include_global_memories=False,
+            reconcile_after_apply=False,
+        ),
+    )
+    service._build_truth_digest_async = AsyncMock(return_value="")
+    return service
+
+
+def _empty_sweep_totals() -> MagicMock:
+    totals = MagicMock(mutations=0)
+    totals.to_plan.return_value = {}
+    totals.to_summary.return_value = {}
+    return totals
+
+
+async def test_dream_execution_lock_queues_across_service_instances() -> None:
+    first_service = _execution_test_service()
+    second_service = _execution_test_service()
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    second_attempted = asyncio.Event()
+    second_entered = asyncio.Event()
+
+    async def first_sweep(*_args: Any, **_kwargs: Any) -> MagicMock:
+        first_entered.set()
+        await release_first.wait()
+        return _empty_sweep_totals()
+
+    async def second_sweep(*_args: Any, **_kwargs: Any) -> MagicMock:
+        second_entered.set()
+        return _empty_sweep_totals()
+
+    async def run_second() -> dict[str, Any]:
+        second_attempted.set()
+        return await second_service.run(options)
+
+    first_service._stream_sweep = AsyncMock(side_effect=first_sweep)
+    second_service._stream_sweep = AsyncMock(side_effect=second_sweep)
+    first_run_id = first_service.store.create_run(project_id="proj-1", dry_run=False, options={})
+    options = DreamRunOptions(dry_run=False, project_id="proj-1")
+
+    first_task = asyncio.create_task(first_service.execute_run(first_run_id, options))
+    await first_entered.wait()
+    second_task = asyncio.create_task(run_second())
+    await second_attempted.wait()
+
+    assert second_entered.is_set() is False
+    release_first.set()
+    first_result, second_result = await asyncio.gather(first_task, second_task)
+    assert first_result["success"] is True
+    assert second_result["success"] is True
+    assert second_entered.is_set() is True
+
+
+async def test_dream_execution_lock_covers_aggregate_cron_entrypoint() -> None:
+    aggregate_service = _execution_test_service()
+    manual_service = _execution_test_service()
+    aggregate_entered = asyncio.Event()
+    release_aggregate = asyncio.Event()
+    manual_attempted = asyncio.Event()
+    manual_entered = asyncio.Event()
+
+    async def blocked_truth_trigger() -> None:
+        aggregate_entered.set()
+        await release_aggregate.wait()
+
+    async def manual_sweep(*_args: Any, **_kwargs: Any) -> MagicMock:
+        manual_entered.set()
+        return _empty_sweep_totals()
+
+    async def run_manual() -> dict[str, Any]:
+        manual_attempted.set()
+        return await manual_service.execute_run(manual_run_id, options)
+
+    aggregate_service._apply_truth_change_triggers = AsyncMock(side_effect=blocked_truth_trigger)
+    aggregate_service.memory_manager.list_dream_project_ids = MagicMock(return_value=[])
+    manual_service._stream_sweep = AsyncMock(side_effect=manual_sweep)
+    manual_run_id = manual_service.store.create_run(project_id="proj-1", dry_run=False, options={})
+    options = DreamRunOptions(dry_run=False, project_id="proj-1")
+
+    aggregate_task = asyncio.create_task(aggregate_service.run_all_due_projects())
+    await aggregate_entered.wait()
+    manual_task = asyncio.create_task(run_manual())
+    await manual_attempted.wait()
+
+    assert manual_entered.is_set() is False
+    release_aggregate.set()
+    aggregate_result, manual_result = await asyncio.gather(aggregate_task, manual_task)
+    assert aggregate_result["success"] is True
+    assert manual_result["success"] is True
+    assert manual_entered.is_set() is True
+
+
+async def test_dream_execution_lock_releases_after_failure() -> None:
+    failing_service = _execution_test_service()
+    next_service = _execution_test_service()
+    failing_service._stream_sweep = AsyncMock(side_effect=RuntimeError("dream failed"))
+    next_service._stream_sweep = AsyncMock(return_value=_empty_sweep_totals())
+    options = DreamRunOptions(dry_run=False, project_id="proj-1")
+    failing_run_id = failing_service.store.create_run(
+        project_id="proj-1", dry_run=False, options={}
+    )
+    next_run_id = next_service.store.create_run(project_id="proj-1", dry_run=False, options={})
+
+    failed = await failing_service.execute_run(failing_run_id, options)
+    succeeded = await asyncio.wait_for(next_service.execute_run(next_run_id, options), timeout=1)
+
+    assert failed["success"] is False
+    assert succeeded["success"] is True
+
+
+async def test_dream_execution_lock_releases_after_cancellation() -> None:
+    cancelled_service = _execution_test_service()
+    next_service = _execution_test_service()
+    entered = asyncio.Event()
+
+    async def blocked_sweep(*_args: Any, **_kwargs: Any) -> MagicMock:
+        entered.set()
+        await asyncio.Event().wait()
+        return _empty_sweep_totals()
+
+    cancelled_service._stream_sweep = AsyncMock(side_effect=blocked_sweep)
+    next_service._stream_sweep = AsyncMock(return_value=_empty_sweep_totals())
+    options = DreamRunOptions(dry_run=False, project_id="proj-1")
+    cancelled_run_id = cancelled_service.store.create_run(
+        project_id="proj-1", dry_run=False, options={}
+    )
+    next_run_id = next_service.store.create_run(project_id="proj-1", dry_run=False, options={})
+    cancelled_task = asyncio.create_task(cancelled_service.execute_run(cancelled_run_id, options))
+    await entered.wait()
+
+    cancelled_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await cancelled_task
+    succeeded = await asyncio.wait_for(next_service.execute_run(next_run_id, options), timeout=1)
+
+    assert succeeded["success"] is True
+
+
 def test_decode_raw_plan_metadata_handles_strings_safely() -> None:
     assert _decode_raw_plan_metadata('{"planner_errors": ["missing llm"]}') == {
         "planner_errors": ["missing llm"]
@@ -2135,7 +2281,7 @@ async def test_run_all_due_projects_loops_targets_with_per_target_scope(
             "run": {"id": f"run-{idx}", "summary": {"mutations": mutations}},
         }
 
-    monkeypatch.setattr(service, "run", fake_run)
+    monkeypatch.setattr(service, "_run_without_execution_lock", fake_run)
 
     result = await service.run_all_due_projects(dry_run=True, memory_type="fact", full_sweep=True)
 
@@ -2174,7 +2320,7 @@ async def test_run_all_due_projects_isolates_target_failure(
             raise RuntimeError("boom")
         return {"success": True, "run_id": "r", "run": {"id": "r", "summary": {"mutations": 2}}}
 
-    monkeypatch.setattr(service, "run", fake_run)
+    monkeypatch.setattr(service, "_run_without_execution_lock", fake_run)
 
     result = await service.run_all_due_projects()
 
@@ -2197,7 +2343,7 @@ async def test_run_all_due_projects_all_failed_marks_aggregate_failed(
     async def fake_run(options: DreamRunOptions) -> dict[str, Any]:
         raise RuntimeError("nope")
 
-    monkeypatch.setattr(service, "run", fake_run)
+    monkeypatch.setattr(service, "_run_without_execution_lock", fake_run)
 
     result = await service.run_all_due_projects()
 
