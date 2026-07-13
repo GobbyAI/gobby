@@ -422,9 +422,7 @@ class VoiceWarmupMixin:
         if len(chat_sessions) > 0:
             return
 
-        models_loaded = (
-            self._stt_warmup_status == _WARMUP_READY or self._tts_warmup_status == _WARMUP_READY
-        )
+        models_loaded = self._whisper_stt is not None or self._tts_provider is not None
         warmup_in_flight = (
             self._voice_warmup_task is not None and not self._voice_warmup_task.done()
         )

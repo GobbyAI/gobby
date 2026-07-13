@@ -531,6 +531,23 @@ class TestVoiceWarmup:
 
         assert mixin._voice_warmup_task is None
 
+    async def test_check_voice_idle_unloads_lazy_models_after_warmup_errors(self) -> None:
+        """Idle checks should reclaim models loaded lazily after failed warmup."""
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=True))
+        mock_stt = MagicMock()
+        mock_tts = MagicMock()
+        mixin._whisper_stt = mock_stt
+        mixin._tts_provider = mock_tts
+        mixin._stt_warmup_status = "error"
+        mixin._tts_warmup_status = "error"
+
+        await mixin._check_voice_idle()
+
+        mock_stt.unload.assert_called_once_with()
+        mock_tts.unload.assert_called_once_with()
+        assert mixin._whisper_stt is None
+        assert mixin._tts_provider is None
+
     @pytest.mark.asyncio
     async def test_voice_audio_forwards_project_id_to_chat_message(self) -> None:
         """Voice audio should forward project_id into the chat message payload."""
