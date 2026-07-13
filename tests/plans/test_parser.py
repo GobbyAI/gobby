@@ -277,6 +277,22 @@ def test_acceptance_item_id_must_prefix_section(tmp_path: Path) -> None:
         parse_plan(plan)
 
 
+def test_duplicate_acceptance_item_ids_raise(tmp_path: Path) -> None:
+    plan = _write_plan(
+        tmp_path,
+        """
+        ## 1
+        `kind: deliverable`
+        **Acceptance:**
+        - 1.1 — first item. file: src/first.py.
+        - 1.1 — second item. file: src/second.py.
+        """,
+    )
+
+    with pytest.raises(PlanParseError, match="duplicate acceptance item ID '1.1'"):
+        parse_plan(plan)
+
+
 @pytest.mark.parametrize(
     "malformed_bullet",
     [

@@ -520,6 +520,7 @@ def _parse_acceptance_items(
         return ()
 
     items: list[AcceptanceItem] = []
+    seen_item_ids: set[str] = set()
     current_id: str | None = None
     current_parts: list[str] = []
     current_line = 0
@@ -529,13 +530,19 @@ def _parse_acceptance_items(
         nonlocal current_id, current_parts, current_line
         if current_id is None:
             return
+        item_id = current_id
         prose = " ".join(part.strip() for part in current_parts if part.strip()).strip()
-        item = _build_acceptance_item(current_id, prose, current_line, section_id, errors)
-        if item is not None:
-            items.append(item)
+        source_line = current_line
         current_id = None
         current_parts = []
         current_line = 0
+        if item_id in seen_item_ids:
+            errors.append((source_line, f"duplicate acceptance item ID {item_id!r}"))
+            return
+        seen_item_ids.add(item_id)
+        item = _build_acceptance_item(item_id, prose, source_line, section_id, errors)
+        if item is not None:
+            items.append(item)
 
     for index in range(marker_index + 1, end_index + 1):
         if index >= len(lines) or mask[index]:
