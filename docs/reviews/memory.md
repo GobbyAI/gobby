@@ -172,22 +172,35 @@
 - **Failure mode:** Deleting a session that has any agent-created memory raises an FK violation and rolls back.
 - **Minimal fix:** `ON DELETE SET NULL` on `source_session_id` (provenance is optional), or null it inside `delete()`'s transaction.
 
-### [NIT] Diagnostics and dead code
-- **Where:** `vectorstore.py:651-666` (`count_sync` returns 0 for an uninitialized client — indistinguishable from an empty collection); `storage/memories.py:657-698` (`delete_crossrefs`/`delete_project_crossrefs` redundant with the FK cascade — self-documented as such); `services/dedup.py:44,173` (unused `DedupResult.deleted`; stale comment); `mcp_proxy/tools/memory.py` general (read tools scope to the current project, the gap is only on the destructive/graph-search tools — flagged above).
+## Nit-sweep resolution (#16700)
 
-### [NIT] `create_memory` session-proximity dedup uses a 100-char prefix
-- **Where:** `storage/memories.py:163-176` — within one session and 60s, two memories whose first 100 chars match are merged (the new one dropped). Two distinct facts sharing a long prefix silently collapse. Narrow (same session, <60s).
-- **Minimal fix:** Full normalized-content equality or a hash.
+The original nit-level observations were rechecked against the final review-fix code.
+No stale or duplicate nit remains actionable in this document:
 
-### [NIT] FalkorDB client small items
-- **Where:** `falkor_client.py:155-171` (`close()` early-returns after the first target — harmless today, `FalkorDB` only exposes `aclose`); `:452-527` (`get_entity_neighbors` filters only the center node's project — benign today since cross-project edges can't be created); `writer.py:98-132` (`delete_relations` silently no-ops if the LLM paraphrases endpoint names).
-
-### [NIT] Migration 271 `ON CONFLICT DO NOTHING`
-- **Where:** `migrations/271:25-46` — a pre-existing `ai.embeddings.dim` silently wins over the migrated legacy value. Config-keys only (no vector data); ultimately caught at runtime by `expected_dim`. Low impact.
-
-### [NIT] Title recovery re-runs full-digest LLM synthesis on every contentless stop event
-- **Where:** `digest.py:691-705` (feeds the entire growing `existing_digest` to the LLM on each idle stop until a title lands). Wasted calls + unbounded prompt growth.
-- **Minimal fix:** Truncate the digest fed to title synthesis; gate re-synthesis on "digest changed since last title".
+- **Vector count diagnostics:** fixed by #18126. An unavailable or uninitialized Qdrant
+  client now raises the vector-store domain error and `get_stats` reports `vector_count=-1`;
+  only an initialized empty collection reports `0`.
+- **Cross-reference cleanup helpers:** retained intentionally. `delete_crossrefs` is used when
+  content revisions rebuild secondary indices, and `delete_project_crossrefs` is used by the
+  project cross-reference rebuild. They are not redundant with hard-delete FK cascades.
+- **Dedup result dead state:** the unused `DedupResult.deleted` field and stale return-contract
+  text were removed by #16700.
+- **MCP scope note:** removed as a duplicate of the destructive-delete and graph-search
+  project-scope findings above; those fixes are tracked by their focused review leaves.
+- **Session-proximity dedup:** already fixed. `MemoryCrudMixin.create_memory` compares full
+  normalized content within the same project/session window rather than a 100-character prefix.
+- **FalkorDB close and neighbor scope:** cleared as non-bugs. `FalkorClient` has one owning
+  `_db` connection and its focused close test verifies that owner is closed; project-qualified
+  entity keys prevent cross-project edges, so neighbor expansion through a scoped center cannot
+  cross projects.
+- **Relationship deletion selection:** fixed by #18129. Only exact canonical existing triples
+  returned by the LLM can reach the writer; malformed, paraphrased, hallucinated, and duplicate
+  selections are ignored or deduplicated with diagnostics.
+- **Migration 271 conflict behavior:** obsolete after the 0.5.0 migration flatten. Replayable
+  migrations now begin at 306 and the baseline is authoritative.
+- **Digest title recovery:** fixed by #18127. Recovery persists the attempted digest hash,
+  skips unchanged digests, permits a changed digest to retry, and bounds the title prompt to the
+  newest 12,000 digest characters.
 
 ## Systemic patterns
 

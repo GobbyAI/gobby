@@ -42,7 +42,6 @@ class DedupResult:
 
     added: list[Memory] = field(default_factory=list)
     updated: list[Memory] = field(default_factory=list)
-    deleted: list[str] = field(default_factory=list)
 
 
 def _memory_richness_score(content: str) -> tuple[int, int, int, int, int]:
@@ -114,7 +113,7 @@ class DedupService:
                 against itself
 
         Returns:
-            DedupResult with lists of added, updated, and deleted memories
+            DedupResult with lists of added and updated memories
         """
         result = DedupResult()
 

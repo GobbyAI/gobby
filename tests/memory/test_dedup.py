@@ -60,17 +60,15 @@ class TestDedupResult:
         result = DedupResult()
         assert result.added == []
         assert result.updated == []
-        assert result.deleted == []
 
     def test_result_with_data(self) -> None:
         mock_mem = MagicMock()
         result = DedupResult(
             added=[mock_mem],
             updated=[mock_mem],
-            deleted=["mem-123"],
         )
         assert len(result.added) == 1
-        assert len(result.deleted) == 1
+        assert len(result.updated) == 1
 
 
 class TestProcess:
@@ -91,7 +89,6 @@ class TestProcess:
         assert isinstance(result, DedupResult)
         assert result.added == []
         assert result.updated == []
-        assert result.deleted == []
         mock_embed_fn.assert_called_once_with("Brand new information")
         mock_vector_store.search.assert_called_once()
 
@@ -109,7 +106,6 @@ class TestProcess:
 
         assert result.added == []
         assert result.updated == []
-        assert result.deleted == []
 
     @pytest.mark.asyncio
     async def test_process_similar_updates_when_richer(
