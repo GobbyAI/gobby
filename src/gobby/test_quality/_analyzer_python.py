@@ -206,11 +206,11 @@ def _is_unconditional_skip(decorator: ast.expr) -> bool:
 
 
 def _is_xfail_without_strict_or_reason(decorator: ast.expr) -> bool:
-    if not isinstance(decorator, ast.Call):
-        return False
-    name = _call_name(decorator.func)
+    name = _call_name(decorator.func if isinstance(decorator, ast.Call) else decorator)
     if name not in {"xfail", "pytest.mark.xfail"}:
         return False
+    if not isinstance(decorator, ast.Call):
+        return True
 
     has_strict_true = any(
         keyword.arg == "strict"

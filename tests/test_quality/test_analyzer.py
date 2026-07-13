@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from gobby.test_quality import audit_paths
+from gobby.test_quality.models import severity_meets_minimum
 
 pytestmark = pytest.mark.unit
 
@@ -164,6 +165,53 @@ def test_xfail_ok():
     )
 
     assert codes == {"UNCONDITIONAL_SKIP", "XFAIL_WITHOUT_STRICT_OR_REASON"}
+
+
+def test_bare_xfail_name_and_attribute_match_called_marker_severity(tmp_path: Path) -> None:
+    _write_test(
+        tmp_path,
+        """
+import pytest
+
+xfail = pytest.mark.xfail
+
+
+@xfail
+def test_bare_name():
+    assert 1 == 1
+
+
+@pytest.mark.xfail
+def test_bare_attribute():
+    assert 1 == 1
+
+
+@pytest.mark.xfail(reason="bug")
+def test_called_without_strict():
+    assert 1 == 1
+
+
+@xfail(reason="bug", strict=True)
+def test_called_complete():
+    assert 1 == 1
+""",
+    )
+
+    report = audit_paths([tmp_path / "tests"], root=tmp_path)
+    xfail_issues = {
+        issue.test_name: issue
+        for issue in report.issues
+        if issue.issue_code == "XFAIL_WITHOUT_STRICT_OR_REASON"
+    }
+
+    assert set(xfail_issues) == {
+        "test_bare_name",
+        "test_bare_attribute",
+        "test_called_without_strict",
+    }
+    called_severity = xfail_issues["test_called_without_strict"].severity
+    assert severity_meets_minimum(xfail_issues["test_bare_name"].severity, called_severity)
+    assert severity_meets_minimum(xfail_issues["test_bare_attribute"].severity, called_severity)
 
 
 def test_sleep_todo_and_suppression_handling(tmp_path: Path) -> None:
