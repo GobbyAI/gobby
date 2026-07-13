@@ -128,6 +128,53 @@ async def test_project_scoped_pipeline_is_retrievable_and_runnable_from_context(
 
 
 @pytest.mark.asyncio
+async def test_project_scoped_pipeline_is_listed_and_shadows_global(
+    temp_db: HubDatabase,
+) -> None:
+    _create_project(temp_db)
+    definitions = LocalWorkflowDefinitionManager(temp_db)
+    definitions.create(
+        name="scoped-pipeline",
+        workflow_type="pipeline",
+        definition_json=json.dumps(
+            {
+                "name": "scoped-pipeline",
+                "type": "pipeline",
+                "description": "global pipeline",
+                "steps": [{"id": "global", "exec": "echo global"}],
+            }
+        ),
+    )
+    project_row = definitions.create(
+        name="scoped-pipeline",
+        workflow_type="pipeline",
+        project_id=PROJECT_ID,
+        definition_json=json.dumps(
+            {
+                "name": "scoped-pipeline",
+                "type": "pipeline",
+                "description": "project pipeline",
+                "steps": [{"id": "project", "exec": "echo project"}],
+            }
+        ),
+    )
+    registry = create_workflows_registry(db=temp_db, loader=WorkflowLoader(db=temp_db))
+
+    with _project_tool_context():
+        result = await registry.call("list_pipelines", {})
+
+    assert result["success"] is True
+    assert result["count"] == 1
+    pipeline = result["pipelines"][0]
+    assert pipeline["name"] == "scoped-pipeline"
+    assert pipeline["description"] == "project pipeline"
+    assert pipeline["is_project"] is True
+    assert pipeline["path"].endswith(project_row.id)
+    assert pipeline["priority"] == 100
+    assert pipeline["step_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_list_workflows_returns_only_visible_workflow_kinds(
     temp_db: HubDatabase,
 ) -> None:

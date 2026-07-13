@@ -153,10 +153,10 @@ def register_pipeline_tools(
         name="list_pipelines",
         description="List available pipeline definitions from project and global directories.",
     )
-    async def _list_pipelines(
-        project_path: str | None = None,
-    ) -> dict[str, Any]:
-        return await list_pipelines(_loader, project_path)
+    async def _list_pipelines() -> dict[str, Any]:
+        project_ctx = get_project_context()
+        project_id = project_ctx.get("id") if project_ctx else None
+        return await list_pipelines(_loader, project_id)
 
     @registry.tool(
         name="get_pipeline",

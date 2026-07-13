@@ -3,6 +3,8 @@
 TDD tests for the pipelines MCP registry and tools.
 """
 
+from collections.abc import Iterator
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -13,10 +15,11 @@ from gobby.workflows.definitions import PipelineDefinition, PipelineStep
 from gobby.workflows.loader_cache import DiscoveredWorkflow
 
 pytestmark = pytest.mark.unit
+TEST_TIME = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 @pytest.fixture(autouse=True)
-def _session_and_project_context():
+def _session_and_project_context() -> Iterator[None]:
     """Provide session and project context for all pipeline tests."""
     token = set_project_context(
         {
@@ -60,8 +63,8 @@ def mock_executor(mock_execution_manager: MagicMock) -> MagicMock:
         pipeline_name="default",
         project_id="",
         status=ExecutionStatus.PENDING,
-        created_at="2026-01-01T00:00:00Z",
-        updated_at="2026-01-01T00:00:00Z",
+        created_at=TEST_TIME,
+        updated_at=TEST_TIME,
     )
     return executor
 
@@ -70,7 +73,7 @@ class TestCreatePipelinesRegistry:
     """Tests for create_pipelines_registry function."""
 
     def test_returns_internal_tool_registry(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that create_pipelines_registry returns an InternalToolRegistry."""
         from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -85,7 +88,7 @@ class TestCreatePipelinesRegistry:
         assert isinstance(registry, InternalToolRegistry)
 
     def test_registry_has_list_pipelines_tool(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that list_pipelines tool is registered."""
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
@@ -101,7 +104,9 @@ class TestCreatePipelinesRegistry:
 
         assert "list_pipelines" in tool_names
 
-    def test_registry_name(self, mock_loader, mock_executor, mock_execution_manager) -> None:
+    def test_registry_name(
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
+    ) -> None:
         """Test that registry has correct name."""
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
@@ -114,7 +119,7 @@ class TestCreatePipelinesRegistry:
         assert registry.name == "gobby-workflows"
 
     def test_registry_has_list_pipeline_executions_tool(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that list_pipeline_executions tool is registered."""
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
@@ -130,7 +135,7 @@ class TestCreatePipelinesRegistry:
         assert "list_pipeline_executions" in tool_names
 
     def test_registry_has_search_pipeline_executions_tool(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that search_pipeline_executions tool is registered."""
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
@@ -151,7 +156,7 @@ class TestListPipelinesTool:
 
     @pytest.mark.asyncio
     async def test_list_pipelines_calls_discover(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that list_pipelines calls loader.discover_pipeline_workflows()."""
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
@@ -176,7 +181,7 @@ class TestListPipelinesTool:
 
     @pytest.mark.asyncio
     async def test_list_pipelines_returns_pipeline_info(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that list_pipelines returns pipeline names and descriptions."""
         from pathlib import Path
@@ -235,7 +240,7 @@ class TestListPipelinesTool:
 
     @pytest.mark.asyncio
     async def test_list_pipelines_includes_is_project(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that list_pipelines indicates if pipeline is project-specific."""
         from pathlib import Path
@@ -268,10 +273,10 @@ class TestListPipelinesTool:
         assert result["pipelines"][0]["is_project"] is True
 
     @pytest.mark.asyncio
-    async def test_list_pipelines_with_project_path(
-        self, mock_loader, mock_executor, mock_execution_manager
+    async def test_list_pipelines_uses_project_id_from_context(
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
-        """Test that list_pipelines passes project_path to discover."""
+        """Test that list_pipelines passes the ambient project UUID to discovery."""
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
         mock_loader.discover_pipeline_workflows.return_value = []
@@ -285,15 +290,17 @@ class TestListPipelinesTool:
         # Reset mock after registry creation (which also calls discover for dynamic tools)
         mock_loader.discover_pipeline_workflows.reset_mock()
 
-        await registry.call("list_pipelines", {"project_path": "/my/project"})
+        await registry.call("list_pipelines", {})
 
-        mock_loader.discover_pipeline_workflows.assert_called_once_with(project_path="/my/project")
+        mock_loader.discover_pipeline_workflows.assert_called_once_with(
+            "11111111-1111-4111-8111-111111110001"
+        )
         assert mock_loader.discover_pipeline_workflows.call_count == 1
         assert mock_loader.discover_pipeline_workflows.call_args is not None
 
     @pytest.mark.asyncio
     async def test_list_pipelines_empty_result(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that list_pipelines handles no pipelines found."""
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
@@ -316,7 +323,7 @@ class TestRunPipelineTool:
     """Tests for the run_pipeline MCP tool."""
 
     def test_registry_has_run_pipeline_tool(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that run_pipeline tool is registered."""
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
@@ -334,7 +341,7 @@ class TestRunPipelineTool:
 
     @pytest.mark.asyncio
     async def test_run_pipeline_loads_pipeline(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that run_pipeline loads the pipeline via loader."""
         from unittest.mock import AsyncMock
@@ -354,8 +361,8 @@ class TestRunPipelineTool:
             pipeline_name="deploy",
             project_id="11111111-1111-4111-8111-111111110001",
             status=ExecutionStatus.COMPLETED,
-            created_at="2026-01-01T00:00:00Z",
-            updated_at="2026-01-01T00:00:00Z",
+            created_at=TEST_TIME,
+            updated_at=TEST_TIME,
             outputs_json='{"result": "success"}',
         )
         mock_executor.execute = AsyncMock(return_value=execution)
@@ -379,7 +386,7 @@ class TestRunPipelineTool:
 
     @pytest.mark.asyncio
     async def test_run_pipeline_calls_executor(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that run_pipeline creates execution and launches background task."""
         from unittest.mock import AsyncMock
@@ -412,7 +419,7 @@ class TestRunPipelineTool:
 
     @pytest.mark.asyncio
     async def test_run_pipeline_returns_running_status(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that run_pipeline returns running status immediately (fire-and-forget)."""
         from unittest.mock import AsyncMock
@@ -444,7 +451,7 @@ class TestRunPipelineTool:
 
     @pytest.mark.asyncio
     async def test_run_pipeline_returns_running_even_if_approval_needed(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that run_pipeline returns running status even when approval will be required.
 
@@ -489,7 +496,7 @@ class TestRunPipelineTool:
 
     @pytest.mark.asyncio
     async def test_run_pipeline_not_found(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that run_pipeline returns error when pipeline not found."""
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
@@ -511,7 +518,7 @@ class TestRunPipelineTool:
         assert "not found" in result["error"].lower()
 
     async def test_run_pipeline_disabled(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Disabled pipelines fail before an execution record is created."""
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
@@ -537,7 +544,7 @@ class TestRunPipelineTool:
 
     @pytest.mark.asyncio
     async def test_run_pipeline_execution_error_returns_running(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that run_pipeline returns running even if executor will fail.
 
@@ -573,7 +580,7 @@ class TestRunPipelineTool:
 
     @pytest.mark.asyncio
     async def test_run_pipeline_no_executor_configured(
-        self, mock_loader, mock_execution_manager
+        self, mock_loader: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that run_pipeline returns error when no executor configured."""
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
@@ -597,7 +604,7 @@ class TestApprovePipelineTool:
     """Tests for the approve_pipeline MCP tool."""
 
     def test_registry_has_approve_pipeline_tool(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that approve_pipeline tool is registered."""
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
@@ -615,7 +622,7 @@ class TestApprovePipelineTool:
 
     @pytest.mark.asyncio
     async def test_approve_pipeline_calls_executor_approve(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that approve_pipeline calls executor.approve()."""
         from unittest.mock import AsyncMock
@@ -628,8 +635,8 @@ class TestApprovePipelineTool:
             pipeline_name="deploy",
             project_id="11111111-1111-4111-8111-111111110001",
             status=ExecutionStatus.COMPLETED,
-            created_at="2026-01-01T00:00:00Z",
-            updated_at="2026-01-01T00:00:00Z",
+            created_at=TEST_TIME,
+            updated_at=TEST_TIME,
         )
         mock_executor.approve = AsyncMock(return_value=execution)
 
@@ -653,7 +660,7 @@ class TestApprovePipelineTool:
 
     @pytest.mark.asyncio
     async def test_approve_pipeline_returns_execution_status(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that approve_pipeline returns execution status after approval."""
         from unittest.mock import AsyncMock
@@ -666,8 +673,8 @@ class TestApprovePipelineTool:
             pipeline_name="deploy",
             project_id="11111111-1111-4111-8111-111111110001",
             status=ExecutionStatus.COMPLETED,
-            created_at="2026-01-01T00:00:00Z",
-            updated_at="2026-01-01T00:00:00Z",
+            created_at=TEST_TIME,
+            updated_at=TEST_TIME,
             outputs_json='{"result": "deployed"}',
         )
         mock_executor.approve = AsyncMock(return_value=execution)
@@ -689,7 +696,7 @@ class TestApprovePipelineTool:
 
     @pytest.mark.asyncio
     async def test_approve_pipeline_invalid_token(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that approve_pipeline returns error for invalid token."""
         from unittest.mock import AsyncMock
@@ -713,7 +720,9 @@ class TestApprovePipelineTool:
         assert "invalid" in result["error"].lower() or "token" in result["error"].lower()
 
     @pytest.mark.asyncio
-    async def test_approve_pipeline_no_executor(self, mock_loader, mock_execution_manager) -> None:
+    async def test_approve_pipeline_no_executor(
+        self, mock_loader: MagicMock, mock_execution_manager: MagicMock
+    ) -> None:
         """Test that approve_pipeline returns error when no executor configured."""
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
@@ -736,7 +745,7 @@ class TestRejectPipelineTool:
     """Tests for the reject_pipeline MCP tool."""
 
     def test_registry_has_reject_pipeline_tool(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that reject_pipeline tool is registered."""
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
@@ -754,7 +763,7 @@ class TestRejectPipelineTool:
 
     @pytest.mark.asyncio
     async def test_reject_pipeline_calls_executor_reject(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that reject_pipeline calls executor.reject()."""
         from unittest.mock import AsyncMock
@@ -767,8 +776,8 @@ class TestRejectPipelineTool:
             pipeline_name="deploy",
             project_id="11111111-1111-4111-8111-111111110001",
             status=ExecutionStatus.CANCELLED,
-            created_at="2026-01-01T00:00:00Z",
-            updated_at="2026-01-01T00:00:00Z",
+            created_at=TEST_TIME,
+            updated_at=TEST_TIME,
         )
         mock_executor.reject = AsyncMock(return_value=execution)
 
@@ -792,7 +801,7 @@ class TestRejectPipelineTool:
 
     @pytest.mark.asyncio
     async def test_reject_pipeline_returns_cancelled_status(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that reject_pipeline returns cancelled status."""
         from unittest.mock import AsyncMock
@@ -805,8 +814,8 @@ class TestRejectPipelineTool:
             pipeline_name="deploy",
             project_id="11111111-1111-4111-8111-111111110001",
             status=ExecutionStatus.CANCELLED,
-            created_at="2026-01-01T00:00:00Z",
-            updated_at="2026-01-01T00:00:00Z",
+            created_at=TEST_TIME,
+            updated_at=TEST_TIME,
         )
         mock_executor.reject = AsyncMock(return_value=execution)
 
@@ -827,7 +836,7 @@ class TestRejectPipelineTool:
 
     @pytest.mark.asyncio
     async def test_reject_pipeline_invalid_token(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that reject_pipeline returns error for invalid token."""
         from unittest.mock import AsyncMock
@@ -851,7 +860,9 @@ class TestRejectPipelineTool:
         assert "invalid" in result["error"].lower() or "token" in result["error"].lower()
 
     @pytest.mark.asyncio
-    async def test_reject_pipeline_no_executor(self, mock_loader, mock_execution_manager) -> None:
+    async def test_reject_pipeline_no_executor(
+        self, mock_loader: MagicMock, mock_execution_manager: MagicMock
+    ) -> None:
         """Test that reject_pipeline returns error when no executor configured."""
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
@@ -874,7 +885,7 @@ class TestGetPipelineStatusTool:
     """Tests for the get_pipeline_status MCP tool."""
 
     def test_registry_has_get_pipeline_status_tool(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that get_pipeline_status tool is registered."""
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
@@ -892,7 +903,7 @@ class TestGetPipelineStatusTool:
 
     @pytest.mark.asyncio
     async def test_get_pipeline_status_returns_execution_details(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that get_pipeline_status returns execution with all fields."""
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
@@ -903,8 +914,8 @@ class TestGetPipelineStatusTool:
             pipeline_name="deploy",
             project_id="11111111-1111-4111-8111-111111110001",
             status=ExecutionStatus.RUNNING,
-            created_at="2026-01-01T00:00:00Z",
-            updated_at="2026-01-01T00:01:00Z",
+            created_at=TEST_TIME,
+            updated_at=TEST_TIME,
             inputs_json='{"env": "prod"}',
         )
         mock_execution_manager.get_execution.return_value = execution
@@ -929,7 +940,7 @@ class TestGetPipelineStatusTool:
 
     @pytest.mark.asyncio
     async def test_get_pipeline_status_includes_step_executions(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that get_pipeline_status includes step_executions list."""
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
@@ -945,8 +956,8 @@ class TestGetPipelineStatusTool:
             pipeline_name="deploy",
             project_id="11111111-1111-4111-8111-111111110001",
             status=ExecutionStatus.RUNNING,
-            created_at="2026-01-01T00:00:00Z",
-            updated_at="2026-01-01T00:01:00Z",
+            created_at=TEST_TIME,
+            updated_at=TEST_TIME,
         )
 
         step1 = StepExecution(
@@ -987,7 +998,7 @@ class TestGetPipelineStatusTool:
 
     @pytest.mark.asyncio
     async def test_get_pipeline_status_not_found(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that get_pipeline_status returns error when not found."""
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
@@ -1010,7 +1021,7 @@ class TestGetPipelineStatusTool:
 
     @pytest.mark.asyncio
     async def test_get_pipeline_status_no_execution_manager(
-        self, mock_loader, mock_executor
+        self, mock_loader: MagicMock, mock_executor: MagicMock
     ) -> None:
         """Test that get_pipeline_status returns error when no manager configured."""
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
@@ -1035,7 +1046,7 @@ class TestDynamicPipelineTools:
 
     @pytest.mark.asyncio
     async def test_expose_as_tool_creates_dynamic_tool(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that pipelines with expose_as_tool=True are exposed as tools."""
         from pathlib import Path
@@ -1075,7 +1086,7 @@ class TestDynamicPipelineTools:
 
     @pytest.mark.asyncio
     async def test_expose_as_tool_false_not_exposed(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that pipelines with expose_as_tool=False are NOT exposed as tools."""
         from pathlib import Path
@@ -1113,7 +1124,7 @@ class TestDynamicPipelineTools:
         assert "pipeline:internal-pipeline" not in tool_names
 
     async def test_disabled_pipeline_not_exposed(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """A disabled exposed pipeline must not remain callable as a dynamic tool."""
         from pathlib import Path
@@ -1147,7 +1158,7 @@ class TestDynamicPipelineTools:
 
     @pytest.mark.asyncio
     async def test_dynamic_tool_has_correct_description(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that dynamic pipeline tools have the pipeline's description."""
         from pathlib import Path
@@ -1186,7 +1197,7 @@ class TestDynamicPipelineTools:
 
     @pytest.mark.asyncio
     async def test_dynamic_tool_includes_input_schema(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that dynamic pipeline tools include input schema from pipeline inputs."""
         from pathlib import Path
@@ -1233,7 +1244,7 @@ class TestDynamicPipelineTools:
 
     @pytest.mark.asyncio
     async def test_dynamic_tool_executes_pipeline(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that calling a dynamic pipeline tool executes the pipeline."""
         from pathlib import Path
@@ -1268,8 +1279,8 @@ class TestDynamicPipelineTools:
             pipeline_name="run-tests",
             project_id="",
             status=ExecutionStatus.COMPLETED,
-            created_at="2026-01-01T00:00:00Z",
-            updated_at="2026-01-01T00:00:00Z",
+            created_at=TEST_TIME,
+            updated_at=TEST_TIME,
             outputs_json='{"tests_passed": 42}',
         )
         mock_executor.execute = AsyncMock(return_value=execution)
@@ -1291,7 +1302,7 @@ class TestDynamicPipelineTools:
 
     @pytest.mark.asyncio
     async def test_multiple_exposed_pipelines(
-        self, mock_loader, mock_executor, mock_execution_manager
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
         """Test that multiple pipelines with expose_as_tool=True all get tools."""
         from pathlib import Path
@@ -1360,7 +1371,9 @@ class TestDynamicPipelineTools:
 class TestWaitForCompletionRemoved:
     """wait_for_completion is no longer registered on gobby-workflows."""
 
-    def test_wait_not_registered(self, mock_loader, mock_executor, mock_execution_manager) -> None:
+    def test_wait_not_registered(
+        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
+    ) -> None:
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
         registry = create_workflows_registry(
