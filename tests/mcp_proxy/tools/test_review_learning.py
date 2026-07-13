@@ -1,9 +1,20 @@
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
-from gobby.mcp_proxy.tools.review_learning import create_review_learning_registry
-from tests.review_learning.conftest import FakeDB, FakeMemoryManager, FakeTaskManager
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.review_learning import (
+    create_review_learning_registry as _create_review_learning_registry,
+)
+from gobby.review_learning.promotion import PromotionTaskManager
+from gobby.review_learning.service import ReviewLearningMemoryManager
+from tests.review_learning.conftest import (
+    FakeDB,
+    FakeMemoryManager,
+    FakeTaskManager,
+)
 
 pytestmark = pytest.mark.unit
 SESSION_ID = "11111111-1111-1111-1111-111111111111"
@@ -34,6 +45,16 @@ LEGACY_SERVICE_CONFIG_LESSON = """# Review Lesson: Propagate service config-stor
 
 def _scoped_memory_manager(project_id: str = "_personal") -> FakeMemoryManager:
     return FakeMemoryManager(db=FakeDB(session_id=SESSION_ID, project_id=project_id))
+
+
+def create_review_learning_registry(
+    memory_manager: FakeMemoryManager,
+    task_manager: FakeTaskManager,
+) -> InternalToolRegistry:
+    return _create_review_learning_registry(
+        cast(ReviewLearningMemoryManager, memory_manager),
+        cast(PromotionTaskManager, task_manager),
+    )
 
 
 def test_create_review_learning_registry_registers_two_tools() -> None:

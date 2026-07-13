@@ -200,7 +200,7 @@ class FakeMemoryManager:
 
 
 class FakeTaskManager:
-    def __init__(self):
+    def __init__(self) -> None:
         self.tasks: list[FakeTask] = []
         self.created: list[dict[str, Any]] = []
         self.updated: list[dict[str, Any]] = []
