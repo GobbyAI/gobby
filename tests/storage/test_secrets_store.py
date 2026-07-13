@@ -18,6 +18,7 @@ import pytest
 from cryptography.fernet import Fernet
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.secret_names import SECRET_NAME_PATTERN
 from gobby.storage.secrets import (
     POSTURE_KEY_FILE,
     POSTURE_SCRYPT_PASSPHRASE,
@@ -534,6 +535,34 @@ class TestSecretStoreSet:
         assert row["encrypted_value"] != "super-secret-value"
         assert len(row["encrypted_value"]) > 0
 
+    @pytest.mark.parametrize("name", ["", "   ", "my-key", "my.key", "1leading"])
+    def test_set_rejects_names_that_cannot_be_referenced(
+        self,
+        store: SecretStore,
+        name: str,
+    ) -> None:
+        with pytest.raises(ValueError, match="Invalid secret name: must start"):
+            store.set(name, "value")
+
+    @pytest.mark.parametrize(
+        ("name", "normalized_name"),
+        [
+            ("API_KEY", "api_key"),
+            ("  _Private  ", "_private"),
+            ("name123", "name123"),
+        ],
+    )
+    def test_every_accepted_name_round_trips_through_reference(
+        self,
+        store: SecretStore,
+        name: str,
+        normalized_name: str,
+    ) -> None:
+        info = store.set(name, "stored-value")
+
+        assert info.name == normalized_name
+        assert store.resolve(f"$secret:{info.name}") == "stored-value"
+
 
 # =============================================================================
 # SecretStore.get
@@ -976,6 +1005,13 @@ class TestSecretRefPattern:
         m = SECRET_REF_PATTERN.search("prefix $secret:MY_KEY suffix")
         assert m is not None
         assert m.group(1) == "MY_KEY"
+
+    @pytest.mark.parametrize("name", ["API_KEY", "_private", "MyKey123", "1bad", "bad-name"])
+    def test_name_and_reference_patterns_share_one_grammar(self, name: str) -> None:
+        name_matches = SECRET_NAME_PATTERN.fullmatch(name) is not None
+        reference_matches = SECRET_REF_PATTERN.fullmatch(f"$secret:{name}") is not None
+
+        assert reference_matches is name_matches
 
 
 # =============================================================================

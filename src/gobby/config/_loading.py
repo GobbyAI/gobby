@@ -15,6 +15,7 @@ import yaml
 from gobby.config.embedding_keys import is_removed_embedding_config_store_key
 from gobby.config.voice_secrets import mask_voice_audio_api_keys
 from gobby.config.wiki_migration import migrate_legacy_wiki_roots
+from gobby.storage.secret_names import SECRET_REF_PATTERN
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
@@ -25,10 +26,6 @@ logger = logging.getLogger(__name__)
 # ${VAR} - simple substitution
 # ${VAR:-default} - with default value if VAR is unset or empty
 ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
-
-# Pattern for secret references (secrets-store-only, no env fallback):
-# $secret:NAME - resolved from encrypted secrets store
-SECRET_REF_PATTERN = re.compile(r"\$secret:([A-Za-z_][A-Za-z0-9_]*)")
 
 # Keys renamed/removed from DaemonConfig that may still exist in DB config_store
 _LEGACY_KEYS_TO_DROP = frozenset(

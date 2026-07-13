@@ -2,21 +2,20 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 from copy import deepcopy
 from typing import Any
+
+from gobby.storage.secret_names import SECRET_REF_PATTERN
 
 VOICE_AUDIO_BINDINGS_KEY = "voice.openai_compatible_audio"
 VOICE_AUDIO_API_KEY_PATH = f"{VOICE_AUDIO_BINDINGS_KEY}[].api_key"
 MASKED_VOICE_AUDIO_API_KEY = "********"
 
-_SECRET_REFERENCE_PATTERN = re.compile(r"\$secret:([A-Za-z_][A-Za-z0-9_]*)")
-
 
 def is_secret_reference(value: object) -> bool:
     """Return whether value is exactly one supported secret reference."""
-    return isinstance(value, str) and _SECRET_REFERENCE_PATTERN.fullmatch(value) is not None
+    return isinstance(value, str) and SECRET_REF_PATTERN.fullmatch(value) is not None
 
 
 def _bindings(config: dict[str, Any]) -> object | None:
@@ -137,7 +136,7 @@ def resolve_voice_audio_api_keys(
         value = binding.get("api_key")
         if not isinstance(value, str):
             continue
-        match = _SECRET_REFERENCE_PATTERN.fullmatch(value)
+        match = SECRET_REF_PATTERN.fullmatch(value)
         if match is None:
             continue
         resolved_value = secret_resolver(match.group(1))

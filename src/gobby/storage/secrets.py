@@ -27,12 +27,16 @@ from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 from gobby.paths import get_gobby_home
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.secret_names import (
+    SECRET_REF_PATTERN,
+    normalize_and_validate_secret_name,
+    normalize_secret_name,
+)
 from gobby.utils.datetime import datetime_to_required_iso, require_stored_datetime, utc_now
 from gobby.utils.machine_id import get_machine_id
 
 logger = logging.getLogger(__name__)
 
-SECRET_REF_PATTERN = re.compile(r"\$secret:([A-Za-z_][A-Za-z0-9_]*)")
 _SALT_FILENAME = ".secret_salt"
 _KEK_FILENAME = ".secret_kek"
 # Every file holding secret key material under ~/.gobby. Anything that
@@ -367,7 +371,7 @@ class SecretStore:
     @staticmethod
     def _normalize_name(name: str) -> str:
         """Normalize secret name to lowercase for case-insensitive matching."""
-        return name.strip().lower()
+        return normalize_secret_name(name)
 
     @classmethod
     def find_secret_references(cls, values: Iterable[Any]) -> set[str]:
@@ -689,7 +693,7 @@ class SecretStore:
         if category not in VALID_CATEGORIES:
             raise ValueError(f"Invalid category '{category}'. Must be one of: {VALID_CATEGORIES}")
 
-        name = self._normalize_name(name)
+        name = normalize_and_validate_secret_name(name)
         fernet = self._get_fernet()
         encrypted = fernet.encrypt(plaintext_value.encode("utf-8")).decode("utf-8")
         now = utc_now()
