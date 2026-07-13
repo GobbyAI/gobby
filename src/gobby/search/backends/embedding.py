@@ -13,6 +13,7 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 from gobby.ai.embeddings import EmbeddingService
+from gobby.search.similarity import cosine_similarity as _cosine_similarity
 
 if TYPE_CHECKING:
     from gobby.config.persistence import EmbeddingsConfig
@@ -265,9 +266,7 @@ def _rank_embeddings(
     similarities: list[tuple[str, float]] = []
     for item_id, item_embedding in zip(item_ids, normalized_embeddings, strict=True):
         if len(item_embedding) != len(normalized_query):
-            raise ValueError(
-                f"Vector length mismatch: {len(item_embedding)} != {len(normalized_query)}"
-            )
+            _cosine_similarity(item_embedding, normalized_query)
         similarity = sum(
             query_value * item_value
             for query_value, item_value in zip(normalized_query, item_embedding, strict=True)
