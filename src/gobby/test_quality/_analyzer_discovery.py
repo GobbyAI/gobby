@@ -15,6 +15,19 @@ from gobby.test_quality._analyzer_common import (
 )
 from gobby.test_quality.models import AuditWarning
 
+_EXCLUDED_DIRECTORY_NAMES = frozenset(
+    {
+        ".git",
+        ".mypy_cache",
+        ".venv",
+        "__pycache__",
+        "build",
+        "dist",
+        "node_modules",
+        "target",
+    }
+)
+
 
 def _discover_files(paths: Sequence[str | Path], *, root: Path) -> _DiscoveryResult:
     files: set[Path] = set()
@@ -30,13 +43,18 @@ def _discover_files(paths: Sequence[str | Path], *, root: Path) -> _DiscoveryRes
             warning = _unsupported_language_warning(path.resolve(), root)
             warnings[warning.path or str(path)] = warning
             continue
-        if path.is_dir():
-            for candidate in path.rglob("*"):
-                if _is_analyzable_file(candidate):
-                    files.add(candidate.resolve())
-                elif _is_unsupported_test_file(candidate):
-                    warning = _unsupported_language_warning(candidate.resolve(), root)
-                    warnings[warning.path or str(candidate)] = warning
+        if path.is_dir() and not _is_excluded_directory(path):
+            for directory, dirnames, filenames in path.walk():
+                dirnames[:] = [
+                    dirname for dirname in dirnames if dirname not in _EXCLUDED_DIRECTORY_NAMES
+                ]
+                for filename in filenames:
+                    candidate = directory / filename
+                    if _is_analyzable_file(candidate):
+                        files.add(candidate.resolve())
+                    elif _is_unsupported_test_file(candidate):
+                        warning = _unsupported_language_warning(candidate.resolve(), root)
+                        warnings[warning.path or str(candidate)] = warning
     return _DiscoveryResult(
         files=tuple(sorted(files)),
         warnings=tuple(warnings[key] for key in sorted(warnings)),
@@ -44,9 +62,9 @@ def _discover_files(paths: Sequence[str | Path], *, root: Path) -> _DiscoveryRes
 
 
 def _is_analyzable_file(path: Path) -> bool:
-    parts = set(path.parts)
-    if "__pycache__" in parts or ".venv" in parts or ".mypy_cache" in parts:
+    if _is_in_excluded_directory(path):
         return False
+    parts = set(path.parts)
     if path.suffix == _PYTHON_SUFFIX:
         return True
     if path.suffix in _SCRIPT_TEST_SUFFIXES:
@@ -57,7 +75,11 @@ def _is_analyzable_file(path: Path) -> bool:
 
 
 def _is_unsupported_test_file(path: Path) -> bool:
-    if not path.is_file() or path.suffix not in _UNSUPPORTED_TEST_LANGUAGE_SUFFIXES:
+    if (
+        _is_in_excluded_directory(path)
+        or not path.is_file()
+        or path.suffix not in _UNSUPPORTED_TEST_LANGUAGE_SUFFIXES
+    ):
         return False
     parts = set(path.parts)
     name = path.name.lower()
@@ -70,6 +92,14 @@ def _is_unsupported_test_file(path: Path) -> bool:
         or name.endswith("_test.go")
         or name.endswith("test.java")
     )
+
+
+def _is_in_excluded_directory(path: Path) -> bool:
+    return not _EXCLUDED_DIRECTORY_NAMES.isdisjoint(path.parent.parts)
+
+
+def _is_excluded_directory(path: Path) -> bool:
+    return path.name in _EXCLUDED_DIRECTORY_NAMES or _is_in_excluded_directory(path)
 
 
 def _unsupported_language_warning(path: Path, root: Path) -> AuditWarning:

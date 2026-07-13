@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -302,6 +303,87 @@ def test_supported_test_suffixes_are_analyzed_without_unsupported_warnings(
     assert report.files_scanned == 9
     assert report.tests_scanned == 9
     assert report.warnings == ()
+
+
+def test_discovery_prunes_excluded_directories_before_descent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    descended_into: list[str] = []
+
+    def walk(directory: Path) -> Iterator[tuple[Path, list[str], list[str]]]:
+        dirnames = ["node_modules", "target", "dist", "build", ".git", "ordinary"]
+        yield directory, dirnames, []
+        descended_into.extend(dirnames)
+
+    monkeypatch.setattr(Path, "walk", walk)
+
+    audit_paths([tests_dir], root=tmp_path)
+
+    assert descended_into == ["ordinary"]
+
+
+@pytest.mark.parametrize(
+    "directory_name",
+    [
+        ".git",
+        "build",
+        "dist",
+        "node_modules",
+        "target",
+    ],
+)
+def test_discovery_prunes_excluded_directory_components(
+    tmp_path: Path,
+    directory_name: str,
+) -> None:
+    tests_dir = tmp_path / "tests"
+    excluded_tests_dir = tests_dir / directory_name / "__tests__"
+    excluded_tests_dir.mkdir(parents=True)
+    (tests_dir / "test_visible.py").write_text(
+        "def test_visible():\n    assert 1 == 1\n",
+        encoding="utf-8",
+    )
+    (excluded_tests_dir / "test_hidden.py").write_text(
+        "def test_hidden():\n    pass\n",
+        encoding="utf-8",
+    )
+
+    report = audit_paths([tests_dir], root=tmp_path)
+
+    assert report.files_scanned == 1
+    assert report.tests_scanned == 1
+    assert report.issues == ()
+
+
+@pytest.mark.parametrize(
+    "file_name",
+    [
+        ".git.py",
+        "build.py",
+        "dist.py",
+        "node_modules.py",
+        "target.py",
+    ],
+)
+def test_discovery_keeps_files_named_like_excluded_directories(
+    tmp_path: Path,
+    file_name: str,
+) -> None:
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / file_name).write_text(
+        "def test_visible():\n    assert 1 == 1\n",
+        encoding="utf-8",
+    )
+
+    report = audit_paths([tests_dir], root=tmp_path)
+
+    assert report.files_scanned == 1
+    assert report.tests_scanned == 1
+    assert report.issues == ()
 
 
 def test_rust_assertion_like_checks_are_supported(tmp_path: Path) -> None:
