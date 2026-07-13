@@ -69,15 +69,15 @@ def _fixture_plan(name: str) -> Path:
 
 
 def test_public_api_exports_parser_contract() -> None:
-    assert PlanDocument
-    assert PlanSection
-    assert AcceptanceItem
-    assert Deferral
-    assert Kind
-    assert ArtifactKind
-    assert PlanParseError
-    assert parse_plan
-    assert PLAN_HEADING_REGEX
+    assert parser.PlanDocument is PlanDocument
+    assert parser.PlanSection is PlanSection
+    assert parser.AcceptanceItem is AcceptanceItem
+    assert parser.Deferral is Deferral
+    assert parser.Kind is Kind
+    assert parser.ArtifactKind is ArtifactKind
+    assert parser.PlanParseError is PlanParseError
+    assert parser.parse_plan is _real_parse_plan
+    assert parser.PLAN_HEADING_REGEX == PLAN_HEADING_REGEX
 
 
 def test_parses_task_13173_recovery() -> None:
