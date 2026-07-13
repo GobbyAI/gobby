@@ -141,10 +141,17 @@ class CronScheduler:
             run = self.storage.create_run(job.id, scheduler_owner=self._scheduler_owner)
             if run is None:
                 return None
-            updated = self._update_job_bookkeeping(
-                job,
-                next_run_at=next_run.isoformat() if next_run else None,
-            )
+            if job.schedule_type == "once" and next_run is None:
+                updated = self.storage.update_job(
+                    job.id,
+                    enabled=False,
+                    next_run_at=None,
+                )
+            else:
+                updated = self._update_job_bookkeeping(
+                    job,
+                    next_run_at=next_run.isoformat() if next_run else None,
+                )
             if updated is None:
                 raise RuntimeError(f"Cron job {job.id} disappeared during dispatch bookkeeping")
         return run

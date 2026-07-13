@@ -293,6 +293,47 @@ async def test_bookkeeping_failure_rolls_back_pending_run_on_repeated_heartbeats
 
 
 @pytest.mark.asyncio
+async def test_due_one_shot_dispatches_once_and_is_disabled(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+    config: CronConfig,
+) -> None:
+    """A consumed one-shot clears its schedule without violating job invariants."""
+    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    future = datetime.now(UTC) + timedelta(hours=1)
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="One shot",
+        schedule_type="once",
+        action_type="handler",
+        action_config={"handler": "test"},
+        run_at=future.isoformat(),
+    )
+    due_at = datetime.now(UTC) - timedelta(minutes=1)
+    cron_storage.update_job(
+        job.id,
+        run_at=due_at.isoformat(),
+        next_run_at=due_at.isoformat(),
+    )
+
+    await scheduler._check_due_jobs()
+    await wait_for_async_condition(
+        lambda: mock_executor.execute.await_count == 1,
+        description="one-shot cron dispatch",
+    )
+    await scheduler._check_due_jobs()
+
+    persisted_job = cron_storage.get_job(job.id)
+    runs = cron_storage.list_runs(job.id, limit=10)
+    assert persisted_job is not None
+    assert persisted_job.enabled is False
+    assert persisted_job.next_run_at is None
+    assert len(runs) == 1
+    assert runs[0].status == "completed"
+    mock_executor.execute.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_respects_max_concurrent(
     cron_storage: CronJobStorage,
     mock_executor: CronExecutor,
