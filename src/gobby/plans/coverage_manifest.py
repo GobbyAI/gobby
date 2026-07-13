@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Literal
 
 import yaml
@@ -93,25 +95,39 @@ def write_manifest(
     )
     coverage_root = root / ".gobby" / "plans" / "coverage"
 
-    _ensure_path_identity(path, identity, coverage_root)
+    _ensure_path_identity(
+        path,
+        identity,
+        coverage_root,
+        allow_invalid_target=regenerate,
+    )
     existing = _read_manifest(path)
     if existing is not None:
         existing_identity = _identity_from_manifest(existing)
         if existing_identity != identity:
-            raise PathIdentityMismatchError(
-                f"manifest path {path} already belongs to {existing_identity}"
+            if not regenerate or existing_identity is not None:
+                raise PathIdentityMismatchError(
+                    f"manifest path {path} already belongs to {existing_identity}"
+                )
+            _append_regenerate_audit(
+                coverage_root,
+                identity,
+                "invalid-manifest",
+                new_hash,
             )
-        existing_hash = _plan_hash_from_manifest(existing)
-        if existing_hash != new_hash:
-            if not regenerate:
-                raise IdentityCollisionError(existing_hash, new_hash)
-            _append_regenerate_audit(coverage_root, identity, existing_hash, new_hash)
+            existing = None
+        else:
+            existing_hash = _plan_hash_from_manifest(existing)
+            if existing_hash != new_hash:
+                if not regenerate:
+                    raise IdentityCollisionError(existing_hash, new_hash)
+                _append_regenerate_audit(coverage_root, identity, existing_hash, new_hash)
 
     payload = _manifest_payload(report)
     if regenerate and existing is not None:
         payload = _preserve_stable_rows(payload, existing)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    _atomic_write_text(path, yaml.safe_dump(payload, sort_keys=False))
     return path
 
 
@@ -128,13 +144,21 @@ def _sanitize(value: str, *, kind: ComponentKind = "component") -> str:
     return replaced
 
 
-def _ensure_path_identity(path: Path, identity: ManifestIdentity, coverage_root: Path) -> None:
+def _ensure_path_identity(
+    path: Path,
+    identity: ManifestIdentity,
+    coverage_root: Path,
+    *,
+    allow_invalid_target: bool = False,
+) -> None:
     for existing_path in _candidate_manifest_paths(path, coverage_root):
         existing = _read_manifest(existing_path)
         existing_identity = _identity_from_manifest(existing) if existing is not None else None
         if existing_identity == identity:
             continue
         if existing_path == path:
+            if allow_invalid_target and existing_identity is None:
+                continue
             raise PathIdentityMismatchError(
                 f"manifest path {path} already belongs to {existing_identity}"
             )
@@ -190,12 +214,36 @@ def _relative_parts(path: Path, root: Path) -> tuple[str, ...] | None:
 
 
 def _read_manifest(path: Path) -> Mapping[str, object] | None:
-    if not path.exists():
-        return None
-    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    try:
+        if not path.exists():
+            return None
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
     if isinstance(raw, Mapping):
         return raw
     return {}
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    temp_path: Path | None = None
+    try:
+        with NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+            temp_file.write(content)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+        os.replace(temp_path, path)
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
 
 
 def _identity_from_manifest(raw: Mapping[str, object]) -> ManifestIdentity | None:

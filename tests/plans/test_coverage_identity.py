@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 import yaml
 
+import gobby.plans.coverage_manifest as coverage_manifest_module
 from gobby.plans.coverage import (
     CoverageHeader,
     CoverageReport,
@@ -92,6 +94,91 @@ def test_regenerate_overwrites_and_audits(tmp_path: Path) -> None:
     lines = log.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
     assert "project #1 plan old -> new" in lines[0]
+
+
+def test_unrelated_malformed_manifest_does_not_block_write(tmp_path: Path) -> None:
+    malformed = (
+        tmp_path
+        / ".gobby"
+        / "plans"
+        / "coverage"
+        / "unrelated-project"
+        / "2"
+        / "broken.coverage.yaml"
+    )
+    malformed.parent.mkdir(parents=True)
+    malformed.write_text("header: [", encoding="utf-8")
+
+    path = write_manifest(_report(), tmp_path)
+
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert raw["header"]["plan_id"] == "plan"
+    assert malformed.read_text(encoding="utf-8") == "header: ["
+
+
+@pytest.mark.parametrize(
+    "invalid_content",
+    ["rows: []\n", "header: ["],
+    ids=["headerless", "corrupt"],
+)
+def test_regenerate_recovers_invalid_own_manifest(tmp_path: Path, invalid_content: str) -> None:
+    path = coverage_manifest_path(
+        tmp_path,
+        project_id="project",
+        root_task_ref="#1",
+        plan_id="plan",
+    )
+    path.parent.mkdir(parents=True)
+    path.write_text(invalid_content, encoding="utf-8")
+
+    result = write_manifest(_report(), tmp_path, regenerate=True)
+
+    assert result == path
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert raw["header"]["project_id"] == "project"
+    assert raw["header"]["root_task_ref"] == "#1"
+    assert raw["header"]["plan_id"] == "plan"
+    audit = tmp_path / ".gobby" / "plans" / "coverage" / ".regenerate.log"
+    assert "project #1 plan invalid-manifest -> hash" in audit.read_text(encoding="utf-8")
+
+
+def test_invalid_own_manifest_requires_regenerate(tmp_path: Path) -> None:
+    path = coverage_manifest_path(
+        tmp_path,
+        project_id="project",
+        root_task_ref="#1",
+        plan_id="plan",
+    )
+    path.parent.mkdir(parents=True)
+    path.write_text("rows: []\n", encoding="utf-8")
+
+    with pytest.raises(PathIdentityMismatchError):
+        write_manifest(_report(), tmp_path)
+
+
+def test_manifest_write_uses_same_directory_temp_and_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    replace_calls: list[tuple[Path, Path]] = []
+    real_replace = os.replace
+
+    def track_replace(
+        source: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        target: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+    ) -> None:
+        replace_calls.append((Path(source), Path(target)))
+        real_replace(source, target)
+
+    monkeypatch.setattr(coverage_manifest_module.os, "replace", track_replace)
+
+    path = write_manifest(_report(), tmp_path)
+
+    assert len(replace_calls) == 1
+    temp_path, target_path = replace_calls[0]
+    assert target_path == path
+    assert temp_path != path
+    assert temp_path.parent == path.parent
+    assert not temp_path.exists()
 
 
 def test_regenerate_preserves_stable_row_decisions(tmp_path: Path) -> None:
