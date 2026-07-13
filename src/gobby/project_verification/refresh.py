@@ -19,7 +19,7 @@ from gobby.project_verification.candidates import (
     select_best_candidates,
     verification_dict_from_candidates,
 )
-from gobby.project_verification.evidence import collect_evidence
+from gobby.project_verification.evidence import EvidenceBundle, collect_evidence
 from gobby.project_verification.synthesis import RejectedCommand, synthesize_verification_commands
 
 AIMode = Literal["auto", "on", "off"]
@@ -28,6 +28,10 @@ logger = logging.getLogger(__name__)
 
 class ProjectVerificationAIError(RuntimeError):
     """AI synthesis was required but did not produce usable commands."""
+
+
+class ProjectVerificationReadError(RuntimeError):
+    """Existing project metadata could not be read safely for an update."""
 
 
 @dataclass
@@ -42,6 +46,7 @@ class RefreshResult:
     selected: dict[str, CommandCandidate]
     changed: bool
     diff: str
+    warnings: list[str] = field(default_factory=list)
     written: bool = False
     ai_mode: AIMode = "off"
     ai_used: bool = False
@@ -55,6 +60,7 @@ class RefreshResult:
             "project_json": str(self.project_json_path),
             "changed": self.changed,
             "written": self.written,
+            "warnings": list(self.warnings),
             "ai": {
                 "mode": self.ai_mode,
                 "used": self.ai_used,
@@ -71,6 +77,7 @@ class RefreshResult:
 def refresh_project_verification_deterministic(root: Path, *, fix: bool = False) -> RefreshResult:
     """Refresh using deterministic evidence only."""
     bundle = collect_evidence(root)
+    _require_intact_project_json_for_fix(bundle, fix=fix)
     candidates = generate_candidates(bundle)
     selected = select_best_candidates(candidates)
     after = verification_dict_from_candidates(selected)
@@ -81,6 +88,7 @@ def refresh_project_verification_deterministic(root: Path, *, fix: bool = False)
         candidates=candidates,
         selected=selected,
         ai_mode="off",
+        warnings=bundle.warnings,
     )
     if fix and result.changed:
         _write_verification(result.project_json_path, after)
@@ -98,6 +106,7 @@ async def refresh_project_verification(
 ) -> RefreshResult:
     """Refresh verification commands with optional AI synthesis."""
     bundle = collect_evidence(root)
+    _require_intact_project_json_for_fix(bundle, fix=fix)
     candidates = generate_candidates(bundle)
     selected = select_best_candidates(candidates)
     ai_error: str | None = None
@@ -146,6 +155,7 @@ async def refresh_project_verification(
         ai_used=ai_used,
         ai_error=ai_error,
         ai_rejected=rejected,
+        warnings=bundle.warnings,
     )
     if fix and result.changed:
         _write_verification(result.project_json_path, after)
@@ -161,6 +171,7 @@ def _build_result(
     candidates: list[CommandCandidate],
     selected: dict[str, CommandCandidate],
     ai_mode: AIMode,
+    warnings: list[str],
     ai_used: bool = False,
     ai_error: str | None = None,
     ai_rejected: list[RejectedCommand] | None = None,
@@ -176,11 +187,19 @@ def _build_result(
         selected=selected,
         changed=normalized_before != normalized_after,
         diff=_verification_diff(normalized_before, normalized_after),
+        warnings=list(warnings),
         ai_mode=ai_mode,
         ai_used=ai_used,
         ai_error=ai_error,
         ai_rejected=ai_rejected or [],
     )
+
+
+def _require_intact_project_json_for_fix(bundle: EvidenceBundle, *, fix: bool) -> None:
+    if not fix or bundle.existing_project_json_intact:
+        return
+    detail = bundle.warnings[0] if bundle.warnings else "Existing project metadata is unreadable."
+    raise ProjectVerificationReadError(f"Refusing to update {bundle.project_json_path}: {detail}")
 
 
 def _write_verification(project_json_path: Path, verification: dict[str, Any]) -> None:

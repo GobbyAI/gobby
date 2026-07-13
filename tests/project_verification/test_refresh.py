@@ -17,8 +17,15 @@ from gobby.project_verification.candidates import (
     select_best_candidates,
     verification_dict_from_candidates,
 )
-from gobby.project_verification.evidence import _split_run_commands, collect_evidence
-from gobby.project_verification.refresh import refresh_project_verification_deterministic
+from gobby.project_verification.evidence import (
+    MAX_FILE_BYTES,
+    _split_run_commands,
+    collect_evidence,
+)
+from gobby.project_verification.refresh import (
+    ProjectVerificationReadError,
+    refresh_project_verification_deterministic,
+)
 from gobby.project_verification.synthesis import synthesize_verification_commands
 
 pytestmark = [pytest.mark.unit]
@@ -364,3 +371,46 @@ def test_hostile_ci_command_is_not_persisted(tmp_path: Path) -> None:
     assert result.written
     assert persisted["verification"]["unit_tests"] == result.after["unit_tests"]
     assert "/tmp/pwn" not in persisted["verification"]["unit_tests"]
+
+
+def test_oversized_structured_evidence_is_skipped_with_warnings(tmp_path: Path) -> None:
+    paths = [
+        tmp_path / "pyproject.toml",
+        tmp_path / "package.json",
+        tmp_path / "Taskfile.yml",
+        tmp_path / ".github" / "workflows" / "ci.yml",
+    ]
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x" * (MAX_FILE_BYTES + 1), encoding="utf-8")
+
+    bundle = collect_evidence(tmp_path)
+
+    assert len(bundle.warnings) == len(paths)
+    for path in paths:
+        relative_path = path.relative_to(tmp_path).as_posix()
+        assert any(relative_path in warning for warning in bundle.warnings)
+    assert all("exceeds MAX_FILE_BYTES" in warning for warning in bundle.warnings)
+    assert bundle.python is None
+    assert bundle.packages == []
+
+
+def test_fix_refuses_oversized_project_json_without_losing_user_commands(
+    tmp_path: Path,
+) -> None:
+    command = "uv run pytest tests/custom -q"
+    project_json = write_project_json(tmp_path, {"unit_tests": command})
+    payload = json.loads(project_json.read_text(encoding="utf-8"))
+    payload["large_user_config"] = "x" * (70 * 1024)
+    project_json.write_text(json.dumps(payload), encoding="utf-8")
+    original = project_json.read_bytes()
+
+    preview = refresh_project_verification_deterministic(tmp_path)
+
+    assert preview.warnings
+    assert "exceeds MAX_FILE_BYTES" in preview.warnings[0]
+    with pytest.raises(ProjectVerificationReadError, match="Refusing to update"):
+        refresh_project_verification_deterministic(tmp_path, fix=True)
+    assert project_json.read_bytes() == original
+    persisted = json.loads(project_json.read_text(encoding="utf-8"))
+    assert persisted["verification"]["unit_tests"] == command

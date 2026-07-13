@@ -129,3 +129,23 @@ def test_refresh_verification_uninitialized_path_has_init_hint(
 
     assert result.exit_code == 1
     assert f"gobby init -C {tmp_path}" in result.output
+
+
+def test_refresh_verification_fix_reports_oversized_project_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    write_project(tmp_path, {"unit_tests": "pytest tests/custom"})
+    project_json = tmp_path / ".gobby" / "project.json"
+    payload = json.loads(project_json.read_text(encoding="utf-8"))
+    payload["large_user_config"] = "x" * (70 * 1024)
+    project_json.write_text(json.dumps(payload), encoding="utf-8")
+    original = project_json.read_bytes()
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(projects, ["refresh-verification", "--ai", "off", "--fix"])
+
+    assert result.exit_code == 1
+    assert "Refusing to update" in result.output
+    assert "exceeds MAX_FILE_BYTES" in result.output
+    assert project_json.read_bytes() == original

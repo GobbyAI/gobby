@@ -112,6 +112,8 @@ class EvidenceBundle:
 
     root: Path
     existing_verification: dict[str, Any] = field(default_factory=dict)
+    existing_project_json_intact: bool = True
+    warnings: list[str] = field(default_factory=list)
     items: list[EvidenceItem] = field(default_factory=list)
     python: PythonEvidence | None = None
     packages: list[PackageScripts] = field(default_factory=list)
@@ -129,6 +131,7 @@ class EvidenceBundle:
         return {
             "project_root_name": self.root.name,
             "existing_verification": self.existing_verification,
+            "warnings": list(self.warnings),
             "items": [item.to_prompt_dict() for item in self.items],
             "manifests": {
                 "python": asdict(self.python) if self.python else None,
@@ -158,9 +161,19 @@ def _collect_existing_project_json(bundle: EvidenceBundle) -> None:
     project_file = bundle.project_json_path
     if not project_file.exists():
         return
+    text = _read_structured_text(bundle, project_file)
+    if text is None:
+        bundle.existing_project_json_intact = False
+        return
     try:
-        data = json.loads(_read_text(project_file))
-    except (json.JSONDecodeError, OSError):
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        bundle.existing_project_json_intact = False
+        _warn_structured_skip(bundle, project_file, f"invalid JSON ({exc})")
+        return
+    if not isinstance(data, dict):
+        bundle.existing_project_json_intact = False
+        _warn_structured_skip(bundle, project_file, "top-level JSON value is not an object")
         return
     verification = data.get("verification")
     if not isinstance(verification, dict):
@@ -197,9 +210,13 @@ def _collect_pyproject(bundle: EvidenceBundle) -> None:
     path = bundle.root / "pyproject.toml"
     if not path.exists():
         return
+    text = _read_structured_text(bundle, path)
+    if text is None:
+        return
     try:
-        data = tomllib.loads(_read_text(path))
-    except (tomllib.TOMLDecodeError, OSError):
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        _warn_structured_skip(bundle, path, f"invalid TOML ({exc})")
         return
     tool = data.get("tool", {})
     if not isinstance(tool, dict):
@@ -229,9 +246,16 @@ def _collect_pyproject(bundle: EvidenceBundle) -> None:
 def _collect_package_jsons(bundle: EvidenceBundle) -> None:
     for package_dir, subdir in _find_frontend_dirs(bundle.root):
         path = package_dir / "package.json"
+        text = _read_structured_text(bundle, path)
+        if text is None:
+            continue
         try:
-            data = json.loads(_read_text(path))
-        except (json.JSONDecodeError, OSError):
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            _warn_structured_skip(bundle, path, f"invalid JSON ({exc})")
+            continue
+        if not isinstance(data, dict):
+            _warn_structured_skip(bundle, path, "top-level JSON value is not an object")
             continue
         scripts = data.get("scripts", {})
         if not isinstance(scripts, dict):
@@ -283,9 +307,13 @@ def _collect_ci_commands(bundle: EvidenceBundle) -> None:
     for path in sorted((*workflows_dir.glob("*.yml"), *workflows_dir.glob("*.yaml"))):
         if count >= MAX_CI_COMMANDS:
             return
+        text = _read_structured_text(bundle, path)
+        if text is None:
+            continue
         try:
-            data = yaml.safe_load(_read_text(path)) or {}
-        except (OSError, yaml.YAMLError):
+            data = yaml.safe_load(text) or {}
+        except yaml.YAMLError as exc:
+            _warn_structured_skip(bundle, path, f"invalid YAML ({exc})")
             continue
         rel = _rel(bundle.root, path)
         for command, step_name in _workflow_commands(data):
@@ -305,10 +333,11 @@ def _collect_ci_commands(bundle: EvidenceBundle) -> None:
 
 
 def _collect_make_like_commands(bundle: EvidenceBundle) -> None:
-    for filename in ("Makefile", "makefile", "justfile", "Justfile"):
-        path = bundle.root / filename
-        if not path.exists():
-            continue
+    for path in _existing_unique_files(
+        bundle.root,
+        ("Makefile", "makefile", "justfile", "Justfile"),
+    ):
+        filename = path.name
         for target, command in _parse_indented_recipes(_read_text(path)):
             if _script_name_is_relevant(target) and _looks_like_command(command):
                 bundle.items.append(
@@ -321,13 +350,18 @@ def _collect_make_like_commands(bundle: EvidenceBundle) -> None:
                     )
                 )
 
-    for filename in ("Taskfile.yml", "Taskfile.yaml", "taskfile.yml", "taskfile.yaml"):
-        path = bundle.root / filename
-        if not path.exists():
+    for path in _existing_unique_files(
+        bundle.root,
+        ("Taskfile.yml", "Taskfile.yaml", "taskfile.yml", "taskfile.yaml"),
+    ):
+        filename = path.name
+        text = _read_structured_text(bundle, path)
+        if text is None:
             continue
         try:
-            data = yaml.safe_load(_read_text(path)) or {}
-        except (OSError, yaml.YAMLError):
+            data = yaml.safe_load(text) or {}
+        except yaml.YAMLError as exc:
+            _warn_structured_skip(bundle, path, f"invalid YAML ({exc})")
             continue
         tasks = data.get("tasks", {}) if isinstance(data, dict) else {}
         if not isinstance(tasks, dict):
@@ -550,7 +584,52 @@ def _looks_like_doc_command(command: str) -> bool:
 
 
 def _read_text(path: Path) -> str:
-    return path.read_text(encoding="utf-8", errors="replace")[:MAX_FILE_BYTES]
+    with path.open("rb") as handle:
+        return handle.read(MAX_FILE_BYTES).decode("utf-8", errors="replace")
+
+
+def _existing_unique_files(root: Path, filenames: tuple[str, ...]) -> list[Path]:
+    """Return existing candidate files once per physical filesystem entry."""
+    paths: list[Path] = []
+    seen: set[tuple[int, int]] = set()
+    for filename in filenames:
+        path = root / filename
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        identity = (stat.st_dev, stat.st_ino)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        paths.append(path)
+    return paths
+
+
+def _read_structured_text(bundle: EvidenceBundle, path: Path) -> str | None:
+    """Read a structured evidence file only when its complete contents fit."""
+    try:
+        with path.open("rb") as handle:
+            raw = handle.read(MAX_FILE_BYTES + 1)
+    except OSError as exc:
+        _warn_structured_skip(bundle, path, f"could not read file ({exc})")
+        return None
+    if len(raw) > MAX_FILE_BYTES:
+        _warn_structured_skip(
+            bundle,
+            path,
+            f"file exceeds MAX_FILE_BYTES ({MAX_FILE_BYTES} bytes)",
+        )
+        return None
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        _warn_structured_skip(bundle, path, f"file is not valid UTF-8 ({exc})")
+        return None
+
+
+def _warn_structured_skip(bundle: EvidenceBundle, path: Path, reason: str) -> None:
+    bundle.warnings.append(f"Skipped structured evidence {_rel(bundle.root, path)}: {reason}.")
 
 
 def _rel(root: Path, path: Path) -> str:

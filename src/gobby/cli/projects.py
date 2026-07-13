@@ -267,6 +267,7 @@ def refresh_verification(
     """Refresh .gobby/project.json verification commands."""
     from gobby.project_verification.refresh import (
         ProjectVerificationAIError,
+        ProjectVerificationReadError,
         refresh_project_verification,
         refresh_project_verification_deterministic,
     )
@@ -300,7 +301,7 @@ def refresh_verification(
                     text_generation_service=service,
                 )
             )
-    except ProjectVerificationAIError as exc:
+    except (ProjectVerificationAIError, ProjectVerificationReadError) as exc:
         if json_format:
             click.echo(json_dumps({"error": str(exc)}, indent=2))
         else:
@@ -310,6 +311,9 @@ def refresh_verification(
     if json_format:
         click.echo(json_dumps(result.to_dict(), indent=2))
         return
+
+    for warning in result.warnings:
+        click.echo(f"Warning: {warning}", err=True)
 
     if result.changed:
         if result.written:
