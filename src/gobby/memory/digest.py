@@ -55,6 +55,20 @@ async def _run_sync_io(func: Any, *args: Any, **kwargs: Any) -> Any:
     return await asyncio.to_thread(func, *args, **kwargs)
 
 
+def _parser_for_transcript(source: str | None, transcript_path: str) -> Any | None:
+    """Resolve a parser or log why transcript processing is skipped."""
+    from gobby.sessions.transcripts import get_parser
+
+    if not str(source or "").strip():
+        logger.warning("Skipping transcript %s: session source is missing", transcript_path)
+        return None
+    try:
+        return get_parser(source)
+    except ValueError as exc:
+        logger.warning("Skipping transcript %s: %s", transcript_path, exc)
+        return None
+
+
 def _render_prompt_template(template: str, values: dict[str, str], db: Any | None) -> str:
     from gobby.prompts.loader import PromptLoader
 
@@ -154,7 +168,9 @@ async def memory_sync_export(
     return {"exported": {"memories": count}}
 
 
-async def _read_last_turn_from_transcript(transcript_path: str, source: str) -> tuple[str, str]:
+async def _read_last_turn_from_transcript(
+    transcript_path: str, source: str | None
+) -> tuple[str, str]:
     """Read the last user prompt and assistant response from a transcript file.
 
     Args:
@@ -169,9 +185,9 @@ async def _read_last_turn_from_transcript(transcript_path: str, source: str) -> 
         return "", ""
 
     try:
-        from gobby.sessions.transcripts import get_parser
-
-        parser = get_parser(source)
+        parser = _parser_for_transcript(source, transcript_path)
+        if parser is None:
+            return "", ""
 
         def _read_lines() -> list[str]:
             with open(transcript_file, encoding="utf-8") as f:
@@ -206,7 +222,7 @@ async def _read_last_turn_from_transcript(transcript_path: str, source: str) -> 
 
 async def _read_undigested_turns(
     transcript_path: str,
-    source: str,
+    source: str | None,
     digested_pair_index: int,
     num_pairs: int = 50,
 ) -> tuple[list[tuple[str, str]], int]:
@@ -230,9 +246,9 @@ async def _read_undigested_turns(
         return [], digested_pair_index
 
     try:
-        from gobby.sessions.transcripts import get_parser
-
-        parser = get_parser(source)
+        parser = _parser_for_transcript(source, transcript_path)
+        if parser is None:
+            return [], digested_pair_index
 
         def _read_lines() -> list[str]:
             with open(transcript_file, encoding="utf-8") as f:

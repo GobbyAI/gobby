@@ -676,6 +676,18 @@ class TestHeuristicTitleFromTranscript:
         assert await heuristic_title_from_transcript("/nonexistent/path.jsonl", "claude") is None
         assert await heuristic_title_from_transcript(None, "claude") is None
 
+    @pytest.mark.parametrize("source", [None, "", "unknown-cli"])
+    async def test_skips_unsupported_source_with_log(
+        self,
+        source: str | None,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with caplog.at_level(logging.WARNING):
+            title = await heuristic_title_from_transcript(str(_CLAUDE_FIXTURE), source)
+
+        assert title is None
+        assert "Skipping heuristic title" in caplog.text
+
     @pytest.mark.asyncio
     async def test_skips_lifecycle_and_tool_results(self, tmp_path: Path) -> None:
         import json
@@ -2018,6 +2030,23 @@ class TestReadUndigestedTurns:
         result, next_index = await _read_undigested_turns("/nonexistent/path.jsonl", "claude", 0)
         assert result == []
         assert next_index == 0
+
+    @pytest.mark.parametrize("source", [None, "", "unknown-cli"])
+    async def test_unsupported_source_skips_with_log(
+        self,
+        source: str | None,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        transcript = tmp_path / "transcript.jsonl"
+        self._write_claude_transcript(transcript, [("prompt", "response")])
+
+        with caplog.at_level(logging.WARNING):
+            result, next_index = await _read_undigested_turns(str(transcript), source, 0)
+
+        assert result == []
+        assert next_index == 0
+        assert "Skipping transcript" in caplog.text
 
     @pytest.mark.asyncio
     async def test_single_pair_backward_compat(self, tmp_path) -> None:
