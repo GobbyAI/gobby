@@ -392,8 +392,8 @@ class CronScheduler:
         await self._run_db(self._sweep_stale_running_runs)
         await self._run_db(self._sweep_orphaned_active_runs)
 
-        run, running_count = cast(
-            tuple[CronRun | None, int],
+        run, running_count, already_running = cast(
+            tuple[CronRun | None, int, bool],
             await self._run_db(
                 self.storage.create_run_if_admitted,
                 job.id,
@@ -401,6 +401,8 @@ class CronScheduler:
                 scheduler_owner=self._scheduler_owner,
             ),
         )
+        if run is None and already_running:
+            return None
         if run is None and running_count >= self.config.max_concurrent_jobs:
             raise CronRunRejected(
                 "cron_max_concurrent_jobs",
