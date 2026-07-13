@@ -98,7 +98,7 @@ def test_regenerate_preserves_stable_row_decisions(tmp_path: Path) -> None:
     path = write_manifest(
         _report(
             plan_hash="old",
-            task_tree_source_hash="old-tree",
+            task_tree_source_hash="stable-tree",
             row=CoverageRow(
                 section_id="A1",
                 item_id="A1.1",
@@ -128,12 +128,12 @@ def test_regenerate_preserves_stable_row_decisions(tmp_path: Path) -> None:
     write_manifest(
         _report(
             plan_hash="new",
-            task_tree_source_hash="new-tree",
+            task_tree_source_hash="stable-tree",
             row=CoverageRow(
                 section_id="A1",
                 item_id="A1.1",
                 plan_node_hash="node-hash",
-                status=CoverageStatus.missing,
+                status=CoverageStatus.covered,
             ),
         ),
         tmp_path,
@@ -143,10 +143,109 @@ def test_regenerate_preserves_stable_row_decisions(tmp_path: Path) -> None:
     manifest = yaml.safe_load(path.read_text(encoding="utf-8"))
     row = manifest["rows"][0]
     assert manifest["header"]["plan_hash"] == "new"
-    assert manifest["header"]["task_tree_source_hash"] == "new-tree"
+    assert manifest["header"]["task_tree_source_hash"] == "stable-tree"
     assert row["status"] == "covered"
     assert row["leaves"][0]["leaf_task_ref"] == "#2"
     assert row["evidence"][0]["detail"] == "manual acceptance"
+
+
+@pytest.mark.parametrize(
+    ("fresh_status", "fresh_tree_hash"),
+    [
+        (CoverageStatus.missing, "new-tree"),
+        (CoverageStatus.invalid, "new-tree"),
+        (CoverageStatus.missing, "old-tree"),
+    ],
+    ids=["deleted-leaf", "relabelled-leaf", "fresh-regression"],
+)
+def test_regenerate_uses_fresh_row_when_coverage_regresses(
+    tmp_path: Path, fresh_status: CoverageStatus, fresh_tree_hash: str
+) -> None:
+    path = write_manifest(
+        _report(
+            task_tree_source_hash="old-tree",
+            row=CoverageRow(
+                section_id="A1",
+                item_id="A1.1",
+                plan_node_hash="node-hash",
+                status=CoverageStatus.covered,
+                leaves=(
+                    CoverageRowLeaf(
+                        leaf_task_ref="#2",
+                        validation_criteria_snippet="acceptance covered",
+                        matched_artifact_ref="src/example.py",
+                    ),
+                ),
+            ),
+        ),
+        tmp_path,
+    )
+    fresh_leaves = (
+        ()
+        if fresh_status is CoverageStatus.missing
+        else (
+            CoverageRowLeaf(
+                leaf_task_ref="#3",
+                validation_criteria_snippet="relabelled cover is invalid",
+                matched_artifact_ref="covers:plan:A9:A9.1",
+            ),
+        )
+    )
+
+    write_manifest(
+        _report(
+            task_tree_source_hash=fresh_tree_hash,
+            row=CoverageRow(
+                section_id="A1",
+                item_id="A1.1",
+                plan_node_hash="node-hash",
+                status=fresh_status,
+                leaves=fresh_leaves,
+            ),
+        ),
+        tmp_path,
+        regenerate=True,
+    )
+
+    manifest = yaml.safe_load(path.read_text(encoding="utf-8"))
+    row = manifest["rows"][0]
+    assert manifest["header"]["plan_hash"] == "hash"
+    assert manifest["header"]["task_tree_source_hash"] == fresh_tree_hash
+    assert row["status"] == fresh_status.value
+    expected_refs = [] if fresh_status is CoverageStatus.missing else ["#3"]
+    assert [leaf["leaf_task_ref"] for leaf in row["leaves"]] == expected_refs
+
+
+def test_regenerate_does_not_preserve_without_task_tree_provenance(tmp_path: Path) -> None:
+    path = write_manifest(
+        _report(
+            plan_hash="old",
+            task_tree_source_hash="",
+            row=CoverageRow(
+                section_id="A1",
+                item_id="A1.1",
+                plan_node_hash="node-hash",
+                status=CoverageStatus.covered,
+                leaves=(
+                    CoverageRowLeaf(
+                        leaf_task_ref="#2",
+                        validation_criteria_snippet="stale decision",
+                        matched_artifact_ref="src/example.py",
+                    ),
+                ),
+            ),
+        ),
+        tmp_path,
+    )
+
+    write_manifest(
+        _report(plan_hash="new", task_tree_source_hash=""),
+        tmp_path,
+        regenerate=True,
+    )
+
+    manifest = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert manifest["rows"][0]["leaves"] == []
 
 
 def test_casefold_leaf_collision_raises_path_identity_mismatch(tmp_path: Path) -> None:

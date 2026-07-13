@@ -254,6 +254,7 @@ def _manifest_payload(report: object) -> dict[str, object]:
 
 
 _PRESERVED_ROW_FIELDS = ("status", "leaves", "deferral_target", "evidence")
+_PRESERVABLE_ROW_STATUSES = frozenset({"covered", "deferred"})
 
 
 def _preserve_stable_rows(
@@ -263,6 +264,9 @@ def _preserve_stable_rows(
     rows = payload.get("rows")
     if not isinstance(rows, list):
         return payload
+    task_tree_source_hash = _task_tree_source_hash(payload)
+    if not task_tree_source_hash or task_tree_source_hash != _task_tree_source_hash(existing):
+        return payload
 
     prior_rows = _prior_rows_by_item(existing)
     preserved_rows: list[object] = []
@@ -271,7 +275,12 @@ def _preserve_stable_rows(
             preserved_rows.append(row)
             continue
         prior = prior_rows.get(_row_identity(row))
-        if prior is None or not _same_plan_node(row, prior):
+        if (
+            prior is None
+            or not _same_plan_node(row, prior)
+            or _string(row.get("status")) not in _PRESERVABLE_ROW_STATUSES
+            or _string(prior.get("status")) not in _PRESERVABLE_ROW_STATUSES
+        ):
             preserved_rows.append(row)
             continue
         preserved = dict(row)
@@ -302,6 +311,13 @@ def _row_identity(row: Mapping[str, object]) -> tuple[str, str]:
 def _same_plan_node(left: Mapping[str, object], right: Mapping[str, object]) -> bool:
     left_hash = _string(left.get("plan_node_hash"))
     return bool(left_hash) and left_hash == _string(right.get("plan_node_hash"))
+
+
+def _task_tree_source_hash(raw: Mapping[str, object]) -> str:
+    header = raw.get("header")
+    if not isinstance(header, Mapping):
+        return ""
+    return _string(header.get("task_tree_source_hash"))
 
 
 def _string(raw: object) -> str:
