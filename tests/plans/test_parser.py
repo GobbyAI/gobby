@@ -277,6 +277,33 @@ def test_acceptance_item_id_must_prefix_section(tmp_path: Path) -> None:
         parse_plan(plan)
 
 
+@pytest.mark.parametrize(
+    "malformed_bullet",
+    [
+        "- A1.2: second item. file: src/second.py.",
+        "- A1.2 – second item. file: src/second.py.",
+    ],
+    ids=["colon", "en-dash"],
+)
+def test_acceptance_item_rejects_wrong_separator(tmp_path: Path, malformed_bullet: str) -> None:
+    plan = _write_plan(
+        tmp_path,
+        f"""
+        ## A1
+        `kind: deliverable`
+        **Acceptance:**
+        - A1.1 — first item. file: src/first.py.
+        {malformed_bullet}
+        """,
+    )
+
+    with pytest.raises(
+        PlanParseError,
+        match=r"malformed acceptance item 'A1\.2'.*separator",
+    ):
+        parse_plan(plan)
+
+
 def test_acceptance_item_id_must_match_covers_grammar(tmp_path: Path) -> None:
     plan = _write_plan(
         tmp_path,
@@ -467,6 +494,61 @@ def test_acceptance_item_without_artifact_raises(tmp_path: Path) -> None:
 
     with pytest.raises(PlanParseError, match="no artifact reference"):
         parse_plan(plan)
+
+
+def test_acceptance_list_stops_before_unindented_prose_after_blank(tmp_path: Path) -> None:
+    plan = _write_plan(
+        tmp_path,
+        """
+        ## A1
+        `kind: deliverable`
+        **Acceptance:**
+        - A1.1 — real item. file: src/accepted.py.
+
+        Narrative after the list mentions file: src/unrelated.py.
+        """,
+    )
+
+    item = parse_plan(plan).sections[0].acceptance_items[0]
+
+    assert item.artifact_ref == "src/accepted.py"
+    assert "unrelated.py" not in item.prose
+
+
+def test_trailing_prose_cannot_supply_missing_acceptance_artifact(tmp_path: Path) -> None:
+    plan = _write_plan(
+        tmp_path,
+        """
+        ## A1
+        `kind: deliverable`
+        **Acceptance:**
+        - A1.1 — real item without reference.
+
+        Narrative after the list mentions file: src/unrelated.py.
+        """,
+    )
+
+    with pytest.raises(PlanParseError, match="no artifact reference"):
+        parse_plan(plan)
+
+
+def test_acceptance_item_preserves_indented_continuation_after_blank(tmp_path: Path) -> None:
+    plan = _write_plan(
+        tmp_path,
+        """
+        ## A1
+        `kind: deliverable`
+        **Acceptance:**
+        - A1.1 — real item continued below.
+
+          Continued details name file: src/continued.py.
+        """,
+    )
+
+    item = parse_plan(plan).sections[0].acceptance_items[0]
+
+    assert item.artifact_ref == "src/continued.py"
+    assert "Continued details" in item.prose
 
 
 def test_acceptance_item_with_multiple_artifacts_uses_first(tmp_path: Path) -> None:

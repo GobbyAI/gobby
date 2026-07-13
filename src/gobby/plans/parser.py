@@ -33,6 +33,9 @@ _ACCEPTANCE_BULLET_RE = re.compile(
     r"^\s*-\s+(?P<item_id>[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)+)"
     r"\s+(?:-|\u2014)\s+(?P<prose>.*)$"
 )
+_ACCEPTANCE_ITEM_PREFIX_RE = re.compile(
+    r"^\s*-\s+(?P<item_id>[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)+)(?![A-Za-z0-9])"
+)
 _ARTIFACT_RE = re.compile(
     r"\b(?P<kind>file|symbol|test|behavior):\s*"
     r"""(?P<ref>`[^`]+`|"[^"]+"|'[^']+'|.*?(?=\s+\b(?:file|symbol|test|behavior):|$))"""
@@ -521,6 +524,7 @@ def _parse_acceptance_items(
     current_id: str | None = None
     current_parts: list[str] = []
     current_line = 0
+    crossed_blank_boundary = False
 
     def flush_current() -> None:
         nonlocal current_id, current_parts, current_line
@@ -544,8 +548,27 @@ def _parse_acceptance_items(
             current_id = bullet_match.group("item_id")
             current_parts = [bullet_match.group("prose")]
             current_line = index + 1
+            crossed_blank_boundary = False
+            continue
+        item_prefix_match = _ACCEPTANCE_ITEM_PREFIX_RE.match(line)
+        if item_prefix_match is not None:
+            flush_current()
+            errors.append(
+                (
+                    index + 1,
+                    f"malformed acceptance item {item_prefix_match.group('item_id')!r}; "
+                    "expected separator ' - ' or ' — '",
+                )
+            )
+            crossed_blank_boundary = False
             continue
         if current_id is not None:
+            if not line.strip():
+                crossed_blank_boundary = True
+                continue
+            if crossed_blank_boundary and not line[:1].isspace():
+                flush_current()
+                break
             current_parts.append(line)
 
     flush_current()
