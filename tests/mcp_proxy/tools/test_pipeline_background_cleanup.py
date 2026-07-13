@@ -8,6 +8,7 @@ import pytest
 
 from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
     _background_tasks,
+    _background_tasks_by_execution,
     cleanup_background_tasks,
 )
 
@@ -18,8 +19,10 @@ pytestmark = pytest.mark.unit
 def _clear_background_tasks() -> None:
     """Ensure _background_tasks is empty before and after each test."""
     _background_tasks.clear()
+    _background_tasks_by_execution.clear()
     yield
     _background_tasks.clear()
+    _background_tasks_by_execution.clear()
 
 
 @pytest.mark.asyncio

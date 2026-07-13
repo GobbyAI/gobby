@@ -152,6 +152,54 @@ class PipelineStepStorageMixin:
         )
         return StepExecution.from_row(row) if row else None
 
+    def consume_step_approval(
+        self,
+        token: str,
+        *,
+        status: StepStatus,
+        approved_by: str | None = None,
+        error: str | None = None,
+    ) -> StepExecution | None:
+        """Atomically consume a waiting step's approval token.
+
+        Only one caller can transition a token, and stale tokens cannot mutate
+        steps that have already left ``WAITING_APPROVAL``.
+        """
+        if status not in (StepStatus.COMPLETED, StepStatus.FAILED):
+            raise ValueError("Approval decisions must complete or fail the step")
+
+        now = utc_now()
+        project_clause = "project_id IS NULL" if self.project_id is None else "project_id = %s"
+        project_params: tuple[str, ...] = () if self.project_id is None else (self.project_id,)
+        row = self.db.fetchone(
+            f"""
+            UPDATE step_executions
+            SET status = %s,
+                approval_token = NULL,
+                approved_by = %s,
+                approved_at = %s,
+                error = %s,
+                completed_at = COALESCE(completed_at, %s)
+            WHERE approval_token = %s
+              AND status = %s
+              AND execution_id IN (
+                  SELECT id FROM pipeline_executions WHERE {project_clause}
+              )
+            RETURNING *
+            """,  # nosec - project_clause is an internal fixed predicate.
+            (
+                status.value,
+                approved_by,
+                now if approved_by is not None else None,
+                error,
+                now,
+                token,
+                StepStatus.WAITING_APPROVAL.value,
+                *project_params,
+            ),
+        )
+        return StepExecution.from_row(row) if row else None
+
     def get_expired_approval_steps(self, *, limit: int = 100) -> list[StepExecution]:
         """Get step executions where approval has timed out.
 

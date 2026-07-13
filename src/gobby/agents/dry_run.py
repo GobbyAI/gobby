@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.workflows.dry_run import EvaluationItem, WorkflowEvaluation
@@ -67,6 +68,7 @@ class SpawnEvaluation:
 def _load_agent_body(
     name: str,
     db: HubDatabase | None,
+    project_id: str | None = None,
 ) -> Any:
     """Load an AgentDefinitionBody from the DB by name."""
     if db is None:
@@ -76,10 +78,9 @@ def _load_agent_body(
         from gobby.workflows.definitions import AgentDefinitionBody
 
         manager = LocalWorkflowDefinitionManager(db)
-        rows = manager.list_all(workflow_type="agent")
-        for row in rows:
-            if row.name == name:
-                return AgentDefinitionBody.model_validate_json(row.definition_json)
+        row = manager.get_by_name(name, project_id=project_id)
+        if row is not None and row.workflow_type == "agent":
+            return AgentDefinitionBody.model_validate_json(row.definition_json)
     except Exception as e:
         logger.warning(f"Failed to load agent definition '{name}': {e}")
     return None
@@ -115,8 +116,13 @@ async def evaluate_spawn(
     """
     result = SpawnEvaluation(can_spawn=True, agent_name=agent)
 
+    from gobby.utils.project_context import get_project_context
+
+    project_ctx = get_project_context(Path(project_path)) if project_path else get_project_context()
+    workflow_project_id = project_ctx.get("id") if project_ctx else None
+
     # ---- Layer 1: Agent Definition Resolution ----
-    agent_body = _load_agent_body(agent, db)
+    agent_body = _load_agent_body(agent, db, workflow_project_id)
 
     if agent_body is None:
         result.agent_found = False
@@ -174,7 +180,7 @@ async def evaluate_spawn(
         if workflow_loader is not None:
             is_valid, error_msg = await workflow_loader.validate_workflow_for_agent(
                 effective_workflow,
-                project_path,
+                workflow_project_id,
             )
             if not is_valid:
                 result.can_spawn = False
@@ -312,7 +318,7 @@ async def evaluate_spawn(
         wf_eval = await evaluate_workflow(
             effective_workflow,
             workflow_loader,
-            project_path,
+            workflow_project_id,
             mcp_manager,
         )
         result.workflow_evaluation = wf_eval

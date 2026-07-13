@@ -17,7 +17,11 @@ from pydantic import ValidationError
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager, WorkflowDefinitionRow
-from gobby.workflows.definitions import PipelineDefinition, WorkflowDefinition
+from gobby.workflows.definitions import (
+    PipelineDefinition,
+    WorkflowDefinition,
+    normalize_workflow_definition_enabled,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +176,7 @@ def sync_bundled_pipelines(db: HubDatabase) -> dict[str, Any]:
             workflow_type = yaml_type if yaml_type in VALID_WORKFLOW_TYPES else "pipeline"
             description = data.get("description", "")
             version = str(data.get("version", "1.0"))
-            enabled = bool(data.get("enabled", False))
+            enabled = normalize_workflow_definition_enabled(data, default=False)
             priority = data.get("priority", 100)
             sources_list = data.get("sources")
 

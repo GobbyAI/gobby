@@ -8,14 +8,14 @@ logger = logging.getLogger(__name__)
 
 async def list_pipelines(
     loader: Any,
-    project_path: str | None = None,
+    project_id: str | None = None,
 ) -> dict[str, Any]:
     """
     List available pipeline definitions.
 
     Args:
         loader: WorkflowLoader instance
-        project_path: Optional project path for project-specific pipelines
+        project_id: Optional project UUID for project-specific pipelines
 
     Returns:
         Dict with list of pipeline info or error
@@ -24,7 +24,7 @@ async def list_pipelines(
         return {"success": False, "error": "No loader configured"}
 
     try:
-        discovered = await loader.discover_pipeline_workflows(project_path=project_path)
+        discovered = await loader.discover_pipeline_workflows(project_id)
 
         pipelines = []
         for workflow in discovered:
