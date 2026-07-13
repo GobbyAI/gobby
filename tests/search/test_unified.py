@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import math
 import threading
-import time
 from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -512,18 +511,26 @@ class TestKeywordAsyncSearchBackend:
         await backend.fit_async([("inside", "shared query")])
         loop_thread = threading.get_ident()
         worker_threads: list[int] = []
+        search_started = threading.Event()
+        release_search = threading.Event()
 
         def blocking_search(*_args: object, **_kwargs: object) -> list[SearchHit]:
             worker_threads.append(threading.get_ident())
-            time.sleep(0.05)
+            search_started.set()
+            if not release_search.wait(timeout=2):
+                raise TimeoutError("test did not release blocking search")
             return [SearchHit(id="inside", score=1.0)]
 
         backend._backend.search = blocking_search
 
         search_task = asyncio.create_task(backend.search_async("shared query", top_k=10))
-        await asyncio.sleep(0.01)
+        try:
+            started = await asyncio.to_thread(search_started.wait, 2)
+            assert started, "blocking search did not start"
+            assert not search_task.done(), "blocking search stalled the event loop"
+        finally:
+            release_search.set()
 
-        assert not search_task.done(), "blocking search stalled the event loop"
         assert await search_task == [("inside", 1.0)]
         assert len(worker_threads) == 1
         assert worker_threads[0] != loop_thread
@@ -843,6 +850,8 @@ class TestEmbeddingBackend:
         loop_thread = threading.get_ident()
         worker_threads: list[int] = []
         rank_embeddings = embedding_module._rank_embeddings
+        rank_started = threading.Event()
+        release_rank = threading.Event()
 
         def blocking_rank(
             item_ids: list[str],
@@ -851,7 +860,9 @@ class TestEmbeddingBackend:
             top_k: int,
         ) -> list[tuple[str, float]]:
             worker_threads.append(threading.get_ident())
-            time.sleep(0.05)
+            rank_started.set()
+            if not release_rank.wait(timeout=2):
+                raise TimeoutError("test did not release embedding rank")
             return rank_embeddings(
                 item_ids,
                 normalized_embeddings,
@@ -874,9 +885,13 @@ class TestEmbeddingBackend:
             await backend.fit_async(items)
             with patch.object(embedding_module, "_rank_embeddings", side_effect=blocking_rank):
                 search_task = asyncio.create_task(backend.search_async("query", top_k=10))
-                await asyncio.sleep(0.01)
+                try:
+                    started = await asyncio.to_thread(rank_started.wait, 2)
+                    assert started, "embedding rank did not start"
+                    assert not search_task.done(), "embedding scan stalled the event loop"
+                finally:
+                    release_rank.set()
 
-                assert not search_task.done(), "embedding scan stalled the event loop"
                 results = await search_task
 
         assert len(results) == 10
