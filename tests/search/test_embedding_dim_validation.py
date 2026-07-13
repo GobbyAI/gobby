@@ -38,18 +38,19 @@ def _make_mock_client(dim: int) -> AsyncMock:
 
     async def fake_create(model: str, input: list[str]):
         class FakeItem:
-            def __init__(self, embedding: list[float]):
+            def __init__(self, embedding: list[float], index: int):
                 self.embedding = embedding
+                self.index = index
 
         class FakeResponse:
             def __init__(self, items: list[FakeItem]):
                 self.data = items
 
         items = []
-        for text in input:
+        for index, text in enumerate(input):
             vec = [0.0] * dim
             vec[0] = hash(text) % 1000 / 1000.0
-            items.append(FakeItem(vec))
+            items.append(FakeItem(vec, index))
         return FakeResponse(items)
 
     mock_client.embeddings.create = fake_create
@@ -74,14 +75,15 @@ def _make_evicting_client(dim: int) -> AsyncMock:
             )
 
         class FakeItem:
-            def __init__(self, embedding: list[float]):
+            def __init__(self, embedding: list[float], index: int):
                 self.embedding = embedding
+                self.index = index
 
         class FakeResponse:
             def __init__(self, items: list[FakeItem]):
                 self.data = items
 
-        return FakeResponse([FakeItem([0.1] * dim) for _ in input])
+        return FakeResponse([FakeItem([0.1] * dim, index) for index, _ in enumerate(input)])
 
     mock_client.embeddings.create = fake_create
     return mock_client

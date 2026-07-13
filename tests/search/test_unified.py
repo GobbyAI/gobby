@@ -56,13 +56,14 @@ def _make_openai_client(dim: int) -> AsyncMock:
     @dataclass
     class FakeItem:
         embedding: list[float]
+        index: int
 
     @dataclass
     class FakeResponse:
         data: list[FakeItem]
 
     async def fake_create(model: str, input: list[str]) -> FakeResponse:
-        return FakeResponse([FakeItem([0.1] * dim) for _ in input])
+        return FakeResponse([FakeItem([0.1] * dim, index) for index, _ in enumerate(input)])
 
     create_mock: AsyncMock = AsyncMock(side_effect=fake_create)
     mock_client.embeddings.create = create_mock

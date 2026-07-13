@@ -415,14 +415,23 @@ def _get_api_error_message(error: Exception) -> str:
     return str(error)
 
 
-def _validate_embedding_response(
-    embeddings: list[list[float]],
+def _extract_ordered_embeddings(
+    response_data: list[Any],
     *,
     requested_count: int,
     model: str,
     api_base: str | None,
-) -> None:
-    """Validate provider response shape before cache population."""
+) -> list[list[float]]:
+    """Order and validate provider response before cache population."""
+    try:
+        ordered_data = sorted(response_data, key=lambda item: item.index)
+        indices = [item.index for item in ordered_data]
+        embeddings: list[list[float]] = [item.embedding for item in ordered_data]
+    except (AttributeError, TypeError) as e:
+        raise EmbeddingGenerationError(
+            f"Embedding API returned malformed result for model={model}, api_base={api_base}"
+        ) from e
+
     if not embeddings:
         raise EmbeddingGenerationError(
             f"Embedding API returned empty result for model={model}, api_base={api_base}"
@@ -433,12 +442,19 @@ def _validate_embedding_response(
             f"model={model}, api_base={api_base}, expected={requested_count}, "
             f"actual={len(embeddings)}"
         )
+    if indices != list(range(requested_count)):
+        raise EmbeddingGenerationError(
+            "Embedding API returned invalid result indices: "
+            f"model={model}, api_base={api_base}, expected={list(range(requested_count))}, "
+            f"actual={indices}"
+        )
     for index, embedding in enumerate(embeddings):
         if not embedding:
             raise EmbeddingGenerationError(
                 "Embedding API returned an empty vector: "
                 f"model={model}, api_base={api_base}, index={index}"
             )
+    return embeddings
 
 
 def _is_ollama_endpoint(api_base: str | None) -> bool:
@@ -459,9 +475,8 @@ async def _retry_embeddings_after_reload(
 ) -> list[list[float]]:
     """Retry a single embeddings request after the local model is reloaded."""
     response = await client.embeddings.create(model=model, input=texts)
-    embeddings = [item.embedding for item in response.data]
-    _validate_embedding_response(
-        embeddings,
+    embeddings = _extract_ordered_embeddings(
+        response.data,
         requested_count=len(texts),
         model=model,
         api_base=api_base,
@@ -532,9 +547,8 @@ async def _fetch_embeddings(
         for attempt in range(max_retries + 1):
             try:
                 response = await client.embeddings.create(model=provider.model, input=texts)
-                embeddings: list[list[float]] = [item.embedding for item in response.data]
-                _validate_embedding_response(
-                    embeddings,
+                embeddings = _extract_ordered_embeddings(
+                    response.data,
                     requested_count=len(texts),
                     model=model,
                     api_base=provider.api_base,
