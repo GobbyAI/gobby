@@ -6,10 +6,11 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
-from gobby.plans.evidence import EvidenceResolveStatus, resolve_evidence
+from gobby.plans.evidence import EvidenceResolveStatus, InvalidEvidenceError, resolve_evidence
 
 pytestmark = pytest.mark.unit
 
@@ -85,6 +86,22 @@ def test_invalid_when_base_sha_unresolvable(tmp_path: Path) -> None:
 
     assert bundle.rows[0].status is EvidenceResolveStatus.invalid
     assert f"base_commit_sha does-not-exist does not resolve in {repo}" == bundle.rows[0].detail
+
+
+def test_option_shaped_base_sha_is_rejected_before_git(tmp_path: Path) -> None:
+    ctx = EvidenceContext(
+        tmp_path,
+        {"worktree_path": str(tmp_path), "base_commit_sha": "--all"},
+    )
+
+    with patch("gobby.plans.evidence.subprocess.run") as run_git:
+        with pytest.raises(
+            InvalidEvidenceError,
+            match="Option-shaped evidence ref '--all' is not allowed",
+        ):
+            resolve_evidence("worktree-diff:#13252", ctx=ctx)
+
+    run_git.assert_not_called()
 
 
 def test_picks_worktree_over_clone_when_both_present(tmp_path: Path) -> None:

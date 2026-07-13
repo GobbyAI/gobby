@@ -6,6 +6,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -52,6 +53,30 @@ def test_resolve_commits_range(tmp_path: Path) -> None:
         ("nested/second.txt",),
     ]
     assert all(row.status is EvidenceResolveStatus.resolved for row in bundle.rows)
+
+
+def test_commits_option_ref_is_rejected_before_git(tmp_path: Path) -> None:
+    with patch("gobby.plans.evidence.subprocess.run") as run_git:
+        with pytest.raises(
+            InvalidEvidenceError,
+            match="Option-shaped evidence ref '--all' is not allowed",
+        ):
+            resolve_evidence("commits:--all", ctx=EvidenceContext(tmp_path))
+
+    run_git.assert_not_called()
+
+
+def test_cli_commit_diff_rejects_option_ref_before_git(tmp_path: Path) -> None:
+    ctx = _CliEvidenceContext(repo_root=tmp_path, project_id=None)
+
+    with patch("gobby.cli.plan.subprocess.run") as run_git:
+        with pytest.raises(
+            InvalidEvidenceError,
+            match="Option-shaped evidence ref '--all' is not allowed",
+        ):
+            ctx.get_commit_range_diff("--all")
+
+    run_git.assert_not_called()
 
 
 def test_resolve_task_diff(tmp_path: Path) -> None:

@@ -57,6 +57,12 @@ class InvalidEvidenceError(ValueError):
     """Raised when an evidence spec is malformed or unsupported."""
 
 
+def validate_evidence_ref(ref: str) -> None:
+    """Reject evidence refs that Git could interpret as command-line options."""
+    if ref.startswith("-"):
+        raise InvalidEvidenceError(f"Option-shaped evidence ref {ref!r} is not allowed")
+
+
 class EvidenceContextProtocol(Protocol):
     repo_root: Path
 
@@ -89,6 +95,7 @@ def resolve_evidence(spec: str, *, ctx: EvidenceContextProtocol) -> EvidenceBund
     except ValueError as error:
         raise InvalidEvidenceError(f"Unsupported evidence kind: {kind_value}") from error
 
+    validate_evidence_ref(ref)
     if kind is EvidenceKind.commits:
         return _resolve_commits(ref, ctx=ctx)
     if kind is EvidenceKind.task_diff:
@@ -219,6 +226,7 @@ def _resolve_worktree_diff(artifact_ref: str, *, ctx: EvidenceContextProtocol) -
 
     path = Path(cast(str, isolation_path))
     base = cast(str, base_commit_sha)
+    validate_evidence_ref(base)
     rev_parse = _run_git(path, ["rev-parse", base])
     if rev_parse.returncode != 0:
         return _bundle(

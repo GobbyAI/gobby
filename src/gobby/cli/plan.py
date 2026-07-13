@@ -31,6 +31,7 @@ from gobby.plans.evidence import (
     EvidenceRow,
     InvalidEvidenceError,
     resolve_evidence,
+    validate_evidence_ref,
 )
 from gobby.plans.parser import PlanParseError
 from gobby.storage.tasks import LocalTaskManager, TaskNotFoundError
@@ -207,6 +208,7 @@ class _CliEvidenceContext:
         return raw
 
     def get_commit_range_diff(self, range_: str) -> str:
+        validate_evidence_ref(range_)
         result = subprocess.run(  # nosec B603 B607 # fixed git argv plus caller ref.
             ["git", "-C", str(self.repo_root), "diff", range_],
             check=False,
