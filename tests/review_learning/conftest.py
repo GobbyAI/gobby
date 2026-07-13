@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -53,6 +56,13 @@ class FakeDB:
     def __init__(self, session_id: str | None = None, project_id: str = "session-project"):
         self.session_id = session_id
         self.project_id = project_id
+        self._advisory_locks: dict[object, asyncio.Lock] = {}
+
+    @asynccontextmanager
+    async def advisory_lock(self, lock: object) -> AsyncIterator[None]:
+        async_lock = self._advisory_locks.setdefault(lock, asyncio.Lock())
+        async with async_lock:
+            yield
 
     def fetchone(self, sql: str, params: tuple[Any, ...]) -> dict[str, str] | None:
         if "SELECT id FROM sessions WHERE id" in sql and self.session_id:
@@ -82,6 +92,7 @@ class FakeMemoryManager:
         source_session_id: str | None = None,
         tags: list[str] | None = None,
     ) -> FakeMemory:
+        await asyncio.sleep(0)
         memory = FakeMemory(
             id=f"mem-{len(self.memories) + 1}",
             content=content,

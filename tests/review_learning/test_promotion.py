@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from gobby.review_learning.lessons import normalize_lesson
@@ -282,6 +284,41 @@ async def test_duplicate_occurrence_preflight_skips_new_memory(
 
     assert duplicate["skipped_reason"] == "duplicate_occurrence"
     assert len(fake_memory_manager.memories) == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_same_occurrence_creates_one_memory_and_guardrail_task(
+    fake_memory_manager,
+    fake_task_manager,
+) -> None:
+    service = ReviewLearningService(fake_memory_manager, fake_task_manager)
+    await service.record(
+        source_kind="agent_review",
+        source="code-reviewer",
+        source_review="review-1",
+        decision="confirmed",
+        finding=_finding(),
+        evidence={"commit": "abc"},
+    )
+
+    results = await asyncio.gather(
+        *(
+            service.record(
+                source_kind="agent_review",
+                source="code-reviewer",
+                source_review="review-2",
+                decision="confirmed",
+                finding=_finding(),
+                evidence={"commit": "def"},
+            )
+            for _ in range(2)
+        )
+    )
+
+    assert len(fake_memory_manager.memories) == 2
+    assert len(fake_task_manager.tasks) == 1
+    assert sum(result.get("skipped_reason") == "duplicate_occurrence" for result in results) == 1
+    assert sum(result.get("task_ref") == "#1" for result in results) == 1
 
 
 @pytest.mark.asyncio

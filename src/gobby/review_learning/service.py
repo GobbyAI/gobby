@@ -30,6 +30,7 @@ from gobby.review_learning.promotion import (
     PromotionTaskManager,
     promote_lesson,
 )
+from gobby.storage.hub.protocol import HubDatabase, ReviewLearningPatternMutation
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
@@ -42,7 +43,7 @@ _LEGACY_SCAN_LIMIT = 200
 
 
 class ReviewLearningMemoryManager(PromotionMemoryManager, Protocol):
-    db: Any
+    db: HubDatabase
 
     async def create_memory(
         self,
@@ -215,63 +216,68 @@ class ReviewLearningService:
             risk=risk,
         )
 
-        existing = await self.memory_manager.alist_memories(
+        lock = ReviewLearningPatternMutation(
             project_id=project_id,
-            memory_type="pattern",
-            limit=1,
-            tags_all=["review-lesson", normalized.occurrence_tag],
+            pattern_key=normalized.identity.pattern_key,
         )
-        if existing:
-            memory = existing[0]
+        async with self.memory_manager.db.advisory_lock(lock):
+            existing = await self.memory_manager.alist_memories(
+                project_id=project_id,
+                memory_type="pattern",
+                limit=1,
+                tags_all=["review-lesson", normalized.occurrence_tag],
+            )
+            if existing:
+                memory = existing[0]
+                return {
+                    "lesson_id": getattr(memory, "id", None),
+                    "pattern_id": normalized.identity.pattern_id,
+                    "finding_fingerprint": finding_fingerprint,
+                    "occurrence_key": occurrence_key,
+                    "decision": validated_decision,
+                    "promotable": normalized.identity.promotable,
+                    "skipped_reason": "duplicate_occurrence",
+                }
+
+            if (
+                normalized.source_kind in CI_SOURCE_KINDS
+                and normalized.decision == "confirmed"
+                and not has_verified_fix(evidence)
+            ):
+                return {
+                    "pattern_id": normalized.identity.pattern_id,
+                    "finding_fingerprint": finding_fingerprint,
+                    "occurrence_key": occurrence_key,
+                    "decision": validated_decision,
+                    "promotable": normalized.identity.promotable,
+                    "skipped_reason": "missing_verified_fix",
+                }
+
+            memory = await self.memory_manager.create_memory(
+                content=normalized.content,
+                memory_type="pattern",
+                project_id=project_id,
+                source_type="agent",
+                source_session_id=source_session_id,
+                tags=normalized.tags,
+            )
+            promotion = await promote_lesson(
+                lesson=normalized,
+                evidence_memory_id=memory.id,
+                memory_manager=self.memory_manager,
+                task_manager=self.task_manager,
+                project_id=project_id,
+                source_session_id=source_session_id,
+            )
             return {
-                "lesson_id": getattr(memory, "id", None),
+                "lesson_id": memory.id,
                 "pattern_id": normalized.identity.pattern_id,
                 "finding_fingerprint": finding_fingerprint,
                 "occurrence_key": occurrence_key,
                 "decision": validated_decision,
                 "promotable": normalized.identity.promotable,
-                "skipped_reason": "duplicate_occurrence",
+                **promotion,
             }
-
-        if (
-            normalized.source_kind in CI_SOURCE_KINDS
-            and normalized.decision == "confirmed"
-            and not has_verified_fix(evidence)
-        ):
-            return {
-                "pattern_id": normalized.identity.pattern_id,
-                "finding_fingerprint": finding_fingerprint,
-                "occurrence_key": occurrence_key,
-                "decision": validated_decision,
-                "promotable": normalized.identity.promotable,
-                "skipped_reason": "missing_verified_fix",
-            }
-
-        memory = await self.memory_manager.create_memory(
-            content=normalized.content,
-            memory_type="pattern",
-            project_id=project_id,
-            source_type="agent",
-            source_session_id=source_session_id,
-            tags=normalized.tags,
-        )
-        promotion = await promote_lesson(
-            lesson=normalized,
-            evidence_memory_id=memory.id,
-            memory_manager=self.memory_manager,
-            task_manager=self.task_manager,
-            project_id=project_id,
-            source_session_id=source_session_id,
-        )
-        return {
-            "lesson_id": memory.id,
-            "pattern_id": normalized.identity.pattern_id,
-            "finding_fingerprint": finding_fingerprint,
-            "occurrence_key": occurrence_key,
-            "decision": validated_decision,
-            "promotable": normalized.identity.promotable,
-            **promotion,
-        }
 
     async def _search_recall_matches(
         self,

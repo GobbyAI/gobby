@@ -20,6 +20,7 @@ __all__ = [
     "IntegrationWorkspaceMutex",
     "LockAcquisitionOrderError",
     "LockTarget",
+    "ReviewLearningPatternMutation",
     "Row",
     "Savepoint",
     "SessionRecoveryByProject",
@@ -86,6 +87,15 @@ class GitHubIssueTriageMutation:
     project_id: str
     repo: str
     issue_number: int
+
+
+@dataclass(frozen=True)
+class ReviewLearningPatternMutation:
+    """Serializes review-lesson and guardrail mutations for one pattern."""
+
+    PRIORITY: ClassVar[int] = 175
+    project_id: str
+    pattern_key: str
 
 
 @dataclass(frozen=True)
