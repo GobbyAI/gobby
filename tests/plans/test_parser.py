@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from gobby.plans import parser
+from gobby.plans.coverage import parse_covers_label
 from gobby.plans.parser import (
     PLAN_HEADING_REGEX,
     AcceptanceItem,
@@ -252,6 +253,52 @@ def test_acceptance_item_id_must_prefix_section(tmp_path: Path) -> None:
         parse_plan(plan)
 
 
+def test_acceptance_item_id_must_match_covers_grammar(tmp_path: Path) -> None:
+    plan = _write_plan(
+        tmp_path,
+        """
+        ## 1.1
+        `kind: deliverable`
+        **Acceptance:**
+        - 1.1.foo — invalid suffix. file: invalid.py
+        """,
+    )
+
+    with pytest.raises(PlanParseError, match="acceptance item ID '1.1.foo'.*dotted-ID grammar"):
+        parse_plan(plan)
+
+
+@pytest.mark.parametrize(
+    ("section_id", "item_id"),
+    [
+        ("A1", "A1.1"),
+        ("AB12", "AB12.3"),
+        ("1.1", "1.1.2"),
+        ("1.1a", "1.1a.2b"),
+        ("A1a", "A1a.2b"),
+    ],
+)
+def test_parsed_acceptance_ids_round_trip_through_covers_labels(
+    tmp_path: Path, section_id: str, item_id: str
+) -> None:
+    plan = _write_plan(
+        tmp_path,
+        f"""
+        ## {section_id}
+        `kind: deliverable`
+        **Acceptance:**
+        - {item_id} — valid item. file: valid.py
+        """,
+    )
+
+    document = parse_plan(plan)
+    parsed_item_id = document.sections[0].acceptance_items[0].item_id
+    record = parse_covers_label(f"covers:plan:{section_id}:{parsed_item_id}")
+
+    assert record.section_id == section_id
+    assert record.item_id == item_id
+
+
 def test_deferred_without_object_raises(tmp_path: Path) -> None:
     plan = _write_plan(
         tmp_path,
@@ -356,6 +403,30 @@ def test_invalid_deferred_artifact_kind_raises(tmp_path: Path) -> None:
     )
 
     with pytest.raises(PlanParseError, match="invalid artifact_kind"):
+        parse_plan(plan)
+
+
+def test_deferred_acceptance_item_id_must_match_covers_grammar(tmp_path: Path) -> None:
+    plan = _write_plan(
+        tmp_path,
+        """
+        ## 1.1
+        `kind: deferred`
+
+        ```yaml
+        task_ref: "#999"
+        reason: "covered by follow-up"
+        owner: "agent"
+        original_acceptance_items:
+          - item_id: 1.1.foo
+            prose: "implement later"
+            artifact_kind: file
+            artifact_ref: "src/later.py"
+        ```
+        """,
+    )
+
+    with pytest.raises(PlanParseError, match="acceptance item ID '1.1.foo'.*dotted-ID grammar"):
         parse_plan(plan)
 
 

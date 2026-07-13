@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 import yaml
 
+from gobby.plans._identifiers import DOTTED_ID_PATTERN, is_dotted_id
 from gobby.plans.manifest_parser import ManifestEntry
 from gobby.plans.manifest_parser import resolve_manifest as _resolve_manifest
 
@@ -19,9 +20,7 @@ ParseMode = Literal["draft", "expansion", "strict"]
 logger = logging.getLogger(__name__)
 
 PLAN_HEADING_REGEX: re.Pattern[str] = re.compile(
-    r"^#{2,6}\s+(?:§\s*)?(?P<section_id>"
-    r"(?:\d+(?:\.\d+)*(?:[a-z])?|[A-Z]+[0-9]+(?:\.[0-9]+)*(?:[a-z])?)"
-    r")(?=\s|[).:-]|$)"
+    rf"^#{{2,6}}\s+(?:§\s*)?(?P<section_id>{DOTTED_ID_PATTERN})(?=\s|[).:-]|$)"
 )
 
 _HEADING_LINE_RE = re.compile(r"^(?P<marks>#{2,6})\s+")
@@ -561,6 +560,8 @@ def _build_acceptance_item(
     section_id: str,
     errors: list[tuple[int, str]],
 ) -> AcceptanceItem | None:
+    if not _validate_acceptance_item_id(item_id, source_line, errors):
+        return None
     if not item_id.startswith(f"{section_id}."):
         errors.append(
             (source_line, f"acceptance item {item_id!r} does not belong to section {section_id!r}")
@@ -580,6 +581,17 @@ def _build_acceptance_item(
         artifact_ref=artifact_ref,
         source_line=source_line,
     )
+
+
+def _validate_acceptance_item_id(
+    item_id: str, source_line: int, errors: list[tuple[int, str]]
+) -> bool:
+    if is_dotted_id(item_id):
+        return True
+    errors.append(
+        (source_line, f"acceptance item ID {item_id!r} does not match the dotted-ID grammar")
+    )
+    return False
 
 
 def _first_artifact(prose: str) -> tuple[ArtifactKind, str] | None:
@@ -683,8 +695,11 @@ def _parse_original_acceptance_items(
             return None
         try:
             artifact_kind = ArtifactKind(str(raw_item["artifact_kind"]))
+            item_id = str(raw_item["item_id"])
+            if not _validate_acceptance_item_id(item_id, source_line, errors):
+                return None
             item = AcceptanceItem(
-                item_id=str(raw_item["item_id"]),
+                item_id=item_id,
                 prose=str(raw_item["prose"]),
                 artifact_kind=artifact_kind,
                 artifact_ref=str(raw_item["artifact_ref"]),
