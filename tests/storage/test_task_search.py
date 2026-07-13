@@ -334,6 +334,15 @@ class TestTaskSearchBackend:
         assert sanitize_pg_search_query("some-thing") == "some thing"
         assert sanitize_pg_search_query("alpha::beta -> list[str] &&") == ("alpha beta list str")
         assert sanitize_pg_search_query("!!! ---") == ""
+        assert sanitize_pg_search_query("AND OR NOT") == "and or not"
+        assert (
+            sanitize_pg_search_query("salt AND pepper Or paprika nOt sugar")
+            == "salt and pepper or paprika not sugar"
+        )
+        assert sanitize_pg_search_query("CANDY ORACLE NOTICE _NOT_") == (
+            "CANDY ORACLE NOTICE _NOT_"
+        )
+        assert sanitize_pg_search_query('"salt AND pepper" OR "NOT"') == ("salt and pepper or not")
 
     def test_keyword_backend_parse_error_returns_empty_without_warning(
         self,

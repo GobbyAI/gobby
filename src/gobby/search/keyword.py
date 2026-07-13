@@ -380,7 +380,10 @@ def _table_config(table: str) -> _TableConfig:
 def sanitize_pg_search_query(query: str) -> str:
     """Sanitize user input for pg_search's BM25 query DSL."""
     cleaned = "".join(ch if ch.isalnum() or ch in (" ", "_") else " " for ch in query)
-    return " ".join(token for token in cleaned.split() if token.strip("_"))
+    tokens = (token for token in cleaned.split() if token.strip("_"))
+    return " ".join(
+        token.lower() if token.upper() in {"AND", "OR", "NOT"} else token for token in tokens
+    )
 
 
 def is_pg_search_parse_error(error: BaseException) -> bool:
