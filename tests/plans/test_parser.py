@@ -238,6 +238,30 @@ def test_deliverable_without_acceptance_raises(tmp_path: Path) -> None:
         parse_plan(plan)
 
 
+@pytest.mark.parametrize("section_kind", ["framing", "verification"])
+def test_acceptance_block_under_non_deliverable_fails(
+    tmp_path: Path,
+    section_kind: str,
+) -> None:
+    plan = _write_plan(
+        tmp_path,
+        f"""
+        ## A1 Mistyped Deliverable
+        `kind: {section_kind}`
+        **Acceptance:**
+        - A1.1 — file: `src/feature.py`
+        """,
+    )
+
+    with pytest.raises(PlanParseError) as exc_info:
+        parse_plan(plan)
+
+    message = str(exc_info.value)
+    assert "section 'A1'" in message
+    assert f"kind '{section_kind}'" in message
+    assert "must not contain an **Acceptance:** block" in message
+
+
 def test_acceptance_item_id_must_prefix_section(tmp_path: Path) -> None:
     plan = _write_plan(
         tmp_path,

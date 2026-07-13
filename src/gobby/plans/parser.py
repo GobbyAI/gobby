@@ -249,6 +249,19 @@ def parse_plan(
                 errors=errors,
             )
 
+        if kind is not Kind.deliverable:
+            acceptance_marker = _find_acceptance_marker(
+                lines, mask, heading.line_index + 1, end_index
+            )
+            if acceptance_marker is not None:
+                errors.append(
+                    (
+                        acceptance_marker + 1,
+                        f"section {heading.section_id!r} with kind {kind.value!r} "
+                        "must not contain an **Acceptance:** block",
+                    )
+                )
+
         section = PlanSection(
             section_id=heading.section_id,
             parent_id=_parent_for_heading(section_stack, heading.level),
