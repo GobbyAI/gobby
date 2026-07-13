@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import cast
+from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -8,10 +9,12 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.review_learning import (
     create_review_learning_registry as _create_review_learning_registry,
 )
+from gobby.review_learning.file_paths import path_tag
 from gobby.review_learning.promotion import PromotionTaskManager
 from gobby.review_learning.service import ReviewLearningMemoryManager
 from tests.review_learning.conftest import (
     FakeDB,
+    FakeMemory,
     FakeMemoryManager,
     FakeTaskManager,
 )
@@ -214,6 +217,67 @@ async def test_recall_review_lessons_for_files_matches_recorded_finding_path() -
     assert "WikiUpdateCoordinator" in lesson["prevention"]
     assert "<review-guidance>" in result["message"]
     assert "## Evidence" not in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_recall_review_lessons_uses_tag_fast_path_across_checkouts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    main_root = tmp_path / "main"
+    worktree_root = tmp_path / "worktree"
+    for root in (main_root, worktree_root):
+        (root / ".gobby").mkdir(parents=True)
+        (root / ".gobby" / "project.json").write_text("{}", encoding="utf-8")
+
+    relative_path = Path("src/gobby/wiki/scheduled_jobs.py")
+    memory_manager = _scoped_memory_manager()
+    registry = create_review_learning_registry(memory_manager, FakeTaskManager())
+    await registry.call(
+        "record_review_lesson",
+        {
+            "source_kind": "review_comment",
+            "source": "coderabbit",
+            "source_review": "review-absolute-worktree",
+            "decision": "confirmed",
+            "finding": {
+                "title": "Use shared coordinator",
+                "pattern_id": "shared-coordinator",
+                "path": str(worktree_root / relative_path),
+                "principle": "Scheduled writes must route through the coordinator.",
+            },
+            "evidence": {"commit": "abc"},
+            "session_id": SESSION_ID,
+        },
+    )
+
+    list_calls: list[list[str]] = []
+    original_alist_memories = memory_manager.alist_memories
+
+    async def tagged_only(**kwargs: Any) -> list[FakeMemory]:
+        tags_all = list(kwargs.get("tags_all") or [])
+        list_calls.append(tags_all)
+        if len(tags_all) == 2:
+            return []
+        return await original_alist_memories(**kwargs)
+
+    monkeypatch.setattr(memory_manager, "alist_memories", tagged_only)
+
+    result = await registry.call(
+        "recall_review_lessons_for_files",
+        {
+            "file_paths": [str(main_root / relative_path)],
+            "session_id": SESSION_ID,
+        },
+    )
+
+    assert result["success"] is True
+    assert result["count"] == 1
+    assert list_calls[0] == [
+        "review-lesson",
+        "confirmed",
+        path_tag(relative_path.as_posix()),
+    ]
 
 
 @pytest.mark.asyncio
