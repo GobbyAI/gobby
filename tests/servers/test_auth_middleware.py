@@ -7,6 +7,7 @@ AI-generated vault as structural docs (#17777, #17776).
 """
 
 from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -14,6 +15,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from gobby.servers.middleware.auth import AuthMiddleware
+
+if TYPE_CHECKING:
+    from gobby.servers.http import HTTPServer
 
 
 @pytest.fixture
@@ -25,7 +29,7 @@ def auth_client() -> tuple[TestClient, MagicMock]:
     auth_service.is_request_authenticated.return_value = False
     app.add_middleware(
         AuthMiddleware,
-        server=SimpleNamespace(auth_service=auth_service),
+        server=cast("HTTPServer", SimpleNamespace(auth_service=auth_service)),
     )
 
     @app.get("/{path:path}")
@@ -36,7 +40,7 @@ def auth_client() -> tuple[TestClient, MagicMock]:
     return TestClient(app), auth_service
 
 
-TOOLING_PATHS = [
+PROTECTED_PATHS = [
     "/api/llm/generate",
     "/api/llm/vision/extract",
     "/api/embeddings",
@@ -45,26 +49,42 @@ TOOLING_PATHS = [
     "/api/workflows/variables/get",
     "/api/mcp/tools/call",
     "/api/sessions/register",
+    "/api/tasks",
+    "/api/config",
+    "/api/agents",
+]
+
+PUBLIC_PATHS = [
+    "/",
+    "/api/health",
+    "/api/admin/health",
+    "/api/admin/startup-progress",
+    "/api/auth/status",
+    "/api/comms/webhooks/test",
+    "/api/github/webhooks/test",
+    "/assets/app.js",
+    "/favicon.ico",
+    "/logo.png",
 ]
 
 
-@pytest.mark.parametrize("path", TOOLING_PATHS)
-def test_tooling_routes_bypass_ui_auth(
+@pytest.mark.parametrize("path", PUBLIC_PATHS)
+def test_public_routes_bypass_required_auth(
     auth_client: tuple[TestClient, MagicMock], path: str
 ) -> None:
-    """Machine-local tooling routes pass even with auth enabled and no cookie."""
-    client, _auth_service = auth_client
+    client, auth_service = auth_client
 
-    response = client.post(path)
+    response = client.get(path)
 
     assert response.status_code == 200, path
+    auth_service.is_request_authenticated.assert_not_called()
 
 
-@pytest.mark.parametrize("path", ["/api/tasks", "/api/config", "/api/agents"])
-def test_ui_api_routes_require_auth_when_enabled(
+@pytest.mark.parametrize("path", PROTECTED_PATHS)
+def test_protected_routes_require_auth_when_enabled(
     auth_client: tuple[TestClient, MagicMock], path: str
 ) -> None:
-    """Non-exempt API routes 401 when auth is enabled and no session cookie."""
+    """Data-plane and UI API routes require credentials in required mode."""
     client, _auth_service = auth_client
 
     response = client.get(path)
