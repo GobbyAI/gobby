@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import re
 from pathlib import Path
 
 import pytest
@@ -118,19 +119,30 @@ def test_cli_help_lists_exact_ten_flags() -> None:
         "--manifest",
         "--regenerate",
     }
-    options = {
-        token.rstrip(",")
-        for token in result.output.replace("[required]", "").split()
-        if token.startswith("--") and token != "--help"
-    }
+    options = set(re.findall(r"^  (--[a-z-]+)(?=\s|\[)", result.output, flags=re.MULTILINE))
+    options.discard("--help")
     assert options == expected
+    option_blocks = re.split(r"(?=^  --)", result.output, flags=re.MULTILINE)
     for required in ("--plan", "--plan-id", "--plan-hash", "--task-tree"):
-        line = next(
-            (line for line in result.output.splitlines() if required in line),
+        block = next(
+            (block for block in option_blocks if block.startswith(f"  {required}")),
             None,
         )
-        assert line is not None, f"Flag {required} not present in output"
-        assert "[required]" in line, f"Flag {required} missing [required] marker"
+        assert block is not None, f"Flag {required} not present in output"
+        assert "[required]" in block, f"Flag {required} missing [required] marker"
+
+
+def test_cli_help_describes_task_tree_modes_and_inputs() -> None:
+    result = CliRunner().invoke(cli, ["plan", "coverage", "--help"])
+    normalized_output = " ".join(result.output.split())
+
+    assert result.exit_code == 0
+    assert "--task-tree [db|matrix-file]" in normalized_output
+    assert "db reads live tasks; matrix-file reads" in normalized_output
+    assert "required for db mode" in normalized_output
+    assert "Coverage matrix YAML/JSON" in normalized_output
+    assert "Writes a coverage manifest and prints its path" in normalized_output
+    assert "jsonl" not in normalized_output.lower()
 
 
 @pytest.mark.parametrize(

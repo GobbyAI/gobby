@@ -51,12 +51,25 @@ def plan() -> None:
 )
 @click.option("--plan-id", required=True)
 @click.option("--plan-hash", required=True)
-@click.option("--task-tree", type=click.Choice(["db", "matrix-file"]), required=True)
-@click.option("--root-task")
-@click.option("--project-id")
-@click.option("--matrix-file", type=click.Path(dir_okay=False, path_type=Path))
+@click.option(
+    "--task-tree",
+    type=click.Choice(["db", "matrix-file"]),
+    required=True,
+    help="db reads live tasks; matrix-file reads --matrix-file.",
+)
+@click.option("--root-task", help="Root task ref (required for db mode).")
+@click.option("--project-id", help="Project UUID (required for db mode).")
+@click.option(
+    "--matrix-file",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Coverage matrix YAML/JSON (required for matrix-file mode).",
+)
 @click.option("--evidence")
-@click.option("--manifest", type=click.Path(dir_okay=False, path_type=Path))
+@click.option(
+    "--manifest",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Coverage manifest output path (defaults under .gobby/plans/coverage).",
+)
 @click.option("--regenerate", is_flag=True)
 def coverage(
     plan_path: Path,
@@ -70,7 +83,10 @@ def coverage(
     manifest: Path | None,
     regenerate: bool,
 ) -> None:
-    """Evaluate plan coverage."""
+    """Evaluate plan coverage.
+
+    Writes a coverage manifest and prints its path.
+    """
     try:
         evidence_rows = _resolve_evidence_rows(evidence, project_id=project_id)
         report = _evaluate_for_cli(
