@@ -196,7 +196,7 @@ async def test_synthesis_uses_profile_candidates_and_accepts_evidenced_json(
     )
     config = ProjectVerificationSynthesisConfig(candidates=["local:lm-studio/test-model"])
 
-    result = await synthesize_verification_commands(service, config, bundle, candidates)  # type: ignore[arg-type]
+    result = await synthesize_verification_commands(service, config, bundle, candidates)
 
     assert result.accepted["unit_tests"].command == "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v"
     assert service.request is not None
@@ -233,7 +233,7 @@ async def test_synthesis_rejects_unsupported_or_mutating_commands(tmp_path: Path
         service,
         ProjectVerificationSynthesisConfig(candidates=["local:lm-studio/test-model"]),
         bundle,
-        candidates,  # type: ignore[arg-type]
+        candidates,
     )
 
     assert not result.accepted
