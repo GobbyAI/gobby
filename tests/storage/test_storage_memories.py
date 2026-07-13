@@ -68,6 +68,21 @@ def test_update_memory(memory_manager) -> None:
     assert memory_manager.get_memory(created.id).content == "Updated"
 
 
+def test_content_update_tracks_and_clears_stale_vector_state(memory_manager) -> None:
+    memory = memory_manager.create_memory("Original vector content")
+
+    updated = memory_manager.update_memory(memory.id, content="Current vector content")
+
+    assert updated.vector_needs_reindex is True
+    assert memory_manager.list_vector_reindex_ids() == [memory.id]
+    assert memory_manager.mark_vectors_reindexed({memory.id: "obsolete content"}) == 0
+    assert memory_manager.get_memory(memory.id).vector_needs_reindex is True
+    assert memory_manager.mark_vectors_reindexed({memory.id: updated.content}) == 1
+    assert memory_manager.get_memory(memory.id).vector_needs_reindex is False
+    assert memory_manager.mark_vectors_reindexed({memory.id: "obsolete content"}) == 0
+    assert memory_manager.get_memory(memory.id).vector_needs_reindex is True
+
+
 def test_rescope_memory_to_global_does_not_bump_updated_at(memory_manager, db) -> None:
     db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_1, "Project 1"))
     created = memory_manager.create_memory(content="Universal", project_id=PROJECT_1)
@@ -83,6 +98,17 @@ def test_delete_memory(memory_manager) -> None:
     assert memory_manager.delete_memory(created.id)
     with pytest.raises(ValueError, match="not found"):
         memory_manager.get_memory(created.id)
+
+
+def test_delete_memory_scoped_rejects_other_project(memory_manager, db) -> None:
+    project_a = "11111111-1111-4111-8111-111111111111"
+    project_b = "22222222-2222-4222-8222-222222222222"
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (project_a, "Project A"))
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (project_b, "Project B"))
+    created = memory_manager.create_memory(content="Project B memory", project_id=project_b)
+
+    assert memory_manager.delete_memory_scoped(created.id, project_a) is False
+    assert memory_manager.get_memory(created.id).project_id == project_b
 
 
 def test_list_memories(memory_manager, db) -> None:
@@ -283,6 +309,28 @@ def test_create_memory_dedup_scopes_to_project(memory_manager, db) -> None:
     assert memory1.project_id == PROJECT_1
     assert memory2.project_id == PROJECT_2
     assert memory3.project_id is None
+    assert memory_manager.get_memory_by_content("Scoped dedup test", PROJECT_1).id == memory1.id
+    assert memory_manager.get_memory_by_content("Scoped dedup test", PROJECT_2).id == memory2.id
+
+
+def test_create_project_memory_dedups_against_visible_global(memory_manager, db) -> None:
+    """A visible global memory wins over creating a project-local duplicate."""
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_1, "Project 1"))
+    global_memory = memory_manager.create_memory(
+        content="Visible global duplicate",
+        project_id=None,
+    )
+
+    project_result = memory_manager.create_memory(
+        content="Visible global duplicate",
+        project_id=PROJECT_1,
+    )
+
+    assert project_result.id == global_memory.id
+    assert project_result.project_id is None
+    row = db.fetchone("SELECT COUNT(*) AS cnt FROM memories WHERE project_id = %s", (PROJECT_1,))
+    assert row is not None
+    assert row["cnt"] == 0
 
 
 def test_source_session_proximity_dedup_scopes_to_project(memory_manager, db) -> None:
@@ -376,6 +424,93 @@ def test_mark_pending_graphs_without_project_resets_all(memory_manager, db) -> N
     assert {row["graph_processed"] for row in rows} == {0}
 
 
+def test_deterministic_graph_failures_become_terminal_at_cap(memory_manager, db) -> None:
+    """A deterministic poison memory leaves the pending queue at the configured cap."""
+    memory = memory_manager.create_memory(content="Deterministic poison")
+    memory_manager.mark_pending_graph(memory.id)
+
+    assert (
+        memory_manager.record_graph_failure(memory.id, deterministic=True, max_attempts=3)
+        == "pending"
+    )
+    assert (
+        memory_manager.record_graph_failure(memory.id, deterministic=True, max_attempts=3)
+        == "pending"
+    )
+    assert (
+        memory_manager.record_graph_failure(memory.id, deterministic=True, max_attempts=3)
+        == "failed"
+    )
+
+    row = db.fetchone(
+        "SELECT graph_processed, graph_attempts, graph_status FROM memories WHERE id = %s",
+        (memory.id,),
+    )
+    assert row is not None
+    assert row["graph_processed"] is True
+    assert row["graph_attempts"] == 3
+    assert row["graph_status"] == "failed"
+    assert memory_manager.get_pending_graph_memories() == []
+
+
+def test_terminal_poison_memory_does_not_starve_newer_pending_memory(memory_manager, db) -> None:
+    """After terminal failure, the queue advances beyond its former oldest row."""
+    poison = memory_manager.create_memory(content="Old poison")
+    newer = memory_manager.create_memory(content="New valid memory")
+    db.execute(
+        "UPDATE memories SET created_at = created_at - INTERVAL '1 hour' WHERE id = %s",
+        (poison.id,),
+    )
+    memory_manager.mark_pending_graph(poison.id)
+    memory_manager.mark_pending_graph(newer.id)
+
+    memory_manager.record_graph_failure(poison.id, deterministic=True, max_attempts=1)
+
+    pending = memory_manager.get_pending_graph_memories(limit=1)
+    assert [memory.id for memory in pending] == [newer.id]
+
+
+def test_transient_graph_failure_stays_pending_without_consuming_attempt(
+    memory_manager, db
+) -> None:
+    """Retryable, partial, and unexpected failures retain their queue position and budget."""
+    memory = memory_manager.create_memory(content="Transient graph outage")
+    memory_manager.mark_pending_graph(memory.id)
+
+    assert (
+        memory_manager.record_graph_failure(memory.id, deterministic=False, max_attempts=3)
+        == "pending"
+    )
+
+    row = db.fetchone(
+        "SELECT graph_processed, graph_attempts, graph_status FROM memories WHERE id = %s",
+        (memory.id,),
+    )
+    assert row is not None
+    assert row["graph_processed"] is False
+    assert row["graph_attempts"] == 0
+    assert row["graph_status"] == "pending"
+    assert [item.id for item in memory_manager.get_pending_graph_memories()] == [memory.id]
+
+
+def test_mark_graph_processed_resets_retry_state(memory_manager, db) -> None:
+    """Success and no-entity outcomes complete the queue row and clear old attempts."""
+    memory = memory_manager.create_memory(content="Eventually succeeds")
+    memory_manager.mark_pending_graph(memory.id)
+    memory_manager.record_graph_failure(memory.id, deterministic=True, max_attempts=3)
+
+    memory_manager.mark_graph_processed(memory.id)
+
+    row = db.fetchone(
+        "SELECT graph_processed, graph_attempts, graph_status FROM memories WHERE id = %s",
+        (memory.id,),
+    )
+    assert row is not None
+    assert row["graph_processed"] is True
+    assert row["graph_attempts"] == 0
+    assert row["graph_status"] == "completed"
+
+
 def test_list_all_ids_applies_offset_without_limit(memory_manager, monkeypatch) -> None:
     fetchall = MagicMock(return_value=[{"id": "mem-3"}])
     monkeypatch.setattr(memory_manager.db, "fetchall", fetchall)
@@ -398,6 +533,40 @@ def test_content_exists_with_project(memory_manager, db) -> None:
 
     # Different content should not exist
     assert memory_manager.content_exists("Other content", project_id=PROJECT_1) is False
+
+
+def test_content_lookup_uses_project_plus_global_visibility(memory_manager, db) -> None:
+    """Existence and retrieval use identical project-plus-global precedence."""
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_1, "Project 1"))
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_2, "Project 2"))
+    global_memory = memory_manager.create_memory(content="Shared visible", project_id=None)
+    project_memory = memory_manager.create_memory(content="Project only", project_id=PROJECT_1)
+
+    assert memory_manager.content_exists("Shared visible", project_id=PROJECT_2) is True
+    assert (
+        memory_manager.get_memory_by_content("Shared visible", project_id=PROJECT_2).id
+        == global_memory.id
+    )
+    assert memory_manager.content_exists("Project only", project_id=PROJECT_2) is False
+    assert memory_manager.get_memory_by_content("Project only", project_id=PROJECT_2) is None
+    assert memory_manager.content_exists("Project only", project_id=PROJECT_1) is True
+    assert (
+        memory_manager.get_memory_by_content("Project only", project_id=PROJECT_1).id
+        == project_memory.id
+    )
+
+
+def test_global_content_lookup_does_not_match_project_memory(memory_manager, db) -> None:
+    """Creating or querying global scope does not absorb a project-local memory."""
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_1, "Project 1"))
+    project_memory = memory_manager.create_memory(content="Scope direction", project_id=PROJECT_1)
+
+    assert memory_manager.content_exists("Scope direction", project_id=None) is False
+    assert memory_manager.get_memory_by_content("Scope direction", project_id=None) is None
+
+    global_memory = memory_manager.create_memory(content="Scope direction", project_id=None)
+    assert global_memory.id != project_memory.id
+    assert global_memory.project_id is None
 
 
 def test_content_exists_without_project(memory_manager) -> None:

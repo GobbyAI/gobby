@@ -31,6 +31,8 @@ from gobby.utils.json_helpers import extract_json_object
 
 logger = logging.getLogger(__name__)
 
+_TITLE_SYNTHESIS_DIGEST_LIMIT = 12_000
+
 
 @dataclass(frozen=True)
 class _TurnRecord:
@@ -45,6 +47,68 @@ class SessionTitlePolicy(Protocol):
 
 class _DigestPersistenceError(RuntimeError):
     """Raised when digest persistence would leave partial session state."""
+
+
+_DIGEST_TURN_SENTINEL_RE = re.compile(r"(?m)^[ \t]*<!-- gobby:digest-turn:(\d+) -->[ \t]*$")
+
+
+async def _run_sync_io(func: Any, *args: Any, **kwargs: Any) -> Any:
+    """Run synchronous digest/session I/O without blocking the event loop."""
+    return await asyncio.to_thread(func, *args, **kwargs)
+
+
+def _parser_for_transcript(source: str | None, transcript_path: str) -> Any | None:
+    """Resolve a parser or log why transcript processing is skipped."""
+    from gobby.sessions.transcripts import get_parser
+
+    if not str(source or "").strip():
+        logger.warning("Skipping transcript %s: session source is missing", transcript_path)
+        return None
+    try:
+        return get_parser(source)
+    except ValueError as exc:
+        logger.warning("Skipping transcript %s: %s", transcript_path, exc)
+        return None
+
+
+def _render_prompt_template(template: str, values: dict[str, str], db: Any | None) -> str:
+    from gobby.prompts.loader import PromptLoader
+
+    return PromptLoader(db=db).render(template, values)
+
+
+def _extract_digest_pairs(parser: Any, turns: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    """Extract digestible pairs from a transcript slice."""
+    if not turns:
+        return []
+    messages = parser.extract_last_messages(turns, num_pairs=max(1, len(turns)))
+    messages = [
+        {**msg, "content": stripped}
+        for msg in messages
+        if (stripped := strip_injected_context(str(msg["content"]))).strip()
+    ]
+
+    pairs: list[tuple[str, str]] = []
+    current_prompt = ""
+    for msg in messages:
+        if msg["role"] == "user":
+            if current_prompt:
+                pairs.append((current_prompt, ""))
+            current_prompt = msg["content"]
+        elif msg["role"] == "assistant":
+            pairs.append((current_prompt or "", msg["content"]))
+            current_prompt = ""
+    if current_prompt:
+        pairs.append((current_prompt, ""))
+
+    def _is_lifecycle_prompt(prompt: str) -> bool:
+        normalized = re.sub(r"<[^>]+>", "", prompt).strip().lower()
+        return any(
+            normalized == command or normalized.startswith(command + " ")
+            for command in LIFECYCLE_CMDS
+        )
+
+    return [(prompt, response) for prompt, response in pairs if not _is_lifecycle_prompt(prompt)]
 
 
 def _provider_cancelled_result(session_id: str, exc: LLMProviderCancellation) -> dict[str, Any]:
@@ -72,7 +136,7 @@ async def _provider_cancelled_fallback(
     result = _provider_cancelled_result(session_id, exc)
     if not session_manager or not session_id:
         return result
-    session = session_manager.get(session_id)
+    session = await _run_sync_io(session_manager.get, session_id)
     if session is None:
         return result
     if not _can_replace_with_heuristic_title(session):
@@ -85,7 +149,12 @@ async def _provider_cancelled_fallback(
     if not title:
         return result
 
-    updated = session_manager.update_title(session_id, title, title_source="heuristic")
+    updated = await _run_sync_io(
+        session_manager.update_title,
+        session_id,
+        title,
+        title_source="heuristic",
+    )
     if updated is not None:
         result["title"] = title
         result["title_source"] = "heuristic"
@@ -135,7 +204,9 @@ async def memory_sync_export(
     return {"exported": {"memories": count}}
 
 
-async def _read_last_turn_from_transcript(transcript_path: str, source: str) -> tuple[str, str]:
+async def _read_last_turn_from_transcript(
+    transcript_path: str, source: str | None
+) -> tuple[str, str]:
     """Read the last user prompt and assistant response from a transcript file.
 
     Args:
@@ -150,9 +221,9 @@ async def _read_last_turn_from_transcript(transcript_path: str, source: str) -> 
         return "", ""
 
     try:
-        from gobby.sessions.transcripts import get_parser
-
-        parser = get_parser(source)
+        parser = _parser_for_transcript(source, transcript_path)
+        if parser is None:
+            return "", ""
 
         def _read_lines() -> list[str]:
             with open(transcript_file, encoding="utf-8") as f:
@@ -186,31 +257,35 @@ async def _read_last_turn_from_transcript(transcript_path: str, source: str) -> 
 
 
 async def _read_undigested_turns(
-    transcript_path: str, source: str, digested_count: int, max_turns: int = 50, num_pairs: int = 50
-) -> list[tuple[str, str]]:
+    transcript_path: str,
+    source: str | None,
+    digested_pair_index: int,
+    num_pairs: int = 50,
+) -> tuple[list[tuple[str, str]], int]:
     """Read user/assistant pairs from transcript that haven't been digested yet.
 
     Uses extract_turns_since_clear() to respect /clear boundaries, then
     extract_last_messages() to get all pairs from the current segment.
-    Returns only pairs after digested_count.
+    The persisted cursor counts digestible pairs across all transcript segments,
+    while returned content remains restricted to the current segment.
 
     Args:
         transcript_path: Path to the JSONL transcript file
     source: CLI source (claude, qwen, codex, etc.)
-        digested_count: Number of pairs already digested
+        digested_pair_index: Number of pairs already digested
+        num_pairs: Maximum pairs to consume in this digest pass
 
     Returns:
-        List of (prompt, response) tuples for undigested exchanges.
-        Empty list if nothing new to digest.
+        Tuple of the undigested pair batch and the next persisted pair index.
     """
     transcript_file = Path(transcript_path)
     if not transcript_file.exists():
-        return []
+        return [], digested_pair_index
 
     try:
-        from gobby.sessions.transcripts import get_parser
-
-        parser = get_parser(source)
+        parser = _parser_for_transcript(source, transcript_path)
+        if parser is None:
+            return [], digested_pair_index
 
         def _read_lines() -> list[str]:
             with open(transcript_file, encoding="utf-8") as f:
@@ -224,88 +299,54 @@ async def _read_undigested_turns(
                 turns.append(json.loads(line))
 
         if not turns:
-            return []
+            return [], digested_pair_index
 
         # Get current conversation segment (respects /clear boundaries)
-        segment = parser.extract_turns_since_clear(turns, max_turns=max_turns)
+        segment = parser.extract_turns_since_clear(turns, max_turns=None)
         if not segment:
-            return []
+            return [], digested_pair_index
 
-        # Extract all user/assistant messages from the segment
-        messages = parser.extract_last_messages(segment, num_pairs=num_pairs)
-        if not messages:
-            return []
-        messages = [
-            {**msg, "content": stripped}
-            for msg in messages
-            if (stripped := strip_injected_context(str(msg["content"]))).strip()
-        ]
-        if not messages:
-            return []
-
-        # Pair messages into (prompt, response) tuples
-        pairs: list[tuple[str, str]] = []
-        current_prompt = ""
-        for msg in messages:
-            if msg["role"] == "user":
-                # Consecutive user message means previous had no response (interrupted)
-                if current_prompt:
-                    pairs.append((current_prompt, ""))
-                current_prompt = msg["content"]
-            elif msg["role"] == "assistant":
-                pairs.append((current_prompt or "", msg["content"]))
-                current_prompt = ""
-        # Trailing user message without response
-        if current_prompt:
-            pairs.append((current_prompt, ""))
-
-        # Filter out lifecycle commands
-        pairs = [
-            (p, r)
-            for p, r in pairs
-            if not any(
-                p.strip().lower() == c or p.strip().lower().startswith(c + " ")
-                for c in LIFECYCLE_CMDS
-            )
-        ]
-
+        pairs = _extract_digest_pairs(parser, segment)
         if not pairs:
-            return []
+            return [], digested_pair_index
 
-        # Return undigested pairs
-        if digested_count < len(pairs):
-            return pairs[digested_count:]
+        segment_turn_offset = len(turns) - len(segment)
+        # Parsers return the active transcript suffix, but may sanitize records
+        # in that suffix (for example Claude removes orphaned tool results).
+        # Content equality therefore cannot identify the raw prefix reliably;
+        # the preserved turn count is the stable boundary coordinate.
+        prefix_turns = turns[:segment_turn_offset] if segment_turn_offset >= 0 else []
+        segment_pair_offset = len(_extract_digest_pairs(parser, prefix_turns))
+        start_index = digested_pair_index - segment_pair_offset
+        if start_index < 0 or start_index > len(pairs):
+            logger.debug(
+                "Resetting digest cursor to active transcript segment: index=%s offset=%s pairs=%s",
+                digested_pair_index,
+                segment_pair_offset,
+                len(pairs),
+            )
+            start_index = 0
 
-        # Transcript has fewer pairs than digested (e.g., /clear reset) —
-        # fall back to the last pair so we don't lose the current exchange
-        logger.debug(
-            f"Undigested turns fallback: digested_count={digested_count} >= len(pairs)={len(pairs)}. Returning last pair.",
-        )
-        return [pairs[-1]]
+        batch = pairs[start_index : start_index + num_pairs]
+        return batch, segment_pair_offset + start_index + len(batch)
 
     except Exception as e:
         logger.warning(f"Failed to read undigested turns from {transcript_path}: {e}")
-        return []
+        return [], digested_pair_index
 
 
 def _get_next_turn_number(previous_digest: str | None) -> int:
-    """Parse existing digest to determine the next turn number.
-
-    Args:
-        previous_digest: The existing digest_markdown content
-
-    Returns:
-        Next turn number (1-based)
-    """
+    """Get the next display turn from sanitized internal sentinels."""
     if not previous_digest:
         return 1
 
-    # Find all "### Turn N" headers
-    turn_numbers = re.findall(r"^### Turn (\d+)", previous_digest, re.MULTILINE)
-    if not turn_numbers:
-        return 1
+    turn_numbers = _DIGEST_TURN_SENTINEL_RE.findall(previous_digest)
+    return max((int(number) for number in turn_numbers), default=0) + 1
 
-    return max(int(n) for n in turn_numbers) + 1
+
+def _sanitize_turn_markdown(turn_markdown: str) -> str:
+    """Remove reserved sentinels so model output cannot forge digest state."""
+    return _DIGEST_TURN_SENTINEL_RE.sub("", turn_markdown).strip()
 
 
 def _build_turn_record_prompt(prompt_text: str, response_text: str) -> str:
@@ -403,7 +444,7 @@ async def bootstrap_session_title(
     if not session_manager or not session_id:
         return None
 
-    session = session_manager.get(session_id)
+    session = await _run_sync_io(session_manager.get, session_id)
     if session is None:
         return None
 
@@ -422,7 +463,8 @@ async def bootstrap_session_title(
     if not title:
         return None
 
-    updated = session_manager.update_title(
+    updated = await _run_sync_io(
+        session_manager.update_title,
         session_id,
         title,
         title_source="heuristic",
@@ -438,24 +480,23 @@ async def _resolve_undigested_pairs(
     session: Any,
     prompt_text: str | None,
     session_id: str,
-    max_turns: int = 50,
     num_pairs: int = 50,
-) -> tuple[list[tuple[str, str]], str] | None:
+) -> tuple[list[tuple[str, str]], str, int] | None:
     """Resolve undigested turn pairs from transcript or prompt_text.
 
     Returns:
-        Tuple of (pairs, input_hash) or None if no content to digest.
+        Tuple of (pairs, input_hash, next_pair_index) or None if no content to digest.
     """
     undigested_pairs: list[tuple[str, str]] = []
+    raw_pair_index = getattr(session, "last_digested_pair_index", 0)
+    pair_index = raw_pair_index if isinstance(raw_pair_index, int) and raw_pair_index >= 0 else 0
+    next_pair_index = pair_index
 
     if session.transcript_path:
-        previous_digest = getattr(session, "digest_markdown", None) or ""
-        digested_count = _get_next_turn_number(previous_digest) - 1
-        undigested_pairs = await _read_undigested_turns(
+        undigested_pairs, next_pair_index = await _read_undigested_turns(
             session.transcript_path,
             session.source,
-            digested_count,
-            max_turns=max_turns,
+            pair_index,
             num_pairs=num_pairs,
         )
 
@@ -470,8 +511,10 @@ async def _resolve_undigested_pairs(
         ):
             return None
         undigested_pairs = [(user_prompt, "")]
+        next_pair_index = pair_index + 1
 
-    combined_content = "||".join(f"{p}||{r}" for p, r in undigested_pairs)
+    start_pair_index = next_pair_index - len(undigested_pairs)
+    combined_content = f"{start_pair_index}||" + "||".join(f"{p}||{r}" for p, r in undigested_pairs)
     input_hash = hashlib.sha256(combined_content.encode()).hexdigest()[:16]
     if session.last_digest_input_hash == input_hash:
         logger.debug(
@@ -479,7 +522,7 @@ async def _resolve_undigested_pairs(
         )
         return None
 
-    return undigested_pairs, input_hash
+    return undigested_pairs, input_hash, next_pair_index
 
 
 async def _build_turn_record(
@@ -506,12 +549,11 @@ async def _build_turn_record(
         truncated_response = ""
 
     try:
-        from gobby.prompts.loader import PromptLoader
-
-        loader = PromptLoader(db=db)
-        turn_prompt = loader.render(
+        turn_prompt = await _run_sync_io(
+            _render_prompt_template,
             "memory/turn_record",
             {"prompt_text": truncated_prompt, "response_text": truncated_response},
+            db,
         )
     except Exception:
         turn_prompt = _build_turn_record_prompt(truncated_prompt, truncated_response)
@@ -632,16 +674,17 @@ async def _synthesize_title(
     if not _should_update_digest_title(session):
         return None
 
-    try:
-        from gobby.prompts.loader import PromptLoader
+    digest_excerpt = updated_digest[-_TITLE_SYNTHESIS_DIGEST_LIMIT:]
 
-        loader = PromptLoader(db=db)
-        title_prompt = loader.render(
+    try:
+        title_prompt = await _run_sync_io(
+            _render_prompt_template,
             "memory/title_synthesis",
-            {"digest_markdown": updated_digest},
+            {"digest_markdown": digest_excerpt},
+            db,
         )
     except Exception:
-        title_prompt = _build_title_synthesis_prompt(updated_digest)
+        title_prompt = _build_title_synthesis_prompt(digest_excerpt)
 
     llm_timeout = getattr(digest_config, "timeout", 30)
     title = await asyncio.wait_for(
@@ -655,7 +698,8 @@ async def _synthesize_title(
 
     title_str = normalize_title_candidate(title)
     if title_str:
-        updated_session = session_manager.update_title(
+        updated_session = await _run_sync_io(
+            session_manager.update_title,
             session_id,
             title_str,
             title_source="llm",
@@ -719,7 +763,7 @@ async def build_turn_and_digest(
 
     try:
         # 1. Get session
-        session = session_manager.get(session_id) if session_manager else None
+        session = await _run_sync_io(session_manager.get, session_id) if session_manager else None
         if not session:
             logger.warning(f"build_turn_and_digest: Session {session_id} not found")
             return None
@@ -733,11 +777,8 @@ async def build_turn_and_digest(
         existing_digest = getattr(session, "digest_markdown", None) or ""
 
         # 2. Resolve undigested pairs
-        max_turns = getattr(digest_config, "max_turns", 50) if digest_config else 50
         num_pairs = getattr(digest_config, "num_pairs", 50) if digest_config else 50
-        resolved = await _resolve_undigested_pairs(
-            session, prompt_text, session_id, max_turns, num_pairs
-        )
+        resolved = await _resolve_undigested_pairs(session, prompt_text, session_id, num_pairs)
         if resolved is None and (not needs_title_recovery or not existing_digest):
             return None
 
@@ -745,6 +786,14 @@ async def build_turn_and_digest(
             return {"error": "memory digest feature config not available"}
 
         if resolved is None:
+            title_digest_hash = hashlib.sha256(existing_digest.encode("utf-8")).hexdigest()[:16]
+            if getattr(session, "last_title_synthesis_digest_hash", None) == title_digest_hash:
+                return None
+            await _run_sync_io(
+                session_manager.update_last_title_synthesis_digest_hash,
+                session_id,
+                title_digest_hash,
+            )
             try:
                 title = await _synthesize_title(
                     existing_digest,
@@ -770,16 +819,18 @@ async def build_turn_and_digest(
                 "digest_length": len(existing_digest),
             }
 
-        undigested_pairs, input_hash = resolved
+        undigested_pairs, input_hash, next_pair_index = resolved
 
         # 4. Build turn record via LLM
         turn_record = await _build_turn_record(llm_service, digest_config, undigested_pairs, db)
-        last_turn = turn_record.turn_markdown
+        last_turn = _sanitize_turn_markdown(turn_record.turn_markdown)
+        if not last_turn:
+            raise ValueError("turn_markdown contains only reserved digest sentinels")
 
         # 5. Prepare digest/title state after validating the LLM JSON contract.
         previous_digest = getattr(session, "digest_markdown", None) or ""
         turn_num = _get_next_turn_number(previous_digest)
-        entry = f"### Turn {turn_num}\n{last_turn}"
+        entry = f"<!-- gobby:digest-turn:{turn_num} -->\n### Turn {turn_num}\n{last_turn}"
         updated_digest = f"{previous_digest}\n\n{entry}" if previous_digest else entry
 
         digest_title: str | None = None
@@ -797,11 +848,13 @@ async def build_turn_and_digest(
 
         # 6. Persist digest state only after contract validation succeeds.
         try:
-            updated_session = session_manager.persist_digest_state(
+            updated_session = await _run_sync_io(
+                session_manager.persist_digest_state,
                 session_id,
                 last_turn_markdown=last_turn,
                 digest_markdown=updated_digest,
                 last_digest_input_hash=input_hash,
+                last_digested_pair_index=next_pair_index,
                 title=persist_title,
                 title_source=persist_title_source,
             )

@@ -14,8 +14,6 @@ import redis.exceptions
 
 logger = logging.getLogger(__name__)
 
-_VECTOR_SEARCH_PROJECT_OVERFETCH_FACTOR = 5
-_VECTOR_SEARCH_PROJECT_OVERFETCH_LIMIT = 200
 _CONSTRAINT_POLL_INTERVAL_SECONDS = 0.25
 _CONSTRAINT_READY_TIMEOUT_SECONDS = 30.0
 
@@ -107,7 +105,8 @@ def _constraint_properties(value: Any) -> list[str]:
     return [_as_string(value)]
 
 
-def _normalize_relationship_type(rel_type: str) -> str:
+def normalize_relationship_type(rel_type: str) -> str:
+    """Normalize a relationship label to the exact Cypher type Falkor stores."""
     normalized = re.sub(r"[^A-Za-z0-9_]", "_", rel_type)
     if normalized and normalized[0].isdigit():
         normalized = "_" + normalized
@@ -626,7 +625,7 @@ class FalkorClient:
         ``updated_at`` timestamp. Callers that omit ``weight`` keep the exact
         prior behavior (``r += $props`` only), so existing callers are unchanged.
         """
-        rel_type = _normalize_relationship_type(rel_type)
+        rel_type = normalize_relationship_type(rel_type)
         props = dict(properties or {})
         match_clause = (
             "MATCH (a:_Entity {entity_key: $source_key}), (b:_Entity {entity_key: $target_key}) "
@@ -692,46 +691,41 @@ class FalkorClient:
         limit: int = 10,
         min_score: float = 0.5,
         project_id: str | None = None,
+        include_global: bool = True,
     ) -> list[dict[str, Any]]:
         """Search for entities using vector similarity."""
         if limit <= 0:
             return []
 
         _validate_cypher_identifier(index_name, "index name")
-        candidate_limit = min(
-            limit * _VECTOR_SEARCH_PROJECT_OVERFETCH_FACTOR,
-            _VECTOR_SEARCH_PROJECT_OVERFETCH_LIMIT,
-        )
-        # FalkorDB's cosine vector index returns a DISTANCE in `score` (0.0 == identical,
-        # higher == less similar; verified on graph module v41807). Convert to cosine
-        # similarity (1.0 - distance) so callers get a higher-is-better score and
-        # `min_score` acts as a similarity floor. The previous `WHERE score >= min_score`
-        # filtered on raw distance, which kept the LEAST similar entities and dropped the
-        # most similar (a query-identical entity scored 0.0 and was excluded).
+        # FalkorDB's vector index procedure cannot apply property filters before
+        # its global k-neighbor window. Filter the embedded entity set by project
+        # first, then compute exact cosine distance so foreign projects cannot
+        # displace an in-scope match from the candidate window.
         cypher = (
-            "CALL db.idx.vector.queryNodes('_Entity', 'embedding', "
-            "$candidate_limit, vecf32($embedding)) "
-            "YIELD node, score "
-            "WHERE (1.0 - score) >= $min_score "
+            "MATCH (node:_Entity) "
+            "WHERE (node.project_id = $project_id "
+            "OR ($include_global AND node.project_id IS NULL)) "
+            "AND node.embedding IS NOT NULL "
+            "WITH node, vec.cosineDistance(node.embedding, vecf32($embedding)) AS distance "
+            "WHERE (1.0 - distance) >= $min_score "
             "RETURN node.entity_key AS entity_key, node.name AS name, "
             "node.entity_type AS entity_type, node.project_id AS project_id, "
-            "labels(node) AS labels, (1.0 - score) AS score, "
-            "properties(node) AS props"
+            "labels(node) AS labels, (1.0 - distance) AS score, "
+            "properties(node) AS props "
+            "ORDER BY distance ASC "
+            "LIMIT $limit"
         )
-        rows = await self.query(
+        return await self.query(
             cypher,
             {
                 "embedding": query_embedding,
-                "candidate_limit": candidate_limit,
+                "project_id": project_id,
+                "include_global": include_global,
                 "min_score": min_score,
+                "limit": limit,
             },
         )
-        filtered = [
-            row
-            for row in rows
-            if row.get("project_id") == project_id or row.get("project_id") is None
-        ]
-        return filtered[:limit]
 
     async def ping(self) -> bool:
         """Check if FalkorDB is reachable."""

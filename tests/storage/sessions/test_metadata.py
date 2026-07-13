@@ -197,6 +197,7 @@ class TestSessionManagerMetadata:
                 last_turn_markdown="last turn",
                 digest_markdown="### Turn 1\nlast turn",
                 last_digest_input_hash="abc123",
+                last_digested_pair_index=3,
                 title="Digest Title",
                 title_source="llm",
             )
@@ -207,9 +208,30 @@ class TestSessionManagerMetadata:
         assert updated.last_turn_markdown == "last turn"
         assert updated.digest_markdown == "### Turn 1\nlast turn"
         assert updated.last_digest_input_hash == "abc123"
+        assert updated.last_digested_pair_index == 3
         assert session_calls == [("session_updated", session.id)]
         assert title_calls == [(session.id, "Digest Title")]
         mock_rename.assert_called_once()
+
+    def test_update_last_title_synthesis_digest_hash_persists_attempt(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Contentless title recovery persists the digest identity it attempted."""
+        session = session_manager.register(
+            external_id="title-recovery-hash-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        session_manager.update_last_title_synthesis_digest_hash(session.id, "digest-hash")
+
+        updated = session_manager.get(session.id)
+        assert updated is not None
+        assert updated.last_title_synthesis_digest_hash == "digest-hash"
+        assert updated.to_dict()["last_title_synthesis_digest_hash"] == "digest-hash"
 
     def test_persist_digest_state_missing_session_does_not_notify_listener(
         self,
@@ -226,6 +248,7 @@ class TestSessionManagerMetadata:
             last_turn_markdown="last turn",
             digest_markdown="digest",
             last_digest_input_hash="abc123",
+            last_digested_pair_index=1,
             title="Digest Title",
             title_source="llm",
         )
@@ -277,6 +300,7 @@ class TestSessionManagerMetadata:
                     last_turn_markdown="new turn",
                     digest_markdown="boom",
                     last_digest_input_hash="new-hash",
+                    last_digested_pair_index=4,
                     title="New Title",
                     title_source="llm",
                 )
@@ -288,6 +312,7 @@ class TestSessionManagerMetadata:
             assert reloaded.last_turn_markdown is None
             assert reloaded.digest_markdown is None
             assert reloaded.last_digest_input_hash is None
+            assert reloaded.last_digested_pair_index == 0
         finally:
             session_manager.db.execute(
                 "DROP TRIGGER IF EXISTS fail_digest_state_update ON sessions"

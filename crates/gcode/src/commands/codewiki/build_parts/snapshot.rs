@@ -29,10 +29,17 @@ pub(crate) fn build_codewiki_index_snapshot(
         });
     let mut file_snapshots = BTreeMap::new();
     for file in files {
+        // Indexed files can vanish from disk before the run starts (the index
+        // lags external commits that delete sources); skip them instead of
+        // aborting the whole run (#18109).
+        let Some(content_hash) = hash_snapshot_file(project_root, &file)? else {
+            eprintln!("warning: skipping codewiki source file missing from disk: {file}");
+            continue;
+        };
         file_snapshots.insert(
             file.clone(),
             CodewikiFileSnapshot {
-                content_hash: hash_snapshot_file(project_root, &file)?,
+                content_hash,
                 symbol_count: symbols_by_file.get(&file).copied().unwrap_or_default(),
             },
         );
@@ -75,19 +82,38 @@ pub(crate) fn build_codewiki_index_snapshot(
     })
 }
 
-fn hash_snapshot_file(project_root: &Path, file: &str) -> anyhow::Result<String> {
+/// Hash one snapshot source from disk; `Ok(None)` means the file no longer
+/// exists (deleted since indexing) and the caller should skip it (#18109).
+fn hash_snapshot_file(project_root: &Path, file: &str) -> anyhow::Result<Option<String>> {
     let canonical_root = project_root
         .canonicalize()
         .map_err(|err| anyhow::anyhow!("failed to resolve codewiki project root: {err}"))?;
     let source_path = project_root.join(file);
-    let canonical_source = source_path
-        .canonicalize()
-        .map_err(|err| anyhow::anyhow!("failed to resolve codewiki source file {file}: {err}"))?;
+    let canonical_source = match source_path.canonicalize() {
+        Ok(path) => path,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(anyhow::anyhow!(
+                "failed to resolve codewiki source file {file}: {err}"
+            ));
+        }
+    };
     if !canonical_source.starts_with(&canonical_root) {
         anyhow::bail!("codewiki source file {file} resolves outside project root");
     }
-    hasher::file_content_hash(&canonical_source)
-        .map_err(|err| anyhow::anyhow!("failed to hash codewiki source file {file}: {err}"))
+    match hasher::file_content_hash(&canonical_source) {
+        Ok(hash) => Ok(Some(hash)),
+        Err(err)
+            if err
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io_err| io_err.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            Ok(None)
+        }
+        Err(err) => Err(anyhow::anyhow!(
+            "failed to hash codewiki source file {file}: {err}"
+        )),
+    }
 }
 
 fn graph_neighborhood_fingerprints(

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from gobby.memory.services.indexing import MAX_REINDEX_LIMIT, IndexingService
+from gobby.memory.services.indexing import REINDEX_PAGE_SIZE, IndexingService
 from gobby.storage.memories import Memory
 
 pytestmark = pytest.mark.unit
@@ -28,6 +28,9 @@ def _memory(memory_id: str, content: str, project_id: str = "project-1") -> Memo
 class _MemoryStorage:
     def __init__(self, memories: list[Memory]) -> None:
         self.memories = memories
+        self.stale_ids = {memory.id for memory in memories if memory.vector_needs_reindex}
+        self.reindexed_content: dict[str, str] = {}
+        self.list_calls: list[tuple[str | None, int | None, int]] = []
         self.db = MagicMock()
         self.db.execute.return_value.rowcount = 0
 
@@ -41,6 +44,7 @@ class _MemoryStorage:
         tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
     ) -> list[Memory]:
+        self.list_calls.append((project_id, limit, offset))
         memories = [
             memory
             for memory in self.memories
@@ -55,17 +59,32 @@ class _MemoryStorage:
         end = None if limit is None else offset + limit
         return ids[offset:end]
 
+    def get_memories(self, memory_ids: list[str], **_kwargs: Any) -> list[Memory]:
+        by_id = {memory.id: memory for memory in self.memories}
+        return [by_id[memory_id] for memory_id in memory_ids if memory_id in by_id]
+
     def delete_project_crossrefs(self, project_id: str) -> int:
         return 0
+
+    def list_vector_reindex_ids(self) -> list[str]:
+        return sorted(self.stale_ids)
+
+    def mark_vectors_reindexed(self, indexed_content: dict[str, str]) -> int:
+        self.reindexed_content.update(indexed_content)
+        cleared = self.stale_ids & indexed_content.keys()
+        self.stale_ids -= cleared
+        return len(cleared)
 
 
 class _VectorStore:
     def __init__(self) -> None:
         self.ids: list[str] = []
+        self.events: list[str] = []
         self.rebuild = AsyncMock(side_effect=self._rebuild)
         self.scroll_ids = AsyncMock(side_effect=self._scroll_ids)
         self.delete = AsyncMock()
-        self.batch_upsert = AsyncMock()
+        self.delete_many = AsyncMock(side_effect=self._delete_many)
+        self.batch_upsert = AsyncMock(side_effect=self._batch_upsert)
         self.delete_collection = AsyncMock()
 
     @property
@@ -79,8 +98,27 @@ class _VectorStore:
     ) -> None:
         self.ids = [str(memory["id"]) for memory in memory_dicts]
 
-    async def _scroll_ids(self) -> list[str]:
+    async def _scroll_ids(
+        self,
+        batch_size: int = 1000,
+        filters: dict[str, str] | None = None,
+    ) -> list[str]:
+        del batch_size, filters
+        self.events.append("scroll")
         return list(self.ids)
+
+    async def _batch_upsert(self, batch: list[tuple[str, list[float], dict[str, Any]]]) -> None:
+        self.events.append("upsert")
+        self.ids.extend(memory_id for memory_id, _embedding, _payload in batch)
+
+    async def _delete_many(
+        self,
+        memory_ids: list[str],
+        collection_name: str | None = None,
+    ) -> None:
+        del collection_name
+        self.events.append("delete")
+        self.ids = [memory_id for memory_id in self.ids if memory_id not in memory_ids]
 
 
 class _SlowVectorStore(_VectorStore):
@@ -108,16 +146,137 @@ def _service(
     storage: _MemoryStorage,
     vector_store: _VectorStore,
     run_db: Callable[..., Awaitable[Any]] | None = None,
+    embed_fn: Callable[[str], Awaitable[list[float]]] = _embed_fn,
 ) -> IndexingService:
     return IndexingService(
         storage=storage,
         vector_store=vector_store,
-        embed_fn=_embed_fn,
+        embed_fn=embed_fn,
         kg_service=None,
         crossref_service=MagicMock(),
         kg_rebuilder=AsyncMock(return_value={}),
         run_db=run_db,
     )
+
+
+@pytest.mark.asyncio
+async def test_reconcile_backfills_missing_vectors_and_deletes_orphans() -> None:
+    """Storage-minus-Qdrant rows are embedded while Qdrant orphans still disappear."""
+    storage = _MemoryStorage([_memory("present", "Present"), _memory("missing", "Missing")])
+    vector_store = _VectorStore()
+    vector_store.ids = ["present", "orphan"]
+    embed_fn = AsyncMock(return_value=[0.4, 0.5])
+
+    report = await _service(storage, vector_store, embed_fn=embed_fn).reconcile_stores()
+
+    assert report["qdrant"] == {
+        "orphans_found": 1,
+        "orphans_deleted": 1,
+        "missing_found": 1,
+        "missing_embedded": 1,
+        "stale_found": 0,
+        "stale_reindexed": 0,
+        "errors": 0,
+        "total": 2,
+    }
+    assert set(vector_store.ids) == {"present", "missing"}
+    embed_fn.assert_awaited_once_with("Missing")
+    assert vector_store.batch_upsert.await_args.args[0] == [
+        ("missing", [0.4, 0.5], {"content": "Missing", "project_id": "project-1"})
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_replaces_stale_vector_and_clears_current_marker() -> None:
+    stale = _memory("stale", "Current content")
+    stale.vector_needs_reindex = True
+    storage = _MemoryStorage([stale])
+    vector_store = _VectorStore()
+    vector_store.ids = ["stale"]
+    embed_fn = AsyncMock(return_value=[0.7, 0.8])
+
+    report = await _service(storage, vector_store, embed_fn=embed_fn).reconcile_stores()
+
+    assert report["qdrant"]["missing_found"] == 0
+    assert report["qdrant"]["stale_found"] == 1
+    assert report["qdrant"]["stale_reindexed"] == 1
+    assert report["qdrant"]["errors"] == 0
+    embed_fn.assert_awaited_once_with("Current content")
+    assert storage.reindexed_content == {"stale": "Current content"}
+    assert storage.stale_ids == set()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_reports_only_content_qualified_stale_clears() -> None:
+    stale = _memory("stale", "Current content")
+    stale.vector_needs_reindex = True
+    storage = _MemoryStorage([stale])
+    storage.mark_vectors_reindexed = MagicMock(return_value=0)
+    vector_store = _VectorStore()
+    vector_store.ids = ["stale"]
+
+    report = await _service(storage, vector_store).reconcile_stores()
+
+    assert report["qdrant"]["stale_found"] == 1
+    assert report["qdrant"]["stale_reindexed"] == 0
+    storage.mark_vectors_reindexed.assert_called_once_with({"stale": "Current content"})
+
+
+@pytest.mark.asyncio
+async def test_reconcile_dry_run_reports_missing_and_orphans_without_mutating() -> None:
+    storage = _MemoryStorage([_memory("missing", "Missing")])
+    vector_store = _VectorStore()
+    vector_store.ids = ["orphan"]
+    embed_fn = AsyncMock(return_value=[0.4, 0.5])
+
+    report = await _service(storage, vector_store, embed_fn=embed_fn).reconcile_stores(dry_run=True)
+
+    assert report["qdrant"]["orphans_found"] == 1
+    assert report["qdrant"]["orphans_deleted"] == 0
+    assert report["qdrant"]["missing_found"] == 1
+    assert report["qdrant"]["missing_embedded"] == 0
+    assert vector_store.ids == ["orphan"]
+    embed_fn.assert_not_awaited()
+    vector_store.delete_many.assert_not_awaited()
+    vector_store.batch_upsert.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_reports_one_embedding_failure_and_continues() -> None:
+    storage = _MemoryStorage([_memory("bad", "Bad"), _memory("good", "Good")])
+    vector_store = _VectorStore()
+
+    async def embed_fn(content: str) -> list[float]:
+        if content == "Bad":
+            raise RuntimeError("embedding unavailable")
+        return [0.4, 0.5]
+
+    report = await _service(storage, vector_store, embed_fn=embed_fn).reconcile_stores()
+
+    assert report["qdrant"]["missing_found"] == 2
+    assert report["qdrant"]["missing_embedded"] == 1
+    assert report["qdrant"]["errors"] == 1
+    assert report["qdrant"]["reindex_failures"] == [
+        {"memory_id": "bad", "error": "embedding unavailable"}
+    ]
+    assert vector_store.ids == ["good"]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_reports_vector_upsert_failure_without_crashing() -> None:
+    storage = _MemoryStorage([_memory("missing", "Missing")])
+    vector_store = _VectorStore()
+    vector_store.batch_upsert.side_effect = RuntimeError("qdrant unavailable")
+
+    report = await _service(storage, vector_store).reconcile_stores()
+
+    assert report["qdrant"]["missing_found"] == 1
+    assert report["qdrant"]["missing_embedded"] == 0
+    assert report["qdrant"]["errors"] == 1
+    assert report["qdrant"]["reindex_failures"] == [
+        {"memory_id": "missing", "error": "vector upsert failed: qdrant unavailable"}
+    ]
+    assert vector_store.ids == []
 
 
 @pytest.mark.asyncio
@@ -147,6 +306,60 @@ async def test_project_reindex_logs_cumulative_batch_progress(
 
 
 @pytest.mark.asyncio
+async def test_project_reindex_pages_all_memories_then_deletes_only_stale_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("gobby.memory.services.indexing.REINDEX_PAGE_SIZE", 2)
+    storage = _MemoryStorage([_memory(f"mem-{index}", f"content {index}") for index in range(5)])
+    vector_store = _VectorStore()
+    vector_store.ids = ["mem-0", "stale-project-vector"]
+    service = _service(storage, vector_store)
+
+    result = await service.reindex_embeddings(project_id="project-1")
+
+    assert result["success"] is True
+    assert result["embeddings_generated"] == 5
+    assert storage.list_calls == [
+        ("project-1", 2, 0),
+        ("project-1", 2, 2),
+        ("project-1", 2, 4),
+    ]
+    vector_store.scroll_ids.assert_awaited_once_with(filters={"project_id": "project-1"})
+    assert [len(call.args[0]) for call in vector_store.batch_upsert.await_args_list] == [2, 2, 1]
+    vector_store.delete_many.assert_awaited_once_with(["stale-project-vector"])
+    assert vector_store.events == ["scroll", "upsert", "upsert", "upsert", "delete"]
+
+
+@pytest.mark.asyncio
+async def test_project_reindex_embed_failure_never_deletes_existing_vectors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("gobby.memory.services.indexing.REINDEX_PAGE_SIZE", 1)
+    storage = _MemoryStorage([_memory("mem-1", "first"), _memory("mem-2", "fail")])
+    vector_store = _VectorStore()
+    vector_store.ids = ["mem-1", "mem-2", "stale-project-vector"]
+
+    async def embed_fn(content: str) -> list[float]:
+        if content == "fail":
+            raise RuntimeError("embedding failed")
+        return [0.1, 0.2]
+
+    service = _service(storage, vector_store, embed_fn=embed_fn)
+
+    result = await service.reindex_embeddings(project_id="project-1")
+
+    assert result == {
+        "success": False,
+        "total_memories": 2,
+        "error": "embedding failed",
+    }
+    assert vector_store.batch_upsert.await_count == 1
+    vector_store.delete_many.assert_not_awaited()
+    vector_store.delete.assert_not_awaited()
+    assert vector_store.events == ["scroll", "upsert"]
+
+
+@pytest.mark.asyncio
 async def test_global_reindex_skips_unchanged_memory_snapshot() -> None:
     storage = _MemoryStorage(
         [
@@ -170,6 +383,60 @@ async def test_global_reindex_skips_unchanged_memory_snapshot() -> None:
 
 
 @pytest.mark.asyncio
+async def test_global_reindex_does_not_skip_durable_stale_marker() -> None:
+    storage = _MemoryStorage([_memory("mem-1", "alpha")])
+    vector_store = _VectorStore()
+    service = _service(storage, vector_store)
+
+    await service.reindex_embeddings()
+    storage.stale_ids.add("mem-1")
+    second = await service.reindex_embeddings()
+
+    assert second["success"] is True
+    assert second["embeddings_generated"] == 1
+    assert second["skipped"] is False
+    assert vector_store.rebuild.await_count == 2
+    assert storage.stale_ids == set()
+
+
+@pytest.mark.asyncio
+async def test_global_reindex_pages_every_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("gobby.memory.services.indexing.REINDEX_PAGE_SIZE", 2)
+    storage = _MemoryStorage([_memory(f"mem-{index}", str(index)) for index in range(5)])
+    vector_store = _VectorStore()
+
+    result = await _service(storage, vector_store).reindex_embeddings()
+
+    assert result["success"] is True
+    assert result["embeddings_generated"] == 5
+    assert vector_store.ids == [f"mem-{index}" for index in range(5)]
+    assert storage.list_calls == [(None, 2, 0), (None, 2, 2), (None, 2, 4)]
+
+
+@pytest.mark.asyncio
+async def test_global_index_rebuild_pages_every_crossref_memory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("gobby.memory.services.indexing.REINDEX_PAGE_SIZE", 2)
+    storage = _MemoryStorage([_memory(f"mem-{index}", str(index)) for index in range(5)])
+    service = _service(storage, _VectorStore())
+    service._crossref_service.rebuild_for_memory = AsyncMock(return_value=1)
+
+    report = await service.rebuild_indices()
+
+    assert report["crossrefs"] == {"memories_processed": 5, "crossrefs_created": 5}
+    assert service._crossref_service.rebuild_for_memory.await_count == 5
+    assert storage.list_calls == [
+        (None, 2, 0),
+        (None, 2, 2),
+        (None, 2, 4),
+        (None, 2, 0),
+        (None, 2, 2),
+        (None, 2, 4),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_global_reindex_reads_storage_through_run_storage() -> None:
     storage = _MemoryStorage([_memory("mem-1", "alpha")])
     vector_store = _VectorStore()
@@ -188,7 +455,7 @@ async def test_global_reindex_reads_storage_through_run_storage() -> None:
     assert getattr(func, "__self__", None) is storage
     assert getattr(func, "__func__", None) is _MemoryStorage.list_memories
     assert args == ()
-    assert kwargs == {"limit": MAX_REINDEX_LIMIT}
+    assert kwargs == {"limit": REINDEX_PAGE_SIZE, "offset": 0}
 
 
 @pytest.mark.asyncio

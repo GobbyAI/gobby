@@ -197,6 +197,7 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
         last_turn_markdown: str,
         digest_markdown: str,
         last_digest_input_hash: str,
+        last_digested_pair_index: int,
         title: str | None = None,
         title_source: str | None = None,
     ) -> Session | None:
@@ -217,6 +218,7 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
             "last_turn_markdown": last_turn_markdown,
             "digest_markdown": digest_markdown,
             "last_digest_input_hash": last_digest_input_hash,
+            "last_digested_pair_index": last_digested_pair_index,
             "updated_at": now,
         }
         if changed_title is not None:
@@ -303,6 +305,22 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
                 """
                 UPDATE sessions
                 SET last_digest_input_hash = %s,
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (hash_value, now, session_id),
+            )
+
+    def update_last_title_synthesis_digest_hash(
+        self: _ManagerState, session_id: str, hash_value: str
+    ) -> None:
+        """Record the digest identity used for a contentless title attempt."""
+        now = utc_now()
+        with self.db.transaction():
+            self.db.execute(
+                """
+                UPDATE sessions
+                SET last_title_synthesis_digest_hash = %s,
                     updated_at = %s
                 WHERE id = %s
                 """,

@@ -684,6 +684,17 @@ class KnowledgeGraphService:
         """Get neighbors for a single entity."""
         return await self._reader.get_entity_neighbors(entity_key, project_id=project_id)
 
-    async def search_graph(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
+    async def search_graph(
+        self,
+        query: str,
+        limit: int = 10,
+        project_id: str | None = None,
+        include_global: bool = True,
+    ) -> list[dict[str, Any]]:
         """Search the knowledge graph for entities matching a query."""
-        return await self._reader.search_graph(query, limit=limit)
+        return await self._reader.search_graph(
+            query,
+            limit=limit,
+            project_id=project_id,
+            include_global=include_global,
+        )

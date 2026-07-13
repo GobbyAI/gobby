@@ -87,6 +87,11 @@ class KnowledgeGraphQueueConfig(BaseModel):
         ge=1,
         description="Max memories to process per KG queue cycle",
     )
+    max_deterministic_attempts: int = Field(
+        default=3,
+        ge=1,
+        description="Deterministic KG failures allowed before a memory leaves the queue",
+    )
 
 
 class RecommendToolsConfig(FeatureDefaultConfig):

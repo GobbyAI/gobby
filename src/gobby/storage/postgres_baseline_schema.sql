@@ -218,6 +218,8 @@ CREATE TABLE sessions (
     last_turn_markdown TEXT,
     chat_mode TEXT DEFAULT 'plan',
     last_digest_input_hash TEXT,
+    last_digested_pair_index INTEGER NOT NULL DEFAULT 0,
+    last_title_synthesis_digest_hash TEXT,
     message_count INTEGER DEFAULT 0,
     turn_count INTEGER DEFAULT 0,
     tool_call_count INTEGER DEFAULT 0,
@@ -755,11 +757,16 @@ CREATE TABLE memories (
     memory_type TEXT NOT NULL,
     content TEXT NOT NULL,
     source_type TEXT,
-    source_session_id UUID REFERENCES sessions(id) DEFERRABLE INITIALLY IMMEDIATE,
+    source_session_id UUID REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     access_count INTEGER DEFAULT 0,
     last_accessed_at TIMESTAMPTZ,
 tags JSONB,
-graph_processed BOOLEAN DEFAULT TRUE,
+    graph_processed BOOLEAN DEFAULT TRUE,
+    graph_attempts INTEGER NOT NULL DEFAULT 0,
+    graph_status TEXT NOT NULL DEFAULT 'completed'
+        CONSTRAINT memories_graph_status_check
+        CHECK (graph_status IN ('pending', 'completed', 'failed')),
+    vector_needs_reindex BOOLEAN NOT NULL DEFAULT FALSE,
 created_at TIMESTAMPTZ NOT NULL,
 updated_at TIMESTAMPTZ NOT NULL,
 deleted_at TIMESTAMPTZ,
@@ -776,6 +783,11 @@ CREATE INDEX idx_memories_project ON memories(project_id);
 CREATE INDEX idx_memories_type ON memories(memory_type);
 
 CREATE INDEX idx_memories_graph_pending ON memories(graph_processed) WHERE graph_processed IS FALSE;
+CREATE INDEX idx_memories_graph_status_pending ON memories(created_at)
+    WHERE graph_status = 'pending';
+
+CREATE INDEX idx_memories_vector_needs_reindex ON memories(id)
+    WHERE vector_needs_reindex IS TRUE;
 
 CREATE INDEX idx_memories_source_session ON memories(source_session_id);
 

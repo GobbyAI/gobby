@@ -436,3 +436,22 @@ class TestRegisterExposedPipelineTools:
 
         _register_exposed_pipeline_tools(registry, loader, lambda: None)
         assert registry.get_schema("pipeline:my-exposed") is not None
+
+    def test_skips_disabled_exposed_pipeline(self) -> None:
+        from gobby.mcp_proxy.tools.workflows._pipelines import (
+            _register_exposed_pipeline_tools,
+        )
+
+        registry = InternalToolRegistry("test")
+        loader = MagicMock()
+        mock_pipeline = MagicMock(
+            name="disabled-exposed",
+            enabled=False,
+            expose_as_tool=True,
+        )
+        mock_wf = MagicMock(definition=mock_pipeline)
+        loader.discover_pipeline_workflows_sync.return_value = [mock_wf]
+
+        _register_exposed_pipeline_tools(registry, loader, lambda: None)
+
+        assert registry.get_schema("pipeline:disabled-exposed") is None

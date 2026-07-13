@@ -268,6 +268,10 @@ class MemoryDreamConfig(FeatureDefaultConfig):
         default=True,
         description="Enable scheduled memory dream maintenance",
     )
+    allow_unattended_mutations: bool = Field(
+        default=False,
+        description="Allow scheduled memory dream runs to apply destructive mutations",
+    )
     schedule_cron: str = Field(
         default="0 3 * * *",
         description="Cron expression for the system memory dream job",

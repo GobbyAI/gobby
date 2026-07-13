@@ -87,6 +87,35 @@ async def test_git_merge_conflict(resolver):
             assert len(result["conflicts"][0]["hunks"]) == 1
 
 
+async def test_git_merge_preserves_all_unparseable_conflicted_paths(resolver):
+    """Every unmerged path is reported even when parsing or reading fails."""
+    with patch("asyncio.create_subprocess_exec") as mock_exec:
+        mock_process_merge = AsyncMock()
+        mock_process_merge.returncode = 1
+        mock_process_merge.communicate.return_value = (b"", b"merge failed")
+
+        mock_process_diff = AsyncMock()
+        mock_process_diff.returncode = 0
+        mock_process_diff.communicate.return_value = (b"malformed.py\nbinary.dat\n", b"")
+        mock_exec.side_effect = [mock_process_merge, mock_process_diff]
+
+        def read_conflict(path: Path, *, encoding: str) -> str:
+            assert encoding == "utf-8"
+            if path.name == "binary.dat":
+                raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+            return "<<<<<<< HEAD\nours\n======= body\n=======\ntheirs\n>>>>>>> main\n"
+
+        with patch.object(Path, "read_text", autospec=True, side_effect=read_conflict):
+            result = await resolver._git_merge("/tmp/test-repo", "feature", "main")
+
+    assert result["success"] is False
+    assert [conflict["file"] for conflict in result["conflicts"]] == [
+        "malformed.py",
+        "binary.dat",
+    ]
+    assert [conflict["hunks"] for conflict in result["conflicts"]] == [[], []]
+
+
 @pytest.mark.asyncio
 async def test_resolve_conflicts_only_success(resolver, mock_llm_service, tmp_path):
     """Tier 2 splices the LLM hunk response into the file on disk."""

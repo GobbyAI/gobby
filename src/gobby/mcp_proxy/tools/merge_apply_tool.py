@@ -18,6 +18,7 @@ from gobby.mcp_proxy.tools.merge_git_state import (
 from gobby.mcp_proxy.tools.merge_github_protection import git_output
 from gobby.storage.merge_resolutions import MergeResolutionManager
 from gobby.worktrees.git import WorktreeGitManager
+from gobby.worktrees.merge.resolver import assert_marker_free
 
 logger = logging.getLogger(__name__)
 
@@ -109,9 +110,10 @@ def register_merge_apply_tool(
                         ),
                     }
 
-            written: list[str] = []
+            validated_content: dict[str, str] = {}
             for conflict in conflicts:
-                if conflict.resolved_content is None:
+                content = conflict.resolved_content
+                if content is None:
                     return {
                         "success": False,
                         "error": (
@@ -119,11 +121,22 @@ def register_merge_apply_tool(
                             "resolved_content; resolve it before applying"
                         ),
                     }
+                try:
+                    assert_marker_free(content)
+                except ValueError as exc:
+                    return {
+                        "success": False,
+                        "error": f"Cannot apply {conflict.file_path}: {exc}",
+                    }
+                validated_content[conflict.id] = content
+
+            written: list[str] = []
+            for conflict in conflicts:
                 target = Path(wt_path) / conflict.file_path
                 await asyncio.to_thread(target.parent.mkdir, parents=True, exist_ok=True)
                 await asyncio.to_thread(
                     target.write_text,
-                    conflict.resolved_content,
+                    validated_content[conflict.id],
                     encoding="utf-8",
                 )
 

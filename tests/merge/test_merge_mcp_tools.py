@@ -940,6 +940,25 @@ class TestMergeResolveTool:
         assert result["success"] is True
         mock_storage.update_conflict.assert_called_once()
 
+    @pytest.mark.parametrize("marker_line", ["<<<<<<< HEAD", "=======", ">>>>>>> feature"])
+    async def test_merge_resolve_rejects_manual_conflict_markers(
+        self, merge_registry, mock_storage, marker_line
+    ):
+        """Manual resolution content must not preserve any standard conflict marker."""
+        mock_storage.get_conflict.return_value = MagicMock()
+
+        result = await merge_registry.call(
+            "merge_resolve",
+            {
+                "conflict_id": "45d99b5a-8044-5c05-b151-bb595a05ff08",
+                "resolved_content": f"before\n{marker_line}\nafter\n",
+            },
+        )
+
+        assert result["success"] is False
+        assert "conflict markers" in result["error"]
+        mock_storage.update_conflict.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_merge_resolve_conflict_not_found(self, merge_registry, mock_storage):
         """merge_resolve returns error for unknown conflict."""
@@ -1089,6 +1108,55 @@ class TestMergeApplyTool:
             ["rev-parse", "HEAD"], cwd=str(tmp_path), timeout=10
         )
         assert result["merge_sha"] == "merged-sha"
+
+    @pytest.mark.parametrize("marker_line", ["<<<<<<< HEAD", "=======", ">>>>>>> feature"])
+    async def test_merge_apply_rejects_markers_before_write_or_stage(
+        self,
+        merge_registry,
+        mock_storage,
+        mock_git_manager,
+        tmp_path,
+        marker_line,
+    ):
+        """merge_apply preflights every resolved file before mutating the worktree."""
+        resolution = MagicMock(
+            worktree_id="42771f92-3d33-57b0-8bef-452d7139ad78",
+            source_branch="feature/test",
+            target_branch="main",
+        )
+        clean_conflict = MagicMock(
+            id="3e915d35-bad6-586e-a831-31516dcff128",
+            file_path="src/clean.py",
+            status="resolved",
+            resolved_content="clean content\n",
+        )
+        marker_conflict = MagicMock(
+            id="45d99b5a-8044-5c05-b151-bb595a05ff08",
+            file_path="src/test.py",
+            status="resolved",
+            resolved_content=f"before\n{marker_line}\nafter\n",
+        )
+        mock_storage.get_resolution.return_value = resolution
+        mock_storage.list_conflicts.return_value = [clean_conflict, marker_conflict]
+        mock_git_manager.run_git_command.return_value = MagicMock(
+            returncode=0,
+            stdout="merge-head\n",
+            stderr="",
+        )
+
+        result = await merge_registry.call(
+            "merge_apply", {"resolution_id": "15174726-47f5-57c4-999e-18bf66046857"}
+        )
+
+        assert result["success"] is False
+        assert "conflict markers" in result["error"]
+        assert not (tmp_path / "src" / "clean.py").exists()
+        assert not (tmp_path / "src" / "test.py").exists()
+        mock_git_manager.stage_files.assert_not_called()
+        assert all(
+            call.args[0] != ["commit", "--no-edit"]
+            for call in mock_git_manager.run_git_command.call_args_list
+        )
 
     @pytest.mark.asyncio
     async def test_merge_apply_with_pending_conflicts(self, merge_registry, mock_storage):

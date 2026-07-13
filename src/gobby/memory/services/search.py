@@ -71,10 +71,10 @@ class SearchService:
             recall_constants if recall_constants is not None else resolve_recall_constants(config)
         )
 
-    async def _run_storage(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    async def _run_storage[T](self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         if self._run_db is None:
             return await asyncio.to_thread(func, *args, **kwargs)
-        return await self._run_db(func, *args, **kwargs)
+        return cast(T, await self._run_db(func, *args, **kwargs))
 
     @property
     def kg_service(self) -> KnowledgeGraphService | None:
@@ -194,7 +194,7 @@ class SearchService:
                 include_global=include_global,
             )
 
-        self.update_access_stats(memories)
+        await self.update_access_stats(memories)
         return memories
 
     async def _search_with_graph(
@@ -292,7 +292,7 @@ class SearchService:
             build=_build_with_storage_runner,
         )
 
-    def _emit_search_debug(
+    async def _emit_search_debug(
         self,
         *,
         query: str,
@@ -307,7 +307,8 @@ class SearchService:
         graph_score_map: dict[str, float] | None = None,
         graph_component_map: dict[str, dict[str, float | None]] | None = None,
     ) -> None:
-        emit_search_debug(
+        await self._run_storage(
+            emit_search_debug,
             search_debug_sink=self._search_debug_sink,
             query=query,
             project_id=project_id,
@@ -441,7 +442,7 @@ class SearchService:
             include_global=include_global,
         )
         # One event per completed search — fallback searches must not be silent.
-        self._emit_search_debug(
+        await self._emit_search_debug(
             query=query,
             project_id=project_id,
             session_id=session_id,
@@ -456,6 +457,11 @@ class SearchService:
         )
         return memories
 
-    def update_access_stats(self, memories: list[Memory]) -> None:
+    async def update_access_stats(self, memories: list[Memory]) -> None:
         """Update access count and time for memories (debounced)."""
-        update_memory_access_stats(storage=self._storage, config=self._config, memories=memories)
+        await self._run_storage(
+            update_memory_access_stats,
+            storage=self._storage,
+            config=self._config,
+            memories=memories,
+        )

@@ -559,10 +559,18 @@ class TestSearchKnowledgeGraph:
         mock_memory_manager.kg_service = mock_kg
 
         registry = create_memory_registry(mock_memory_manager)
-        result = await registry.call("search_knowledge_graph", {"query": "Python", "limit": 5})
+        with patch("gobby.utils.project_context.get_project_context") as mock_ctx:
+            mock_ctx.return_value = {"id": "project-a", "name": "Project A"}
+            result = await registry.call("search_knowledge_graph", {"query": "Python", "limit": 5})
 
         assert result["success"] is True
         assert len(result["results"]) == 1
+        mock_kg.search_graph.assert_awaited_once_with(
+            "Python",
+            limit=5,
+            project_id="project-a",
+            include_global=True,
+        )
 
     @pytest.mark.asyncio
     async def test_error(self, mock_memory_manager: MagicMock) -> None:

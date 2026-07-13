@@ -739,8 +739,8 @@ class TestResolverEdgeCases:
     """Edge cases for resolver main flow."""
 
     @pytest.mark.asyncio
-    async def test_resolve_no_git_no_conflicts(self):
-        """Test unusual state: no git success but no conflicts returned."""
+    async def test_resolve_no_git_no_conflicts_requires_human_review(self):
+        """A failed git merge without parsed conflicts is never reported as success."""
         from gobby.worktrees.merge.resolver import MergeResolver, ResolutionTier
 
         resolver = MergeResolver()
@@ -755,10 +755,38 @@ class TestResolverEdgeCases:
                 target_branch="main",
             )
 
-            assert result.success is True
-            # Should default to GIT_AUTO tier as fallback for "no work needed"
-            assert result.tier == ResolutionTier.GIT_AUTO
+            assert result.success is False
+            assert result.tier == ResolutionTier.HUMAN_REVIEW
+            assert result.needs_human_review is True
+            assert result.failure_reason == "git_merge_failed_without_conflicts"
             assert len(result.conflicts) == 0
+
+    @pytest.mark.asyncio
+    async def test_resolve_empty_hunks_requires_human_review(self):
+        """An unmerged path with unparseable hunks cannot enter an AI or Git success tier."""
+        from gobby.worktrees.merge.resolver import MergeResolver, ResolutionTier
+
+        resolver = MergeResolver()
+        conflict = {
+            "file": "malformed.py",
+            "hunks": [],
+            "worktree_path": "/path/to/worktree",
+        }
+
+        with patch.object(resolver, "_git_merge", new_callable=AsyncMock) as mock_git:
+            mock_git.return_value = {"success": False, "conflicts": [conflict]}
+
+            result = await resolver.resolve(
+                worktree_path="/path/to/worktree",
+                source_branch="feat",
+                target_branch="main",
+            )
+
+        assert result.success is False
+        assert result.tier == ResolutionTier.HUMAN_REVIEW
+        assert result.needs_human_review is True
+        assert result.failure_reason == "unparseable_git_conflicts"
+        assert result.unresolved_conflicts == [conflict]
 
     @pytest.mark.asyncio
     async def test_parallel_resolution_handles_exceptions(self):

@@ -9,6 +9,7 @@ Tests cover:
 """
 
 import inspect
+import logging
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -182,6 +183,52 @@ class TestCreateMemory:
         assert memory.memory_type == "fact"
         assert memory.source_type == "agent"
         assert memory.tags == []
+
+    @pytest.mark.asyncio
+    async def test_create_memory_uses_project_plus_global_dedup_scope(
+        self,
+        memory_manager,
+        db,
+    ) -> None:
+        """Facade creation sees globals, isolates projects, and keeps global creation global."""
+        other_project_id = "22222222-2222-4222-8222-222222222222"
+        db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_ID, "Project 1"))
+        db.execute(
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
+            (other_project_id, "Project 2"),
+        )
+
+        global_memory = await memory_manager.create_memory(
+            content="Facade visible global",
+            project_id=None,
+        )
+        visible_result = await memory_manager.create_memory(
+            content="Facade visible global",
+            project_id=PROJECT_ID,
+        )
+        first_project = await memory_manager.create_memory(
+            content="Facade project isolated",
+            project_id=PROJECT_ID,
+        )
+        same_project = await memory_manager.create_memory(
+            content="Facade project isolated",
+            project_id=PROJECT_ID,
+        )
+        second_project = await memory_manager.create_memory(
+            content="Facade project isolated",
+            project_id=other_project_id,
+        )
+        new_global = await memory_manager.create_memory(
+            content="Facade project isolated",
+            project_id=None,
+        )
+
+        assert visible_result.id == global_memory.id
+        assert visible_result.project_id is None
+        assert same_project.id == first_project.id
+        assert first_project.id != second_project.id
+        assert new_global.id not in {first_project.id, second_project.id}
+        assert new_global.project_id is None
 
     def test_create_memory_with_sync_metadata_uses_lww(self, memory_manager) -> None:
         memory_id = str(uuid.uuid4())
@@ -441,15 +488,15 @@ class TestAccessStats:
         # Should still be same count due to debouncing
         assert updated_again.access_count == first_access_count
 
-    def test_update_access_stats_empty_list(self, memory_manager) -> None:
+    async def test_update_access_stats_empty_list(self, memory_manager) -> None:
         """Test _update_access_stats handles empty list."""
         with patch.object(memory_manager.storage, "update_access_stats") as update_access_stats:
-            result = memory_manager._update_access_stats([])
+            result = await memory_manager._update_access_stats([])
 
         assert result is None
         assert update_access_stats.call_count == 0
 
-    def test_update_access_stats_invalid_timestamp(self, db, memory_config) -> None:
+    async def test_update_access_stats_invalid_timestamp(self, db, memory_config) -> None:
         """Test _update_access_stats handles invalid timestamps gracefully."""
         manager = MemoryManager(db=db, config=memory_config)
 
@@ -457,9 +504,9 @@ class TestAccessStats:
         memory.id = "mm-test"
         memory.last_accessed_at = "invalid-timestamp"
 
-        assert manager._update_access_stats([memory]) is None
+        assert await manager._update_access_stats([memory]) is None
 
-    def test_update_access_stats_no_timezone(self, db, memory_config) -> None:
+    async def test_update_access_stats_no_timezone(self, db, memory_config) -> None:
         """Test _update_access_stats handles timestamps without timezone."""
         manager = MemoryManager(db=db, config=memory_config)
 
@@ -469,7 +516,7 @@ class TestAccessStats:
         memory.id = real_memory.id
         memory.last_accessed_at = "2024-01-01T00:00:00"
 
-        manager._update_access_stats([memory])
+        await manager._update_access_stats([memory])
 
         updated = manager.get_memory(real_memory.id)
         assert updated.access_count >= 1
@@ -688,7 +735,7 @@ class TestEdgeCases:
         with patch.object(manager.storage, "update_access_stats") as mock_update:
             mock_update.side_effect = Exception("Database error")
 
-            assert manager._update_access_stats([memory]) is None
+            assert await manager._update_access_stats([memory]) is None
             assert mock_update.call_count == 1
 
 
@@ -767,7 +814,7 @@ class TestVectorStoreIntegration:
         """_embed_and_upsert does nothing when no VectorStore."""
         result = await memory_manager._embed_and_upsert("id", "content")
 
-        assert result is None
+        assert result is False
         assert memory_manager.vector_store is None
 
     @pytest.mark.asyncio
@@ -806,9 +853,9 @@ class TestVectorStoreIntegration:
         await manager._embed_and_upsert("id-1", "content")
         await manager._embed_and_upsert("id-2", "content")
 
-        assert manager._embeddings_available is True
         assert mock_embed.call_count == 2
         assert mock_vs.upsert.call_count == 2
+        assert not hasattr(manager, "_embeddings_available")
 
     @pytest.mark.asyncio
     async def test_create_memory_with_vectorstore(self, db, memory_config) -> None:
@@ -826,9 +873,113 @@ class TestVectorStoreIntegration:
         assert mock_vs.upsert.call_count == 1
         assert mock_vs.upsert.call_args is not None
 
+    @pytest.mark.asyncio
+    async def test_create_and_update_retry_embedding_until_provider_recovers(
+        self,
+        db,
+        memory_config,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Transient embed failures never suppress later create/update attempts."""
+        mock_vs = MagicMock()
+        mock_vs.upsert = AsyncMock()
+        mock_embed = AsyncMock(
+            side_effect=[
+                RuntimeError("provider down"),
+                RuntimeError("provider still down"),
+                [0.1, 0.2],
+            ]
+        )
+        manager = MemoryManager(
+            db=db,
+            config=memory_config,
+            vector_store=mock_vs,
+            embed_fn=mock_embed,
+        )
+        manager._dedup_service = None
+
+        with caplog.at_level(logging.DEBUG, logger="gobby.memory.services.lifecycle"):
+            memory = await manager.create_memory(content="Initial content")
+            unavailable = await manager.update_memory(memory.id, content="Still unavailable")
+            assert unavailable.vector_needs_reindex is True
+            recovered = await manager.update_memory(memory.id, content="Recovered content")
+
+        assert recovered.content == "Recovered content"
+        assert recovered.vector_needs_reindex is False
+        assert mock_embed.await_count == 3
+        mock_vs.upsert.assert_awaited_once_with(
+            memory.id,
+            [0.1, 0.2],
+            {"project_id": None},
+        )
+        embedding_records = [
+            record
+            for record in caplog.records
+            if record.name == "gobby.memory.services.lifecycle"
+            and record.message.startswith("Embedding failed for")
+        ]
+        assert [record.levelno for record in embedding_records] == [logging.WARNING, logging.DEBUG]
+        assert not hasattr(manager, "_embeddings_available")
+
+    @pytest.mark.asyncio
+    async def test_vector_upsert_failure_leaves_content_marked_for_reindex(
+        self,
+        db,
+        memory_config,
+    ) -> None:
+        mock_vs = MagicMock()
+        mock_vs.upsert = AsyncMock(side_effect=RuntimeError("qdrant rejected write"))
+        manager = MemoryManager(
+            db=db,
+            config=memory_config,
+            vector_store=mock_vs,
+            embed_fn=AsyncMock(return_value=[0.1, 0.2]),
+        )
+        manager._dedup_service = None
+        memory = manager.storage.create_memory("Old indexed content")
+
+        updated = await manager.update_memory(memory.id, content="New current content")
+
+        assert updated.content == "New current content"
+        assert updated.vector_needs_reindex is True
+        assert manager.storage.list_vector_reindex_ids() == [memory.id]
+
 
 class TestLifecycleService:
     """Service-level tests for memory lifecycle side effects."""
+
+    @pytest.mark.asyncio
+    async def test_restore_memory_indices_recreates_vector_and_requeues_graph(
+        self,
+        db,
+        memory_config,
+    ) -> None:
+        mock_vs = MagicMock()
+        mock_vs.upsert = AsyncMock()
+        mock_embed = AsyncMock(return_value=[0.1, 0.2])
+        manager = MemoryManager(
+            db=db,
+            config=memory_config,
+            vector_store=mock_vs,
+            embed_fn=mock_embed,
+        )
+        db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_ID, "Project 1"))
+        memory = manager.storage.create_memory(
+            content="restored content",
+            project_id=PROJECT_ID,
+        )
+        manager.storage.mark_graph_processed(memory.id)
+
+        await manager.restore_memory_indices(memory.id, memory.content, PROJECT_ID)
+
+        mock_vs.upsert.assert_awaited_once_with(
+            memory.id,
+            [0.1, 0.2],
+            {"project_id": PROJECT_ID},
+        )
+        row = db.fetchone("SELECT graph_processed FROM memories WHERE id = %s", (memory.id,))
+        assert row is not None
+        assert row["graph_processed"] in (False, 0)
 
     @pytest.mark.asyncio
     async def test_create_update_delete_updates_secondary_indices(
@@ -942,6 +1093,35 @@ class TestDeleteMemoryExtended:
         mock_vs.delete.assert_called_once_with(memory.id)
         assert mock_vs.delete.call_count == 1
         assert mock_vs.delete.call_args is not None
+
+    @pytest.mark.asyncio
+    async def test_scoped_delete_preserves_other_project_indices(self, db, memory_config) -> None:
+        """An out-of-scope delete leaves the row, vector, and graph artifacts intact."""
+        mock_vs = MagicMock()
+        mock_vs.delete = AsyncMock()
+        mock_vs.upsert = AsyncMock()
+        mock_embed = AsyncMock(return_value=[0.1, 0.2])
+        mock_kg = MagicMock()
+        mock_kg.remove_memory_from_graph = AsyncMock()
+        manager = MemoryManager(
+            db=db, config=memory_config, vector_store=mock_vs, embed_fn=mock_embed
+        )
+        manager._kg_service = mock_kg
+        project_b = "22222222-2222-4222-8222-222222222222"
+        db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_ID, "Project A"))
+        db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (project_b, "Project B"))
+        memory = await manager.create_memory(
+            content="Project B protected memory",
+            project_id=project_b,
+        )
+        mock_vs.delete.reset_mock()
+
+        result = await manager.delete_memory_scoped(memory.id, PROJECT_ID)
+
+        assert result is False
+        assert manager.get_memory(memory.id) is not None
+        mock_vs.delete.assert_not_awaited()
+        mock_kg.remove_memory_from_graph.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_delete_vectorstore_error_handled(self, db, memory_config) -> None:

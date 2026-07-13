@@ -30,7 +30,8 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "backfill_terminal_context": "(self, session_id: 'str', terminal_context: "
     "'dict[str, Any] | None') -> 'tuple[Session | None, bool]'",
     "cache_session_mapping": "(self, external_id: 'str', source: 'str', "
-    "session_id: 'str') -> 'None'",
+    "session_id: 'str', machine_id: 'str | None' = None, "
+    "project_id: 'str | None' = None) -> 'None'",
     "clear_had_edits": "(self, session_id: 'str') -> 'None'",
     "count": "(self, project_id: 'str | None' = None, status: 'str | None' = None, "
     "source: 'str | None' = None, machine_id: 'str | None' = None) -> 'int'",
@@ -58,13 +59,15 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "find_children": "(self, parent_session_id: 'str') -> 'list[Session]'",
     "find_parent": "(self, machine_id: 'str', project_id: 'str', "
     "source: 'str | None' = None, status: 'str' = 'handoff_ready', "
-    "max_age_minutes: 'int' = 10) -> 'Session | None'",
+    "max_age_minutes: 'int' = 10, terminal_context: 'dict[str, Any] | str | None' = None, "
+    "candidate_limit: 'int' = 1) -> 'Session | None'",
     "find_parent_session": "(self, machine_id: 'str', source: 'str', "
     "project_id: 'str', max_attempts: 'int' = 30) -> 'tuple[str, str | None] | None'",
     "get": "(self, session_id: 'str') -> 'Session | None'",
     "get_pending_transcript_sessions": "(self, limit: 'int' = 10) -> 'list[Session]'",
     "get_summary_revision": "(self, revision_id: 'str') -> 'dict[str, Any] | None'",
-    "get_session_id": "(self, external_id: 'str', source: 'str') -> 'str | None'",
+    "get_session_id": "(self, external_id: 'str', source: 'str', "
+    "machine_id: 'str | None' = None, project_id: 'str | None' = None) -> 'str | None'",
     "get_sessions_since": "(self, since: 'datetime', project_id: 'str | None' = None) "
     "-> 'list[Session]'",
     "is_ancestor": "(self, ancestor_id: 'str', descendant_id: 'str') -> 'bool'",
@@ -89,6 +92,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "pause_inactive_active_sessions": "(self, timeout_minutes: 'int' = 30) -> 'int'",
     "persist_digest_state": "(self, session_id: 'str', *, last_turn_markdown: "
     "'str', digest_markdown: 'str', last_digest_input_hash: 'str', "
+    "last_digested_pair_index: 'int', "
     "title: 'str | None' = None, title_source: 'str | None' = None) -> "
     "'Session | None'",
     "persist_summary_state": "(self, session_id: 'str', *, summary_markdown: 'str', "
@@ -143,6 +147,8 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "update_digest_markdown": "(self, session_id: 'str', digest_markdown: 'str') -> "
     "'Session | None'",
     "update_last_digest_input_hash": "(self, session_id: 'str', hash_value: 'str') -> 'None'",
+    "update_last_title_synthesis_digest_hash": "(self, session_id: 'str', "
+    "hash_value: 'str') -> 'None'",
     "update_last_turn_markdown": "(self, session_id: 'str', last_turn_markdown: 'str') "
     "-> 'Session | None'",
     "update_model": "(self, session_id: 'str', model: 'str') -> 'Session | None'",

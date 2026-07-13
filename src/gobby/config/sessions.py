@@ -143,6 +143,11 @@ class DigestConfig(FeatureDefaultConfig):
         gt=0,
         description="Timeout in seconds for digest/title LLM calls (default 30s).",
     )
+    num_pairs: int = Field(
+        default=50,
+        gt=0,
+        description="Maximum transcript pairs consumed in one digest pass (default 50).",
+    )
 
 
 class MemoryUsefulnessConfig(FeatureDefaultConfig):

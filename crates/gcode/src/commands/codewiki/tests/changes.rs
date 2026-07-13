@@ -48,6 +48,33 @@ fn codewiki_changes_baseline_persists_snapshot_without_degrading_on_missing_grap
 }
 
 #[test]
+fn codewiki_snapshot_skips_indexed_files_missing_from_disk() {
+    let project = tempfile::tempdir().expect("project tempdir");
+    std::fs::create_dir_all(project.path().join("src")).expect("source dir");
+    std::fs::write(project.path().join("src/lib.rs"), "pub struct Client;\n").expect("write lib");
+    // src/deleted.rs is indexed but absent from disk: an external commit
+    // removed it after indexing. The snapshot must skip it, not abort (#18109).
+    let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
+        files: vec!["src/lib.rs".to_string(), "src/deleted.rs".to_string()],
+        graph_edges: Vec::new(),
+        graph_availability: CodewikiGraphAvailability::Unavailable,
+        symbols: vec![test_symbol(
+            "src/deleted.rs",
+            "gone",
+            "function",
+            1,
+            "pub fn gone()",
+        )],
+    };
+
+    let snapshot = build_codewiki_index_snapshot(project.path(), &input).expect("snapshot");
+
+    assert!(snapshot.files.contains_key("src/lib.rs"));
+    assert!(!snapshot.files.contains_key("src/deleted.rs"));
+}
+
+#[test]
 fn codewiki_changes_lists_index_diff_against_previous_snapshot() {
     let project = tempfile::tempdir().expect("project tempdir");
     std::fs::create_dir_all(project.path().join("src")).expect("source dir");
