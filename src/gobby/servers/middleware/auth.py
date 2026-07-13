@@ -77,7 +77,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if not auth_service.enabled and not remote_hook_requires_auth:
             return await call_next(request)
 
-        if auth_service.is_request_authenticated(request):
+        if await self.server.run_db(auth_service.is_request_authenticated, request):
             return await call_next(request)
 
         if path.startswith(_PROTECTED_PREFIXES):

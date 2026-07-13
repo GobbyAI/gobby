@@ -1,23 +1,39 @@
-"""AuthMiddleware exemption behavior for machine-local tooling routes.
+"""AuthMiddleware behavior for required-by-default route authentication.
 
-UI auth must never sever the data-plane routes the installed gcode/gwiki
-binaries and the MCP proxy call: a 401 on /api/llm/generate previously made
-`gcode codewiki --ai auto` resolve "no daemon" and destructively rewrite an
-AI-generated vault as structural docs (#17777, #17776).
+Machine-local tooling routes require configured credentials when UI auth is
+enabled. Only explicitly public routes bypass middleware authentication.
 """
 
+import asyncio
+import threading
+from collections.abc import Callable
+from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, ParamSpec, TypeVar, cast
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import gobby.storage.secrets as secrets_module
+from gobby.servers.auth_service import AuthService
 from gobby.servers.middleware.auth import AuthMiddleware
+from gobby.storage.auth import LOCAL_API_TOKEN_HASH_KEY, AuthStore, hash_token
+from gobby.storage.config_store import ConfigStore
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.secrets import SecretStore
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
+
+_P = ParamSpec("_P")
+_T = TypeVar("_T")
+
+
+async def _run_db(func: Callable[_P, _T], *args: _P.args, **kwargs: _P.kwargs) -> _T:
+    return await asyncio.to_thread(func, *args, **kwargs)
 
 
 @pytest.fixture
@@ -29,7 +45,10 @@ def auth_client() -> tuple[TestClient, MagicMock]:
     auth_service.is_request_authenticated.return_value = False
     app.add_middleware(
         AuthMiddleware,
-        server=cast("HTTPServer", SimpleNamespace(auth_service=auth_service)),
+        server=cast(
+            "HTTPServer",
+            SimpleNamespace(auth_service=auth_service, run_db=_run_db),
+        ),
     )
 
     @app.get("/{path:path}")
@@ -107,3 +126,163 @@ def test_all_routes_pass_when_auth_disabled(
     response = client.get("/api/tasks")
 
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_repeated_requests_reuse_cached_credentials_without_secret_kdf(
+    hub_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_token = "old-local-token"
+    new_token = "new-local-token"
+    config_store = ConfigStore(hub_db)
+    config_store.set(LOCAL_API_TOKEN_HASH_KEY, hash_token(old_token), source="system")
+
+    original_get = ConfigStore.get
+    credential_lookup_threads: list[int] = []
+
+    def tracked_get(store: ConfigStore, key: str) -> object | None:
+        credential_lookup_threads.append(threading.get_ident())
+        return original_get(store, key)
+
+    monkeypatch.setattr(ConfigStore, "get", tracked_get)
+    secret_store_init = MagicMock(side_effect=AssertionError("SecretStore constructed"))
+    derive_key = MagicMock(side_effect=AssertionError("legacy secret KDF invoked"))
+    monkeypatch.setattr(SecretStore, "__init__", secret_store_init)
+    monkeypatch.setattr(secrets_module, "_derive_fernet_key", derive_key)
+
+    auth_service = AuthService(
+        lambda: hub_db,
+        "required",
+        token_file=tmp_path / "missing-token",
+    )
+    server = cast(
+        "HTTPServer",
+        SimpleNamespace(auth_service=auth_service, run_db=_run_db),
+    )
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware, server=server)
+
+    @app.get("/api/tasks")
+    async def protected() -> dict[str, bool]:
+        return {"ok": True}
+
+    event_loop_thread = threading.get_ident()
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        first = await client.get(
+            "/api/tasks",
+            headers={"Authorization": f"Bearer {old_token}"},
+        )
+        second = await client.get(
+            "/api/tasks",
+            headers={"Authorization": f"Bearer {old_token}"},
+        )
+
+        config_store.set(LOCAL_API_TOKEN_HASH_KEY, hash_token(new_token), source="system")
+        auth_service._last_refresh -= auth_service.MIN_REFRESH_INTERVAL
+        after_change = await client.get(
+            "/api/tasks",
+            headers={"Authorization": f"Bearer {new_token}"},
+        )
+
+    assert [first.status_code, second.status_code, after_change.status_code] == [200, 200, 200]
+    assert len(credential_lookup_threads) == 6
+    assert all(thread_id != event_loop_thread for thread_id in credential_lookup_threads)
+    secret_store_init.assert_not_called()
+    derive_key.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_session_cookie_validation_runs_off_event_loop(
+    hub_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_token, _expires_at = AuthStore(hub_db).create_session()
+    original_validate = AuthStore.validate_session
+    validation_threads: list[int] = []
+
+    def tracked_validate(store: AuthStore, token: str) -> bool:
+        validation_threads.append(threading.get_ident())
+        return original_validate(store, token)
+
+    monkeypatch.setattr(AuthStore, "validate_session", tracked_validate)
+    auth_service = AuthService(
+        lambda: hub_db,
+        "required",
+        token_file=tmp_path / "missing-token",
+    )
+    server = cast(
+        "HTTPServer",
+        SimpleNamespace(auth_service=auth_service, run_db=_run_db),
+    )
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware, server=server)
+
+    @app.get("/api/tasks")
+    async def protected() -> dict[str, bool]:
+        return {"ok": True}
+
+    event_loop_thread = threading.get_ident()
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        client.cookies.set("gobby_session", session_token)
+        response = await client.get("/api/tasks")
+
+    assert response.status_code == 200
+    assert validation_threads
+    assert all(thread_id != event_loop_thread for thread_id in validation_threads)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_protected_requests_do_not_block_event_loop() -> None:
+    request_count = 3
+    started_count = 0
+    started_lock = threading.Lock()
+    workers_started = asyncio.Event()
+    release_auth = threading.Event()
+    auth_threads: list[int] = []
+    auth_service = MagicMock(enabled=True)
+    event_loop = asyncio.get_running_loop()
+
+    def blocking_authentication(_request: object) -> bool:
+        nonlocal started_count
+        auth_threads.append(threading.get_ident())
+        with started_lock:
+            started_count += 1
+            if started_count == request_count:
+                event_loop.call_soon_threadsafe(workers_started.set)
+        if not release_auth.wait(timeout=1):
+            raise AssertionError("event loop did not progress while authentication was blocked")
+        return True
+
+    auth_service.is_request_authenticated.side_effect = blocking_authentication
+    server = cast(
+        "HTTPServer",
+        SimpleNamespace(auth_service=auth_service, run_db=_run_db),
+    )
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware, server=server)
+
+    @app.get("/api/tasks")
+    async def protected() -> dict[str, bool]:
+        return {"ok": True}
+
+    async def release_after_workers_start() -> None:
+        await workers_started.wait()
+        release_auth.set()
+
+    event_loop_thread = threading.get_ident()
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        responses = await asyncio.gather(
+            *(client.get("/api/tasks") for _ in range(request_count)),
+            release_after_workers_start(),
+        )
+
+    http_responses = cast(list[httpx.Response], responses[:-1])
+    assert [response.status_code for response in http_responses] == [200, 200, 200]
+    assert len(auth_threads) == request_count
+    assert all(thread_id != event_loop_thread for thread_id in auth_threads)
