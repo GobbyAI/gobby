@@ -257,6 +257,11 @@ def _resolve_coverage_matrix(path_ref: str, *, ctx: EvidenceContextProtocol) -> 
     rows_data = _manifest_rows(raw)
     evidence_rows: list[EvidenceRow] = []
     for index, row_data in enumerate(rows_data):
+        if not isinstance(row_data, dict):
+            raise InvalidEvidenceError(
+                f"Invalid coverage matrix {path_ref}: row {index + 1} must be a mapping, "
+                f"got {type(row_data).__name__}"
+            )
         row = cast(dict[str, Any], row_data)
         ref = _coverage_ref(row, fallback=f"{path_ref}#{index + 1}")
         touched = _coverage_artifacts(row)

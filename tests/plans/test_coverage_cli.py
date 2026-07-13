@@ -256,6 +256,37 @@ def test_cli_writes_evidence_from_flag(tmp_path: Path) -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    "invalid_row",
+    ["covered", ["covered"], None],
+    ids=["scalar", "list", "null"],
+)
+def test_cli_rejects_non_mapping_coverage_evidence_rows(
+    tmp_path: Path, invalid_row: object
+) -> None:
+    plan_path, plan_hash = _plan_file(tmp_path)
+    matrix = _matrix_file(tmp_path, "covered", plan_hash=plan_hash)
+    evidence_matrix = tmp_path / "invalid-evidence.coverage.yaml"
+    evidence_matrix.write_text(
+        yaml.safe_dump({"rows": [invalid_row]}),
+        encoding="utf-8",
+    )
+    manifest = tmp_path / "out.coverage.yaml"
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            *_base_args(plan_path, plan_hash, matrix, manifest),
+            "--evidence",
+            f"coverage-matrix:{evidence_matrix}",
+        ],
+    )
+
+    assert result.exit_code == 3
+    assert "row 1 must be a mapping" in result.output
+    assert "Traceback" not in result.output
+
+
 def test_cli_preserves_root_task_header(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     plan_path, plan_hash = _plan_file(tmp_path)
     manifest = tmp_path / "out.coverage.yaml"

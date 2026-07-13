@@ -166,6 +166,22 @@ def test_resolve_coverage_matrix_invalid_yaml_raises_invalid_evidence(tmp_path: 
         resolve_evidence(f"coverage-matrix:{manifest}", ctx=EvidenceContext(tmp_path))
 
 
+@pytest.mark.parametrize(
+    "row_yaml",
+    ["covered", "[covered]", "null"],
+    ids=["scalar", "list", "null"],
+)
+def test_resolve_coverage_matrix_rejects_non_mapping_rows(tmp_path: Path, row_yaml: str) -> None:
+    manifest = tmp_path / "coverage.yaml"
+    manifest.write_text(f"rows:\n  - {row_yaml}\n", encoding="utf-8")
+
+    with pytest.raises(
+        InvalidEvidenceError,
+        match=r"Invalid coverage matrix .*: row 1 must be a mapping",
+    ):
+        resolve_evidence(f"coverage-matrix:{manifest}", ctx=EvidenceContext(tmp_path))
+
+
 def test_resolve_none_emits_audit_row(tmp_path: Path) -> None:
     bundle = resolve_evidence("none", ctx=EvidenceContext(tmp_path))
 
