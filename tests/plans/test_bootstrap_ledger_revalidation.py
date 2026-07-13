@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 import yaml
@@ -18,7 +19,7 @@ from gobby.storage.tasks import LocalTaskManager, Task
 pytestmark = pytest.mark.unit
 
 
-def test_close_blocked_on_ledger_mismatch(temp_db, tmp_path: Path) -> None:
+def test_close_blocked_on_ledger_mismatch(temp_db: HubDatabase, tmp_path: Path) -> None:
     root, _leaf, project_id = _seed_plan_task_tree(
         temp_db, tmp_path, expected_leaf_title="Expected leaf"
     )
@@ -51,7 +52,7 @@ def test_close_blocked_on_ledger_mismatch(temp_db, tmp_path: Path) -> None:
     assert exc_info.value.to_response()["error"] == "bootstrap_ledger_mismatch"
 
 
-def test_close_succeeds_on_ledger_match(temp_db, tmp_path: Path) -> None:
+def test_close_succeeds_on_ledger_match(temp_db: HubDatabase, tmp_path: Path) -> None:
     root, leaf, project_id = _seed_plan_task_tree(
         temp_db, tmp_path, expected_leaf_title="Expected leaf"
     )
@@ -84,7 +85,7 @@ def test_close_succeeds_on_ledger_match(temp_db, tmp_path: Path) -> None:
 
 
 def _seed_plan_task_tree(
-    temp_db, tmp_path: Path, *, expected_leaf_title: str
+    temp_db: HubDatabase, tmp_path: Path, *, expected_leaf_title: str
 ) -> tuple[Task, Task, str]:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -119,7 +120,7 @@ def _write_plan_row(temp_db: HubDatabase, *, project_id: str, root_ref: str, pla
                 '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
         """,
         (
-            f"plan-{plan_id}",
+            str(uuid5(NAMESPACE_URL, f"gobby-plan:{plan_id}")),
             project_id,
             plan_id,
             f".gobby/plans/{plan_id}.md",
