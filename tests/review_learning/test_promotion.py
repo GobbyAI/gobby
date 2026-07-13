@@ -325,6 +325,36 @@ async def test_duplicate_occurrence_preflight_skips_new_memory(
 
 
 @pytest.mark.asyncio
+async def test_distinct_findings_with_formerly_colliding_identity_are_both_recorded(
+    fake_memory_manager,
+    fake_task_manager,
+) -> None:
+    service = ReviewLearningService(fake_memory_manager, fake_task_manager)
+
+    rule_result = await service.record(
+        source_kind="agent_review",
+        source="code-reviewer",
+        source_review="review-1",
+        decision="confirmed",
+        finding=_finding(rule_id="X", principle=""),
+        evidence={"commit": "abc"},
+    )
+    principle_result = await service.record(
+        source_kind="agent_review",
+        source="code-reviewer",
+        source_review="review-1",
+        decision="confirmed",
+        finding=_finding(rule_id="", principle="X"),
+        evidence={"commit": "abc"},
+    )
+
+    assert rule_result["finding_fingerprint"] != principle_result["finding_fingerprint"]
+    assert rule_result["occurrence_key"] != principle_result["occurrence_key"]
+    assert principle_result.get("skipped_reason") != "duplicate_occurrence"
+    assert len(fake_memory_manager.memories) == 2
+
+
+@pytest.mark.asyncio
 async def test_concurrent_same_occurrence_creates_one_memory_and_guardrail_task(
     fake_memory_manager,
     fake_task_manager,
