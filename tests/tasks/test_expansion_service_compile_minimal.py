@@ -53,14 +53,12 @@ Document the behavior.
 `kind: deferred`
 
 ```yaml
-task_ref: "#99"
-reason: "covered by downstream follow-up"
-owner: "docs"
-original_acceptance_items:
-  - item_id: 2.2.1
-    prose: "Deferred behavior is tracked. behavior: downstream lifecycle"
-    artifact_kind: behavior
-    artifact_ref: "downstream lifecycle"
+deferral:
+  task_ref: "#99"
+  reason: "covered by downstream follow-up"
+  owner: "docs"
+  original_acceptance_items:
+    - 2.2.1
 ```
 
 ## M1 Task Manifest
@@ -236,7 +234,7 @@ def test_compile_minimal_contract_plan_with_cross_phase_dep_and_deferral(
                 {
                     "item_id": "2.2.1",
                     "artifact_kind": "behavior",
-                    "artifact_ref": "downstream lifecycle",
+                    "artifact_ref": "2.2.1",
                 }
             ],
         }

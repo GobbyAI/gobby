@@ -248,7 +248,6 @@ def parse_plan(
                 lines=lines,
                 start_index=heading.line_index + 1,
                 end_index=end_index,
-                source_path=path,
                 errors=errors,
             )
 
@@ -644,7 +643,6 @@ def _parse_deferral(
     lines: list[str],
     start_index: int,
     end_index: int,
-    source_path: Path,
     errors: list[tuple[int, str]],
 ) -> Deferral | None:
     block = _find_yaml_fence(lines, start_index, end_index)
@@ -662,6 +660,12 @@ def _parse_deferral(
     if not isinstance(data, dict):
         errors.append((block_start, "deferred YAML must be a mapping"))
         return None
+    if set(data) != {"deferral"} or not isinstance(data.get("deferral"), dict):
+        errors.append(
+            (block_start, "deferred YAML is missing the required top-level 'deferral:' wrapper")
+        )
+        return None
+    data = data["deferral"]
 
     required_fields = ("task_ref", "reason", "owner", "original_acceptance_items")
     missing = [field for field in required_fields if not data.get(field)]
@@ -670,7 +674,7 @@ def _parse_deferral(
         return None
 
     original_items = _parse_original_acceptance_items(
-        data["original_acceptance_items"], block_start, source_path, errors
+        data["original_acceptance_items"], block_start, errors
     )
     if original_items is None:
         return None
@@ -718,7 +722,7 @@ def _find_fence_close(
 
 
 def _parse_original_acceptance_items(
-    value: Any, source_line: int, source_path: Path, errors: list[tuple[int, str]]
+    value: Any, source_line: int, errors: list[tuple[int, str]]
 ) -> tuple[AcceptanceItem, ...] | None:
     if not isinstance(value, list) or not value:
         errors.append((source_line, "original_acceptance_items must be a non-empty list"))
@@ -726,29 +730,24 @@ def _parse_original_acceptance_items(
 
     items: list[AcceptanceItem] = []
     for index, raw_item in enumerate(value, start=1):
-        if not isinstance(raw_item, dict):
-            errors.append((source_line, f"original_acceptance_items[{index}] must be a mapping"))
-            return None
-        try:
-            artifact_kind = ArtifactKind(str(raw_item["artifact_kind"]))
-            item_id = str(raw_item["item_id"])
-            if not _validate_acceptance_item_id(item_id, source_line, errors):
-                return None
-            item = AcceptanceItem(
-                item_id=item_id,
-                prose=str(raw_item["prose"]),
-                artifact_kind=artifact_kind,
-                artifact_ref=str(raw_item["artifact_ref"]),
-                source_line=source_line,
-            )
-        except KeyError as exc:
+        if not isinstance(raw_item, str):
             errors.append(
-                (source_line, f"original_acceptance_items[{index}] missing {exc.args[0]}")
+                (
+                    source_line,
+                    f"original_acceptance_items[{index}] must be a scalar acceptance-item ID",
+                )
             )
             return None
-        except ValueError as exc:
-            errors.append((source_line, f"invalid artifact_kind in {source_path}: {exc}"))
+        item_id = raw_item.strip()
+        if not _validate_acceptance_item_id(item_id, source_line, errors):
             return None
+        item = AcceptanceItem(
+            item_id=item_id,
+            prose=item_id,
+            artifact_kind=ArtifactKind.behavior,
+            artifact_ref=item_id,
+            source_line=source_line,
+        )
         items.append(item)
     return tuple(items)
 

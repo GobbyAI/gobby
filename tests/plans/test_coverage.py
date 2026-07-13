@@ -78,14 +78,12 @@ def _deferred_plan(tmp_path: Path, *, task_ref: str = "#999") -> tuple[Path, str
 `kind: deferred`
 
 ```yaml
-task_ref: "{task_ref}"
-reason: "covered by follow-up"
-owner: "backend"
-original_acceptance_items:
-  - item_id: A1.1
-    prose: "implement later"
-    artifact_kind: file
-    artifact_ref: "src/later.py"
+deferral:
+  task_ref: "{task_ref}"
+  reason: "covered by follow-up"
+  owner: "backend"
+  original_acceptance_items:
+    - A1.1
 ```
 """,
         encoding="utf-8",
@@ -150,7 +148,7 @@ def test_closed_serialized_task_record_rejects_deferral(tmp_path: Path) -> None:
                     "current_stage": {"name": "development", "state": "ready"},
                 },
                 "labels": ["deferred-from:plan:A1"],
-                "validation_criteria": "Follow-up owns src/later.py.",
+                "validation_criteria": "Follow-up owns A1.1.",
             },
         ],
     )
@@ -294,7 +292,7 @@ def test_parsed_deferred_section_validates_task_and_provenance(
                 "path_cache": "1.999",
                 "state": task_state,
                 "labels": list(labels),
-                "validation_criteria": "Follow-up owns src/later.py.",
+                "validation_criteria": "Follow-up owns A1.1.",
             }
         )
 
@@ -332,7 +330,7 @@ def test_parsed_deferred_item_accepts_valid_covers_label(tmp_path: Path) -> None
                 "ref": "#101",
                 "path_cache": "1.101",
                 "labels": ["covers:plan:A1:A1.1"],
-                "validation_criteria": "Implements src/later.py.",
+                "validation_criteria": "Implements A1.1.",
             },
         ],
     )
@@ -460,13 +458,13 @@ def test_db_deferral_uses_project_records_without_widening_root_scope(
         project.id,
         "Project-wide deferral",
         labels=["deferred-from:plan:A1", "covers:plan:A1:A1.1"],
-        validation_criteria="Follow-up owns src/later.py.",
+        validation_criteria="Follow-up owns A1.1.",
     )
     foreign_deferral = manager.create_task(
         foreign_project.id,
         "Foreign deferral",
         labels=["deferred-from:plan:A1", "covers:plan:A1:A1.1"],
-        validation_criteria="Follow-up owns src/later.py.",
+        validation_criteria="Follow-up owns A1.1.",
     )
     dependencies = TaskDependencyManager(temp_db)
     dependencies.add_dependency(root.id, deferral.id)

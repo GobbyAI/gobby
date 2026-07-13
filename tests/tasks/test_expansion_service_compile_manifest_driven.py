@@ -462,14 +462,12 @@ def test_deferrals_preserved(
         `kind: deferred`
 
         ```yaml
-        task_ref: "#777"
-        reason: "tracked downstream"
-        owner: "backend-developer"
-        original_acceptance_items:
-          - item_id: D1.1
-            prose: "Deferred work is tracked. behavior: downstream work"
-            artifact_kind: behavior
-            artifact_ref: "downstream work"
+        deferral:
+          task_ref: "#777"
+          reason: "tracked downstream"
+          owner: "backend-developer"
+          original_acceptance_items:
+            - D1.1
         ```
 
         ## M1 Task Manifest
@@ -506,7 +504,7 @@ def test_deferrals_preserved(
                 {
                     "item_id": "D1.1",
                     "artifact_kind": "behavior",
-                    "artifact_ref": "downstream work",
+                    "artifact_ref": "D1.1",
                 }
             ],
         }

@@ -379,6 +379,75 @@ def test_deferred_with_unlabeled_fence_raises_parse_error(tmp_path: Path) -> Non
         parse_plan(plan)
 
 
+def test_documented_deferral_wrapper_and_scalar_ids_round_trip(tmp_path: Path) -> None:
+    canonical_block = """\
+deferral:
+  task_ref: "#12345"
+  reason: "Why this work is outside the current epic."
+  owner: "team-or-agent"
+  original_acceptance_items:
+    - A7.3"""
+    repo_root = Path(__file__).resolve().parents[2]
+    contract = (repo_root / "docs/contracts/plan-coverage.md").read_text(encoding="utf-8")
+    draft_skill = (repo_root / "src/gobby/install/shared/skills/plan-draft/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert canonical_block in contract
+    assert canonical_block in draft_skill
+    plan = _write_plan(
+        tmp_path,
+        f"""> **Plan ID:** plan
+
+## A7 Deferred work
+`kind: deferred`
+
+```yaml
+{canonical_block}
+```
+""",
+    )
+
+    deferral = parse_plan(plan).sections[0].deferral
+
+    assert deferral is not None
+    assert deferral.task_ref == "#12345"
+    assert deferral.reason == "Why this work is outside the current epic."
+    assert deferral.owner == "team-or-agent"
+    assert deferral.raw_block == canonical_block
+    assert deferral.original_acceptance_items == (
+        AcceptanceItem(
+            item_id="A7.3",
+            prose="A7.3",
+            artifact_kind=ArtifactKind.behavior,
+            artifact_ref="A7.3",
+            source_line=6,
+        ),
+    )
+
+
+def test_unwrapped_deferral_block_names_required_wrapper(tmp_path: Path) -> None:
+    plan = _write_plan(
+        tmp_path,
+        """
+        > **Plan ID:** plan
+
+        ## A7 Deferred work
+        `kind: deferred`
+
+        ```yaml
+        task_ref: "#12345"
+        reason: "Why this work is outside the current epic."
+        owner: "team-or-agent"
+        original_acceptance_items:
+          - A7.3
+        ```
+        """,
+    )
+
+    with pytest.raises(PlanParseError, match="required top-level 'deferral:' wrapper"):
+        parse_plan(plan)
+
+
 def test_manifest_with_unlabeled_fence_raises_parse_error(tmp_path: Path) -> None:
     plan = _write_plan(
         tmp_path,
@@ -403,14 +472,12 @@ def test_deferred_object_parsed(tmp_path: Path) -> None:
         `kind: deferred`
 
         ```yaml
-        task_ref: "#999"
-        reason: "covered by follow-up"
-        owner: "agent"
-        original_acceptance_items:
-          - item_id: A1.1
-            prose: "implement later"
-            artifact_kind: file
-            artifact_ref: "src/later.py"
+        deferral:
+          task_ref: "#999"
+          reason: "covered by follow-up"
+          owner: "agent"
+          original_acceptance_items:
+            - A1.1
         ```
         """,
     )
@@ -425,15 +492,15 @@ def test_deferred_object_parsed(tmp_path: Path) -> None:
     assert deferral.original_acceptance_items == (
         AcceptanceItem(
             item_id="A1.1",
-            prose="implement later",
-            artifact_kind=ArtifactKind.file,
-            artifact_ref="src/later.py",
+            prose="A1.1",
+            artifact_kind=ArtifactKind.behavior,
+            artifact_ref="A1.1",
             source_line=4,
         ),
     )
 
 
-def test_invalid_deferred_artifact_kind_raises(tmp_path: Path) -> None:
+def test_deferred_acceptance_items_require_scalar_ids(tmp_path: Path) -> None:
     plan = _write_plan(
         tmp_path,
         """
@@ -441,19 +508,17 @@ def test_invalid_deferred_artifact_kind_raises(tmp_path: Path) -> None:
         `kind: deferred`
 
         ```yaml
-        task_ref: "#999"
-        reason: "covered by follow-up"
-        owner: "agent"
-        original_acceptance_items:
-          - item_id: A1.1
-            prose: "implement later"
-            artifact_kind: package
-            artifact_ref: "src/later.py"
+        deferral:
+          task_ref: "#999"
+          reason: "covered by follow-up"
+          owner: "agent"
+          original_acceptance_items:
+            - item_id: A1.1
         ```
         """,
     )
 
-    with pytest.raises(PlanParseError, match="invalid artifact_kind"):
+    with pytest.raises(PlanParseError, match="must be a scalar acceptance-item ID"):
         parse_plan(plan)
 
 
@@ -465,14 +530,12 @@ def test_deferred_acceptance_item_id_must_match_covers_grammar(tmp_path: Path) -
         `kind: deferred`
 
         ```yaml
-        task_ref: "#999"
-        reason: "covered by follow-up"
-        owner: "agent"
-        original_acceptance_items:
-          - item_id: 1.1.foo
-            prose: "implement later"
-            artifact_kind: file
-            artifact_ref: "src/later.py"
+        deferral:
+          task_ref: "#999"
+          reason: "covered by follow-up"
+          owner: "agent"
+          original_acceptance_items:
+            - 1.1.foo
         ```
         """,
     )
@@ -766,10 +829,11 @@ def test_fenced_deferral_yaml_outside_deferred_is_ignored(tmp_path: Path) -> Non
         - A1.1 \u2014 real item. file: a.py.
 
         ```yaml
-        task_ref: "#999"
-        reason: "ignore me"
-        owner: "agent"
-        original_acceptance_items: []
+        deferral:
+          task_ref: "#999"
+          reason: "ignore me"
+          owner: "agent"
+          original_acceptance_items: []
         ```
         """,
     )
