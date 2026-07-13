@@ -53,12 +53,13 @@ class FakeStore:
 
 def _deferral(
     *,
+    task_ref: str = DEFERRED_TASK_REF,
     reason: str = "covered elsewhere",
     owner: str = "owner",
     item: AcceptanceItem = ITEM,
 ) -> Deferral:
     return Deferral(
-        task_ref=DEFERRED_TASK_REF,
+        task_ref=task_ref,
         reason=reason,
         owner=owner,
         original_acceptance_items=(item,),
@@ -222,6 +223,26 @@ def test_validate_dependency_path() -> None:
     assert result.status == "valid"
 
 
+@pytest.mark.parametrize(
+    "task_ref",
+    ["#12345", "12345"],
+    ids=["canonical", "unquoted-integer-form"],
+)
+def test_validate_numeric_task_ref_formats_match_dependency_closure(task_ref: str) -> None:
+    canonical_ref = "#12345"
+    store = FakeStore(
+        tasks={canonical_ref: _task()},
+        labels={canonical_ref: [PROVENANCE_LABEL]},
+        dependencies={RECOVERY_EPIC_REF: [canonical_ref]},
+    )
+
+    result = _validate(_deferral(task_ref=task_ref), store)
+
+    assert result.status == "valid"
+    assert store.task_calls[0] == canonical_ref
+    assert store.label_calls[0] == canonical_ref
+
+
 def test_validate_cited_parent_path() -> None:
     store = FakeStore(
         tasks={
@@ -287,6 +308,36 @@ def test_validate_cited_parent_inside_dependency_closure_rejected() -> None:
             "#parent": [f"out-of-scope-for:{RECOVERY_EPIC_REF}"],
         },
         dependencies={RECOVERY_EPIC_REF: ["#parent"]},
+    )
+
+    result = _validate(_deferral(), store)
+
+    assert result.status == "missing_dependency_or_cited_parent"
+
+
+@pytest.mark.parametrize(
+    "cited_parent_label",
+    ["cited-parent:#12345", "cited-parent:12345"],
+    ids=["canonical", "unquoted-integer-form"],
+)
+def test_validate_numeric_cited_parent_inside_dependency_closure_rejected(
+    cited_parent_label: str,
+) -> None:
+    canonical_ref = "#12345"
+    plain_ref = "12345"
+    out_of_scope_label = f"out-of-scope-for:{RECOVERY_EPIC_REF}"
+    store = FakeStore(
+        tasks={
+            DEFERRED_TASK_REF: _task(),
+            canonical_ref: _task(criteria="Parent task"),
+            plain_ref: _task(criteria="Parent task"),
+        },
+        labels={
+            DEFERRED_TASK_REF: [PROVENANCE_LABEL, cited_parent_label],
+            canonical_ref: [out_of_scope_label],
+            plain_ref: [out_of_scope_label],
+        },
+        dependencies={RECOVERY_EPIC_REF: [canonical_ref]},
     )
 
     result = _validate(_deferral(), store)

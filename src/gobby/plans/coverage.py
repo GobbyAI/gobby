@@ -17,6 +17,7 @@ import yaml
 from gobby.plans._artifact_refs import artifact_referenced
 from gobby.plans._identifiers import DOTTED_ID_PATTERN
 from gobby.plans._task_record_state import coerce_task_state
+from gobby.plans._task_refs import normalize_task_ref
 from gobby.plans.evidence import EvidenceKind, EvidenceRow
 from gobby.plans.parser import AcceptanceItem, PlanDocument, PlanSection, parse_plan
 from gobby.tasks.state_semantics import serialize_task_state
@@ -139,7 +140,7 @@ class _TaskRecordStore:
         self._by_ref = {record.ref: record for record in records}
 
     def get_task(self, task_ref: str) -> dict[str, object] | None:
-        record = self._by_ref.get(_normalize_ref(task_ref))
+        record = self._by_ref.get(normalize_task_ref(task_ref))
         if record is None:
             return None
         return {
@@ -150,11 +151,11 @@ class _TaskRecordStore:
         }
 
     def get_task_labels(self, task_ref: str) -> list[str]:
-        record = self._by_ref.get(_normalize_ref(task_ref))
+        record = self._by_ref.get(normalize_task_ref(task_ref))
         return list(record.labels) if record is not None else []
 
     def get_task_dependencies(self, task_ref: str) -> list[str]:
-        record = self._by_ref.get(_normalize_ref(task_ref))
+        record = self._by_ref.get(normalize_task_ref(task_ref))
         return list(record.dependencies) if record is not None else []
 
 
@@ -797,7 +798,7 @@ def _task_ref(raw: Mapping[str, object]) -> str:
     for key in ("ref", "task_ref", "id"):
         value = raw.get(key)
         if isinstance(value, str) and value:
-            return _normalize_ref(value)
+            return normalize_task_ref(value)
     seq_num = raw.get("seq_num")
     if isinstance(seq_num, int):
         return f"#{seq_num}"
@@ -825,14 +826,14 @@ def _dependency_refs(raw: object) -> tuple[str, ...]:
     if isinstance(raw, Sequence) and not isinstance(raw, str):
         for item in raw:
             if isinstance(item, str):
-                values.append(_normalize_ref(item))
+                values.append(normalize_task_ref(item))
             elif isinstance(item, Mapping):
                 ref = item.get("ref") or item.get("depends_on") or item.get("task_ref")
                 if isinstance(ref, str):
-                    values.append(_normalize_ref(ref))
+                    values.append(normalize_task_ref(ref))
         return tuple(values)
     if isinstance(raw, str):
-        return (_normalize_ref(raw),)
+        return (normalize_task_ref(raw),)
     return ()
 
 
@@ -852,18 +853,11 @@ def _optional_string(raw: object) -> str | None:
 
 
 def _optional_ref(raw: str) -> str | None:
-    return _normalize_ref(raw) if raw else None
-
-
-def _normalize_ref(ref: str) -> str:
-    stripped = ref.strip()
-    if stripped.isdecimal():
-        return f"#{stripped}"
-    return stripped
+    return normalize_task_ref(raw) if raw else None
 
 
 def _filter_to_scope(records: Sequence[_TaskRecord], root_task_ref: str) -> tuple[_TaskRecord, ...]:
-    normalized_root = _normalize_ref(root_task_ref)
+    normalized_root = normalize_task_ref(root_task_ref)
     root_key = normalized_root.lstrip("#")
     included = {
         record.ref
