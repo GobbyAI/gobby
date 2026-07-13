@@ -24,7 +24,7 @@ PLAN_HEADING_REGEX: re.Pattern[str] = re.compile(
 )
 
 _HEADING_LINE_RE = re.compile(r"^(?P<marks>#{2,6})\s+")
-_KIND_LINE_RE = re.compile(r"^`?\s*kind:\s*(?P<kind>[a-z_]+)\s*`?$")
+KIND_LINE_RE = re.compile(r"^`?\s*kind:\s*(?P<kind>[a-z_]+)\s*`?$")
 _PLAN_ID_RE = re.compile(r"^\s*>?\s*\*\*Plan ID:\*\*\s*(?P<plan_id>.+?)\s*$")
 _TASK_PLAN_FILENAME_RE = re.compile(r"^task-(?P<seq>\d+)(?:[-_].*)?$")
 _SECTION_DEPENDS_RE = re.compile(r"\(depends:\s*(?P<depends>[^)]+)\)", flags=re.IGNORECASE)
@@ -171,7 +171,7 @@ def parse_plan(
     source_bytes = path.read_bytes()
     source_hash = hashlib.sha256(source_bytes).hexdigest()
     lines = source_bytes.decode("utf-8").splitlines()
-    mask, unclosed_fence_line = _compute_fence_mask(lines)
+    mask, unclosed_fence_line = compute_fence_mask(lines)
     headings = _collect_headings(lines, mask)
 
     errors: list[tuple[int, str]] = []
@@ -309,7 +309,9 @@ def parse_plan(
     )
 
 
-def _compute_fence_mask(lines: list[str]) -> tuple[list[bool], int | None]:
+def compute_fence_mask(lines: list[str]) -> tuple[list[bool], int | None]:
+    """Return fenced-line masking and the opening line of any unclosed fence."""
+
     mask = [False] * len(lines)
     open_fence: _Fence | None = None
     open_fence_line: int | None = None
@@ -460,7 +462,7 @@ def _section_kind(
         stripped = lines[index].strip()
         if not stripped:
             continue
-        match = _KIND_LINE_RE.match(stripped)
+        match = KIND_LINE_RE.match(stripped)
         if match is None:
             return None
         try:
@@ -795,6 +797,7 @@ __all__ = [
     "ArtifactKind",
     "Deferral",
     "Kind",
+    "KIND_LINE_RE",
     "ManifestEntry",
     "ParseMode",
     "PlanDocument",
@@ -802,6 +805,7 @@ __all__ = [
     "PlanParseError",
     "PlanSection",
     "MISSING_PLAN_ID_SENTINEL",
+    "compute_fence_mask",
     "extract_section_dependencies",
     "parse_plan",
     "resolve_plan_id",

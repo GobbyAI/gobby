@@ -16,11 +16,13 @@ from typing import Literal
 import yaml
 
 from gobby.plans.parser import (
+    KIND_LINE_RE,
     Kind,
     PlanDocument,
     PlanKind,
     PlanParseError,
     PlanSection,
+    compute_fence_mask,
     extract_section_dependencies,
     parse_plan,
     resolve_plan_id,
@@ -43,10 +45,8 @@ EmitOutcome = Literal[
 __all__ = ["EmitOutcome", "emit_stub_manifest"]
 
 _HEADING_LINE_RE = re.compile(r"^(?P<marks>#{2,6})\s+")
-_KIND_DIRECTIVE_RE = re.compile(r"^`?kind:\s*(?P<value>[a-z_]+)`?\s*$")
 _CATEGORY_RE = re.compile(r"\[category:\s*(?P<value>[a-z_]+)\]")
 _TITLE_BRACKET_RE = re.compile(r"\s*(?:\[category:[^\]]+\]|\(depends:[^)]+\))")
-_FENCE_OPEN_RE = re.compile(r"^\s*(?P<marker>`{3,}|~{3,})")
 _PHASE_REF_RE = re.compile(r"^P\d+$")
 _FRONTEND_SIGNAL_RE = re.compile(
     r"\b(?:accessibility|browser|client|component|css|eslint|frontend|lighthouse|"
@@ -423,48 +423,30 @@ def _write_manifest_section(body: str, entries: list[dict[str, object]]) -> str:
 
 def _has_manifest_section(raw: str) -> bool:
     lines = raw.splitlines()
-    in_fence = False
-    fence_marker = ""
+    fence_mask, _ = compute_fence_mask(lines)
     for index, line in enumerate(lines):
-        stripped = line.strip()
-        if in_fence:
-            if stripped.startswith(fence_marker):
-                in_fence = False
-            continue
-        opener = _FENCE_OPEN_RE.match(line)
-        if opener is not None:
-            in_fence = True
-            fence_marker = opener.group("marker")[:3]
+        if fence_mask[index]:
             continue
         if _HEADING_LINE_RE.match(line):
-            if _next_kind_directive(lines, index + 1) == "manifest":
+            if _next_kind_directive(lines, fence_mask, index + 1) == "manifest":
                 return True
     return False
 
 
 def _strip_manifest_section(raw: str) -> str:
     lines = raw.splitlines()
-    in_fence = False
-    fence_marker = ""
+    fence_mask, _ = compute_fence_mask(lines)
     manifest_start = -1
     manifest_level = -1
 
     for index, line in enumerate(lines):
-        stripped = line.strip()
+        if fence_mask[index]:
+            continue
         if manifest_start < 0:
-            if in_fence:
-                if stripped.startswith(fence_marker):
-                    in_fence = False
-                continue
-            opener = _FENCE_OPEN_RE.match(line)
-            if opener is not None:
-                in_fence = True
-                fence_marker = opener.group("marker")[:3]
-                continue
             heading_match = _HEADING_LINE_RE.match(line)
             if heading_match is None:
                 continue
-            if _next_kind_directive(lines, index + 1) == "manifest":
+            if _next_kind_directive(lines, fence_mask, index + 1) == "manifest":
                 manifest_start = index
                 manifest_level = len(heading_match.group("marks"))
             continue
@@ -481,28 +463,19 @@ def _strip_manifest_section(raw: str) -> str:
     return text + "\n" if text else ""
 
 
-def _next_kind_directive(lines: list[str], start_index: int) -> str | None:
-    in_fence = False
-    fence_marker = ""
+def _next_kind_directive(lines: list[str], fence_mask: list[bool], start_index: int) -> str | None:
     for index in range(start_index, len(lines)):
+        if fence_mask[index]:
+            continue
         line = lines[index]
         stripped = line.strip()
-        if in_fence:
-            if stripped.startswith(fence_marker):
-                in_fence = False
-            continue
         if not stripped:
-            continue
-        opener = _FENCE_OPEN_RE.match(line)
-        if opener is not None:
-            in_fence = True
-            fence_marker = opener.group("marker")[:3]
             continue
         if _HEADING_LINE_RE.match(line):
             return None
-        match = _KIND_DIRECTIVE_RE.match(stripped)
+        match = KIND_LINE_RE.match(stripped)
         if match is not None:
-            return match.group("value")
+            return match.group("kind")
         return None
     return None
 

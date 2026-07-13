@@ -13,6 +13,8 @@ import pytest
 from gobby.plans.manifest_emitter import (
     EmitOutcome,
     ManifestSynthesisError,
+    _has_manifest_section,
+    _strip_manifest_section,
     emit_stub_manifest,
 )
 from gobby.plans.parser import (
@@ -268,6 +270,67 @@ def test_replace_malformed(tmp_path: Path) -> None:
     assert len(document.manifest_entries) == 2
     titles = {entry.title for entry in document.manifest_entries}
     assert "Stale" not in titles
+
+
+def test_four_backtick_manifest_example_is_not_treated_as_existing_manifest(
+    tmp_path: Path,
+) -> None:
+    plan = _plan_two_deliverables(tmp_path, name="four-backtick-example.md")
+    example = textwrap.dedent(
+        """
+
+        ````markdown
+        ```yaml
+        ## M1 Task Manifest
+        `kind: manifest`
+        - title: "Documentation example only"
+        ```
+        ````
+        """
+    )
+    original = plan.read_text(encoding="utf-8").rstrip() + example
+    plan.write_text(original, encoding="utf-8")
+
+    assert parse_plan(plan, parse_mode="draft").manifest_entries == ()
+    assert not _has_manifest_section(original)
+
+    outcome = emit_stub_manifest(plan)
+
+    assert outcome == "fresh"
+    emitted = plan.read_text(encoding="utf-8")
+    assert example.strip() in emitted
+    assert len(parse_plan(plan, parse_mode="expansion").manifest_entries) == 2
+
+
+def test_strip_manifest_ignores_column_zero_heading_inside_yaml() -> None:
+    raw = textwrap.dedent(
+        """
+        ## A1 Before
+        `kind: framing`
+
+        ## M1 Task Manifest
+        `kind: manifest`
+
+        ```yaml
+        - title: "Malformed entry"
+        ## heading-shaped YAML comment
+          category: code
+        ```
+
+        ## A2 After
+        `kind: framing`
+
+        Preserve this section.
+        """
+    ).lstrip()
+
+    stripped = _strip_manifest_section(raw)
+
+    assert "## M1 Task Manifest" not in stripped
+    assert "## heading-shaped YAML comment" not in stripped
+    assert "category: code" not in stripped
+    assert "## A2 After" in stripped
+    assert "Preserve this section." in stripped
 
 
 def test_fallback_force_approve_no_raise(tmp_path: Path) -> None:
