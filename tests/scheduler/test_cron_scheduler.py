@@ -896,6 +896,70 @@ async def test_run_now_returns_none_when_job_already_running(
 
 
 @pytest.mark.asyncio
+async def test_run_now_racing_heartbeat_admits_exactly_one_run(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+    config: CronConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The manual and scheduled paths share one atomic per-job admission guard."""
+    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Manual heartbeat race",
+        schedule_type="cron",
+        action_type="handler",
+        action_config={"handler": "test"},
+        cron_expr="0 * * * *",
+    )
+    due_at = datetime.now(UTC) - timedelta(minutes=1)
+    cron_storage.update_job(job.id, next_run_at=due_at)
+
+    admission_barrier = threading.Barrier(2)
+    create_scheduled_run = cron_storage.create_run
+    create_manual_run = cron_storage.create_run_if_admitted
+
+    def racing_scheduled_create(
+        cron_job_id: str,
+        *,
+        scheduler_owner: str | None = None,
+    ) -> CronRun | None:
+        admission_barrier.wait(timeout=2)
+        return create_scheduled_run(cron_job_id, scheduler_owner=scheduler_owner)
+
+    def racing_manual_create(
+        cron_job_id: str,
+        *,
+        max_concurrent_jobs: int,
+        scheduler_owner: str | None = None,
+    ) -> tuple[CronRun | None, int]:
+        admission_barrier.wait(timeout=2)
+        return create_manual_run(
+            cron_job_id,
+            max_concurrent_jobs=max_concurrent_jobs,
+            scheduler_owner=scheduler_owner,
+        )
+
+    monkeypatch.setattr(cron_storage, "create_run", racing_scheduled_create)
+    monkeypatch.setattr(cron_storage, "create_run_if_admitted", racing_manual_create)
+
+    _, manual_run = await asyncio.gather(
+        scheduler._check_due_jobs(),
+        scheduler.run_now(job.id),
+    )
+    await wait_for_async_condition(
+        lambda: mock_executor.execute.await_count == 1,
+        description="single cron execution after admission race",
+    )
+
+    runs = cron_storage.list_runs(job.id, limit=10)
+    assert len(runs) == 1
+    if manual_run is not None:
+        assert manual_run.id == runs[0].id
+    mock_executor.execute.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_run_now_rejects_when_max_concurrency_full(
     cron_storage: CronJobStorage,
     mock_executor: CronExecutor,
