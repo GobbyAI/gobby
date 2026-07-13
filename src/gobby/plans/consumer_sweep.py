@@ -260,12 +260,14 @@ def _resolve_symbols(storage: Any, project_id: str, symbol_ref: str) -> tuple[An
     if not callable(search):
         return ()
     symbols = tuple(search(symbol_ref, project_id, limit=20))
+    leaf = symbol_ref.rsplit(".", 1)[-1]
+    if not symbols:
+        symbols = tuple(search(leaf, project_id, limit=20))
     exact_qualified = tuple(
         symbol for symbol in symbols if _symbol_attr(symbol, "qualified_name") == symbol_ref
     )
     if exact_qualified:
         return exact_qualified
-    leaf = symbol_ref.rsplit(".", 1)[-1]
     exact_names = tuple(symbol for symbol in symbols if _symbol_attr(symbol, "name") == leaf)
     if len(exact_names) == 1:
         return exact_names
