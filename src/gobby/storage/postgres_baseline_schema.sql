@@ -219,6 +219,7 @@ CREATE TABLE sessions (
     chat_mode TEXT DEFAULT 'plan',
     last_digest_input_hash TEXT,
     last_digested_pair_index INTEGER NOT NULL DEFAULT 0,
+    last_title_synthesis_digest_hash TEXT,
     message_count INTEGER DEFAULT 0,
     turn_count INTEGER DEFAULT 0,
     tool_call_count INTEGER DEFAULT 0,

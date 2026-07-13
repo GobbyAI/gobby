@@ -10,7 +10,7 @@ import threading
 from collections.abc import Awaitable
 from dataclasses import dataclass
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -1714,6 +1714,33 @@ class TestBuildTurnAndDigest:
 
         assert llm_service.call_feature.await_args.kwargs["caller"] == "memory.title_synthesis"
 
+    async def test_synthesize_title_bounds_digest_excerpt(self):
+        """Title recovery sends only the most recent bounded digest excerpt."""
+        session_manager = MagicMock()
+        session_manager.update_title.return_value = MagicMock()
+        session = MagicMock(title=None, title_source=None)
+        llm_service = MagicMock()
+        llm_service.call_feature = AsyncMock(return_value="Bounded Title")
+        digest_config = MagicMock(timeout=1)
+        digest = "head-marker" + ("x" * 12_000) + "tail-marker"
+
+        with patch(
+            "gobby.memory.digest._render_prompt_template",
+            side_effect=RuntimeError("use inline fallback"),
+        ):
+            await _synthesize_title(
+                updated_digest=digest,
+                session_id="session-123",
+                session_manager=session_manager,
+                session=session,
+                llm_service=llm_service,
+                digest_config=digest_config,
+            )
+
+        prompt = llm_service.call_feature.await_args.args[1]
+        assert "head-marker" not in prompt
+        assert "tail-marker" in prompt
+
 
 class TestBuildTurnAndDigestIdempotency:
     """Tests for digest idempotency via last_digest_input_hash."""
@@ -1741,6 +1768,7 @@ class TestBuildTurnAndDigestIdempotency:
         session.seq_num = 42
         session.terminal_context = None
         session.last_digest_input_hash = None  # No prior digest
+        session.last_title_synthesis_digest_hash = None
         sm.get.return_value = session
         sm.update_last_turn_markdown.return_value = session
         sm.update_digest_markdown.return_value = session
@@ -1830,6 +1858,7 @@ class TestBuildTurnAndDigestIdempotency:
         session = mock_session_manager.get.return_value
         session.digest_markdown = "### Turn 1\nExisting digest"
         session.last_digest_input_hash = expected_hash
+        session.last_title_synthesis_digest_hash = "older-digest"
 
         mock_llm_service.call_feature = AsyncMock(return_value="Recovered Title")
 
@@ -1852,12 +1881,48 @@ class TestBuildTurnAndDigestIdempotency:
             "Recovered Title",
             title_source="llm",
         )
+        expected_digest_hash = hashlib.sha256(session.digest_markdown.encode()).hexdigest()[:16]
+        mock_session_manager.update_last_title_synthesis_digest_hash.assert_called_once_with(
+            "session-123", expected_digest_hash
+        )
         mock_session_manager.persist_digest_state.assert_not_called()
         mock_session_manager.update_last_turn_markdown.assert_not_called()
         mock_session_manager.update_digest_markdown.assert_not_called()
         mock_session_manager.update_last_digest_input_hash.assert_not_called()
         assert mock_llm_service.call_feature.await_count == 1
         assert mock_llm_service.call_feature.await_args.kwargs["caller"] == "memory.title_synthesis"
+
+    @pytest.mark.asyncio
+    async def test_unchanged_digest_does_not_repeat_title_synthesis(
+        self,
+        mock_memory_manager,
+        mock_session_manager,
+        mock_llm_service,
+    ):
+        """An unchanged digest is attempted at most once for title recovery."""
+        import hashlib
+
+        prompt = "Fix the bug"
+        expected_hash = hashlib.sha256(f"0||{prompt}||".encode()).hexdigest()[:16]
+        session = mock_session_manager.get.return_value
+        session.digest_markdown = "### Turn 1\nExisting digest"
+        session.last_digest_input_hash = expected_hash
+        session.last_title_synthesis_digest_hash = hashlib.sha256(
+            session.digest_markdown.encode()
+        ).hexdigest()[:16]
+
+        result = await build_turn_and_digest(
+            memory_manager=mock_memory_manager,
+            session_manager=mock_session_manager,
+            session_id="session-123",
+            prompt_text=prompt,
+            llm_service=mock_llm_service,
+            config=_digest_config(),
+        )
+
+        assert result is None
+        mock_llm_service.call_feature.assert_not_called()
+        mock_session_manager.update_last_title_synthesis_digest_hash.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_skips_title_synthesis_when_title_present_and_duplicate(

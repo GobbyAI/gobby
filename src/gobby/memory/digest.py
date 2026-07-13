@@ -31,6 +31,8 @@ from gobby.utils.json_helpers import extract_json_object
 
 logger = logging.getLogger(__name__)
 
+_TITLE_SYNTHESIS_DIGEST_LIMIT = 12_000
+
 
 @dataclass(frozen=True)
 class _TurnRecord:
@@ -669,15 +671,17 @@ async def _synthesize_title(
     if not _should_update_digest_title(session):
         return None
 
+    digest_excerpt = updated_digest[-_TITLE_SYNTHESIS_DIGEST_LIMIT:]
+
     try:
         title_prompt = await _run_sync_io(
             _render_prompt_template,
             "memory/title_synthesis",
-            {"digest_markdown": updated_digest},
+            {"digest_markdown": digest_excerpt},
             db,
         )
     except Exception:
-        title_prompt = _build_title_synthesis_prompt(updated_digest)
+        title_prompt = _build_title_synthesis_prompt(digest_excerpt)
 
     llm_timeout = getattr(digest_config, "timeout", 30)
     title = await asyncio.wait_for(
@@ -779,6 +783,17 @@ async def build_turn_and_digest(
             return {"error": "memory digest feature config not available"}
 
         if resolved is None:
+            title_digest_hash = hashlib.sha256(existing_digest.encode("utf-8")).hexdigest()[:16]
+            if (
+                getattr(session, "last_title_synthesis_digest_hash", None)
+                == title_digest_hash
+            ):
+                return None
+            await _run_sync_io(
+                session_manager.update_last_title_synthesis_digest_hash,
+                session_id,
+                title_digest_hash,
+            )
             try:
                 title = await _synthesize_title(
                     existing_digest,

@@ -213,6 +213,26 @@ class TestSessionManagerMetadata:
         assert title_calls == [(session.id, "Digest Title")]
         mock_rename.assert_called_once()
 
+    def test_update_last_title_synthesis_digest_hash_persists_attempt(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Contentless title recovery persists the digest identity it attempted."""
+        session = session_manager.register(
+            external_id="title-recovery-hash-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        session_manager.update_last_title_synthesis_digest_hash(session.id, "digest-hash")
+
+        updated = session_manager.get(session.id)
+        assert updated is not None
+        assert updated.last_title_synthesis_digest_hash == "digest-hash"
+        assert updated.to_dict()["last_title_synthesis_digest_hash"] == "digest-hash"
+
     def test_persist_digest_state_missing_session_does_not_notify_listener(
         self,
         session_manager: SessionManager,

@@ -311,6 +311,22 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
                 (hash_value, now, session_id),
             )
 
+    def update_last_title_synthesis_digest_hash(
+        self: _ManagerState, session_id: str, hash_value: str
+    ) -> None:
+        """Record the digest identity used for a contentless title attempt."""
+        now = utc_now()
+        with self.db.transaction():
+            self.db.execute(
+                """
+                UPDATE sessions
+                SET last_title_synthesis_digest_hash = %s,
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (hash_value, now, session_id),
+            )
+
     def update_parent_session_id(
         self: _ManagerState, session_id: str, parent_session_id: str
     ) -> Session | None:
