@@ -617,6 +617,32 @@ async def test_apply_and_revert_soft_hide_refresh_and_keep() -> None:
     # keep is stamp-only — no snapshot for it.
     assert {row["action"] for row in db.snapshots} == {"delete", "review", "refresh"}
 
+    # Simulate a vectorless restored row: the direct restore hook repairs only
+    # graph state, so the post-revert reconciliation must backfill the vector.
+    manager.vector_ids.discard("refresh-me")
+
+    async def restore_graph_only(
+        memory_id: str,
+        content: str,
+        project_id: str | None,
+    ) -> None:
+        del content, project_id
+        manager.graph_ids.add(memory_id)
+
+    async def reconcile_missing_vectors(dry_run: bool = False) -> dict[str, Any]:
+        missing = set(db.memories) - manager.vector_ids
+        if not dry_run:
+            manager.vector_ids.update(missing)
+        return {
+            "qdrant": {
+                "missing_found": len(missing),
+                "missing_embedded": 0 if dry_run else len(missing),
+            }
+        }
+
+    manager.restore_memory_indices.side_effect = restore_graph_only
+    manager.reconcile_stores.side_effect = reconcile_missing_vectors
+
     result = await revert_dream_run(store=store, run_id=run_id, memory_manager=manager)
 
     assert result["success"] is True
@@ -630,6 +656,7 @@ async def test_apply_and_revert_soft_hide_refresh_and_keep() -> None:
     assert {"hide-me", "review-me", "refresh-me"} <= restored_ids
     assert {"hide-me", "review-me", "refresh-me"} <= manager.vector_ids
     assert {"hide-me", "review-me", "refresh-me"} <= manager.graph_ids
+    assert result["reconcile"]["qdrant"] == {"missing_found": 1, "missing_embedded": 1}
     manager.reconcile_stores.assert_awaited_once_with(dry_run=False)
 
 

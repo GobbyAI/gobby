@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from gobby.memory.services.crossref import CrossrefRebuildError, CrossrefService
-from gobby.storage.memories import Memory
+from gobby.storage.memories import Memory, Visibility
 
 if TYPE_CHECKING:
     from gobby.memory.services.knowledge_graph import KnowledgeGraphService
@@ -26,6 +26,14 @@ class MemoryStorageProtocol(Protocol):
     db: Any
 
     def list_all_ids(self, *, limit: int | None = None, offset: int = 0) -> list[str]: ...
+
+    def get_memories(
+        self,
+        memory_ids: list[str],
+        project_id: str | None = None,
+        *,
+        visibility: Visibility = "active",
+    ) -> list[Memory]: ...
 
     def list_memories(
         self,
@@ -203,7 +211,13 @@ class IndexingService:
         report: dict[str, Any] = {
             "dry_run": dry_run,
             "storage_count": len(storage_ids),
-            "qdrant": {"orphans_found": 0, "orphans_deleted": 0, "errors": 0},
+            "qdrant": {
+                "orphans_found": 0,
+                "orphans_deleted": 0,
+                "missing_found": 0,
+                "missing_embedded": 0,
+                "errors": 0,
+            },
             "falkordb": {
                 "orphan_memories_found": 0,
                 "orphan_memories_deleted": 0,
@@ -216,8 +230,10 @@ class IndexingService:
             try:
                 qdrant_ids = set(await self._vector_store.scroll_ids())
                 orphaned = qdrant_ids - storage_ids
+                missing = storage_ids - qdrant_ids
                 report["qdrant"]["total"] = len(qdrant_ids)
                 report["qdrant"]["orphans_found"] = len(orphaned)
+                report["qdrant"]["missing_found"] = len(missing)
 
                 if not dry_run and orphaned:
                     try:
@@ -228,9 +244,16 @@ class IndexingService:
                             f"Batch delete of {len(orphaned)} Qdrant orphans failed: {e}"
                         )
                         report["qdrant"]["errors"] += len(orphaned)
+                if not dry_run and missing:
+                    embedded, failures = await self._backfill_missing_embeddings(missing)
+                    report["qdrant"]["missing_embedded"] = embedded
+                    report["qdrant"]["errors"] += len(failures)
+                    if failures:
+                        report["qdrant"]["missing_failures"] = failures
             except Exception as e:
                 logger.error(f"Qdrant reconciliation failed: {e}")
                 report["qdrant"]["error"] = str(e)
+                report["qdrant"]["errors"] += 1
 
         if self._kg_service:
             try:
@@ -252,6 +275,82 @@ class IndexingService:
                 report["falkordb"]["error"] = str(e)
 
         return report
+
+    async def _backfill_missing_embeddings(
+        self,
+        missing_ids: set[str],
+    ) -> tuple[int, list[dict[str, str]]]:
+        """Embed storage memories missing from Qdrant without aborting the pass."""
+        ordered_ids = sorted(missing_ids)
+        if self._embed_fn is None:
+            return 0, [
+                {"memory_id": memory_id, "error": "embedding function not configured"}
+                for memory_id in ordered_ids
+            ]
+
+        try:
+            memories = await self._run_storage(
+                self._storage.get_memories,
+                ordered_ids,
+                visibility="all",
+            )
+        except Exception as error:
+            logger.warning("Failed to load memories missing Qdrant vectors: %s", error)
+            return 0, [
+                {"memory_id": memory_id, "error": f"memory load failed: {error}"}
+                for memory_id in ordered_ids
+            ]
+
+        by_id = {memory.id: memory for memory in memories}
+        failures: list[dict[str, str]] = []
+        batch: list[tuple[str, list[float], dict[str, Any]]] = []
+        embedded = 0
+        vector_store = cast(VectorStoreProtocol, self._vector_store)
+
+        async def _flush_batch() -> None:
+            nonlocal batch, embedded
+            if not batch:
+                return
+            batch_ids = [memory_id for memory_id, _embedding, _payload in batch]
+            try:
+                await vector_store.batch_upsert(batch)
+                embedded += len(batch)
+            except Exception as error:
+                logger.warning(
+                    "Failed to backfill %s missing Qdrant vector(s): %s",
+                    len(batch),
+                    error,
+                )
+                failures.extend(
+                    {"memory_id": memory_id, "error": f"vector upsert failed: {error}"}
+                    for memory_id in batch_ids
+                )
+            batch = []
+
+        for memory_id in ordered_ids:
+            memory = by_id.get(memory_id)
+            if memory is None:
+                failures.append(
+                    {"memory_id": memory_id, "error": "memory disappeared during reconciliation"}
+                )
+                continue
+            try:
+                embedding = await self._embed_fn(memory.content)
+            except Exception as error:
+                logger.warning("Failed to embed missing memory %s: %s", memory_id, error)
+                failures.append({"memory_id": memory_id, "error": str(error)})
+                continue
+            batch.append(
+                (
+                    memory.id,
+                    embedding,
+                    {"content": memory.content, "project_id": memory.project_id},
+                )
+            )
+            if len(batch) >= REINDEX_PAGE_SIZE:
+                await _flush_batch()
+        await _flush_batch()
+        return embedded, failures
 
     async def reindex_embeddings(self, project_id: str | None = None) -> dict[str, Any]:
         """Regenerate embeddings for stored memories."""

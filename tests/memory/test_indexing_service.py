@@ -57,6 +57,10 @@ class _MemoryStorage:
         end = None if limit is None else offset + limit
         return ids[offset:end]
 
+    def get_memories(self, memory_ids: list[str], **_kwargs: Any) -> list[Memory]:
+        by_id = {memory.id: memory for memory in self.memories}
+        return [by_id[memory_id] for memory_id in memory_ids if memory_id in by_id]
+
     def delete_project_crossrefs(self, project_id: str) -> int:
         return 0
 
@@ -142,6 +146,88 @@ def _service(
         kg_rebuilder=AsyncMock(return_value={}),
         run_db=run_db,
     )
+
+
+@pytest.mark.asyncio
+async def test_reconcile_backfills_missing_vectors_and_deletes_orphans() -> None:
+    """Storage-minus-Qdrant rows are embedded while Qdrant orphans still disappear."""
+    storage = _MemoryStorage([_memory("present", "Present"), _memory("missing", "Missing")])
+    vector_store = _VectorStore()
+    vector_store.ids = ["present", "orphan"]
+    embed_fn = AsyncMock(return_value=[0.4, 0.5])
+
+    report = await _service(storage, vector_store, embed_fn=embed_fn).reconcile_stores()
+
+    assert report["qdrant"] == {
+        "orphans_found": 1,
+        "orphans_deleted": 1,
+        "missing_found": 1,
+        "missing_embedded": 1,
+        "errors": 0,
+        "total": 2,
+    }
+    assert set(vector_store.ids) == {"present", "missing"}
+    embed_fn.assert_awaited_once_with("Missing")
+    assert vector_store.batch_upsert.await_args.args[0] == [
+        ("missing", [0.4, 0.5], {"content": "Missing", "project_id": "project-1"})
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_dry_run_reports_missing_and_orphans_without_mutating() -> None:
+    storage = _MemoryStorage([_memory("missing", "Missing")])
+    vector_store = _VectorStore()
+    vector_store.ids = ["orphan"]
+    embed_fn = AsyncMock(return_value=[0.4, 0.5])
+
+    report = await _service(storage, vector_store, embed_fn=embed_fn).reconcile_stores(dry_run=True)
+
+    assert report["qdrant"]["orphans_found"] == 1
+    assert report["qdrant"]["orphans_deleted"] == 0
+    assert report["qdrant"]["missing_found"] == 1
+    assert report["qdrant"]["missing_embedded"] == 0
+    assert vector_store.ids == ["orphan"]
+    embed_fn.assert_not_awaited()
+    vector_store.delete_many.assert_not_awaited()
+    vector_store.batch_upsert.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_reports_one_embedding_failure_and_continues() -> None:
+    storage = _MemoryStorage([_memory("bad", "Bad"), _memory("good", "Good")])
+    vector_store = _VectorStore()
+
+    async def embed_fn(content: str) -> list[float]:
+        if content == "Bad":
+            raise RuntimeError("embedding unavailable")
+        return [0.4, 0.5]
+
+    report = await _service(storage, vector_store, embed_fn=embed_fn).reconcile_stores()
+
+    assert report["qdrant"]["missing_found"] == 2
+    assert report["qdrant"]["missing_embedded"] == 1
+    assert report["qdrant"]["errors"] == 1
+    assert report["qdrant"]["missing_failures"] == [
+        {"memory_id": "bad", "error": "embedding unavailable"}
+    ]
+    assert vector_store.ids == ["good"]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_reports_vector_upsert_failure_without_crashing() -> None:
+    storage = _MemoryStorage([_memory("missing", "Missing")])
+    vector_store = _VectorStore()
+    vector_store.batch_upsert.side_effect = RuntimeError("qdrant unavailable")
+
+    report = await _service(storage, vector_store).reconcile_stores()
+
+    assert report["qdrant"]["missing_found"] == 1
+    assert report["qdrant"]["missing_embedded"] == 0
+    assert report["qdrant"]["errors"] == 1
+    assert report["qdrant"]["missing_failures"] == [
+        {"memory_id": "missing", "error": "vector upsert failed: qdrant unavailable"}
+    ]
+    assert vector_store.ids == []
 
 
 @pytest.mark.asyncio
