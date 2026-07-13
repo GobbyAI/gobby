@@ -195,18 +195,27 @@ def _write_all(fd: int, data: bytes) -> None:
     while remaining:
         written = os.write(fd, remaining)
         if written <= 0:
-            raise OSError("Failed to write secret salt")
+            raise OSError("Failed to write secret material")
         remaining = remaining[written:]
 
 
-def _publish_secret_salt(salt_file: Path, salt: bytes) -> bool:
-    """Publish a complete salt without replacing a racing process's winner."""
-    temp_file = salt_file.with_name(f".{salt_file.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+def _fsync_directory(directory: Path) -> None:
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _publish_private_file(path: Path, data: bytes) -> bool:
+    """Durably publish a complete private file without replacing a racing winner."""
+    temp_file = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     fd = os.open(temp_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    published = False
     try:
         try:
             os.fchmod(fd, 0o600)
-            _write_all(fd, salt)
+            _write_all(fd, data)
             os.fsync(fd)
         finally:
             os.close(fd)
@@ -214,12 +223,22 @@ def _publish_secret_salt(salt_file: Path, salt: bytes) -> bool:
         try:
             # A hard link is an atomic, no-clobber publication within one directory.
             # os.rename()/os.replace() would let a later racer overwrite the winner.
-            os.link(temp_file, salt_file)
+            os.link(temp_file, path)
         except FileExistsError:
             return False
+        published = True
         return True
     finally:
-        temp_file.unlink(missing_ok=True)
+        try:
+            temp_file.unlink(missing_ok=True)
+        finally:
+            if published:
+                _fsync_directory(path.parent)
+
+
+def _publish_secret_salt(salt_file: Path, salt: bytes) -> bool:
+    """Publish a complete salt without replacing a racing process's winner."""
+    return _publish_private_file(salt_file, salt)
 
 
 def _get_or_create_salt() -> bytes:
@@ -310,26 +329,34 @@ def write_private_file(path: Path, data: bytes) -> None:
         os.close(fd)
 
 
+def _read_kek_file(kek_file: Path) -> bytes:
+    key = kek_file.read_bytes().strip()
+    try:
+        Fernet(key)
+    except (TypeError, ValueError) as exc:
+        raise SecretKeyUnavailable(f"Invalid secret KEK file: {kek_file}") from exc
+    try:
+        kek_file.chmod(0o600)
+    except OSError:
+        logger.warning("Could not enforce 0600 permissions on %s", kek_file)
+    return key
+
+
 def _get_or_create_kek_file_key() -> bytes:
     """Return the default key-file KEK, creating it with 0600 permissions."""
     kek_file = get_gobby_home() / _KEK_FILENAME
     kek_file.parent.mkdir(parents=True, exist_ok=True)
-    if kek_file.exists():
-        key = kek_file.read_bytes().strip()
-        try:
-            Fernet(key)
-        except (TypeError, ValueError) as exc:
-            raise SecretKeyUnavailable(f"Invalid secret KEK file: {kek_file}") from exc
-        try:
-            kek_file.chmod(0o600)
-        except OSError:
-            logger.warning("Could not enforce 0600 permissions on %s", kek_file)
-        return key
+    try:
+        return _read_kek_file(kek_file)
+    except FileNotFoundError:
+        pass
 
     key = Fernet.generate_key()
-    write_private_file(kek_file, key)
-    logger.info("Generated new secret KEK file")
-    return key
+    if _publish_private_file(kek_file, key):
+        logger.info("Generated new secret KEK file")
+        return key
+
+    return _read_kek_file(kek_file)
 
 
 def _encode_bytes(value: bytes) -> str:
@@ -451,12 +478,13 @@ class SecretStore:
         )
         return kek.encrypt(dek).decode("utf-8"), salt_text, kdf_n, kdf_r, kdf_p
 
-    def _unwrap_dek(self, row: Any) -> bytes:
+    def _unwrap_dek(self, row: Any, *, passphrase: str | None = None) -> bytes:
         posture = str(row["kek_posture"])
         try:
             kek, _salt, _n, _r, _p = self._kek_fernet(
                 posture,
                 salt_text=row["kek_salt"],
+                passphrase=passphrase,
                 n=row["kek_kdf_n"],
                 r=row["kek_kdf_r"],
                 p=row["kek_kdf_p"],
@@ -499,6 +527,33 @@ class SecretStore:
                    updated_at = EXCLUDED.updated_at""",
             (SECRET_KEY_ID, wrapped_dek, posture, salt_text, kdf_n, kdf_r, kdf_p, now, now),
         )
+
+    def _insert_key_material_if_absent(
+        self,
+        dek: bytes,
+        *,
+        posture: str,
+        passphrase: str | None,
+        executor: Any,
+    ) -> bool:
+        posture = _normalize_posture(posture)
+        wrapped_dek, salt_text, kdf_n, kdf_r, kdf_p = self._wrap_dek(
+            dek,
+            posture=posture,
+            passphrase=passphrase,
+        )
+        now = utc_now()
+        cursor = executor.execute(
+            """INSERT INTO secret_key_material (
+                   id, wrapped_dek, kek_posture, kek_salt, kek_kdf_n, kek_kdf_r, kek_kdf_p,
+                   created_at, updated_at
+               )
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT (id) DO NOTHING
+               RETURNING id""",
+            (SECRET_KEY_ID, wrapped_dek, posture, salt_text, kdf_n, kdf_r, kdf_p, now, now),
+        )
+        return cursor.fetchone() is not None
 
     def _legacy_fernet(self) -> Fernet:
         machine_id = get_machine_id()
@@ -572,17 +627,33 @@ class SecretStore:
             return None, report
 
         with self.db.transaction() as txn:
-            self._upsert_key_material(
+            key_material_created = self._insert_key_material_if_absent(
                 dek,
                 posture=posture,
                 passphrase=passphrase,
                 executor=txn,
             )
-            for name, encrypted_value in migrated_values:
-                txn.execute(
-                    "UPDATE secrets SET encrypted_value = %s, updated_at = %s WHERE name = %s",
-                    (encrypted_value, utc_now(), name),
+            if key_material_created:
+                for name, encrypted_value in migrated_values:
+                    txn.execute(
+                        "UPDATE secrets SET encrypted_value = %s, updated_at = %s WHERE name = %s",
+                        (encrypted_value, utc_now(), name),
+                    )
+
+        if not key_material_created:
+            winner = self._load_key_material()
+            if winner is None:
+                raise RuntimeError(
+                    "Concurrent secret envelope initialization did not publish a key"
                 )
+            winner_dek = self._unwrap_dek(winner, passphrase=passphrase)
+            concurrent_report = SecretMigrationReport(
+                dry_run=False,
+                key_material_created=False,
+                entries=entries,
+            )
+            self._fernet = Fernet(winner_dek)
+            return winner_dek, concurrent_report
 
         for entry in entries:
             if entry.status == "skipped":
@@ -669,7 +740,7 @@ class SecretStore:
         posture = _normalize_posture(posture)
         row = self._load_key_material()
         if row is None:
-            dek, _report = self._initialize_envelope(
+            dek, report = self._initialize_envelope(
                 required_secret_names=set(),
                 dry_run=False,
                 posture=posture,
@@ -677,6 +748,8 @@ class SecretStore:
             )
             if dek is None:
                 raise RuntimeError("Secret envelope was not initialized")
+            if not report.key_material_created:
+                self._upsert_key_material(dek, posture=posture, passphrase=passphrase)
         else:
             dek = self._unwrap_dek(row)
             self._upsert_key_material(dek, posture=posture, passphrase=passphrase)

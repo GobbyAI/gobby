@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import multiprocessing
 import os
+import stat
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -96,6 +99,37 @@ def _create_salt_with_publish_barrier(
         result_queue.put(("error", repr(exc)))
 
 
+def _create_kek_with_publish_barrier(
+    home: str,
+    candidate: bytes,
+    barrier: Any,
+    result_queue: Any,
+) -> None:
+    """Create a KEK after synchronizing both processes at atomic publication."""
+    os.environ["GOBBY_HOME"] = home
+    from gobby.storage import secrets as secrets_module
+
+    original_generate_key = secrets_module.Fernet.generate_key
+    original_link = secrets_module.os.link
+
+    def deterministic_generate_key() -> bytes:
+        return candidate
+
+    def synchronized_link(src: Any, dst: Any, *args: Any, **kwargs: Any) -> None:
+        barrier.wait(timeout=10)
+        original_link(src, dst, *args, **kwargs)
+
+    secrets_module.Fernet.generate_key = deterministic_generate_key
+    secrets_module.os.link = synchronized_link
+    try:
+        result_queue.put(("ok", secrets_module._get_or_create_kek_file_key()))
+    except Exception as exc:
+        result_queue.put(("error", repr(exc)))
+    finally:
+        secrets_module.Fernet.generate_key = original_generate_key
+        secrets_module.os.link = original_link
+
+
 def _create_salt_with_paused_write(
     home: str,
     partial_ready: Any,
@@ -173,6 +207,30 @@ def _insert_legacy_secret(
         ),
     )
     return token
+
+
+def _synchronize_empty_key_material_loads(
+    stores: list[SecretStore],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Force stores to observe absent key material before either initializes it."""
+    first_load_barrier = threading.Barrier(len(stores))
+    for store in stores:
+        original_load = store._load_key_material
+        load_state = {"first": True}
+
+        def synchronized_load(
+            original_load: Any = original_load,
+            load_state: dict[str, bool] = load_state,
+        ) -> Any:
+            row = original_load()
+            if load_state["first"]:
+                assert row is None
+                load_state["first"] = False
+                first_load_barrier.wait(timeout=5)
+            return row
+
+        monkeypatch.setattr(store, "_load_key_material", synchronized_load)
 
 
 # =============================================================================
@@ -365,6 +423,61 @@ class TestGetOrCreateKekFile:
         kek_file = salt_dir / ".secret_kek"
         mode = oct(kek_file.stat().st_mode & 0o777)
         assert mode == "0o600"
+
+    def test_racing_processes_converge_on_one_kek(self, salt_dir: Path) -> None:
+        context = multiprocessing.get_context("spawn")
+        barrier = context.Barrier(2)
+        result_queue = context.Queue()
+        candidates = [Fernet.generate_key(), Fernet.generate_key()]
+        processes = [
+            context.Process(
+                target=_create_kek_with_publish_barrier,
+                args=(str(salt_dir), candidate, barrier, result_queue),
+            )
+            for candidate in candidates
+        ]
+
+        try:
+            for process in processes:
+                process.start()
+            for process in processes:
+                process.join(timeout=15)
+
+            assert [process.exitcode for process in processes] == [0, 0]
+            results = [result_queue.get(timeout=2) for _ in processes]
+        finally:
+            for process in processes:
+                if process.is_alive():
+                    process.terminate()
+                    process.join(timeout=5)
+            result_queue.close()
+            result_queue.join_thread()
+
+        assert [status for status, _ in results] == ["ok", "ok"]
+        keys = [value for _, value in results]
+        assert keys[0] == keys[1]
+        assert keys[0] in candidates
+        assert (salt_dir / ".secret_kek").read_bytes() == keys[0]
+        assert list(salt_dir.glob("..secret_kek.*.tmp")) == []
+
+    def test_kek_publication_fsyncs_file_and_parent(
+        self,
+        salt_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        original_fsync = os.fsync
+        fsync_targets: list[str] = []
+
+        def recording_fsync(fd: int) -> None:
+            mode = os.fstat(fd).st_mode
+            fsync_targets.append("directory" if stat.S_ISDIR(mode) else "file")
+            original_fsync(fd)
+
+        monkeypatch.setattr("gobby.storage.secrets.os.fsync", recording_fsync)
+
+        _get_or_create_kek_file_key()
+
+        assert fsync_targets == ["file", "directory"]
 
 
 def test_secret_material_paths_follow_gobby_home_changes(
@@ -635,6 +748,75 @@ class TestSecretStoreGet:
 
 
 class TestSecretStoreEnvelope:
+    def test_concurrent_first_use_converges_on_one_envelope(
+        self,
+        temp_db: HubDatabase,
+        salt_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        stores = [SecretStore(temp_db), SecretStore(temp_db)]
+        _synchronize_empty_key_material_loads(stores, monkeypatch)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            fernets = list(executor.map(lambda store: store._get_fernet(), stores))
+
+        stores[0].set("FIRST_WRITER", "alpha")
+        stores[1].set("SECOND_WRITER", "bravo")
+
+        fresh_store = SecretStore(temp_db)
+        assert fresh_store.get("FIRST_WRITER") == "alpha"
+        assert fresh_store.get("SECOND_WRITER") == "bravo"
+        probe = fernets[0].encrypt(b"shared-dek")
+        assert fernets[1].decrypt(probe) == b"shared-dek"
+        assert temp_db.fetchone("SELECT COUNT(*) AS count FROM secret_key_material")["count"] == 1
+
+    def test_posture_change_wins_when_default_initialization_publishes_first(
+        self,
+        temp_db: HubDatabase,
+        salt_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        default_store = SecretStore(temp_db)
+        posture_store = SecretStore(temp_db)
+        stores = [default_store, posture_store]
+        _synchronize_empty_key_material_loads(stores, monkeypatch)
+
+        default_insert = default_store._insert_key_material_if_absent
+        posture_insert = posture_store._insert_key_material_if_absent
+        default_published = threading.Event()
+
+        def publish_default_first(*args: Any, **kwargs: Any) -> bool:
+            inserted = default_insert(*args, **kwargs)
+            assert inserted
+            default_published.set()
+            return inserted
+
+        def wait_for_default(*args: Any, **kwargs: Any) -> bool:
+            assert default_published.wait(timeout=5)
+            return posture_insert(*args, **kwargs)
+
+        monkeypatch.setattr(default_store, "_insert_key_material_if_absent", publish_default_first)
+        monkeypatch.setattr(posture_store, "_insert_key_material_if_absent", wait_for_default)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            default_future = executor.submit(default_store._get_fernet)
+            posture_future = executor.submit(
+                posture_store.set_kek_posture,
+                POSTURE_SCRYPT_PASSPHRASE,
+                passphrase="correct horse",
+            )
+            default_future.result(timeout=10)
+            posture_future.result(timeout=10)
+
+        assert posture_store.current_kek_posture() == POSTURE_SCRYPT_PASSPHRASE
+        default_store.set("AFTER_POSTURE_RACE", "secret")
+        assert (
+            SecretStore(temp_db, kek_passphrase="correct horse").get("AFTER_POSTURE_RACE")
+            == "secret"
+        )
+        with pytest.raises(SecretKeyUnavailable, match=SECRET_KEK_PASSPHRASE_ENV):
+            SecretStore(temp_db)._get_fernet()
+
     def test_machine_id_change_does_not_break_envelope_decryption(
         self,
         temp_db: HubDatabase,
