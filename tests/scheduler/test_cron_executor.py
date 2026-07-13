@@ -288,6 +288,75 @@ async def test_execute_pipeline_recreates_missing_system_session(
 
 
 @pytest.mark.asyncio
+async def test_execute_pipeline_background_success_completes_cron_run(
+    cron_storage: CronJobStorage,
+) -> None:
+    pipeline = MagicMock()
+    pipeline.name = "cron-success"
+    pipeline.model_dump_json.return_value = '{"name":"cron-success"}'
+
+    pipeline_executor = MagicMock()
+    pipeline_executor.loader = MagicMock()
+    pipeline_executor.loader.load_pipeline = AsyncMock(return_value=pipeline)
+    pipeline_executor.session_manager = None
+    execution = MagicMock()
+    execution.id = "eeeeeeee-eeee-4eee-8eee-eeeeeeee0205"
+    pipeline_executor.execution_manager = MagicMock()
+    pipeline_executor.execution_manager.create_execution.return_value = execution
+    pipeline_executor.execute = AsyncMock(return_value=None)
+
+    executor = CronExecutor(storage=cron_storage, pipeline_executor=pipeline_executor)
+    job = _make_job(cron_storage, "pipeline", {"pipeline_name": "cron-success"})
+    run = cron_storage.create_run(job.id)
+
+    dispatched = await executor.execute(job, run)
+    await asyncio.gather(*list(executor._background_tasks))
+
+    persisted = cron_storage.get_run(run.id)
+    assert dispatched.status == "dispatched"
+    assert persisted is not None
+    assert persisted.status == "completed"
+    assert persisted.error is None
+    assert persisted.completed_at is not None
+    assert persisted.pipeline_execution_id == execution.id
+
+
+@pytest.mark.asyncio
+async def test_execute_pipeline_background_failure_fails_cron_run(
+    cron_storage: CronJobStorage,
+) -> None:
+    pipeline = MagicMock()
+    pipeline.name = "cron-failure"
+    pipeline.model_dump_json.return_value = '{"name":"cron-failure"}'
+
+    pipeline_executor = MagicMock()
+    pipeline_executor.loader = MagicMock()
+    pipeline_executor.loader.load_pipeline = AsyncMock(return_value=pipeline)
+    pipeline_executor.session_manager = None
+    execution = MagicMock()
+    execution.id = "eeeeeeee-eeee-4eee-8eee-eeeeeeee0206"
+    pipeline_executor.execution_manager = MagicMock()
+    pipeline_executor.execution_manager.create_execution.return_value = execution
+    pipeline_executor.execution_manager.get_steps_for_execution.return_value = []
+    pipeline_executor.execute = AsyncMock(side_effect=RuntimeError("pipeline exploded"))
+
+    executor = CronExecutor(storage=cron_storage, pipeline_executor=pipeline_executor)
+    job = _make_job(cron_storage, "pipeline", {"pipeline_name": "cron-failure"})
+    run = cron_storage.create_run(job.id)
+
+    dispatched = await executor.execute(job, run)
+    await asyncio.gather(*list(executor._background_tasks))
+
+    persisted = cron_storage.get_run(run.id)
+    assert dispatched.status == "dispatched"
+    assert persisted is not None
+    assert persisted.status == "failed"
+    assert persisted.error == "pipeline exploded"
+    assert persisted.completed_at is not None
+    assert persisted.pipeline_execution_id == execution.id
+
+
+@pytest.mark.asyncio
 async def test_execute_pipeline_default_overlap_skips_active_child(
     cron_storage: CronJobStorage,
 ) -> None:

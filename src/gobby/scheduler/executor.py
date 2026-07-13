@@ -387,6 +387,7 @@ class CronExecutor:
                 pipeline=pipeline,
                 inputs=inputs,
                 project_id=job.project_id,
+                cron_run_id=run.id,
                 execution_id=execution.id,
                 pipeline_name=pipeline.name,
                 session_id=session_id,
@@ -408,6 +409,7 @@ class CronExecutor:
         pipeline: Any,
         inputs: dict[str, Any],
         project_id: str,
+        cron_run_id: str,
         execution_id: str,
         pipeline_name: str,
         session_id: str | None,
@@ -423,7 +425,7 @@ class CronExecutor:
         token = set_project_context(project_ctx)
         try:
             try:
-                await self.pipeline_executor.execute(
+                completed_execution = await self.pipeline_executor.execute(
                     pipeline=pipeline,
                     inputs=inputs,
                     project_id=project_id,
@@ -431,7 +433,7 @@ class CronExecutor:
                     session_id=session_id,
                 )
             except ApprovalRequired:
-                pass
+                return
             except Exception as e:
                 logger.error(f"Background pipeline '{pipeline_name}' failed: {e}", exc_info=True)
                 try:
@@ -452,8 +454,49 @@ class CronExecutor:
                     )
                 except Exception:
                     logger.error("Failed to mark background pipeline as failed", exc_info=True)
+                self._record_pipeline_run_failure(cron_run_id, execution_id, str(e))
+                return
+
+            execution_status = getattr(
+                completed_execution,
+                "status",
+                ExecutionStatus.COMPLETED,
+            )
+            if execution_status == ExecutionStatus.FAILED:
+                error = f"Pipeline failed: execution_id={execution_id}"
+                self._record_pipeline_run_failure(cron_run_id, execution_id, error)
+            elif execution_status == ExecutionStatus.CANCELLED:
+                error = f"Pipeline cancelled: execution_id={execution_id}"
+                self._record_pipeline_run_failure(cron_run_id, execution_id, error)
+            else:
+                self.storage.update_run(
+                    cron_run_id,
+                    status="completed",
+                    completed_at=datetime.now(UTC).isoformat(),
+                    output=f"Pipeline completed: execution_id={execution_id}",
+                    error=None,
+                )
         finally:
             reset_project_context(token)
+
+    def _record_pipeline_run_failure(
+        self,
+        cron_run_id: str,
+        execution_id: str,
+        error: str,
+    ) -> None:
+        """Persist a background pipeline failure on its originating cron run."""
+        self.storage.update_run(
+            cron_run_id,
+            status="failed",
+            completed_at=datetime.now(UTC).isoformat(),
+            error=self._truncate(
+                error,
+                self.config.run_error_max_chars,
+                field_name="error",
+            ),
+            pipeline_execution_id=execution_id,
+        )
 
     def _track_background_task(self, task: asyncio.Task[None]) -> None:
         self._background_tasks.add(task)
