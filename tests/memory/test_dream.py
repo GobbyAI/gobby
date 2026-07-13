@@ -308,6 +308,36 @@ async def test_build_raw_plan_excludes_duplicate_members_and_merges_once() -> No
     assert keep_ids == ["m0"]
 
 
+async def test_build_raw_plan_rejects_cross_project_duplicate_group() -> None:
+    candidates = [
+        replace(_candidate("project-a"), content="same", project_id="proj-a"),
+        replace(_candidate("project-b"), content="same", project_id="proj-b"),
+    ]
+    groups = [
+        DuplicateGroup(
+            memory_ids=["project-a", "project-b"],
+            canonical_content="same",
+            reason="exact duplicate",
+        )
+    ]
+    planner = AsyncMock(return_value={"actions": []})
+
+    with patch("gobby.memory.dream.planner._call_llm_planner", planner):
+        plan = await build_raw_plan(
+            candidates=candidates,
+            duplicate_groups=groups,
+            dream_config=SimpleNamespace(planner_batch_size=25),
+            llm_service=MagicMock(),
+            db=None,
+            project_id=None,
+            skip_consolidation=False,
+        )
+
+    planned_ids = [candidate.id for candidate in planner.call_args.kwargs["candidates"]]
+    assert planned_ids == ["project-a", "project-b"]
+    assert [action for action in plan["actions"] if action["action"] == "merge"] == []
+
+
 @pytest.mark.asyncio
 async def test_build_raw_plan_limits_planner_concurrency() -> None:
     candidates = [_candidate(f"m{i}") for i in range(6)]
@@ -491,6 +521,26 @@ def test_duplicate_groups_choose_longest_content_as_canonical() -> None:
     assert len(groups) == 1
     assert groups[0].memory_ids == ["shorter", "longer"]
     assert groups[0].canonical_content == "Same  "
+
+
+def test_duplicate_groups_never_cross_project_scope() -> None:
+    project_memory = replace(
+        _candidate("project-memory"),
+        content="same",
+        project_id="proj-a",
+    )
+    other_project_memory = replace(
+        _candidate("other-project-memory"),
+        content="Same  ",
+        project_id="proj-b",
+    )
+    global_memory = replace(
+        _candidate("global-memory"),
+        content="same",
+        project_id=None,
+    )
+
+    assert find_duplicate_groups([project_memory, other_project_memory, global_memory]) == []
 
 
 def test_duplicate_groups_ignore_non_string_content() -> None:
