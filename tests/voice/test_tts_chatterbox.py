@@ -47,8 +47,8 @@ def voice_config_no_ref(tmp_path: Path) -> VoiceConfig:
 def _fake_chatterbox_turbo_modules() -> dict[str, ModuleType]:
     fake_chatterbox = ModuleType("chatterbox")
     fake_turbo = ModuleType("chatterbox.tts_turbo")
-    fake_turbo.S3GEN_SR = 24000
-    fake_turbo.S3_SR = 16000
+    setattr(fake_turbo, "S3GEN_SR", 24000)
+    setattr(fake_turbo, "S3_SR", 16000)
 
     class FakeT3Cond:
         def __init__(self, **kwargs: object) -> None:
@@ -67,9 +67,9 @@ def _fake_chatterbox_turbo_modules() -> dict[str, ModuleType]:
             self.device = device
             return self
 
-    fake_turbo.T3Cond = FakeT3Cond
-    fake_turbo.Conditionals = FakeConditionals
-    fake_chatterbox.tts_turbo = fake_turbo
+    setattr(fake_turbo, "T3Cond", FakeT3Cond)
+    setattr(fake_turbo, "Conditionals", FakeConditionals)
+    setattr(fake_chatterbox, "tts_turbo", fake_turbo)
     return {"chatterbox": fake_chatterbox, "chatterbox.tts_turbo": fake_turbo}
 
 
