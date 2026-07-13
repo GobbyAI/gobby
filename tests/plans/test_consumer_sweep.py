@@ -98,7 +98,7 @@ class _Storage:
 
 @dataclass(frozen=True)
 class _CodeIndex:
-    storage: _Storage
+    storage: object
     graph: object = object()
 
 
