@@ -395,6 +395,39 @@ def test_oversized_structured_evidence_is_skipped_with_warnings(tmp_path: Path) 
     assert bundle.packages == []
 
 
+def test_taskfile_case_variants_collect_one_physical_file_once(tmp_path: Path) -> None:
+    (tmp_path / "Taskfile.yml").write_text(
+        "version: '3'\ntasks:\n  test:\n    cmds:\n      - go test ./...\n",
+        encoding="utf-8",
+    )
+
+    bundle = collect_evidence(tmp_path)
+
+    taskfile_items = [
+        item
+        for item in bundle.items
+        if item.source.lower() == "taskfile.yml" and item.command == "go test ./..."
+    ]
+    assert len(taskfile_items) == 1
+
+
+def test_oversized_taskfile_case_variants_warn_once_for_one_physical_file(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "Taskfile.yml").write_text(
+        "x" * (MAX_FILE_BYTES + 1),
+        encoding="utf-8",
+    )
+
+    bundle = collect_evidence(tmp_path)
+
+    taskfile_warnings = [
+        warning for warning in bundle.warnings if "taskfile.yml" in warning.lower()
+    ]
+    assert len(taskfile_warnings) == 1
+    assert "exceeds MAX_FILE_BYTES" in taskfile_warnings[0]
+
+
 def test_fix_refuses_oversized_project_json_without_losing_user_commands(
     tmp_path: Path,
 ) -> None:
