@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from gobby.servers.responses import JSONResponse
+from gobby.workflows.pipeline_state import StepStatus
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -398,7 +399,6 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
                     "completed_at": step.completed_at,
                     "output_json": step.output_json,
                     "error": step.error,
-                    "approval_token": step.approval_token,
                 }
                 for step in steps
             ],
@@ -420,6 +420,7 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
             200: Execution resumed and completed (or continued)
             202: Execution resumed but needs another approval
             404: Invalid token
+            409: Approval is no longer waiting
         """
         from gobby.storage.pipelines import LocalPipelineExecutionManager
         from gobby.workflows.pipeline_state import ApprovalRequired
@@ -429,6 +430,8 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
         step = global_mgr.get_step_by_approval_token(token)
         if not step:
             raise HTTPException(status_code=404, detail="Invalid approval token")
+        if step.status != StepStatus.WAITING_APPROVAL:
+            raise HTTPException(status_code=409, detail="Approval is no longer waiting")
         execution_record = global_mgr.get_execution(step.execution_id)
         if not execution_record:
             raise HTTPException(status_code=404, detail="Execution not found")
@@ -461,8 +464,8 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
                 },
             )
 
-        except ValueError as e:
-            raise HTTPException(status_code=404, detail=f"Invalid token: {e}") from None
+        except ValueError:
+            raise HTTPException(status_code=409, detail="Approval is no longer waiting") from None
 
     @router.post("/reject/{token}")
     async def reject_execution(token: str) -> dict[str, Any]:
@@ -472,6 +475,7 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
         Returns:
             200: Execution rejected/cancelled
             404: Invalid token
+            409: Approval is no longer waiting
         """
         from gobby.storage.pipelines import LocalPipelineExecutionManager
 
@@ -480,6 +484,8 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
         step = global_mgr.get_step_by_approval_token(token)
         if not step:
             raise HTTPException(status_code=404, detail="Invalid rejection token")
+        if step.status != StepStatus.WAITING_APPROVAL:
+            raise HTTPException(status_code=409, detail="Approval is no longer waiting")
         execution_record = global_mgr.get_execution(step.execution_id)
         if not execution_record:
             raise HTTPException(status_code=404, detail="Execution not found")
@@ -499,7 +505,7 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
                 "pipeline_name": execution.pipeline_name,
             }
 
-        except ValueError as e:
-            raise HTTPException(status_code=404, detail=f"Invalid token: {e}") from None
+        except ValueError:
+            raise HTTPException(status_code=409, detail="Approval is no longer waiting") from None
 
     return router
