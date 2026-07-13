@@ -15,7 +15,19 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from gobby.memory.vectorstore import is_recoverable_vector_store_error
+from qdrant_client.models import (
+    FieldCondition,
+    Filter,
+    IsEmptyCondition,
+    IsNullCondition,
+    MatchValue,
+    PayloadField,
+)
+
+from gobby.memory.vectorstore import (
+    is_recoverable_vector_store_error,
+    memory_project_scope_filter,
+)
 
 if TYPE_CHECKING:
     from gobby.memory.vectorstore import VectorStore
@@ -34,6 +46,24 @@ _DETAIL_MARKER_RE = re.compile(
 _STRUCTURED_LINE_RE = re.compile(r"^\s*(?:[-*]\s+|\w[\w .-]{0,40}:\s+\S)", re.MULTILINE)
 _SENTENCE_BOUNDARY_RE = re.compile(r"[.!?]+(?:\s+|$)")
 _WORD_RE = re.compile(r"[A-Za-z0-9_'-]+")
+
+
+def _dedup_scope_filter(project_id: str | None) -> Filter:
+    """Limit dedup candidates to memories visible from the source scope."""
+    if project_id:
+        project_filter = memory_project_scope_filter(project_id)
+        if project_filter is None:
+            raise RuntimeError("project-scoped dedup filter was not created")
+        return project_filter
+
+    field = PayloadField(key="project_id")
+    return Filter(
+        should=[
+            FieldCondition(key="project_id", match=MatchValue(value="")),
+            IsNullCondition(is_null=field),
+            IsEmptyCondition(is_empty=field),
+        ]
+    )
 
 
 @dataclass
@@ -128,11 +158,10 @@ class DedupService:
 
         # Search for similar existing memories
         try:
-            filters = {"project_id": project_id} if project_id else None
             search_results = await self.vector_store.search(
                 query_embedding=embedding,
                 limit=5,
-                filters=filters,
+                filters=_dedup_scope_filter(project_id),
             )
         except Exception as e:
             if is_recoverable_vector_store_error(e):

@@ -5,6 +5,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from qdrant_client.models import FieldCondition, IsEmptyCondition, IsNullCondition
 
 from gobby.memory.services.dedup import (
     NEAR_EXACT_THRESHOLD,
@@ -361,28 +362,42 @@ class TestProcess:
         assert not hasattr(dedup_service, "_embeddings_available")
 
     @pytest.mark.asyncio
-    async def test_process_uses_project_filter(
+    async def test_process_uses_project_plus_global_filter(
         self, dedup_service: DedupService, mock_vector_store: Any, mock_embed_fn: Any
     ) -> None:
-        """process() passes project_id as filter to vector search."""
         mock_vector_store.search.return_value = []
 
         await dedup_service.process(content="Test", project_id="proj-42")
 
-        call_kwargs = mock_vector_store.search.call_args[1]
-        assert call_kwargs["filters"] == {"project_id": "proj-42"}
+        filters = mock_vector_store.search.call_args.kwargs["filters"]
+        assert filters.must is None
+        assert filters.should is not None
+        assert [
+            condition.match.value
+            for condition in filters.should
+            if isinstance(condition, FieldCondition)
+        ] == ["proj-42", ""]
+        assert any(isinstance(condition, IsNullCondition) for condition in filters.should)
+        assert any(isinstance(condition, IsEmptyCondition) for condition in filters.should)
 
     @pytest.mark.asyncio
-    async def test_process_no_project_no_filter(
+    async def test_process_global_scope_excludes_project_memories(
         self, dedup_service: DedupService, mock_vector_store: Any, mock_embed_fn: Any
     ) -> None:
-        """process() passes None filter when no project_id."""
         mock_vector_store.search.return_value = []
 
         await dedup_service.process(content="Test", project_id=None)
 
-        call_kwargs = mock_vector_store.search.call_args[1]
-        assert call_kwargs["filters"] is None
+        filters = mock_vector_store.search.call_args.kwargs["filters"]
+        assert filters.must is None
+        assert filters.should is not None
+        assert [
+            condition.match.value
+            for condition in filters.should
+            if isinstance(condition, FieldCondition)
+        ] == [""]
+        assert any(isinstance(condition, IsNullCondition) for condition in filters.should)
+        assert any(isinstance(condition, IsEmptyCondition) for condition in filters.should)
 
 
 class TestThresholds:
