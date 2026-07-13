@@ -28,6 +28,8 @@ def _memory(memory_id: str, content: str, project_id: str = "project-1") -> Memo
 class _MemoryStorage:
     def __init__(self, memories: list[Memory]) -> None:
         self.memories = memories
+        self.stale_ids = {memory.id for memory in memories if memory.vector_needs_reindex}
+        self.reindexed_content: dict[str, str] = {}
         self.list_calls: list[tuple[str | None, int | None, int]] = []
         self.db = MagicMock()
         self.db.execute.return_value.rowcount = 0
@@ -63,6 +65,15 @@ class _MemoryStorage:
 
     def delete_project_crossrefs(self, project_id: str) -> int:
         return 0
+
+    def list_vector_reindex_ids(self) -> list[str]:
+        return sorted(self.stale_ids)
+
+    def mark_vectors_reindexed(self, indexed_content: dict[str, str]) -> int:
+        self.reindexed_content.update(indexed_content)
+        cleared = self.stale_ids & indexed_content.keys()
+        self.stale_ids -= cleared
+        return len(cleared)
 
 
 class _VectorStore:
@@ -163,6 +174,8 @@ async def test_reconcile_backfills_missing_vectors_and_deletes_orphans() -> None
         "orphans_deleted": 1,
         "missing_found": 1,
         "missing_embedded": 1,
+        "stale_found": 0,
+        "stale_reindexed": 0,
         "errors": 0,
         "total": 2,
     }
@@ -171,6 +184,26 @@ async def test_reconcile_backfills_missing_vectors_and_deletes_orphans() -> None
     assert vector_store.batch_upsert.await_args.args[0] == [
         ("missing", [0.4, 0.5], {"content": "Missing", "project_id": "project-1"})
     ]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_replaces_stale_vector_and_clears_current_marker() -> None:
+    stale = _memory("stale", "Current content")
+    stale.vector_needs_reindex = True
+    storage = _MemoryStorage([stale])
+    vector_store = _VectorStore()
+    vector_store.ids = ["stale"]
+    embed_fn = AsyncMock(return_value=[0.7, 0.8])
+
+    report = await _service(storage, vector_store, embed_fn=embed_fn).reconcile_stores()
+
+    assert report["qdrant"]["missing_found"] == 0
+    assert report["qdrant"]["stale_found"] == 1
+    assert report["qdrant"]["stale_reindexed"] == 1
+    assert report["qdrant"]["errors"] == 0
+    embed_fn.assert_awaited_once_with("Current content")
+    assert storage.reindexed_content == {"stale": "Current content"}
+    assert storage.stale_ids == set()
 
 
 @pytest.mark.asyncio
@@ -207,7 +240,7 @@ async def test_reconcile_reports_one_embedding_failure_and_continues() -> None:
     assert report["qdrant"]["missing_found"] == 2
     assert report["qdrant"]["missing_embedded"] == 1
     assert report["qdrant"]["errors"] == 1
-    assert report["qdrant"]["missing_failures"] == [
+    assert report["qdrant"]["reindex_failures"] == [
         {"memory_id": "bad", "error": "embedding unavailable"}
     ]
     assert vector_store.ids == ["good"]
@@ -224,7 +257,7 @@ async def test_reconcile_reports_vector_upsert_failure_without_crashing() -> Non
     assert report["qdrant"]["missing_found"] == 1
     assert report["qdrant"]["missing_embedded"] == 0
     assert report["qdrant"]["errors"] == 1
-    assert report["qdrant"]["missing_failures"] == [
+    assert report["qdrant"]["reindex_failures"] == [
         {"memory_id": "missing", "error": "vector upsert failed: qdrant unavailable"}
     ]
     assert vector_store.ids == []

@@ -40,7 +40,7 @@ class MemoryLifecycleService:
         background_tasks: set[asyncio.Task[Any]],
         record_to_memory: Callable[[MemoryRecord], Memory],
         get_memory: Callable[[str], Memory | None],
-        embed_and_upsert: Callable[..., Awaitable[None]],
+        embed_and_upsert: Callable[..., Awaitable[bool]],
         vector_store_failure_logger: Callable[[str, BaseException], None],
         run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
@@ -78,23 +78,25 @@ class MemoryLifecycleService:
         memory_id: str,
         content: str,
         payload: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> bool:
         """Embed content and upsert to VectorStore when available."""
         if not self._vector_store or not self._embed_fn:
-            return
+            return False
         try:
             embedding = await self._embed_fn(content)
         except Exception as e:
             self._log_embedding_failure(memory_id, e)
-            return
+            return False
 
         try:
             await self._vector_store.upsert(memory_id, embedding, payload or {})
+            return True
         except Exception as e:
             if is_recoverable_vector_store_error(e):
                 self._log_vector_store_failure(f"VectorStore upsert unavailable for {memory_id}", e)
             else:
                 logger.warning("VectorStore upsert failed for %s: %s", memory_id, e)
+            return False
 
     def _log_embedding_failure(self, memory_id: str, error: BaseException) -> None:
         """Rate-limit warnings without suppressing future embedding attempts."""
@@ -253,7 +255,7 @@ class MemoryLifecycleService:
 
     async def adelete_memory(self, memory_id: str) -> bool:
         """Delete a memory through the async backend and secondary indices."""
-        existing_memory = self._get_memory(memory_id)
+        existing_memory = await self._run_storage(self._get_memory, memory_id)
         result = await self.backend.delete(memory_id)
         await self._delete_secondary_indices(memory_id, existing_memory, result)
         return result
@@ -351,11 +353,18 @@ class MemoryLifecycleService:
         memory: Memory,
     ) -> None:
         """Best-effort secondary sync after a memory content revision."""
-        await self._embed_and_upsert(
+        indexed = await self._embed_and_upsert(
             memory.id,
             memory.content,
             payload={"project_id": memory.project_id},
         )
+        if indexed:
+            cleared = await self._run_storage(
+                self.storage.mark_vectors_reindexed,
+                {memory.id: memory.content},
+            )
+            if cleared:
+                memory.vector_needs_reindex = False
 
         kg_service = self._kg_service_provider()
         if kg_service:

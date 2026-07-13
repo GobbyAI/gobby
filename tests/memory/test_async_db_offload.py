@@ -12,6 +12,7 @@ from gobby.memory.manager import MemoryManager
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
+
 async def _assert_event_loop_progresses[T](
     operation: Awaitable[T],
     started: threading.Event,
@@ -83,6 +84,27 @@ async def test_delete_does_not_block_event_loop(memory_manager: MemoryManager) -
     ):
         deleted = await _assert_event_loop_progresses(
             memory_manager.delete_memory(memory.id), started, release
+        )
+
+    assert deleted is True
+
+
+@pytest.mark.asyncio
+async def test_alternate_delete_lookup_does_not_block_event_loop(
+    memory_manager: MemoryManager,
+) -> None:
+    memory = await memory_manager.create_memory("Alternate delete without blocking")
+    started = threading.Event()
+    release = threading.Event()
+    storage = memory_manager.storage
+
+    with patch.object(
+        storage,
+        "get_memory",
+        side_effect=_blocking_call(storage.get_memory, started, release),
+    ):
+        deleted = await _assert_event_loop_progresses(
+            memory_manager.adelete_memory(memory.id), started, release
         )
 
     assert deleted is True

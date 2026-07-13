@@ -427,7 +427,7 @@ class MemoryCrudMixin(MemoryStoreBase):
                 raise ValueError("Memory content cannot be empty")
             with self.db.transaction() as conn:
                 current = conn.execute(
-                    "SELECT project_id FROM memories WHERE id = %s",
+                    "SELECT project_id, content FROM memories WHERE id = %s",
                     (memory_id,),
                 ).fetchone()
                 if current is None:
@@ -446,6 +446,8 @@ class MemoryCrudMixin(MemoryStoreBase):
                     raise ValueError("Memory content already exists in this project/global scope")
             updates.append("content = %s")
             params.append(content)
+            if content != current["content"]:
+                updates.append("vector_needs_reindex = TRUE")
         if tags is not None:
             updates.append("tags = %s")
             params.append(json.dumps(tags))
@@ -466,6 +468,31 @@ class MemoryCrudMixin(MemoryStoreBase):
 
         self._notify_listeners()
         return self.get_memory(memory_id)
+
+    def list_vector_reindex_ids(self) -> list[str]:
+        """Return memories whose stored content is newer than their vector."""
+        rows = self.db.fetchall(
+            "SELECT id FROM memories WHERE vector_needs_reindex IS TRUE ORDER BY id"
+        )
+        return [str(row["id"]) for row in rows]
+
+    def mark_vectors_reindexed(self, indexed_content: dict[str, str]) -> int:
+        """Clear stale state only when the indexed content is still current."""
+        if not indexed_content:
+            return 0
+        cleared = 0
+        with self.db.transaction() as conn:
+            for memory_id, content in indexed_content.items():
+                cursor = conn.execute(
+                    """
+                    UPDATE memories
+                    SET vector_needs_reindex = FALSE
+                    WHERE id = %s AND content = %s
+                    """,
+                    (memory_id, content),
+                )
+                cleared += cursor.rowcount
+        return cleared
 
     def update_memory_project(self, memory_id: str, project_id: str) -> Memory:
         """Update a memory's project assignment and notify storage listeners."""

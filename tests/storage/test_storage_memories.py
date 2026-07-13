@@ -68,6 +68,19 @@ def test_update_memory(memory_manager) -> None:
     assert memory_manager.get_memory(created.id).content == "Updated"
 
 
+def test_content_update_tracks_and_clears_stale_vector_state(memory_manager) -> None:
+    memory = memory_manager.create_memory("Original vector content")
+
+    updated = memory_manager.update_memory(memory.id, content="Current vector content")
+
+    assert updated.vector_needs_reindex is True
+    assert memory_manager.list_vector_reindex_ids() == [memory.id]
+    assert memory_manager.mark_vectors_reindexed({memory.id: "obsolete content"}) == 0
+    assert memory_manager.get_memory(memory.id).vector_needs_reindex is True
+    assert memory_manager.mark_vectors_reindexed({memory.id: updated.content}) == 1
+    assert memory_manager.get_memory(memory.id).vector_needs_reindex is False
+
+
 def test_rescope_memory_to_global_does_not_bump_updated_at(memory_manager, db) -> None:
     db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_1, "Project 1"))
     created = memory_manager.create_memory(content="Universal", project_id=PROJECT_1)

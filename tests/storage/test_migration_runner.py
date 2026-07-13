@@ -111,6 +111,8 @@ def test_postgres_migration_discovery_finds_all_post_baseline_migrations() -> No
         (312, "session_digest_pair_index"),
         (313, "memory_source_session_set_null"),
         (314, "memory_graph_retry_state"),
+        (315, "session_title_synthesis_digest_hash"),
+        (316, "memory_vector_reindex_state"),
     ]
 
 

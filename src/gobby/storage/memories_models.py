@@ -88,6 +88,7 @@ class Memory:
     graph_processed: bool = True
     graph_attempts: int = 0
     graph_status: Literal["pending", "completed", "failed"] = "completed"
+    vector_needs_reindex: bool = False
     tags: list[str] | None = None
     deleted_at: datetime | None = None  # NULL = visible; non-NULL = dream-hidden (recoverable)
     dream_action: Literal["review", "delete"] | None = None  # why dream hid the row
@@ -132,6 +133,7 @@ class Memory:
                 Literal["pending", "completed", "failed"],
                 row.get("graph_status", "completed"),
             ),
+            vector_needs_reindex=bool(row.get("vector_needs_reindex", False)),
             tags=tags,
             deleted_at=row.get("deleted_at"),
             dream_action=row.get("dream_action"),
@@ -153,6 +155,7 @@ class Memory:
             "graph_processed": self.graph_processed,
             "graph_attempts": self.graph_attempts,
             "graph_status": self.graph_status,
+            "vector_needs_reindex": self.vector_needs_reindex,
             "tags": self.tags,
             "deleted_at": self.deleted_at,
             "dream_action": self.dream_action,

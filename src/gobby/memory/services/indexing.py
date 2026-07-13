@@ -48,6 +48,10 @@ class MemoryStorageProtocol(Protocol):
 
     def delete_project_crossrefs(self, project_id: str) -> int: ...
 
+    def list_vector_reindex_ids(self) -> list[str]: ...
+
+    def mark_vectors_reindexed(self, indexed_content: dict[str, str]) -> int: ...
+
 
 class VectorStoreProtocol(Protocol):
     @property
@@ -216,6 +220,8 @@ class IndexingService:
                 "orphans_deleted": 0,
                 "missing_found": 0,
                 "missing_embedded": 0,
+                "stale_found": 0,
+                "stale_reindexed": 0,
                 "errors": 0,
             },
             "falkordb": {
@@ -231,9 +237,13 @@ class IndexingService:
                 qdrant_ids = set(await self._vector_store.scroll_ids())
                 orphaned = qdrant_ids - storage_ids
                 missing = storage_ids - qdrant_ids
+                stale = set(await self._run_storage(self._storage.list_vector_reindex_ids))
+                reindex_ids = missing | stale
                 report["qdrant"]["total"] = len(qdrant_ids)
                 report["qdrant"]["orphans_found"] = len(orphaned)
                 report["qdrant"]["missing_found"] = len(missing)
+                report["qdrant"]["stale_found"] = len(stale)
+                report["qdrant"]["stale_reindexed"] = 0
 
                 if not dry_run and orphaned:
                     try:
@@ -244,12 +254,23 @@ class IndexingService:
                             f"Batch delete of {len(orphaned)} Qdrant orphans failed: {e}"
                         )
                         report["qdrant"]["errors"] += len(orphaned)
-                if not dry_run and missing:
-                    embedded, failures = await self._backfill_missing_embeddings(missing)
-                    report["qdrant"]["missing_embedded"] = embedded
+                if not dry_run and reindex_ids:
+                    indexed_content, failures = await self._backfill_embeddings(reindex_ids)
+                    embedded_ids = set(indexed_content)
+                    report["qdrant"]["missing_embedded"] = len(embedded_ids & missing)
+                    reindexed_stale = embedded_ids & stale
+                    if reindexed_stale:
+                        await self._run_storage(
+                            self._storage.mark_vectors_reindexed,
+                            {
+                                memory_id: indexed_content[memory_id]
+                                for memory_id in reindexed_stale
+                            },
+                        )
+                    report["qdrant"]["stale_reindexed"] = len(reindexed_stale)
                     report["qdrant"]["errors"] += len(failures)
                     if failures:
-                        report["qdrant"]["missing_failures"] = failures
+                        report["qdrant"]["reindex_failures"] = failures
             except Exception as e:
                 logger.error(f"Qdrant reconciliation failed: {e}")
                 report["qdrant"]["error"] = str(e)
@@ -276,14 +297,14 @@ class IndexingService:
 
         return report
 
-    async def _backfill_missing_embeddings(
+    async def _backfill_embeddings(
         self,
-        missing_ids: set[str],
-    ) -> tuple[int, list[dict[str, str]]]:
-        """Embed storage memories missing from Qdrant without aborting the pass."""
-        ordered_ids = sorted(missing_ids)
+        memory_ids: set[str],
+    ) -> tuple[dict[str, str], list[dict[str, str]]]:
+        """Replace missing or stale vectors without aborting the pass."""
+        ordered_ids = sorted(memory_ids)
         if self._embed_fn is None:
-            return 0, [
+            return {}, [
                 {"memory_id": memory_id, "error": "embedding function not configured"}
                 for memory_id in ordered_ids
             ]
@@ -296,7 +317,7 @@ class IndexingService:
             )
         except Exception as error:
             logger.warning("Failed to load memories missing Qdrant vectors: %s", error)
-            return 0, [
+            return {}, [
                 {"memory_id": memory_id, "error": f"memory load failed: {error}"}
                 for memory_id in ordered_ids
             ]
@@ -304,17 +325,19 @@ class IndexingService:
         by_id = {memory.id: memory for memory in memories}
         failures: list[dict[str, str]] = []
         batch: list[tuple[str, list[float], dict[str, Any]]] = []
-        embedded = 0
+        indexed_content: dict[str, str] = {}
         vector_store = cast(VectorStoreProtocol, self._vector_store)
 
         async def _flush_batch() -> None:
-            nonlocal batch, embedded
+            nonlocal batch
             if not batch:
                 return
             batch_ids = [memory_id for memory_id, _embedding, _payload in batch]
             try:
                 await vector_store.batch_upsert(batch)
-                embedded += len(batch)
+                indexed_content.update(
+                    {memory_id: str(payload["content"]) for memory_id, _embedding, payload in batch}
+                )
             except Exception as error:
                 logger.warning(
                     "Failed to backfill %s missing Qdrant vector(s): %s",
@@ -350,7 +373,7 @@ class IndexingService:
             if len(batch) >= REINDEX_PAGE_SIZE:
                 await _flush_batch()
         await _flush_batch()
-        return embedded, failures
+        return indexed_content, failures
 
     async def reindex_embeddings(self, project_id: str | None = None) -> dict[str, Any]:
         """Regenerate embeddings for stored memories."""
@@ -388,6 +411,10 @@ class IndexingService:
             stale_ids = sorted(existing_ids - incoming_ids)
             for index in range(0, len(stale_ids), REINDEX_PAGE_SIZE):
                 await vector_store.delete_many(stale_ids[index : index + REINDEX_PAGE_SIZE])
+            await self._run_storage(
+                self._storage.mark_vectors_reindexed,
+                {str(mem["id"]): str(mem["content"]) for mem in memory_dicts},
+            )
             generated = len(memory_dicts)
         except Exception as e:
             logger.error(f"Failed to rebuild vector store: {e}")
@@ -446,6 +473,10 @@ class IndexingService:
             vector_store = cast(VectorStoreProtocol, self._vector_store)
             embed_fn = cast(Callable[..., Any], self._embed_fn)
             await vector_store.rebuild(memory_dicts, embed_fn)
+            await self._run_storage(
+                self._storage.mark_vectors_reindexed,
+                {str(mem["id"]): str(mem["content"]) for mem in memory_dicts},
+            )
             self._last_global_reindex_identity_fingerprint = identity_fingerprint
             self._last_global_reindex_fingerprint = fingerprint
             self._last_global_reindex_completed_at = asyncio.get_running_loop().time()

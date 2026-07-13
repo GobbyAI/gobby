@@ -814,7 +814,7 @@ class TestVectorStoreIntegration:
         """_embed_and_upsert does nothing when no VectorStore."""
         result = await memory_manager._embed_and_upsert("id", "content")
 
-        assert result is None
+        assert result is False
         assert memory_manager.vector_store is None
 
     @pytest.mark.asyncio
@@ -900,10 +900,12 @@ class TestVectorStoreIntegration:
 
         with caplog.at_level(logging.DEBUG, logger="gobby.memory.services.lifecycle"):
             memory = await manager.create_memory(content="Initial content")
-            await manager.update_memory(memory.id, content="Still unavailable")
+            unavailable = await manager.update_memory(memory.id, content="Still unavailable")
+            assert unavailable.vector_needs_reindex is True
             recovered = await manager.update_memory(memory.id, content="Recovered content")
 
         assert recovered.content == "Recovered content"
+        assert recovered.vector_needs_reindex is False
         assert mock_embed.await_count == 3
         mock_vs.upsert.assert_awaited_once_with(
             memory.id,
@@ -918,6 +920,29 @@ class TestVectorStoreIntegration:
         ]
         assert [record.levelno for record in embedding_records] == [logging.WARNING, logging.DEBUG]
         assert not hasattr(manager, "_embeddings_available")
+
+    @pytest.mark.asyncio
+    async def test_vector_upsert_failure_leaves_content_marked_for_reindex(
+        self,
+        db,
+        memory_config,
+    ) -> None:
+        mock_vs = MagicMock()
+        mock_vs.upsert = AsyncMock(side_effect=RuntimeError("qdrant rejected write"))
+        manager = MemoryManager(
+            db=db,
+            config=memory_config,
+            vector_store=mock_vs,
+            embed_fn=AsyncMock(return_value=[0.1, 0.2]),
+        )
+        manager._dedup_service = None
+        memory = manager.storage.create_memory("Old indexed content")
+
+        updated = await manager.update_memory(memory.id, content="New current content")
+
+        assert updated.content == "New current content"
+        assert updated.vector_needs_reindex is True
+        assert manager.storage.list_vector_reindex_ids() == [memory.id]
 
 
 class TestLifecycleService:

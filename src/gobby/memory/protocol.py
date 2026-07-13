@@ -182,6 +182,7 @@ class MemoryRecord:
     deleted_at: datetime | None = None
     dream_action: str | None = None
     last_dreamed_at: datetime | None = None
+    vector_needs_reindex: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Convert record to dictionary for serialization."""
@@ -204,6 +205,7 @@ class MemoryRecord:
             "deleted_at": self.deleted_at.isoformat() if self.deleted_at else None,
             "dream_action": self.dream_action,
             "last_dreamed_at": (self.last_dreamed_at.isoformat() if self.last_dreamed_at else None),
+            "vector_needs_reindex": self.vector_needs_reindex,
         }
 
     @classmethod
@@ -249,6 +251,7 @@ class MemoryRecord:
             deleted_at=deleted_at,
             dream_action=data.get("dream_action"),
             last_dreamed_at=last_dreamed_at,
+            vector_needs_reindex=bool(data.get("vector_needs_reindex", False)),
         )
 
 

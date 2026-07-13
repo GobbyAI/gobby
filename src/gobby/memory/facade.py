@@ -88,9 +88,9 @@ class MemoryManagerFacadeMethods:
         memory_id: str,
         content: str,
         payload: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> bool:
         """Embed content and upsert to VectorStore when available."""
-        await self._lifecycle_service.embed_and_upsert(memory_id, content, payload)
+        return await self._lifecycle_service.embed_and_upsert(memory_id, content, payload)
 
     def _fire_background_dedup(
         self,

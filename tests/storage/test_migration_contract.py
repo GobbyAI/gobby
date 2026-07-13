@@ -239,6 +239,7 @@ def test_postgres_migrations_limited_to_known_post_baseline() -> None:
         "313_memory_source_session_set_null.sql",
         "314_memory_graph_retry_state.sql",
         "315_session_title_synthesis_digest_hash.sql",
+        "316_memory_vector_reindex_state.sql",
     ]
 
 
@@ -280,7 +281,7 @@ def test_postgres_baseline_version_is_flattened_to_305() -> None:
     # The 0.5.0 pre-release flatten folded 295-305 into the baseline. Hubs below
     # 305 take the corrupt_partial backup/recreate path; later migrations replay.
     assert module.BASELINE_VERSION == 305
-    assert module.latest_known_version() == 315
+    assert module.latest_known_version() == 316
 
 
 def test_postgres_baseline_uses_uuid_for_internal_identity_columns() -> None:
@@ -817,3 +818,29 @@ def test_memory_source_session_fk_sets_null_in_baseline_and_upgrade_migration() 
     ) in memories
     assert "DROP CONSTRAINT IF EXISTS memories_source_session_id_fkey" in migration
     assert "FOREIGN KEY (source_session_id) REFERENCES sessions(id) ON DELETE SET NULL" in migration
+
+
+def test_memory_vector_reindex_state_is_consistent_across_schema_and_runtime() -> None:
+    baseline = _baseline_text()
+    migration = (
+        SRC_ROOT / "storage" / "migrations" / "316_memory_vector_reindex_state.sql"
+    ).read_text(encoding="utf-8")
+    model = (SRC_ROOT / "storage" / "memories_models.py").read_text(encoding="utf-8")
+    storage = (SRC_ROOT / "storage" / "memories_crud.py").read_text(encoding="utf-8")
+
+    for label, content in (("baseline", baseline), ("migration", migration)):
+        _assert_contains_all(
+            f"memory vector reindex {label}",
+            content,
+            ("vector_needs_reindex", "DEFAULT FALSE", "WHERE vector_needs_reindex IS TRUE"),
+        )
+    _assert_contains_all(
+        "memory vector reindex model",
+        model,
+        ("vector_needs_reindex",),
+    )
+    _assert_contains_all(
+        "memory vector reindex storage",
+        storage,
+        ("list_vector_reindex_ids", "mark_vectors_reindexed", "content = %s"),
+    )

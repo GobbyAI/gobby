@@ -766,6 +766,7 @@ tags JSONB,
     graph_status TEXT NOT NULL DEFAULT 'completed'
         CONSTRAINT memories_graph_status_check
         CHECK (graph_status IN ('pending', 'completed', 'failed')),
+    vector_needs_reindex BOOLEAN NOT NULL DEFAULT FALSE,
 created_at TIMESTAMPTZ NOT NULL,
 updated_at TIMESTAMPTZ NOT NULL,
 deleted_at TIMESTAMPTZ,
@@ -784,6 +785,9 @@ CREATE INDEX idx_memories_type ON memories(memory_type);
 CREATE INDEX idx_memories_graph_pending ON memories(graph_processed) WHERE graph_processed IS FALSE;
 CREATE INDEX idx_memories_graph_status_pending ON memories(created_at)
     WHERE graph_status = 'pending';
+
+CREATE INDEX idx_memories_vector_needs_reindex ON memories(id)
+    WHERE vector_needs_reindex IS TRUE;
 
 CREATE INDEX idx_memories_source_session ON memories(source_session_id);
 
