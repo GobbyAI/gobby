@@ -265,6 +265,38 @@ def test_deferred_without_object_raises(tmp_path: Path) -> None:
         parse_plan(plan)
 
 
+def test_deferred_with_unlabeled_fence_raises_parse_error(tmp_path: Path) -> None:
+    plan = _write_plan(
+        tmp_path,
+        """
+        ## A1
+        `kind: deferred`
+        ```
+        deferred prose
+        ```
+        """,
+    )
+
+    with pytest.raises(PlanParseError, match="missing YAML deferral object"):
+        parse_plan(plan)
+
+
+def test_manifest_with_unlabeled_fence_raises_parse_error(tmp_path: Path) -> None:
+    plan = _write_plan(
+        tmp_path,
+        """
+        ## M1
+        `kind: manifest`
+        ```
+        manifest prose
+        ```
+        """,
+    )
+
+    with pytest.raises(PlanParseError, match="manifest section missing YAML block"):
+        parse_plan(plan)
+
+
 def test_deferred_object_parsed(tmp_path: Path) -> None:
     plan = _write_plan(
         tmp_path,

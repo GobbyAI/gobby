@@ -656,7 +656,8 @@ def _fence_info(line: str) -> str:
     match = _FENCE_OPENER_RE.match(line)
     if match is None:
         return ""
-    return match.group("info").strip().split(maxsplit=1)[0].lower()
+    info = match.group("info").strip()
+    return info.split(maxsplit=1)[0].lower() if info else ""
 
 
 def _find_fence_close(
