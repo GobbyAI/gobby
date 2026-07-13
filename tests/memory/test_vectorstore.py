@@ -14,7 +14,9 @@ import pytest
 from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 from qdrant_client.models import Distance, VectorParams
 
+from gobby.config.persistence import MemoryConfig
 from gobby.memory import vectorstore as vectorstore_module
+from gobby.memory.services.crossref import CrossrefService
 from gobby.memory.vectorstore import (
     VectorStore,
     VectorStoreCollectionDimensionError,
@@ -22,6 +24,7 @@ from gobby.memory.vectorstore import (
     is_recoverable_vector_store_error,
     memory_project_scope_filter,
 )
+from gobby.storage.memories import LocalMemoryManager
 
 pytestmark = pytest.mark.unit
 
@@ -213,10 +216,30 @@ async def test_transient_operation_error_resets_client(monkeypatch) -> None:
     assert store._next_retry_at == 1005.0
 
 
-def test_count_sync_returns_zero_when_uninitialized() -> None:
+def test_count_sync_raises_when_uninitialized() -> None:
     store = VectorStore(collection_name="sync_test")
 
+    with pytest.raises(VectorStoreUnavailableError, match="not initialized"):
+        store.count_sync()
+
+
+def test_count_sync_returns_zero_for_initialized_empty_collection() -> None:
+    store = VectorStore(collection_name="sync_test")
+    store._client = MagicMock()
+    store._client.count.return_value = SimpleNamespace(count=0)
+
     assert store.count_sync() == 0
+
+
+def test_count_sync_raises_and_resets_client_on_recoverable_error() -> None:
+    store = VectorStore(collection_name="sync_test")
+    store._client = MagicMock()
+    store._client.count.side_effect = ResponseHandlingException(Exception("down"))
+
+    with pytest.raises(VectorStoreUnavailableError, match="count is unavailable"):
+        store.count_sync()
+
+    assert store._client is None
 
 
 @pytest.mark.parametrize(
@@ -290,6 +313,16 @@ async def test_search_with_project_id_filter(vector_store: VectorStore) -> None:
     assert results[0][0] == MEM_2
 
 
+@pytest.mark.asyncio
+async def test_scroll_ids_with_project_filter(vector_store: VectorStore) -> None:
+    await vector_store.upsert(MEM_1, _make_embedding(1.0), {"project_id": "proj-A"})
+    await vector_store.upsert(MEM_2, _make_embedding(2.0), {"project_id": "proj-B"})
+
+    result = await vector_store.scroll_ids(filters={"project_id": "proj-A"})
+
+    assert result == [MEM_1]
+
+
 def test_memory_project_scope_filter_includes_global_and_legacy_empty_payloads() -> None:
     scope_filter = memory_project_scope_filter("proj-A")
 
@@ -355,6 +388,81 @@ async def test_search_with_memory_project_scope_filter_includes_globals(
     assert MEM_1 in result_ids, "explicit project_id=None global must be returned"
     assert MEM_2 in result_ids, "absent project_id key global must be returned"
     assert MEM_3 not in result_ids, "other project's memory must be excluded (no leak)"
+
+
+@pytest.mark.asyncio
+async def test_crossref_create_fills_links_from_project_and_global_only(
+    vector_store: VectorStore,
+    temp_db,
+) -> None:
+    db = temp_db
+    project_a = "11111111-1111-4111-8111-111111111111"
+    project_b = "22222222-2222-4222-8222-222222222222"
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (project_a, "Project A"))
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (project_b, "Project B"))
+    storage = LocalMemoryManager(db)
+    source = storage.create_memory(content="source", project_id=project_a)
+    same_project = storage.create_memory(content="same project", project_id=project_a)
+    global_memory = storage.create_memory(content="global", project_id=None)
+    foreign = storage.create_memory(content="foreign", project_id=project_b)
+    query = _make_embedding(1.0)
+
+    await vector_store.upsert(source.id, query, {"project_id": project_a})
+    await vector_store.upsert(foreign.id, query, {"project_id": project_b})
+    await vector_store.upsert(same_project.id, _make_embedding(1.01), {"project_id": project_a})
+    await vector_store.upsert(global_memory.id, _make_embedding(1.02), {"project_id": None})
+
+    service = CrossrefService(
+        storage=storage,
+        vector_store=vector_store,
+        embed_fn=AsyncMock(return_value=query),
+        config=MemoryConfig(crossref_threshold=0.1, crossref_max_links=2),
+    )
+    created = await service.create(source)
+
+    assert created == 2
+    refs = storage.get_crossrefs(source.id, limit=10)
+    targets = {ref.target_id if ref.source_id == source.id else ref.source_id for ref in refs}
+    assert targets == {same_project.id, global_memory.id}
+    assert foreign.id not in targets
+
+    # A legacy bad edge is still hidden by the existing scoped read path.
+    storage.create_crossref(source.id, foreign.id, 0.99)
+    related = service.get_related(source.id, limit=10, project_id=project_a)
+    assert {memory.id for memory in related} == {same_project.id, global_memory.id}
+
+
+@pytest.mark.asyncio
+async def test_crossref_create_for_global_source_links_global_candidates_only(
+    vector_store: VectorStore,
+    temp_db,
+) -> None:
+    db = temp_db
+    project_a = "11111111-1111-4111-8111-111111111111"
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (project_a, "Project A"))
+    storage = LocalMemoryManager(db)
+    source = storage.create_memory(content="global source", project_id=None)
+    global_target = storage.create_memory(content="global target", project_id=None)
+    project_target = storage.create_memory(content="project target", project_id=project_a)
+    query = _make_embedding(2.0)
+
+    await vector_store.upsert(source.id, query, {"project_id": None})
+    await vector_store.upsert(project_target.id, query, {"project_id": project_a})
+    await vector_store.upsert(global_target.id, _make_embedding(2.01), {})
+
+    service = CrossrefService(
+        storage=storage,
+        vector_store=vector_store,
+        embed_fn=AsyncMock(return_value=query),
+        config=MemoryConfig(crossref_threshold=0.1, crossref_max_links=1),
+    )
+    created = await service.create(source)
+
+    assert created == 1
+    refs = storage.get_crossrefs(source.id, limit=10)
+    targets = {ref.target_id if ref.source_id == source.id else ref.source_id for ref in refs}
+    assert targets == {global_target.id}
+    assert project_target.id not in targets
 
 
 @pytest.mark.asyncio
@@ -555,18 +663,28 @@ async def test_ensure_collection_dimension_mismatch_fails_without_recreate() -> 
 
 
 @pytest.mark.asyncio
-async def test_initialize_existing_collection_dimension_mismatch_raises() -> None:
+async def test_initialize_dimension_mismatch_preserves_active_collection() -> None:
     store = VectorStore(collection_name="mock_memories", embedding_dim=4)
     client = MagicMock()
     client.collection_exists.return_value = True
     client.get_collection.return_value = _collection_info(3)
     store._client = client
 
-    with pytest.raises(VectorStoreCollectionDimensionError) as exc_info:
-        await store.initialize()
+    await store.initialize()
 
-    assert "configured=4, existing=3" in str(exc_info.value)
+    client.delete_collection.assert_not_called()
     client.create_collection.assert_not_called()
+    assert store.status_snapshot() == {
+        "state": "dimension_mismatch_pending_rebuild",
+        "collection": "mock_memories",
+        "configured_dimension": 4,
+        "rebuild_required": True,
+        "dimension_recovery": {
+            "action": "temp_rebuild_required",
+            "previous_dimension": 3,
+            "configured_dimension": 4,
+        },
+    }
 
 
 @pytest.mark.asyncio
@@ -680,37 +798,60 @@ async def test_rebuild_deletes_stale_point_ids_in_batches_under_lifecycle_lock()
 
 
 @pytest.mark.asyncio
-async def test_rebuild_dimension_mismatch_recreates_under_lifecycle_lock() -> None:
+async def test_rebuild_dimension_mismatch_populates_before_atomic_alias_swap() -> None:
     store = VectorStore(collection_name="mock_memories", embedding_dim=4)
     client = MagicMock()
     client.collection_exists.return_value = True
     client.get_collection.return_value = _collection_info(3)
+    client.get_aliases.return_value = SimpleNamespace(
+        aliases=[SimpleNamespace(alias_name="mock_memories", collection_name="mock_memories@old")]
+    )
     store._client = client
-
-    def delete_collection(*, collection_name: str) -> None:
-        assert collection_name == "mock_memories"
-        assert store._collection_lifecycle_lock.locked()
+    target_name: str | None = None
+    populated = False
 
     def create_collection(*, collection_name: str, vectors_config: VectorParams) -> None:
-        assert collection_name == "mock_memories"
+        nonlocal target_name
+        assert collection_name.startswith("mock_memories@rebuild-")
+        target_name = collection_name
         assert vectors_config.size == 4
         assert store._collection_lifecycle_lock.locked()
 
-    client.delete_collection.side_effect = delete_collection
+    async def batch_upsert(
+        items: list[tuple[str, list[float], dict[str, object]]],
+        collection_name: str | None = None,
+    ) -> None:
+        nonlocal populated
+        assert collection_name == target_name
+        assert items[0][0] == MEM_1
+        client.update_collection_aliases.assert_not_called()
+        populated = True
+
+    def update_aliases(*, change_aliases_operations: list[object]) -> None:
+        assert populated is True
+        assert store._collection_lifecycle_lock.locked()
+        assert len(change_aliases_operations) == 2
+        assert change_aliases_operations[0].delete_alias.alias_name == "mock_memories"
+        assert change_aliases_operations[1].create_alias.collection_name == target_name
+        assert change_aliases_operations[1].create_alias.alias_name == "mock_memories"
+
     client.create_collection.side_effect = create_collection
+    client.update_collection_aliases.side_effect = update_aliases
+    store.batch_upsert = AsyncMock(side_effect=batch_upsert)  # type: ignore[method-assign]
 
     async def embed_fn(_text: str) -> list[float]:
         return _make_embedding()
 
-    await store.rebuild([], embed_fn)
+    await store.rebuild([{"id": MEM_1, "content": "one"}], embed_fn)
 
-    client.delete_collection.assert_called_once_with(collection_name="mock_memories")
     client.create_collection.assert_called_once()
+    client.update_collection_aliases.assert_called_once()
+    client.delete_collection.assert_called_once_with(collection_name="mock_memories@old")
 
 
 @pytest.mark.asyncio
-async def test_dimension_mismatch_raises_error(tmp_path) -> None:
-    """initialize() should raise when collection dim mismatches configured dim."""
+async def test_dimension_mismatch_recovers_and_supports_writes_and_queries(tmp_path) -> None:
+    """A completed rebuild replaces the old collection through a serving alias."""
     # Create a collection with dim=4
     store = VectorStore(
         path=str(tmp_path / "qdrant"),
@@ -721,19 +862,77 @@ async def test_dimension_mismatch_raises_error(tmp_path) -> None:
     await store.upsert(MEM_1, _make_embedding(1.0, dim=4), {"content": "test"})
     await store.close()
 
-    # Reopen with different dim — should log error
+    # Reopen with a different dimension. Startup keeps the stale collection serving
+    # and exposes that existing memories still need to be re-embedded.
     store2 = VectorStore(
         path=str(tmp_path / "qdrant"),
         collection_name="dim_test",
         embedding_dim=768,
     )
-    with pytest.raises(
-        VectorStoreCollectionDimensionError,
-        match="configured=768, existing=4",
-    ):
-        await store2.initialize()
+    await store2.initialize()
+
+    assert store2.status_snapshot()["state"] == "dimension_mismatch_pending_rebuild"
+    assert store2.status_snapshot()["rebuild_required"] is True
+    old_results = await store2.search(_make_embedding(1.0, dim=4))
+    assert [result[0] for result in old_results] == [MEM_1]
+
+    async def embed_fn(_text: str) -> list[float]:
+        return _make_embedding(2.0, dim=768)
+
+    await store2.rebuild([{"id": MEM_2, "content": "new"}], embed_fn)
+    assert store2.status_snapshot()["state"] == "ready"
+    assert store2.status_snapshot()["rebuild_required"] is False
+    results = await store2.search(_make_embedding(2.0, dim=768))
+    assert [result[0] for result in results] == [MEM_2]
+    aliases = await store2.get_aliases()
+    assert aliases["dim_test"].startswith("dim_test@rebuild-")
 
     await store2.close()
+
+
+@pytest.mark.asyncio
+async def test_dimension_rebuild_failure_keeps_old_collection_serving(tmp_path) -> None:
+    store = VectorStore(
+        path=str(tmp_path / "qdrant"),
+        collection_name="dim_test",
+        embedding_dim=4,
+    )
+    await store.initialize()
+    await store.upsert(MEM_1, _make_embedding(1.0, dim=4), {"content": "old"})
+    await store.close()
+
+    replacement = VectorStore(
+        path=str(tmp_path / "qdrant"),
+        collection_name="dim_test",
+        embedding_dim=8,
+    )
+    await replacement.initialize()
+    embed_calls = 0
+
+    async def failing_embed(_text: str) -> list[float]:
+        nonlocal embed_calls
+        embed_calls += 1
+        if embed_calls == 2:
+            raise RuntimeError("embedding failed")
+        return _make_embedding(2.0, dim=8)
+
+    with pytest.raises(RuntimeError, match="embedding failed"):
+        await replacement.rebuild(
+            [
+                {"id": MEM_1, "content": "updated"},
+                {"id": MEM_2, "content": "new"},
+            ],
+            failing_embed,
+        )
+
+    old_results = await replacement.search(_make_embedding(1.0, dim=4))
+    assert [result[0] for result in old_results] == [MEM_1]
+    assert await replacement.get_aliases() == {}
+    client = replacement._client
+    assert client is not None
+    collections = await asyncio.to_thread(client.get_collections)
+    assert [collection.name for collection in collections.collections] == ["dim_test"]
+    await replacement.close()
 
 
 @pytest.mark.asyncio

@@ -88,9 +88,9 @@ class MemoryManagerFacadeMethods:
         memory_id: str,
         content: str,
         payload: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> bool:
         """Embed content and upsert to VectorStore when available."""
-        await self._lifecycle_service.embed_and_upsert(memory_id, content, payload)
+        return await self._lifecycle_service.embed_and_upsert(memory_id, content, payload)
 
     def _fire_background_dedup(
         self,
@@ -106,19 +106,32 @@ class MemoryManagerFacadeMethods:
             content, project_id, memory_type, tags, source_type, source_session_id
         )
 
-    def _enqueue_for_graph(
+    async def _enqueue_for_graph(
         self,
         memory_id: str,
         project_id: str | None = None,
     ) -> None:
         """Queue memory for background KG processing."""
-        self._lifecycle_service.enqueue_for_graph(memory_id, project_id)
+        await self._lifecycle_service.enqueue_for_graph(memory_id, project_id)
 
     def get_pending_graph_memories(self, limit: int = 20) -> list[Memory]:
         return self._lifecycle_service.get_pending_graph_memories(limit=limit)
 
     def mark_graph_processed(self, memory_id: str) -> None:
         self._lifecycle_service.mark_graph_processed(memory_id)
+
+    def record_graph_failure(
+        self,
+        memory_id: str,
+        *,
+        deterministic: bool,
+        max_attempts: int,
+    ) -> str:
+        return self._lifecycle_service.record_graph_failure(
+            memory_id,
+            deterministic=deterministic,
+            max_attempts=max_attempts,
+        )
 
     async def create_memory(
         self,
@@ -186,8 +199,8 @@ class MemoryManagerFacadeMethods:
         )
         return build_memory_context(memories)
 
-    def _update_access_stats(self, memories: list[Memory]) -> None:
-        self._search_service.update_access_stats(memories)
+    async def _update_access_stats(self, memories: list[Memory]) -> None:
+        await self._search_service.update_access_stats(memories)
 
     async def _search_graph_for_memories(
         self,
@@ -227,6 +240,9 @@ class MemoryManagerFacadeMethods:
 
     async def delete_memory(self, memory_id: str) -> bool:
         return await self._lifecycle_service.delete_memory(memory_id)
+
+    async def delete_memory_scoped(self, memory_id: str, project_id: str | None) -> bool:
+        return await self._lifecycle_service.delete_memory_scoped(memory_id, project_id)
 
     async def adelete_memory(self, memory_id: str) -> bool:
         return await self._lifecycle_service.adelete_memory(memory_id)
@@ -427,6 +443,14 @@ class MemoryManagerFacadeMethods:
         project_id: str | None,
     ) -> list[dict[str, str]]:
         return await self._lifecycle_service.sync_memory_scope_indices(memory_id, project_id)
+
+    async def restore_memory_indices(
+        self,
+        memory_id: str,
+        content: str,
+        project_id: str | None,
+    ) -> None:
+        await self._lifecycle_service.restore_memory_indices(memory_id, content, project_id)
 
     async def fix_null_project_ids_from_sessions(
         self,

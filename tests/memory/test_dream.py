@@ -308,6 +308,36 @@ async def test_build_raw_plan_excludes_duplicate_members_and_merges_once() -> No
     assert keep_ids == ["m0"]
 
 
+async def test_build_raw_plan_rejects_cross_project_duplicate_group() -> None:
+    candidates = [
+        replace(_candidate("project-a"), content="same", project_id="proj-a"),
+        replace(_candidate("project-b"), content="same", project_id="proj-b"),
+    ]
+    groups = [
+        DuplicateGroup(
+            memory_ids=["project-a", "project-b"],
+            canonical_content="same",
+            reason="exact duplicate",
+        )
+    ]
+    planner = AsyncMock(return_value={"actions": []})
+
+    with patch("gobby.memory.dream.planner._call_llm_planner", planner):
+        plan = await build_raw_plan(
+            candidates=candidates,
+            duplicate_groups=groups,
+            dream_config=SimpleNamespace(planner_batch_size=25),
+            llm_service=MagicMock(),
+            db=None,
+            project_id=None,
+            skip_consolidation=False,
+        )
+
+    planned_ids = [candidate.id for candidate in planner.call_args.kwargs["candidates"]]
+    assert planned_ids == ["project-a", "project-b"]
+    assert [action for action in plan["actions"] if action["action"] == "merge"] == []
+
+
 @pytest.mark.asyncio
 async def test_build_raw_plan_limits_planner_concurrency() -> None:
     candidates = [_candidate(f"m{i}") for i in range(6)]
@@ -493,6 +523,26 @@ def test_duplicate_groups_choose_longest_content_as_canonical() -> None:
     assert groups[0].canonical_content == "Same  "
 
 
+def test_duplicate_groups_never_cross_project_scope() -> None:
+    project_memory = replace(
+        _candidate("project-memory"),
+        content="same",
+        project_id="proj-a",
+    )
+    other_project_memory = replace(
+        _candidate("other-project-memory"),
+        content="Same  ",
+        project_id="proj-b",
+    )
+    global_memory = replace(
+        _candidate("global-memory"),
+        content="same",
+        project_id=None,
+    )
+
+    assert find_duplicate_groups([project_memory, other_project_memory, global_memory]) == []
+
+
 def test_duplicate_groups_ignore_non_string_content() -> None:
     candidate = replace(_candidate("bad"), content=None)
 
@@ -522,6 +572,12 @@ async def test_apply_and_revert_soft_hide_refresh_and_keep() -> None:
         "review-me": _row("review-me", "ambiguous"),
         "refresh-me": _row("refresh-me", "old"),
         "keep-me": _row("keep-me", "durable"),
+    }
+    db.crossrefs[("hide-me", "keep-me")] = {
+        "source_id": "hide-me",
+        "target_id": "keep-me",
+        "similarity": 0.91,
+        "created_at": "2026-01-01T00:00:00+00:00",
     }
     manager = _FakeMemoryManager(db)
     store = MemoryDreamStore(db)
@@ -561,7 +617,33 @@ async def test_apply_and_revert_soft_hide_refresh_and_keep() -> None:
     # keep is stamp-only — no snapshot for it.
     assert {row["action"] for row in db.snapshots} == {"delete", "review", "refresh"}
 
-    result = await revert_dream_run(store=store, run_id=run_id)
+    # Simulate a vectorless restored row: the direct restore hook repairs only
+    # graph state, so the post-revert reconciliation must backfill the vector.
+    manager.vector_ids.discard("refresh-me")
+
+    async def restore_graph_only(
+        memory_id: str,
+        content: str,
+        project_id: str | None,
+    ) -> None:
+        del content, project_id
+        manager.graph_ids.add(memory_id)
+
+    async def reconcile_missing_vectors(dry_run: bool = False) -> dict[str, Any]:
+        missing = set(db.memories) - manager.vector_ids
+        if not dry_run:
+            manager.vector_ids.update(missing)
+        return {
+            "qdrant": {
+                "missing_found": len(missing),
+                "missing_embedded": 0 if dry_run else len(missing),
+            }
+        }
+
+    manager.restore_memory_indices.side_effect = restore_graph_only
+    manager.reconcile_stores.side_effect = reconcile_missing_vectors
+
+    result = await revert_dream_run(store=store, run_id=run_id, memory_manager=manager)
 
     assert result["success"] is True
     # Revert restores the mutating snapshots (delete/review/refresh) to active.
@@ -569,6 +651,13 @@ async def test_apply_and_revert_soft_hide_refresh_and_keep() -> None:
     assert db.memories["hide-me"]["dream_action"] is None
     assert db.memories["review-me"]["deleted_at"] is None
     assert db.memories["refresh-me"]["content"] == "old"
+    assert set(db.crossrefs) == {("hide-me", "keep-me")}
+    restored_ids = {call.args[0] for call in manager.restore_memory_indices.await_args_list}
+    assert {"hide-me", "review-me", "refresh-me"} <= restored_ids
+    assert {"hide-me", "review-me", "refresh-me"} <= manager.vector_ids
+    assert {"hide-me", "review-me", "refresh-me"} <= manager.graph_ids
+    assert result["reconcile"]["qdrant"] == {"missing_found": 1, "missing_embedded": 1}
+    manager.reconcile_stores.assert_awaited_once_with(dry_run=False)
 
 
 @pytest.mark.asyncio
@@ -692,7 +781,29 @@ async def test_apply_and_revert_legacy_merge_and_supersede() -> None:
         "merge-keep": _row("merge-keep", "dup"),
         "merge-drop": _row("merge-drop", "dup"),
         "supersede-me": _row("supersede-me", "old fact"),
+        "related": _row("related", "related fact"),
     }
+    original_crossrefs = {
+        ("merge-drop", "related"): {
+            "source_id": "merge-drop",
+            "target_id": "related",
+            "similarity": 0.92,
+            "created_at": "2026-01-01T00:00:00+00:00",
+        },
+        ("related", "merge-keep"): {
+            "source_id": "related",
+            "target_id": "merge-keep",
+            "similarity": 0.81,
+            "created_at": "2026-01-01T00:00:00+00:00",
+        },
+        ("supersede-me", "related"): {
+            "source_id": "supersede-me",
+            "target_id": "related",
+            "similarity": 0.87,
+            "created_at": "2026-01-01T00:00:00+00:00",
+        },
+    }
+    db.crossrefs = {key: dict(value) for key, value in original_crossrefs.items()}
     manager = _FakeMemoryManager(db)
     store = MemoryDreamStore(db)
     run_id = store.create_run(project_id="proj-1", dry_run=False, options={})
@@ -720,17 +831,68 @@ async def test_apply_and_revert_legacy_merge_and_supersede() -> None:
     assert summary["mutations"] == 4
     assert db.memories["merge-keep"]["content"] == "merged"
     assert "merge-drop" not in db.memories
+    assert ("merge-keep", "related") in db.crossrefs
+    assert all("merge-drop" not in key for key in db.crossrefs)
     created_id = next(mid for mid in db.memories if mid.startswith("created-"))
     assert "supersede-me" not in db.memories
+    assert created_id in manager.vector_ids
+    assert created_id in manager.graph_ids
     assert {row["action"] for row in db.snapshots} >= {"merge", "supersede"}
 
-    result = await revert_dream_run(store=store, run_id=run_id)
+    result = await revert_dream_run(store=store, run_id=run_id, memory_manager=manager)
 
     assert result["success"] is True
     assert db.memories["merge-keep"]["content"] == "dup"
     assert db.memories["merge-drop"]["content"] == "dup"
     assert db.memories["supersede-me"]["content"] == "old fact"
     assert created_id not in db.memories
+    assert db.crossrefs == original_crossrefs
+    assert {"merge-keep", "merge-drop", "supersede-me"} <= manager.vector_ids
+    assert {"merge-keep", "merge-drop", "supersede-me"} <= manager.graph_ids
+    assert created_id not in manager.vector_ids
+    assert created_id not in manager.graph_ids
+    manager.delete_memory.assert_any_await(created_id)
+    restored_ids = {call.args[0] for call in manager.restore_memory_indices.await_args_list}
+    assert {"merge-keep", "merge-drop", "supersede-me"} <= restored_ids
+    manager.reconcile_stores.assert_awaited_once_with(dry_run=False)
+
+
+def test_dream_store_transfers_and_restores_crossrefs_in_postgres(temp_db: Any) -> None:
+    memory_storage = LocalMemoryManager(temp_db)
+    keeper = memory_storage.create_memory(content="keeper")
+    duplicate = memory_storage.create_memory(content="duplicate")
+    related = memory_storage.create_memory(content="related")
+    memory_storage.create_crossref(duplicate.id, related.id, 0.93)
+    memory_storage.create_crossref(related.id, keeper.id, 0.81)
+    store = MemoryDreamStore(temp_db)
+    keeper_before = store.get_memory_row(keeper.id)
+    duplicate_before = store.get_memory_row(duplicate.id)
+    assert keeper_before is not None
+    assert duplicate_before is not None
+    assert duplicate_before["_crossrefs"][0]["source_id"] == duplicate.id
+
+    transferred = store.transfer_crossrefs(duplicate.id, keeper.id)
+    memory_storage.delete_memory(duplicate.id)
+
+    assert transferred == 1
+    assert {
+        (crossref.source_id, crossref.target_id)
+        for crossref in memory_storage.get_crossrefs(keeper.id)
+    } == {
+        (keeper.id, related.id),
+        (related.id, keeper.id),
+    }
+
+    store.restore_memory_row(duplicate_before)
+    store.restore_crossrefs([keeper_before, duplicate_before])
+
+    assert {
+        (crossref.source_id, crossref.target_id)
+        for crossref in memory_storage.get_crossrefs(related.id)
+    } == {
+        (duplicate.id, related.id),
+        (related.id, keeper.id),
+    }
 
 
 @pytest.mark.asyncio
@@ -1000,13 +1162,159 @@ async def test_memory_dream_service_persists_interrupted_status_on_cancellation(
     service._stream_sweep = AsyncMock(side_effect=asyncio.CancelledError())
 
     with pytest.raises(asyncio.CancelledError):
-        await service.execute_run(run_id, DreamRunOptions(project_id="proj-1"))
+        await service.execute_run(run_id, DreamRunOptions(dry_run=False, project_id="proj-1"))
 
     run = service.store.get_run(run_id)
     assert run is not None
     assert run["status"] == "interrupted"
     assert run["error"] == INTERRUPTED_CANCELLED_ERROR
     assert run["completed_at"] is not None
+
+
+def _execution_test_service() -> MemoryDreamService:
+    service = MemoryDreamService(
+        memory_manager=_FakeMemoryManager(_FakeDreamDB()),
+        dream_config=SimpleNamespace(
+            enabled=True,
+            page_size=2,
+            redream_after_hours=20,
+            include_global_memories=False,
+            reconcile_after_apply=False,
+        ),
+    )
+    service._build_truth_digest_async = AsyncMock(return_value="")
+    return service
+
+
+def _empty_sweep_totals() -> MagicMock:
+    totals = MagicMock(mutations=0)
+    totals.to_plan.return_value = {}
+    totals.to_summary.return_value = {}
+    return totals
+
+
+async def test_dream_execution_lock_queues_across_service_instances() -> None:
+    first_service = _execution_test_service()
+    second_service = _execution_test_service()
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    second_attempted = asyncio.Event()
+    second_entered = asyncio.Event()
+
+    async def first_sweep(*_args: Any, **_kwargs: Any) -> MagicMock:
+        first_entered.set()
+        await release_first.wait()
+        return _empty_sweep_totals()
+
+    async def second_sweep(*_args: Any, **_kwargs: Any) -> MagicMock:
+        second_entered.set()
+        return _empty_sweep_totals()
+
+    async def run_second() -> dict[str, Any]:
+        second_attempted.set()
+        return await second_service.run(options)
+
+    first_service._stream_sweep = AsyncMock(side_effect=first_sweep)
+    second_service._stream_sweep = AsyncMock(side_effect=second_sweep)
+    first_run_id = first_service.store.create_run(project_id="proj-1", dry_run=False, options={})
+    options = DreamRunOptions(dry_run=False, project_id="proj-1")
+
+    first_task = asyncio.create_task(first_service.execute_run(first_run_id, options))
+    await first_entered.wait()
+    second_task = asyncio.create_task(run_second())
+    await second_attempted.wait()
+
+    assert second_entered.is_set() is False
+    release_first.set()
+    first_result, second_result = await asyncio.gather(first_task, second_task)
+    assert first_result["success"] is True
+    assert second_result["success"] is True
+    assert second_entered.is_set() is True
+
+
+async def test_dream_execution_lock_covers_aggregate_cron_entrypoint() -> None:
+    aggregate_service = _execution_test_service()
+    manual_service = _execution_test_service()
+    aggregate_entered = asyncio.Event()
+    release_aggregate = asyncio.Event()
+    manual_attempted = asyncio.Event()
+    manual_entered = asyncio.Event()
+
+    async def blocked_truth_trigger() -> None:
+        aggregate_entered.set()
+        await release_aggregate.wait()
+
+    async def manual_sweep(*_args: Any, **_kwargs: Any) -> MagicMock:
+        manual_entered.set()
+        return _empty_sweep_totals()
+
+    async def run_manual() -> dict[str, Any]:
+        manual_attempted.set()
+        return await manual_service.execute_run(manual_run_id, options)
+
+    aggregate_service._apply_truth_change_triggers = AsyncMock(side_effect=blocked_truth_trigger)
+    aggregate_service.memory_manager.list_dream_project_ids = MagicMock(return_value=[])
+    manual_service._stream_sweep = AsyncMock(side_effect=manual_sweep)
+    manual_run_id = manual_service.store.create_run(project_id="proj-1", dry_run=False, options={})
+    options = DreamRunOptions(dry_run=False, project_id="proj-1")
+
+    aggregate_task = asyncio.create_task(aggregate_service.run_all_due_projects())
+    await aggregate_entered.wait()
+    manual_task = asyncio.create_task(run_manual())
+    await manual_attempted.wait()
+
+    assert manual_entered.is_set() is False
+    release_aggregate.set()
+    aggregate_result, manual_result = await asyncio.gather(aggregate_task, manual_task)
+    assert aggregate_result["success"] is True
+    assert manual_result["success"] is True
+    assert manual_entered.is_set() is True
+
+
+async def test_dream_execution_lock_releases_after_failure() -> None:
+    failing_service = _execution_test_service()
+    next_service = _execution_test_service()
+    failing_service._stream_sweep = AsyncMock(side_effect=RuntimeError("dream failed"))
+    next_service._stream_sweep = AsyncMock(return_value=_empty_sweep_totals())
+    options = DreamRunOptions(dry_run=False, project_id="proj-1")
+    failing_run_id = failing_service.store.create_run(
+        project_id="proj-1", dry_run=False, options={}
+    )
+    next_run_id = next_service.store.create_run(project_id="proj-1", dry_run=False, options={})
+
+    failed = await failing_service.execute_run(failing_run_id, options)
+    succeeded = await asyncio.wait_for(next_service.execute_run(next_run_id, options), timeout=1)
+
+    assert failed["success"] is False
+    assert succeeded["success"] is True
+
+
+async def test_dream_execution_lock_releases_after_cancellation() -> None:
+    cancelled_service = _execution_test_service()
+    next_service = _execution_test_service()
+    entered = asyncio.Event()
+
+    async def blocked_sweep(*_args: Any, **_kwargs: Any) -> MagicMock:
+        entered.set()
+        await asyncio.Event().wait()
+        return _empty_sweep_totals()
+
+    cancelled_service._stream_sweep = AsyncMock(side_effect=blocked_sweep)
+    next_service._stream_sweep = AsyncMock(return_value=_empty_sweep_totals())
+    options = DreamRunOptions(dry_run=False, project_id="proj-1")
+    cancelled_run_id = cancelled_service.store.create_run(
+        project_id="proj-1", dry_run=False, options={}
+    )
+    next_run_id = next_service.store.create_run(project_id="proj-1", dry_run=False, options={})
+    cancelled_task = asyncio.create_task(cancelled_service.execute_run(cancelled_run_id, options))
+    await entered.wait()
+
+    cancelled_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await cancelled_task
+    succeeded = await asyncio.wait_for(next_service.execute_run(next_run_id, options), timeout=1)
+
+    assert succeeded["success"] is True
 
 
 def test_decode_raw_plan_metadata_handles_strings_safely() -> None:
@@ -1127,6 +1435,7 @@ class _FakeDreamDB:
 
     def __init__(self) -> None:
         self.memories: dict[str, dict[str, Any]] = {}
+        self.crossrefs: dict[tuple[str, str], dict[str, Any]] = {}
         self.projects: dict[str, dict[str, Any]] = {}
         self.runs: dict[str, dict[str, Any]] = {}
         self.snapshots: list[dict[str, Any]] = []
@@ -1175,6 +1484,25 @@ class _FakeDreamDB:
                     "applied": True,
                 }
             )
+        elif normalized.startswith("DELETE FROM memory_crossrefs"):
+            memory_id = str(params[0])
+            self.crossrefs = {
+                key: row for key, row in self.crossrefs.items() if memory_id not in key
+            }
+        elif normalized.startswith("INSERT INTO memory_crossrefs"):
+            key = (str(params[0]), str(params[1]))
+            row = {
+                "source_id": key[0],
+                "target_id": key[1],
+                "similarity": float(params[2]),
+                "created_at": params[3],
+            }
+            if "GREATEST" in normalized and key in self.crossrefs:
+                row["similarity"] = max(
+                    float(self.crossrefs[key]["similarity"]),
+                    row["similarity"],
+                )
+            self.crossrefs[key] = row
         elif normalized.startswith("DELETE FROM memories"):
             self.memories.pop(str(params[0]), None)
         elif normalized.startswith("INSERT INTO memories"):
@@ -1231,6 +1559,9 @@ class _FakeDreamDB:
 
     def fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
         normalized = " ".join(sql.split())
+        if "FROM memory_crossrefs" in normalized:
+            memory_id = str(params[0])
+            return [dict(row) for key, row in self.crossrefs.items() if memory_id in key]
         if "FROM memory_dream_runs" in normalized:
             return [
                 {"id": run["id"]}
@@ -1349,14 +1680,25 @@ def test_snapshots_serialize_datetime_rows_to_iso_strings() -> None:
 class _FakeMemoryManager:
     def __init__(self, db: _FakeDreamDB) -> None:
         self.db = db
+        self.vector_ids = set(db.memories)
+        self.graph_ids = set(db.memories)
         self.delete_memory = AsyncMock(side_effect=self._delete)
         self.update_memory = AsyncMock(side_effect=self._update)
         self.create_memory = AsyncMock(side_effect=self._create)
         self.rescope_memory = AsyncMock(side_effect=self._rescope)
         self.sync_memory_scope_indices = AsyncMock(return_value=[])
+        self.restore_memory_indices = AsyncMock(side_effect=self._restore_indices)
+        self.reconcile_stores = AsyncMock(return_value={"success": True})
 
     async def _delete(self, memory_id: str) -> bool:
-        return self.db.memories.pop(memory_id, None) is not None
+        deleted = self.db.memories.pop(memory_id, None) is not None
+        if deleted:
+            self.db.crossrefs = {
+                key: row for key, row in self.db.crossrefs.items() if memory_id not in key
+            }
+            self.vector_ids.discard(memory_id)
+            self.graph_ids.discard(memory_id)
+        return deleted
 
     async def _update(
         self,
@@ -1374,7 +1716,19 @@ class _FakeMemoryManager:
     async def _create(self, **kwargs: Any) -> Any:
         memory_id = f"created-{len(self.db.memories)}"
         self.db.memories[memory_id] = _row(memory_id, kwargs["content"])
+        self.vector_ids.add(memory_id)
+        self.graph_ids.add(memory_id)
         return SimpleNamespace(id=memory_id)
+
+    async def _restore_indices(
+        self,
+        memory_id: str,
+        content: str,
+        project_id: str | None,
+    ) -> None:
+        del content, project_id
+        self.vector_ids.add(memory_id)
+        self.graph_ids.add(memory_id)
 
     async def _rescope(self, memory_id: str, new_project_id: str | None) -> Any:
         row = self.db.memories.get(memory_id)
@@ -1502,7 +1856,7 @@ async def test_streaming_sweep_drains_and_immediate_rerun_is_noop() -> None:
         memory_manager=manager, dream_config=_sweep_config(page_size=2), llm_service=None
     )
 
-    result = await service.run(DreamRunOptions(project_id="proj-1"))
+    result = await service.run(DreamRunOptions(dry_run=False, project_id="proj-1"))
 
     assert result["success"] is True
     summary = result["run"]["summary"]
@@ -1512,7 +1866,7 @@ async def test_streaming_sweep_drains_and_immediate_rerun_is_noop() -> None:
     assert summary["actions"].get("keep") == 5
     assert all(row["last_dreamed_at"] is not None for row in db.memories.values())
 
-    rerun = await service.run(DreamRunOptions(project_id="proj-1"))
+    rerun = await service.run(DreamRunOptions(dry_run=False, project_id="proj-1"))
 
     # Everything was just stamped inside the cooldown window, so the re-run is a no-op.
     assert rerun["success"] is True
@@ -1539,7 +1893,7 @@ async def test_streaming_sweep_soft_hides_obsolete_and_keeps_current() -> None:
     }
 
     with patch("gobby.memory.dream.service.build_raw_plan", AsyncMock(return_value=canned)):
-        result = await service.run(DreamRunOptions(project_id="proj-1"))
+        result = await service.run(DreamRunOptions(dry_run=False, project_id="proj-1"))
 
     assert result["success"] is True
     assert db.memories["obsolete"]["deleted_at"] is not None
@@ -1594,7 +1948,7 @@ async def test_global_only_run_persists_null_scope_and_selects_only_global() -> 
         memory_manager=manager, dream_config=_sweep_config(page_size=10), llm_service=None
     )
 
-    result = await service.run(DreamRunOptions(global_only=True))
+    result = await service.run(DreamRunOptions(dry_run=False, global_only=True))
 
     assert result["success"] is True
     run = result["run"]
@@ -1862,16 +2216,16 @@ async def test_full_sweep_ignores_cooldown_and_reviews_all() -> None:
         memory_manager=manager, dream_config=_sweep_config(page_size=2), llm_service=None
     )
 
-    first = await service.run(DreamRunOptions(project_id="proj-1"))
+    first = await service.run(DreamRunOptions(dry_run=False, project_id="proj-1"))
     assert first["run"]["summary"]["candidates_reviewed"] == 5
 
     # A default rerun is a no-op: everything was just stamped inside the cooldown.
-    cooldown_rerun = await service.run(DreamRunOptions(project_id="proj-1"))
+    cooldown_rerun = await service.run(DreamRunOptions(dry_run=False, project_id="proj-1"))
     assert cooldown_rerun["run"]["summary"]["candidates_reviewed"] == 0
 
     # full_sweep bypasses the cooldown and reviews the whole corpus again, draining
     # to completion (the page loop still terminates via per-page stamping).
-    full = await service.run(DreamRunOptions(project_id="proj-1", full_sweep=True))
+    full = await service.run(DreamRunOptions(dry_run=False, project_id="proj-1", full_sweep=True))
     assert full["success"] is True
     assert full["run"]["summary"]["candidates_reviewed"] == 5
     assert full["run"]["summary"]["pages"] == 3  # ceil(5 / 2)
@@ -1954,7 +2308,7 @@ async def test_run_all_due_projects_loops_targets_with_per_target_scope(
             "run": {"id": f"run-{idx}", "summary": {"mutations": mutations}},
         }
 
-    monkeypatch.setattr(service, "run", fake_run)
+    monkeypatch.setattr(service, "_run_without_execution_lock", fake_run)
 
     result = await service.run_all_due_projects(dry_run=True, memory_type="fact", full_sweep=True)
 
@@ -1993,7 +2347,7 @@ async def test_run_all_due_projects_isolates_target_failure(
             raise RuntimeError("boom")
         return {"success": True, "run_id": "r", "run": {"id": "r", "summary": {"mutations": 2}}}
 
-    monkeypatch.setattr(service, "run", fake_run)
+    monkeypatch.setattr(service, "_run_without_execution_lock", fake_run)
 
     result = await service.run_all_due_projects()
 
@@ -2016,7 +2370,7 @@ async def test_run_all_due_projects_all_failed_marks_aggregate_failed(
     async def fake_run(options: DreamRunOptions) -> dict[str, Any]:
         raise RuntimeError("nope")
 
-    monkeypatch.setattr(service, "run", fake_run)
+    monkeypatch.setattr(service, "_run_without_execution_lock", fake_run)
 
     result = await service.run_all_due_projects()
 

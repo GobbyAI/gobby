@@ -471,7 +471,8 @@ async def test_graph_path_emits_debug_snapshot(monkeypatch: Any) -> None:
     assert snapshots[0].returned_hits[1].graph_score == 0.05
 
 
-def test_debug_sink_failure_does_not_change_results() -> None:
+@pytest.mark.asyncio
+async def test_debug_sink_failure_does_not_change_results() -> None:
     sink_called = False
 
     def failing_sink(snapshot: SearchDebugSnapshot) -> None:
@@ -481,7 +482,7 @@ def test_debug_sink_failure_does_not_change_results() -> None:
 
     service = _service(["semantic"], search_debug_sink=failing_sink)
 
-    service._emit_search_debug(
+    await service._emit_search_debug(
         query="query",
         project_id=None,
         session_id=None,

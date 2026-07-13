@@ -99,6 +99,13 @@ async def revert_dream_run(
     secondary_failures: list[dict[str, str]] = []
     failures: list[dict[str, Any]] = []
     snapshots = await asyncio.to_thread(store.list_snapshots, run_id)
+    oldest_before_rows: dict[str, dict[str, Any]] = {}
+    for snapshot in reversed(snapshots):
+        before = snapshot.get("before_data")
+        memory_id = snapshot.get("memory_id")
+        if memory_id and isinstance(before, dict):
+            oldest_before_rows.setdefault(str(memory_id), before)
+    restored_ids: set[str] = set()
     for snapshot in snapshots:
         memory_id_value = snapshot.get("memory_id")
         if not memory_id_value:
@@ -114,17 +121,29 @@ async def revert_dream_run(
             before = snapshot.get("before_data")
             after = snapshot.get("after_data")
             if before is None and after is not None:
-                await asyncio.to_thread(store.delete_memory_row, memory_id)
+                if memory_manager is not None:
+                    removed = await memory_manager.delete_memory(memory_id)
+                    if not removed:
+                        await asyncio.to_thread(store.delete_memory_row, memory_id)
+                else:
+                    await asyncio.to_thread(store.delete_memory_row, memory_id)
                 deleted += 1
                 continue
             if isinstance(before, dict):
                 await asyncio.to_thread(store.restore_memory_row, before)
-                if snapshot.get("action") == "promote" and memory_manager is not None:
-                    secondary_failures.extend(
-                        await memory_manager.sync_memory_scope_indices(
-                            memory_id,
-                            before.get("project_id"),
+                restored_ids.add(memory_id)
+                if memory_manager is not None:
+                    if snapshot.get("action") == "promote":
+                        secondary_failures.extend(
+                            await memory_manager.sync_memory_scope_indices(
+                                memory_id,
+                                before.get("project_id"),
+                            )
                         )
+                    await memory_manager.restore_memory_indices(
+                        memory_id,
+                        str(before["content"]),
+                        before.get("project_id"),
                     )
                 restored += 1
         except Exception as exc:
@@ -136,6 +155,18 @@ async def revert_dream_run(
                 }
             )
             logger.warning("Memory dream snapshot revert failed: %s", exc)
+
+    try:
+        relationship_rows = [
+            oldest_before_rows[memory_id]
+            for memory_id in restored_ids
+            if memory_id in oldest_before_rows
+        ]
+        if relationship_rows:
+            await asyncio.to_thread(store.restore_crossrefs, relationship_rows)
+    except Exception as exc:
+        failures.append({"snapshot_id": None, "error": f"crossref restore failed: {exc}"})
+        logger.warning("Memory dream crossref revert failed: %s", exc)
 
     completed_ts = _now()
     if failures:
@@ -401,6 +432,7 @@ async def _merge(
                 content=action.content,
                 tags=action.tags,
             )
+            await asyncio.to_thread(store.restore_crossrefs, [before_keeper])
             after_keeper = await asyncio.to_thread(store.get_memory_row, keeper_id)
             pending_snapshots.append((snapshot_id, after_keeper))
             rollback_rows.append(before_keeper)
@@ -418,8 +450,14 @@ async def _merge(
                 before_data=before_duplicate,
             )
             rollback_rows.append(before_duplicate)
+            keeper_before_transfer = await asyncio.to_thread(store.get_memory_row, keeper_id)
+            await asyncio.to_thread(store.transfer_crossrefs, duplicate_id, keeper_id)
             deleted = await memory_manager.delete_memory(duplicate_id)
             if not deleted:
+                relationship_rows = [before_duplicate]
+                if keeper_before_transfer is not None:
+                    relationship_rows.append(keeper_before_transfer)
+                await asyncio.to_thread(store.restore_crossrefs, relationship_rows)
                 continue
             pending_snapshots.append((snapshot_id, None))
             mutations += 1
@@ -539,6 +577,10 @@ async def _restore_rows_for_failed_action(
             await asyncio.to_thread(store.restore_memory_row, row)
         except Exception as exc:
             logger.warning("Memory dream action rollback restore failed: %s", exc)
+    try:
+        await asyncio.to_thread(store.restore_crossrefs, rows)
+    except Exception as exc:
+        logger.warning("Memory dream action rollback crossref restore failed: %s", exc)
 
 
 async def _restore_promote_row(

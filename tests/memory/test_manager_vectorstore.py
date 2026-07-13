@@ -223,6 +223,8 @@ async def test_update_memory_content_reembeds_same_id(
     manager: MemoryManager, mock_vector_store: AsyncMock, mock_embed_fn: AsyncMock
 ) -> None:
     memory = await manager.create_memory(content="original")
+    if manager._background_tasks:
+        await asyncio.gather(*tuple(manager._background_tasks))
     mock_embed_fn.reset_mock()
     mock_vector_store.upsert.reset_mock()
 

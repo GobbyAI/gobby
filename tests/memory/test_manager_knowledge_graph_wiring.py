@@ -292,6 +292,32 @@ class TestGraphDelegation:
         assert result["noop_no_entities"] == 1
         assert result["errors"] == 1
 
+    async def test_rebuild_whitespace_entity_marks_memory_processed_without_retry(self) -> None:
+        llm_service = _mock_llm_service()
+        llm_service.call_json_feature = AsyncMock(
+            return_value={"entities": [{"entity": "  \t ", "entity_type": "concept"}]}
+        )
+        manager = _make_manager(
+            falkordb_host="127.0.0.1",
+            llm_service=llm_service,
+            vector_store=AsyncMock(),
+            embed_fn=AsyncMock(return_value=[0.1]),
+        )
+        memory = MagicMock(id="mem-empty", content="Malformed extraction", project_id="proj-1")
+        manager._fetch_all_project_memories = AsyncMock(return_value=[memory])
+        manager._kg_service._extractor._prompt_loader.render = MagicMock(
+            return_value="extract entities"
+        )
+        manager.mark_graph_processed = MagicMock()
+        manager.storage.mark_pending_graph = MagicMock()
+
+        result = await manager.rebuild_knowledge_graph(project_id="proj-1")
+
+        manager.mark_graph_processed.assert_called_once_with("mem-empty")
+        assert result["noop_no_entities"] == 1
+        assert result["memories_marked_processed"] == 1
+        assert result["errors"] == 0
+
     async def test_rebuild_knowledge_graph_reports_progress_and_failed_memory_ids(self) -> None:
         """Rebuild progress snapshots and final result should identify failing rows."""
         manager = _make_manager(
@@ -406,7 +432,7 @@ class TestKnowledgeGraphRebuildService:
         processed: list[str] = []
         kg_service = MagicMock()
         kg_service.add_to_graph = AsyncMock(
-            return_value=KnowledgeGraphResult(KnowledgeGraphStatus.SUCCESS)
+            return_value=KnowledgeGraphResult(KnowledgeGraphStatus.NOOP_NO_ENTITIES)
         )
         service = KnowledgeGraphRebuildService(
             storage_provider=lambda: storage,
@@ -416,6 +442,7 @@ class TestKnowledgeGraphRebuildService:
             list_memories=lambda *args: memories,
             fetch_all_project_memories=AsyncMock(return_value=memories),
             mark_graph_processed=processed.append,
+            record_graph_failure=lambda *_args, **_kwargs: "pending",
         )
 
         result = await service.rebuild_knowledge_graph(project_id=None)
@@ -423,6 +450,7 @@ class TestKnowledgeGraphRebuildService:
         assert result["success"] is True
         assert result["memories_marked_pending"] == 1
         assert result["memories_marked_processed"] == 1
+        assert result["noop_no_entities"] == 1
         assert storage.pending == ["mem-1"]
         assert processed == ["mem-1"]
         kg_service.add_to_graph.assert_awaited_once_with(
@@ -430,6 +458,64 @@ class TestKnowledgeGraphRebuildService:
             memory_id="mem-1",
             project_id="proj-1",
         )
+
+    @pytest.mark.asyncio
+    async def test_rebuild_applies_failure_policy_and_survives_state_error(self) -> None:
+        """Rebuild jobs apply the queue policy without dying on a state-write outage."""
+
+        class Storage:
+            def mark_pending_graph(self, memory_id: str) -> None:
+                assert memory_id == "mem-poison"
+
+        async def run_db(
+            func: Callable[..., _RunDbResult],
+            *args: Any,
+            **kwargs: Any,
+        ) -> _RunDbResult:
+            return func(*args, **kwargs)
+
+        memory = Memory(
+            id="mem-poison",
+            memory_type="fact",
+            content="Invalid extraction input",
+            created_at="2026-01-01T00:00:00+00:00",
+            updated_at="2026-01-01T00:00:00+00:00",
+            project_id="proj-1",
+        )
+        failures: list[tuple[str, bool, int]] = []
+
+        def record_failure(
+            memory_id: str,
+            *,
+            deterministic: bool,
+            max_attempts: int,
+        ) -> str:
+            failures.append((memory_id, deterministic, max_attempts))
+            raise RuntimeError("database unavailable")
+
+        kg_service = MagicMock()
+        kg_service.add_to_graph = AsyncMock(
+            return_value=KnowledgeGraphResult(KnowledgeGraphStatus.DETERMINISTIC_FAILURE)
+        )
+        service = KnowledgeGraphRebuildService(
+            storage_provider=Storage,
+            kg_service_provider=lambda: kg_service,
+            falkor_client_provider=lambda: None,
+            run_db=run_db,
+            list_memories=lambda *args: [memory],
+            fetch_all_project_memories=AsyncMock(return_value=[memory]),
+            mark_graph_processed=lambda _memory_id: None,
+            record_graph_failure=record_failure,
+            max_deterministic_attempts=4,
+        )
+
+        result = await service.rebuild_knowledge_graph(project_id=None)
+
+        assert result["errors"] == 1
+        assert failures == [("mem-poison", True, 4)]
+        assert result["failed_memories"][0]["errors"] == [
+            "Failed to persist graph retry state: database unavailable"
+        ]
 
     @pytest.mark.asyncio
     async def test_rebuild_concurrency_one_prevents_overlapping_add_to_graph(self) -> None:
@@ -496,6 +582,7 @@ class TestKnowledgeGraphRebuildService:
             list_memories=lambda *args: memories,
             fetch_all_project_memories=AsyncMock(return_value=memories),
             mark_graph_processed=processed.append,
+            record_graph_failure=lambda *_args, **_kwargs: "pending",
             max_rebuild_concurrency=1,
         )
 

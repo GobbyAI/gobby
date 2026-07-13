@@ -78,7 +78,9 @@ def register_memory_dream_cron(
             daemon_config=daemon_config,
             current_project_id=project_id,
         )
-        summary = await service.run_all_due_projects()
+        summary = await service.run_all_due_projects(
+            dry_run=not dream_config.allow_unattended_mutations
+        )
         if not summary.get("success"):
             raise RuntimeError("memory dream failed for all targets")
         completed = int(summary.get("completed", 0))

@@ -2654,6 +2654,7 @@ class TestParserRegistry:
         assert parser._transcript_path == transcript_path
         assert DroidTranscriptParser()._transcript_path is None
 
-    def test_get_parser_unknown_source_defaults_to_claude(self) -> None:
-        """Unknown source should default to ClaudeTranscriptParser."""
-        assert isinstance(get_parser("unknown-cli"), ClaudeTranscriptParser)
+    @pytest.mark.parametrize("source", [None, "", "   ", "unknown-cli"])
+    def test_get_parser_rejects_unknown_or_empty_source(self, source: str | None) -> None:
+        with pytest.raises(ValueError, match="Unsupported transcript source"):
+            get_parser(source)

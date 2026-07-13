@@ -34,7 +34,7 @@ from gobby.memory.services.project_repair import (
 )
 from gobby.memory.services.repository import DEFAULT_LIST_LIMIT, MemoryRepository
 from gobby.memory.services.search import SearchService
-from gobby.memory.vectorstore import (
+from gobby.memory.vectorstore_logging import (
     VECTORSTORE_WARNING_INTERVAL_SECONDS,
     log_rate_limited_warning,
 )
@@ -82,6 +82,7 @@ class MemoryManager(MemoryManagerFacadeMethods):
         embedding_dim: int = 768,
         collection_prefix: str = "code_symbols_",
         run_db: Callable[..., Awaitable[Any]] | None = None,
+        max_graph_deterministic_attempts: int = 3,
     ):
         self.db = db
         self.config = config
@@ -139,6 +140,7 @@ class MemoryManager(MemoryManagerFacadeMethods):
             get_memory=self.get_memory,
             embed_and_upsert=lambda *args, **kwargs: self._embed_and_upsert(*args, **kwargs),
             vector_store_failure_logger=self._log_vector_store_failure,
+            run_db=run_db,
         )
         self._search_service = SearchService(
             storage=self.storage,
@@ -177,7 +179,11 @@ class MemoryManager(MemoryManagerFacadeMethods):
                 project_id
             ),
             mark_graph_processed=lambda memory_id: self.mark_graph_processed(memory_id),
+            record_graph_failure=lambda memory_id, **kwargs: self.record_graph_failure(
+                memory_id, **kwargs
+            ),
             max_rebuild_concurrency=config.kg.max_rebuild_concurrency,
+            max_deterministic_attempts=max_graph_deterministic_attempts,
         )
         self._project_repair_service = NullProjectMemoryRepairService(
             db=db,
@@ -217,6 +223,7 @@ class MemoryManager(MemoryManagerFacadeMethods):
                 vector_store=vector_store,
                 storage=self.storage,
                 embed_fn=embed_fn,
+                run_db=self.run_db,
             )
             logger.debug("DedupService initialized")
             return dedup_service
@@ -339,14 +346,6 @@ class MemoryManager(MemoryManagerFacadeMethods):
     def falkor_client(self) -> FalkorClient | None:
         """Shared FalkorDB client for graph-backed subsystems, when configured."""
         return self._falkor_client
-
-    @property
-    def _embeddings_available(self) -> bool | None:
-        return self._lifecycle_service.embeddings_available
-
-    @_embeddings_available.setter
-    def _embeddings_available(self, value: bool | None) -> None:
-        self._lifecycle_service.embeddings_available = value
 
     def _log_vector_store_failure(self, message: str, error: BaseException) -> None:
         """Rate-limit noisy VectorStore availability warnings."""

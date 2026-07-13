@@ -460,12 +460,21 @@ class TestSearchGraphUpgraded:
         mock_falkor.vector_search = AsyncMock(
             return_value=[
                 {
-                    "entity_key": entity_key(None, "Python"),
+                    "entity_key": entity_key("project-a", "Python"),
                     "name": "Python",
                     "entity_type": "tool",
-                    "project_id": None,
+                    "project_id": "project-a",
                     "labels": ["Tool"],
                     "score": 0.9,
+                    "props": {},
+                },
+                {
+                    "entity_key": entity_key("project-b", "Secret"),
+                    "name": "Secret",
+                    "entity_type": "tool",
+                    "project_id": "project-b",
+                    "labels": ["Tool"],
+                    "score": 0.95,
                     "props": {},
                 },
             ]
@@ -473,11 +482,18 @@ class TestSearchGraphUpgraded:
         # Memory lookup returns empty (no MENTIONED_IN links)
         mock_falkor.query = AsyncMock(return_value=[])
 
-        results = await service.search_graph("programming language")
+        results = await service.search_graph("programming language", project_id="project-a")
 
         assert len(results) == 1
         assert results[0]["name"] == "Python"
         mock_embed_fn.assert_called_with("programming language", is_query=True)
+        mock_falkor.vector_search.assert_awaited_once_with(
+            query_embedding=mock_embed_fn.return_value,
+            limit=10,
+            min_score=0.3,
+            project_id="project-a",
+            include_global=True,
+        )
 
     async def test_falls_back_to_substring_on_vector_failure(
         self,
@@ -490,11 +506,26 @@ class TestSearchGraphUpgraded:
 
         mock_falkor.query = AsyncMock(
             return_value=[
-                {"name": "Python", "labels": ["Tool"], "props": {}},
+                {
+                    "name": "Python",
+                    "project_id": "project-a",
+                    "labels": ["Tool"],
+                    "props": {},
+                },
+                {
+                    "name": "Secret",
+                    "project_id": "project-b",
+                    "labels": ["Tool"],
+                    "props": {},
+                },
             ]
         )
 
-        results = await service.search_graph("Python")
+        results = await service.search_graph("Python", project_id="project-a")
 
         assert len(results) == 1
         assert results[0]["name"] == "Python"
+        query, params = mock_falkor.query.await_args.args
+        assert "n.project_id = $project_id" in query
+        assert params["project_id"] == "project-a"
+        assert params["include_global"] is True

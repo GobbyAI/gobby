@@ -115,6 +115,7 @@ def test_runner_memory_stack_uses_canonical_falkordb_enablement_and_kwargs() -> 
     runner = SimpleNamespace(
         config=SimpleNamespace(
             memory=MemoryConfig(),
+            knowledge_graph_queue=SimpleNamespace(max_deterministic_attempts=3),
             embeddings=SimpleNamespace(
                 dim=768,
                 model="nomic-embed-text",

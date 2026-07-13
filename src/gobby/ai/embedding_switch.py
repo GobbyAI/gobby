@@ -20,7 +20,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, ClassVar
 
 from gobby.ai.embedding_catalog import EmbeddingModelSpec, get_spec_or_raise
-from gobby.memory.vectorstore import CollectionNameResolver
+from gobby.memory.collection_names import CollectionNameResolver
 
 logger = logging.getLogger(__name__)
 

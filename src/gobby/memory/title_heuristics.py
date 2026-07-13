@@ -256,11 +256,21 @@ async def heuristic_title_from_transcript(
     """
     if not transcript_path or not Path(transcript_path).exists():
         return None
+    if not str(source or "").strip():
+        logger.warning(
+            "Skipping heuristic title for transcript %s: session source is missing",
+            transcript_path,
+        )
+        return None
     try:
         from gobby.sessions.transcript_normalization import normalize_transcript_records
         from gobby.sessions.transcripts import ParsedMessage, get_parser
 
-        parser = get_parser(source or "")
+        try:
+            parser = get_parser(source)
+        except ValueError as exc:
+            logger.warning("Skipping heuristic title for transcript %s: %s", transcript_path, exc)
+            return None
 
         def _read_lines() -> list[str]:
             lines: list[str] = []
