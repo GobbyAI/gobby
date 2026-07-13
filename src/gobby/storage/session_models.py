@@ -92,7 +92,7 @@ class Session:
     chat_mode: str = "plan"
     # Idempotency guard for digest pipeline
     last_digest_input_hash: str | None = None
-    # Explicit cursor into the active transcript's user/assistant pairs
+    # Explicit cursor across the transcript's digestible user/assistant pairs
     last_digested_pair_index: int = 0
     # Digest identity last used for contentless title recovery
     last_title_synthesis_digest_hash: str | None = None

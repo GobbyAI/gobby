@@ -17,7 +17,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-MAX_REINDEX_LIMIT = 100_000
 REINDEX_PAGE_SIZE = 500
 GLOBAL_REINDEX_DEDUPE_WINDOW_SECONDS = 60.0
 
@@ -183,6 +182,8 @@ class IndexingService:
             return False
         if self._vector_store is None:
             return False
+        if await self._run_storage(self._storage.list_vector_reindex_ids):
+            return False
 
         expected_ids = {str(mem["id"]) for mem in memory_dicts}
         try:
@@ -259,15 +260,16 @@ class IndexingService:
                     embedded_ids = set(indexed_content)
                     report["qdrant"]["missing_embedded"] = len(embedded_ids & missing)
                     reindexed_stale = embedded_ids & stale
+                    cleared_stale = 0
                     if reindexed_stale:
-                        await self._run_storage(
+                        cleared_stale = await self._run_storage(
                             self._storage.mark_vectors_reindexed,
                             {
                                 memory_id: indexed_content[memory_id]
                                 for memory_id in reindexed_stale
                             },
                         )
-                    report["qdrant"]["stale_reindexed"] = len(reindexed_stale)
+                    report["qdrant"]["stale_reindexed"] = cleared_stale
                     report["qdrant"]["errors"] += len(failures)
                     if failures:
                         report["qdrant"]["reindex_failures"] = failures
@@ -446,10 +448,7 @@ class IndexingService:
     async def _run_global_embedding_reindex(self) -> dict[str, Any]:
         total = 0
         try:
-            memories = await self._run_storage(
-                self._storage.list_memories,
-                limit=MAX_REINDEX_LIMIT,
-            )
+            memories = await self.fetch_all_memories()
             total = len(memories)
             memory_dicts = self._memory_dicts(memories)
             identity_fingerprint = self._fingerprint_memory_identity(memory_dicts)
@@ -541,9 +540,7 @@ class IndexingService:
         if project_id:
             all_memories = await self.fetch_all_project_memories(project_id)
         else:
-            all_memories = await self._run_storage(
-                self._storage.list_memories, project_id, None, MAX_REINDEX_LIMIT
-            )
+            all_memories = await self.fetch_all_memories()
         total = len(all_memories)
 
         crossref_sem = asyncio.Semaphore(10)
@@ -588,12 +585,16 @@ class IndexingService:
 
     async def fetch_all_project_memories(self, project_id: str) -> list[Memory]:
         """Fetch all memories for a project using pagination."""
+        return await self.fetch_all_memories(project_id=project_id)
+
+    async def fetch_all_memories(self, project_id: str | None = None) -> list[Memory]:
+        """Fetch all active memories using bounded storage pages."""
         all_memories: list[Memory] = []
         offset = 0
         while True:
             batch = await self._run_storage(
                 self._storage.list_memories,
-                project_id=project_id,
+                **({"project_id": project_id} if project_id is not None else {}),
                 limit=REINDEX_PAGE_SIZE,
                 offset=offset,
             )

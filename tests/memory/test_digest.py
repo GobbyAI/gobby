@@ -2238,6 +2238,64 @@ class TestReadUndigestedTurns:
         assert result[0][1] == "New answer"
 
     @pytest.mark.asyncio
+    async def test_clear_boundary_advances_absolute_pair_cursor(self, tmp_path) -> None:
+        import json
+
+        transcript = tmp_path / "transcript.jsonl"
+        self._write_claude_transcript(transcript, [("Old question", "Old answer")])
+        with open(transcript, "a") as transcript_file:
+            records = [
+                {
+                    "type": "user",
+                    "message": {
+                        "role": "user",
+                        "content": "<command-name>/clear</command-name>",
+                    },
+                },
+                {
+                    "type": "user",
+                    "message": {"role": "user", "content": "New question"},
+                },
+                {
+                    "type": "assistant",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "New answer"}],
+                    },
+                },
+            ]
+            for record in records:
+                transcript_file.write(json.dumps(record) + "\n")
+
+        result, next_index = await _read_undigested_turns(str(transcript), "claude", 1)
+        repeated, repeated_index = await _read_undigested_turns(
+            str(transcript), "claude", next_index
+        )
+        with open(transcript, "a") as transcript_file:
+            for record in (
+                {
+                    "type": "user",
+                    "message": {"role": "user", "content": "Later question"},
+                },
+                {
+                    "type": "assistant",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "Later answer"}],
+                    },
+                },
+            ):
+                transcript_file.write(json.dumps(record) + "\n")
+        later, later_index = await _read_undigested_turns(str(transcript), "claude", repeated_index)
+
+        assert result == [("New question", "New answer")]
+        assert next_index == 2
+        assert repeated == []
+        assert repeated_index == 2
+        assert later == [("Later question", "Later answer")]
+        assert later_index == 3
+
+    @pytest.mark.asyncio
     async def test_interrupted_turn_pairs_with_empty_response(self, tmp_path) -> None:
         """An interrupted turn (user without assistant) gets empty response."""
         transcript = tmp_path / "transcript.jsonl"

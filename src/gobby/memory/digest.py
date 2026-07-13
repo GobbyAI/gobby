@@ -77,6 +77,40 @@ def _render_prompt_template(template: str, values: dict[str, str], db: Any | Non
     return PromptLoader(db=db).render(template, values)
 
 
+def _extract_digest_pairs(parser: Any, turns: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    """Extract digestible pairs from a transcript slice."""
+    if not turns:
+        return []
+    messages = parser.extract_last_messages(turns, num_pairs=max(1, len(turns)))
+    messages = [
+        {**msg, "content": stripped}
+        for msg in messages
+        if (stripped := strip_injected_context(str(msg["content"]))).strip()
+    ]
+
+    pairs: list[tuple[str, str]] = []
+    current_prompt = ""
+    for msg in messages:
+        if msg["role"] == "user":
+            if current_prompt:
+                pairs.append((current_prompt, ""))
+            current_prompt = msg["content"]
+        elif msg["role"] == "assistant":
+            pairs.append((current_prompt or "", msg["content"]))
+            current_prompt = ""
+    if current_prompt:
+        pairs.append((current_prompt, ""))
+
+    def _is_lifecycle_prompt(prompt: str) -> bool:
+        normalized = re.sub(r"<[^>]+>", "", prompt).strip().lower()
+        return any(
+            normalized == command or normalized.startswith(command + " ")
+            for command in LIFECYCLE_CMDS
+        )
+
+    return [(prompt, response) for prompt, response in pairs if not _is_lifecycle_prompt(prompt)]
+
+
 def _provider_cancelled_result(session_id: str, exc: LLMProviderCancellation) -> dict[str, Any]:
     logger.info(
         "build_turn_and_digest: cancelled during provider shutdown for session %s: %s",
@@ -232,7 +266,8 @@ async def _read_undigested_turns(
 
     Uses extract_turns_since_clear() to respect /clear boundaries, then
     extract_last_messages() to get all pairs from the current segment.
-    Returns a bounded batch after the persisted pair index and its next index.
+    The persisted cursor counts digestible pairs across all transcript segments,
+    while returned content remains restricted to the current segment.
 
     Args:
         transcript_path: Path to the JSONL transcript file
@@ -271,61 +306,29 @@ async def _read_undigested_turns(
         if not segment:
             return [], digested_pair_index
 
-        # Apply the persisted cursor only after extracting the full current
-        # segment. A pre-slice makes cursors beyond the window look complete.
-        messages = parser.extract_last_messages(segment, num_pairs=max(1, len(segment)))
-        if not messages:
-            return [], digested_pair_index
-        messages = [
-            {**msg, "content": stripped}
-            for msg in messages
-            if (stripped := strip_injected_context(str(msg["content"]))).strip()
-        ]
-        if not messages:
-            return [], digested_pair_index
-
-        # Pair messages into (prompt, response) tuples
-        pairs: list[tuple[str, str]] = []
-        current_prompt = ""
-        for msg in messages:
-            if msg["role"] == "user":
-                # Consecutive user message means previous had no response (interrupted)
-                if current_prompt:
-                    pairs.append((current_prompt, ""))
-                current_prompt = msg["content"]
-            elif msg["role"] == "assistant":
-                pairs.append((current_prompt or "", msg["content"]))
-                current_prompt = ""
-        # Trailing user message without response
-        if current_prompt:
-            pairs.append((current_prompt, ""))
-
-        # Filter out lifecycle commands
-        pairs = [
-            (p, r)
-            for p, r in pairs
-            if not any(
-                p.strip().lower() == c or p.strip().lower().startswith(c + " ")
-                for c in LIFECYCLE_CMDS
-            )
-        ]
-
+        pairs = _extract_digest_pairs(parser, segment)
         if not pairs:
             return [], digested_pair_index
 
-        start_index = digested_pair_index
-        if start_index > len(pairs):
-            # A /clear can replace the active transcript segment. Reset to the
-            # start of that segment instead of repeatedly digesting its tail.
+        segment_turn_offset = len(turns) - len(segment)
+        prefix_turns = (
+            turns[:segment_turn_offset]
+            if segment_turn_offset >= 0 and turns[segment_turn_offset:] == segment
+            else []
+        )
+        segment_pair_offset = len(_extract_digest_pairs(parser, prefix_turns))
+        start_index = digested_pair_index - segment_pair_offset
+        if start_index < 0 or start_index > len(pairs):
             logger.debug(
-                "Resetting digest pair index after transcript boundary: index=%s pairs=%s",
-                start_index,
+                "Resetting digest cursor to active transcript segment: index=%s offset=%s pairs=%s",
+                digested_pair_index,
+                segment_pair_offset,
                 len(pairs),
             )
             start_index = 0
 
         batch = pairs[start_index : start_index + num_pairs]
-        return batch, start_index + len(batch)
+        return batch, segment_pair_offset + start_index + len(batch)
 
     except Exception as e:
         logger.warning(f"Failed to read undigested turns from {transcript_path}: {e}")
@@ -784,10 +787,7 @@ async def build_turn_and_digest(
 
         if resolved is None:
             title_digest_hash = hashlib.sha256(existing_digest.encode("utf-8")).hexdigest()[:16]
-            if (
-                getattr(session, "last_title_synthesis_digest_hash", None)
-                == title_digest_hash
-            ):
+            if getattr(session, "last_title_synthesis_digest_hash", None) == title_digest_hash:
                 return None
             await _run_sync_io(
                 session_manager.update_last_title_synthesis_digest_hash,

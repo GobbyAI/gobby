@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from gobby.memory.services.indexing import MAX_REINDEX_LIMIT, IndexingService
+from gobby.memory.services.indexing import REINDEX_PAGE_SIZE, IndexingService
 from gobby.storage.memories import Memory
 
 pytestmark = pytest.mark.unit
@@ -207,6 +207,22 @@ async def test_reconcile_replaces_stale_vector_and_clears_current_marker() -> No
 
 
 @pytest.mark.asyncio
+async def test_reconcile_reports_only_content_qualified_stale_clears() -> None:
+    stale = _memory("stale", "Current content")
+    stale.vector_needs_reindex = True
+    storage = _MemoryStorage([stale])
+    storage.mark_vectors_reindexed = MagicMock(return_value=0)
+    vector_store = _VectorStore()
+    vector_store.ids = ["stale"]
+
+    report = await _service(storage, vector_store).reconcile_stores()
+
+    assert report["qdrant"]["stale_found"] == 1
+    assert report["qdrant"]["stale_reindexed"] == 0
+    storage.mark_vectors_reindexed.assert_called_once_with({"stale": "Current content"})
+
+
+@pytest.mark.asyncio
 async def test_reconcile_dry_run_reports_missing_and_orphans_without_mutating() -> None:
     storage = _MemoryStorage([_memory("missing", "Missing")])
     vector_store = _VectorStore()
@@ -367,6 +383,60 @@ async def test_global_reindex_skips_unchanged_memory_snapshot() -> None:
 
 
 @pytest.mark.asyncio
+async def test_global_reindex_does_not_skip_durable_stale_marker() -> None:
+    storage = _MemoryStorage([_memory("mem-1", "alpha")])
+    vector_store = _VectorStore()
+    service = _service(storage, vector_store)
+
+    await service.reindex_embeddings()
+    storage.stale_ids.add("mem-1")
+    second = await service.reindex_embeddings()
+
+    assert second["success"] is True
+    assert second["embeddings_generated"] == 1
+    assert second["skipped"] is False
+    assert vector_store.rebuild.await_count == 2
+    assert storage.stale_ids == set()
+
+
+@pytest.mark.asyncio
+async def test_global_reindex_pages_every_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("gobby.memory.services.indexing.REINDEX_PAGE_SIZE", 2)
+    storage = _MemoryStorage([_memory(f"mem-{index}", str(index)) for index in range(5)])
+    vector_store = _VectorStore()
+
+    result = await _service(storage, vector_store).reindex_embeddings()
+
+    assert result["success"] is True
+    assert result["embeddings_generated"] == 5
+    assert vector_store.ids == [f"mem-{index}" for index in range(5)]
+    assert storage.list_calls == [(None, 2, 0), (None, 2, 2), (None, 2, 4)]
+
+
+@pytest.mark.asyncio
+async def test_global_index_rebuild_pages_every_crossref_memory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("gobby.memory.services.indexing.REINDEX_PAGE_SIZE", 2)
+    storage = _MemoryStorage([_memory(f"mem-{index}", str(index)) for index in range(5)])
+    service = _service(storage, _VectorStore())
+    service._crossref_service.rebuild_for_memory = AsyncMock(return_value=1)
+
+    report = await service.rebuild_indices()
+
+    assert report["crossrefs"] == {"memories_processed": 5, "crossrefs_created": 5}
+    assert service._crossref_service.rebuild_for_memory.await_count == 5
+    assert storage.list_calls == [
+        (None, 2, 0),
+        (None, 2, 2),
+        (None, 2, 4),
+        (None, 2, 0),
+        (None, 2, 2),
+        (None, 2, 4),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_global_reindex_reads_storage_through_run_storage() -> None:
     storage = _MemoryStorage([_memory("mem-1", "alpha")])
     vector_store = _VectorStore()
@@ -385,7 +455,7 @@ async def test_global_reindex_reads_storage_through_run_storage() -> None:
     assert getattr(func, "__self__", None) is storage
     assert getattr(func, "__func__", None) is _MemoryStorage.list_memories
     assert args == ()
-    assert kwargs == {"limit": MAX_REINDEX_LIMIT}
+    assert kwargs == {"limit": REINDEX_PAGE_SIZE, "offset": 0}
 
 
 @pytest.mark.asyncio
