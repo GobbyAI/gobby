@@ -22,7 +22,9 @@ class CronConfig(BaseModel):
     )
     running_timeout_seconds: int = Field(
         default=600,
-        description="Mark cron run records failed after this many seconds in running state",
+        description=(
+            "Maximum duration for bounded cron actions and stale running cron-run records"
+        ),
     )
     cleanup_after_days: int = Field(
         default=30,

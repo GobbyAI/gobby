@@ -206,6 +206,34 @@ class CronRunStorageMixin:
         )
         return row["cnt"] if row else 0
 
+    def fail_stale_running_runs(self, timeout_seconds: int) -> int:
+        """Fail running cron rows older than the configured execution timeout."""
+        if (
+            not isinstance(timeout_seconds, int)
+            or isinstance(timeout_seconds, bool)
+            or timeout_seconds <= 0
+        ):
+            raise ValueError("timeout_seconds must be a positive integer")
+
+        now = utc_now()
+        cutoff = now - timedelta(seconds=timeout_seconds)
+        cursor = self.db.execute(
+            """
+            UPDATE cron_runs
+               SET status = 'failed',
+                   completed_at = %s,
+                   error = %s
+             WHERE status = 'running'
+               AND COALESCE(started_at, triggered_at, created_at) < %s
+            """,
+            (
+                now,
+                f"Cron run exceeded running timeout ({timeout_seconds}s)",
+                cutoff,
+            ),
+        )
+        return cursor.rowcount
+
     def has_running_run(self, cron_job_id: str) -> bool:
         """Return whether a cron job already has pending/running cron-owned work."""
         row = self.db.fetchone(

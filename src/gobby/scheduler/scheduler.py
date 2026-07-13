@@ -12,7 +12,6 @@ from typing import Literal
 
 from gobby.config.cron import CronConfig
 from gobby.scheduler.executor import CronExecutor
-from gobby.shutdown_intent import ShutdownIntent, read_active_shutdown_intent
 from gobby.storage.cron import CronJobStorage, compute_next_run, is_removed_automation_job
 from gobby.storage.cron_models import CronJob, CronRun
 from gobby.utils.project_context import (
@@ -23,8 +22,6 @@ from gobby.utils.project_context import (
 from gobby.utils.session_context import reset_session_context, set_session_context
 
 logger = logging.getLogger(__name__)
-PLANNED_RESTART_MARKER_MIN_AGE_SECONDS = 120.0
-PLANNED_RESTART_MARKER_BUFFER_SECONDS = 120.0
 CronRunRejectionCode = Literal["cron_job_already_running", "cron_max_concurrent_jobs"]
 
 
@@ -130,6 +127,13 @@ class CronScheduler:
                 swept += 1
         return swept
 
+    def _sweep_stale_running_runs(self) -> int:
+        """Fail timed-out runs so they stop consuming scheduler capacity."""
+        swept = self.storage.fail_stale_running_runs(self.config.running_timeout_seconds)
+        if swept:
+            logger.warning("Marked %s stale cron run(s) failed before dispatch", swept)
+        return swept
+
     async def stop(self) -> None:
         """Stop the scheduler loops gracefully."""
         self._running = False
@@ -177,6 +181,7 @@ class CronScheduler:
         if removed:
             logger.info("Deleted %s removed automation cron job(s)", removed)
 
+        self._sweep_stale_running_runs()
         self._sweep_orphaned_active_runs()
 
         due_jobs = self.storage.get_due_jobs()
@@ -325,26 +330,6 @@ class CronScheduler:
         idx = min(consecutive_failures - 1, len(delays) - 1)
         return delays[idx]
 
-    def _planned_restart_source(self) -> str | None:
-        record = read_active_shutdown_intent(
-            max_age_seconds=self._planned_restart_marker_max_age_seconds()
-        )
-        if record is None or record.stale or record.error:
-            return None
-        if record.intent is not ShutdownIntent.RESTART:
-            return None
-        return record.source
-
-    def _planned_restart_marker_max_age_seconds(self) -> float:
-        return max(
-            PLANNED_RESTART_MARKER_MIN_AGE_SECONDS,
-            float(
-                self.config.running_timeout_seconds
-                + self.config.check_interval_seconds
-                + PLANNED_RESTART_MARKER_BUFFER_SECONDS
-            ),
-        )
-
     def _update_job_bookkeeping(self, job: CronJob, **fields: object) -> CronJob | None:
         if job.is_system:
             return self.storage.update_system_job_bookkeeping(job.id, **fields)
@@ -361,6 +346,7 @@ class CronScheduler:
         if not job:
             return None
 
+        self._sweep_stale_running_runs()
         self._sweep_orphaned_active_runs()
 
         run, running_count = self.storage.create_run_if_admitted(

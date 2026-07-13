@@ -413,11 +413,11 @@ async def test_due_jobs_skip_removed_automation_jobs_returned_after_cleanup(
 
 
 @pytest.mark.asyncio
-async def test_old_running_runs_are_not_failed_by_scheduler_loop(
+async def test_stale_tracked_run_is_failed_and_slot_reused(
     cron_storage: CronJobStorage,
     mock_executor: CronExecutor,
 ) -> None:
-    """Old running rows are left active during the normal scheduler loop."""
+    """The scheduler heartbeat reclaims stale runs even when locally tracked."""
     config = CronConfig(
         check_interval_seconds=60,
         max_concurrent_jobs=1,
@@ -435,8 +435,7 @@ async def test_old_running_runs_are_not_failed_by_scheduler_loop(
     stale_run = cron_storage.create_run(stale_job.id)
     old = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
     cron_storage.update_run(stale_run.id, status="running", started_at=old)
-    # A tracked run must never be failed by the loop, no matter how old:
-    # liveness, not age, decides (long handlers can legitimately run for hours)
+    # Simulate a run that is still tracked locally but has exceeded its deadline.
     scheduler._active_run_ids.add(stale_run.id)
     due_job = cron_storage.create_job(
         project_id=PROJECT_ID,
@@ -449,12 +448,17 @@ async def test_old_running_runs_are_not_failed_by_scheduler_loop(
     cron_storage.update_job(due_job.id, next_run_at=old)
 
     await scheduler._check_due_jobs()
+    await wait_for_async_condition(
+        lambda: mock_executor.execute.await_count >= 1,
+        description="dispatch after stale cron run sweep",
+    )
 
     refreshed_stale_run = cron_storage.get_run(stale_run.id)
     assert refreshed_stale_run is not None
-    assert refreshed_stale_run.status == "running"
-    assert refreshed_stale_run.error is None
-    mock_executor.execute.assert_not_awaited()
+    assert refreshed_stale_run.status == "failed"
+    assert refreshed_stale_run.error == "Cron run exceeded running timeout (60s)"
+    assert refreshed_stale_run.completed_at is not None
+    mock_executor.execute.assert_awaited_once()
 
 
 @pytest.mark.asyncio

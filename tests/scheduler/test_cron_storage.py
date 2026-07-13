@@ -796,6 +796,63 @@ def test_reconcile_interrupted_runs_preserves_active_children(
     assert refreshed_stale.status == "failed"
 
 
+def test_fail_stale_running_runs_uses_configured_cutoff(
+    cron_storage: CronJobStorage,
+) -> None:
+    """Only running rows older than the supplied timeout are failed."""
+    stale_job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Stale running",
+        schedule_type="cron",
+        action_type="handler",
+        action_config={"handler": "stale"},
+        cron_expr="0 * * * *",
+    )
+    fresh_job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Fresh running",
+        schedule_type="cron",
+        action_type="handler",
+        action_config={"handler": "fresh"},
+        cron_expr="0 * * * *",
+    )
+    stale_run = cron_storage.create_run(stale_job.id)
+    fresh_run = cron_storage.create_run(fresh_job.id)
+    assert stale_run is not None
+    assert fresh_run is not None
+    cron_storage.update_run(
+        stale_run.id,
+        status="running",
+        started_at=datetime.now(UTC) - timedelta(minutes=5),
+    )
+    cron_storage.update_run(
+        fresh_run.id,
+        status="running",
+        started_at=datetime.now(UTC),
+    )
+
+    failed = cron_storage.fail_stale_running_runs(60)
+
+    refreshed_stale = cron_storage.get_run(stale_run.id)
+    refreshed_fresh = cron_storage.get_run(fresh_run.id)
+    assert failed == 1
+    assert refreshed_stale is not None
+    assert refreshed_stale.status == "failed"
+    assert refreshed_stale.error == "Cron run exceeded running timeout (60s)"
+    assert refreshed_stale.completed_at is not None
+    assert refreshed_fresh is not None
+    assert refreshed_fresh.status == "running"
+
+
+@pytest.mark.parametrize("timeout_seconds", [0, -1, True, 1.5, "60"])
+def test_fail_stale_running_runs_rejects_invalid_timeout(
+    cron_storage: CronJobStorage,
+    timeout_seconds: object,
+) -> None:
+    with pytest.raises(ValueError, match="timeout_seconds must be a positive integer"):
+        cron_storage.fail_stale_running_runs(timeout_seconds)
+
+
 def test_cleanup_old_runs(cron_storage: CronJobStorage) -> None:
     """cleanup_old_runs deletes runs older than threshold."""
     job = cron_storage.create_job(

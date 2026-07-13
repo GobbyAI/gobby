@@ -87,6 +87,14 @@ class CronExecutor:
 
         self._background_tasks.clear()
 
+    async def _wait_for_action(self, action_type: str, action: Awaitable[object]) -> object:
+        """Await a cron action within the scheduler's steady-state timeout."""
+        timeout = self.config.running_timeout_seconds
+        try:
+            return await asyncio.wait_for(action, timeout=timeout)
+        except TimeoutError as exc:
+            raise RuntimeError(f"{action_type} cron action timed out after {timeout}s") from exc
+
     async def execute(self, job: CronJob, run: CronRun) -> CronRun:
         """Execute a cron job and update the run record.
 
@@ -104,13 +112,22 @@ class CronExecutor:
         try:
             raw_output: object
             if job.action_type == "agent_spawn":
-                raw_output = await self._execute_agent_spawn(job)
+                raw_output = await self._wait_for_action(
+                    job.action_type,
+                    self._execute_agent_spawn(job),
+                )
             elif job.action_type == "pipeline":
-                raw_output = await self._execute_pipeline(job, run)
+                raw_output = await self._wait_for_action(
+                    job.action_type,
+                    self._execute_pipeline(job, run),
+                )
             elif job.action_type == "shell":
                 raw_output = await self._execute_shell(job)
             elif job.action_type == "handler":
-                raw_output = await self._execute_handler(job)
+                raw_output = await self._wait_for_action(
+                    job.action_type,
+                    self._execute_handler(job),
+                )
             elif job.action_type == "dispatcher":
                 raw_output = await self._execute_dispatcher(job)
             else:
@@ -425,12 +442,15 @@ class CronExecutor:
         token = set_project_context(project_ctx)
         try:
             try:
-                completed_execution = await self.pipeline_executor.execute(
-                    pipeline=pipeline,
-                    inputs=inputs,
-                    project_id=project_id,
-                    execution_id=execution_id,
-                    session_id=session_id,
+                completed_execution = await self._wait_for_action(
+                    "pipeline",
+                    self.pipeline_executor.execute(
+                        pipeline=pipeline,
+                        inputs=inputs,
+                        project_id=project_id,
+                        execution_id=execution_id,
+                        session_id=session_id,
+                    ),
                 )
             except ApprovalRequired:
                 return
