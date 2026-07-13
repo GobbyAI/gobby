@@ -73,13 +73,93 @@ def test_python_and_node_evidence_generates_expected_commands(tmp_path: Path) ->
 
     result = refresh_project_verification_deterministic(tmp_path)
 
-    assert result.after["unit_tests"] == "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v"
-    assert result.after["type_check"] == "uv run mypy src/ --no-incremental --strict"
-    assert result.after["lint"] == "uv run ruff check src/"
-    assert result.after["format"] == "uv run ruff format --check src/"
+    assert result.after["unit_tests"] == "pytest tests/ -v"
+    assert result.after["type_check"] == "mypy src/ --no-incremental --strict"
+    assert result.after["lint"] == "ruff check src/"
+    assert result.after["format"] == "ruff format --check src/"
     assert result.after["custom"]["frontend_tests"] == "cd web && npm test"
     assert result.after["custom"]["frontend_lint"] == "cd web && npm run lint"
     assert result.after["custom"]["ts_check"] == "cd web && npm run type-check"
+
+
+@pytest.mark.parametrize(
+    ("lockfile", "runner", "build_command"),
+    [
+        ("uv.lock", "uv run", "uv build"),
+        ("poetry.lock", "poetry run", "poetry build"),
+        ("pdm.lock", "pdm run", "pdm build"),
+    ],
+)
+def test_python_lockfile_selects_runner_and_build_command(
+    tmp_path: Path,
+    lockfile: str,
+    runner: str,
+    build_command: str,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='example'\n[build-system]\nrequires=[]\n",
+        encoding="utf-8",
+    )
+    (tmp_path / lockfile).touch()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+
+    result = refresh_project_verification_deterministic(tmp_path)
+
+    assert result.after["unit_tests"] == f"{runner} pytest tests/ -v"
+    assert result.after["type_check"] == f"{runner} mypy src/"
+    assert result.after["lint"] == f"{runner} ruff check src/"
+    assert result.after["format"] == f"{runner} ruff format --check src/"
+    assert result.after["build"] == build_command
+    assert "GOBBY_TEST_PROTECT" not in result.after["unit_tests"]
+
+
+def test_python_lockfile_precedence_is_uv_then_poetry_then_pdm(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='example'\n",
+        encoding="utf-8",
+    )
+    for lockfile in ("pdm.lock", "poetry.lock", "uv.lock"):
+        (tmp_path / lockfile).touch()
+    (tmp_path / "tests").mkdir()
+
+    bundle = collect_evidence(tmp_path)
+    result = refresh_project_verification_deterministic(tmp_path)
+
+    assert bundle.python is not None
+    assert bundle.python.package_manager == "uv"
+    assert result.after["unit_tests"] == "uv run pytest tests/ -v"
+
+
+def test_python_without_lockfile_uses_direct_tools_without_gobby_prefix(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='example'\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tests").mkdir()
+
+    bundle = collect_evidence(tmp_path)
+    result = refresh_project_verification_deterministic(tmp_path)
+
+    assert bundle.python is not None
+    assert bundle.python.package_manager is None
+    assert result.after["unit_tests"] == "pytest tests/ -v"
+    assert "GOBBY_TEST_PROTECT" not in result.after["unit_tests"]
+
+
+def test_gobby_project_name_enables_test_protection_only_with_positive_identity(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='gobby'\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "uv.lock").touch()
+    (tmp_path / "tests").mkdir()
+
+    result = refresh_project_verification_deterministic(tmp_path)
+
+    assert result.after["unit_tests"] == "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v"
 
 
 def test_rust_nextest_build_and_doc_tests_are_detected(tmp_path: Path) -> None:
@@ -229,7 +309,7 @@ async def test_synthesis_uses_profile_candidates_and_accepts_evidenced_json(
         {
             "commands": {
                 "unit_tests": {
-                    "command": "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v",
+                    "command": "pytest tests/ -v",
                     "confidence": 0.91,
                     "sources": ["pyproject.toml"],
                     "rationale": "tests directory exists",
@@ -241,7 +321,7 @@ async def test_synthesis_uses_profile_candidates_and_accepts_evidenced_json(
 
     result = await synthesize_verification_commands(service, config, bundle, candidates)
 
-    assert result.accepted["unit_tests"].command == "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v"
+    assert result.accepted["unit_tests"].command == "pytest tests/ -v"
     assert service.request is not None
     assert service.request.profile == "feature_mid"
     assert service.request.candidates == tuple(config.candidates)

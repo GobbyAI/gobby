@@ -63,10 +63,8 @@ def test_refresh_verification_fix_writes_project_json(
 
     assert result.exit_code == 0
     project_data = json.loads((tmp_path / ".gobby" / "project.json").read_text(encoding="utf-8"))
-    assert (
-        project_data["verification"]["unit_tests"] == "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v"
-    )
-    assert project_data["verification"]["lint"] == "uv run ruff check src/"
+    assert project_data["verification"]["unit_tests"] == "pytest tests/ -v"
+    assert project_data["verification"]["lint"] == "ruff check src/"
 
 
 def test_refresh_verification_json_output(
@@ -82,7 +80,7 @@ def test_refresh_verification_json_output(
     assert result.exit_code == 0
     payload = json.loads(result.output)
     assert payload["changed"] is True
-    assert payload["after"]["unit_tests"] == "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v"
+    assert payload["after"]["unit_tests"] == "pytest tests/ -v"
     assert payload["ai"]["mode"] == "off"
 
 

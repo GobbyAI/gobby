@@ -95,6 +95,8 @@ class PythonEvidence:
     has_ruff_config: bool
     has_mypy_config: bool
     mypy_strict: bool
+    package_manager: str | None
+    project_name: str | None
 
 
 @dataclass(frozen=True)
@@ -221,6 +223,17 @@ def _collect_pyproject(bundle: EvidenceBundle) -> None:
     tool = data.get("tool", {})
     if not isinstance(tool, dict):
         tool = {}
+    project = data.get("project", {})
+    if not isinstance(project, dict):
+        project = {}
+    project_name = project.get("name")
+    poetry = tool.get("poetry", {})
+    if not isinstance(poetry, dict):
+        poetry = {}
+    if not isinstance(project_name, str):
+        project_name = poetry.get("name")
+    if not isinstance(project_name, str):
+        project_name = None
     mypy = tool.get("mypy", {})
     pytest_cfg = tool.get("pytest")
     bundle.python = PythonEvidence(
@@ -232,6 +245,8 @@ def _collect_pyproject(bundle: EvidenceBundle) -> None:
         has_ruff_config=isinstance(tool.get("ruff"), dict),
         has_mypy_config=isinstance(mypy, dict),
         mypy_strict=isinstance(mypy, dict) and mypy.get("strict") is True,
+        package_manager=_python_package_manager(bundle.root),
+        project_name=project_name,
     )
     bundle.items.append(
         EvidenceItem(
@@ -586,6 +601,18 @@ def _looks_like_doc_command(command: str) -> bool:
 def _read_text(path: Path) -> str:
     with path.open("rb") as handle:
         return handle.read(MAX_FILE_BYTES).decode("utf-8", errors="replace")
+
+
+def _python_package_manager(root: Path) -> str | None:
+    """Detect the Python runner with deterministic lockfile precedence."""
+    for lockfile, manager in (
+        ("uv.lock", "uv"),
+        ("poetry.lock", "poetry"),
+        ("pdm.lock", "pdm"),
+    ):
+        if (root / lockfile).is_file():
+            return manager
+    return None
 
 
 def _existing_unique_files(root: Path, filenames: tuple[str, ...]) -> list[Path]:

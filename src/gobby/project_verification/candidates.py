@@ -318,31 +318,46 @@ def _python_candidates(bundle: EvidenceBundle, *, custom: bool) -> list[CommandC
     if not python:
         return []
     target = "src/" if python.has_src else "."
+    runner = {
+        "uv": "uv run ",
+        "poetry": "poetry run ",
+        "pdm": "pdm run ",
+    }.get(python.package_manager or "", "")
+    test_prefix = (
+        "GOBBY_TEST_PROTECT=1 "
+        if python.project_name and python.project_name.strip().casefold() == "gobby"
+        else ""
+    )
     candidates: list[CommandCandidate] = []
     if python.has_tests or python.has_pytest_config:
         candidates.append(
             _candidate(
                 "unit_tests",
-                "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v",
+                f"{test_prefix}{runner}pytest tests/ -v",
                 0.58,
                 "pyproject.toml",
                 "manifest",
             )
         )
-    type_command = f"uv run mypy {target}"
+    type_command = f"{runner}mypy {target}"
     if python.mypy_strict:
         type_command = f"{type_command} --no-incremental --strict"
     candidates.append(_candidate("type_check", type_command, 0.68, "pyproject.toml", "manifest"))
     candidates.append(
-        _candidate("lint", f"uv run ruff check {target}", 0.64, "pyproject.toml", "manifest")
+        _candidate("lint", f"{runner}ruff check {target}", 0.64, "pyproject.toml", "manifest")
     )
     candidates.append(
         _candidate(
-            "format", f"uv run ruff format --check {target}", 0.64, "pyproject.toml", "manifest"
+            "format", f"{runner}ruff format --check {target}", 0.64, "pyproject.toml", "manifest"
         )
     )
     if python.has_build_system:
-        candidates.append(_candidate("build", "uv build", 0.56, "pyproject.toml", "manifest"))
+        build_command = {
+            "uv": "uv build",
+            "poetry": "poetry build",
+            "pdm": "pdm build",
+        }.get(python.package_manager or "", "python -m build")
+        candidates.append(_candidate("build", build_command, 0.56, "pyproject.toml", "manifest"))
     if custom:
         return [_as_custom(candidate, f"python_{candidate.name}") for candidate in candidates]
     return candidates
@@ -548,6 +563,10 @@ def _is_format_check(lowered: str) -> bool:
 def _is_build_command(lowered: str) -> bool:
     build_prefixes = (
         "uv build",
+        "poetry build",
+        "pdm build",
+        "python -m build",
+        "python3 -m build",
         "go build",
         "cargo build",
         "npm run build",
@@ -561,6 +580,9 @@ def _is_build_command(lowered: str) -> bool:
         token in lowered
         for token in (
             "&& uv build",
+            "&& poetry build",
+            "&& pdm build",
+            "&& python -m build",
             "&& go build",
             "&& cargo build",
             "&& npm run build",
