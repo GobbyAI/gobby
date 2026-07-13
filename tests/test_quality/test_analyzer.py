@@ -54,6 +54,32 @@ def test_rejects_value(value):
     assert codes == set()
 
 
+def test_bare_pytest_context_managers_count_as_assertions(tmp_path: Path) -> None:
+    codes = _issue_codes(
+        tmp_path,
+        """
+from pytest import deprecated_call, raises, warns
+
+
+def test_raises():
+    with raises(ValueError):
+        raise ValueError
+
+
+def test_warns():
+    with warns(UserWarning):
+        pass
+
+
+def test_deprecated_call():
+    with deprecated_call():
+        pass
+""",
+    )
+
+    assert codes == set()
+
+
 def test_private_assertion_helper_counts_as_assertion(tmp_path: Path) -> None:
     codes = _issue_codes(
         tmp_path,

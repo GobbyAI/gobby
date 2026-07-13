@@ -239,7 +239,7 @@ def _is_nonempty_string(node: ast.expr) -> bool:
 
 def _is_strong_assertion_call(call_name: str) -> bool:
     leaf_name = call_name.rsplit(".", 1)[-1]
-    if call_name in {"pytest.raises", "pytest.warns", "pytest.deprecated_call"}:
+    if leaf_name in {"raises", "warns", "deprecated_call"}:
         return True
     if call_name.startswith("self.assert") or call_name.startswith("cls.assert"):
         return True
