@@ -9,7 +9,11 @@ from typing import Any
 
 import pytest
 
-from gobby.plans.consumer_sweep import ConsumerSweepResult, run_consumer_sweep
+from gobby.plans.consumer_sweep import (
+    ConsumerSweepResult,
+    _destructive_target_paths,
+    run_consumer_sweep,
+)
 from gobby.plans.parser import parse_plan
 
 pytestmark = pytest.mark.unit
@@ -213,6 +217,54 @@ def _write_file_plan(
         encoding="utf-8",
     )
     return path
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "deletions only",
+        "Delete File",
+        "remove file",
+        "DROP FILE",
+        "Renamed File",
+        "MOVED\tFILE",
+        "deleted entirely",
+        "Removed Entirely",
+    ],
+)
+def test_destructive_file_marker_matrix(marker: str) -> None:
+    assert _destructive_target_paths(f"`src/service.py` ({marker})") == {"src/service.py"}
+
+
+@pytest.mark.parametrize("near_miss", ["UNRENAMED FILE", "MOVED FILES"])
+def test_destructive_file_marker_respects_word_boundaries(near_miss: str) -> None:
+    assert _destructive_target_paths(f"`src/service.py` ({near_miss})") == set()
+
+
+@pytest.mark.parametrize("marker", ["RENAMED FILE", "MOVED FILE"])
+def test_renamed_and_moved_markers_trigger_file_level_sweep(
+    tmp_path: Path,
+    marker: str,
+) -> None:
+    storage = _Storage()
+    storage.file_consumers = {"src/service.py": ("src/api.py",)}
+    plan = parse_plan(
+        _write_file_plan(
+            tmp_path,
+            "Update the service file.",
+            target_line=f"Target: `src/service.py` ({marker})",
+        ),
+        parse_mode="draft",
+    )
+
+    result = run_consumer_sweep(
+        plan,
+        project_id="project-1",
+        code_index=_CodeIndex(storage),
+    )
+
+    assert result.valid is False
+    assert result.issues[0].missing_consumers == ("src/api.py",)
 
 
 def test_destructive_symbol_change_with_unlisted_direct_caller_fails(tmp_path: Path) -> None:
