@@ -203,10 +203,7 @@ def create_workflows_registry(
         name="evaluate_workflow",
         description="Validate a workflow definition — structural and semantic checks without executing.",
     )
-    async def _evaluate_workflow(
-        name: str,
-        project_path: str | None = None,
-    ) -> dict[str, Any]:
+    async def _evaluate_workflow(name: str) -> dict[str, Any]:
         """
         Validate a workflow definition for structural and semantic issues.
 
@@ -217,8 +214,6 @@ def create_workflows_registry(
 
         Args:
             name: Workflow name to evaluate.
-            project_path: Optional project path for resolution.
-
         Returns:
             Dict with valid bool, items list, step_trace, and lifecycle_path.
         """
@@ -226,15 +221,13 @@ def create_workflows_registry(
 
         mcp_inventory = _workflow_mcp_inventory(internal_manager, mcp_manager)
 
-        resolved_path: str | None = project_path
-        if not resolved_path:
-            path = get_workflow_project_path()
-            resolved_path = str(path) if path else None
+        project_ctx = get_project_context()
+        project_id = project_ctx.get("id") if project_ctx else None
 
         eval_result = await evaluate_workflow(
             name,
             _loader,
-            resolved_path,
+            project_id,
             mcp_inventory,
         )
 

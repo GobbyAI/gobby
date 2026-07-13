@@ -604,7 +604,7 @@ class TestRegistryIntegration:
         assert "create_pipeline" in tool_names
 
     @pytest.mark.asyncio
-    async def test_evaluate_workflow_uses_internal_mcp_inventory(self) -> None:
+    async def test_evaluate_workflow_uses_internal_mcp_inventory(self, monkeypatch) -> None:
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
         from gobby.workflows.definitions import WorkflowDefinition, WorkflowStep
 
@@ -625,8 +625,11 @@ class TestRegistryIntegration:
                 return [FakeInternalRegistry()]
 
         class FakeLoader:
+            project_ids: list[str | None] = []
+
             @staticmethod
-            async def load_workflow(name: str, project_path: str | None = None):
+            async def load_workflow(name: str, project_id: str | None = None):
+                FakeLoader.project_ids.append(project_id)
                 return WorkflowDefinition(
                     name=name,
                     type="step",
@@ -638,6 +641,11 @@ class TestRegistryIntegration:
                     ],
                 )
 
+        project_id = "11111111-1111-4111-8111-111111111111"
+        monkeypatch.setattr(
+            "gobby.mcp_proxy.tools.workflows.get_project_context",
+            lambda: {"id": project_id},
+        )
         registry = create_workflows_registry(
             loader=FakeLoader(),
             internal_manager=FakeInternalManager(),
@@ -648,6 +656,7 @@ class TestRegistryIntegration:
         codes = {item["code"] for item in result["items"]}
         assert "SEMANTIC_CHECKS_SKIPPED" not in codes
         assert "UNKNOWN_MCP_TOOL" in codes
+        assert FakeLoader.project_ids == [project_id]
 
 
 # =============================================================================

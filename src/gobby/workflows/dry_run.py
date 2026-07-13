@@ -138,7 +138,7 @@ _BUILTIN_VARIABLES = {
 async def evaluate_workflow(
     name: str,
     workflow_loader: WorkflowLoader,
-    project_path: str | None = None,
+    project_id: str | None = None,
     mcp_manager: MCPInventoryProtocol | None = None,
 ) -> WorkflowEvaluation:
     """
@@ -147,7 +147,7 @@ async def evaluate_workflow(
     Args:
         name: Workflow name to evaluate.
         workflow_loader: WorkflowLoader instance.
-        project_path: Optional project path for resolution.
+        project_id: Optional project UUID for scoped resolution.
         mcp_manager: Optional MCPClientManager for semantic MCP tool checks.
 
     Returns:
@@ -157,7 +157,7 @@ async def evaluate_workflow(
 
     # --- Phase A: Load & Basic Validation ---
     try:
-        definition = await workflow_loader.load_workflow(name, project_path)
+        definition = await workflow_loader.load_workflow(name, project_id)
     except ValueError as e:
         result.valid = False
         result.items.append(

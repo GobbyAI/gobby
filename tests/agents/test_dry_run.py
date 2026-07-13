@@ -188,7 +188,7 @@ class TestRuntimeEnvironment:
 class TestWorkflowEvaluation:
     @pytest.mark.asyncio
     async def test_workflow_eval_embedded(
-        self, temp_db: HubDatabase, mock_workflow_loader: MagicMock
+        self, temp_db: HubDatabase, mock_workflow_loader: MagicMock, monkeypatch
     ) -> None:
         """workflow_evaluation populated with structural results."""
         db = _setup_db(temp_db)
@@ -205,6 +205,11 @@ class TestWorkflowEvaluation:
             ],
         )
         mock_workflow_loader.load_workflow.return_value = wf_definition
+        project_id = "11111111-1111-4111-8111-111111111111"
+        monkeypatch.setattr(
+            "gobby.utils.project_context.get_project_context",
+            lambda: {"id": project_id},
+        )
 
         result = await evaluate_spawn(
             agent="test-agent",
@@ -215,6 +220,10 @@ class TestWorkflowEvaluation:
         assert result.workflow_evaluation is not None
         assert result.workflow_evaluation.valid is True
         assert len(result.workflow_evaluation.step_trace) == 2
+        mock_workflow_loader.validate_workflow_for_agent.assert_awaited_once_with(
+            "worker", project_id
+        )
+        mock_workflow_loader.load_workflow.assert_awaited_once_with("worker", project_id)
 
     @pytest.mark.asyncio
     async def test_workflow_invalid_for_agent(

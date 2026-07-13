@@ -397,7 +397,7 @@ class WorkflowLoader(WorkflowLoaderSyncMixin):
     async def validate_workflow_for_agent(
         self,
         workflow_name: str,
-        project_path: Path | str | None = None,
+        project_id: str | None = None,
     ) -> tuple[bool, str | None]:
         """
         Validate that a workflow can be used for agent spawning.
@@ -406,7 +406,7 @@ class WorkflowLoader(WorkflowLoaderSyncMixin):
         explicitly activated for agents. Only step workflows are valid.
         """
         try:
-            workflow = await self.load_workflow(workflow_name, project_path=project_path)
+            workflow = await self.load_workflow(workflow_name, project_id)
         except ValueError as e:
             return False, f"Failed to load workflow '{workflow_name}': {e}"
 

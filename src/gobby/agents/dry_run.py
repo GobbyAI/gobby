@@ -115,6 +115,11 @@ async def evaluate_spawn(
     """
     result = SpawnEvaluation(can_spawn=True, agent_name=agent)
 
+    from gobby.utils.project_context import get_project_context
+
+    project_ctx = get_project_context()
+    workflow_project_id = project_ctx.get("id") if project_ctx else None
+
     # ---- Layer 1: Agent Definition Resolution ----
     agent_body = _load_agent_body(agent, db)
 
@@ -174,7 +179,7 @@ async def evaluate_spawn(
         if workflow_loader is not None:
             is_valid, error_msg = await workflow_loader.validate_workflow_for_agent(
                 effective_workflow,
-                project_path,
+                workflow_project_id,
             )
             if not is_valid:
                 result.can_spawn = False
@@ -312,7 +317,7 @@ async def evaluate_spawn(
         wf_eval = await evaluate_workflow(
             effective_workflow,
             workflow_loader,
-            project_path,
+            workflow_project_id,
             mcp_manager,
         )
         result.workflow_evaluation = wf_eval
