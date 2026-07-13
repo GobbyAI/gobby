@@ -6,6 +6,7 @@ import inspect
 import textwrap
 from pathlib import Path
 from typing import get_args
+from unittest.mock import patch
 
 import pytest
 
@@ -160,6 +161,52 @@ def test_fresh_emission(tmp_path: Path) -> None:
     assert set(by_section) == {"1.1", "1.2"}
     assert "covers:demo-plan:1.1:1.1.1" in by_section["1.1"].labels
     assert "covers:demo-plan:1.2:1.2.1" in by_section["1.2"].labels
+
+
+def test_fresh_emission_restores_body_after_post_write_validation_failure(
+    tmp_path: Path,
+) -> None:
+    plan = _plan_two_deliverables(tmp_path, name="unclosed-fence.md")
+    original_body = plan.read_text(encoding="utf-8").rstrip() + "\n\n```\n"
+    plan.write_text(original_body, encoding="utf-8")
+
+    first_outcome = emit_stub_manifest(plan)
+    first_text = plan.read_text(encoding="utf-8")
+
+    assert first_outcome == "fallback_force_approve"
+    restored_body, failure_note = first_text.split("\n\n## Yolo Fallbacks\n", maxsplit=1)
+    assert restored_body == original_body.rstrip()
+    assert "synthesized manifest failed draft validation" in failure_note
+    assert "## M1 Task Manifest" not in first_text
+    assert "`kind: manifest`" not in first_text
+
+    second_outcome = emit_stub_manifest(plan)
+
+    assert second_outcome == "fallback_force_approve"
+    assert plan.read_text(encoding="utf-8") == first_text
+    assert first_text.count("## M1 Task Manifest") == 0
+    assert first_text.count("## Yolo Fallbacks") == 1
+
+
+def test_fresh_emission_restores_body_when_post_write_parse_raises(tmp_path: Path) -> None:
+    plan = _plan_two_deliverables(tmp_path, name="post-write-parse-error.md")
+    original_body = plan.read_text(encoding="utf-8")
+    initial_document = parse_plan(plan, parse_mode="draft")
+    forced_error = PlanParseError([(1, "forced post-write failure")], plan)
+
+    with patch(
+        "gobby.plans.manifest_emitter.parse_plan",
+        side_effect=[initial_document, forced_error],
+    ):
+        outcome = emit_stub_manifest(plan)
+
+    text = plan.read_text(encoding="utf-8")
+    restored_body, failure_note = text.split("\n\n## Yolo Fallbacks\n", maxsplit=1)
+    assert outcome == "fallback_force_approve"
+    assert restored_body == original_body.rstrip()
+    assert "forced post-write failure" in failure_note
+    assert "## M1 Task Manifest" not in text
+    assert "`kind: manifest`" not in text
 
 
 def test_noop_on_valid_existing(tmp_path: Path) -> None:

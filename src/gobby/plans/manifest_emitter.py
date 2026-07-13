@@ -234,19 +234,27 @@ def _emit_fresh(
     new_text = _write_manifest_section(body, entries)
     path.write_text(new_text, encoding="utf-8")
 
+    validation_failure: str | None = None
     try:
-        parse_plan(
+        validated_document = parse_plan(
             path,
             plan_kind=plan_kind,
             parse_mode="draft",
             plan_id_override=plan_id,
         )
+        if not validated_document.manifest_entries:
+            validation_failure = "emitted manifest was not present in the parsed document"
     except PlanParseError as exc:
-        _append_yolo_fallback(
-            path,
-            by_actor=by_actor,
-            reason=f"synthesized manifest failed draft validation: {exc}",
-        )
+        validation_failure = str(exc)
+
+    if validation_failure is not None:
+        path.write_text(body, encoding="utf-8")
+        if "\n## Yolo Fallbacks\n" not in f"\n{body}":
+            _append_yolo_fallback(
+                path,
+                by_actor=by_actor,
+                reason=(f"synthesized manifest failed draft validation: {validation_failure}"),
+            )
         return "fallback_force_approve"
 
     return "fresh"
