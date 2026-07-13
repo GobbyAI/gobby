@@ -216,10 +216,30 @@ async def test_transient_operation_error_resets_client(monkeypatch) -> None:
     assert store._next_retry_at == 1005.0
 
 
-def test_count_sync_returns_zero_when_uninitialized() -> None:
+def test_count_sync_raises_when_uninitialized() -> None:
     store = VectorStore(collection_name="sync_test")
 
+    with pytest.raises(VectorStoreUnavailableError, match="not initialized"):
+        store.count_sync()
+
+
+def test_count_sync_returns_zero_for_initialized_empty_collection() -> None:
+    store = VectorStore(collection_name="sync_test")
+    store._client = MagicMock()
+    store._client.count.return_value = SimpleNamespace(count=0)
+
     assert store.count_sync() == 0
+
+
+def test_count_sync_raises_and_resets_client_on_recoverable_error() -> None:
+    store = VectorStore(collection_name="sync_test")
+    store._client = MagicMock()
+    store._client.count.side_effect = ResponseHandlingException(Exception("down"))
+
+    with pytest.raises(VectorStoreUnavailableError, match="count is unavailable"):
+        store.count_sync()
+
+    assert store._client is None
 
 
 @pytest.mark.parametrize(

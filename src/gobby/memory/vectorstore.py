@@ -806,13 +806,13 @@ class VectorStore:
         """
         client = self._client
         if client is None:
-            return 0
+            raise VectorStoreUnavailableError("Vector store is not initialized")
         try:
             result = client.count(collection_name=self._collection_name)
         except Exception as exc:
             if is_recoverable_vector_store_error(exc):
                 self._mark_unavailable(exc)
-                return 0
+                raise VectorStoreUnavailableError("Vector store count is unavailable") from exc
             raise
         return result.count
 
