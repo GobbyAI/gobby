@@ -231,8 +231,9 @@ def test_stale_hash_raises() -> None:
 def test_matrix_file_rejects_scope(tmp_path: Path) -> None:
     matrix = tmp_path / "matrix.coverage.yaml"
     matrix.write_text("header:\n  plan_hash: hash\nrows: []\n", encoding="utf-8")
+    unchecked_evaluate: Any = evaluate
     with pytest.raises(MissingScopeError):
-        evaluate(
+        unchecked_evaluate(
             plan=_plan(_section(_item())),
             plan_id="plan",
             plan_hash="hash",
