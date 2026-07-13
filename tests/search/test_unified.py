@@ -699,6 +699,27 @@ class TestEmbeddingBackend:
             # id1 should have higher similarity (identical embedding)
             assert results[0][0] == "id1"
 
+    async def test_search_dimension_mismatch_raises(self) -> None:
+        """A query dimension change must not degrade to an empty result."""
+        backend = EmbeddingBackend()
+
+        with (
+            patch(
+                "gobby.search.backends.embedding.EmbeddingService.generate_embeddings",
+                new_callable=AsyncMock,
+                return_value=[[1.0, 0.0]],
+            ),
+            patch(
+                "gobby.search.backends.embedding.EmbeddingService.generate_embedding",
+                new_callable=AsyncMock,
+                return_value=[1.0, 0.0, 0.0],
+            ),
+        ):
+            await backend.fit_async([("id1", "hello")])
+
+            with pytest.raises(ValueError, match=r"Vector length mismatch: 2 != 3"):
+                await backend.search_async("greeting")
+
     @pytest.mark.asyncio
     async def test_search_during_threaded_refit_uses_one_complete_index(self) -> None:
         backend = EmbeddingBackend()

@@ -265,7 +265,9 @@ def _rank_embeddings(
     similarities: list[tuple[str, float]] = []
     for item_id, item_embedding in zip(item_ids, normalized_embeddings, strict=True):
         if len(item_embedding) != len(normalized_query):
-            continue
+            raise ValueError(
+                f"Vector length mismatch: {len(item_embedding)} != {len(normalized_query)}"
+            )
         similarity = sum(
             query_value * item_value
             for query_value, item_value in zip(normalized_query, item_embedding, strict=True)

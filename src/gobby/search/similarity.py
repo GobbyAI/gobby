@@ -6,9 +6,9 @@ import math
 
 
 def cosine_similarity(vec1: list[float], vec2: list[float]) -> float:
-    """Compute cosine similarity between two vectors, returning 0.0 for bad inputs."""
+    """Compute cosine similarity between two vectors."""
     if len(vec1) != len(vec2):
-        return 0.0
+        raise ValueError(f"Vector length mismatch: {len(vec1)} != {len(vec2)}")
 
     dot_product = sum(a * b for a, b in zip(vec1, vec2, strict=True))
     norm1 = math.sqrt(sum(a * a for a in vec1))
