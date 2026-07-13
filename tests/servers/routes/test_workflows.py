@@ -14,6 +14,7 @@ from starlette.testclient import TestClient
 from gobby.config.app import DaemonConfig
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
+from gobby.workflows.loader import WorkflowLoader
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -260,7 +261,11 @@ class TestExportWorkflow:
 
 
 class TestImportWorkflow:
-    def test_import_defaults_enabled_to_true(self, client: TestClient) -> None:
+    def test_import_defaults_enabled_to_true(
+        self,
+        client: TestClient,
+        wf_manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         resp = client.post(
             "/api/workflows/import",
             json={
@@ -276,6 +281,9 @@ steps:
 
         assert resp.status_code == 200
         assert resp.json()["definition"]["enabled"] is True
+        pipeline = WorkflowLoader(wf_manager.db).load_pipeline_sync("imported-pipeline")
+        assert pipeline is not None
+        assert pipeline.enabled is True
 
     def test_import_invalid_yaml(self, client: TestClient) -> None:
         resp = client.post(
