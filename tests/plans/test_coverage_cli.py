@@ -15,30 +15,66 @@ from gobby.plans.coverage import (
     CoverageRow,
     CoverageStatus,
     TaskTreeSource,
+    _plan_node_hash,
 )
 from gobby.plans.coverage_manifest import write_manifest
+from gobby.plans.parser import parse_plan
 
 pytestmark = pytest.mark.unit
 
 
 def _plan_file(tmp_path: Path) -> tuple[Path, str]:
     path = tmp_path / "plan.md"
-    path.write_text("# Plan\n\nPlan ID: plan\n", encoding="utf-8")
+    path.write_text(
+        """> **Plan ID:** plan
+
+## A1 Work [category: code]
+`kind: deliverable`
+
+Implement the covered behavior.
+
+**Acceptance:**
+- A1.1 - Behavior exists. file: `src/behavior.py`
+- A1.2 - Behavior is documented. file: `docs/behavior.md`
+""",
+        encoding="utf-8",
+    )
     return path, hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _matrix_file(tmp_path: Path, status: str, *, plan_hash: str) -> Path:
+def _matrix_file(
+    tmp_path: Path,
+    status: str,
+    *,
+    plan_hash: str | None,
+    rows: list[dict[str, object]] | None = None,
+) -> Path:
     path = tmp_path / f"{status}.coverage.yaml"
+    plan_doc = parse_plan(tmp_path / "plan.md", parse_mode="draft")
+    section = next(section for section in plan_doc.sections if section.section_id == "A1")
+    header: dict[str, object] = {
+        "plan_id": "plan",
+        "root_task_ref": "#1",
+        "project_id": "project",
+    }
+    if plan_hash is not None:
+        header["plan_hash"] = plan_hash
+    matrix_rows = rows
+    if matrix_rows is None:
+        matrix_rows = [
+            {
+                "section_id": "A1",
+                "item_id": item.item_id,
+                "plan_node_hash": _plan_node_hash(section, item),
+                "status": status,
+            }
+            for item in section.acceptance_items
+        ]
     path.write_text(
         yaml.safe_dump(
             {
-                "header": {
-                    "plan_id": "plan",
-                    "plan_hash": plan_hash,
-                    "root_task_ref": "#1",
-                    "project_id": "project",
-                },
-                "rows": [{"section_id": "A1", "item_id": "A1.1", "status": status}],
+                "header": header,
+                "rows": matrix_rows,
             }
         ),
         encoding="utf-8",
@@ -208,6 +244,88 @@ def test_cli_exit_code_stale_matrix(tmp_path: Path) -> None:
     manifest = tmp_path / "out.coverage.yaml"
     stale = CliRunner().invoke(cli, _base_args(plan_path, plan_hash, stale_matrix, manifest))
     assert stale.exit_code == 4
+
+
+def test_cli_matrix_requires_plan_hash_header(tmp_path: Path) -> None:
+    plan_path, plan_hash = _plan_file(tmp_path)
+    matrix = _matrix_file(tmp_path, "covered", plan_hash=None)
+    manifest = tmp_path / "out.coverage.yaml"
+
+    result = CliRunner().invoke(cli, _base_args(plan_path, plan_hash, matrix, manifest))
+
+    assert result.exit_code == 4
+    assert "header.plan_hash" in result.output
+    assert not manifest.exists()
+
+
+def test_cli_matrix_omitted_plan_item_is_missing(tmp_path: Path) -> None:
+    plan_path, plan_hash = _plan_file(tmp_path)
+    matrix = _matrix_file(tmp_path, "covered", plan_hash=plan_hash)
+    matrix_data = yaml.safe_load(matrix.read_text(encoding="utf-8"))
+    matrix_data["rows"] = [row for row in matrix_data["rows"] if row["item_id"] == "A1.1"]
+    matrix.write_text(yaml.safe_dump(matrix_data), encoding="utf-8")
+    manifest = tmp_path / "out.coverage.yaml"
+
+    result = CliRunner().invoke(cli, _base_args(plan_path, plan_hash, matrix, manifest))
+
+    assert result.exit_code == 2
+    raw = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    statuses = {row["item_id"]: row["status"] for row in raw["rows"]}
+    assert statuses == {"A1.1": "covered", "A1.2": "missing"}
+
+
+def test_cli_matrix_nonexistent_item_is_invalid(tmp_path: Path) -> None:
+    plan_path, plan_hash = _plan_file(tmp_path)
+    matrix = _matrix_file(
+        tmp_path,
+        "covered",
+        plan_hash=plan_hash,
+        rows=[
+            {
+                "section_id": "Z9",
+                "item_id": "Z9.1",
+                "plan_node_hash": "fabricated",
+                "status": "covered",
+            }
+        ],
+    )
+    manifest = tmp_path / "out.coverage.yaml"
+
+    result = CliRunner().invoke(cli, _base_args(plan_path, plan_hash, matrix, manifest))
+
+    assert result.exit_code == 3
+    raw = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    statuses = {(row["section_id"], row["item_id"]): row["status"] for row in raw["rows"]}
+    assert statuses == {
+        ("Z9", "Z9.1"): "invalid",
+        ("A1", "A1.1"): "missing",
+        ("A1", "A1.2"): "missing",
+    }
+
+
+def test_cli_matrix_plan_node_hash_mismatch_is_invalid(tmp_path: Path) -> None:
+    plan_path, plan_hash = _plan_file(tmp_path)
+    matrix = _matrix_file(
+        tmp_path,
+        "covered",
+        plan_hash=plan_hash,
+        rows=[
+            {
+                "section_id": "A1",
+                "item_id": "A1.1",
+                "plan_node_hash": "stale-node-hash",
+                "status": "covered",
+            }
+        ],
+    )
+    manifest = tmp_path / "out.coverage.yaml"
+
+    result = CliRunner().invoke(cli, _base_args(plan_path, plan_hash, matrix, manifest))
+
+    assert result.exit_code == 3
+    raw = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    statuses = {row["item_id"]: row["status"] for row in raw["rows"]}
+    assert statuses == {"A1.1": "invalid", "A1.2": "missing"}
 
 
 def test_cli_exit_code_missing_scope(tmp_path: Path) -> None:

@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -434,11 +434,15 @@ def _evaluate_matrix_file(
         header_value = raw.get("header", {})
         header_data = header_value if isinstance(header_value, dict) else {}
 
-    existing_hash = str(header_data.get("plan_hash", ""))
-    if existing_hash and existing_hash != plan_hash:
+    existing_hash = _optional_string(header_data.get("plan_hash"))
+    if existing_hash is None:
+        raise StaleHashError("coverage matrix requires header.plan_hash")
+    if existing_hash != plan_hash:
         raise StaleHashError(
             f"coverage matrix hash {existing_hash!r} does not match plan hash {plan_hash!r}"
         )
+
+    rows = _reconcile_matrix_rows(plan_doc, rows, evidence=evidence)
 
     return CoverageReport(
         header=CoverageHeader(
@@ -451,7 +455,7 @@ def _evaluate_matrix_file(
             task_tree_source_hash=_file_hash(matrix_file),
             evidence_summary=_evidence_summary(evidence),
         ),
-        rows=rows or _missing_rows(plan_doc, evidence=evidence),
+        rows=rows,
     )
 
 
@@ -471,6 +475,49 @@ def _row_from_manifest(raw: object, *, evidence: tuple[EvidenceRow, ...]) -> Cov
     )
 
 
+def _reconcile_matrix_rows(
+    plan_doc: PlanDocument,
+    rows: tuple[CoverageRow, ...],
+    *,
+    evidence: tuple[EvidenceRow, ...],
+) -> tuple[CoverageRow, ...]:
+    plan_items = {
+        (section.section_id, item.item_id): (section, item)
+        for section in plan_doc.sections
+        for item in section.acceptance_items
+    }
+    seen: set[tuple[str, str]] = set()
+    reconciled: list[CoverageRow] = []
+
+    for row in rows:
+        key = (row.section_id, row.item_id)
+        plan_item = plan_items.get(key)
+        if plan_item is None:
+            reconciled.append(replace(row, status=CoverageStatus.invalid))
+            continue
+
+        seen.add(key)
+        section, item = plan_item
+        expected_hash = _plan_node_hash(section, item)
+        if row.plan_node_hash != expected_hash:
+            reconciled.append(replace(row, status=CoverageStatus.invalid))
+            continue
+        reconciled.append(row)
+
+    reconciled.extend(
+        CoverageRow(
+            section_id=section.section_id,
+            item_id=item.item_id,
+            plan_node_hash=_plan_node_hash(section, item),
+            status=CoverageStatus.missing,
+            evidence=evidence,
+        )
+        for key, (section, item) in plan_items.items()
+        if key not in seen
+    )
+    return tuple(reconciled)
+
+
 def _leaf_from_manifest(raw: object) -> CoverageRowLeaf:
     if not isinstance(raw, dict):
         return CoverageRowLeaf(
@@ -482,22 +529,6 @@ def _leaf_from_manifest(raw: object) -> CoverageRowLeaf:
         leaf_task_ref=str(raw.get("leaf_task_ref", "")),
         validation_criteria_snippet=str(raw.get("validation_criteria_snippet", "")),
         matched_artifact_ref=str(raw.get("matched_artifact_ref", "")),
-    )
-
-
-def _missing_rows(
-    plan_doc: PlanDocument, *, evidence: tuple[EvidenceRow, ...]
-) -> tuple[CoverageRow, ...]:
-    return tuple(
-        CoverageRow(
-            section_id=section.section_id,
-            item_id=item.item_id,
-            plan_node_hash=_plan_node_hash(section, item),
-            status=CoverageStatus.missing,
-            evidence=evidence,
-        )
-        for section in plan_doc.sections
-        for item in section.acceptance_items
     )
 
 
