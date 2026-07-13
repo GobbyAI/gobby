@@ -280,7 +280,7 @@ gobby plan coverage \
   --plan <path> \
   --plan-id <id> \
   --plan-hash <sha256> \
-  --task-tree <db|jsonl|path> \
+  --task-tree <db|matrix-file> \
   [--root-task <ref>] \
   [--project-id <id>] \
   [--matrix-file <path>] \
@@ -293,6 +293,19 @@ Required flags: `--plan`, `--plan-id`, `--plan-hash`, `--task-tree`.
 
 Optional flags: `--root-task`, `--project-id`, `--matrix-file`, `--evidence`,
 `--manifest`, `--regenerate`.
+
+Task-tree modes:
+
+- `db` reads the live task database. It requires `--root-task <ref>` and
+  `--project-id <uuid>` and evaluates tasks in that root's scoped tree.
+- `matrix-file` reads `--matrix-file <path>`. The file is a YAML or JSON
+  coverage matrix with a `header` (including the current `plan_hash`) and
+  `rows`; do not pass DB-only root or project scope flags in this mode.
+
+Both modes write the canonical coverage manifest, either to `--manifest` or
+under `.gobby/plans/coverage/<project>/<root>/<plan>.coverage.yaml`, print that
+path, and use the exit-code contract below. `jsonl` and arbitrary path values
+are not task-tree modes; task JSONL is export material, not coverage input.
 
 Exit codes: `0`, `2`, `3`, `4`, `5`, `6`, `7`, `8`.
 

@@ -119,11 +119,27 @@ def _verify_one_ledger(
     if ledger is None:
         return ([f"{ledger_path} is not a YAML mapping"], None)
 
-    plan_id = _required_string(ledger, "plan_id") or _required_string(entry, "plan_id")
+    ledger_plan_id = _required_string(ledger, "plan_id")
+    entry_plan_id = _required_string(entry, "plan_id")
+    ledger_root_task_ref = _required_string(ledger, "root_task_ref")
+    entry_root_task_ref = _required_string(entry, "root_task_ref")
+    if ledger_plan_id and entry_plan_id and ledger_plan_id != entry_plan_id:
+        mismatches.append(
+            f"ledger plan_id {ledger_plan_id!r} != locating plan entry {entry_plan_id!r}"
+        )
+    if (
+        ledger_root_task_ref
+        and entry_root_task_ref
+        and _normalize_ref(ledger_root_task_ref) != _normalize_ref(entry_root_task_ref)
+    ):
+        mismatches.append(
+            "ledger root_task_ref "
+            f"{ledger_root_task_ref!r} != locating plan entry {entry_root_task_ref!r}"
+        )
+
+    plan_id = ledger_plan_id or entry_plan_id
     project_id = _required_string(ledger, "project_id") or scope.project_id
-    root_task_ref = _required_string(ledger, "root_task_ref") or _required_string(
-        entry, "root_task_ref"
-    )
+    root_task_ref = ledger_root_task_ref or entry_root_task_ref
     plan_hash = _required_string(ledger, "plan_hash")
 
     for field_name, value in (
@@ -198,6 +214,7 @@ def _matching_plan_entries(
         SELECT plan_id, project_id, root_task_ref
         FROM plans
         WHERE project_id = %s
+          AND state = 'active'
           AND (root_task_ref = %s OR root_task_ref = %s)
         ORDER BY updated_at DESC, plan_id ASC
         """,

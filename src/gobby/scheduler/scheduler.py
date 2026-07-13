@@ -8,14 +8,15 @@ import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal, cast
 
 from gobby.config.cron import CronConfig
 from gobby.scheduler.executor import CronExecutor
-from gobby.shutdown_intent import ShutdownIntent, read_active_shutdown_intent
 from gobby.storage.cron import CronJobStorage, compute_next_run, is_removed_automation_job
 from gobby.storage.cron_models import CronJob, CronRun
+from gobby.storage.hub.protocol import CronRunAdmission
 from gobby.utils.project_context import (
+    get_project_context,
     reset_project_context,
     set_project_context,
     set_project_context_from_ref,
@@ -23,8 +24,6 @@ from gobby.utils.project_context import (
 from gobby.utils.session_context import reset_session_context, set_session_context
 
 logger = logging.getLogger(__name__)
-PLANNED_RESTART_MARKER_MIN_AGE_SECONDS = 120.0
-PLANNED_RESTART_MARKER_BUFFER_SECONDS = 120.0
 CronRunRejectionCode = Literal["cron_job_already_running", "cron_max_concurrent_jobs"]
 
 
@@ -49,6 +48,7 @@ class CronScheduler:
         storage: CronJobStorage,
         executor: CronExecutor,
         config: CronConfig,
+        run_db: Callable[..., Awaitable[Any]] | None = None,
     ):
         self.storage = storage
         self.executor = executor
@@ -59,7 +59,14 @@ class CronScheduler:
         self._active_tasks: set[asyncio.Task[None]] = set()
         self._active_run_ids: set[str] = set()
         self._scheduler_owner = str(uuid.uuid4())
+        self._run_db_callback = run_db
         self.on_run_complete: Callable[[CronJob, CronRun], Awaitable[None]] | None = None
+
+    async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Run synchronous scheduler storage work outside the event loop."""
+        if self._run_db_callback is None:
+            return await asyncio.to_thread(func, *args, **kwargs)
+        return await self._run_db_callback(func, *args, **kwargs)
 
     async def start(self) -> None:
         """Start the scheduler loops."""
@@ -69,7 +76,7 @@ class CronScheduler:
             logger.info("Cron scheduler disabled by config")
             return
 
-        self._reconcile_interrupted_runs_on_startup()
+        await self._run_db(self._reconcile_interrupted_runs_on_startup)
         self._running = True
         self._check_task = asyncio.create_task(
             self._check_loop(),
@@ -130,6 +137,47 @@ class CronScheduler:
                 swept += 1
         return swept
 
+    def _sweep_stale_running_runs(self) -> int:
+        """Fail timed-out runs so they stop consuming scheduler capacity."""
+        swept = self.storage.fail_stale_running_runs(self.config.running_timeout_seconds)
+        if swept:
+            logger.warning("Marked %s stale cron run(s) failed before dispatch", swept)
+        return swept
+
+    def _create_scheduled_run(self, job: CronJob) -> CronRun | None:
+        """Create a run and advance its schedule in one database transaction."""
+        next_run = compute_next_run(job)
+        with self.storage.db.transaction_immediate(lock=CronRunAdmission()):
+            if self.storage.count_running() >= self.config.max_concurrent_jobs:
+                return None
+            run = self.storage.create_run(job.id, scheduler_owner=self._scheduler_owner)
+            if run is None:
+                return None
+            if job.schedule_type == "once" and next_run is None:
+                updated = self.storage.update_job(
+                    job.id,
+                    enabled=False,
+                    next_run_at=None,
+                )
+            else:
+                updated = self._update_job_bookkeeping(
+                    job,
+                    next_run_at=next_run.isoformat() if next_run else None,
+                )
+            if updated is None:
+                raise RuntimeError(f"Cron job {job.id} disappeared during dispatch bookkeeping")
+        return run
+
+    def _resolve_project_context(self, project_id: str) -> dict[str, Any]:
+        """Resolve an enriched project context without leaking a worker token."""
+        token = set_project_context_from_ref(project_id, self.storage.db)
+        if token is None:
+            return {"id": project_id}
+        try:
+            return get_project_context() or {"id": project_id}
+        finally:
+            reset_project_context(token)
+
     async def stop(self) -> None:
         """Stop the scheduler loops gracefully."""
         self._running = False
@@ -165,7 +213,10 @@ class CronScheduler:
             except asyncio.CancelledError:
                 break
             try:
-                deleted = self.storage.cleanup_old_runs(self.config.cleanup_after_days)
+                deleted = await self._run_db(
+                    self.storage.cleanup_old_runs,
+                    self.config.cleanup_after_days,
+                )
                 if deleted > 0:
                     logger.info(f"Cleaned up {deleted} old cron runs")
             except Exception as e:
@@ -173,18 +224,19 @@ class CronScheduler:
 
     async def _check_due_jobs(self) -> None:
         """Check for due jobs and dispatch them."""
-        removed = self.storage.delete_removed_automation_jobs()
+        removed = await self._run_db(self.storage.delete_removed_automation_jobs)
         if removed:
             logger.info("Deleted %s removed automation cron job(s)", removed)
 
-        self._sweep_orphaned_active_runs()
+        await self._run_db(self._sweep_stale_running_runs)
+        await self._run_db(self._sweep_orphaned_active_runs)
 
-        due_jobs = self.storage.get_due_jobs()
+        due_jobs = await self._run_db(self.storage.get_due_jobs)
         if not due_jobs:
             return
 
         # Respect max concurrent limit
-        running_count = self.storage.count_running()
+        running_count = await self._run_db(self.storage.count_running)
         available_slots = self.config.max_concurrent_jobs - running_count
 
         if available_slots <= 0:
@@ -219,8 +271,9 @@ class CronScheduler:
                             )
                             continue
 
-                # Create run and advance next_run_at immediately to prevent re-dispatch
-                run = self.storage.create_run(job.id, scheduler_owner=self._scheduler_owner)
+                # Commit run admission and schedule advancement together so a
+                # bookkeeping failure cannot strand a pending run.
+                run = await self._run_db(self._create_scheduled_run, job)
                 if run is None:
                     logger.debug(
                         "Skipping cron job %s (%s): previous run still active",
@@ -228,11 +281,6 @@ class CronScheduler:
                         job.name,
                     )
                     continue
-                next_run = compute_next_run(job)
-                self._update_job_bookkeeping(
-                    job,
-                    next_run_at=next_run.isoformat() if next_run else None,
-                )
                 logger.info(f"Dispatching cron job {job.id} ({job.name}), run {run.id}")
 
                 # Track background task to prevent GC and await on stop
@@ -253,11 +301,10 @@ class CronScheduler:
             return
         session_token = set_session_context(None)
         project_token = None
-        if job.project_id:
-            project_token = set_project_context_from_ref(job.project_id, self.storage.db)
-            if project_token is None:
-                project_token = set_project_context({"id": job.project_id})
         try:
+            if job.project_id:
+                project_ctx = await self._run_db(self._resolve_project_context, job.project_id)
+                project_token = set_project_context(project_ctx)
             result: CronRun | None = None
             try:
                 result = await self.executor.execute(job, run)
@@ -267,7 +314,8 @@ class CronScheduler:
                 if result.status == "failed":
                     # Increment failure counter (next_run_at already set before dispatch)
                     failures = job.consecutive_failures + 1
-                    self._update_job_bookkeeping(
+                    await self._run_db(
+                        self._update_job_bookkeeping,
                         job,
                         last_run_at=now,
                         last_status=result.status,
@@ -278,7 +326,8 @@ class CronScheduler:
                     )
                 else:
                     # Reset failure counter (next_run_at already set before dispatch)
-                    self._update_job_bookkeeping(
+                    await self._run_db(
+                        self._update_job_bookkeeping,
                         job,
                         last_run_at=now,
                         last_status=result.status,
@@ -289,7 +338,8 @@ class CronScheduler:
                 logger.error(f"Unexpected error executing cron job {job.id}: {e}", exc_info=True)
                 now = datetime.now(UTC).isoformat()
                 failures = job.consecutive_failures + 1
-                self._update_job_bookkeeping(
+                await self._run_db(
+                    self._update_job_bookkeeping,
                     job,
                     last_run_at=now,
                     last_status="failed",
@@ -298,13 +348,14 @@ class CronScheduler:
                 # The executor normally terminalizes the run row; if it raised
                 # instead, fail the row so it cannot wedge the job's dispatch.
                 try:
-                    self.storage.fail_run_if_active(
+                    await self._run_db(
+                        self.storage.fail_run_if_active,
                         run.id,
                         error=f"Scheduler failed to finalize run: {e}",
                     )
                 except Exception:
                     logger.debug("Failed to finalize errored cron run %s", run.id, exc_info=True)
-                result = self.storage.get_run(run.id)
+                result = await self._run_db(self.storage.get_run, run.id)
 
             # Fire event callback (best-effort, non-blocking)
             if self.on_run_complete and result:
@@ -325,26 +376,6 @@ class CronScheduler:
         idx = min(consecutive_failures - 1, len(delays) - 1)
         return delays[idx]
 
-    def _planned_restart_source(self) -> str | None:
-        record = read_active_shutdown_intent(
-            max_age_seconds=self._planned_restart_marker_max_age_seconds()
-        )
-        if record is None or record.stale or record.error:
-            return None
-        if record.intent is not ShutdownIntent.RESTART:
-            return None
-        return record.source
-
-    def _planned_restart_marker_max_age_seconds(self) -> float:
-        return max(
-            PLANNED_RESTART_MARKER_MIN_AGE_SECONDS,
-            float(
-                self.config.running_timeout_seconds
-                + self.config.check_interval_seconds
-                + PLANNED_RESTART_MARKER_BUFFER_SECONDS
-            ),
-        )
-
     def _update_job_bookkeeping(self, job: CronJob, **fields: object) -> CronJob | None:
         if job.is_system:
             return self.storage.update_system_job_bookkeeping(job.id, **fields)
@@ -357,17 +388,24 @@ class CronScheduler:
         CronRun will initially have status 'pending'; poll the run or
         check job.last_status for the final result.
         """
-        job = self.storage.get_job(job_id)
+        job = await self._run_db(self.storage.get_job, job_id)
         if not job:
             return None
 
-        self._sweep_orphaned_active_runs()
+        await self._run_db(self._sweep_stale_running_runs)
+        await self._run_db(self._sweep_orphaned_active_runs)
 
-        run, running_count = self.storage.create_run_if_admitted(
-            job.id,
-            max_concurrent_jobs=self.config.max_concurrent_jobs,
-            scheduler_owner=self._scheduler_owner,
+        run, running_count, already_running = cast(
+            tuple[CronRun | None, int, bool],
+            await self._run_db(
+                self.storage.create_run_if_admitted,
+                job.id,
+                max_concurrent_jobs=self.config.max_concurrent_jobs,
+                scheduler_owner=self._scheduler_owner,
+            ),
         )
+        if run is None and already_running:
+            return None
         if run is None and running_count >= self.config.max_concurrent_jobs:
             raise CronRunRejected(
                 "cron_max_concurrent_jobs",

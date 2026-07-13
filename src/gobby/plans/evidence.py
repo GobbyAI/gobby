@@ -57,6 +57,12 @@ class InvalidEvidenceError(ValueError):
     """Raised when an evidence spec is malformed or unsupported."""
 
 
+def validate_evidence_ref(ref: str) -> None:
+    """Reject evidence refs that Git could interpret as command-line options."""
+    if ref.startswith("-"):
+        raise InvalidEvidenceError(f"Option-shaped evidence ref {ref!r} is not allowed")
+
+
 class EvidenceContextProtocol(Protocol):
     repo_root: Path
 
@@ -89,6 +95,7 @@ def resolve_evidence(spec: str, *, ctx: EvidenceContextProtocol) -> EvidenceBund
     except ValueError as error:
         raise InvalidEvidenceError(f"Unsupported evidence kind: {kind_value}") from error
 
+    validate_evidence_ref(ref)
     if kind is EvidenceKind.commits:
         return _resolve_commits(ref, ctx=ctx)
     if kind is EvidenceKind.task_diff:
@@ -120,6 +127,11 @@ def _run_git(repo_root: Path, args: list[str]) -> subprocess.CompletedProcess[st
 
 
 def _resolve_commits(range_: str, *, ctx: EvidenceContextProtocol) -> EvidenceBundle:
+    if ".." not in range_:
+        raise InvalidEvidenceError(
+            "commits evidence requires an explicit revision range containing '..'; "
+            f"single revision {range_!r} is not allowed"
+        )
     rev_list = _run_git(ctx.repo_root, ["rev-list", "--reverse", range_])
     if rev_list.returncode != 0:
         detail = rev_list.stderr.strip() or f"commit range {range_} did not resolve"
@@ -163,7 +175,18 @@ def _resolve_commits(range_: str, *, ctx: EvidenceContextProtocol) -> EvidenceBu
 
 
 def _resolve_task_diff(task_ref: str, *, ctx: EvidenceContextProtocol) -> EvidenceBundle:
-    diff = ctx.get_task_diff(task_ref)
+    try:
+        diff = ctx.get_task_diff(task_ref)
+    except InvalidEvidenceError as error:
+        return _bundle(_invalid(EvidenceKind.task_diff, task_ref, str(error)))
+    if not diff.strip():
+        return _bundle(
+            _invalid(
+                EvidenceKind.task_diff,
+                task_ref,
+                f"task diff for {task_ref} is empty; link at least one commit to the task",
+            )
+        )
     return _bundle(
         EvidenceRow(
             kind=EvidenceKind.task_diff,
@@ -208,6 +231,7 @@ def _resolve_worktree_diff(artifact_ref: str, *, ctx: EvidenceContextProtocol) -
 
     path = Path(cast(str, isolation_path))
     base = cast(str, base_commit_sha)
+    validate_evidence_ref(base)
     rev_parse = _run_git(path, ["rev-parse", base])
     if rev_parse.returncode != 0:
         return _bundle(
@@ -243,9 +267,17 @@ def _resolve_coverage_matrix(path_ref: str, *, ctx: EvidenceContextProtocol) -> 
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as exc:
         raise InvalidEvidenceError(f"Invalid coverage matrix {path_ref}: {exc}") from exc
+    header_evidence = _coverage_header_evidence(raw, path_ref=path_ref)
+    if header_evidence:
+        return _bundle(*header_evidence)
     rows_data = _manifest_rows(raw)
     evidence_rows: list[EvidenceRow] = []
     for index, row_data in enumerate(rows_data):
+        if not isinstance(row_data, dict):
+            raise InvalidEvidenceError(
+                f"Invalid coverage matrix {path_ref}: row {index + 1} must be a mapping, "
+                f"got {type(row_data).__name__}"
+            )
         row = cast(dict[str, Any], row_data)
         ref = _coverage_ref(row, fallback=f"{path_ref}#{index + 1}")
         touched = _coverage_artifacts(row)
@@ -272,6 +304,28 @@ def _resolve_coverage_matrix(path_ref: str, *, ctx: EvidenceContextProtocol) -> 
         )
 
     return _bundle(*evidence_rows)
+
+
+def _coverage_header_evidence(raw: Any, *, path_ref: str) -> list[EvidenceRow]:
+    if not isinstance(raw, dict) or not isinstance(raw.get("header"), dict):
+        return []
+    evidence = raw["header"].get("evidence")
+    if not isinstance(evidence, list) or not evidence:
+        return []
+    rows: list[EvidenceRow] = []
+    for index, item in enumerate(evidence, start=1):
+        if not isinstance(item, dict):
+            raise InvalidEvidenceError(
+                f"Invalid coverage matrix {path_ref}: header evidence {index} must be a mapping"
+            )
+        rows.append(
+            _coverage_embedded_row(
+                cast(dict[str, Any], item),
+                f"{path_ref}#header-evidence-{index}",
+                (),
+            )
+        )
+    return rows
 
 
 def _manifest_rows(raw: Any) -> list[Any]:
@@ -314,12 +368,18 @@ def _coverage_embedded_row(
         )
     except ValueError:
         status = EvidenceResolveStatus.invalid
+    embedded_touched = evidence.get("artifacts_touched")
+    resolved_touched = (
+        _dedupe(str(value) for value in embedded_touched)
+        if isinstance(embedded_touched, list)
+        else touched
+    )
     return EvidenceRow(
         kind=kind,
         ref=str(evidence.get("ref") or fallback_ref),
         status=status,
         detail=str(evidence.get("detail") or evidence.get("reason") or "coverage evidence"),
-        artifacts_touched=touched,
+        artifacts_touched=resolved_touched,
     )
 
 

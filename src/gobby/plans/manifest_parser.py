@@ -76,6 +76,8 @@ def resolve_manifest(
 
     manifest_section = manifest_sections[0]
     span_start, span_end = _section_span(manifest_section)
+    if sections[-1] is not manifest_section:
+        errors.append((span_start, "manifest section must be last"))
     block = find_yaml_fence(lines, span_start - 1, span_end - 1)
     if block is None:
         errors.append((span_start, "manifest section missing YAML block"))
@@ -259,7 +261,15 @@ def _validate_manifest_invariants(
     valid_section_ids = {entry.source_section for entry in entries}
     for entry in entries:
         for dependency in entry.depends_on:
-            if dependency not in valid_section_ids:
+            if dependency == entry.source_section:
+                errors.append(
+                    (
+                        entry.source_line,
+                        f"manifest entry source_section={entry.source_section!r} "
+                        "cannot depend on itself",
+                    )
+                )
+            elif dependency not in valid_section_ids:
                 errors.append(
                     (
                         entry.source_line,
@@ -267,6 +277,19 @@ def _validate_manifest_invariants(
                         f"{dependency!r}, which has no manifest entry",
                     )
                 )
+
+    dependency_cycle = _find_dependency_cycle(entries)
+    if dependency_cycle is not None:
+        cycle_start = dependency_cycle[0]
+        source_line = next(
+            entry.source_line for entry in entries if entry.source_section == cycle_start
+        )
+        errors.append(
+            (
+                source_line,
+                "manifest dependency cycle detected: " + " -> ".join(dependency_cycle),
+            )
+        )
 
     for section_id, deliverable in deliverables.items():
         bucket = entries_by_section.get(section_id, [])
@@ -315,6 +338,39 @@ def _validate_manifest_invariants(
                     f"label {label!r}",
                 )
             )
+
+
+def _find_dependency_cycle(entries: tuple[ManifestEntry, ...]) -> tuple[str, ...] | None:
+    graph = {
+        entry.source_section: tuple(
+            dependency for dependency in entry.depends_on if dependency != entry.source_section
+        )
+        for entry in entries
+    }
+    visited: set[str] = set()
+    active: list[str] = []
+
+    def visit(section_id: str) -> tuple[str, ...] | None:
+        if section_id in active:
+            cycle_start = active.index(section_id)
+            return tuple(active[cycle_start:] + [section_id])
+        if section_id in visited:
+            return None
+        active.append(section_id)
+        for dependency in graph.get(section_id, ()):
+            if dependency in graph:
+                cycle = visit(dependency)
+                if cycle is not None:
+                    return cycle
+        active.pop()
+        visited.add(section_id)
+        return None
+
+    for section_id in graph:
+        cycle = visit(section_id)
+        if cycle is not None:
+            return cycle
+    return None
 
 
 def _section_kind(section: object) -> str:

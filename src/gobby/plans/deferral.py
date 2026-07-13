@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
 from gobby.plans._artifact_refs import artifact_referenced
+from gobby.plans._task_refs import normalize_task_ref
 from gobby.plans.parser import Deferral
 
 type DeferralStatus = Literal[
@@ -46,7 +47,9 @@ def validate_deferral(
     *,
     recovery_epic_ref: str,
 ) -> DeferralValidationResult:
-    task = task_store.get_task(deferral.task_ref)
+    task_ref = normalize_task_ref(deferral.task_ref)
+    recovery_epic_ref = normalize_task_ref(recovery_epic_ref)
+    task = task_store.get_task(task_ref)
     if task is None:
         return _result(deferral, section_id, plan_id, "task_missing", "task is missing")
 
@@ -60,7 +63,7 @@ def validate_deferral(
             f"task has non-active state {state!r}",
         )
 
-    labels = task_store.get_task_labels(deferral.task_ref)
+    labels = task_store.get_task_labels(task_ref)
     provenance_label = f"deferred-from:{plan_id}:{section_id}"
     if provenance_label not in labels:
         return _result(
@@ -92,7 +95,7 @@ def validate_deferral(
         )
 
     dependency_closure = _dependency_closure(recovery_epic_ref, task_store)
-    if deferral.task_ref in dependency_closure or _has_valid_cited_parent(
+    if task_ref in dependency_closure or _has_valid_cited_parent(
         labels=labels,
         dependency_closure=dependency_closure,
         recovery_epic_ref=recovery_epic_ref,
@@ -140,14 +143,21 @@ def _task_validation_criteria(task: dict[str, Any]) -> str:
 
 def _dependency_closure(root_ref: str, task_store: TaskStoreProtocol) -> set[str]:
     seen: set[str] = set()
-    stack = list(task_store.get_task_dependencies(root_ref))
+    normalized_root_ref = normalize_task_ref(root_ref)
+    stack = [
+        normalize_task_ref(task_ref)
+        for task_ref in task_store.get_task_dependencies(normalized_root_ref)
+    ]
 
     while stack:
-        task_ref = stack.pop()
+        task_ref = normalize_task_ref(stack.pop())
         if task_ref in seen:
             continue
         seen.add(task_ref)
-        stack.extend(task_store.get_task_dependencies(task_ref))
+        stack.extend(
+            normalize_task_ref(dependency_ref)
+            for dependency_ref in task_store.get_task_dependencies(task_ref)
+        )
 
     return seen
 
@@ -164,7 +174,7 @@ def _has_valid_cited_parent(
     for label in labels:
         if not label.startswith("cited-parent:"):
             continue
-        parent_ref = label.removeprefix("cited-parent:")
+        parent_ref = normalize_task_ref(label.removeprefix("cited-parent:"))
         if not parent_ref or parent_ref in dependency_closure:
             continue
         parent_task = task_store.get_task(parent_ref)

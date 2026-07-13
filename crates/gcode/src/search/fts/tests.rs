@@ -54,7 +54,26 @@ fn sanitize_pg_search_query_escapes_leading_minus_per_token() {
 
 #[test]
 fn sanitize_pg_search_query_preserves_dsl_punctuation() {
-    assert_eq!(sanitize_pg_search_query(":: + ()"), ":: + ()");
+    assert_eq!(
+        sanitize_pg_search_query(":: + compute (fence)"),
+        ":: + compute (fence)"
+    );
+    assert_eq!(
+        sanitize_pg_search_query("_compute_fence_mask()"),
+        r"_compute_fence_mask\(\)"
+    );
+    assert_eq!(
+        sanitize_pg_search_query(r"_compute_fence_mask\(\)"),
+        r"_compute_fence_mask\(\)"
+    );
+    assert_eq!(
+        sanitize_pg_search_query(r#""_compute_fence_mask()""#),
+        r#""_compute_fence_mask()""#
+    );
+    assert_eq!(
+        sanitize_pg_search_query("compute (fence"),
+        r"compute \(fence"
+    );
     assert_eq!(sanitize_pg_search_query(r"\-foo -bar"), r"\-foo \-bar");
     assert_eq!(
         sanitize_pg_search_query("claude-opus-4-8[1m]"),
