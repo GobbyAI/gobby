@@ -62,6 +62,14 @@ class InvalidSecretSaltError(RuntimeError):
     """Raised when the legacy secret salt does not have the required length."""
 
 
+class SecretDecryptionError(RuntimeError):
+    """Raised when stored secret ciphertext cannot be decrypted."""
+
+    def __init__(self, secret_identifier: str) -> None:
+        self.secret_identifier = secret_identifier
+        super().__init__(f"Failed to decrypt configured secret {secret_identifier}")
+
+
 class SecretMigrationError(RuntimeError):
     """Raised when required legacy secrets cannot be migrated."""
 
@@ -684,11 +692,7 @@ class SecretStore:
             decrypted: str = fernet.decrypt(row["encrypted_value"].encode("utf-8")).decode("utf-8")
             return decrypted
         except InvalidToken:
-            logger.error(
-                "Failed to decrypt configured secret; envelope token is invalid",
-                extra={"secret": _safe_secret_identifier(name), "reason": "invalid_token"},
-            )
-            return None
+            raise SecretDecryptionError(_safe_secret_identifier(name)) from None
 
     def delete(self, name: str) -> bool:
         """Delete a secret."""
@@ -727,14 +731,22 @@ class SecretStore:
 
         def _replace(match: re.Match[str]) -> str:
             name = match.group(1)
-            value = self.get(name)
+            try:
+                value = self.get(name)
+            except SecretDecryptionError as exc:
+                logger.error(
+                    "Configured secret reference could not be decrypted: %s",
+                    exc.secret_identifier,
+                    extra={"reason": "invalid_token"},
+                )
+                return ""
             if value is not None:
                 return value
             logger.warning(
                 "Configured secret reference not found: %s",
                 _safe_secret_identifier(self._normalize_name(name)),
             )
-            return match.group(0)
+            return ""
 
         return SECRET_REF_PATTERN.sub(_replace, text)
 

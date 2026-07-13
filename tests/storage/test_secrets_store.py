@@ -25,6 +25,7 @@ from gobby.storage.secrets import (
     SECRET_REF_PATTERN,
     VALID_CATEGORIES,
     InvalidSecretSaltError,
+    SecretDecryptionError,
     SecretInfo,
     SecretKeyUnavailable,
     SecretMigrationError,
@@ -575,8 +576,10 @@ class TestSecretStoreGet:
         store.set("KEY", "new")
         assert store.get("KEY") == "new"
 
-    def test_get_invalid_token_returns_none(self, temp_db: HubDatabase, salt_dir: Path) -> None:
-        """Corrupt envelope tokens fail gracefully."""
+    def test_get_invalid_token_raises_decryption_error(
+        self, temp_db: HubDatabase, salt_dir: Path
+    ) -> None:
+        """Corrupt envelope tokens are distinct from missing rows."""
         store = SecretStore(temp_db)
         store.set("KEY", "secret")
         temp_db.execute(
@@ -584,15 +587,15 @@ class TestSecretStoreGet:
             ("not-a-fernet-token", "key"),
         )
 
-        assert SecretStore(temp_db).get("KEY") is None
+        with pytest.raises(SecretDecryptionError):
+            SecretStore(temp_db).get("KEY")
 
-    def test_get_invalid_token_logs_safe_identifier(
+    def test_get_invalid_token_error_uses_safe_identifier(
         self,
         temp_db: HubDatabase,
         salt_dir: Path,
-        caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Decrypt failures log a deterministic hash, not the secret name."""
+        """Decrypt failures expose a deterministic hash, not the secret name."""
         store = SecretStore(temp_db)
         store.set("KEY", "secret")
         temp_db.execute(
@@ -600,11 +603,11 @@ class TestSecretStoreGet:
             ("not-a-fernet-token", "key"),
         )
 
-        with caplog.at_level("ERROR", logger="gobby.storage.secrets"):
-            assert SecretStore(temp_db).get("KEY") is None
+        with pytest.raises(SecretDecryptionError) as exc_info:
+            SecretStore(temp_db).get("KEY")
 
-        assert any(getattr(record, "secret", "").startswith("sha256:") for record in caplog.records)
-        assert "KEY" not in caplog.text
+        assert exc_info.value.secret_identifier.startswith("sha256:")
+        assert "KEY" not in str(exc_info.value)
 
     def test_get_various_value_types(self, store: SecretStore) -> None:
         """Encrypt/decrypt handles various string content."""
@@ -769,7 +772,8 @@ class TestSecretStoreLegacyMigration:
         assert report.skipped == 1
         assert report.entries[0].status == "skipped"
         assert temp_db.fetchone("SELECT 1 FROM secret_key_material WHERE id = %s", ("default",))
-        assert SecretStore(temp_db).get("KEY") is None
+        with pytest.raises(SecretDecryptionError):
+            SecretStore(temp_db).get("KEY")
         assert any(getattr(record, "secret", "").startswith("sha256:") for record in caplog.records)
         assert "KEY" not in caplog.text
 
@@ -878,9 +882,10 @@ class TestSecretStoreResolve:
         result = store.resolve("$secret:USER:$secret:PASS")
         assert result == "admin:s3cret"
 
-    def test_resolve_unresolved_stays(self, store: SecretStore) -> None:
+    def test_resolve_missing_reference_substitutes_empty(self, store: SecretStore) -> None:
         result = store.resolve("Bearer $secret:MISSING_KEY")
-        assert result == "Bearer $secret:MISSING_KEY"
+        assert result == "Bearer "
+        assert "$secret:" not in result
 
     def test_resolve_missing_reference_logs_safe_identifier(
         self,
@@ -890,9 +895,34 @@ class TestSecretStoreResolve:
         with caplog.at_level("WARNING", logger="gobby.storage.secrets"):
             result = store.resolve("Bearer $secret:MISSING_KEY")
 
-        assert result == "Bearer $secret:MISSING_KEY"
+        assert result == "Bearer "
+        assert "Configured secret reference not found" in caplog.text
+        assert "could not be decrypted" not in caplog.text
         assert "sha256:" in caplog.text
         assert "MISSING_KEY" not in caplog.text
+
+    def test_resolve_decrypt_failure_logs_distinctly_and_substitutes_empty(
+        self,
+        temp_db: HubDatabase,
+        salt_dir: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        store = SecretStore(temp_db)
+        store.set("KEY", "secret")
+        temp_db.execute(
+            "UPDATE secrets SET encrypted_value = %s WHERE name = %s",
+            ("not-a-fernet-token", "key"),
+        )
+
+        with caplog.at_level("ERROR", logger="gobby.storage.secrets"):
+            result = SecretStore(temp_db).resolve("Bearer $secret:KEY")
+
+        assert result == "Bearer "
+        assert "$secret:" not in result
+        assert "Configured secret reference could not be decrypted" in caplog.text
+        assert "not found" not in caplog.text
+        assert any(getattr(record, "reason", None) == "invalid_token" for record in caplog.records)
+        assert "KEY" not in caplog.text
 
     def test_resolve_no_refs(self, store: SecretStore) -> None:
         result = store.resolve("plain text no refs")
@@ -904,7 +934,8 @@ class TestSecretStoreResolve:
     def test_resolve_mixed_found_and_missing(self, store: SecretStore) -> None:
         store.set("FOUND", "value")
         result = store.resolve("$secret:FOUND and $secret:MISSING")
-        assert result == "value and $secret:MISSING"
+        assert result == "value and "
+        assert "$secret:" not in result
 
 
 # =============================================================================
@@ -933,6 +964,17 @@ class TestSecretStoreResolveDict:
         store.set("B", "val_b")
         result = store.resolve_dict({"x": "$secret:A", "y": "$secret:B"})
         assert result == {"x": "val_a", "y": "val_b"}
+
+    def test_resolve_dict_never_forwards_missing_refs(self, store: SecretStore) -> None:
+        result = store.resolve_dict(
+            {
+                "Authorization": "Bearer $secret:MISSING",
+                "NestedJson": '{"token":"$secret:MISSING"}',
+            }
+        )
+
+        assert result == {"Authorization": "Bearer ", "NestedJson": '{"token":""}'}
+        assert all("$secret:" not in value for value in result.values())
 
 
 # =============================================================================
