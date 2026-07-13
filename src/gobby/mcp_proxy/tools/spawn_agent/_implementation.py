@@ -6,6 +6,7 @@ the spawn_agent MCP tool and direct callers.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from pathlib import Path
@@ -193,7 +194,8 @@ async def spawn_agent_impl(
     # structural drift the parser silently drops before wasting an LLM call.
     from gobby.tasks.expansion._plan_gate import validate_plan_for_agent_spawn
 
-    gate_failure = validate_plan_for_agent_spawn(
+    gate_failure = await asyncio.to_thread(
+        validate_plan_for_agent_spawn,
         agent_lookup_name,
         task_id,
         task_manager,

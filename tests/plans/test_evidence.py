@@ -6,9 +6,11 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
+from gobby.cli.plan import _CliEvidenceContext
 from gobby.plans.evidence import (
     EvidenceKind,
     EvidenceResolveStatus,
@@ -53,6 +55,41 @@ def test_resolve_commits_range(tmp_path: Path) -> None:
     assert all(row.status is EvidenceResolveStatus.resolved for row in bundle.rows)
 
 
+def test_commits_option_ref_is_rejected_before_git(tmp_path: Path) -> None:
+    with patch("gobby.plans.evidence.subprocess.run") as run_git:
+        with pytest.raises(
+            InvalidEvidenceError,
+            match="Option-shaped evidence ref '--all' is not allowed",
+        ):
+            resolve_evidence("commits:--all", ctx=EvidenceContext(tmp_path))
+
+    run_git.assert_not_called()
+
+
+def test_commits_single_revision_is_rejected_before_git(tmp_path: Path) -> None:
+    with patch("gobby.plans.evidence.subprocess.run") as run_git:
+        with pytest.raises(
+            InvalidEvidenceError,
+            match="commits evidence requires an explicit revision range",
+        ):
+            resolve_evidence("commits:HEAD", ctx=EvidenceContext(tmp_path))
+
+    run_git.assert_not_called()
+
+
+def test_cli_commit_diff_rejects_option_ref_before_git(tmp_path: Path) -> None:
+    ctx = _CliEvidenceContext(repo_root=tmp_path, project_id=None)
+
+    with patch("gobby.cli.plan.subprocess.run") as run_git:
+        with pytest.raises(
+            InvalidEvidenceError,
+            match="Option-shaped evidence ref '--all' is not allowed",
+        ):
+            ctx.get_commit_range_diff("--all")
+
+    run_git.assert_not_called()
+
+
 def test_resolve_task_diff(tmp_path: Path) -> None:
     diff = """\
 diff --git a/src/old.py b/src/new.py
@@ -70,7 +107,62 @@ index 1111111..2222222 100644
     )
 
     assert bundle.rows[0].kind is EvidenceKind.task_diff
+    assert bundle.rows[0].status is EvidenceResolveStatus.resolved
     assert bundle.rows[0].artifacts_touched == ("src/new.py",)
+
+
+@pytest.mark.parametrize("task_diff", ["", "  \n\t"], ids=["empty", "whitespace"])
+def test_task_diff_without_content_is_invalid(tmp_path: Path, task_diff: str) -> None:
+    bundle = resolve_evidence(
+        "task-diff:#13250",
+        ctx=EvidenceContext(tmp_path, task_diff=task_diff),
+    )
+
+    row = bundle.rows[0]
+    assert row.status is EvidenceResolveStatus.invalid
+    assert row.artifacts_touched == ()
+    assert "link at least one commit" in row.detail
+
+
+def test_cli_task_diff_with_no_commits_is_invalid(temp_db: Any, tmp_path: Path) -> None:
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.tasks import LocalTaskManager
+
+    project = LocalProjectManager(temp_db).create("project")
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(project.id, "No commits")
+    ctx = _CliEvidenceContext(repo_root=tmp_path, project_id=project.id)
+    ctx.__dict__["task_manager"] = manager
+
+    bundle = resolve_evidence(f"task-diff:#{task.seq_num}", ctx=ctx)
+
+    assert bundle.rows[0].status is EvidenceResolveStatus.invalid
+    assert "link at least one commit" in bundle.rows[0].detail
+
+
+def test_cli_task_diff_missing_project_is_invalid(tmp_path: Path) -> None:
+    bundle = resolve_evidence(
+        "task-diff:#13250",
+        ctx=_CliEvidenceContext(repo_root=tmp_path, project_id=None),
+    )
+
+    assert bundle.rows[0].status is EvidenceResolveStatus.invalid
+    assert "requires --project-id" in bundle.rows[0].detail
+
+
+def test_cli_task_diff_unknown_task_is_invalid(temp_db: Any, tmp_path: Path) -> None:
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.tasks import LocalTaskManager
+
+    project = LocalProjectManager(temp_db).create("project")
+    manager = LocalTaskManager(temp_db)
+    ctx = _CliEvidenceContext(repo_root=tmp_path, project_id=project.id)
+    ctx.__dict__["task_manager"] = manager
+
+    bundle = resolve_evidence("task-diff:#999999", ctx=ctx)
+
+    assert bundle.rows[0].status is EvidenceResolveStatus.invalid
+    assert "999999" in bundle.rows[0].detail
 
 
 def test_resolve_coverage_matrix(tmp_path: Path) -> None:
@@ -102,11 +194,58 @@ rows:
     assert bundle.rows[1].status is EvidenceResolveStatus.invalid
 
 
+def test_resolve_coverage_matrix_reads_header_evidence_once(tmp_path: Path) -> None:
+    manifest = tmp_path / "coverage.yaml"
+    manifest.write_text(
+        """\
+header:
+  evidence:
+    - kind: commits
+      ref: abc123
+      status: resolved
+      detail: commit abc123
+      artifacts_touched:
+        - src/example.py
+rows:
+  - section_id: A1
+    item_id: A1.1
+    status: covered
+  - section_id: A1
+    item_id: A1.2
+    status: covered
+""",
+        encoding="utf-8",
+    )
+
+    bundle = resolve_evidence(f"coverage-matrix:{manifest}", ctx=EvidenceContext(tmp_path))
+
+    assert len(bundle.rows) == 1
+    assert bundle.rows[0].kind is EvidenceKind.commits
+    assert bundle.rows[0].ref == "abc123"
+    assert bundle.rows[0].artifacts_touched == ("src/example.py",)
+
+
 def test_resolve_coverage_matrix_invalid_yaml_raises_invalid_evidence(tmp_path: Path) -> None:
     manifest = tmp_path / "coverage.yaml"
     manifest.write_text("rows: [", encoding="utf-8")
 
     with pytest.raises(InvalidEvidenceError, match="Invalid coverage matrix"):
+        resolve_evidence(f"coverage-matrix:{manifest}", ctx=EvidenceContext(tmp_path))
+
+
+@pytest.mark.parametrize(
+    "row_yaml",
+    ["covered", "[covered]", "null"],
+    ids=["scalar", "list", "null"],
+)
+def test_resolve_coverage_matrix_rejects_non_mapping_rows(tmp_path: Path, row_yaml: str) -> None:
+    manifest = tmp_path / "coverage.yaml"
+    manifest.write_text(f"rows:\n  - {row_yaml}\n", encoding="utf-8")
+
+    with pytest.raises(
+        InvalidEvidenceError,
+        match=r"Invalid coverage matrix .*: row 1 must be a mapping",
+    ):
         resolve_evidence(f"coverage-matrix:{manifest}", ctx=EvidenceContext(tmp_path))
 
 

@@ -10,6 +10,7 @@ from gobby.plans.parser import Kind, PlanDocument, PlanSection
 from gobby.plans.semantic_lint import (
     collect_target_inventory,
     find_file_paths_in_text,
+    iter_target_block_lines,
     normalize_file_path,
     section_body_lines,
 )
@@ -23,9 +24,8 @@ _CHANGE_VERBS_RE = re.compile(
     r"\b(remove|delete|rename|move|change|modify|update|refactor|rewrite|replace|extract|alter)\b",
     re.IGNORECASE,
 )
-_TARGET_LINE_RE = re.compile(r"^\s*Targets?\s*:\s*(?P<rest>.*)$", re.IGNORECASE)
 _TARGET_DESTRUCTIVE_MARKER_RE = re.compile(
-    r"\b(DELETIONS ONLY|DELETE FILE|REMOVE FILE|DROP FILE|RENAMED%s FILE|MOVED%s FILE|"
+    r"\b(DELETIONS ONLY|DELETE FILE|REMOVE FILE|DROP FILE|RENAMED\s+FILE|MOVED\s+FILE|"
     r"DELETED ENTIRELY|REMOVED ENTIRELY)\b",
     re.IGNORECASE,
 )
@@ -200,36 +200,8 @@ def _symbol_intents(text: str) -> set[str]:
 
 def _file_destructive_intents(plan_doc: PlanDocument, section: PlanSection) -> set[str]:
     paths: set[str] = set()
-    body_lines = section_body_lines(plan_doc, section, before_acceptance=True)
-    index = 0
-    while index < len(body_lines):
-        line = body_lines[index]
-        match = _TARGET_LINE_RE.match(line)
-        if match is None:
-            index += 1
-            continue
-
-        rest = match.group("rest").strip()
-        if rest:
-            paths.update(_destructive_target_paths(rest))
-            index += 1
-            continue
-
-        index += 1
-        while index < len(body_lines):
-            candidate = body_lines[index]
-            stripped = candidate.strip()
-            if not stripped:
-                break
-            if _TARGET_LINE_RE.match(candidate):
-                break
-            if stripped.startswith("#") or stripped.startswith("`kind:"):
-                break
-            if find_file_paths_in_text(candidate):
-                paths.update(_destructive_target_paths(candidate))
-                index += 1
-                continue
-            break
+    for line in iter_target_block_lines(plan_doc, section):
+        paths.update(_destructive_target_paths(line))
     return paths
 
 
@@ -260,12 +232,14 @@ def _resolve_symbols(storage: Any, project_id: str, symbol_ref: str) -> tuple[An
     if not callable(search):
         return ()
     symbols = tuple(search(symbol_ref, project_id, limit=20))
+    leaf = symbol_ref.rsplit(".", 1)[-1]
+    if not symbols:
+        symbols = tuple(search(leaf, project_id, limit=20))
     exact_qualified = tuple(
         symbol for symbol in symbols if _symbol_attr(symbol, "qualified_name") == symbol_ref
     )
     if exact_qualified:
         return exact_qualified
-    leaf = symbol_ref.rsplit(".", 1)[-1]
     exact_names = tuple(symbol for symbol in symbols if _symbol_attr(symbol, "name") == leaf)
     if len(exact_names) == 1:
         return exact_names

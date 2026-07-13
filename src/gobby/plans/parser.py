@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 import yaml
 
+from gobby.plans._identifiers import DOTTED_ID_PATTERN, is_dotted_id
 from gobby.plans.manifest_parser import ManifestEntry
 from gobby.plans.manifest_parser import resolve_manifest as _resolve_manifest
 
@@ -19,13 +20,11 @@ ParseMode = Literal["draft", "expansion", "strict"]
 logger = logging.getLogger(__name__)
 
 PLAN_HEADING_REGEX: re.Pattern[str] = re.compile(
-    r"^#{2,6}\s+(?:§\s*)?(?P<section_id>"
-    r"(?:\d+(?:\.\d+)*(?:[a-z])?|[A-Z]+[0-9]+(?:\.[0-9]+)*(?:[a-z])?)"
-    r")(?=\s|[).:-]|$)"
+    rf"^#{{2,6}}\s+(?:§\s*)?(?P<section_id>{DOTTED_ID_PATTERN})(?=\s|[).:-]|$)"
 )
 
 _HEADING_LINE_RE = re.compile(r"^(?P<marks>#{2,6})\s+")
-_KIND_LINE_RE = re.compile(r"^`?\s*kind:\s*(?P<kind>[a-z_]+)\s*`?$")
+KIND_LINE_RE = re.compile(r"^`?\s*kind:\s*(?P<kind>[a-z_]+)\s*`?$")
 _PLAN_ID_RE = re.compile(r"^\s*>?\s*\*\*Plan ID:\*\*\s*(?P<plan_id>.+?)\s*$")
 _TASK_PLAN_FILENAME_RE = re.compile(r"^task-(?P<seq>\d+)(?:[-_].*)?$")
 _SECTION_DEPENDS_RE = re.compile(r"\(depends:\s*(?P<depends>[^)]+)\)", flags=re.IGNORECASE)
@@ -34,9 +33,12 @@ _ACCEPTANCE_BULLET_RE = re.compile(
     r"^\s*-\s+(?P<item_id>[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)+)"
     r"\s+(?:-|\u2014)\s+(?P<prose>.*)$"
 )
+_ACCEPTANCE_ITEM_PREFIX_RE = re.compile(
+    r"^\s*-\s+(?P<item_id>[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)+)(?![A-Za-z0-9])"
+)
 _ARTIFACT_RE = re.compile(
     r"\b(?P<kind>file|symbol|test|behavior):\s*"
-    r"""(?P<ref>`[^`]+`|"[^"]+"|'[^']+'|.*?)(?=\s+\b(?:file|symbol|test|behavior):|$)"""
+    r"""(?P<ref>`[^`]+`|"[^"]+"|'[^']+'|.*?(?=\s+\b(?:file|symbol|test|behavior):|$))"""
 )
 _FENCE_OPENER_RE = re.compile(r"^(?P<indent> {0,3})(?P<fence>`{3,}|~{3,})(?P<info>.*)$")
 MISSING_PLAN_ID_SENTINEL = "unknown"
@@ -169,10 +171,17 @@ def parse_plan(
     source_bytes = path.read_bytes()
     source_hash = hashlib.sha256(source_bytes).hexdigest()
     lines = source_bytes.decode("utf-8").splitlines()
-    mask = _compute_fence_mask(lines)
+    mask, unclosed_fence_line = compute_fence_mask(lines)
     headings = _collect_headings(lines, mask)
 
     errors: list[tuple[int, str]] = []
+    if unclosed_fence_line is not None:
+        errors.append(
+            (
+                unclosed_fence_line,
+                f"unclosed fence opened at line {unclosed_fence_line}",
+            )
+        )
     warnings: list[str] = []
     identity = _resolve_document_plan_id(
         path=path,
@@ -246,9 +255,21 @@ def parse_plan(
                 lines=lines,
                 start_index=heading.line_index + 1,
                 end_index=end_index,
-                source_path=path,
                 errors=errors,
             )
+
+        if kind is not Kind.deliverable:
+            acceptance_marker = _find_acceptance_marker(
+                lines, mask, heading.line_index + 1, end_index
+            )
+            if acceptance_marker is not None:
+                errors.append(
+                    (
+                        acceptance_marker + 1,
+                        f"section {heading.section_id!r} with kind {kind.value!r} "
+                        "must not contain an **Acceptance:** block",
+                    )
+                )
 
         section = PlanSection(
             section_id=heading.section_id,
@@ -288,9 +309,12 @@ def parse_plan(
     )
 
 
-def _compute_fence_mask(lines: list[str]) -> list[bool]:
+def compute_fence_mask(lines: list[str]) -> tuple[list[bool], int | None]:
+    """Return fenced-line masking and the opening line of any unclosed fence."""
+
     mask = [False] * len(lines)
     open_fence: _Fence | None = None
+    open_fence_line: int | None = None
 
     for index, line in enumerate(lines):
         if open_fence is None:
@@ -299,13 +323,15 @@ def _compute_fence_mask(lines: list[str]) -> list[bool]:
                 continue
             mask[index] = True
             open_fence = opener
+            open_fence_line = index + 1
             continue
 
         mask[index] = True
         if _is_fence_closer(line, open_fence):
             open_fence = None
+            open_fence_line = None
 
-    return mask
+    return mask, open_fence_line
 
 
 def _match_fence_opener(line: str) -> _Fence | None:
@@ -436,7 +462,7 @@ def _section_kind(
         stripped = lines[index].strip()
         if not stripped:
             continue
-        match = _KIND_LINE_RE.match(stripped)
+        match = KIND_LINE_RE.match(stripped)
         if match is None:
             return None
         try:
@@ -506,21 +532,29 @@ def _parse_acceptance_items(
         return ()
 
     items: list[AcceptanceItem] = []
+    seen_item_ids: set[str] = set()
     current_id: str | None = None
     current_parts: list[str] = []
     current_line = 0
+    crossed_blank_boundary = False
 
     def flush_current() -> None:
         nonlocal current_id, current_parts, current_line
         if current_id is None:
             return
+        item_id = current_id
         prose = " ".join(part.strip() for part in current_parts if part.strip()).strip()
-        item = _build_acceptance_item(current_id, prose, current_line, section_id, errors)
-        if item is not None:
-            items.append(item)
+        source_line = current_line
         current_id = None
         current_parts = []
         current_line = 0
+        if item_id in seen_item_ids:
+            errors.append((source_line, f"duplicate acceptance item ID {item_id!r}"))
+            return
+        seen_item_ids.add(item_id)
+        item = _build_acceptance_item(item_id, prose, source_line, section_id, errors)
+        if item is not None:
+            items.append(item)
 
     for index in range(marker_index + 1, end_index + 1):
         if index >= len(lines) or mask[index]:
@@ -532,8 +566,27 @@ def _parse_acceptance_items(
             current_id = bullet_match.group("item_id")
             current_parts = [bullet_match.group("prose")]
             current_line = index + 1
+            crossed_blank_boundary = False
+            continue
+        item_prefix_match = _ACCEPTANCE_ITEM_PREFIX_RE.match(line)
+        if item_prefix_match is not None:
+            flush_current()
+            errors.append(
+                (
+                    index + 1,
+                    f"malformed acceptance item {item_prefix_match.group('item_id')!r}; "
+                    "expected separator ' - ' or ' — '",
+                )
+            )
+            crossed_blank_boundary = False
             continue
         if current_id is not None:
+            if not line.strip():
+                crossed_blank_boundary = True
+                continue
+            if crossed_blank_boundary and not line[:1].isspace():
+                flush_current()
+                break
             current_parts.append(line)
 
     flush_current()
@@ -561,6 +614,8 @@ def _build_acceptance_item(
     section_id: str,
     errors: list[tuple[int, str]],
 ) -> AcceptanceItem | None:
+    if not _validate_acceptance_item_id(item_id, source_line, errors):
+        return None
     if not item_id.startswith(f"{section_id}."):
         errors.append(
             (source_line, f"acceptance item {item_id!r} does not belong to section {section_id!r}")
@@ -582,6 +637,17 @@ def _build_acceptance_item(
     )
 
 
+def _validate_acceptance_item_id(
+    item_id: str, source_line: int, errors: list[tuple[int, str]]
+) -> bool:
+    if is_dotted_id(item_id):
+        return True
+    errors.append(
+        (source_line, f"acceptance item ID {item_id!r} does not match the dotted-ID grammar")
+    )
+    return False
+
+
 def _first_artifact(prose: str) -> tuple[ArtifactKind, str] | None:
     for match in _ARTIFACT_RE.finditer(prose):
         artifact_ref = _clean_ref(match.group("ref"))
@@ -596,7 +662,6 @@ def _parse_deferral(
     lines: list[str],
     start_index: int,
     end_index: int,
-    source_path: Path,
     errors: list[tuple[int, str]],
 ) -> Deferral | None:
     block = _find_yaml_fence(lines, start_index, end_index)
@@ -614,6 +679,12 @@ def _parse_deferral(
     if not isinstance(data, dict):
         errors.append((block_start, "deferred YAML must be a mapping"))
         return None
+    if set(data) != {"deferral"} or not isinstance(data.get("deferral"), dict):
+        errors.append(
+            (block_start, "deferred YAML is missing the required top-level 'deferral:' wrapper")
+        )
+        return None
+    data = data["deferral"]
 
     required_fields = ("task_ref", "reason", "owner", "original_acceptance_items")
     missing = [field for field in required_fields if not data.get(field)]
@@ -622,7 +693,7 @@ def _parse_deferral(
         return None
 
     original_items = _parse_original_acceptance_items(
-        data["original_acceptance_items"], block_start, source_path, errors
+        data["original_acceptance_items"], block_start, errors
     )
     if original_items is None:
         return None
@@ -656,7 +727,8 @@ def _fence_info(line: str) -> str:
     match = _FENCE_OPENER_RE.match(line)
     if match is None:
         return ""
-    return match.group("info").strip().split(maxsplit=1)[0].lower()
+    info = match.group("info").strip()
+    return info.split(maxsplit=1)[0].lower() if info else ""
 
 
 def _find_fence_close(
@@ -669,7 +741,7 @@ def _find_fence_close(
 
 
 def _parse_original_acceptance_items(
-    value: Any, source_line: int, source_path: Path, errors: list[tuple[int, str]]
+    value: Any, source_line: int, errors: list[tuple[int, str]]
 ) -> tuple[AcceptanceItem, ...] | None:
     if not isinstance(value, list) or not value:
         errors.append((source_line, "original_acceptance_items must be a non-empty list"))
@@ -677,26 +749,24 @@ def _parse_original_acceptance_items(
 
     items: list[AcceptanceItem] = []
     for index, raw_item in enumerate(value, start=1):
-        if not isinstance(raw_item, dict):
-            errors.append((source_line, f"original_acceptance_items[{index}] must be a mapping"))
-            return None
-        try:
-            artifact_kind = ArtifactKind(str(raw_item["artifact_kind"]))
-            item = AcceptanceItem(
-                item_id=str(raw_item["item_id"]),
-                prose=str(raw_item["prose"]),
-                artifact_kind=artifact_kind,
-                artifact_ref=str(raw_item["artifact_ref"]),
-                source_line=source_line,
-            )
-        except KeyError as exc:
+        if not isinstance(raw_item, str):
             errors.append(
-                (source_line, f"original_acceptance_items[{index}] missing {exc.args[0]}")
+                (
+                    source_line,
+                    f"original_acceptance_items[{index}] must be a scalar acceptance-item ID",
+                )
             )
             return None
-        except ValueError as exc:
-            errors.append((source_line, f"invalid artifact_kind in {source_path}: {exc}"))
+        item_id = raw_item.strip()
+        if not _validate_acceptance_item_id(item_id, source_line, errors):
             return None
+        item = AcceptanceItem(
+            item_id=item_id,
+            prose=item_id,
+            artifact_kind=ArtifactKind.behavior,
+            artifact_ref=item_id,
+            source_line=source_line,
+        )
         items.append(item)
     return tuple(items)
 
@@ -727,6 +797,7 @@ __all__ = [
     "ArtifactKind",
     "Deferral",
     "Kind",
+    "KIND_LINE_RE",
     "ManifestEntry",
     "ParseMode",
     "PlanDocument",
@@ -734,6 +805,7 @@ __all__ = [
     "PlanParseError",
     "PlanSection",
     "MISSING_PLAN_ID_SENTINEL",
+    "compute_fence_mask",
     "extract_section_dependencies",
     "parse_plan",
     "resolve_plan_id",

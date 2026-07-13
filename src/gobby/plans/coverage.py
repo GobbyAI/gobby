@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -15,6 +15,9 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 import yaml
 
 from gobby.plans._artifact_refs import artifact_referenced
+from gobby.plans._identifiers import DOTTED_ID_PATTERN
+from gobby.plans._task_record_state import coerce_task_state
+from gobby.plans._task_refs import normalize_task_ref
 from gobby.plans.evidence import EvidenceKind, EvidenceRow
 from gobby.plans.parser import AcceptanceItem, PlanDocument, PlanSection, parse_plan
 from gobby.tasks.state_semantics import serialize_task_state
@@ -22,12 +25,10 @@ from gobby.tasks.state_semantics import serialize_task_state
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
-_DOTTED_ID_PATTERN = r"(?:\d+[a-z]?|[A-Z]+[0-9]+[a-z]?)(?:\.(?:\d+[a-z]?|[A-Z]+[0-9]+[a-z]?))*"
-
 COVERS_LABEL_REGEX: re.Pattern[str] = re.compile(
     r"^covers:(?P<plan_id>[A-Za-z0-9._-]+):"
-    rf"(?P<section_id>{_DOTTED_ID_PATTERN}):"
-    rf"(?P<item_id>{_DOTTED_ID_PATTERN})$"
+    rf"(?P<section_id>{DOTTED_ID_PATTERN}):"
+    rf"(?P<item_id>{DOTTED_ID_PATTERN})$"
 )
 type CoversStatus = Literal["valid", "missing_section", "missing_item", "artifact_not_referenced"]
 type PlanInput = PlanDocument | Path | str
@@ -139,7 +140,7 @@ class _TaskRecordStore:
         self._by_ref = {record.ref: record for record in records}
 
     def get_task(self, task_ref: str) -> dict[str, object] | None:
-        record = self._by_ref.get(_normalize_ref(task_ref))
+        record = self._by_ref.get(normalize_task_ref(task_ref))
         if record is None:
             return None
         return {
@@ -150,11 +151,11 @@ class _TaskRecordStore:
         }
 
     def get_task_labels(self, task_ref: str) -> list[str]:
-        record = self._by_ref.get(_normalize_ref(task_ref))
+        record = self._by_ref.get(normalize_task_ref(task_ref))
         return list(record.labels) if record is not None else []
 
     def get_task_dependencies(self, task_ref: str) -> list[str]:
-        record = self._by_ref.get(_normalize_ref(task_ref))
+        record = self._by_ref.get(normalize_task_ref(task_ref))
         return list(record.dependencies) if record is not None else []
 
 
@@ -298,6 +299,7 @@ def evaluate(
         root_task_ref=root_task_ref,
         project_id=project_id,
         records=scoped_records,
+        project_records=records,
         evidence=evidence_rows,
         recovery_epic_ref=recovery_epic_ref or root_task_ref,
     )
@@ -313,13 +315,14 @@ def _evaluate_records(
     root_task_ref: str,
     project_id: str,
     records: Sequence[_TaskRecord],
+    project_records: Sequence[_TaskRecord],
     evidence: tuple[EvidenceRow, ...],
     recovery_epic_ref: str,
 ) -> CoverageReport:
-    store = _TaskRecordStore(records)
+    store = _TaskRecordStore(project_records)
     rows: list[CoverageRow] = []
     for section in plan_doc.sections:
-        for item in section.acceptance_items:
+        for item in _coverage_items(section):
             rows.append(
                 _evaluate_item(
                     plan_doc=plan_doc,
@@ -332,6 +335,14 @@ def _evaluate_records(
                     recovery_epic_ref=recovery_epic_ref,
                 )
             )
+    rows.extend(
+        _invalid_cover_rows(
+            plan_doc=plan_doc,
+            plan_id=plan_id,
+            records=records,
+            evidence=evidence,
+        )
+    )
 
     return CoverageReport(
         header=CoverageHeader(
@@ -434,11 +445,15 @@ def _evaluate_matrix_file(
         header_value = raw.get("header", {})
         header_data = header_value if isinstance(header_value, dict) else {}
 
-    existing_hash = str(header_data.get("plan_hash", ""))
-    if existing_hash and existing_hash != plan_hash:
+    existing_hash = _optional_string(header_data.get("plan_hash"))
+    if existing_hash is None:
+        raise StaleHashError("coverage matrix requires header.plan_hash")
+    if existing_hash != plan_hash:
         raise StaleHashError(
             f"coverage matrix hash {existing_hash!r} does not match plan hash {plan_hash!r}"
         )
+
+    rows = _reconcile_matrix_rows(plan_doc, rows, evidence=evidence)
 
     return CoverageReport(
         header=CoverageHeader(
@@ -451,7 +466,7 @@ def _evaluate_matrix_file(
             task_tree_source_hash=_file_hash(matrix_file),
             evidence_summary=_evidence_summary(evidence),
         ),
-        rows=rows or _missing_rows(plan_doc, evidence=evidence),
+        rows=rows,
     )
 
 
@@ -471,6 +486,109 @@ def _row_from_manifest(raw: object, *, evidence: tuple[EvidenceRow, ...]) -> Cov
     )
 
 
+def _reconcile_matrix_rows(
+    plan_doc: PlanDocument,
+    rows: tuple[CoverageRow, ...],
+    *,
+    evidence: tuple[EvidenceRow, ...],
+) -> tuple[CoverageRow, ...]:
+    plan_items = {
+        (section.section_id, item.item_id): (section, item)
+        for section in plan_doc.sections
+        for item in _coverage_items(section)
+    }
+    seen: set[tuple[str, str]] = set()
+    reconciled: list[CoverageRow] = []
+
+    for row in rows:
+        key = (row.section_id, row.item_id)
+        plan_item = plan_items.get(key)
+        if plan_item is None:
+            reconciled.append(replace(row, status=CoverageStatus.invalid))
+            continue
+
+        seen.add(key)
+        section, item = plan_item
+        expected_hash = _plan_node_hash(section, item)
+        if row.plan_node_hash != expected_hash:
+            reconciled.append(replace(row, status=CoverageStatus.invalid))
+            continue
+        reconciled.append(row)
+
+    reconciled.extend(
+        CoverageRow(
+            section_id=section.section_id,
+            item_id=item.item_id,
+            plan_node_hash=_plan_node_hash(section, item),
+            status=CoverageStatus.missing,
+            evidence=evidence,
+        )
+        for key, (section, item) in plan_items.items()
+        if key not in seen
+    )
+    return tuple(reconciled)
+
+
+def _coverage_items(section: PlanSection) -> tuple[AcceptanceItem, ...]:
+    if section.deferral is not None:
+        return section.deferral.original_acceptance_items
+    return section.acceptance_items
+
+
+def _invalid_cover_rows(
+    *,
+    plan_doc: PlanDocument,
+    plan_id: str,
+    records: Sequence[_TaskRecord],
+    evidence: tuple[EvidenceRow, ...],
+) -> list[CoverageRow]:
+    rows: list[CoverageRow] = []
+    for task in records:
+        for label in task.labels:
+            if not label.startswith("covers:"):
+                continue
+            try:
+                record = parse_covers_label(label)
+            except InvalidCoversLabelError as exc:
+                rows.append(
+                    CoverageRow(
+                        section_id="<invalid-covers-label>",
+                        item_id=label,
+                        status=CoverageStatus.invalid,
+                        leaves=(
+                            CoverageRowLeaf(
+                                leaf_task_ref=task.ref,
+                                validation_criteria_snippet=str(exc),
+                                matched_artifact_ref=label,
+                            ),
+                        ),
+                        evidence=evidence,
+                    )
+                )
+                continue
+            if record.plan_id != plan_id:
+                continue
+            result = validate_covers(record, task.validation_criteria, task.ref, plan_doc)
+            if result.status not in ("missing_section", "missing_item"):
+                continue
+            rows.append(
+                CoverageRow(
+                    section_id=record.section_id,
+                    item_id=record.item_id,
+                    status=CoverageStatus.invalid,
+                    leaves=(
+                        CoverageRowLeaf(
+                            leaf_task_ref=task.ref,
+                            validation_criteria_snippet=result.detail,
+                            matched_artifact_ref=label,
+                        ),
+                    ),
+                    evidence=evidence,
+                )
+            )
+    return rows
+
+
 def _leaf_from_manifest(raw: object) -> CoverageRowLeaf:
     if not isinstance(raw, dict):
         return CoverageRowLeaf(
@@ -482,22 +600,6 @@ def _leaf_from_manifest(raw: object) -> CoverageRowLeaf:
         leaf_task_ref=str(raw.get("leaf_task_ref", "")),
         validation_criteria_snippet=str(raw.get("validation_criteria_snippet", "")),
         matched_artifact_ref=str(raw.get("matched_artifact_ref", "")),
-    )
-
-
-def _missing_rows(
-    plan_doc: PlanDocument, *, evidence: tuple[EvidenceRow, ...]
-) -> tuple[CoverageRow, ...]:
-    return tuple(
-        CoverageRow(
-            section_id=section.section_id,
-            item_id=item.item_id,
-            plan_node_hash=_plan_node_hash(section, item),
-            status=CoverageStatus.missing,
-            evidence=evidence,
-        )
-        for section in plan_doc.sections
-        for item in section.acceptance_items
     )
 
 
@@ -557,7 +659,7 @@ def _find_section(plan_doc: PlanDocument, section_id: str) -> PlanSection | None
 
 
 def _find_acceptance_item(section: PlanSection, item_id: str) -> AcceptanceItem | None:
-    for item in section.acceptance_items:
+    for item in _coverage_items(section):
         if item.item_id == item_id:
             return item
     return None
@@ -667,17 +769,7 @@ def _live_task_record(task: Any, task_ref_by_id: Mapping[str, str]) -> _TaskReco
 
 
 def _live_task_state(task: Any) -> str:
-    state = serialize_task_state(task)
-    if state["is_closed"]:
-        return "closed"
-    if state["is_escalated"]:
-        return "escalated"
-    current_stage = state["current_stage"]
-    if isinstance(current_stage, dict):
-        stage_state = current_stage.get("state")
-        if isinstance(stage_state, str) and stage_state:
-            return stage_state
-    return "ready"
+    return coerce_task_state(serialize_task_state(task), default="ready")
 
 
 def _live_task_ref(task: Any) -> str:
@@ -693,7 +785,7 @@ def _coerce_task_record(raw: Mapping[str, object]) -> _TaskRecord:
         ref=ref,
         labels=_labels(raw.get("labels")),
         validation_criteria=_first_string(raw, "validation_criteria", "validation", "description"),
-        state=_first_string(raw, "state", default="ready"),
+        state=coerce_task_state(raw.get("state")),
         parent_ref=_optional_ref(
             _first_string(raw, "parent_ref", "parent_task_ref", "parent", default="")
         ),
@@ -706,7 +798,7 @@ def _task_ref(raw: Mapping[str, object]) -> str:
     for key in ("ref", "task_ref", "id"):
         value = raw.get(key)
         if isinstance(value, str) and value:
-            return _normalize_ref(value)
+            return normalize_task_ref(value)
     seq_num = raw.get("seq_num")
     if isinstance(seq_num, int):
         return f"#{seq_num}"
@@ -734,14 +826,14 @@ def _dependency_refs(raw: object) -> tuple[str, ...]:
     if isinstance(raw, Sequence) and not isinstance(raw, str):
         for item in raw:
             if isinstance(item, str):
-                values.append(_normalize_ref(item))
+                values.append(normalize_task_ref(item))
             elif isinstance(item, Mapping):
                 ref = item.get("ref") or item.get("depends_on") or item.get("task_ref")
                 if isinstance(ref, str):
-                    values.append(_normalize_ref(ref))
+                    values.append(normalize_task_ref(ref))
         return tuple(values)
     if isinstance(raw, str):
-        return (_normalize_ref(raw),)
+        return (normalize_task_ref(raw),)
     return ()
 
 
@@ -761,18 +853,11 @@ def _optional_string(raw: object) -> str | None:
 
 
 def _optional_ref(raw: str) -> str | None:
-    return _normalize_ref(raw) if raw else None
-
-
-def _normalize_ref(ref: str) -> str:
-    stripped = ref.strip()
-    if stripped.isdecimal():
-        return f"#{stripped}"
-    return stripped
+    return normalize_task_ref(raw) if raw else None
 
 
 def _filter_to_scope(records: Sequence[_TaskRecord], root_task_ref: str) -> tuple[_TaskRecord, ...]:
-    normalized_root = _normalize_ref(root_task_ref)
+    normalized_root = normalize_task_ref(root_task_ref)
     root_key = normalized_root.lstrip("#")
     included = {
         record.ref

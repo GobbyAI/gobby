@@ -195,6 +195,70 @@ def test_validate_covers_artifact_referenced_by_symbol_short_name() -> None:
     assert result.status == "valid"
 
 
+@pytest.mark.parametrize(
+    ("item", "criteria"),
+    [
+        (
+            _item(
+                "A1.1",
+                artifact_kind=ArtifactKind.symbol,
+                artifact_ref="gobby.plans.parser.parse",
+            ),
+            "The parser is great.",
+        ),
+        (_item("A1.1", artifact_ref="test.py"), "Run latest.py."),
+        (_item("A1.1", artifact_ref="tests/test.py"), "Run tests/latest.py."),
+    ],
+    ids=["symbol-prefix", "bare-file-suffix", "path-part-suffix"],
+)
+def test_validate_covers_rejects_artifact_substrings(item: AcceptanceItem, criteria: str) -> None:
+    result = validate_covers(
+        CoversRecord("plan", "A1", "A1.1"),
+        criteria,
+        "#leaf",
+        _plan_doc("A1", item),
+    )
+
+    assert result.status == "artifact_not_referenced"
+
+
+@pytest.mark.parametrize(
+    ("item", "criteria"),
+    [
+        (
+            _item(
+                "A1.1",
+                artifact_kind=ArtifactKind.symbol,
+                artifact_ref="gobby.plans.parser.parse",
+            ),
+            "Call `gobby.plans.parser.parse`.",
+        ),
+        (
+            _item(
+                "A1.1",
+                artifact_kind=ArtifactKind.symbol,
+                artifact_ref="gobby.plans.parser.parse",
+            ),
+            "Call parse().",
+        ),
+        (_item("A1.1", artifact_ref="test.py"), "Run tests/test.py, then report."),
+        (_item("A1.1", artifact_ref="tests/test.py"), "Run tests / test.py."),
+    ],
+    ids=["qualified-symbol", "bare-symbol", "qualified-file", "split-path"],
+)
+def test_validate_covers_accepts_bounded_artifact_references(
+    item: AcceptanceItem, criteria: str
+) -> None:
+    result = validate_covers(
+        CoversRecord("plan", "A1", "A1.1"),
+        criteria,
+        "#leaf",
+        _plan_doc("A1", item),
+    )
+
+    assert result.status == "valid"
+
+
 def test_validate_covers_artifact_referenced_by_test_path_and_name() -> None:
     item = _item(
         "A1.1",
