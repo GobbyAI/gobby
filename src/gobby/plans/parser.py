@@ -35,7 +35,7 @@ _ACCEPTANCE_BULLET_RE = re.compile(
 )
 _ARTIFACT_RE = re.compile(
     r"\b(?P<kind>file|symbol|test|behavior):\s*"
-    r"""(?P<ref>`[^`]+`|"[^"]+"|'[^']+'|.*?)(?=\s+\b(?:file|symbol|test|behavior):|$)"""
+    r"""(?P<ref>`[^`]+`|"[^"]+"|'[^']+'|.*?(?=\s+\b(?:file|symbol|test|behavior):|$))"""
 )
 _FENCE_OPENER_RE = re.compile(r"^(?P<indent> {0,3})(?P<fence>`{3,}|~{3,})(?P<info>.*)$")
 MISSING_PLAN_ID_SENTINEL = "unknown"

@@ -486,6 +486,60 @@ def test_acceptance_item_with_multiple_artifacts_uses_first(tmp_path: Path) -> N
     assert item.artifact_ref == "tests/first.py::test_one"
 
 
+@pytest.mark.parametrize(
+    "quoted_ref",
+    ["`src/a.py`", '"src/a.py"', "'src/a.py'"],
+    ids=["backtick", "double-quote", "single-quote"],
+)
+def test_quoted_artifact_ref_stops_before_trailing_prose(
+    tmp_path: Path,
+    quoted_ref: str,
+) -> None:
+    plan = _write_plan(
+        tmp_path,
+        f"""
+        ## A1
+        `kind: deliverable`
+        **Acceptance:**
+        - A1.1 — file: {quoted_ref} and the tests pass
+        """,
+    )
+
+    item = parse_plan(plan).sections[0].acceptance_items[0]
+
+    assert item.artifact_kind is ArtifactKind.file
+    assert item.artifact_ref == "src/a.py"
+
+
+@pytest.mark.parametrize(
+    ("artifact_prose", "expected_ref"),
+    [
+        ("file: src/a.py", "src/a.py"),
+        ("file: src/a.py symbol: gobby.plans.parser.parse_plan", "src/a.py"),
+    ],
+    ids=["end-of-line", "next-artifact"],
+)
+def test_unquoted_artifact_ref_uses_existing_terminators(
+    tmp_path: Path,
+    artifact_prose: str,
+    expected_ref: str,
+) -> None:
+    plan = _write_plan(
+        tmp_path,
+        f"""
+        ## A1
+        `kind: deliverable`
+        **Acceptance:**
+        - A1.1 — {artifact_prose}
+        """,
+    )
+
+    item = parse_plan(plan).sections[0].acceptance_items[0]
+
+    assert item.artifact_kind is ArtifactKind.file
+    assert item.artifact_ref == expected_ref
+
+
 def test_strategy_kind_permissive_no_raise_on_narrative_headings(tmp_path: Path) -> None:
     plan = _write_plan(
         tmp_path,
