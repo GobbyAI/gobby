@@ -740,9 +740,9 @@ class GitHubIssueTriageService:
         if secret_ref.startswith("$secret:"):
             if self.secret_store is None:
                 raise TriageWebhookError("Secret store is not available")
-            resolved = str(self.secret_store.resolve(secret_ref))
-            if resolved == secret_ref:
-                raise TriageWebhookError(f"Webhook secret {secret_ref!r} was not found")
+            resolved = self.secret_store.resolve(secret_ref)
+            if not isinstance(resolved, str) or not resolved or resolved == secret_ref:
+                raise TriageWebhookError("Webhook secret could not be resolved")
             return resolved
         return secret_ref
 
