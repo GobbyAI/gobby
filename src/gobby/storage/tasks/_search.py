@@ -6,7 +6,6 @@ the hub database seam.
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -15,6 +14,7 @@ from gobby.search.keyword import (
     KeywordSearchBackend,
     SearchHit,
     SearchMode,
+    SearchQuerySyntaxError,
     fetch_all,
     is_pg_search_parse_error,
     normalize_positive_scores,
@@ -26,8 +26,6 @@ from gobby.search.keyword import (
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
-
-logger = logging.getLogger(__name__)
 
 __all__ = [
     "BM25SearchBackend",
@@ -135,18 +133,14 @@ class TaskSearchBackend:
             parent_task_id=parent_task_id,
             category=category,
         )
-        try:
-            if filters.current_stage_state:
-                hits = self._search_with_stage_state(
-                    query=query,
-                    limit=fetch_limit,
-                    filters=filters,
-                )
-            else:
-                hits = self._backend.search(query, fetch_limit, filters=filters.keyword_filters())
-        except Exception as e:
-            logger.warning(f"pg_search task search failed: {e}")
-            return []
+        if filters.current_stage_state:
+            hits = self._search_with_stage_state(
+                query=query,
+                limit=fetch_limit,
+                filters=filters,
+            )
+        else:
+            hits = self._backend.search(query, fetch_limit, filters=filters.keyword_filters())
 
         results: list[tuple[str, float]] = []
         for hit in hits:
@@ -210,12 +204,10 @@ class TaskSearchBackend:
         """
         try:
             rows = fetch_all(self._db, sql, params)
-        except Exception as e:
-            if is_pg_search_parse_error(e):
-                logger.debug("pg_search task stage-state query parse failed: %s", e)
-                return []
-            logger.warning(f"pg_search task search failed: {e}")
-            return []
+        except Exception as exc:
+            if is_pg_search_parse_error(exc):
+                raise SearchQuerySyntaxError(query) from exc
+            raise
         scores = normalize_positive_scores([float(row_value(row, "score")) for row in rows])
         return [
             SearchHit(id=str(row_value(row, "id")), score=score)

@@ -14,6 +14,17 @@ SearchMode = Literal["keyword", "semantic"]
 logger = logging.getLogger(__name__)
 
 
+class SearchQuerySyntaxError(ValueError):
+    """Raised when pg_search cannot parse a user search query."""
+
+    def __init__(self, query: str) -> None:
+        self.query = query
+        super().__init__(
+            f"Search query could not be parsed: {query!r}. "
+            "Simplify the query to plain words and retry."
+        )
+
+
 @dataclass(frozen=True)
 class SearchHit:
     """Single keyword search result."""
@@ -183,8 +194,7 @@ class BM25SearchBackend:
             rows = fetch_all(self._hub, sql, params)
         except Exception as exc:
             if is_pg_search_parse_error(exc):
-                logger.debug("pg_search keyword query parse failed: %s", exc)
-                return []
+                raise SearchQuerySyntaxError(query) from exc
             raise
 
         raw_scores = [float(row_value(row, "score")) for row in rows]

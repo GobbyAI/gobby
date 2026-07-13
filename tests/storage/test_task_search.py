@@ -1,6 +1,5 @@
 """Tests for task search functionality."""
 
-import logging
 from typing import Any
 
 import pytest
@@ -344,12 +343,10 @@ class TestTaskSearchBackend:
         )
         assert sanitize_pg_search_query('"salt AND pepper" OR "NOT"') == ("salt and pepper or not")
 
-    def test_keyword_backend_parse_error_returns_empty_without_warning(
-        self,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """Known pg_search parse errors are non-warning empty results."""
-        from gobby.search.keyword import BM25SearchBackend
+    def test_postgres_keyword_parse_error_raises_typed_error(self) -> None:
+        """Known pg_search parse errors are exposed as query syntax failures."""
+        from gobby.search.keyword import SearchQuerySyntaxError
+        from gobby.storage.tasks._search import TaskSearchBackend
 
         class FakePostgresDB:
             dialect = "postgres"
@@ -357,14 +354,36 @@ class TestTaskSearchBackend:
             def fetchall(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
                 raise RuntimeError("could not parse query string: `content:(-)`")
 
-        with caplog.at_level(logging.DEBUG):
-            results = BM25SearchBackend(FakePostgresDB(), "memories").search("alpha", 5)
+        with pytest.raises(SearchQuerySyntaxError, match="plain words") as exc_info:
+            TaskSearchBackend(FakePostgresDB()).search("alpha", top_k=5)
 
-        assert results == []
-        assert all(record.levelno < logging.WARNING for record in caplog.records)
-        assert any(
-            "pg_search keyword query parse failed" in record.message for record in caplog.records
-        )
+        assert exc_info.value.query == "alpha"
+        assert isinstance(exc_info.value.__cause__, RuntimeError)
+
+    def test_postgres_keyword_zero_rows_returns_empty(self) -> None:
+        """A successful pg_search query with no rows is not a syntax failure."""
+        from gobby.storage.tasks._search import TaskSearchBackend
+
+        class FakePostgresDB:
+            dialect = "postgres"
+
+            def fetchall(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
+                return []
+
+        assert TaskSearchBackend(FakePostgresDB()).search("alpha", top_k=5) == []
+
+    def test_postgres_keyword_infrastructure_error_propagates(self) -> None:
+        """Non-parser database failures remain visible to callers."""
+        from gobby.storage.tasks._search import TaskSearchBackend
+
+        class FakePostgresDB:
+            dialect = "postgres"
+
+            def fetchall(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
+                raise RuntimeError("database connection lost")
+
+        with pytest.raises(RuntimeError, match="connection lost"):
+            TaskSearchBackend(FakePostgresDB()).search("alpha", top_k=5)
 
     def test_memory_keyword_search_excludes_soft_deleted(self) -> None:
         """Memory BM25 search appends an explicit ``deleted_at IS NULL`` active clause.
@@ -418,11 +437,9 @@ class TestTaskSearchBackend:
 
         assert "deleted_at" not in db.sql
 
-    def test_postgres_stage_state_parse_error_returns_empty_without_warning(
-        self,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """Task stage-state search uses the same parse-error fallback."""
+    def test_postgres_stage_state_parse_error_raises_typed_error(self) -> None:
+        """Task stage-state search exposes the same typed syntax failure."""
+        from gobby.search.keyword import SearchQuerySyntaxError
         from gobby.storage.tasks._search import TaskSearchBackend
 
         class FakePostgresDB:
@@ -431,15 +448,44 @@ class TestTaskSearchBackend:
             def fetchall(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
                 raise RuntimeError("could not parse query string: `title:(-)`")
 
-        with caplog.at_level(logging.DEBUG):
-            results = TaskSearchBackend(FakePostgresDB()).search(
+        with pytest.raises(SearchQuerySyntaxError, match="plain words") as exc_info:
+            TaskSearchBackend(FakePostgresDB()).search(
                 "alpha",
                 current_stage_state="ready",
             )
 
-        assert results == []
-        assert all(record.levelno < logging.WARNING for record in caplog.records)
-        assert any(
-            "pg_search task stage-state query parse failed" in record.message
-            for record in caplog.records
+        assert exc_info.value.query == "alpha"
+        assert isinstance(exc_info.value.__cause__, RuntimeError)
+
+    def test_postgres_stage_state_zero_rows_returns_empty(self) -> None:
+        """A successful stage-state query with no rows remains an empty result."""
+        from gobby.storage.tasks._search import TaskSearchBackend
+
+        class FakePostgresDB:
+            dialect = "postgres"
+
+            def fetchall(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
+                return []
+
+        results = TaskSearchBackend(FakePostgresDB()).search(
+            "alpha",
+            current_stage_state="ready",
         )
+
+        assert results == []
+
+    def test_postgres_stage_state_infrastructure_error_propagates(self) -> None:
+        """Stage-state search does not convert infrastructure failures to no matches."""
+        from gobby.storage.tasks._search import TaskSearchBackend
+
+        class FakePostgresDB:
+            dialect = "postgres"
+
+            def fetchall(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
+                raise RuntimeError("database connection lost")
+
+        with pytest.raises(RuntimeError, match="connection lost"):
+            TaskSearchBackend(FakePostgresDB()).search(
+                "alpha",
+                current_stage_state="ready",
+            )
