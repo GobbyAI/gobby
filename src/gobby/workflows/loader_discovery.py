@@ -84,7 +84,11 @@ def _merge_db_pipelines(
         return
 
     try:
-        db_rows = mgr.list_all(project_id=project_id, workflow_type="pipeline")
+        db_rows = mgr.list_all(
+            project_id=project_id,
+            workflow_type="pipeline",
+            enabled=True,
+        )
     except Exception as e:
         logger.warning(f"Failed to list DB pipeline definitions: {e}")
         return
@@ -92,6 +96,9 @@ def _merge_db_pipelines(
     for row in db_rows:
         try:
             data = json.loads(row.definition_json)
+            # Mutable row metadata is authoritative; definition_json may still
+            # contain the value from import time after a later enable toggle.
+            data["enabled"] = row.enabled
             loader._validate_pipeline_references(data)
             definition = PipelineDefinition(**data)
 

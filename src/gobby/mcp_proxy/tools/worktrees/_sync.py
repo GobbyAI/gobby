@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+
+# Used only to classify timeout exceptions from the existing Git runner.
+import subprocess  # nosec
 from typing import Any, Literal, cast
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -11,8 +14,11 @@ from gobby.mcp_proxy.tools.worktrees._context import RegistryContext
 from gobby.mcp_proxy.tools.worktrees._helpers import resolve_project_context
 from gobby.utils.git import (
     get_checkout_mutation_lock,
+    new_stash_marker,
     run_thread_to_completion,
     run_to_completion,
+    stash_oid_for_marker,
+    stash_ref_for_oid,
 )
 
 logger = logging.getLogger(__name__)
@@ -148,17 +154,14 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             "source_branch": source_branch or worktree.base_branch,
         }
 
-    @registry.tool(
-        name="merge_worktree",
-        description="Merge a worktree's branch into its base branch (or a specified target).",
-    )
-    async def merge_worktree(
+    async def _merge_worktree_impl(
         worktree_id: str,
         source_branch: str | None = None,
         target_branch: str | None = None,
         push: bool = False,
         prefer_remote: bool = False,
         project_path: str | None = None,
+        cancellation_requested: asyncio.Event | None = None,
     ) -> dict[str, Any]:
         """Merge a worktree branch into the local target branch.
 
@@ -259,20 +262,81 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         original_branch = ""
         checked_out_target = False
+        merge_cleanup_required = False
 
-        stash_created = False
+        stash_oid: str | None = None
 
         async def _restore_stash() -> None:
             """Restore stashed .gobby/ files if any were stashed."""
-            if stash_created:
+            if stash_oid:
+                stash_list = await run_thread_to_completion(
+                    resolved_git_mgr.run_git_command,
+                    ["stash", "list", "--format=%gd%x00%H"],
+                    cwd=merge_cwd,
+                    timeout=10,
+                )
+                if stash_list.returncode != 0:
+                    detail = stash_list.stderr or stash_list.stdout or "git stash list failed"
+                    raise RuntimeError(f"Failed to locate merge_worktree stash: {detail}")
+                stash_ref = stash_ref_for_oid(stash_list.stdout, stash_oid)
+                if stash_ref is None:
+                    raise RuntimeError(f"Failed to locate exact merge_worktree stash {stash_oid}")
                 pop_result = await run_thread_to_completion(
-                    resolved_git_mgr.run_git_command, ["stash", "pop"], cwd=merge_cwd, timeout=10
+                    resolved_git_mgr.run_git_command,
+                    ["stash", "pop", stash_ref],
+                    cwd=merge_cwd,
+                    timeout=10,
                 )
                 if pop_result.returncode != 0:
-                    logger.warning(
-                        f"Failed to restore stashed .gobby/ files: "
-                        f"{pop_result.stderr or pop_result.stdout}"
+                    detail = pop_result.stderr or pop_result.stdout or "git stash pop failed"
+                    raise RuntimeError(
+                        f"Failed to restore stashed .gobby/ files from {stash_ref}: {detail}"
                     )
+
+        async def _abort_failed_merge() -> None:
+            """Abort a failed merge transaction if Git still has MERGE_HEAD."""
+            nonlocal merge_cleanup_required
+            if not merge_cleanup_required:
+                return
+
+            try:
+                merge_head = await run_thread_to_completion(
+                    resolved_git_mgr.run_git_command,
+                    ["rev-parse", "--verify", "-q", "MERGE_HEAD"],
+                    cwd=merge_cwd,
+                    timeout=10,
+                )
+            except (subprocess.TimeoutExpired, OSError) as error:
+                raise RuntimeError(f"Failed to inspect failed merge state: {error}") from error
+
+            if merge_head.returncode == 1:
+                merge_cleanup_required = False
+                return
+            if merge_head.returncode != 0:
+                detail = (
+                    merge_head.stderr
+                    or merge_head.stdout
+                    or f"git exited with status {merge_head.returncode}"
+                )
+                raise RuntimeError(f"Failed to inspect failed merge state: {detail}")
+
+            try:
+                abort_result = await run_thread_to_completion(
+                    resolved_git_mgr.run_git_command,
+                    ["merge", "--abort"],
+                    cwd=merge_cwd,
+                    timeout=10,
+                )
+            except (subprocess.TimeoutExpired, OSError) as error:
+                raise RuntimeError(f"Failed to abort merge_worktree merge: {error}") from error
+            if abort_result.returncode != 0:
+                detail = (
+                    abort_result.stderr
+                    or abort_result.stdout
+                    or f"git exited with status {abort_result.returncode}"
+                )
+                raise RuntimeError(f"Failed to abort merge_worktree merge: {detail}")
+            merge_cleanup_required = False
 
         async def _source_is_merged_into_target() -> bool:
             ancestor_result = await run_thread_to_completion(
@@ -353,6 +417,8 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         mutation_lock = get_checkout_mutation_lock(merge_cwd)
         await mutation_lock.acquire()
         try:
+            if cancellation_requested is not None and cancellation_requested.is_set():
+                raise asyncio.CancelledError
             current_branch_result = await run_thread_to_completion(
                 resolved_git_mgr.run_git_command,
                 ["rev-parse", "--abbrev-ref", "HEAD"],
@@ -463,26 +529,87 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                         "target_branch": merge_target,
                     }
 
-            # Stash dirty .gobby/ sync files to prevent merge blocking.
-            # Compare stash list before/after to reliably detect if a stash was created
-            # (same pattern as merge_clone).
-            stash_list_before = await run_thread_to_completion(
-                resolved_git_mgr.run_git_command, ["stash", "list"], cwd=merge_cwd, timeout=10
-            )
-            stash_push = await run_thread_to_completion(
+            # Stash dirty .gobby/ sync files and retain the exact object identity.
+            stash_marker = new_stash_marker("merge-worktree")
+            stash_head_before = await run_thread_to_completion(
                 resolved_git_mgr.run_git_command,
-                ["stash", "push", "-m", "gobby-merge: auto-stash sync files", "--", ".gobby/"],
+                ["stash", "list", "-1", "--format=%H"],
                 cwd=merge_cwd,
                 timeout=10,
             )
-            if stash_push.returncode == 0:
-                stash_list_after = await run_thread_to_completion(
-                    resolved_git_mgr.run_git_command,
-                    ["stash", "list"],
-                    cwd=merge_cwd,
-                    timeout=10,
+            if stash_head_before.returncode != 0:
+                detail = (
+                    stash_head_before.stderr
+                    or stash_head_before.stdout
+                    or "git stash identity lookup failed"
                 )
-                stash_created = stash_list_after.stdout != stash_list_before.stdout
+                return {
+                    "success": False,
+                    "error": f"Failed to inspect target checkout stash identity: {detail}",
+                    "step": "stash",
+                    "worktree_path": wt_path,
+                    "project_path": repo_path,
+                    "target_worktree_path": target_worktree_path,
+                    "source_branch": effective_source,
+                    "target_branch": merge_target,
+                }
+            stash_push = await run_thread_to_completion(
+                resolved_git_mgr.run_git_command,
+                ["stash", "push", "-m", stash_marker, "--", ".gobby/"],
+                cwd=merge_cwd,
+                timeout=10,
+            )
+            if stash_push.returncode != 0:
+                detail = stash_push.stderr or stash_push.stdout or "git stash push failed"
+                return {
+                    "success": False,
+                    "error": f"Failed to stash target checkout .gobby files: {detail}",
+                    "step": "stash",
+                    "worktree_path": wt_path,
+                    "project_path": repo_path,
+                    "target_worktree_path": target_worktree_path,
+                    "source_branch": effective_source,
+                    "target_branch": merge_target,
+                }
+            stash_head_after = await run_thread_to_completion(
+                resolved_git_mgr.run_git_command,
+                ["stash", "list", "--format=%H%x00%gs"],
+                cwd=merge_cwd,
+                timeout=10,
+            )
+            if stash_head_after.returncode != 0:
+                detail = (
+                    stash_head_after.stderr
+                    or stash_head_after.stdout
+                    or "git stash identity lookup failed"
+                )
+                return {
+                    "success": False,
+                    "error": f"Failed to identify target checkout stash: {detail}",
+                    "step": "stash",
+                    "worktree_path": wt_path,
+                    "project_path": repo_path,
+                    "target_worktree_path": target_worktree_path,
+                    "source_branch": effective_source,
+                    "target_branch": merge_target,
+                }
+            before_oid = stash_head_before.stdout.strip() or None
+            after_oid = stash_head_after.stdout.partition("\0")[0].strip() or None
+            stash_oid = stash_oid_for_marker(stash_head_after.stdout, stash_marker)
+            if stash_oid is None and after_oid != before_oid:
+                return {
+                    "success": False,
+                    "error": (
+                        "Stash head changed after push but the operation-owned "
+                        "stash marker was not found"
+                    ),
+                    "step": "stash",
+                    "worktree_path": wt_path,
+                    "project_path": repo_path,
+                    "target_worktree_path": target_worktree_path,
+                    "source_branch": effective_source,
+                    "target_branch": merge_target,
+                }
 
             merge_head_result = await run_thread_to_completion(
                 resolved_git_mgr.run_git_command,
@@ -508,12 +635,19 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "target_branch": merge_target,
                 }
 
+            # Git can leave MERGE_HEAD/index state behind even when the command
+            # raises instead of returning a nonzero result (for example, timeout).
+            # Treat the transaction as cleanup-required before starting merge and
+            # clear the flag only after Git proves the merge command succeeded.
+            merge_cleanup_required = True
             merge_result = await run_thread_to_completion(
                 resolved_git_mgr.run_git_command,
                 ["merge", source_ref, "--no-ff", "--no-edit"],
                 cwd=merge_cwd,
                 timeout=60,
             )
+            if merge_result.returncode == 0:
+                merge_cleanup_required = False
             auto_resolved: list[str] = []
             message = f"Merged {effective_source} into local {merge_target}"
 
@@ -552,19 +686,15 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                                 "source_branch": effective_source,
                                 "target_branch": merge_target,
                             }
+                        merge_cleanup_required = False
                         auto_resolved = conflicted_files
                         message = (
                             f"Merged {effective_source} into local {merge_target} "
                             f"(auto-resolved {len(conflicted_files)} trivial conflict(s))"
                         )
                     else:
-                        # Still have real conflicts — abort and report.
-                        await run_thread_to_completion(
-                            resolved_git_mgr.run_git_command,
-                            ["merge", "--abort"],
-                            cwd=merge_cwd,
-                            timeout=10,
-                        )
+                        # Still have real conflicts — the transaction cleanup
+                        # below aborts before the checkout lock is released.
                         return {
                             "success": False,
                             "has_conflicts": True,
@@ -583,12 +713,6 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
                 else:
                     merge_output = merge_result.stdout + merge_result.stderr
-                    await run_thread_to_completion(
-                        resolved_git_mgr.run_git_command,
-                        ["merge", "--abort"],
-                        cwd=merge_cwd,
-                        timeout=10,
-                    )
                     return {
                         "success": False,
                         "has_conflicts": False,
@@ -646,7 +770,13 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 result["auto_resolved"] = auto_resolved
             return result
         finally:
+            cleanup_errors: list[RuntimeError] = []
             try:
+                try:
+                    await _abort_failed_merge()
+                except RuntimeError as abort_error:
+                    cleanup_errors.append(abort_error)
+                    logger.error("%s", abort_error)
                 if checked_out_target and original_branch != merge_target:
                     restore_branch = await run_thread_to_completion(
                         resolved_git_mgr.run_git_command,
@@ -655,14 +785,53 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                         timeout=30,
                     )
                     if restore_branch.returncode != 0:
-                        logger.warning(
-                            "Failed to restore original branch %s after merge_worktree: %s",
-                            original_branch,
-                            restore_branch.stderr or restore_branch.stdout,
+                        detail = (
+                            restore_branch.stderr
+                            or restore_branch.stdout
+                            or f"git exited with status {restore_branch.returncode}"
                         )
-                await _restore_stash()
+                        cleanup_errors.append(
+                            RuntimeError(
+                                f"Failed to restore original branch {original_branch} "
+                                f"after merge_worktree: {detail}"
+                            )
+                        )
+                        logger.error("%s", cleanup_errors[-1])
+                try:
+                    await _restore_stash()
+                except RuntimeError as stash_error:
+                    cleanup_errors.append(stash_error)
+                    logger.error("%s", stash_error)
+                if cleanup_errors:
+                    raise RuntimeError("; ".join(str(error) for error in cleanup_errors))
             finally:
                 mutation_lock.release()
+
+    @registry.tool(
+        name="merge_worktree",
+        description="Merge a worktree's branch into its base branch (or a specified target).",
+    )
+    async def merge_worktree(
+        worktree_id: str,
+        source_branch: str | None = None,
+        target_branch: str | None = None,
+        push: bool = False,
+        prefer_remote: bool = False,
+        project_path: str | None = None,
+    ) -> dict[str, Any]:
+        cancellation_requested = asyncio.Event()
+        return await run_to_completion(
+            _merge_worktree_impl(
+                worktree_id,
+                source_branch,
+                target_branch,
+                push,
+                prefer_remote,
+                project_path,
+                cancellation_requested,
+            ),
+            on_cancel=cancellation_requested.set,
+        )
 
     @registry.tool(
         name="push_branch",

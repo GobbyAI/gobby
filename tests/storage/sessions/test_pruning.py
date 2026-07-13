@@ -360,6 +360,58 @@ class TestSessionManagerPruning:
         assert session_manager.get(memory_ref.id) is not None
         assert session_manager.get(agent_run_ref.id) is not None
 
+    @pytest.mark.asyncio
+    async def test_workflow_audit_maintenance_unblocks_empty_session_pruning(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        from gobby.runner_maintenance_audit import workflow_audit_cleanup_loop
+
+        session = session_manager.register(
+            external_id="old-audit-ref",
+            machine_id="machine",
+            source="qwen",
+            project_id=sample_project["id"],
+        )
+        session_manager.update_status(session.id, "expired")
+        session_manager.db.execute(
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = %s",
+            (session.id,),
+        )
+        session_manager.db.execute(
+            """
+            INSERT INTO workflow_audit_log (session_id, timestamp, step, event_type, result)
+            VALUES (%s, NOW() - INTERVAL '8 days', %s, %s, %s)
+            """,
+            (session.id, "old-step", "transition", "success"),
+        )
+
+        assert session_manager.prune_empty_sessions(min_age_hours=1) == 0
+
+        shutdown_requested = False
+
+        async def stop_after_cycle(_seconds: float) -> None:
+            nonlocal shutdown_requested
+            shutdown_requested = True
+
+        await workflow_audit_cleanup_loop(
+            session_manager.db,
+            lambda: shutdown_requested,
+            retention_days=7,
+            interval_seconds=0,
+            sleep=stop_after_cycle,
+        )
+
+        audit_count = session_manager.db.fetchone(
+            "SELECT COUNT(*) AS count FROM workflow_audit_log WHERE session_id = %s",
+            (session.id,),
+        )
+        assert audit_count is not None
+        assert audit_count["count"] == 0
+        assert session_manager.prune_empty_sessions(min_age_hours=1) == 1
+        assert session_manager.get(session.id) is None
+
     def test_prune_empty_sessions_large_batch_preserves_retained_refs(
         self,
         session_manager: SessionManager,

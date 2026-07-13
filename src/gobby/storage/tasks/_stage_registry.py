@@ -20,6 +20,30 @@ ReviewPolicy = Literal["none", "required", "optional"]
 StageCategory = Literal["discovery", "design", "verification", "implementation", "delivery"]
 DispatchType = Literal["agent", "pipeline"]
 
+EDITABLE_STAGE_UPDATE_FIELDS = frozenset(
+    {
+        "display_label",
+        "description",
+        "category",
+        "default_agent",
+        "reviewer_agent",
+        "reviewer_agent_selector_json",
+        "review_policy",
+        "dispatch_type",
+        "dispatch_target",
+        "dispatch_inputs_json",
+        "position_hint",
+        "requires_human",
+        "is_terminal",
+        "default_max_work_attempts",
+        "default_max_review_rounds",
+    }
+)
+
+
+class StageRegistryNotFoundError(ValueError):
+    """Raised when a requested stage registry entry does not exist."""
+
 
 @normalize_datetime_model(optional=("deleted_at",))
 @dataclass(frozen=True, slots=True)
@@ -171,9 +195,13 @@ class StageRegistryManager:
 
         if "name" in updates and updates["name"] != name:
             raise ValueError("stage names are immutable")
+        unknown_fields = set(updates) - EDITABLE_STAGE_UPDATE_FIELDS - {"name"}
+        if unknown_fields:
+            fields = ", ".join(sorted(unknown_fields))
+            raise ValueError(f"Unknown stage update field(s): {fields}")
         current = self.get(name)
         if current is None:
-            raise ValueError(f"Unknown stage '{name}'")
+            raise StageRegistryNotFoundError(f"Unknown stage '{name}'")
         payload = self._entry_payload(current)
         payload.update({key: value for key, value in updates.items() if key != "name"})
         entry = StageRegistryEntry(**payload)
@@ -233,7 +261,9 @@ class StageRegistryManager:
         bundled = {entry.name: entry for entry in StageRegistryLoader().load_with_hashes()}
         bundled_entry = bundled.get(name)
         if bundled_entry is None:
-            raise ValueError(f"Stage '{name}' is not bundled and cannot be restored")
+            raise StageRegistryNotFoundError(
+                f"Stage '{name}' is not bundled and cannot be restored"
+            )
         self.upsert(bundled_entry.to_registry_entry(), bundled_hash=bundled_entry.bundled_hash)
         restored = self.get(name)
         if restored is None:
@@ -243,7 +273,7 @@ class StageRegistryManager:
     def delete_stage(self, name: str) -> StageRegistryEntry:
         current = self.get(name)
         if current is None:
-            raise ValueError(f"Unknown stage '{name}'")
+            raise StageRegistryNotFoundError(f"Unknown stage '{name}'")
         blocker = self._delete_blocker(name)
         if blocker is not None:
             raise ValueError(blocker)

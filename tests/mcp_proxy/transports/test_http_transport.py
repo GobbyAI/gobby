@@ -111,13 +111,6 @@ class TestHTTPInit:
         assert conn.config.name == "test-http"
         assert conn.config.url == "http://localhost:8080/mcp"
 
-    def test_auth_token_default_none(self, conn: HTTPTransportConnection) -> None:
-        assert conn._auth_token is None
-
-    def test_auth_token_set(self, config: MCPServerConfig) -> None:
-        c = HTTPTransportConnection(config, auth_token="secret")
-        assert c._auth_token == "secret"
-
 
 # ===========================================================================
 # connect() — early return when already connected
@@ -756,10 +749,6 @@ class TestHTTPBaseProperties:
         # Both present -> connected
         conn._state = ConnectionState.CONNECTED
         assert conn.is_connected is True
-
-    def test_set_auth_token(self, conn: HTTPTransportConnection) -> None:
-        conn.set_auth_token("new-token")
-        assert conn._auth_token == "new-token"
 
     @pytest.mark.asyncio
     async def test_health_check_not_connected(self, conn: HTTPTransportConnection) -> None:

@@ -47,8 +47,6 @@ class _TestHandler(AgentEventHandlerMixin):
     def __init__(self) -> None:
         self.logger = MagicMock()
         self._session_manager = MagicMock()
-        # Prevent real DB calls in handle_subagent_start depth tracking
-        self._session_manager.db.fetchone.return_value = None
         self._session_coordinator = None
         self._message_processor = None
         self._task_manager = None
@@ -85,6 +83,22 @@ class TestHandleBeforeAgent:
         result = handler.handle_before_agent(event)
         assert result.decision == "allow"
 
+    def test_skill_resolution_uses_event_project(self) -> None:
+        handler = _TestHandler()
+        skill = MagicMock(name="project-only")
+        skill.name = "project-only"
+        handler._skill_manager.resolve_skill_name.return_value = skill
+        event = _make_event(data={"prompt": "/gobby project-only"})
+        event.project_id = "project-a"
+
+        response = handler.handle_before_agent(event)
+
+        assert response.context is not None
+        handler._skill_manager.resolve_skill_name.assert_called_with(
+            "project-only",
+            project_id="project-a",
+        )
+
     def test_updates_status_to_active(self) -> None:
         handler = _TestHandler()
         handler._skill_manager = None
@@ -97,6 +111,26 @@ class TestHandleBeforeAgent:
         handler._session_manager.update_session_status.assert_called_with("sess-1", "active")
         assert handler._session_manager.update_session_status.call_count >= 1
         assert handler._session_manager.update_session_status.call_args is not None
+
+    def test_resets_subagent_count_at_start_of_parent_turn(self) -> None:
+        handler = _TestHandler()
+        handler._skill_manager = None
+        event = _make_event(
+            data={"prompt": "hello"},
+            metadata={"_platform_session_id": "sess-1"},
+        )
+
+        with patch("gobby.workflows.state_manager.SessionVariableManager") as mock_svm_cls:
+            mock_svm = MagicMock()
+            mock_svm_cls.return_value = mock_svm
+
+            result = handler.handle_before_agent(event)
+
+            assert result.decision == "allow"
+            mock_svm.merge_variables.assert_any_call(
+                "sess-1",
+                {"subagent_count": 0, "is_subagent": False},
+            )
 
     def test_clear_command_generates_summaries(self) -> None:
         handler = _TestHandler()
@@ -195,7 +229,7 @@ class TestHandleBeforeAgent:
         )
         assert "<active_skills>" not in result.context
         assert "### brevity" not in result.context
-        mock_merge.assert_called_once_with(
+        mock_merge.assert_any_call(
             "sess-1",
             {
                 "_agent_context_injected": True,
@@ -249,7 +283,7 @@ class TestHandleBeforeAgent:
         assert first.context.count("## Personality") == 1
         assert first.context.count("## Instructions") == 1
         assert second.context is None
-        mock_merge.assert_called_once_with(
+        mock_merge.assert_any_call(
             "sess-1",
             {
                 "_agent_context_injected": True,
@@ -296,7 +330,7 @@ class TestHandleBeforeAgent:
         handler._session_manager.reset_transcript_processed.assert_called_once_with("sess-1")
         handler._session_manager.get.assert_called_once_with("sess-1")
         mock_resolve_agent.assert_not_called()
-        mock_merge.assert_called_once_with("sess-1", {"_agent_context_injected": True})
+        mock_merge.assert_any_call("sess-1", {"_agent_context_injected": True})
 
     def test_persona_switch_reinjects_agent_preamble_once(self) -> None:
         handler = _TestHandler()
@@ -349,6 +383,7 @@ class TestHandleBeforeAgent:
         assert "## Role\nAct as the operator." in first.context
         assert second.context is None
         assert mock_merge.call_args_list == [
+            call("sess-1", {"subagent_count": 0, "is_subagent": False}),
             call(
                 "sess-1",
                 {
@@ -356,7 +391,8 @@ class TestHandleBeforeAgent:
                     "_agent_identity_reinject": False,
                     "_agent_context_rehydrate_pending": False,
                 },
-            )
+            ),
+            call("sess-1", {"subagent_count": 0, "is_subagent": False}),
         ]
 
     def test_explicit_rehydrate_reinjects_agent_preamble_once(self) -> None:
@@ -408,6 +444,7 @@ class TestHandleBeforeAgent:
         assert "## Goal\nRestore prompt context." in first.context
         assert second.context is None
         assert mock_merge.call_args_list == [
+            call("sess-1", {"subagent_count": 0, "is_subagent": False}),
             call(
                 "sess-1",
                 {
@@ -415,7 +452,8 @@ class TestHandleBeforeAgent:
                     "_agent_identity_reinject": False,
                     "_agent_context_rehydrate_pending": False,
                 },
-            )
+            ),
+            call("sess-1", {"subagent_count": 0, "is_subagent": False}),
         ]
 
 
@@ -743,6 +781,28 @@ class TestGenerateHelpContent:
         assert context["command_prefix"] == "$gobby"
         assert "- `$gobby expand` — Expand tasks" in context["skills_list"]
 
+    def test_generate_help_logs_active_skill_filter_failure(self) -> None:
+        handler = _TestHandler()
+        skill = MagicMock()
+        skill.name = "expand"
+        skill.description = "Expand tasks."
+        skill.is_always_apply.return_value = False
+        handler._skill_manager.discover_core_skills.return_value = [skill]
+
+        with (
+            patch("gobby.workflows.state_manager.SessionVariableManager") as mock_svm_cls,
+            patch(
+                "gobby.hooks.event_handlers._agent._load_agent_prompt",
+                return_value="help",
+            ),
+        ):
+            mock_svm_cls.return_value.get_variables.side_effect = RuntimeError("database offline")
+            result = handler._generate_help_content(session_id="sess-1")
+
+        assert result == "help"
+        handler.logger.warning.assert_called_once()
+        assert "active skills" in handler.logger.warning.call_args.args[0]
+
     def test_generate_help_filters_always_apply(self) -> None:
         handler = _TestHandler()
         regular_skill = MagicMock()
@@ -846,6 +906,7 @@ class TestHandleAfterAgent:
 
     def test_with_session(self) -> None:
         handler = _TestHandler()
+        handler._apply_debug_echo = MagicMock()
         event = _make_event(
             event_type=HookEventType.AFTER_AGENT,
             metadata={"_platform_session_id": "sess-1"},
@@ -854,6 +915,7 @@ class TestHandleAfterAgent:
         result = handler.handle_after_agent(event)
         assert result.decision == "allow"
         handler._session_manager.update_session_status.assert_called_with("sess-1", "paused")
+        handler._apply_debug_echo.assert_called_once_with(result)
 
     def test_without_session(self) -> None:
         handler = _TestHandler()
@@ -986,8 +1048,10 @@ class TestSubagentEvents:
 
         result = handler.handle_subagent_start(event)
         assert result.decision == "allow"
+        handler._session_manager.db.fetchone.assert_not_called()
+        assert not hasattr(handler, "_pending_subagent_depths")
 
-    def test_subagent_start_sets_is_subagent(self) -> None:
+    def test_subagent_start_increments_count_and_derives_is_subagent(self) -> None:
         handler = _TestHandler()
         event = _make_event(
             event_type=HookEventType.SUBAGENT_START,
@@ -1002,7 +1066,12 @@ class TestSubagentEvents:
             result = handler.handle_subagent_start(event)
 
             assert result.decision == "allow"
-            mock_svm.set_variable.assert_called_once_with("sess-1", "is_subagent", True)
+            mock_svm.adjust_counter_and_derive_boolean.assert_called_once_with(
+                "sess-1",
+                "subagent_count",
+                1,
+                boolean_name="is_subagent",
+            )
 
     def test_subagent_start_no_ids(self) -> None:
         handler = _TestHandler()
@@ -1039,7 +1108,7 @@ class TestSubagentEvents:
         result = handler.handle_subagent_stop(event)
         assert result.decision == "allow"
 
-    def test_subagent_stop_clears_is_subagent(self) -> None:
+    def test_subagent_stop_decrements_count_and_derives_is_subagent(self) -> None:
         handler = _TestHandler()
         event = _make_event(
             event_type=HookEventType.SUBAGENT_STOP,
@@ -1053,7 +1122,12 @@ class TestSubagentEvents:
             result = handler.handle_subagent_stop(event)
 
             assert result.decision == "allow"
-            mock_svm.set_variable.assert_called_once_with("sess-1", "is_subagent", False)
+            mock_svm.adjust_counter_and_derive_boolean.assert_called_once_with(
+                "sess-1",
+                "subagent_count",
+                -1,
+                boolean_name="is_subagent",
+            )
 
     def test_subagent_stop_no_session(self) -> None:
         handler = _TestHandler()

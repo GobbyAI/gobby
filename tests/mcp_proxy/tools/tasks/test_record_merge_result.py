@@ -4,17 +4,20 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import Mock
 
 import pytest
 
 import gobby.mcp_proxy.tools.tasks._stage_ops as stage_ops
+from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.delivery import TaskDeliveryStateManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.storage.tasks._stage_types import IllegalStageTransitionError
 from gobby.utils.session_context import session_context_for_test
 from tests.storage.tasks._stage_test_helpers import (
     create_task,
@@ -72,8 +75,10 @@ def _context() -> SimpleNamespace:
     )
 
 
-def _record_merge_result(ctx: SimpleNamespace):
-    tool = stage_ops.create_stage_ops_registry(ctx).get_tool("record_merge_result")
+def _record_merge_result(ctx: SimpleNamespace | RegistryContext) -> Any:
+    tool = stage_ops.create_stage_ops_registry(cast(RegistryContext, ctx)).get_tool(
+        "record_merge_result"
+    )
     assert tool is not None
     return tool
 
@@ -86,22 +91,34 @@ def _patch_stage_view(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def _real_context(temp_db) -> SimpleNamespace:
-    return SimpleNamespace(
-        task_manager=LocalTaskManager(temp_db),
-        resolve_session_id=lambda session_ref: session_ref,
+def _real_context(temp_db: HubDatabase) -> RegistryContext:
+    return cast(
+        RegistryContext,
+        SimpleNamespace(
+            task_manager=LocalTaskManager(temp_db),
+            resolve_session_id=lambda session_ref: session_ref,
+        ),
     )
 
 
-def _real_context_with_github(temp_db, github) -> SimpleNamespace:
-    return SimpleNamespace(
-        task_manager=LocalTaskManager(temp_db),
-        resolve_session_id=lambda session_ref: session_ref,
-        mcp_manager=github,
+def _real_context_with_github(temp_db: HubDatabase, github: Any) -> RegistryContext:
+    return cast(
+        RegistryContext,
+        SimpleNamespace(
+            task_manager=LocalTaskManager(temp_db),
+            resolve_session_id=lambda session_ref: session_ref,
+            mcp_manager=github,
+        ),
     )
 
 
-def _register_session(temp_db, sample_project, external_id: str, *, agent_depth: int = 0) -> str:
+def _register_session(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    external_id: str,
+    *,
+    agent_depth: int = 0,
+) -> str:
     return (
         SessionManager(temp_db)
         .register(
@@ -117,7 +134,7 @@ def _register_session(temp_db, sample_project, external_id: str, *, agent_depth:
 
 
 def _running_agent_run(
-    temp_db,
+    temp_db: HubDatabase,
     *,
     parent_session_id: str,
     child_session_id: str,
@@ -139,7 +156,7 @@ def _running_agent_run(
     return run.id
 
 
-def _artifact_row(temp_db, task_id: str) -> dict[str, object]:
+def _artifact_row(temp_db: HubDatabase, task_id: str) -> dict[str, object]:
     row = temp_db.fetchone(
         """
         SELECT merge_sha, merge_report_ref
@@ -153,12 +170,12 @@ def _artifact_row(temp_db, task_id: str) -> dict[str, object]:
 
 
 def _merge_task_in_progress(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     *,
     max_work_attempts: int | None = None,
     parent_task_id: str | None = None,
-):
+) -> Any:
     task = create_task(
         temp_db,
         sample_project,
@@ -214,7 +231,42 @@ def test_success_writes_artifacts_and_completes_merge(
     assert cleanup_calls == [(ctx.task_manager.db, "task-1")]
 
 
-def test_success_closes_task_via_terminal_close(temp_db, sample_project) -> None:
+def test_success_transition_failure_does_not_write_merged_campaign(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_stage_view(monkeypatch)
+    ctx = _context()
+    ctx.task_manager.stage_states.complete_stage.side_effect = IllegalStageTransitionError(
+        "merge",
+        "needs_review",
+        "complete_stage",
+        "required",
+    )
+    delivery = Mock()
+    delivery.get_state.return_value = {"campaign": {}}
+    monkeypatch.setattr(stage_ops, "TaskDeliveryStateManager", Mock(return_value=delivery))
+    release = Mock()
+    monkeypatch.setattr(stage_ops, "_release_current_agent_dispatch_mutex", release)
+
+    with pytest.raises(IllegalStageTransitionError):
+        _record_merge_result(ctx)(
+            task_id="task-1",
+            merge_sha="merge-sha",
+        )
+
+    assert delivery.record_campaign.call_count == 0
+    assert release.call_count == 0
+    assert ctx.task_manager.stage_states.complete_stage.call_count == 1
+    assert ctx.task_manager.stage_states.complete_stage.call_args.args == ("task-1", "merge")
+    assert ctx.task_manager.stage_states.complete_stage.call_args.kwargs == {
+        "by_session_id": None,
+        "commit_sha": "merge-sha",
+    }
+
+
+def test_success_closes_task_via_terminal_close(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     task = _merge_task_in_progress(temp_db, sample_project)
 
     result = _record_merge_result(_real_context(temp_db))(
@@ -229,8 +281,8 @@ def test_success_closes_task_via_terminal_close(temp_db, sample_project) -> None
 
 
 def test_success_close_uses_manifest_exhausted_reason_and_merge_sha(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     task = _merge_task_in_progress(temp_db, sample_project)
 
@@ -249,7 +301,9 @@ def test_success_close_uses_manifest_exhausted_reason_and_merge_sha(
     }
 
 
-def test_success_is_idempotent_after_worker_recorded_merge(temp_db, sample_project) -> None:
+def test_success_is_idempotent_after_worker_recorded_merge(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     task = _merge_task_in_progress(temp_db, sample_project)
 
     first = _record_merge_result(_real_context(temp_db))(
@@ -276,8 +330,8 @@ def test_success_is_idempotent_after_worker_recorded_merge(temp_db, sample_proje
 
 
 def test_success_idempotent_merge_rejects_different_completed_sha(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     task = _merge_task_in_progress(temp_db, sample_project)
 
@@ -301,8 +355,8 @@ def test_success_idempotent_merge_rejects_different_completed_sha(
 
 
 def test_success_reconciles_ready_merge_after_prior_failure(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     task = _merge_task_in_progress(temp_db, sample_project, max_work_attempts=3)
 
@@ -334,8 +388,8 @@ def test_success_reconciles_ready_merge_after_prior_failure(
 
 
 def test_success_reconciles_ready_merge_when_campaign_already_merged(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     task = _merge_task_in_progress(temp_db, sample_project)
     manager = LocalTaskManager(temp_db)
@@ -371,8 +425,8 @@ def test_success_reconciles_ready_merge_when_campaign_already_merged(
 
 
 def test_success_rejects_different_ready_campaign_sha(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     task = _merge_task_in_progress(temp_db, sample_project)
     manager = LocalTaskManager(temp_db)
@@ -406,8 +460,8 @@ def test_success_rejects_different_ready_campaign_sha(
 
 
 def test_success_releases_parent_merge_orchestrator_mutex_for_worker(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     root_session_id = _register_session(temp_db, sample_project, "root")
     orchestrator_session_id = _register_session(
@@ -460,7 +514,9 @@ def test_success_releases_parent_merge_orchestrator_mutex_for_worker(
     assert mutexes.get_mutex(task.id) is None
 
 
-def test_success_close_uses_cascade_descendants_true(temp_db, sample_project) -> None:
+def test_success_close_uses_cascade_descendants_true(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     parent = _merge_task_in_progress(temp_db, sample_project)
     child = create_task(
         temp_db,
@@ -529,8 +585,8 @@ def test_failure_writes_report_and_fails_merge(monkeypatch: pytest.MonkeyPatch) 
 
 @pytest.mark.asyncio
 async def test_close_linked_github_issue_tool_comments_labels_and_closes(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     class FakeGitHub:
         def __init__(self) -> None:
@@ -564,15 +620,15 @@ async def test_close_linked_github_issue_tool_comments_labels_and_closes(
 
     assert result == {"ok": True, "task_id": task.id, "closed": True}
     assert [name for name, _args in github.calls] == [
-        "add_issue_comment",
         "add_labels_to_issue",
         "update_issue",
+        "add_issue_comment",
     ]
-    assert github.calls[1][1]["labels"] == ["gobby:resolved"]
-    assert github.calls[2][1]["state"] == "closed"
+    assert github.calls[0][1]["labels"] == ["gobby:resolved"]
+    assert github.calls[1][1]["state"] == "closed"
 
 
-def test_failure_path(temp_db, sample_project) -> None:
+def test_failure_path(temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
     under_cap = _merge_task_in_progress(temp_db, sample_project, max_work_attempts=2)
 
     result = _record_merge_result(_real_context(temp_db))(

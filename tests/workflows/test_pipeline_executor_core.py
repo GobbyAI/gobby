@@ -4,7 +4,7 @@ Split from the test_pipeline_executor monolith (#12210).
 """
 
 import json
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -105,7 +105,7 @@ class TestPipelineExecutorExecute:
             execution_id="pe-existing-456",
         )
 
-        mock_execution_manager.get_execution.assert_called_with("pe-existing-456")
+        mock_execution_manager.get_execution.assert_any_call("pe-existing-456")
         assert mock_execution_manager.get_execution.call_count >= 1
         assert mock_execution_manager.get_execution.call_args is not None
 
@@ -207,6 +207,80 @@ class TestPipelineExecutorExecute:
         calls = mock_execution_manager.update_execution_status.call_args_list
         first_call = calls[0]
         assert first_call.kwargs["status"] == ExecutionStatus.RUNNING
+
+    @pytest.mark.asyncio
+    async def test_execute_stops_before_next_step_when_execution_is_cancelled(
+        self, mock_db, mock_execution_manager, mock_llm_service, simple_pipeline
+    ) -> None:
+        """A persisted cancellation is terminal and must not be overwritten."""
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        running_execution = MagicMock(id="pe-test-123", status=ExecutionStatus.RUNNING)
+        cancelled_execution = MagicMock(id="pe-test-123", status=ExecutionStatus.CANCELLED)
+        mock_execution_manager.get_execution.side_effect = [
+            running_execution,
+            cancelled_execution,
+        ]
+        mock_execution_manager.update_execution_status.return_value = running_execution
+        mock_execution_manager.get_steps_for_execution.return_value = []
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+        )
+
+        result = await executor.execute(
+            pipeline=simple_pipeline,
+            inputs={},
+            project_id="proj-123",
+            execution_id="pe-test-123",
+        )
+
+        assert result is cancelled_execution
+        mock_execution_manager.create_step_execution.assert_not_called()
+        statuses = [
+            call.kwargs["status"]
+            for call in mock_execution_manager.update_execution_status.call_args_list
+        ]
+        assert statuses == [ExecutionStatus.RUNNING]
+
+    @pytest.mark.asyncio
+    async def test_execute_does_not_complete_step_after_cancellation_during_step(
+        self, mock_db, mock_execution_manager, mock_llm_service, simple_pipeline
+    ) -> None:
+        """A cancellation persisted during a shielded step wins over its output."""
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        running_execution = MagicMock(id="pe-test-123", status=ExecutionStatus.RUNNING)
+        cancelled_execution = MagicMock(id="pe-test-123", status=ExecutionStatus.CANCELLED)
+        mock_execution_manager.get_execution.side_effect = [
+            running_execution,
+            running_execution,
+            cancelled_execution,
+        ]
+        mock_execution_manager.update_execution_status.return_value = running_execution
+        mock_execution_manager.get_steps_for_execution.return_value = []
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+        )
+        executor._execute_step = AsyncMock(return_value={"result": "too-late"})
+
+        result = await executor.execute(
+            pipeline=simple_pipeline,
+            inputs={},
+            project_id="proj-123",
+            execution_id="pe-test-123",
+        )
+
+        assert result is cancelled_execution
+        completed_updates = [
+            call
+            for call in mock_execution_manager.update_step_execution.call_args_list
+            if call.kwargs.get("status") == StepStatus.COMPLETED
+        ]
+        assert completed_updates == []
 
 
 class TestPipelineExecutorStepExecution:

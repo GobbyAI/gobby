@@ -162,6 +162,99 @@ class TestToolHandlerEdgeCases:
             tool_result="1 passed",
         )
 
+    def test_edit_tracking_failure_clears_verification_freshness(
+        self,
+        mock_dependencies: dict,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A failed edit append still invalidates previously recorded evidence."""
+        import logging
+
+        from gobby.workflows.verification_evidence import (
+            VERIFICATION_EVIDENCE_RESET_UPDATES,
+        )
+
+        handlers = EventHandlers(**mock_dependencies)
+        variable_manager = MagicMock()
+        variable_manager.record_edited_file.side_effect = RuntimeError("primary write failed")
+        variables = {"verification_evidence_recorded": True}
+
+        def merge_variables(_session_id: str, updates: dict[str, Any]) -> bool:
+            variables.update(updates)
+            return True
+
+        variable_manager.merge_variables.side_effect = merge_variables
+
+        with (
+            caplog.at_level(logging.WARNING),
+            patch.object(
+                handlers,
+                "_resolve_repo_relative_edit_path",
+                return_value="src/gobby/example.py",
+            ),
+            patch(
+                "gobby.workflows.state_manager.SessionVariableManager",
+                return_value=variable_manager,
+            ),
+        ):
+            handlers._track_session_edited_file(
+                "sess-123",
+                "src/gobby/example.py",
+                None,
+            )
+
+        variable_manager.merge_variables.assert_called_once_with(
+            "sess-123",
+            VERIFICATION_EVIDENCE_RESET_UPDATES,
+        )
+        assert variables["verification_evidence_recorded"] is False
+        warning = next(
+            record
+            for record in caplog.records
+            if "resetting verification evidence" in record.getMessage()
+        )
+        assert warning.levelno == logging.WARNING
+        assert warning.exc_info is not None
+
+    def test_edit_tracking_fallback_failure_logs_error(
+        self,
+        mock_dependencies: dict,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A failed fallback evidence reset is visible at error level."""
+        import logging
+
+        handlers = EventHandlers(**mock_dependencies)
+        variable_manager = MagicMock()
+        variable_manager.record_edited_file.side_effect = RuntimeError("primary write failed")
+        variable_manager.merge_variables.side_effect = RuntimeError("fallback write failed")
+
+        with (
+            caplog.at_level(logging.WARNING),
+            patch.object(
+                handlers,
+                "_resolve_repo_relative_edit_path",
+                return_value="src/gobby/example.py",
+            ),
+            patch(
+                "gobby.workflows.state_manager.SessionVariableManager",
+                return_value=variable_manager,
+            ),
+        ):
+            handlers._track_session_edited_file(
+                "sess-123",
+                "src/gobby/example.py",
+                None,
+            )
+
+        error = next(
+            record
+            for record in caplog.records
+            if "Failed to reset verification evidence" in record.getMessage()
+        )
+        assert error.levelno == logging.ERROR
+        assert error.exc_info is not None
+
     def test_after_tool_edit_marks_had_edits(self, mock_dependencies: dict, tmp_path: Path) -> None:
         """Test AFTER_TOOL marks had_edits for edit tools on regular files."""
         mock_dependencies["task_manager"].list_tasks.return_value = [
@@ -227,8 +320,9 @@ class TestToolHandlerEdgeCases:
             patch("gobby.utils.git.is_path_gitignored", return_value=True),
             patch.object(handlers, "_track_session_edited_file") as track,
         ):
-            handlers.handle_after_tool(event)
+            response = handlers.handle_after_tool(event)
 
+        assert response.decision == "allow"
         track.assert_not_called()
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
         mock_dependencies["task_manager"].list_tasks.assert_not_called()
@@ -253,8 +347,9 @@ class TestToolHandlerEdgeCases:
             patch("gobby.utils.git.is_path_gitignored", return_value=False),
             patch.object(handlers, "_track_session_edited_file") as track,
         ):
-            handlers.handle_after_tool(event)
+            response = handlers.handle_after_tool(event)
 
+        assert response.decision == "allow"
         track.assert_called_once()
         mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
 
@@ -274,8 +369,9 @@ class TestToolHandlerEdgeCases:
         )
 
         with patch.object(handlers, "_track_session_edited_file") as track:
-            handlers.handle_after_tool(event)
+            response = handlers.handle_after_tool(event)
 
+        assert response.decision == "allow"
         track.assert_not_called()
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
 
@@ -429,7 +525,10 @@ class TestSkillToolInterception:
         )
         assert "# Agent Monitoring" not in (response.context or "")
         assert "<skill-context" not in (response.context or "")
-        skill_manager.resolve_skill_name.assert_called_once_with("build-coordinator")
+        skill_manager.resolve_skill_name.assert_called_once_with(
+            "build-coordinator",
+            project_id="",
+        )
 
     def test_skill_tool_with_gobby_prefix(
         self, handlers_with_skills: EventHandlers, skill_manager: MagicMock
@@ -446,7 +545,10 @@ class TestSkillToolInterception:
             'Call get_skill(name="build-coordinator") on gobby-skills through mcp__gobby__ progressive discovery'
             in (response.context or "")
         )
-        skill_manager.resolve_skill_name.assert_called_once_with("build-coordinator")
+        skill_manager.resolve_skill_name.assert_called_once_with(
+            "build-coordinator",
+            project_id="",
+        )
 
     def test_skill_tool_with_args(self, handlers_with_skills: EventHandlers) -> None:
         """Skill tool call with args includes them in context."""
@@ -474,7 +576,10 @@ class TestSkillToolInterception:
         response = handlers_with_skills.handle_before_tool(event)
 
         assert response.decision == "allow"
-        skill_manager.resolve_skill_name.assert_called_once_with("unknown-thing")
+        skill_manager.resolve_skill_name.assert_called_once_with(
+            "unknown-thing",
+            project_id="",
+        )
 
     def test_skill_tool_non_gobby_namespace(
         self, handlers_with_skills: EventHandlers, skill_manager: MagicMock

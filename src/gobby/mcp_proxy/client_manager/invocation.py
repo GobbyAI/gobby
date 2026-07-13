@@ -8,9 +8,11 @@ import time
 from collections.abc import Awaitable
 from typing import Any, Protocol
 
+from anyio import BrokenResourceError, ClosedResourceError, EndOfStream
 from opentelemetry.trace import Status, StatusCode
 from pydantic import AnyUrl
 
+from gobby.mcp_proxy.connection_cleanup import describe_exception, discard_connection
 from gobby.telemetry.tracing import create_span
 
 
@@ -18,11 +20,27 @@ class _InvocationManager(Protocol):
     """Manager surface required by MCP invocation helpers."""
 
     _configs: dict[str, Any]
+    _connections: dict[str, Any]
+    _lazy_connector: Any
+    _tool_schema_cache: dict[str, list[dict[str, Any]]]
     health: dict[str, Any]
     metrics_manager: Any | None
     project_id: str | None
 
     def get_client_session(self, server_name: str) -> Awaitable[Any]: ...
+
+
+async def _call_session_tool(
+    session: Any,
+    tool_name: str,
+    arguments: dict[str, Any],
+    timeout: float | None,
+) -> Any:
+    """Call one downstream session, applying the configured timeout."""
+    call = session.call_tool(tool_name, arguments)
+    if timeout:
+        return await asyncio.wait_for(call, timeout=timeout)
+    return await call
 
 
 async def call_tool(
@@ -43,13 +61,38 @@ async def call_tool(
     ) as span:
         try:
             session = await manager.get_client_session(server_name)
-            if timeout:
-                result = await asyncio.wait_for(
-                    session.call_tool(tool_name, arguments or {}),
-                    timeout=timeout,
+            try:
+                result = await _call_session_tool(
+                    session,
+                    tool_name,
+                    arguments or {},
+                    timeout,
                 )
-            else:
-                result = await session.call_tool(tool_name, arguments or {})
+            except (ClosedResourceError, BrokenResourceError, EndOfStream) as exc:
+                error_message = describe_exception(exc)
+                logger.warning(
+                    "Discarding dead connection for %s after %s failed: %s",
+                    server_name,
+                    tool_name,
+                    error_message,
+                )
+                if server_name in manager.health:
+                    manager.health[server_name].record_failure(error_message)
+                await discard_connection(
+                    server_name,
+                    manager._connections,
+                    manager.health,
+                    manager._lazy_connector,
+                    logger,
+                    tool_schema_cache=manager._tool_schema_cache,
+                )
+                session = await manager.get_client_session(server_name)
+                result = await _call_session_tool(
+                    session,
+                    tool_name,
+                    arguments or {},
+                    timeout,
+                )
             if server_name in manager.health:
                 manager.health[server_name].record_success()
             success = True
@@ -76,7 +119,8 @@ async def call_tool(
                 )
                 if metrics_project_id:
                     try:
-                        manager.metrics_manager.record_call(
+                        await asyncio.to_thread(
+                            manager.metrics_manager.record_call,
                             server_name=server_name,
                             tool_name=tool_name,
                             project_id=metrics_project_id,

@@ -9,6 +9,7 @@ This enables progressive discovery for internal tools and reduces the
 number of tools exposed on the main MCP server.
 """
 
+import asyncio
 import inspect
 import json
 import logging
@@ -16,6 +17,8 @@ import types
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Union, get_args, get_origin, get_type_hints
+
+from gobby.mcp_proxy.tools._background_task_lifecycle import internal_tool_background_loop
 
 logger = logging.getLogger(__name__)
 
@@ -280,7 +283,8 @@ class InternalToolRegistry:
         # Call the function (handle both sync and async)
         if inspect.iscoroutinefunction(tool.func):
             return await tool.func(**coerced_arguments)
-        return tool.func(**coerced_arguments)
+        with internal_tool_background_loop(asyncio.get_running_loop()):
+            return await asyncio.to_thread(tool.func, **coerced_arguments)
 
     def call_sync(
         self, name: str, arguments: dict[str, Any], context: dict[str, Any] | None = None

@@ -11,8 +11,59 @@ from gobby.telemetry.tracing import create_span
 
 DispatchMcpCalls = Callable[[list[dict[str, Any]], HookEvent], list[dict[str, Any]]]
 FormatDiscoveryResult = Callable[[dict[str, Any]], str]
+DedupDiscoveryResult = Callable[[dict[str, Any], str], dict[str, Any]]
 
 MIN_SKILL_RELEVANCE = 0.65
+
+
+def process_dispatch_results(
+    event: HookEvent,
+    dispatch_results: list[dict[str, Any]],
+    extra_context: list[str],
+    *,
+    format_discovery_result: FormatDiscoveryResult,
+    dedup_memory_results: DedupDiscoveryResult | None = None,
+    dedup_skill_results: DedupDiscoveryResult | None = None,
+) -> HookResponse | None:
+    """Apply captured MCP results to hook context and blocking decisions."""
+    session_id = event.metadata.get("_platform_session_id")
+    if not isinstance(session_id, str) or not session_id:
+        session_id = None
+
+    for result in dispatch_results:
+        if result.get("inject_result") and result.get("result"):
+            if result.get("tool") == "search_memories" and session_id and dedup_memory_results:
+                result["result"] = dedup_memory_results(result["result"], session_id)
+            if result.get("tool") == "search_skills" and session_id and dedup_skill_results:
+                result["result"] = dedup_skill_results(result["result"], session_id)
+            extra_context.append(format_discovery_result(result))
+
+        if result.get("block_on_failure") and not result.get("success"):
+            call_result = result.get("result") or {}
+            error_msg = (
+                call_result.get("error", "unknown")
+                if isinstance(call_result, dict)
+                else str(call_result)
+            )
+            return HookResponse(
+                decision="block",
+                reason=(
+                    f"Auto-heal prerequisite failed: "
+                    f"{result['server']}/{result['tool']}: {error_msg}"
+                ),
+                context="\n\n".join(extra_context) if extra_context else None,
+            )
+
+        if result.get("block_on_success") and result.get("success"):
+            return HookResponse(
+                decision="block",
+                reason=(
+                    f"Intercepted by {result['server']}/{result['tool']} \u2014 see context below."
+                ),
+                context="\n\n".join(extra_context) if extra_context else None,
+            )
+
+    return None
 
 
 class WorkflowRuleEvaluator:
@@ -94,32 +145,14 @@ class WorkflowRuleEvaluator:
         dispatch_results: list[dict[str, Any]],
         extra_context: list[str],
     ) -> HookResponse | None:
-        session_id = event.metadata.get("_platform_session_id")
-        if not isinstance(session_id, str) or not session_id:
-            session_id = None
-
-        for result in dispatch_results:
-            if result.get("inject_result") and result.get("result"):
-                if result.get("tool") == "search_memories" and session_id:
-                    result["result"] = self.dedup_memory_results(result["result"], session_id)
-                if result.get("tool") == "search_skills" and session_id:
-                    result["result"] = self.dedup_skill_results(result["result"], session_id)
-                extra_context.append(self.format_discovery_result(result))
-
-            if result.get("block_on_failure") and not result.get("success"):
-                return self._block_for_failed_call(result, extra_context)
-
-            if result.get("block_on_success") and result.get("success"):
-                return HookResponse(
-                    decision="block",
-                    reason=(
-                        f"Intercepted by {result['server']}/{result['tool']} "
-                        "\u2014 see context below."
-                    ),
-                    context="\n\n".join(extra_context) if extra_context else None,
-                )
-
-        return None
+        return process_dispatch_results(
+            event,
+            dispatch_results,
+            extra_context,
+            format_discovery_result=self.format_discovery_result,
+            dedup_memory_results=self.dedup_memory_results,
+            dedup_skill_results=self.dedup_skill_results,
+        )
 
     @staticmethod
     def _block_for_failed_call(
@@ -214,9 +247,6 @@ class WorkflowRuleEvaluator:
             from gobby.workflows.state_manager import SessionVariableManager
 
             sv_mgr = SessionVariableManager(self.database)
-            variables = sv_mgr.get_variables(session_id)
-            already_injected: set[str] = set(variables.get("injected_memory_ids", []))
-
             memories = result.get("memories", [])
             id_less = [m for m in memories if not m.get("id")]
             if id_less:
@@ -224,16 +254,18 @@ class WorkflowRuleEvaluator:
                     "Memory dedup: %d memories lack 'id' field and cannot be tracked",
                     len(id_less),
                 )
-            if not memories or not already_injected:
-                new_ids = [m["id"] for m in memories if m.get("id")]
-                if new_ids:
-                    sv_mgr.append_to_set_variable(session_id, "injected_memory_ids", new_ids)
+            if not memories:
                 return result
 
-            filtered = [m for m in memories if m.get("id") not in already_injected]
-            new_ids = [m["id"] for m in filtered if m.get("id")]
-            if new_ids:
-                sv_mgr.append_to_set_variable(session_id, "injected_memory_ids", new_ids)
+            memory_ids = [m["id"] for m in memories if m.get("id")]
+            claimed_ids = set(
+                sv_mgr.claim_set_variable_values(
+                    session_id,
+                    "injected_memory_ids",
+                    memory_ids,
+                )
+            )
+            filtered = [m for m in memories if not m.get("id") or m["id"] in claimed_ids]
 
             return {**result, "memories": filtered}
         except Exception as exc:
@@ -246,23 +278,26 @@ class WorkflowRuleEvaluator:
             from gobby.workflows.state_manager import SessionVariableManager
 
             sv_mgr = SessionVariableManager(self.database)
-            variables = sv_mgr.get_variables(session_id)
-            already_suggested: set[str] = set(variables.get("suggested_skill_names", []))
-
             results_list = result.get("results", [])
             if not results_list:
                 return result
 
+            relevant = [
+                item for item in results_list if item.get("score", 0) >= MIN_SKILL_RELEVANCE
+            ]
+            relevant_names = [item["skill_name"] for item in relevant if item.get("skill_name")]
+            claimed_names = set(
+                sv_mgr.claim_set_variable_values(
+                    session_id,
+                    "suggested_skill_names",
+                    relevant_names,
+                )
+            )
             filtered = [
                 item
-                for item in results_list
-                if item.get("score", 0) >= MIN_SKILL_RELEVANCE
-                and item.get("skill_name", "") not in already_suggested
+                for item in relevant
+                if not item.get("skill_name") or item["skill_name"] in claimed_names
             ]
-
-            new_names = [item["skill_name"] for item in filtered if item.get("skill_name")]
-            if new_names:
-                sv_mgr.append_to_set_variable(session_id, "suggested_skill_names", new_names)
 
             return {**result, "results": filtered, "count": len(filtered)}
         except Exception as exc:

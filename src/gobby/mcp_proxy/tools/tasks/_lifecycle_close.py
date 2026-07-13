@@ -38,6 +38,18 @@ logger = logging.getLogger(__name__)
 CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT: int = 30
 
 
+def _repo_path_unavailable_error() -> dict[str, Any]:
+    """Return the structured error used when close_task cannot safely run Git."""
+    return {
+        "success": False,
+        "error": "task_repo_path_unavailable",
+        "message": (
+            "close_task requires a resolvable task repository path for commit operations. "
+            "Configure the task project's repo_path or pass project_path."
+        ),
+    }
+
+
 def _has_committable_edits(paths: set[str], cwd: str) -> bool:
     """Return True if any of the given repo-relative paths could ever be committed.
 
@@ -132,12 +144,13 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             )
         except RepoPathValidationError as e:
             return {"error": str(e)}
-        cwd = repo_path or "."
 
         # Link commit if provided (convenience for link + close in one call)
         if commit_sha:
+            if repo_path is None:
+                return _repo_path_unavailable_error()
             try:
-                ctx.task_manager.link_commit(resolved_id, commit_sha, cwd=cwd)
+                ctx.task_manager.link_commit(resolved_id, commit_sha, cwd=repo_path)
             except ValueError as e:
                 return {"error": str(e)}
             task = ctx.task_manager.get_task(resolved_id)
@@ -212,11 +225,13 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
 
         target_task_had_edits = target_task_has_edits(session_vars, resolved_id)
         if target_task_had_edits:
+            if repo_path is None:
+                return _repo_path_unavailable_error()
             edited_paths = task_edited_file_set(session_vars, resolved_id)
             target_task_had_edits = await asyncio.to_thread(
                 _has_committable_edits,
                 edited_paths,
-                cwd,
+                repo_path,
             )
 
         autolink_error = _auto_link_claim_window_commits(
@@ -224,7 +239,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             task=task,
             resolved_id=resolved_id,
             resolved_session_id=resolved_session_id,
-            cwd=cwd,
+            cwd=repo_path,
         )
         if autolink_error is not None:
             return autolink_error
@@ -353,17 +368,19 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         )
         current_commit_sha: str | None = None
         if requires_closed_commit_sha:
+            if repo_path is None:
+                return _repo_path_unavailable_error()
             if commit_sha:
-                current_commit_sha = normalize_commit_sha(commit_sha, cwd=cwd)
+                current_commit_sha = normalize_commit_sha(commit_sha, cwd=repo_path)
             elif task.commits:
                 linked_commit_sha = task.commits[-1]
                 current_commit_sha = (
-                    normalize_commit_sha(linked_commit_sha, cwd=cwd) or linked_commit_sha
+                    normalize_commit_sha(linked_commit_sha, cwd=repo_path) or linked_commit_sha
                 )
             else:
                 current_commit_sha = run_git_command(
                     ["git", "rev-parse", "--short", "HEAD"],
-                    cwd=cwd,
+                    cwd=repo_path,
                 )
             if current_commit_sha is None:
                 return {
@@ -587,11 +604,13 @@ def _auto_link_claim_window_commits(
     task: Any,
     resolved_id: str,
     resolved_session_id: str | None,
-    cwd: str,
+    cwd: str | None,
 ) -> dict[str, Any] | None:
     claim_started_at = _claimed_session_window_start(ctx, task, resolved_id, resolved_session_id)
     if not claim_started_at:
         return None
+    if cwd is None:
+        return _repo_path_unavailable_error()
 
     try:
         from gobby.tasks.commits import auto_link_commits

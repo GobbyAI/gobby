@@ -845,14 +845,41 @@ pub(crate) fn source_hashes_for_doc(
         .map_err(|err| anyhow::anyhow!("failed to resolve codewiki project root: {err}"))?;
     for file in source_files_from_frontmatter(content) {
         let source_path = project_root.join(&file);
-        let canonical_source = source_path.canonicalize().map_err(|err| {
-            anyhow::anyhow!("failed to resolve codewiki source file {file}: {err}")
-        })?;
+        // Sources can be deleted by external commits between generation (which
+        // reads the index) and this on-disk re-hash at persist; skip their
+        // hashes instead of aborting the run (#18109). The doc then misses a
+        // source hash and re-keys for regeneration on the next run.
+        let canonical_source = match source_path.canonicalize() {
+            Ok(path) => path,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                eprintln!("warning: skipping codewiki source hash for deleted file: {file}");
+                continue;
+            }
+            Err(err) => {
+                return Err(anyhow::anyhow!(
+                    "failed to resolve codewiki source file {file}: {err}"
+                ));
+            }
+        };
         if !canonical_source.starts_with(&canonical_root) {
             anyhow::bail!("codewiki source file {file} resolves outside project root");
         }
-        let hash = hasher::file_content_hash(&canonical_source)
-            .map_err(|err| anyhow::anyhow!("failed to hash codewiki source file {file}: {err}"))?;
+        let hash = match hasher::file_content_hash(&canonical_source) {
+            Ok(hash) => hash,
+            Err(err)
+                if err
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|io_err| io_err.kind() == std::io::ErrorKind::NotFound) =>
+            {
+                eprintln!("warning: skipping codewiki source hash for deleted file: {file}");
+                continue;
+            }
+            Err(err) => {
+                return Err(anyhow::anyhow!(
+                    "failed to hash codewiki source file {file}: {err}"
+                ));
+            }
+        };
         hashes.insert(file, hash);
     }
     Ok(hashes)

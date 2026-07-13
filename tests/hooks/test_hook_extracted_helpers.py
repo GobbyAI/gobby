@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -63,6 +65,35 @@ class TestProjectIdResolver:
 
 
 class TestHookProjectContext:
+    def test_sessionless_hook_cwd_overrides_inherited_project_id(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        gobby_dir = tmp_path / ".gobby"
+        gobby_dir.mkdir()
+        (gobby_dir / "project.json").write_text(
+            json.dumps({"id": "cwd-project", "name": "CWD Project"})
+        )
+        monkeypatch.setenv("GOBBY_PROJECT_ID", "inherited-project")
+        event = HookEvent(
+            event_type=HookEventType.SESSION_START,
+            session_id="missing-session",
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={},
+            cwd=str(tmp_path),
+        )
+        resolver = ProjectIdResolver()
+
+        resolution = resolve_hook_project_context(
+            event,
+            session_manager=None,
+            resolve_project_id=resolver.resolve,
+        )
+
+        assert resolution.project_id == "cwd-project"
+        assert resolution.source == "cwd"
+        assert event.project_id == "cwd-project"
+
     def test_contract_probe_cwd_uses_global_project(self) -> None:
         event = HookEvent(
             event_type=HookEventType.SESSION_START,

@@ -4,6 +4,7 @@ Provides RegistryContext dataclass that bundles shared state and helpers
 used across task tool modules.
 """
 
+import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -15,6 +16,8 @@ from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.project_context import get_project_context
 from gobby.workflows.state_manager import SessionVariableManager
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
@@ -141,7 +144,8 @@ class RegistryContext:
         """Resolve project_id from session (authoritative source).
 
         The session's project_id is the authoritative source for project
-        affiliation. Falls back to context var then personal workspace.
+        affiliation. A provided session that cannot be resolved must fail
+        closed rather than falling back to a different project.
 
         This prevents cross-project leakage when the daemon's CWD differs
         from the calling session's project (e.g., stdio MCP transport).
@@ -152,20 +156,27 @@ class RegistryContext:
         Returns:
             Resolved project_id string
         """
-        from gobby.storage.projects import PERSONAL_PROJECT_ID
-
         try:
             resolved_sid = self.resolve_session_id(session_id)
             session = self.session_manager.get(resolved_sid)
-            if session and session.project_id:
-                return session.project_id
-        except Exception:
-            pass
-        # Fallback to context var (may be set by rules engine path)
-        project_ctx = get_project_context()
-        if project_ctx and project_ctx.get("id"):
-            return str(project_ctx["id"])
-        return PERSONAL_PROJECT_ID
+        except (ValueError, KeyError, LookupError) as exc:
+            logger.warning(
+                "Cannot resolve project for session %s: %s",
+                session_id,
+                exc,
+                exc_info=True,
+            )
+            raise ValueError(f"Cannot resolve project for session '{session_id}': {exc}") from exc
+
+        if session is None:
+            message = f"Resolved session '{resolved_sid}' was not found"
+            logger.warning("Cannot resolve project for session %s: %s", session_id, message)
+            raise ValueError(message)
+        if not session.project_id:
+            message = f"Resolved session '{resolved_sid}' has no project"
+            logger.warning("Cannot resolve project for session %s: %s", session_id, message)
+            raise ValueError(message)
+        return session.project_id
 
 
 def resolve_project_filter_standalone(

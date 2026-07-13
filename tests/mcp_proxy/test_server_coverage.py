@@ -149,16 +149,16 @@ class TestCallToolSessionResolution:
         }
 
     @pytest.mark.asyncio
-    async def test_call_tool_skips_session_context_when_unresolvable(
+    async def test_call_tool_rejects_unresolvable_explicit_session(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Unresolvable wrapper session ref is debug-only with no SessionContext planted."""
+        """An unresolvable wrapper session cannot degrade to an anonymous tool call."""
         handler, _ = self._make_handler(
             resolve_to=None, resolve_exc=ValueError("Session not found")
         )
         caplog.set_level(logging.DEBUG, logger="gobby.utils.session_context")
 
-        await handler.call_tool(
+        result = await handler.call_tool(
             server_name="gobby-tasks",
             tool_name="suggest_next_task",
             arguments={},
@@ -173,8 +173,7 @@ class TestCallToolSessionResolution:
             rec.levelno >= logging.WARNING and "could not resolve session ref" in rec.message
             for rec in caplog.records
         )
-        call_args = handler.tool_proxy.call_tool.call_args
-        resolved = call_args.kwargs.get("session_id")
-        if resolved is None and len(call_args.args) > 3:
-            resolved = call_args.args[3]
-        assert resolved is None
+        assert result.isError is True
+        assert "session_id" in result.content[0].text
+        assert "not found" in result.content[0].text
+        handler.tool_proxy.call_tool.assert_not_awaited()

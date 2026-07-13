@@ -126,6 +126,21 @@ class TestStatusUtils:
         assert "Health Issues:" in msg
         assert "s1" in msg
 
+    def test_format_status_message_reports_hook_runtime_schema_skew(self) -> None:
+        msg = format_status_message(
+            running=True,
+            api_data={
+                "hook_runtime": {
+                    "state": "schema_mismatch",
+                    "detail": "ghook envelope schema 2 does not match daemon schema 1.",
+                }
+            },
+        )
+
+        assert "Health Issues:" in msg
+        assert "Hook runtime: schema_mismatch" in msg
+        assert "ghook envelope schema 2 does not match daemon schema 1" in msg
+
     def test_format_status_message_log_files(self) -> None:
         msg = format_status_message(
             running=True,

@@ -279,7 +279,7 @@ class TestClaimTaskTool:
             mock_task_manager.claim_task.assert_called_once_with(
                 parent_owned_task.id,
                 session_id="my-session-id",
-                force=True,
+                expected_owner="parent-session-id",
             )
 
     @pytest.mark.asyncio

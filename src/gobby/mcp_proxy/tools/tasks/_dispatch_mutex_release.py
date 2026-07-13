@@ -13,34 +13,52 @@ def _release_current_agent_dispatch_mutex(
     *,
     task_id: str,
     session_id: str,
+    run_id: str | None = None,
 ) -> bool:
     """Release the spawn lease only for the running agent that owns this session."""
+    if run_id is None:
+        run_id = _current_agent_dispatch_mutex_run_id(
+            ctx,
+            task_id=task_id,
+            session_id=session_id,
+        )
+    if run_id is None:
+        return False
+    try:
+        return TaskDispatchMutexManager(ctx.task_manager.db).clear_by_run_id(run_id) > 0
+    except Exception:
+        return False
+
+
+def _current_agent_dispatch_mutex_run_id(
+    ctx: RegistryContext,
+    *,
+    task_id: str,
+    session_id: str,
+) -> str | None:
+    """Return the spawn-lease run ID only when the current agent owns it."""
     db = ctx.task_manager.db
     mutexes = TaskDispatchMutexManager(db)
     try:
         mutex = mutexes.get_mutex(task_id)
     except Exception:
-        return False
+        return None
     if mutex is None or not isinstance(mutex.run_id, str) or not mutex.run_id:
-        return False
+        return None
 
     try:
         row = _current_agent_mutex_owner(db, mutex.run_id, task_id, session_id)
     except Exception:
-        return False
+        return None
     if row is None:
-        return False
+        return None
 
     try:
         if row["id"] != mutex.run_id:
-            return False
+            return None
     except Exception:
-        return False
-
-    try:
-        return mutexes.clear_by_run_id(mutex.run_id) > 0
-    except Exception:
-        return False
+        return None
+    return mutex.run_id
 
 
 def _current_agent_mutex_owner(

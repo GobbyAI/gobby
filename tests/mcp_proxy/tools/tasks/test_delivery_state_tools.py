@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import MagicMock
@@ -158,6 +159,39 @@ async def test_open_delivery_pr_uses_github_mcp_for_same_repo(
     assert row["target_branch"] == "main"
     assert row["pr_url"] == "https://github.com/test/test-project/pull/7"
     assert row["github_pr_number"] == 7
+
+
+@pytest.mark.asyncio
+async def test_open_delivery_pr_offloads_git_helpers(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: Any,
+    sample_project: dict[str, Any],
+) -> None:
+    task = create_task(temp_db, sample_project, task_type="feature")
+    github = FakeGitHub()
+    registry = _registry_with_github(temp_db, github)
+    tool = registry.get_tool("open_delivery_pr")
+    assert tool is not None
+    event_loop_thread = threading.get_ident()
+    helper_threads: list[int] = []
+
+    def resolve_source_branch(**_kwargs: Any) -> str:
+        helper_threads.append(threading.get_ident())
+        return "feature/task"
+
+    def push_branch(**_kwargs: Any) -> None:
+        helper_threads.append(threading.get_ident())
+
+    monkeypatch.setattr(delivery_tools, "_repo_path", lambda *_args: "/repo")
+    monkeypatch.setattr(delivery_tools, "_resolve_source_branch", resolve_source_branch)
+    monkeypatch.setattr(delivery_tools, "_push_branch", push_branch)
+
+    result = await tool(task_id=task.id, target_branch="main")
+
+    assert result["ok"] is True
+    assert result["pushed"] is True
+    assert len(helper_threads) == 2
+    assert all(thread_id != event_loop_thread for thread_id in helper_threads)
 
 
 @pytest.mark.asyncio

@@ -49,7 +49,7 @@ class _WorkflowLoaderProtocol(Protocol):
     async def validate_workflow_for_agent(
         self,
         workflow_name: str,
-        project_path: Path | str | None = None,
+        project_id: str | None = None,
     ) -> tuple[bool, str | None]: ...
 
 
@@ -135,8 +135,8 @@ class WorkflowLoaderSyncMixin:
     def validate_workflow_for_agent_sync(
         self,
         workflow_name: str,
-        project_path: Path | str | None = None,
+        project_id: str | None = None,
     ) -> tuple[bool, str | None]:
         return self._run_sync(
-            self._async_self.validate_workflow_for_agent(workflow_name, project_path)
+            self._async_self.validate_workflow_for_agent(workflow_name, project_id)
         )

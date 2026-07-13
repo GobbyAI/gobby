@@ -355,6 +355,7 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
 
     periodic_task_attrs = (
         "_metrics_cleanup_task",
+        "_workflow_audit_cleanup_task",
         "_metrics_archive_task",
         "_span_cleanup_task",
         "_unmodeled_observations_cleanup_task",

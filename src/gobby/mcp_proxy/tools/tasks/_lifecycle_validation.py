@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.mcp_proxy.tools._task_query_pagination import collect_task_query_pages
 from gobby.mcp_proxy.tools.tasks._helpers import SKIP_REASONS
 from gobby.storage.tasks import Task
 from gobby.storage.tasks._validation_backoff import TaskValidationBackoffStore
@@ -225,7 +226,10 @@ def validate_parent_task(
     Returns:
         ValidationResult indicating if parent can be closed
     """
-    children = ctx.task_manager.list_tasks(parent_task_id=task_id, limit=1000)
+    children = collect_task_query_pages(
+        ctx.task_manager.list_tasks,
+        parent_task_id=task_id,
+    )
 
     if children:
         open_children = [c for c in children if not is_task_closed(c)]

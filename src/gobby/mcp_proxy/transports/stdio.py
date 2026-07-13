@@ -3,7 +3,6 @@
 import asyncio
 import logging
 import sys
-from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TextIO
 
@@ -43,12 +42,10 @@ class StdioTransportConnection(BaseTransportConnection):
     def __init__(
         self,
         config: "MCPServerConfig",
-        auth_token: str | None = None,
-        token_refresh_callback: Callable[[], Coroutine[Any, Any, str]] | None = None,
         stdio_errlog_path: str | None = None,
     ) -> None:
         """Initialize stdio transport connection."""
-        super().__init__(config, auth_token, token_refresh_callback)
+        super().__init__(config)
         self._stdio_errlog_path = stdio_errlog_path
         self._stdio_errlog_handle: TextIO | None = None
         self._session_context: ClientSession | None = None

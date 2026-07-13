@@ -4,10 +4,14 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+from gobby.mcp_proxy.tools._background_task_lifecycle import schedule_background_task
+
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
+
+_notification_tasks: dict[str, asyncio.Task[None]] = {}
 
 
 def notify_parent_on_task_state_change(
@@ -22,8 +26,14 @@ def notify_parent_on_task_state_change(
     broadcasts a task_progress event.
     """
     try:
-        loop = asyncio.get_running_loop()
-        loop.create_task(_notify(db, task_id, new_state, task_ref))
+        schedule_background_task(
+            _notification_tasks,
+            f"{task_id}:{new_state}",
+            lambda: _notify(db, task_id, new_state, task_ref),
+            name=f"gobby-parent-notification-{task_id}-{new_state}",
+            logger=logger,
+            description="Parent notification task",
+        )
     except RuntimeError:
         pass
 

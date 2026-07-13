@@ -1,7 +1,6 @@
 """Base transport connection abstract class."""
 
 import asyncio
-from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from typing import Any
 
@@ -24,20 +23,14 @@ class BaseTransportConnection:
     def __init__(
         self,
         config: MCPServerConfig,
-        auth_token: str | None = None,
-        token_refresh_callback: Callable[[], Coroutine[Any, Any, str]] | None = None,
     ):
         """
         Initialize transport connection.
 
         Args:
             config: Server configuration
-            auth_token: Optional auth token
-            token_refresh_callback: Optional callback for token refresh
         """
         self.config = config
-        self._auth_token = auth_token
-        self._token_refresh_callback = token_refresh_callback
         self._session: Any | None = None  # ClientSession
         self._transport_context: Any | None = None  # Transport-specific context manager
         self._state = ConnectionState.DISCONNECTED
@@ -66,10 +59,6 @@ class BaseTransportConnection:
     def session(self) -> ClientSession | None:
         """Get the current client session, if connected."""
         return self._session
-
-    def set_auth_token(self, token: str) -> None:
-        """Update authentication token."""
-        self._auth_token = token
 
     async def health_check(self, timeout: float = 5.0) -> bool:
         """

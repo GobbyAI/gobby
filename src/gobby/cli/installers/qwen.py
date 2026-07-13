@@ -10,7 +10,7 @@ from typing import Any
 from gobby.agents.trust import seed_gobby_home_trust
 from gobby.cli.utils import get_install_dir
 
-from .hook_commands import rewrite_hook_template_commands
+from .hook_commands import merge_gobby_hook_groups, rewrite_hook_template_commands
 from .mcp_config import configure_mcp_server_json, remove_mcp_server_json
 from .shared import (
     clean_project_hooks,
@@ -111,7 +111,9 @@ def install_qwen(project_path: Path, mode: str = "global") -> dict[str, Any]:
     if "hooks" not in existing_settings:
         existing_settings["hooks"] = {}
     for hook_type, hook_config in gobby_settings.get("hooks", {}).items():
-        existing_settings["hooks"][hook_type] = hook_config
+        existing_settings["hooks"][hook_type] = merge_gobby_hook_groups(
+            existing_settings["hooks"].get(hook_type, []), hook_config
+        )
         hooks_installed.append(hook_type)
 
     existing_settings.setdefault("general", {})

@@ -33,6 +33,26 @@ class TestCoerceStringArguments:
         assert result is not None
         assert result["title"] == "hello"
 
+    @pytest.mark.parametrize(
+        ("encoded_value", "expected_value"),
+        [
+            (r"line\\nnext", r"line\nnext"),
+            (r"left\\tright", r"left\tright"),
+            (r"C:\\\\Temp", r"C:\\Temp"),
+            (r"\\u263A", r"\u263A"),
+        ],
+    )
+    def test_quote_replacement_preserves_literal_backslashes(
+        self,
+        encoded_value: str,
+        expected_value: str,
+    ) -> None:
+        raw = rf"{{\"value\": \"{encoded_value}\"}}"
+
+        result = coerce_string_arguments(raw)
+
+        assert result == {"value": expected_value}
+
     def test_double_escaped_outer(self) -> None:
         r"""The transport-layer pattern: {\"key\": \"value\"}."""
         # Build a string with literal \ before every "

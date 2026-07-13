@@ -13,6 +13,7 @@ from fastapi.responses import PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from gobby.cli.services import is_qdrant_healthy
+from gobby.hooks.runtime_compat import read_ghook_runtime_diagnostic
 from gobby.telemetry.instruments import get_all_metrics, set_gauge, update_daemon_metrics
 
 if TYPE_CHECKING:
@@ -138,9 +139,13 @@ async def _get_falkordb_memory_status(server: "HTTPServer") -> dict[str, Any]:
 
 def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
     @router.get("/health")
-    async def health_check() -> dict[str, str]:
-        """Lightweight health check for startup probing. No I/O."""
-        return {"status": "ok"}
+    async def health_check() -> dict[str, Any]:
+        """Lightweight health check including local hook-runtime compatibility."""
+        hook_runtime = read_ghook_runtime_diagnostic()
+        return {
+            "status": "degraded" if hook_runtime.is_degraded else "ok",
+            "hook_runtime": hook_runtime.to_dict(),
+        }
 
     @router.get("/startup-progress")
     async def startup_progress() -> dict[str, Any]:
@@ -167,6 +172,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
         memory usage, background tasks, and connection statistics.
         """
         start_time = time.perf_counter()
+        hook_runtime = read_ghook_runtime_diagnostic()
 
         # Get server uptime
         uptime_seconds = None
@@ -419,8 +425,8 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                 fd_dir = pathlib.Path(f"/proc/{os.getpid()}/fd")
             current = len(list(fd_dir.iterdir())) if fd_dir.exists() else None
             fd_usage = {"current": current, "soft_limit": soft, "hard_limit": hard}
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Could not collect file descriptor usage: %s", exc, exc_info=True)
 
         # Last shutdown source
         last_shutdown: str | None = None
@@ -438,8 +444,8 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                 shutdown_record = read_active_shutdown_intent(home=home, max_age_seconds=120)
             if shutdown_record is not None:
                 last_shutdown = format_shutdown_source(shutdown_record)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Could not read the last shutdown source: %s", exc, exc_info=True)
 
         # Agent run statistics
         agent_stats: dict[str, int] = {"running": 0}
@@ -452,8 +458,8 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
 
             runs = await server.run_db(_list_running_agents)
             agent_stats["running"] = len(runs)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Could not collect running agent count: %s", exc, exc_info=True)
 
         # Calculate response time
         response_time_ms = (time.perf_counter() - start_time) * 1000
@@ -481,8 +487,8 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                     resolved_db_path = Path(db_path).expanduser()
                     if resolved_db_path.exists():
                         db_size_bytes = resolved_db_path.stat().st_size
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Could not read database file size: %s", exc, exc_info=True)
         executor_stats = server.services.db_executor_stats()
         if executor_stats is not None:
             database_status["executor"] = executor_stats
@@ -497,7 +503,9 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                 logger.warning(f"Failed to get automation loop status: {e}")
 
         payload: dict[str, Any] = {
-            "status": "healthy" if server._running else "degraded",
+            "status": (
+                "healthy" if server._running and not hook_runtime.is_degraded else "degraded"
+            ),
             "dev_mode": getattr(server.services, "dev_mode", False),
             "project_id": getattr(server.services, "project_id", None),
             "server": {
@@ -524,6 +532,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             "fd_usage": fd_usage,
             "db_size_bytes": db_size_bytes,
             "last_shutdown": last_shutdown,
+            "hook_runtime": hook_runtime.to_dict(),
             "response_time_ms": response_time_ms,
         }
         if postgres_status is not None:

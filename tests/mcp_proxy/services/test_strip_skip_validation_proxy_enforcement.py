@@ -27,6 +27,8 @@ from gobby.workflows.sync_rules import get_bundled_rules_path
 
 pytestmark = pytest.mark.unit
 
+SESSION_ID = "00000000-0000-4000-8000-000000000001"
+
 
 def _load_strip_skip_validation_rule(db: HubDatabase) -> None:
     """Insert only the strip-skip-validation rule so other bundled rules don't interfere."""
@@ -129,7 +131,7 @@ async def test_apply_before_tool_enforcement_leaves_skip_validation_for_close_ta
     engine = RuleEngine(db)
     service = _StubService(
         engine=engine,
-        session_id="sess-1",
+        session_id=SESSION_ID,
         variables={"task_has_commits": True},
     )
 
@@ -138,7 +140,7 @@ async def test_apply_before_tool_enforcement_leaves_skip_validation_for_close_ta
         "gobby-tasks",
         "close_task",
         arguments={"task_id": "t-1", "skip_validation": True},
-        session_id="sess-1",
+        session_id=SESSION_ID,
     )
 
     assert error is None
@@ -158,7 +160,7 @@ async def test_apply_before_tool_enforcement_passthrough_without_commits(
     engine = RuleEngine(db)
     service = _StubService(
         engine=engine,
-        session_id="sess-1",
+        session_id=SESSION_ID,
         variables={"task_has_commits": False},
     )
 
@@ -167,7 +169,7 @@ async def test_apply_before_tool_enforcement_passthrough_without_commits(
         "gobby-tasks",
         "close_task",
         arguments={"task_id": "t-1", "skip_validation": True},
-        session_id="sess-1",
+        session_id=SESSION_ID,
     )
 
     assert error is None
@@ -184,7 +186,7 @@ async def test_apply_before_tool_enforcement_marks_duplicate_pending_cli_context
 
     service = _StubService(
         engine=RuleEngine(db),
-        session_id="sess-1",
+        session_id=SESSION_ID,
         variables={},
         pending_tool_context=True,
     )
@@ -194,7 +196,7 @@ async def test_apply_before_tool_enforcement_marks_duplicate_pending_cli_context
         "gobby-merge",
         "merge_resolve",
         arguments={"conflict_id": "mc-one", "use_ai": True},
-        session_id="sess-1",
+        session_id=SESSION_ID,
     )
 
     assert error is None
@@ -214,7 +216,7 @@ def test_proxy_before_tool_event_shape_unchanged() -> None:
 
     event = build_before_tool_event(
         _CtxStub(),
-        effective_session_id="sess-1",
+        effective_session_id=SESSION_ID,
         server_name="gobby-tasks",
         tool_name="close_task",
         arguments={"task_id": "t-1", "skip_validation": True},

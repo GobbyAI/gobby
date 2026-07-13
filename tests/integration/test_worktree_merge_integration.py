@@ -290,34 +290,7 @@ class TestConcurrentMerges:
 
 
 class TestMergeHooks:
-    """Tests for pre-merge and post-merge hooks."""
-
-    def test_merge_hook_manager_exists(self) -> None:
-        """MergeHookManager should exist in gobby.hooks.git."""
-        try:
-            from gobby.hooks.git import MergeHookManager
-
-            assert MergeHookManager is not None
-        except ImportError:
-            pytest.fail("MergeHookManager not found in gobby.hooks.git")
-
-    def test_merge_hook_manager_has_register_pre_merge(self) -> None:
-        """MergeHookManager should have register_pre_merge method."""
-        try:
-            from gobby.hooks.git import MergeHookManager
-
-            assert hasattr(MergeHookManager, "register_pre_merge")
-        except ImportError:
-            pytest.fail("MergeHookManager not found in gobby.hooks.git")
-
-    def test_merge_hook_manager_has_register_post_merge(self) -> None:
-        """MergeHookManager should have register_post_merge method."""
-        try:
-            from gobby.hooks.git import MergeHookManager
-
-            assert hasattr(MergeHookManager, "register_post_merge")
-        except ImportError:
-            pytest.fail("MergeHookManager not found in gobby.hooks.git")
+    """Tests for merge-resolution event support."""
 
     def test_merge_resolution_manager_has_hooks_support(self) -> None:
         """MergeResolutionManager should support hooks."""

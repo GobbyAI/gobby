@@ -156,23 +156,22 @@ class TestBlockOnFailure:
     def test_block_on_failure_success_continues(self) -> None:
         """When block_on_failure=True and call succeeds, chain continues."""
         proxy = AsyncMock()
-        proxy.list_servers = AsyncMock(return_value={"success": True, "servers": []})
-        proxy.list_tools = AsyncMock(return_value={"success": True, "tools": []})
+        proxy.call_tool = AsyncMock(side_effect=[{"result": []}, {"result": []}])
         stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy, loop=None)
         event = _make_event()
 
         calls = [
             {
-                "server": "_proxy",
-                "tool": "list_mcp_servers",
+                "server": "gobby-skills",
+                "tool": "list_skills",
                 "arguments": {},
                 "inject_result": True,
                 "block_on_failure": True,
             },
             {
-                "server": "_proxy",
-                "tool": "list_tools",
-                "arguments": {"server_name": "gobby-tasks"},
+                "server": "gobby-skills",
+                "tool": "get_skill",
+                "arguments": {"name": "python"},
                 "inject_result": True,
                 "block_on_failure": True,
             },
@@ -183,6 +182,27 @@ class TestBlockOnFailure:
         assert len(results) == 2
         assert all(r["success"] for r in results)
 
+    def test_block_on_failure_stops_when_call_returns_none(self) -> None:
+        """A missing MCP result is a failure and stops a guarded chain."""
+        proxy = AsyncMock()
+        proxy.call_tool = AsyncMock(return_value=None)
+        stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy, loop=None)
+
+        results = stub._dispatch_mcp_calls(
+            [
+                {
+                    "server": "gobby-skills",
+                    "tool": "get_skill",
+                    "arguments": {"name": "python"},
+                    "block_on_failure": True,
+                }
+            ],
+            _make_event(),
+        )
+
+        assert len(results) == 1
+        assert results[0]["success"] is False
+
 
 class TestBlockOnSuccess:
     """Tests for block_on_success flag on mcp_calls."""
@@ -192,7 +212,6 @@ class TestBlockOnSuccess:
         proxy = AsyncMock()
         proxy.call_tool = AsyncMock(
             return_value={
-                "success": True,
                 "result": [{"file_path": "src/foo.py", "line_start": 10, "snippet": "class Foo:"}],
             }
         )
@@ -211,6 +230,35 @@ class TestBlockOnSuccess:
         ]
 
         results = stub._dispatch_mcp_calls(calls, event)
+
+        assert len(results) == 1
+        assert results[0]["success"] is True
+        assert results[0]["block_on_success"] is True
+
+    def test_block_on_success_accepts_call_tool_result(self) -> None:
+        """A successful external CallToolResult triggers block_on_success."""
+        from mcp.types import CallToolResult, TextContent
+
+        proxy = AsyncMock()
+        proxy.call_tool = AsyncMock(
+            return_value=CallToolResult(
+                content=[TextContent(type="text", text="ok")],
+                isError=False,
+            )
+        )
+        stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy, loop=None)
+
+        results = stub._dispatch_mcp_calls(
+            [
+                {
+                    "server": "external-server",
+                    "tool": "external-tool",
+                    "arguments": {},
+                    "block_on_success": True,
+                }
+            ],
+            _make_event(),
+        )
 
         assert len(results) == 1
         assert results[0]["success"] is True
@@ -274,6 +322,29 @@ class TestBlockOnSuccess:
         assert len(results) == 1
         assert results[0]["success"] is False
         assert results[0]["block_on_failure"] is True
+
+
+class TestInlineMcpDispatcher:
+    """Inline dispatch uses the same production result contract."""
+
+    @pytest.mark.asyncio
+    async def test_success_without_success_key(self) -> None:
+        from gobby.hooks.factory import HookManagerFactory
+
+        proxy = AsyncMock()
+        proxy.call_tool = AsyncMock(return_value={"result": "ok"})
+        dispatcher = HookManagerFactory._build_inline_mcp_dispatcher(lambda: proxy)
+
+        assert dispatcher is not None
+        result = await dispatcher(
+            "gobby-skills",
+            "get_skill",
+            {"name": "python"},
+            _make_event(),
+        )
+
+        assert result is not None
+        assert result["success"] is True
 
 
 class TestProxySelfRouting:

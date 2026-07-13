@@ -9,15 +9,66 @@ Tests for the gobby-clones MCP server tools:
 - merge_clone
 """
 
+import asyncio
+import subprocess
+import threading
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import pytest
 
 from gobby.storage.clones import Clone, CloneStatus
+from gobby.utils.git import get_checkout_mutation_lock
 
 pytestmark = pytest.mark.integration
+
+RECENT_TIMESTAMP = "2026-01-02T03:04:05+00:00"
+STALE_TIMESTAMP = "2025-01-02T03:04:05+00:00"
+
+
+def _merge_test_clone() -> Clone:
+    """Build the clone record shared by merge failure-path tests."""
+    return Clone(
+        id="clone-123",
+        project_id="11111111-1111-4111-8111-111111110001",
+        branch_name="feature/test",
+        clone_path="/tmp/clones/test",
+        base_branch="main",
+        task_id=None,
+        agent_session_id=None,
+        status="active",
+        remote_url="https://github.com/user/repo.git",
+        last_sync_at=None,
+        cleanup_after=None,
+        created_at=RECENT_TIMESTAMP,
+        updated_at=RECENT_TIMESTAMP,
+    )
+
+
+def _git_result(
+    *,
+    returncode: int = 0,
+    stdout: str = "",
+    stderr: str = "",
+) -> MagicMock:
+    """Build a completed git command result."""
+    return MagicMock(returncode=returncode, stdout=stdout, stderr=stderr)
+
+
+class _ObservedLock:
+    """Expose when an operation attempts to acquire an underlying lock."""
+
+    def __init__(self, lock: asyncio.Lock) -> None:
+        self._lock = lock
+        self.acquire_attempted = asyncio.Event()
+
+    async def acquire(self) -> bool:
+        self.acquire_attempted.set()
+        return await self._lock.acquire()
+
+    def release(self) -> None:
+        self._lock.release()
 
 
 @pytest.fixture
@@ -31,14 +82,23 @@ def mock_git_manager() -> MagicMock:
     """Create mock git manager."""
     manager = MagicMock()
     manager.repo_path = Path("/tmp/repo")
+    manager.run_git_command.return_value = _git_result()
     return manager
 
 
 @pytest.fixture
-def registry(mock_clone_storage: Any, mock_git_manager: Any) -> Any:
+def registry(
+    mock_clone_storage: Any,
+    mock_git_manager: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Any:
     """Create registry with clone tools."""
     from gobby.mcp_proxy.tools.clones import create_clones_registry
 
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools._clones_operations.new_stash_marker",
+        lambda _operation: "test-stash-marker",
+    )
     return create_clones_registry(
         clone_storage=mock_clone_storage,
         git_manager=mock_git_manager,
@@ -83,8 +143,8 @@ class TestCreateClone:
             remote_url="https://github.com/user/repo.git",
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
 
         result = await registry.call(
@@ -114,6 +174,100 @@ class TestCreateClone:
         mock_clone_storage.create.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_create_clone_slow_git_does_not_block_event_loop(
+        self, registry: Any, mock_git_manager: Any
+    ) -> None:
+        """A slow clone subprocess runs outside the event-loop thread."""
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_clone(**_kwargs: object) -> MagicMock:
+            started.set()
+            if not release.wait(timeout=2):
+                raise TimeoutError("test did not release clone operation")
+            return MagicMock(success=False, error="expected test failure")
+
+        mock_git_manager.shallow_clone.side_effect = slow_clone
+        operation = asyncio.create_task(
+            registry.call(
+                "create_clone",
+                {
+                    "branch_name": "main",
+                    "clone_path": "/tmp/clones/test",
+                    "remote_url": "https://github.com/user/repo.git",
+                },
+            )
+        )
+
+        try:
+            assert await asyncio.wait_for(asyncio.to_thread(started.wait, 1), timeout=1)
+            assert operation.done() is False
+            progress = asyncio.Event()
+            allow_progress = asyncio.Event()
+
+            async def mark_progress() -> None:
+                await allow_progress.wait()
+                progress.set()
+
+            progress_task = asyncio.create_task(mark_progress())
+            allow_progress.set()
+            await asyncio.wait_for(progress.wait(), timeout=0.1)
+            await progress_task
+            assert operation.done() is False
+        finally:
+            release.set()
+
+        result = await asyncio.wait_for(operation, timeout=1)
+        assert result["success"] is False
+
+    async def test_create_clone_cancellation_waits_for_record_commit(
+        self,
+        registry: Any,
+        mock_clone_storage: Any,
+        mock_git_manager: Any,
+    ) -> None:
+        """Cancellation cannot abandon a clone after filesystem mutation starts."""
+        started = threading.Event()
+        release = threading.Event()
+
+        def blocking_clone(**_kwargs: object) -> MagicMock:
+            started.set()
+            assert release.wait(timeout=5)
+            return MagicMock(success=True)
+
+        mock_git_manager.shallow_clone.side_effect = blocking_clone
+        mock_clone_storage.create.return_value.to_dict.return_value = {"id": "clone-1"}
+        operation = asyncio.create_task(
+            registry.call(
+                "create_clone",
+                {
+                    "branch_name": "feature",
+                    "clone_path": "/tmp/clones/test",
+                    "remote_url": "https://github.com/user/repo.git",
+                },
+            )
+        )
+
+        assert await asyncio.to_thread(started.wait, 2)
+        operation.cancel()
+        cancellation_cycle = asyncio.Event()
+
+        async def observe_cancellation_cycle() -> None:
+            cancellation_cycle.set()
+
+        observer = asyncio.create_task(observe_cancellation_cycle())
+        await cancellation_cycle.wait()
+        await observer
+        assert operation.done() is False
+
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await operation
+
+        mock_clone_storage.create.assert_called_once()
+        mock_git_manager.delete_clone.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_create_clone_with_task_id(
         self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
     ) -> None:
@@ -132,8 +286,8 @@ class TestCreateClone:
             remote_url="https://github.com/user/repo.git",
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
 
         result = await registry.call(
@@ -143,6 +297,96 @@ class TestCreateClone:
 
         assert result["success"] is True
         assert result["clone"]["task_id"] == "task-456"
+
+    @pytest.mark.asyncio
+    async def test_create_clone_resolves_task_before_filesystem_clone(
+        self,
+        registry: Any,
+        mock_clone_storage: Any,
+        mock_git_manager: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Invalid task references fail before any clone directory is created."""
+        from gobby.mcp_proxy.tools._clones_context import CloneRegistryContext
+
+        resolve_task_id = MagicMock(side_effect=ValueError("task not found"))
+        monkeypatch.setattr(CloneRegistryContext, "resolve_task_id", resolve_task_id)
+
+        result = await registry.call(
+            "create_clone",
+            {
+                "branch_name": "main",
+                "clone_path": "/tmp/clones/test",
+                "remote_url": "https://github.com/user/repo.git",
+                "task_id": "#404",
+            },
+        )
+
+        assert result == {"success": False, "error": "task not found"}
+        resolve_task_id.assert_called_once_with("#404")
+        mock_git_manager.full_clone.assert_not_called()
+        mock_git_manager.shallow_clone.assert_not_called()
+        mock_git_manager.delete_clone.assert_not_called()
+        mock_clone_storage.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_create_clone_storage_failure_cleans_path_for_retry(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """A failed DB insert removes the clone so the same path can be retried."""
+        clone_exists = False
+
+        def clone_to_path(**_kwargs: object) -> MagicMock:
+            nonlocal clone_exists
+            if clone_exists:
+                return MagicMock(success=False, error="clone path already exists")
+            clone_exists = True
+            return MagicMock(success=True)
+
+        def delete_clone(*_args: object, **_kwargs: object) -> MagicMock:
+            nonlocal clone_exists
+            clone_exists = False
+            return MagicMock(success=True)
+
+        mock_git_manager.shallow_clone.side_effect = clone_to_path
+        mock_git_manager.delete_clone.side_effect = delete_clone
+        mock_clone_storage.create.side_effect = [
+            RuntimeError("database unavailable"),
+            Clone(
+                id="clone-retry",
+                project_id="11111111-1111-4111-8111-111111110001",
+                branch_name="main",
+                clone_path="/tmp/clones/retry",
+                base_branch="main",
+                task_id=None,
+                agent_session_id=None,
+                status="active",
+                remote_url="https://github.com/user/repo.git",
+                last_sync_at=None,
+                cleanup_after=None,
+                created_at=RECENT_TIMESTAMP,
+                updated_at=RECENT_TIMESTAMP,
+            ),
+        ]
+        arguments = {
+            "branch_name": "main",
+            "clone_path": "/tmp/clones/retry",
+            "remote_url": "https://github.com/user/repo.git",
+        }
+
+        first_result = await registry.call("create_clone", arguments)
+        second_result = await registry.call("create_clone", arguments)
+
+        assert first_result == {"success": False, "error": "database unavailable"}
+        assert second_result["success"] is True
+        assert second_result["clone"]["id"] == "clone-retry"
+        assert clone_exists is True
+        mock_git_manager.delete_clone.assert_called_once_with(
+            "/tmp/clones/retry",
+            force=True,
+        )
+        assert mock_git_manager.shallow_clone.call_count == 2
+        assert mock_clone_storage.create.call_count == 2
 
     @pytest.mark.asyncio
     async def test_create_clone_use_local(
@@ -164,8 +408,8 @@ class TestCreateClone:
             remote_url="https://github.com/user/repo.git",
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
 
         result = await registry.call(
@@ -212,8 +456,8 @@ class TestGetClone:
             remote_url="https://github.com/user/repo.git",
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
 
         result = await registry.call("get_clone", {"clone_id": "clone-123"})
@@ -252,8 +496,8 @@ class TestListClones:
                 remote_url=None,
                 last_sync_at=None,
                 cleanup_after=None,
-                created_at="now",
-                updated_at="now",
+                created_at=RECENT_TIMESTAMP,
+                updated_at=RECENT_TIMESTAMP,
             ),
             Clone(
                 id="clone-2",
@@ -267,8 +511,8 @@ class TestListClones:
                 remote_url=None,
                 last_sync_at=None,
                 cleanup_after=None,
-                created_at="now",
-                updated_at="now",
+                created_at=RECENT_TIMESTAMP,
+                updated_at=RECENT_TIMESTAMP,
             ),
         ]
 
@@ -323,8 +567,8 @@ class TestDeleteClone:
             remote_url=None,
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
         mock_git_manager.delete_clone.return_value = MagicMock(success=True)
         mock_clone_storage.delete.return_value = True
@@ -365,8 +609,8 @@ class TestDeleteClone:
             remote_url=None,
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
         mock_git_manager.delete_clone.return_value = MagicMock(success=True)
         mock_clone_storage.delete.return_value = True
@@ -397,8 +641,8 @@ class TestDeleteClone:
             remote_url=None,
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
         mock_clone_storage.get.return_value = original_clone
         mock_git_manager.delete_clone.return_value = MagicMock(
@@ -418,6 +662,40 @@ class TestDeleteClone:
         assert original_clone.id == "clone-123"
         assert original_clone.task_id == "task-123"
 
+    async def test_delete_clone_file_exception_restores_original_status(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """A raised filesystem error preserves the existing clone record."""
+        original_clone = Clone(
+            id="clone-123",
+            project_id="11111111-1111-4111-8111-111111110001",
+            branch_name="main",
+            clone_path="/tmp/clones/test",
+            base_branch="main",
+            task_id="task-123",
+            agent_session_id=None,
+            status=CloneStatus.STALE.value,
+            remote_url=None,
+            last_sync_at=None,
+            cleanup_after=None,
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
+        )
+        mock_clone_storage.get.return_value = original_clone
+        mock_git_manager.delete_clone.side_effect = OSError("filesystem unavailable")
+
+        result = await registry.call("delete_clone", {"clone_id": "clone-123"})
+
+        assert result == {
+            "success": False,
+            "error": "Failed to delete clone files: filesystem unavailable",
+        }
+        assert mock_clone_storage.update.call_args_list == [
+            call("clone-123", status=CloneStatus.DELETING.value),
+            call("clone-123", status=CloneStatus.STALE.value),
+        ]
+        mock_clone_storage.delete.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_delete_clone_record_failure_leaves_retryable_deleting_state(
         self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
@@ -435,8 +713,8 @@ class TestDeleteClone:
             remote_url=None,
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
         mock_git_manager.delete_clone.return_value = MagicMock(success=True)
         mock_clone_storage.delete.side_effect = RuntimeError("database unavailable")
@@ -449,6 +727,42 @@ class TestDeleteClone:
             "clone-123", status=CloneStatus.DELETING.value
         )
         mock_git_manager.delete_clone.assert_called_once_with("/tmp/clones/test", force=False)
+        mock_clone_storage.delete.assert_called_once_with("clone-123")
+
+    @pytest.mark.asyncio
+    async def test_delete_clone_cancellation_waits_for_record_delete(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """Cancellation cannot abandon an in-flight filesystem deletion."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+        started = threading.Event()
+        release = threading.Event()
+
+        def blocking_delete(*_args: object, **_kwargs: object) -> MagicMock:
+            started.set()
+            assert release.wait(timeout=5)
+            return MagicMock(success=True)
+
+        mock_git_manager.delete_clone.side_effect = blocking_delete
+        operation = asyncio.create_task(registry.call("delete_clone", {"clone_id": "clone-123"}))
+
+        assert await asyncio.to_thread(started.wait, 2)
+        operation.cancel()
+        cancellation_cycle = asyncio.Event()
+
+        async def observe_cancellation_cycle() -> None:
+            cancellation_cycle.set()
+
+        observer = asyncio.create_task(observe_cancellation_cycle())
+        await cancellation_cycle.wait()
+        await observer
+        assert operation.done() is False
+        mock_clone_storage.delete.assert_not_called()
+
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await operation
+
         mock_clone_storage.delete.assert_called_once_with("clone-123")
 
 
@@ -472,8 +786,8 @@ class TestSyncClone:
             remote_url=None,
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
         mock_git_manager.sync_clone.return_value = MagicMock(success=True)
 
@@ -499,8 +813,8 @@ class TestSyncClone:
             remote_url=None,
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
         mock_git_manager.sync_clone.return_value = MagicMock(success=True)
 
@@ -535,14 +849,54 @@ class TestSyncClone:
             remote_url=None,
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
         mock_git_manager.sync_clone.return_value = MagicMock(success=False, error="Network error")
 
         result = await registry.call("sync_clone", {"clone_id": "clone-123", "direction": "pull"})
 
         assert result["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_sync_clone_cancellation_waits_for_status_commit(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """Cancellation cannot reset clone status before sync work finishes."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+        started = threading.Event()
+        release = threading.Event()
+
+        def blocking_sync(**_kwargs: object) -> MagicMock:
+            started.set()
+            assert release.wait(timeout=5)
+            return MagicMock(success=True)
+
+        mock_git_manager.sync_clone.side_effect = blocking_sync
+        operation = asyncio.create_task(
+            registry.call("sync_clone", {"clone_id": "clone-123", "direction": "pull"})
+        )
+
+        assert await asyncio.to_thread(started.wait, 2)
+        operation.cancel()
+        cancellation_cycle = asyncio.Event()
+
+        async def observe_cancellation_cycle() -> None:
+            cancellation_cycle.set()
+
+        observer = asyncio.create_task(observe_cancellation_cycle())
+        await cancellation_cycle.wait()
+        await observer
+        assert operation.done() is False
+        mock_clone_storage.record_sync.assert_not_called()
+        mock_clone_storage.update.assert_not_called()
+
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await operation
+
+        mock_clone_storage.record_sync.assert_called_once_with("clone-123")
+        mock_clone_storage.update.assert_called_once_with("clone-123", status="active")
 
 
 class TestMergeCloneToTarget:
@@ -568,13 +922,13 @@ class TestMergeCloneToTarget:
             remote_url="https://github.com/user/repo.git",
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
         mock_clone_storage.update.return_value = MagicMock()
 
         # Mock fetch from clone path (returncode=0 = success)
-        mock_git_manager.run_git_command.return_value = MagicMock(returncode=0, stderr="")
+        mock_git_manager.run_git_command.return_value = _git_result()
         # Mock merge operation
         mock_git_manager.merge_branch.return_value = MagicMock(
             success=True,
@@ -593,6 +947,161 @@ class TestMergeCloneToTarget:
         assert "/tmp/clones/test" in fetch_call[0][0]
         # Should have set cleanup_after on success
         mock_clone_storage.update.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_merge_clone_waits_for_checkout_mutation_lock(
+        self,
+        registry: Any,
+        mock_clone_storage: Any,
+        mock_git_manager: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Clone merge does not mutate the main checkout while its lock is held."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+        mock_git_manager.run_git_command.return_value = _git_result()
+        mock_git_manager.merge_branch.return_value = MagicMock(success=True)
+        lock = get_checkout_mutation_lock(mock_git_manager.repo_path)
+        observed_lock = _ObservedLock(lock)
+        monkeypatch.setattr(
+            "gobby.mcp_proxy.tools._clones_operations.get_checkout_mutation_lock",
+            lambda _path: observed_lock,
+        )
+
+        await lock.acquire()
+        operation = asyncio.create_task(
+            registry.call(
+                "merge_clone",
+                {"clone_id": "clone-123", "target_branch": "main"},
+            )
+        )
+        try:
+            await observed_lock.acquire_attempted.wait()
+            assert operation.done() is False
+            mock_git_manager.run_git_command.assert_not_called()
+        finally:
+            lock.release()
+
+        result = await operation
+        assert result["success"] is True
+
+    async def test_merge_clone_cancellation_waits_for_git_worker_before_unlock(
+        self,
+        registry: Any,
+        mock_clone_storage: Any,
+        mock_git_manager: Any,
+    ) -> None:
+        """Fetch cancellation waits for transaction cleanup before unlocking."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+        worker_started = threading.Event()
+        release_worker = threading.Event()
+
+        def blocking_fetch(args: list[str], **_kwargs: object) -> Any:
+            if args and args[0] == "fetch":
+                worker_started.set()
+                assert release_worker.wait(timeout=5)
+            return _git_result()
+
+        mock_git_manager.run_git_command.side_effect = blocking_fetch
+        mock_git_manager.merge_branch.return_value = MagicMock(success=True)
+        lock = get_checkout_mutation_lock(mock_git_manager.repo_path)
+        operation = asyncio.create_task(
+            registry.call(
+                "merge_clone",
+                {"clone_id": "clone-123", "target_branch": "main"},
+            )
+        )
+
+        assert await asyncio.to_thread(worker_started.wait, 2)
+        operation.cancel()
+        contender_started = asyncio.Event()
+
+        async def acquire_lock() -> None:
+            contender_started.set()
+            await lock.acquire()
+
+        contender = asyncio.create_task(acquire_lock())
+        await contender_started.wait()
+        assert operation.done() is False
+        assert contender.done() is False
+        assert lock.locked() is True
+
+        release_worker.set()
+        with pytest.raises(asyncio.CancelledError):
+            await operation
+        await asyncio.wait_for(contender, timeout=2)
+        lock.release()
+        mock_clone_storage.update.assert_called_with(
+            "clone-123",
+            status=CloneStatus.ACTIVE.value,
+        )
+        commands = [call.args[0] for call in mock_git_manager.run_git_command.call_args_list]
+        assert ["branch", "-D", "clone-merge/feature/test"] in commands
+        mock_git_manager.merge_branch.assert_called_once()
+
+    async def test_merge_clone_stash_cancellation_restores_exact_stash_before_unlock(
+        self,
+        registry: Any,
+        mock_clone_storage: Any,
+        mock_git_manager: Any,
+    ) -> None:
+        """A cancelled stash push still completes merge cleanup and exact restore."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+        worker_started = threading.Event()
+        release_worker = threading.Event()
+        identity_calls = 0
+
+        def blocking_stash(args: list[str], **_kwargs: object) -> Any:
+            nonlocal identity_calls
+            if args == ["stash", "list", "-1", "--format=%H"]:
+                identity_calls += 1
+                return _git_result(stdout="")
+            if args[:2] == ["stash", "push"]:
+                worker_started.set()
+                assert release_worker.wait(timeout=5)
+                return _git_result()
+            if args == ["stash", "list", "--format=%H%x00%gs"]:
+                return _git_result(stdout="operation-stash\x00On main: test-stash-marker")
+            if args == ["stash", "list", "--format=%gd%x00%H"]:
+                return _git_result(stdout="stash@{0}\0operation-stash")
+            return _git_result()
+
+        mock_git_manager.run_git_command.side_effect = blocking_stash
+        mock_git_manager.merge_branch.return_value = MagicMock(success=True)
+        lock = get_checkout_mutation_lock(mock_git_manager.repo_path)
+        operation = asyncio.create_task(
+            registry.call(
+                "merge_clone",
+                {"clone_id": "clone-123", "target_branch": "main"},
+            )
+        )
+
+        assert await asyncio.to_thread(worker_started.wait, 2)
+        operation.cancel()
+        contender_started = asyncio.Event()
+
+        async def acquire_lock() -> None:
+            contender_started.set()
+            await lock.acquire()
+
+        contender = asyncio.create_task(acquire_lock())
+        await contender_started.wait()
+        assert operation.done() is False
+        assert contender.done() is False
+
+        release_worker.set()
+        with pytest.raises(asyncio.CancelledError):
+            await operation
+        await asyncio.wait_for(contender, timeout=2)
+        lock.release()
+
+        commands = [call.args[0] for call in mock_git_manager.run_git_command.call_args_list]
+        assert ["stash", "pop", "stash@{0}"] in commands
+        assert ["branch", "-D", "clone-merge/feature/test"] in commands
+        mock_git_manager.merge_branch.assert_called_once()
+        mock_clone_storage.update.assert_called_with(
+            "clone-123",
+            status=CloneStatus.ACTIVE.value,
+        )
 
     @pytest.mark.asyncio
     async def test_merge_clone_not_found(self, registry: Any, mock_clone_storage: Any) -> None:
@@ -624,8 +1133,8 @@ class TestMergeCloneToTarget:
             remote_url="https://github.com/user/repo.git",
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
 
         # Fetch from clone path fails
@@ -641,6 +1150,267 @@ class TestMergeCloneToTarget:
 
         assert result["success"] is False
         assert "fetch" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_merge_clone_fetch_timeout_restores_active_status(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """A fetch timeout is reported and cannot leave the clone syncing."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+        mock_git_manager.run_git_command.side_effect = subprocess.TimeoutExpired(
+            ["git", "fetch"],
+            120,
+        )
+
+        result = await registry.call(
+            "merge_clone",
+            {"clone_id": "clone-123", "target_branch": "main"},
+        )
+
+        assert result == {
+            "success": False,
+            "error": "Fetch timed out after 120 seconds",
+            "step": "fetch",
+        }
+        mock_clone_storage.update.assert_any_call("clone-123", status="active")
+
+    @pytest.mark.asyncio
+    async def test_merge_clone_record_sync_failure_deletes_temp_ref_before_unlock(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """Storage failure after fetch cannot leak the fetched temporary branch."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+        mock_clone_storage.record_sync.side_effect = RuntimeError("database unavailable")
+
+        def git_result(_args: list[str], **_kwargs: object) -> MagicMock:
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        mock_git_manager.run_git_command.side_effect = git_result
+        lock = get_checkout_mutation_lock(mock_git_manager.repo_path)
+
+        with pytest.raises(RuntimeError, match="database unavailable"):
+            await registry.call(
+                "merge_clone",
+                {"clone_id": "clone-123", "target_branch": "main"},
+            )
+
+        commands = [entry.args[0] for entry in mock_git_manager.run_git_command.call_args_list]
+        assert commands == [
+            [
+                "fetch",
+                "/tmp/clones/test",
+                "feature/test:refs/heads/clone-merge/feature/test",
+            ],
+            ["branch", "-D", "clone-merge/feature/test"],
+        ]
+        mock_git_manager.merge_branch.assert_not_called()
+        mock_clone_storage.update.assert_called_with("clone-123", status="active")
+        assert lock.locked() is False
+
+    @pytest.mark.asyncio
+    async def test_merge_clone_stash_oserror_restores_status_and_cleans_temp_branch(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """A stash process failure returns its own result and still cleans up."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+        mock_git_manager.run_git_command.side_effect = [
+            _git_result(),
+            _git_result(),
+            OSError("stash executable unavailable"),
+            _git_result(),
+        ]
+
+        result = await registry.call(
+            "merge_clone",
+            {"clone_id": "clone-123", "target_branch": "main"},
+        )
+
+        assert result == {
+            "success": False,
+            "error": "Stash failed: stash executable unavailable",
+            "step": "stash",
+        }
+        cleanup_call = mock_git_manager.run_git_command.call_args_list[-1]
+        assert cleanup_call.args[0][:2] == ["branch", "-D"]
+        mock_clone_storage.update.assert_any_call("clone-123", status="active")
+
+    @pytest.mark.asyncio
+    async def test_merge_clone_stash_failure_does_not_merge(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """A nonzero stash command stops before the merge and still cleans up."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+        mock_git_manager.run_git_command.side_effect = [
+            _git_result(),
+            _git_result(stdout=""),
+            _git_result(returncode=1, stderr="cannot write index"),
+            _git_result(),
+        ]
+
+        result = await registry.call(
+            "merge_clone",
+            {"clone_id": "clone-123", "target_branch": "main"},
+        )
+
+        assert result == {
+            "success": False,
+            "error": "Stash failed: cannot write index",
+            "step": "stash",
+        }
+        mock_git_manager.merge_branch.assert_not_called()
+        cleanup_call = mock_git_manager.run_git_command.call_args_list[-1]
+        assert cleanup_call.args[0][:2] == ["branch", "-D"]
+        mock_clone_storage.update.assert_any_call("clone-123", status="active")
+
+    async def test_merge_clone_stash_identity_lookup_failure_does_not_merge(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """A successful stash push still requires an exact post-push identity."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+
+        def failing_identity_lookup(args, **_kwargs):
+            if args == ["stash", "list", "-1", "--format=%H"]:
+                return _git_result(stdout="")
+            if args == ["stash", "list", "--format=%H%x00%gs"]:
+                return _git_result(stdout="other\x00On main: other-operation")
+            return _git_result()
+
+        mock_git_manager.run_git_command.side_effect = failing_identity_lookup
+        mock_git_manager.merge_branch.return_value = MagicMock(success=True)
+
+        result = await registry.call(
+            "merge_clone",
+            {"clone_id": "clone-123", "target_branch": "main"},
+        )
+
+        assert result["success"] is False
+        assert result["step"] == "stash"
+        assert "operation-owned stash marker was not found" in result["error"]
+        mock_git_manager.merge_branch.assert_not_called()
+        cleanup_call = mock_git_manager.run_git_command.call_args_list[-1]
+        assert cleanup_call.args[0][:2] == ["branch", "-D"]
+        mock_clone_storage.update.assert_any_call("clone-123", status="active")
+
+    @pytest.mark.asyncio
+    async def test_merge_clone_branch_cleanup_failure_warns_without_masking_success(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """A branch-delete exception is a warning on the successful merge result."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+        mock_git_manager.run_git_command.side_effect = [
+            _git_result(),
+            _git_result(stdout=""),
+            _git_result(),
+            _git_result(stdout=""),
+            OSError("cannot delete temporary branch"),
+        ]
+        mock_git_manager.merge_branch.return_value = MagicMock(success=True)
+
+        result = await registry.call(
+            "merge_clone",
+            {"clone_id": "clone-123", "target_branch": "main"},
+        )
+
+        assert result["success"] is True
+        assert result["warnings"] == [
+            "Failed to delete temporary branch clone-merge/feature/test: "
+            "cannot delete temporary branch"
+        ]
+        mock_clone_storage.update.assert_any_call("clone-123", status="active")
+
+    @pytest.mark.asyncio
+    async def test_merge_clone_stash_pop_timeout_warns_without_masking_conflict(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """A stash-pop timeout preserves the primary merge-conflict result."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+        mock_git_manager.run_git_command.side_effect = [
+            _git_result(),
+            _git_result(stdout=""),
+            _git_result(),
+            _git_result(stdout="ours\x00On main: test-stash-marker"),
+            _git_result(),
+            _git_result(stdout="stash@{0}\x00ours"),
+            subprocess.TimeoutExpired(["git", "stash", "pop", "stash@{0}"], 10),
+        ]
+        mock_git_manager.merge_branch.return_value = MagicMock(
+            success=False,
+            error="merge_conflict",
+            message="Merge conflict in 2 files",
+            output="src/foo.py\nsrc/bar.py",
+        )
+
+        result = await registry.call(
+            "merge_clone",
+            {"clone_id": "clone-123", "target_branch": "main"},
+        )
+
+        assert result["success"] is False
+        assert result["has_conflicts"] is True
+        assert result["error"] == "Merge conflict in 2 files"
+        assert result["warnings"] == [
+            "Failed to restore stashed .gobby/ files: "
+            "Command '['git', 'stash', 'pop', 'stash@{0}']' timed out after 10 seconds"
+        ]
+        assert result["stash_restore_error"] == result["warnings"][0]
+        mock_clone_storage.update.assert_any_call("clone-123", status="active")
+
+    @pytest.mark.asyncio
+    async def test_merge_clone_restores_exact_stash_after_interleaved_stash(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """An intervening stash does not change which stash this merge restores."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+        mock_git_manager.run_git_command.side_effect = [
+            _git_result(),
+            _git_result(stdout="previous"),
+            _git_result(),
+            _git_result(
+                stdout=(
+                    "interleaved\x00On main: other-operation\nours\x00On main: test-stash-marker"
+                )
+            ),
+            _git_result(),
+            _git_result(stdout="stash@{0}\x00interleaved\nstash@{1}\x00ours"),
+            _git_result(),
+        ]
+        mock_git_manager.merge_branch.return_value = MagicMock(success=True)
+
+        result = await registry.call(
+            "merge_clone",
+            {"clone_id": "clone-123", "target_branch": "main"},
+        )
+
+        assert result["success"] is True
+        pop_call = mock_git_manager.run_git_command.call_args_list[-1]
+        assert pop_call.args[0] == ["stash", "pop", "stash@{1}"]
+
+    @pytest.mark.asyncio
+    async def test_merge_clone_stash_restore_failure_surfaces_after_success(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """A successful merge is reported incomplete when exact stash restore fails."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+        mock_git_manager.run_git_command.side_effect = [
+            _git_result(),
+            _git_result(stdout=""),
+            _git_result(),
+            _git_result(stdout="ours\x00On main: test-stash-marker"),
+            _git_result(),
+            _git_result(stdout="stash@{0}\x00ours"),
+            _git_result(returncode=1, stderr="restore conflict"),
+        ]
+        mock_git_manager.merge_branch.return_value = MagicMock(success=True)
+
+        result = await registry.call(
+            "merge_clone",
+            {"clone_id": "clone-123", "target_branch": "main"},
+        )
+
+        assert result["success"] is False
+        assert result["step"] == "stash_restore"
+        assert result["error"] == "Failed to restore stashed .gobby/ files: restore conflict"
+        assert result["stash_restore_error"] == result["error"]
 
     @pytest.mark.asyncio
     async def test_merge_clone_with_conflicts(
@@ -661,12 +1431,12 @@ class TestMergeCloneToTarget:
             remote_url="https://github.com/user/repo.git",
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
 
         # Fetch succeeds
-        mock_git_manager.run_git_command.return_value = MagicMock(returncode=0, stderr="")
+        mock_git_manager.run_git_command.return_value = _git_result()
         # Merge has conflicts - error="merge_conflict" signals conflict
         mock_git_manager.merge_branch.return_value = MagicMock(
             success=False,
@@ -703,13 +1473,13 @@ class TestMergeCloneToTarget:
             remote_url="https://github.com/user/repo.git",
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
         mock_clone_storage.update.return_value = MagicMock()
 
         # Fetch succeeds
-        mock_git_manager.run_git_command.return_value = MagicMock(returncode=0, stderr="")
+        mock_git_manager.run_git_command.return_value = _git_result()
         mock_git_manager.merge_branch.return_value = MagicMock(
             success=True,
             has_conflicts=False,
@@ -746,8 +1516,8 @@ class TestClaimClone:
             remote_url=None,
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
         mock_clone_storage.claim.return_value = MagicMock()
 
@@ -758,12 +1528,14 @@ class TestClaimClone:
 
         assert result["success"] is True
         mock_clone_storage.claim.assert_called_once_with("clone-123", "sess-1")
+        mock_clone_storage.get.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_claim_clone_already_claimed(
         self, registry: Any, mock_clone_storage: Any
     ) -> None:
         """Claim fails when clone is already claimed by another session."""
+        mock_clone_storage.claim.return_value = None
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
             project_id="11111111-1111-4111-8111-111111110001",
@@ -776,8 +1548,8 @@ class TestClaimClone:
             remote_url=None,
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
 
         from gobby.utils.session_context import session_context_for_test
@@ -787,7 +1559,7 @@ class TestClaimClone:
 
         assert result["success"] is False
         assert "already claimed" in result["error"]
-        mock_clone_storage.claim.assert_not_called()
+        mock_clone_storage.claim.assert_called_once_with("clone-123", "sess-1")
 
     @pytest.mark.asyncio
     async def test_claim_clone_same_session(self, registry: Any, mock_clone_storage: Any) -> None:
@@ -804,8 +1576,8 @@ class TestClaimClone:
             remote_url=None,
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
         mock_clone_storage.claim.return_value = MagicMock()
 
@@ -815,10 +1587,12 @@ class TestClaimClone:
             result = await registry.call("claim_clone", {"clone_id": "clone-123"})
 
         assert result["success"] is True
+        mock_clone_storage.get.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_claim_clone_not_found(self, registry: Any, mock_clone_storage: Any) -> None:
         """Claim fails when clone not found."""
+        mock_clone_storage.claim.return_value = None
         mock_clone_storage.get.return_value = None
 
         from gobby.utils.session_context import session_context_for_test
@@ -828,6 +1602,7 @@ class TestClaimClone:
 
         assert result["success"] is False
         assert "not found" in result["error"].lower()
+        mock_clone_storage.claim.assert_called_once_with("nonexistent", "sess-1")
 
 
 class TestReleaseClone:
@@ -848,8 +1623,8 @@ class TestReleaseClone:
             remote_url=None,
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
         mock_clone_storage.release.return_value = MagicMock()
 
@@ -887,8 +1662,8 @@ class TestGetCloneByTask:
             remote_url=None,
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
 
         result = await registry.call("get_clone_by_task", {"task_id": "task-456"})
@@ -929,8 +1704,8 @@ class TestLinkTaskToClone:
             remote_url=None,
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
         mock_clone_storage.update.return_value = MagicMock()
 
@@ -1007,8 +1782,8 @@ class TestDetectStaleClones:
                 remote_url=None,
                 last_sync_at=None,
                 cleanup_after=None,
-                created_at="old",
-                updated_at="old",
+                created_at=STALE_TIMESTAMP,
+                updated_at=STALE_TIMESTAMP,
             ),
         ]
 
@@ -1054,8 +1829,8 @@ class TestCleanupStaleClones:
                 remote_url=None,
                 last_sync_at=None,
                 cleanup_after=None,
-                created_at="old",
-                updated_at="old",
+                created_at=STALE_TIMESTAMP,
+                updated_at=STALE_TIMESTAMP,
             ),
         ]
 
@@ -1086,8 +1861,8 @@ class TestCleanupStaleClones:
                 remote_url=None,
                 last_sync_at=None,
                 cleanup_after=None,
-                created_at="old",
-                updated_at="old",
+                created_at=STALE_TIMESTAMP,
+                updated_at=STALE_TIMESTAMP,
             ),
         ]
 
@@ -1116,11 +1891,12 @@ class TestCleanupStaleClones:
                 remote_url=None,
                 last_sync_at=None,
                 cleanup_after=None,
-                created_at="old",
-                updated_at="old",
+                created_at=STALE_TIMESTAMP,
+                updated_at=STALE_TIMESTAMP,
             ),
         ]
         mock_git_manager.delete_clone.return_value = MagicMock(success=True)
+        mock_clone_storage.delete.return_value = True
 
         result = await registry.call(
             "cleanup_stale_clones",
@@ -1130,7 +1906,137 @@ class TestCleanupStaleClones:
         assert result["success"] is True
         assert result["cleaned"][0]["marked_stale"] is True
         assert result["cleaned"][0]["files_deleted"] is True
+        assert result["cleaned"][0]["record_deleted"] is True
+        assert result["cleaned"][0]["record_terminal"] is True
+        mock_clone_storage.mark_cleanup.assert_called_once_with("clone-1")
         mock_git_manager.delete_clone.assert_called_once_with("/tmp/clones/old", force=True)
+        mock_clone_storage.delete.assert_called_once_with("clone-1")
+
+    @pytest.mark.asyncio
+    async def test_cleanup_slow_git_does_not_block_event_loop(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """Slow stale-clone deletion runs outside the event-loop thread."""
+        mock_clone_storage.cleanup_stale.return_value = [
+            Clone(
+                id="clone-1",
+                project_id="11111111-1111-4111-8111-111111110001",
+                branch_name="old-feature",
+                clone_path="/tmp/clones/old",
+                base_branch="main",
+                task_id=None,
+                agent_session_id=None,
+                status="stale",
+                remote_url=None,
+                last_sync_at=None,
+                cleanup_after=None,
+                created_at=STALE_TIMESTAMP,
+                updated_at=STALE_TIMESTAMP,
+            ),
+        ]
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_delete(*_args: object, **_kwargs: object) -> MagicMock:
+            started.set()
+            if not release.wait(timeout=2):
+                raise TimeoutError("test did not release clone cleanup")
+            return MagicMock(success=True)
+
+        mock_git_manager.delete_clone.side_effect = slow_delete
+        operation = asyncio.create_task(
+            registry.call(
+                "cleanup_stale_clones",
+                {"hours": 24, "dry_run": False, "delete_files": True},
+            )
+        )
+
+        try:
+            assert await asyncio.wait_for(asyncio.to_thread(started.wait, 1), timeout=1)
+            assert operation.done() is False
+            progress = asyncio.Event()
+            allow_progress = asyncio.Event()
+
+            async def mark_progress() -> None:
+                await allow_progress.wait()
+                progress.set()
+
+            progress_task = asyncio.create_task(mark_progress())
+            allow_progress.set()
+            await asyncio.wait_for(progress.wait(), timeout=0.1)
+            await progress_task
+            assert operation.done() is False
+        finally:
+            release.set()
+
+        result = await asyncio.wait_for(operation, timeout=1)
+        assert result["success"] is True
+        assert result["cleaned"][0]["files_deleted"] is True
+        assert result["cleaned"][0]["record_deleted"] is True
+        mock_clone_storage.delete.assert_called_once_with("clone-1")
+
+    async def test_cleanup_cancellation_finishes_current_item_and_stops(
+        self,
+        registry: Any,
+        mock_clone_storage: Any,
+        mock_git_manager: Any,
+    ) -> None:
+        """Cancellation commits the active DB/path pair before stopping the sweep."""
+        stale = [
+            Clone(
+                id=f"clone-{index}",
+                project_id="11111111-1111-4111-8111-111111110001",
+                branch_name=f"feature-{index}",
+                clone_path=f"/tmp/clones/{index}",
+                base_branch="main",
+                task_id=None,
+                agent_session_id=None,
+                status="stale",
+                remote_url=None,
+                last_sync_at=None,
+                cleanup_after=None,
+                created_at=STALE_TIMESTAMP,
+                updated_at=STALE_TIMESTAMP,
+            )
+            for index in (1, 2)
+        ]
+        mock_clone_storage.cleanup_stale.return_value = stale
+        mock_clone_storage.mark_cleanup.return_value = stale[0]
+        started = threading.Event()
+        release = threading.Event()
+
+        def blocking_delete(*_args: object, **_kwargs: object) -> MagicMock:
+            started.set()
+            assert release.wait(timeout=5)
+            return MagicMock(success=True)
+
+        mock_git_manager.delete_clone.side_effect = blocking_delete
+        operation = asyncio.create_task(
+            registry.call(
+                "cleanup_stale_clones",
+                {"hours": 24, "dry_run": False, "delete_files": True},
+            )
+        )
+
+        assert await asyncio.to_thread(started.wait, 2)
+        operation.cancel()
+        cancellation_cycle = asyncio.Event()
+
+        async def observe_cancellation_cycle() -> None:
+            cancellation_cycle.set()
+
+        observer = asyncio.create_task(observe_cancellation_cycle())
+        await cancellation_cycle.wait()
+        await observer
+        assert operation.done() is False
+
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await operation
+
+        mock_clone_storage.mark_cleanup.assert_called_once_with("clone-1")
+        mock_clone_storage.delete.assert_called_once_with("clone-1")
+        mock_git_manager.delete_clone.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_cleanup_delete_files_failure(
@@ -1150,8 +2056,8 @@ class TestCleanupStaleClones:
                 remote_url=None,
                 last_sync_at=None,
                 cleanup_after=None,
-                created_at="old",
-                updated_at="old",
+                created_at=STALE_TIMESTAMP,
+                updated_at=STALE_TIMESTAMP,
             ),
         ]
         mock_git_manager.delete_clone.return_value = MagicMock(
@@ -1163,6 +2069,91 @@ class TestCleanupStaleClones:
             {"hours": 24, "dry_run": False, "delete_files": True},
         )
 
-        assert result["success"] is True
+        assert result["success"] is False
         assert result["cleaned"][0]["files_deleted"] is False
+        assert result["cleaned"][0]["record_deleted"] is False
         assert result["cleaned"][0]["delete_error"] == "Permission denied"
+        assert result["cleaned"][0]["record_terminal"] is False
+        assert result["cleaned"][0]["record_restored"] is True
+        mock_clone_storage.update.assert_called_once_with(
+            "clone-1",
+            status=CloneStatus.STALE.value,
+        )
+        mock_clone_storage.delete.assert_not_called()
+
+    async def test_cleanup_delete_files_exception_restores_stale_record(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """A raised filesystem error restores the row so cleanup can retry."""
+        mock_clone_storage.cleanup_stale.return_value = [
+            Clone(
+                id="clone-1",
+                project_id="11111111-1111-4111-8111-111111110001",
+                branch_name="old-feature",
+                clone_path="/tmp/clones/old",
+                base_branch="main",
+                task_id=None,
+                agent_session_id=None,
+                status=CloneStatus.STALE.value,
+                remote_url=None,
+                last_sync_at=None,
+                cleanup_after=None,
+                created_at=STALE_TIMESTAMP,
+                updated_at=STALE_TIMESTAMP,
+            ),
+        ]
+        mock_git_manager.delete_clone.side_effect = OSError("filesystem unavailable")
+
+        result = await registry.call(
+            "cleanup_stale_clones",
+            {"hours": 24, "dry_run": False, "delete_files": True},
+        )
+
+        assert result["success"] is False
+        assert result["cleaned"][0]["files_deleted"] is False
+        assert result["cleaned"][0]["record_deleted"] is False
+        assert result["cleaned"][0]["delete_error"] == "filesystem unavailable"
+        assert result["cleaned"][0]["record_terminal"] is False
+        assert result["cleaned"][0]["record_restored"] is True
+        mock_clone_storage.update.assert_called_once_with(
+            "clone-1",
+            status=CloneStatus.STALE.value,
+        )
+        mock_clone_storage.delete.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_record_delete_failure_is_reported_after_files_removed(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """Cleanup surfaces a storage failure after successful file deletion."""
+        mock_clone_storage.cleanup_stale.return_value = [
+            Clone(
+                id="clone-1",
+                project_id="11111111-1111-4111-8111-111111110001",
+                branch_name="old-feature",
+                clone_path="/tmp/clones/old",
+                base_branch="main",
+                task_id=None,
+                agent_session_id=None,
+                status="stale",
+                remote_url=None,
+                last_sync_at=None,
+                cleanup_after=None,
+                created_at=STALE_TIMESTAMP,
+                updated_at=STALE_TIMESTAMP,
+            ),
+        ]
+        mock_git_manager.delete_clone.return_value = MagicMock(success=True)
+        mock_clone_storage.delete.side_effect = RuntimeError("database unavailable")
+
+        result = await registry.call(
+            "cleanup_stale_clones",
+            {"hours": 24, "dry_run": False, "delete_files": True},
+        )
+
+        assert result["success"] is False
+        assert result["cleaned"][0]["files_deleted"] is True
+        assert result["cleaned"][0]["record_deleted"] is False
+        assert result["cleaned"][0]["record_terminal"] is True
+        assert result["cleaned"][0]["record_delete_error"] == "database unavailable"
+        mock_clone_storage.mark_cleanup.assert_called_once_with("clone-1")

@@ -13,7 +13,11 @@ from typing import TYPE_CHECKING
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.hooks.project_context import apply_project_id_to_event, resolve_hook_project_context
 from gobby.hooks.session_types import HookSessionManager
-from gobby.hooks.terminal_context import enrich_terminal_context_with_cwd, hook_cwd
+from gobby.hooks.terminal_context import (
+    enrich_terminal_context_with_cwd,
+    hook_cwd,
+    is_gobby_acp_child,
+)
 from gobby.tasks.state_semantics import serialize_task_state
 from gobby.workflows.summary_actions import schedule_tmux_window_rename
 
@@ -207,26 +211,31 @@ class SessionLookupService:
 
     def _resolve_session_id(self, external_id: str, event: HookEvent) -> str | None:
         """Look up or create platform session ID for the given external_id."""
-        # Check SessionManager's cache first (keyed by (external_id, source))
-        platform_session_id = self._session_manager.get_session_id(external_id, event.source.value)
+        machine_id = event.machine_id or self._get_machine_id()
+        cwd = event.data.get("cwd")
+        project_id = event.project_id
+        platform_session_id = self._session_manager.get_session_id(
+            external_id,
+            event.source.value,
+            machine_id=machine_id,
+            project_id=project_id,
+        )
 
         # If not in mapping and not session-start, try to query database
         if not platform_session_id and event.event_type != HookEventType.SESSION_START:
             with self._session_coordinator.get_lookup_lock():
                 # Double check in case another thread finished lookup
                 platform_session_id = self._session_manager.get_session_id(
-                    external_id, event.source.value
+                    external_id,
+                    event.source.value,
+                    machine_id=machine_id,
+                    project_id=project_id,
                 )
 
                 if not platform_session_id:
                     self._logger.debug(
                         f"Session not in mapping, querying database for external_id={external_id}"
                     )
-                    # Resolve context for lookup
-                    machine_id = event.machine_id or self._get_machine_id()
-                    cwd = event.data.get("cwd")
-                    project_id = event.project_id
-
                     # Lookup with full composite key
                     platform_session_id = self._session_manager.lookup_session_id(
                         external_id,
@@ -265,6 +274,15 @@ class SessionLookupService:
                                 external_id,
                                 machine_id,
                                 project_id,
+                                event.source.value,
+                            )
+                            return None
+
+                        if is_gobby_acp_child(event.data.get("terminal_context")):
+                            self._logger.info(
+                                "Skipping auto-registration for ACP child process: "
+                                "external_id=%s source=%s",
+                                external_id,
                                 event.source.value,
                             )
                             return None

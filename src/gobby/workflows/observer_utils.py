@@ -57,18 +57,41 @@ def _extract_shell_command(event: HookEvent) -> str:
     return command if isinstance(command, str) else ""
 
 
-def _shell_tool_succeeded(event: HookEvent) -> bool:
+def _shell_tool_succeeded(event: HookEvent) -> bool | None:
+    """Return a confirmed shell outcome, or ``None`` when no signal exists."""
     if not event.data:
-        return False
-    if event.data.get("is_error") or event.metadata.get("is_failure"):
-        return False
+        return None
+
+    success_signals: list[bool] = []
+    is_error = event.data.get("is_error")
+    if "is_error" in event.data and isinstance(is_error, bool):
+        success_signals.append(not is_error)
+    is_failure = event.metadata.get("is_failure")
+    if "is_failure" in event.metadata and isinstance(is_failure, bool):
+        success_signals.append(not is_failure)
+
     output = event.data.get("tool_output")
     if isinstance(output, dict):
         for key in ("exitCode", "exit_code", "returncode"):
             value = output.get(key)
-            if isinstance(value, int) and value != 0:
-                return False
+            if isinstance(value, int) and not isinstance(value, bool):
+                success_signals.append(value == 0)
+                break
+
+        output_success = output.get("success")
+        if isinstance(output_success, bool):
+            success_signals.append(output_success)
+
         status = output.get("status")
-        if isinstance(status, str) and status.lower() in {"error", "failed", "failure"}:
-            return False
-    return True
+        if isinstance(status, str):
+            normalized_status = status.strip().lower()
+            if normalized_status in {"error", "failed", "failure"}:
+                success_signals.append(False)
+            elif normalized_status in {"complete", "completed", "ok", "succeeded", "success"}:
+                success_signals.append(True)
+
+    if False in success_signals:
+        return False
+    if True in success_signals:
+        return True
+    return None

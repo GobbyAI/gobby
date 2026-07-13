@@ -12,6 +12,11 @@ import tomlkit
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def _supported_ghook(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("gobby.cli.installers.grok.get_ghook_version", lambda: "0.7.1")
+
+
 def _write_grok_template(install_dir: Path) -> None:
     template_dir = install_dir / "grok"
     template_dir.mkdir(parents=True)
@@ -26,6 +31,46 @@ def _write_grok_template(install_dir: Path) -> None:
             }
         ),
         encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize("installed_version", [None, "0.4.9", "not-a-version"])
+def test_install_grok_refuses_unsupported_ghook_without_side_effects(
+    temp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    installed_version: str | None,
+) -> None:
+    from gobby.cli.installers.grok import install_grok
+
+    project_dir = temp_dir / "project"
+    project_dir.mkdir()
+    monkeypatch.setattr("gobby.cli.installers.grok.get_ghook_version", lambda: installed_version)
+
+    with (
+        patch.object(Path, "home", return_value=temp_dir),
+        patch("gobby.cli.installers.grok.get_install_dir") as get_install_dir,
+        patch("gobby.cli.installers.grok.install_global_hooks") as install_global_hooks,
+        patch("gobby.cli.installers.grok.install_shared_content") as install_shared_content,
+    ):
+        result = install_grok(project_dir)
+
+    assert result["success"] is False
+    assert "Grok hooks require ghook >= 0.5.0" in result["error"]
+    assert "gobby update" in result["error"]
+    get_install_dir.assert_not_called()
+    install_global_hooks.assert_not_called()
+    install_shared_content.assert_not_called()
+    assert not (temp_dir / ".grok").exists()
+
+
+def test_managed_ghook_pin_satisfies_grok_support_floor() -> None:
+    from gobby.cli.installers.grok import _MIN_GHOOK_VERSION_FOR_GROK
+    from gobby.install.bin_freshness_models import is_at_least_version
+    from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
+
+    assert is_at_least_version(
+        MANAGED_BIN_VERSION_PINS["ghook"],
+        _MIN_GHOOK_VERSION_FOR_GROK,
     )
 
 

@@ -13,6 +13,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._runtime_mutex import DispatchMutexUnavailableError
+from gobby.storage.tasks._stage_types import IllegalStageTransitionError
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import add_claimed_task
@@ -89,6 +90,84 @@ def _in_progress_architecture_task(temp_db, sample_project, *, session_id: str):
     return task
 
 
+def _failing_session_resolver(_session_ref: str) -> str:
+    raise ValueError("unresolvable session reference")
+
+
+def test_session_id_resolution_failure_returns_none() -> None:
+    ctx = SimpleNamespace(resolve_session_id=_failing_session_resolver)
+
+    with session_context_for_test("#3"):
+        assert stage_ops._session_id(ctx) is None
+
+
+def test_complete_stage_does_not_persist_unresolved_session_ref(
+    temp_db,
+    sample_project,
+) -> None:
+    child_session_id = _register_session(
+        temp_db,
+        sample_project,
+        "child-unresolved-audit",
+        agent_depth=1,
+    )
+    task = _in_progress_architecture_task(temp_db, sample_project, session_id=child_session_id)
+    ctx = _ops_context(temp_db)
+
+    ctx.resolve_session_id = _failing_session_resolver
+    with session_context_for_test("#3"):
+        result = _complete_stage(ctx)(task_id=task.id, stage_name="architecture")
+
+    row = stage_row(temp_db, task.id, "architecture")
+    assert result["stage"]["state"] == "done"
+    assert row["state"] == "done"
+    assert row["completed_by_session_id"] is None
+
+
+def test_failed_session_resolution_preserves_running_agent_dispatch_mutex(
+    temp_db,
+    sample_project,
+) -> None:
+    parent_session_id = _register_session(temp_db, sample_project, "parent-unresolved")
+    child_session_id = _register_session(
+        temp_db,
+        sample_project,
+        "child-unresolved-mutex",
+        agent_depth=1,
+    )
+    task = _in_progress_architecture_task(temp_db, sample_project, session_id=child_session_id)
+    run_id = _running_agent_run(
+        temp_db,
+        parent_session_id=parent_session_id,
+        child_session_id=child_session_id,
+        task_id=task.id,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4071",
+    )
+    mutexes = TaskDispatchMutexManager(temp_db)
+    assert mutexes.acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="stage_dispatch",
+        ttl_seconds=30,
+        run_id=run_id,
+    )
+    ctx = _ops_context(temp_db)
+    ctx.resolve_session_id = _failing_session_resolver
+
+    with (
+        session_context_for_test("#3"),
+        pytest.raises(DispatchMutexUnavailableError),
+    ):
+        _complete_stage(ctx)(task_id=task.id, stage_name="architecture")
+
+    row = stage_row(temp_db, task.id, "architecture")
+    assert row["state"] == "in_progress"
+    assert row["completed_by_session_id"] is None
+    mutex = mutexes.get_mutex(task.id)
+    assert mutex is not None
+    assert mutex.run_id == run_id
+
+
 def test_complete_stage_releases_current_running_agent_dispatch_mutex(
     temp_db,
     sample_project,
@@ -126,6 +205,59 @@ def test_complete_stage_releases_current_running_agent_dispatch_mutex(
     assert result["stage"]["state"] == "done"
     assert stage_row(temp_db, task.id, "architecture")["state"] == "done"
     assert mutexes.get_mutex(task.id) is None
+
+
+def test_illegal_complete_keeps_agent_dispatch_mutex_blocking_next_dispatch(
+    temp_db,
+    sample_project,
+) -> None:
+    parent_session_id = _register_session(temp_db, sample_project, "parent-illegal")
+    child_session_id = _register_session(
+        temp_db,
+        sample_project,
+        "child-illegal",
+        agent_depth=1,
+    )
+    task = _in_progress_architecture_task(temp_db, sample_project, session_id=child_session_id)
+    LocalTaskManager(temp_db).stage_states.complete_stage(
+        task.id,
+        "architecture",
+        by_session_id=child_session_id,
+    )
+    run_id = _running_agent_run(
+        temp_db,
+        parent_session_id=parent_session_id,
+        child_session_id=child_session_id,
+        task_id=task.id,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4015",
+    )
+    mutexes = TaskDispatchMutexManager(temp_db)
+    assert mutexes.acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="stage_dispatch",
+        ttl_seconds=30,
+        run_id=run_id,
+    )
+
+    with (
+        session_context_for_test(child_session_id),
+        pytest.raises(IllegalStageTransitionError),
+    ):
+        _complete_stage(_ops_context(temp_db))(
+            task_id=task.id,
+            stage_name="architecture",
+        )
+
+    retained = mutexes.get_mutex(task.id)
+    assert retained is not None
+    assert retained.run_id == run_id
+    assert not mutexes.acquire_mutex(
+        task.id,
+        holder="next-dispatcher",
+        kind="stage_dispatch",
+        ttl_seconds=30,
+    )
 
 
 def test_complete_stage_releases_completed_agent_task_claim(

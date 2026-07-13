@@ -362,7 +362,11 @@ class _FakePipeline:
 
 
 class _FakePipelineLoader:
-    async def load_pipeline(self, name: str):
+    def __init__(self) -> None:
+        self.project_ids: list[str] = []
+
+    async def load_pipeline(self, name: str, project_id: str):
+        self.project_ids.append(project_id)
         return _FakePipeline() if name == "02e3e743-e572-51b3-a0f4-83e68271282f" else None
 
 
@@ -382,12 +386,12 @@ class _FakePipelineExecutor:
 
 
 class _ValueErrorPipelineLoader:
-    async def load_pipeline(self, _name: str) -> NoReturn:
+    async def load_pipeline(self, _name: str, _project_id: str) -> NoReturn:
         raise ValueError("bad pipeline")
 
 
 class _RuntimeErrorPipelineLoader:
-    async def load_pipeline(self, _name: str) -> NoReturn:
+    async def load_pipeline(self, _name: str, _project_id: str) -> NoReturn:
         raise RuntimeError("loader unavailable")
 
 
@@ -3728,6 +3732,7 @@ async def test_start_pipeline_action_links_execution_id(
     assert mutex is not None
     assert mutex.run_id is not None
     assert mutex.action_kind == "stage-pipeline:expansion"
+    assert services.pipeline_executor.loader.project_ids == [sample_project["id"]]
 
 
 def test_dispatcher_run_heartbeat_cold_imports(repo_root) -> None:
@@ -3928,25 +3933,6 @@ async def test_dispatcher_starts_stage_pipeline_with_injected_services(
 
 
 @pytest.mark.asyncio
-async def test_expansion_terminal_event_releases_lease_via_handlers(
-    temp_db, sample_project
-) -> None:
-    """Expansion terminal event releases lease via handlers."""
-    from gobby.hooks.event_handlers import _dispatch
-
-    task = _task(temp_db, sample_project)
-    storage = _mutex_storage(temp_db)
-    storage.acquire_mutex(task.id, holder="dispatcher", kind="expansion", ttl_seconds=30)
-    storage.attach_run_id(task.id, "eeeeeeee-eeee-4eee-8eee-eeeeeeee5001")
-
-    _dispatch.on_expansion_run_cancelled(
-        task.id, "eeeeeeee-eeee-4eee-8eee-eeeeeeee5001", storage=storage
-    )
-
-    assert storage.get_mutex(task.id) is None
-
-
-@pytest.mark.asyncio
 async def test_execution_id_attaches_before_background_pipeline_start(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
@@ -4010,20 +3996,6 @@ async def test_pipeline_terminal_handler_releases_lease(
         storage=storage,
     )
 
-    assert storage.get_mutex(task.id) is None
-
-
-def test_terminal_handler_release_by_task_id_fallback(temp_db, sample_project) -> None:
-    """Terminal handler release by task id fallback."""
-    from gobby.hooks.event_handlers import _dispatch
-
-    task = _task(temp_db, sample_project)
-    storage = _mutex_storage(temp_db)
-    storage.acquire_mutex(task.id, holder="dispatcher", kind="spawn", ttl_seconds=30)
-
-    released = _dispatch.on_agent_terminal({"task_id": task.id}, storage=storage)
-
-    assert released == 1
     assert storage.get_mutex(task.id) is None
 
 

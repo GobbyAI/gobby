@@ -2,19 +2,15 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-import sqlite3
-from functools import partial
 from typing import TYPE_CHECKING, Any
-
-import psycopg
 
 from gobby.build.coordinator import summary_allows_cross_project_coordinator
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._dispatch_mutex_release import (
+    _current_agent_dispatch_mutex_run_id,
     _release_current_agent_dispatch_mutex,
 )
 from gobby.mcp_proxy.tools.tasks._dispatcher_tick import schedule_dispatcher_tick
@@ -34,6 +30,19 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from gobby.storage.tasks import Task
+
+
+def _dispatch_run_kwargs(
+    ctx: RegistryContext,
+    task_id: str,
+    session_id: str,
+) -> dict[str, Any]:
+    run_id = _current_agent_dispatch_mutex_run_id(
+        ctx,
+        task_id=task_id,
+        session_id=session_id,
+    )
+    return {"dispatch_run_id": run_id} if run_id is not None else {}
 
 
 def _operation_response(ctx: RegistryContext, task_id: str, stage_name: str) -> dict[str, Any]:
@@ -162,40 +171,6 @@ def _relay_signoff_to_build_coordinator_sync(
     )
 
 
-async def _relay_signoff_to_build_coordinator(
-    ctx: RegistryContext,
-    *,
-    task: Task,
-    task_id: str,
-    stage_name: str,
-    action: str,
-    from_session_id: str,
-    signoff_message: str,
-) -> None:
-    """Persist a direct P2P signoff for the coordinator of the newest build run."""
-    try:
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            None,
-            partial(
-                _relay_signoff_to_build_coordinator_sync,
-                ctx,
-                task=task,
-                task_id=task_id,
-                stage_name=stage_name,
-                action=action,
-                from_session_id=from_session_id,
-                signoff_message=signoff_message,
-            ),
-        )
-    except (sqlite3.DatabaseError, psycopg.Error):
-        logger.warning(
-            "Failed to relay review signoff to build coordinator",
-            extra={"task_id": task_id, "stage_name": stage_name, "action": action},
-            exc_info=True,
-        )
-
-
 def _schedule_signoff_relay(
     ctx: RegistryContext,
     *,
@@ -207,11 +182,18 @@ def _schedule_signoff_relay(
     signoff_message: str,
 ) -> None:
     try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError as exc:
+        _relay_signoff_to_build_coordinator_sync(
+            ctx,
+            task=task,
+            task_id=task_id,
+            stage_name=stage_name,
+            action=action,
+            from_session_id=from_session_id,
+            signoff_message=signoff_message,
+        )
+    except Exception:
         logger.warning(
-            "Failed to schedule review signoff relay to build coordinator: %s",
-            exc,
+            "Failed to relay review signoff to build coordinator",
             extra={
                 "task_id": task_id,
                 "stage_name": stage_name,
@@ -220,19 +202,6 @@ def _schedule_signoff_relay(
             },
             exc_info=True,
         )
-        return
-    loop.create_task(
-        _relay_signoff_to_build_coordinator(
-            ctx,
-            task=task,
-            task_id=task_id,
-            stage_name=stage_name,
-            action=action,
-            from_session_id=from_session_id,
-            signoff_message=signoff_message,
-        ),
-        name=f"gobby-review-signoff-relay-{action}",
-    )
 
 
 def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
@@ -252,12 +221,27 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         resolved_id, error = _resolve_task(ctx, task_id)
         if error is not None:
             return error
-        assert resolved_id is not None
+        if resolved_id is None:
+            raise RuntimeError("Task resolution returned neither a task ID nor an error")
 
         task = ctx.task_manager.get_task(resolved_id)
         if not task:
             return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
         prior_owner_session_id = get_claimed_session_id(task)
+        dispatch_kwargs = _dispatch_run_kwargs(ctx, resolved_id, resolved_session_id)
+        try:
+            updated = ctx.task_manager.submit_for_review(
+                resolved_id,
+                stage_name,
+                review_notes=review_notes,
+                by_session_id=resolved_session_id,
+                **dispatch_kwargs,
+            )
+        except ValueError as e:
+            return _lifecycle_value_error(str(e))
+        if not updated:
+            return {"error": f"Failed to submit stage {stage_name} on task {task_id} for review"}
+
         _auto_link_session_commits(
             ctx,
             task_id=resolved_id,
@@ -268,20 +252,8 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             ctx,
             task_id=resolved_id,
             session_id=resolved_session_id,
+            run_id=dispatch_kwargs.get("dispatch_run_id"),
         )
-
-        try:
-            updated = ctx.task_manager.submit_for_review(
-                resolved_id,
-                stage_name,
-                review_notes=review_notes,
-                by_session_id=resolved_session_id,
-            )
-        except ValueError as e:
-            return _lifecycle_value_error(str(e))
-        if not updated:
-            return {"error": f"Failed to submit stage {stage_name} on task {task_id} for review"}
-
         _clear_prior_claim_session_variables(
             ctx,
             resolved_id,
@@ -339,12 +311,27 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         resolved_id, error = _resolve_task(ctx, task_id)
         if error is not None:
             return error
-        assert resolved_id is not None
+        if resolved_id is None:
+            raise RuntimeError("Task resolution returned neither a task ID nor an error")
 
         task = ctx.task_manager.get_task(resolved_id)
         if not task:
             return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
         prior_owner_session_id = get_claimed_session_id(task)
+        dispatch_kwargs = _dispatch_run_kwargs(ctx, resolved_id, resolved_session_id)
+        try:
+            updated = ctx.task_manager.approve_review(
+                resolved_id,
+                stage_name,
+                approval_notes=approval_notes,
+                by_session_id=resolved_session_id,
+                **dispatch_kwargs,
+            )
+        except ValueError as e:
+            return _lifecycle_value_error(str(e))
+        if not updated:
+            return {"error": f"Failed to approve review for stage {stage_name} on task {task_id}"}
+
         _auto_link_session_commits(
             ctx,
             task_id=resolved_id,
@@ -355,20 +342,8 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             ctx,
             task_id=resolved_id,
             session_id=resolved_session_id,
+            run_id=dispatch_kwargs.get("dispatch_run_id"),
         )
-
-        try:
-            updated = ctx.task_manager.approve_review(
-                resolved_id,
-                stage_name,
-                approval_notes=approval_notes,
-                by_session_id=resolved_session_id,
-            )
-        except ValueError as e:
-            return _lifecycle_value_error(str(e))
-        if not updated:
-            return {"error": f"Failed to approve review for stage {stage_name} on task {task_id}"}
-
         _clear_prior_claim_session_variables(
             ctx,
             resolved_id,
@@ -445,12 +420,28 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         resolved_id, error = _resolve_task(ctx, task_id)
         if error is not None:
             return error
-        assert resolved_id is not None
+        if resolved_id is None:
+            raise RuntimeError("Task resolution returned neither a task ID nor an error")
 
         task = ctx.task_manager.get_task(resolved_id)
         if not task:
             return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
         prior_owner_session_id = get_claimed_session_id(task)
+        dispatch_kwargs = _dispatch_run_kwargs(ctx, resolved_id, resolved_session_id)
+        try:
+            updated = ctx.task_manager.reject_review(
+                resolved_id,
+                stage_name,
+                rejection_notes=rejection_notes,
+                round_number=round_number,
+                by_session_id=resolved_session_id,
+                **dispatch_kwargs,
+            )
+        except ValueError as e:
+            return _lifecycle_value_error(str(e))
+        if not updated:
+            return {"error": f"Failed to reject review for stage {stage_name} on task {task_id}"}
+
         _auto_link_session_commits(
             ctx,
             task_id=resolved_id,
@@ -461,21 +452,8 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             ctx,
             task_id=resolved_id,
             session_id=resolved_session_id,
+            run_id=dispatch_kwargs.get("dispatch_run_id"),
         )
-
-        try:
-            updated = ctx.task_manager.reject_review(
-                resolved_id,
-                stage_name,
-                rejection_notes=rejection_notes,
-                round_number=round_number,
-                by_session_id=resolved_session_id,
-            )
-        except ValueError as e:
-            return _lifecycle_value_error(str(e))
-        if not updated:
-            return {"error": f"Failed to reject review for stage {stage_name} on task {task_id}"}
-
         _clear_prior_claim_session_variables(
             ctx,
             resolved_id,
@@ -559,7 +537,8 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         resolved_id, error = _resolve_task(ctx, task_id)
         if error is not None:
             return error
-        assert resolved_id is not None
+        if resolved_id is None:
+            raise RuntimeError("Task resolution returned neither a task ID nor an error")
 
         task = ctx.task_manager.get_task(resolved_id)
         if not task:

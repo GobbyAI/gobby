@@ -153,6 +153,7 @@ class StageStatesManager:
         *,
         by_session_id: str | None,
         notes: str | None = None,
+        dispatch_run_id: str | None = None,
     ) -> StageState:
         return self._transition(
             task_id,
@@ -160,6 +161,7 @@ class StageStatesManager:
             "start_stage",
             by_session_id=by_session_id,
             notes=notes,
+            dispatch_run_id=dispatch_run_id,
         )
 
     def submit_for_review(
@@ -169,6 +171,8 @@ class StageStatesManager:
         *,
         by_session_id: str | None,
         notes: str | None = None,
+        dispatch_run_id: str | None = None,
+        preheld_mutex_run_id: str | None = None,
     ) -> StageState:
         return self._transition(
             task_id,
@@ -176,6 +180,8 @@ class StageStatesManager:
             "submit_for_review",
             by_session_id=by_session_id,
             notes=notes,
+            dispatch_run_id=dispatch_run_id,
+            preheld_mutex_run_id=preheld_mutex_run_id,
         )
 
     def approve_review(
@@ -185,6 +191,7 @@ class StageStatesManager:
         *,
         by_session_id: str | None,
         notes: str | None = None,
+        dispatch_run_id: str | None = None,
     ) -> StageState:
         return self._transition(
             task_id,
@@ -192,6 +199,7 @@ class StageStatesManager:
             "approve_review",
             by_session_id=by_session_id,
             notes=notes,
+            dispatch_run_id=dispatch_run_id,
         )
 
     def reject_review(
@@ -202,6 +210,7 @@ class StageStatesManager:
         reason: str,
         by_session_id: str | None,
         notes: str | None = None,
+        dispatch_run_id: str | None = None,
     ) -> StageState:
         return self._transition(
             task_id,
@@ -210,6 +219,7 @@ class StageStatesManager:
             by_session_id=by_session_id,
             notes=notes,
             reason=reason,
+            dispatch_run_id=dispatch_run_id,
         )
 
     def route_enhancement(
@@ -242,6 +252,8 @@ class StageStatesManager:
         commit_sha: str | None = None,
         artifact_updates: Mapping[str, str] | None = None,
         validation_override_reason: str | None = None,
+        dispatch_run_id: str | None = None,
+        preheld_mutex_run_id: str | None = None,
     ) -> StageState:
         return self._transition(
             task_id,
@@ -251,6 +263,8 @@ class StageStatesManager:
             commit_sha=commit_sha,
             artifact_updates=artifact_updates,
             validation_override_reason=validation_override_reason,
+            dispatch_run_id=dispatch_run_id,
+            preheld_mutex_run_id=preheld_mutex_run_id,
         )
 
     def fail_stage(
@@ -262,6 +276,8 @@ class StageStatesManager:
         needs_human: bool = False,
         by_session_id: str | None,
         cited_subtasks: Sequence[str] | None = None,
+        dispatch_run_id: str | None = None,
+        preheld_mutex_run_id: str | None = None,
     ) -> StageState:
         return self._transition(
             task_id,
@@ -271,6 +287,8 @@ class StageStatesManager:
             by_session_id=by_session_id,
             reason=reason,
             cited_subtasks=cited_subtasks,
+            dispatch_run_id=dispatch_run_id,
+            preheld_mutex_run_id=preheld_mutex_run_id,
         )
 
     def recover_abandoned_stage(
@@ -323,6 +341,8 @@ class StageStatesManager:
         artifact_updates: Mapping[str, str] | None = None,
         validation_override_reason: str | None = None,
         cited_subtasks: Sequence[str] | None = None,
+        dispatch_run_id: str | None = None,
+        preheld_mutex_run_id: str | None = None,
     ) -> StageState:
         return self._transitions.transition(
             task_id,
@@ -336,6 +356,8 @@ class StageStatesManager:
             artifact_updates=artifact_updates,
             validation_override_reason=validation_override_reason,
             cited_subtasks=cited_subtasks,
+            dispatch_run_id=dispatch_run_id,
+            preheld_mutex_run_id=preheld_mutex_run_id,
         )
 
     def _state_from_row(self, row: Mapping[str, Any]) -> StageState:

@@ -37,7 +37,7 @@ RetryNeutralPipelineDispatch = Callable[
 RenderDispatchInputs = Callable[[StartPipelineAction, object | None, object | None], dict[str, Any]]
 CreatePipelineExecution = Callable[..., str]
 ExecutePipelineBackground = Callable[..., Coroutine[Any, Any, Any]]
-RegisterBackgroundTask = Callable[[asyncio.Task[Any]], object]
+RegisterBackgroundTask = Callable[[str, asyncio.Task[Any]], object]
 EscalateTask = Callable[..., bool]
 StageStatesManagerFactory = Callable[..., Any]
 
@@ -72,8 +72,9 @@ async def start_pipeline_action(
     if loader is None:
         return escalate_pipeline_dispatch(action, mutex, db, "pipeline_loader_missing")
 
+    project_id = str(field(context, "project_id", ""))
     try:
-        pipeline = await loader.load_pipeline(action.pipeline_name)
+        pipeline = await loader.load_pipeline(action.pipeline_name, project_id)
     except ValueError as exc:
         return escalate_pipeline_dispatch(action, mutex, db, f"pipeline_invalid:{exc}")
     if pipeline is None:
@@ -126,14 +127,14 @@ async def start_pipeline_action(
             executor,
             pipeline,
             inputs,
-            str(field(context, "project_id", "")),
+            project_id,
             execution_id,
             action.pipeline_name,
             session_id=getattr(services, "triggering_session_id", None),
         ),
         name=f"stage-pipeline-{action.pipeline_name}-{execution_id[:8]}",
     )
-    register_background_task(task)
+    register_background_task(execution_id, task)
     return {"success": True, "execution_id": execution_id, "status": "running"}
 
 

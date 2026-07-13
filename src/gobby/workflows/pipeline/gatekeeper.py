@@ -159,17 +159,15 @@ class ApprovalManager:
         Raises:
             ValueError: If the token is invalid or not found
         """
-        # Find the step by approval token
-        step = self.execution_manager.get_step_by_approval_token(token)
-        if not step:
-            raise ValueError(f"Invalid approval token: {token}")
-
-        # Mark step as approved
-        self.execution_manager.update_step_execution(
-            step_execution_id=step.id,
+        # Consume the token and transition the step in one guarded write.
+        step = await self._run_db(
+            self.execution_manager.consume_step_approval,
+            token,
             status=StepStatus.COMPLETED,
             approved_by=approved_by,
         )
+        if not step:
+            raise ValueError(f"Invalid or already used approval token: {token}")
 
         # Get the execution
         execution = self.execution_manager.get_execution(step.execution_id)
@@ -195,21 +193,19 @@ class ApprovalManager:
         Raises:
             ValueError: If the token is invalid or not found
         """
-        # Find the step by approval token
-        step = self.execution_manager.get_step_by_approval_token(token)
-        if not step:
-            raise ValueError(f"Invalid approval token: {token}")
-
-        # Mark step as failed
         error_msg = "Rejected"
         if rejected_by:
             error_msg += f" by {rejected_by}"
 
-        self.execution_manager.update_step_execution(
-            step_execution_id=step.id,
+        # Consume the token and transition the step in one guarded write.
+        step = await self._run_db(
+            self.execution_manager.consume_step_approval,
+            token,
             status=StepStatus.FAILED,
             error=error_msg,
         )
+        if not step:
+            raise ValueError(f"Invalid or already used approval token: {token}")
 
         # Set execution status to CANCELLED
         execution = self.execution_manager.update_execution_status(

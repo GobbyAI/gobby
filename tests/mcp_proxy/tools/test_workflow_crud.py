@@ -36,6 +36,28 @@ steps:
     exec: make build
 """
 
+VALID_RULE_YAML = """\
+name: test-rule
+type: rule
+event: before_tool
+effects:
+  - type: block
+    reason: Test rule
+"""
+
+VALID_VARIABLE_YAML = """\
+name: test-variable
+type: variable
+variable: test_value
+value: 42
+"""
+
+VALID_AGENT_YAML = """\
+name: test-agent
+type: agent
+role: Test agent
+"""
+
 INVALID_YAML_NO_NAME = """\
 description: Missing name field
 type: pipeline
@@ -76,9 +98,30 @@ def loader(tmp_path) -> WorkflowLoader:
 
 
 class TestCreateWorkflow:
+    @pytest.mark.parametrize(
+        ("yaml_content", "expected_type"),
+        [
+            (VALID_RULE_YAML, "rule"),
+            (VALID_VARIABLE_YAML, "variable"),
+            (VALID_AGENT_YAML, "agent"),
+        ],
+    )
+    def test_create_valid_non_pipeline_types(
+        self,
+        def_manager: LocalWorkflowDefinitionManager,
+        loader: WorkflowLoader,
+        yaml_content: str,
+        expected_type: str,
+    ) -> None:
+        result = create_workflow_definition(def_manager, loader, yaml_content)
+
+        assert result["success"] is True
+        assert result["definition"]["workflow_type"] == expected_type
+
     def test_create_valid_workflow(
         self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
     ) -> None:
+        loader.db = def_manager.db
         result = create_workflow_definition(def_manager, loader, VALID_WORKFLOW_YAML)
 
         assert result["success"] is True
@@ -87,6 +130,10 @@ class TestCreateWorkflow:
         assert defn["workflow_type"] == "pipeline"
         assert defn["description"] == "A test workflow"
         assert defn["version"] == "1.0"
+        assert defn["enabled"] is True
+        pipeline = loader.load_pipeline_sync("test-workflow")
+        assert pipeline is not None
+        assert pipeline.enabled is True
 
     def test_create_valid_pipeline(
         self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
@@ -97,6 +144,22 @@ class TestCreateWorkflow:
         defn = result["definition"]
         assert defn["name"] == "test-pipeline"
         assert defn["workflow_type"] == "pipeline"
+
+    def test_create_pipeline_normalizes_disabled_string(
+        self, def_manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        loader = WorkflowLoader(def_manager.db)
+        yaml_content = VALID_PIPELINE_YAML.replace(
+            "type: pipeline", 'type: pipeline\nenabled: "false"'
+        )
+
+        result = create_workflow_definition(def_manager, loader, yaml_content)
+
+        assert result["success"] is True
+        assert result["definition"]["enabled"] is False
+        pipeline = loader.load_pipeline_sync("test-pipeline")
+        assert pipeline is not None
+        assert pipeline.enabled is False
 
     def test_create_with_project_id(
         self,
@@ -147,6 +210,44 @@ class TestCreateWorkflow:
 
         assert result["success"] is False
         assert "Validation failed" in result["error"]
+
+    @pytest.mark.parametrize(
+        "yaml_content",
+        [
+            VALID_RULE_YAML + "junk: true\n",
+            VALID_VARIABLE_YAML + "junk: true\n",
+            VALID_AGENT_YAML + "junk: true\n",
+        ],
+    )
+    def test_create_rejects_junk_non_pipeline_bodies(
+        self,
+        def_manager: LocalWorkflowDefinitionManager,
+        loader: WorkflowLoader,
+        yaml_content: str,
+    ) -> None:
+        result = create_workflow_definition(def_manager, loader, yaml_content)
+
+        assert result["success"] is False
+        assert "extra_forbidden" in result["error"]
+
+    @pytest.mark.parametrize(
+        "yaml_content",
+        [
+            "name: missing-type\nsteps: []\n",
+            "name: unsupported-type\ntype: workflow\nsteps: []\n",
+            "name: malformed-type\ntype: [rule]\n",
+        ],
+    )
+    def test_create_rejects_missing_or_unsupported_type(
+        self,
+        def_manager: LocalWorkflowDefinitionManager,
+        loader: WorkflowLoader,
+        yaml_content: str,
+    ) -> None:
+        result = create_workflow_definition(def_manager, loader, yaml_content)
+
+        assert result["success"] is False
+        assert "agent, pipeline, rule, variable" in result["error"]
 
     def test_create_detects_name_conflict(
         self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
@@ -289,6 +390,56 @@ steps:
         )
         assert result["success"] is False
         assert "Invalid type" in result["error"]
+
+    def test_update_rejects_type_change(
+        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+    ) -> None:
+        create_workflow_definition(def_manager, loader, VALID_RULE_YAML)
+
+        result = update_workflow_definition(
+            def_manager,
+            loader,
+            name="test-rule",
+            yaml_content=VALID_VARIABLE_YAML.replace("test-variable", "test-rule"),
+        )
+
+        assert result["success"] is False
+        assert "does not match existing workflow type 'rule'" in result["error"]
+        assert def_manager.get_by_name("test-rule").workflow_type == "rule"
+
+    def test_update_without_type_validates_using_existing_type(
+        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+    ) -> None:
+        create_workflow_definition(def_manager, loader, VALID_RULE_YAML)
+        replacement = """\
+name: test-rule
+event: after_tool
+effects:
+  - type: observe
+    category: test
+"""
+
+        result = update_workflow_definition(
+            def_manager, loader, name="test-rule", yaml_content=replacement
+        )
+
+        assert result["success"] is True
+        assert result["definition"]["workflow_type"] == "rule"
+
+    def test_update_without_type_rejects_junk_for_existing_type(
+        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+    ) -> None:
+        create_workflow_definition(def_manager, loader, VALID_AGENT_YAML)
+
+        result = update_workflow_definition(
+            def_manager,
+            loader,
+            name="test-agent",
+            yaml_content="name: test-agent\nrole: replacement\njunk: true\n",
+        )
+
+        assert result["success"] is False
+        assert "extra_forbidden" in result["error"]
 
 
 # =============================================================================
@@ -441,6 +592,9 @@ class TestRegistryIntegration:
         assert "update_workflow" in tool_names
         assert "delete_workflow" in tool_names
         assert "export_workflow" in tool_names
+        create_tool = registry.get_tool_metadata("create_workflow")
+        assert create_tool is not None
+        assert "rule, variable, agent, or pipeline" in create_tool.description
 
     def test_pipelines_registry_has_crud_tools(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
@@ -471,7 +625,7 @@ class TestRegistryIntegration:
         assert "create_pipeline" in tool_names
 
     @pytest.mark.asyncio
-    async def test_evaluate_workflow_uses_internal_mcp_inventory(self) -> None:
+    async def test_evaluate_workflow_uses_internal_mcp_inventory(self, monkeypatch) -> None:
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
         from gobby.workflows.definitions import WorkflowDefinition, WorkflowStep
 
@@ -492,8 +646,11 @@ class TestRegistryIntegration:
                 return [FakeInternalRegistry()]
 
         class FakeLoader:
+            project_ids: list[str | None] = []
+
             @staticmethod
-            async def load_workflow(name: str, project_path: str | None = None):
+            async def load_workflow(name: str, project_id: str | None = None):
+                FakeLoader.project_ids.append(project_id)
                 return WorkflowDefinition(
                     name=name,
                     type="step",
@@ -505,6 +662,11 @@ class TestRegistryIntegration:
                     ],
                 )
 
+        project_id = "11111111-1111-4111-8111-111111111111"
+        monkeypatch.setattr(
+            "gobby.mcp_proxy.tools.workflows.get_project_context",
+            lambda: {"id": project_id},
+        )
         registry = create_workflows_registry(
             loader=FakeLoader(),
             internal_manager=FakeInternalManager(),
@@ -515,6 +677,49 @@ class TestRegistryIntegration:
         codes = {item["code"] for item in result["items"]}
         assert "SEMANTIC_CHECKS_SKIPPED" not in codes
         assert "UNKNOWN_MCP_TOOL" in codes
+        assert FakeLoader.project_ids == [project_id]
+
+    async def test_evaluate_agent_definition_uses_project_scope(
+        self,
+        db: HubDatabase,
+        def_manager: LocalWorkflowDefinitionManager,
+        monkeypatch,
+    ) -> None:
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
+        from gobby.workflows.definitions import AgentDefinitionBody
+
+        project_id = "11111111-1111-4111-8111-111111110002"
+        db.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at) "
+            "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            (project_id, "Agent Evaluation Project"),
+        )
+        def_manager.create(
+            name="scoped-agent",
+            definition_json=AgentDefinitionBody(
+                name="global-agent",
+                blocked_mcp_tools=["missing-server:missing-tool"],
+            ).model_dump_json(),
+            workflow_type="agent",
+        )
+        def_manager.create(
+            name="scoped-agent",
+            definition_json=AgentDefinitionBody(name="project-agent").model_dump_json(),
+            workflow_type="agent",
+            project_id=project_id,
+        )
+        monkeypatch.setattr(
+            "gobby.mcp_proxy.tools.workflows.get_project_context",
+            lambda: {"id": project_id},
+        )
+        registry = create_workflows_registry(db=db)
+
+        result = await registry.call("evaluate_workflow", {"name": "scoped-agent"})
+
+        assert result["valid"] is True
+        assert result["workflow_name"] == "project-agent"
+        assert result["workflow_type"] == "agent"
+        assert all(item["code"] != "UNKNOWN_MCP_SERVER" for item in result["items"])
 
 
 # =============================================================================

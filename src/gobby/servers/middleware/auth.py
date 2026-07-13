@@ -12,6 +12,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import Response
 
+from gobby.config.ui import is_loopback_bind_host
 from gobby.servers.responses import JSONResponse
 
 if TYPE_CHECKING:
@@ -46,6 +47,16 @@ _PROTECTED_PREFIXES = (
 )
 
 
+def _remote_hook_requires_auth(server: "HTTPServer", path: str) -> bool:
+    if path != "/api/hooks" and not path.startswith("/api/hooks/"):
+        return False
+
+    services = getattr(server, "services", None)
+    config = getattr(services, "config", None)
+    bind_host = getattr(config, "bind_host", None)
+    return isinstance(bind_host, str) and not is_loopback_bind_host(bind_host)
+
+
 class AuthMiddleware(BaseHTTPMiddleware):
     """Enforce the server's configured auth mode at HTTP route boundaries."""
 
@@ -55,12 +66,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         path = request.url.path
+        remote_hook_requires_auth = _remote_hook_requires_auth(self.server, path)
 
-        if path in _PUBLIC_PATHS or any(path.startswith(prefix) for prefix in _PUBLIC_PREFIXES):
+        if not remote_hook_requires_auth and (
+            path in _PUBLIC_PATHS or any(path.startswith(prefix) for prefix in _PUBLIC_PREFIXES)
+        ):
             return await call_next(request)
 
         auth_service = self.server.auth_service
-        if not auth_service.enabled:
+        if not auth_service.enabled and not remote_hook_requires_auth:
             return await call_next(request)
 
         if auth_service.is_request_authenticated(request):
