@@ -92,6 +92,7 @@ async def _proxy_websocket(
 ) -> None:
     import websockets
 
+    accepted = False
     try:
         requested_subprotocols = _requested_websocket_subprotocols(websocket.headers)
         if bearer_token:
@@ -108,6 +109,7 @@ async def _proxy_websocket(
 
         async with backend_connection as backend:
             await websocket.accept(subprotocol=getattr(backend, "subprotocol", None))
+            accepted = True
 
             async def client_to_backend() -> None:
                 try:
@@ -164,10 +166,11 @@ async def _proxy_websocket(
                     raise exc
     except Exception as e:
         logger.debug(f"WebSocket proxy error: {e}")
-        try:
-            await websocket.close(code=1011)
-        except Exception:
-            pass
+        if accepted:
+            try:
+                await websocket.close(code=1011)
+            except Exception:
+                pass
 
 
 def _mount_vite_hmr_proxy(app: FastAPI, server: "HTTPServer") -> None:

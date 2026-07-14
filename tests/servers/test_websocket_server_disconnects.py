@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from unittest.mock import AsyncMock, MagicMock
 
@@ -59,7 +60,59 @@ def server(mock_config: MagicMock, mock_mcp_manager: MagicMock) -> WebSocketServ
     return WebSocketServer(mock_config, mock_mcp_manager)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message", ["5", "[]"])
+async def test_handle_message_rejects_non_object_json(
+    server: WebSocketServer, message: str
+) -> None:
+    websocket = IteratingWebSocket()
+
+    await server._handle_message(websocket, message)
+
+    assert len(websocket.sent_messages) == 1
+    assert json.loads(websocket.sent_messages[0]) == {
+        "type": "error",
+        "code": "ERROR",
+        "message": "Message must be a JSON object",
+    }
+
+
 class TestHandleConnectionDisconnects:
+    @pytest.mark.asyncio
+    async def test_disconnect_cleans_attached_session_tts(self, server: WebSocketServer) -> None:
+        ws = IteratingWebSocket(messages=['{"type":"session_update"}'])
+        pipeline = MagicMock()
+        pipeline.cancel = AsyncMock()
+        server._active_tts_pipelines["attached-session"] = pipeline
+        server._attached_tts_offsets.update(
+            {
+                "attached-session:message-1": 12,
+                "attached-session:message-2": 34,
+                "other-session:message-1": 56,
+            }
+        )
+        server._rebroadcast_pending_interactions = AsyncMock()
+        server._cleanup_tmux_client = AsyncMock()
+        server._check_voice_idle = AsyncMock()
+
+        async def disconnect_after_attach(websocket: IteratingWebSocket, _message: str) -> None:
+            server.clients[websocket]["attached_session_id"] = "attached-session"
+            raise ConnectionClosedOK(
+                Close(1001, "going away"),
+                Close(1001, "going away"),
+                True,
+            )
+
+        server._handle_message = AsyncMock(side_effect=disconnect_after_attach)
+
+        await server._handle_connection(ws)
+
+        pipeline.cancel.assert_awaited_once_with()
+        assert "attached-session" not in server._active_tts_pipelines
+        assert server._attached_tts_offsets == {"other-session:message-1": 56}
+        server._check_voice_idle.assert_awaited_once_with()
+        assert ws not in server.clients
+
     @pytest.mark.asyncio
     async def test_connection_closed_during_handler_does_not_log_message_error(
         self, server: WebSocketServer, caplog: pytest.LogCaptureFixture

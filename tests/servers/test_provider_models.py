@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.config.app import DaemonConfig
 from gobby.servers.provider_model_defaults import AGY_MODELS
 from gobby.servers.provider_model_discovery import CLAUDE_ALIASES
 from gobby.servers.provider_models import (
@@ -21,6 +20,7 @@ from gobby.servers.provider_models import (
     _model_discovery_cwd_path,
     create_provider_model_catalog,
 )
+from gobby.servers.provider_models_grok import models_from_cache
 
 pytestmark = pytest.mark.unit
 
@@ -31,13 +31,23 @@ class TestProviderModelCatalog:
         with pytest.raises(TypeError, match="config"):
             ProviderModelCatalog(config=None, cache_path=temp_dir / "provider-model-catalog.json")
 
-    def test_factory_accepts_daemon_config_without_constructor_probe(self, temp_dir: Path) -> None:
-        """Factory is the daemon-aware entry point; the catalog itself stays config-free."""
+    def test_factory_has_no_inert_daemon_config(self, temp_dir: Path) -> None:
+        """Factory and catalog use the same config-free constructor contract."""
         with patch.dict("os.environ", {"GOBBY_HOME": str(temp_dir)}, clear=False):
-            catalog = create_provider_model_catalog(DaemonConfig())
+            catalog = create_provider_model_catalog()
 
         assert isinstance(catalog, ProviderModelCatalog)
         assert catalog.cache_path == temp_dir / "provider-model-catalog.json"
+
+    @pytest.mark.parametrize("contents", [None, "not-json"])
+    def test_grok_cache_read_failures_return_empty(
+        self, tmp_path: Path, contents: str | None
+    ) -> None:
+        cache_path = tmp_path / "models_cache.json"
+        if contents is not None:
+            cache_path.write_text(contents, encoding="utf-8")
+
+        assert models_from_cache(cache_path) == []
 
     @pytest.mark.asyncio
     async def test_probe_claude_model_records_canonical_id(self, temp_dir: Path) -> None:
@@ -347,6 +357,16 @@ class TestProviderModelCatalog:
         assert catalog.get_context_window("droid", "claude-fable-5") == 1_000_000
         assert catalog.get_context_window("droid", "z-ai/glm-5") == 128_000
         assert catalog.get_context_window("droid", "custom/byok-model") is None
+
+    def test_droid_catalog_precedes_underlying_static_default(self, temp_dir: Path) -> None:
+        catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
+        catalog._providers = {"droid": {"models": []}, "codex": {"models": []}}
+
+        resolved = catalog.get_context_window_with_source("droid", "gpt-5.4")
+
+        assert resolved is not None
+        assert resolved.value == 200_000
+        assert resolved.source == "provider_catalog"
 
     def test_live_snapshot_order_and_metadata_are_preserved(self, temp_dir: Path) -> None:
         """Live discovery owns catalog model order and metadata."""
@@ -764,6 +784,16 @@ class TestProviderModelCatalog:
         }
         assert "minimal" in by_id["gemini-3-flash-preview"]["reasoning"]["supported_efforts"]
         assert by_id["minimax-m2.7"]["reasoning"]["supported_efforts"] == ["high"]
+        assert {
+            model_id: by_id[model_id]["context_length"]
+            for model_id in ("minimax-m2.7", "minimax-m2.5", "kimi-k2.6", "kimi-k2.5")
+        } == {
+            "minimax-m2.7": 204_800,
+            "minimax-m2.5": 204_800,
+            "kimi-k2.6": 262_144,
+            "kimi-k2.5": 262_144,
+        }
+        assert all(model.get("context_length") is not None for model in models)
         for model_id in ("glm-5.1", "glm-5", "glm-4.7"):
             assert by_id[model_id].get("reasoning", {}).get("supported_efforts", []) == []
 

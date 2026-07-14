@@ -80,6 +80,8 @@ PROTECTED_PATHS = [
     "/api/tasks",
     "/api/config",
     "/api/agents",
+    "/api/authentic",
+    "/api/mcpx",
 ]
 
 PUBLIC_PATHS = [

@@ -407,6 +407,7 @@ async def handle_plan_approval_response(
         return
 
     conversation_id_raw: str | None = data.get("conversation_id")
+    tool_call_id = data.get("tool_call_id")
     decision = data.get("decision", "")
     option_id = data.get("option_id")
 
@@ -433,11 +434,22 @@ async def handle_plan_approval_response(
         post_plan_mode = option.post_plan_chat_mode if option else "normal"
         should_auto_continue = option.auto_continue if option else True
         if session.has_pending_plan:
+            plan_auto_switch = bool(getattr(session, "plan_auto_switch", False))
+            if plan_auto_switch and (
+                not isinstance(tool_call_id, str) or not session.has_pending_plan_id(tool_call_id)
+            ):
+                logger.warning("Plan approval does not match a pending tool_call_id")
+                return
             session._pending_post_plan_mode = post_plan_mode
             session.set_chat_mode(post_plan_mode)
             _clear_pending_plan_prompt(session)
             await session.sync_sdk_permission_mode()
-            session.provide_plan_decision("approve")
+            decision_target = tool_call_id if plan_auto_switch else None
+            if plan_auto_switch and not session.provide_plan_decision(decision_target, "approve"):
+                logger.warning("Plan approval did not match a pending plan gate: %s", tool_call_id)
+                return
+            if not plan_auto_switch:
+                session.provide_plan_decision(None, "approve")
             logger.info(
                 "Plan approved (ExitPlanMode unblocked, option=%s) for conversation %s -> %s",
                 option.id if option else "-",
@@ -503,7 +515,20 @@ async def handle_plan_approval_response(
             # event-based has_pending_plan survives the clear, or a managed
             # tool-plan CLI's gate, e.g. Droid ExitSpecMode). Deny it so the
             # agent stays in plan mode; queued feedback rides the next turn.
-            session.provide_plan_decision("request_changes")
+            plan_auto_switch = bool(getattr(session, "plan_auto_switch", False))
+            if plan_auto_switch and (
+                not isinstance(tool_call_id, str) or not session.has_pending_plan_id(tool_call_id)
+            ):
+                logger.warning("Plan rejection does not match a pending tool_call_id")
+                return
+            decision_target = tool_call_id if plan_auto_switch else None
+            if plan_auto_switch and not session.provide_plan_decision(
+                decision_target, "request_changes"
+            ):
+                logger.warning("Plan rejection did not match a pending plan gate: %s", tool_call_id)
+                return
+            if not plan_auto_switch:
+                session.provide_plan_decision(None, "request_changes")
             logger.info(
                 f"Plan changes requested (plan-exit tool denied) for conversation {conversation_id[:8]}",
             )

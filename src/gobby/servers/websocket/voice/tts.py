@@ -161,7 +161,7 @@ class TTSPipeline:
                         await ws.send(meta)
                         await ws.send(pcm_bytes)
                     except (ConnectionClosed, ConnectionClosedError):
-                        pass
+                        self.clients.pop(ws, None)
 
         except asyncio.CancelledError:
             raise

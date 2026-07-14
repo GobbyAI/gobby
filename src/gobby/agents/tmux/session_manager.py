@@ -298,6 +298,14 @@ class TmuxSessionManager:
         """Stop the configured tmux server."""
         await self._run("kill-server", timeout=5.0)
 
+    async def set_option(self, session_name: str, option: str, value: str) -> None:
+        """Set an option on a tmux session."""
+        await self._run("set-option", "-t", session_name, option, value, timeout=5.0)
+
+    async def refresh_client(self, session_name: str) -> None:
+        """Redraw clients attached to a tmux session."""
+        await self._run("refresh-client", "-t", session_name, timeout=5.0)
+
     async def create_session(
         self,
         name: str,

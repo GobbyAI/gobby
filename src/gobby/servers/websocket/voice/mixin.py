@@ -148,7 +148,7 @@ class VoiceMixin(VoiceWarmupMixin):
         # Cancel existing pipeline if any
         existing = self._active_tts_pipelines.pop(conversation_id, None)
         if existing:
-            asyncio.create_task(existing.cancel())
+            self._spawn_background_task(existing.cancel(), name="cancel-tts-pipeline")
 
         pipeline = TTSPipeline(
             tts,
@@ -181,6 +181,16 @@ class VoiceMixin(VoiceWarmupMixin):
             logger.debug(f"TTS cancelled for {conversation_id[:8]}")
 
         await _broadcast_tts_status(self.clients, conversation_id, "idle")
+
+    async def _cleanup_attached_tts(self, session_id: str) -> None:
+        """Cancel TTS and discard partial-message offsets for an attached session."""
+        offset_prefix = f"{session_id}:"
+        for offset_key in tuple(self._attached_tts_offsets):
+            if offset_key.startswith(offset_prefix):
+                self._attached_tts_offsets.pop(offset_key, None)
+
+        await self._cancel_tts(session_id)
+        await self._check_voice_idle()
 
     async def _handle_tts_stop(self, websocket: Any, data: dict[str, Any]) -> None:
         """Handle client-requested TTS stop (barge-in from VAD).

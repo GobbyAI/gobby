@@ -142,8 +142,8 @@ class ManagedChatSessionBase:
         default=None, repr=False
     )
     _on_mode_changed: Callable[[str, str], Awaitable[None]] | None = field(default=None, repr=False)
-    _on_plan_ready: Callable[[str | None, dict[str, Any]], Awaitable[None]] | None = field(
-        default=None, repr=False
+    _on_plan_ready: Callable[[str | None, dict[str, Any], str | None], Awaitable[None]] | None = (
+        field(default=None, repr=False)
     )
 
     @property
@@ -188,8 +188,11 @@ class ManagedChatSessionBase:
     def has_pending_plan(self) -> bool:
         return False
 
-    def provide_plan_decision(self, decision: str) -> None:
-        return None
+    def has_pending_plan_id(self, tool_use_id: str) -> bool:
+        return False
+
+    def provide_plan_decision(self, tool_use_id: str | None, decision: str) -> bool:
+        return False
 
     def approve_plan(self) -> None:
         return None
@@ -201,15 +204,15 @@ class ManagedChatSessionBase:
     def has_pending_question(self) -> bool:
         return False
 
-    def provide_answer(self, answers: dict[str, Any]) -> None:
-        return None
+    def provide_answer(self, tool_use_id: str, answers: dict[str, Any]) -> bool:
+        return False
 
     @property
     def has_pending_approval(self) -> bool:
         return False
 
-    def provide_approval(self, decision: str) -> None:
-        return None
+    def provide_approval(self, tool_use_id: str, decision: str) -> bool:
+        return False
 
     def _queue_deferred_context(self, response: dict[str, Any] | None) -> None:
         """Persist lifecycle context for the next prompt when it can't be injected live."""

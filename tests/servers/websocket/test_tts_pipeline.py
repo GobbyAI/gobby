@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock
 
 import pytest
+from websockets.exceptions import ConnectionClosed
 
 from gobby.servers.websocket.voice import TTSPipeline
 from gobby.servers.websocket.voice_attached import feed_attached_session_tts
@@ -73,6 +74,21 @@ class TestTTSPipeline:
         assert binary_frames == [b"First sentence.", b"Second sentence."]
 
         await pipeline.cancel()
+
+    @pytest.mark.asyncio
+    async def test_closed_client_is_removed_after_partial_chunk_send(self) -> None:
+        ws = DummyWebSocket()
+        ws.send.side_effect = [None, ConnectionClosed(None, None)]
+        clients = {ws: {"conversation_id": "conv-1234"}}
+        pipeline = TTSPipeline(
+            tts=OrderedTTS({}),
+            conversation_id="conv-1234",
+            clients=clients,
+        )
+
+        await pipeline._synthesize_and_send("Hello.")
+
+        assert ws not in clients
 
     @pytest.mark.asyncio
     async def test_cancel_stops_worker_before_clearing_buffer_and_queue(self) -> None:

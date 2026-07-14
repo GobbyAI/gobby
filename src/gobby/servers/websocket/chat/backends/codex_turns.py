@@ -33,6 +33,8 @@ from gobby.sessions.transcripts.base import ParsedMessage, ParsedToolEvent
 
 logger = logging.getLogger(__name__)
 
+_CODEX_TURN_TIMEOUT_SECONDS = 600.0
+
 BeforeToolDedupKeyExtractor = Callable[[dict[str, Any]], str | None]
 
 
@@ -222,11 +224,20 @@ async def stream_codex_turn(
             effort=session.reasoning_effort,
         )
         session._turn_id = turn.id or session._turn_id
+        turn_deadline = asyncio.get_running_loop().time() + _CODEX_TURN_TIMEOUT_SECONDS
 
         while not turn_completed.is_set():
+            if not client.is_connected:
+                raise RuntimeError("Codex app-server disconnected before turn completed")
+            poll_deadline = min(turn_deadline, asyncio.get_running_loop().time() + 0.1)
             try:
-                method, params = await asyncio.wait_for(event_queue.get(), timeout=0.1)
+                async with asyncio.timeout_at(poll_deadline):
+                    method, params = await event_queue.get()
             except TimeoutError:
+                if asyncio.get_running_loop().time() >= turn_deadline:
+                    raise RuntimeError(
+                        f"Codex turn timed out after {_CODEX_TURN_TIMEOUT_SECONDS:g} seconds"
+                    ) from None
                 continue
 
             if method in {"agent/messageDelta", "item/agentMessage/delta"}:

@@ -46,6 +46,8 @@ class ChatMessageIngressMixin:
 
         async def _cancel_active_chat(self, conversation_id: str) -> None: ...
 
+        def _get_session_create_lock(self, conversation_id: str) -> asyncio.Lock: ...
+
         async def _stream_chat_response(
             self,
             websocket: Any,
@@ -120,31 +122,35 @@ class ChatMessageIngressMixin:
             prepared_attachments,
         )
 
-        await self._cancel_active_chat(conversation_id)
+        lock = self._get_session_create_lock(conversation_id)
+        async with lock:
+            await self._cancel_active_chat(conversation_id)
 
-        task = asyncio.create_task(
-            self._stream_chat_response(
-                websocket,
-                conversation_id,
-                validated_content,
-                model,
-                request_id,
-                project_id,
-                inject_context=inject_context,
-                provider=provider,
-                reasoning_effort=reasoning_effort,
-                tts_enabled=(
-                    data.get("tts_enabled") if isinstance(data.get("tts_enabled"), bool) else None
-                ),
-                attachments=prepared_attachments,
+            task = asyncio.create_task(
+                self._stream_chat_response(
+                    websocket,
+                    conversation_id,
+                    validated_content,
+                    model,
+                    request_id,
+                    project_id,
+                    inject_context=inject_context,
+                    provider=provider,
+                    reasoning_effort=reasoning_effort,
+                    tts_enabled=(
+                        data.get("tts_enabled")
+                        if isinstance(data.get("tts_enabled"), bool)
+                        else None
+                    ),
+                    attachments=prepared_attachments,
+                )
             )
-        )
-        task.add_done_callback(self._on_chat_task_done)
-        registry = getattr(self, "web_chat_session_registry", None)
-        if registry is not None:
-            registry.track_active_task(conversation_id, task)
-        else:
-            self._active_chat_tasks[conversation_id] = task
+            task.add_done_callback(self._on_chat_task_done)
+            registry = getattr(self, "web_chat_session_registry", None)
+            if registry is not None:
+                registry.track_active_task(conversation_id, task)
+            else:
+                self._active_chat_tasks[conversation_id] = task
 
     def _apply_tts_intent(self, conversation_id: str, tts_enabled: Any) -> None:
         """Apply the request's TTS toggle before stream scheduling."""

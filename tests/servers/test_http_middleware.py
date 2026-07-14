@@ -16,6 +16,7 @@ from starlette.responses import JSONResponse, Response
 
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
+from gobby.mcp_proxy.tools import artifacts as artifacts_tools
 from gobby.servers.auth_service import AuthService
 from gobby.servers.http import HTTPServer
 from gobby.servers.middleware.auth import AuthMiddleware
@@ -127,6 +128,31 @@ def test_required_by_default(temp_db: HubDatabase) -> None:
     assert fallback_server.auth_service.enabled is True
     assert configured_server.auth_service.enabled is False
     assert explicit_server.auth_service.enabled is False
+
+
+def test_cors_wraps_auth_rejections_and_protected_preflights(temp_db: HubDatabase) -> None:
+    origin = "https://app.example.test"
+    services = ServiceContainer(
+        config=DaemonConfig(auth_mode="required", cors_origins=[origin]),
+        database=temp_db,
+        session_manager=MagicMock(),
+        task_manager=MagicMock(),
+    )
+    client = TestClient(HTTPServer(services).app)
+
+    rejected = client.get("/api/tasks", headers={"Origin": origin})
+    preflight = client.options(
+        "/api/tasks",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert rejected.status_code == 401
+    assert rejected.headers["access-control-allow-origin"] == origin
+    assert preflight.status_code == 200
+    assert preflight.headers["access-control-allow-origin"] == origin
 
 
 def test_public_prefix_matrix() -> None:
@@ -277,6 +303,36 @@ class TestLifespan:
 
         with TestClient(server.app):
             assert server._running is True
+
+    def test_lifespan_clears_artifact_broadcaster(
+        self,
+        session_storage: SessionManager,
+    ) -> None:
+        """Each lifespan owns its artifact broadcaster only while running."""
+
+        def build_server() -> HTTPServer:
+            services = ServiceContainer(
+                config=None,
+                database=session_storage.db,
+                session_manager=session_storage,
+                task_manager=MagicMock(),
+            )
+            return HTTPServer(services=services, port=60887, test_mode=True)
+
+        first_server = build_server()
+        second_server = build_server()
+
+        with TestClient(first_server.app):
+            first_broadcaster = artifacts_tools._artifact_broadcaster
+            assert first_broadcaster is not None
+
+        assert artifacts_tools._artifact_broadcaster is None
+
+        with TestClient(second_server.app):
+            assert artifacts_tools._artifact_broadcaster is not None
+            assert artifacts_tools._artifact_broadcaster is not first_broadcaster
+
+        assert artifacts_tools._artifact_broadcaster is None
 
     def test_lifespan_initializes_hook_manager(self, session_storage: SessionManager) -> None:
         """Test that lifespan initializes HookManager."""

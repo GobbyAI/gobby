@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+import httpx
 from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 
 from gobby.servers.chat_session_base import ChatSessionProtocol
@@ -53,14 +54,31 @@ class ChatStreamingMixin:
     @staticmethod
     def _classify_chat_error(exc: Exception) -> tuple[str, str]:
         """Return (user_message, error_code) for a chat exception."""
-        msg = str(exc).lower()
-        if "rate_limit" in msg or "429" in msg:
+        chain: list[BaseException] = []
+        seen: set[int] = set()
+        current: BaseException | None = exc
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            chain.append(current)
+            current = current.__cause__ or current.__context__
+
+        status_code = None
+        for error in chain:
+            status_code = getattr(error, "status_code", None)
+            if status_code is None:
+                status_code = getattr(getattr(error, "response", None), "status_code", None)
+            if status_code is not None:
+                break
+        if status_code == 429:
             return "Rate limited by Claude API. Please wait and try again.", "RATE_LIMITED"
-        if "auth" in msg or "401" in msg or "403" in msg or "api_key" in msg:
+        if status_code in {401, 403}:
             return "Authentication error with Claude API.", "AUTH_ERROR"
-        if isinstance(exc, TimeoutError) or "timeout" in msg:
+        if any(isinstance(error, (TimeoutError, httpx.TimeoutException)) for error in chain):
             return "Request timed out. Please try again.", "TIMEOUT"
-        if "connection" in msg:
+        if any(
+            isinstance(error, (ConnectionError, ConnectionClosed, httpx.NetworkError))
+            for error in chain
+        ):
             return "Connection to Claude API failed. Please try again.", "CONNECTION_ERROR"
         exc_type = type(exc).__name__
         return f"An error occurred ({exc_type}). Check daemon logs for details.", "INTERNAL_ERROR"
@@ -96,6 +114,7 @@ class ChatStreamingMixin:
         )
 
         gen: AsyncIterator[Any] | None = None
+        session: ChatSessionProtocol | None = None
         try:
             session = self._chat_sessions.get(conversation_id)
             if session is None:
@@ -111,6 +130,11 @@ class ChatStreamingMixin:
                 )
                 if session is None:
                     return
+
+            client_info = self.clients.get(websocket)
+            if client_info is not None:
+                client_info["conversation_id"] = conversation_id
+                client_info["project_id"] = getattr(session, "project_id", None)
 
             if reasoning_effort is not None:
                 session.reasoning_effort = reasoning_effort
@@ -169,6 +193,9 @@ class ChatStreamingMixin:
                 pass
 
         finally:
+            if session is not None and not state.completed:
+                await persistence.persist_current_assistant(session)
+                await persistence.set_status(session, "paused")
             await self._close_generator(gen)
             self._clear_active_task(conversation_id)
 

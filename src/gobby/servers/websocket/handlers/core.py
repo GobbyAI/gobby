@@ -349,7 +349,7 @@ class HandlerMixin:
 
                 mgr = get_tmux_session_manager()
                 await mgr.send_keys(run.tmux_session_name, input_data)
-            except Exception as e:
+            except (OSError, RuntimeError) as e:
                 logger.warning(f"Failed to send keys to tmux agent {run_id}: {e}")
             return
 

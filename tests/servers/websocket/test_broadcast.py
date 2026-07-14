@@ -175,6 +175,16 @@ class TestBroadcast:
         assert b.clients == {}
 
     @pytest.mark.asyncio
+    async def test_broadcast_ignores_nonserializable_payload(self) -> None:
+        b = FakeBroadcaster()
+        ws = _make_ws(subscriptions={"*"})
+        b.clients[ws] = {}
+
+        await b.broadcast({"type": "test", "data": object()})
+
+        assert ws.sent == []
+
+    @pytest.mark.asyncio
     async def test_broadcast_sends_to_subscribed_clients(self) -> None:
         b = FakeBroadcaster()
         ws = _make_ws(subscriptions={"*"})

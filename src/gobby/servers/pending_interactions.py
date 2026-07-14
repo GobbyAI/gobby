@@ -208,7 +208,9 @@ class PendingInteractionManager:
 
     async def expire(self, interaction_id: str) -> None:
         """Mark expired in DB, wake waiter with timeout decision."""
-        await self._run_database(self._expire_pending, interaction_id)
+        updated = await self._run_database(self._expire_pending, interaction_id)
+        if not updated:
+            return
 
         # Cancel timeout task (may already be the one calling us)
         timeout_task = self._timeouts.pop(interaction_id, None)
@@ -224,15 +226,16 @@ class PendingInteractionManager:
         if future and not future.done():
             future.set_result(result)
 
-    def _expire_pending(self, interaction_id: str) -> None:
+    def _expire_pending(self, interaction_id: str) -> bool:
         with self._db.transaction() as conn:
-            conn.execute(
+            result = conn.execute(
                 """UPDATE pending_interactions
                    SET status = 'expired', decision = 'timeout',
                        resolved_at = CURRENT_TIMESTAMP
                    WHERE id = %s AND status = 'pending'""",
                 (interaction_id,),
             )
+            return result.rowcount > 0
 
     async def rebroadcast(self, session_id: str) -> list[dict[str, Any]]:
         """Return all pending (non-expired, non-resolved) interactions for session.
