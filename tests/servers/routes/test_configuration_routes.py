@@ -1746,6 +1746,28 @@ class TestExportImport:
         assert "1 prompt override(s) restored" in data["summary"]
         assert data["requires_restart"] is True
 
+    def test_import_prompt_write_failure_rolls_back_config(
+        self, client: TestClient, temp_db: Any
+    ) -> None:
+        store = ConfigStore(temp_db)
+        store.set("daemon_port", 5555)
+
+        with patch.object(
+            LocalPromptManager,
+            "create_prompt",
+            side_effect=RuntimeError("prompt write failed"),
+        ):
+            response = client.post(
+                "/api/config/import",
+                json={
+                    "config_store": {"daemon_port": 9999},
+                    "prompts": {"test/foo.md": "# Foo"},
+                },
+            )
+
+        assert response.status_code == 400
+        assert store.get("daemon_port") == 5555
+
     def test_import_config_store_falkordb_password_encrypts(
         self, postgres_client: TestClient, postgres_db: Any, mock_machine_id: Any
     ) -> None:

@@ -369,86 +369,89 @@ def register_import_export_routes(
                 default_project_id=context.server.services.project_id,
             )
 
-            if request.config_store is not None:
-                count = persist_imported_config(
-                    flat_config=request.config_store,
-                    config_store=config_store,
-                    secret_store_provider=context.get_secret_store,
-                    config_secret_keys=config_secret_keys,
-                    restart_touched_keys=restart_touched_keys,
-                )
-                summary_parts.append(f"config restored ({count} keys)")
-                config_imported = True
-
-            elif request.config:
-                flat = flatten_config(request.config)
-                try:
-                    databases_config = request.config.get("databases", {})
-                    if databases_config is None:
-                        falkordb_config = {}
-                    elif isinstance(databases_config, dict):
-                        falkordb_config = databases_config.get("falkordb", {})
-                    else:
-                        raise ValueError("databases must be an object")
-                    if isinstance(falkordb_config, dict):
-                        falkordb_password = falkordb_config.get("password")
-                        if falkordb_password not in (None, ""):
-                            validate_falkordb_secret(FALKOR_PASSWORD_KEY, falkordb_password)
-                    for key, value in flat.items():
-                        if (
-                            key == FALKOR_PASSWORD_KEY or is_secret_key_name(key)
-                        ) and value not in (None, ""):
-                            validate_falkordb_secret(key, value)
-                except ValueError as e:
-                    raise HTTPException(status_code=422, detail=str(e)) from e
-
-                DaemonConfig(**request.config)
-                defaults_flat = flatten_config(
-                    DaemonConfig().model_dump(mode="json", exclude_none=True, by_alias=True)
-                )
-                diff = {
-                    k: v for k, v in flat.items() if k not in defaults_flat or defaults_flat[k] != v
-                }
-                count = persist_imported_config(
-                    flat_config=diff,
-                    config_store=config_store,
-                    secret_store_provider=context.get_secret_store,
-                    config_secret_keys=config_secret_keys,
-                    restart_touched_keys=restart_touched_keys,
-                )
-                summary_parts.append(f"config restored ({count} keys)")
-                config_imported = True
-
-            if prompt_imports:
-                manager = context.get_prompt_manager()
-                for imported in prompt_imports:
-                    if imported.scope == "project":
-                        _ensure_imported_project_exists(manager, imported.project_id)
-                    existing_id = _existing_prompt_id(
-                        manager,
-                        name=imported.name,
-                        scope=imported.scope,
-                        project_id=imported.project_id,
+            with config_store.db.transaction():
+                if request.config_store is not None:
+                    count = persist_imported_config(
+                        flat_config=request.config_store,
+                        config_store=config_store,
+                        secret_store_provider=context.get_secret_store,
+                        config_secret_keys=config_secret_keys,
+                        restart_touched_keys=restart_touched_keys,
                     )
-                    if existing_id:
-                        manager.update_prompt(
-                            prompt_id=existing_id,
-                            description=imported.description,
-                            content=imported.content,
-                            version=imported.version,
-                            variables=imported.variables,
-                        )
-                    else:
-                        manager.create_prompt(
+                    summary_parts.append(f"config restored ({count} keys)")
+                    config_imported = True
+
+                elif request.config:
+                    flat = flatten_config(request.config)
+                    try:
+                        databases_config = request.config.get("databases", {})
+                        if databases_config is None:
+                            falkordb_config = {}
+                        elif isinstance(databases_config, dict):
+                            falkordb_config = databases_config.get("falkordb", {})
+                        else:
+                            raise ValueError("databases must be an object")
+                        if isinstance(falkordb_config, dict):
+                            falkordb_password = falkordb_config.get("password")
+                            if falkordb_password not in (None, ""):
+                                validate_falkordb_secret(FALKOR_PASSWORD_KEY, falkordb_password)
+                        for key, value in flat.items():
+                            if (
+                                key == FALKOR_PASSWORD_KEY or is_secret_key_name(key)
+                            ) and value not in (None, ""):
+                                validate_falkordb_secret(key, value)
+                    except ValueError as e:
+                        raise HTTPException(status_code=422, detail=str(e)) from e
+
+                    DaemonConfig(**request.config)
+                    defaults_flat = flatten_config(
+                        DaemonConfig().model_dump(mode="json", exclude_none=True, by_alias=True)
+                    )
+                    diff = {
+                        k: v
+                        for k, v in flat.items()
+                        if k not in defaults_flat or defaults_flat[k] != v
+                    }
+                    count = persist_imported_config(
+                        flat_config=diff,
+                        config_store=config_store,
+                        secret_store_provider=context.get_secret_store,
+                        config_secret_keys=config_secret_keys,
+                        restart_touched_keys=restart_touched_keys,
+                    )
+                    summary_parts.append(f"config restored ({count} keys)")
+                    config_imported = True
+
+                if prompt_imports:
+                    manager = context.get_prompt_manager()
+                    for imported in prompt_imports:
+                        if imported.scope == "project":
+                            _ensure_imported_project_exists(manager, imported.project_id)
+                        existing_id = _existing_prompt_id(
+                            manager,
                             name=imported.name,
-                            description=imported.description,
-                            content=imported.content,
-                            version=imported.version,
-                            variables=imported.variables,
                             scope=imported.scope,
                             project_id=imported.project_id,
                         )
-                summary_parts.append(f"{len(prompt_imports)} prompt override(s) restored")
+                        if existing_id:
+                            manager.update_prompt(
+                                prompt_id=existing_id,
+                                description=imported.description,
+                                content=imported.content,
+                                version=imported.version,
+                                variables=imported.variables,
+                            )
+                        else:
+                            manager.create_prompt(
+                                name=imported.name,
+                                description=imported.description,
+                                content=imported.content,
+                                version=imported.version,
+                                variables=imported.variables,
+                                scope=imported.scope,
+                                project_id=imported.project_id,
+                            )
+                    summary_parts.append(f"{len(prompt_imports)} prompt override(s) restored")
 
             response: dict[str, Any] = {
                 "success": True,
