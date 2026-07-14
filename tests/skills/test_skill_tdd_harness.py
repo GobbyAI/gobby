@@ -722,6 +722,41 @@ def test_lua_skill_loads_embedded_coroutine_boundary_pattern() -> None:
     assert result.has_behavioral_delta
 
 
+def test_objc_skill_loads_mixed_memory_block_interop_pattern() -> None:
+    """Verify Objective-C work resolves ownership and mixed-language boundaries."""
+    result = run_recorded_skill_scenario(SCENARIOS / "objc/mixed-memory-block-interop.yaml")
+
+    assert result.baseline.action_names == (
+        "assume_arc_for_all_files",
+        "store_block_with_strong_cycle",
+        "leave_header_unannotated",
+        "use_exception_for_recoverable_error",
+        "run_whole_scheme_tests",
+        "respond",
+    )
+    assert result.loaded.action_names == (
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "detect_memory_management_mode",
+        "use_copy_block_property",
+        "break_block_owner_cycle",
+        "annotate_nullability_and_generics",
+        "return_nserror",
+        "add_focused_objc_and_swift_tests",
+        "run_validation",
+        "respond",
+    )
+    assert result.loaded.actions[0]["path"] == "references/configuration-and-language-modes.md"
+    assert result.loaded.actions[1]["path"] == "references/ownership-and-lifetimes.md"
+    assert result.loaded.actions[2]["path"] == "references/blocks-and-concurrency.md"
+    assert result.loaded.actions[3]["path"] == "references/foundation-and-api-design.md"
+    assert result.loaded.actions[4]["path"] == "references/swift-and-c-family-interop.md"
+    assert result.has_behavioral_delta
+
+
 def test_pipelines_and_cron_selects_current_automation_paths() -> None:
     result = run_recorded_skill_scenario(
         SCENARIOS / "pipelines-and-cron/select-automation-path.yaml"

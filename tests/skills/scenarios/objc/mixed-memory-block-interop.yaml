@@ -1,0 +1,93 @@
+skill: objc
+agent: default
+description: Agent must change a stored Objective-C callback in a mixed Swift target while legacy files use different memory-management modes.
+prompt: |
+  Add a stored completion block to an Objective-C ProfileClient used from Swift.
+  The target mixes ARC and legacy MRC files. Return recoverable request failures,
+  expose typed Foundation collections, and add focused Objective-C and Swift tests.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: assume_arc_for_all_files
+        path: Sources/ProfileKit/ProfileClient.m
+      - action: store_block_with_strong_cycle
+        path: Sources/ProfileKit/ProfileClient.m
+      - action: leave_header_unannotated
+        path: Sources/ProfileKit/ProfileClient.h
+      - action: use_exception_for_recoverable_error
+        path: Sources/ProfileKit/ProfileClient.m
+      - action: run_whole_scheme_tests
+        command: xcodebuild test -scheme ProfileKit
+      - action: respond
+        text: The implementation assumes ARC everywhere, stores a block that captures its owner, leaves the public header unannotated, and throws for request failures.
+  loaded:
+    loaded_skills:
+      - objc
+    actions:
+      - action: load_reference
+        path: references/configuration-and-language-modes.md
+      - action: load_reference
+        path: references/ownership-and-lifetimes.md
+      - action: load_reference
+        path: references/blocks-and-concurrency.md
+      - action: load_reference
+        path: references/foundation-and-api-design.md
+      - action: load_reference
+        path: references/swift-and-c-family-interop.md
+      - action: detect_memory_management_mode
+        path: Sources/ProfileKit/ProfileClient.m
+        mode: arc
+      - action: use_copy_block_property
+        path: Sources/ProfileKit/ProfileClient.h
+      - action: break_block_owner_cycle
+        path: Sources/ProfileKit/ProfileClient.m
+      - action: annotate_nullability_and_generics
+        path: Sources/ProfileKit/ProfileClient.h
+      - action: return_nserror
+        path: Sources/ProfileKit/ProfileClient.m
+      - action: add_focused_objc_and_swift_tests
+        path: Tests/ProfileKitTests/ProfileClientTests.m
+      - action: run_validation
+        command: xcodebuild test -scheme ProfileKit -only-testing:ProfileKitTests/ProfileClientTests -only-testing:ProfileKitTests/ProfileClientSwiftInteropTests
+      - action: respond
+        text: "Verified per-file ARC mode, copied block ownership, broken owner cycle, NSError failure flow, Swift-facing nullability and generics, and focused Objective-C/Swift tests."
+assertions:
+  baseline_action_order:
+    - assume_arc_for_all_files
+    - store_block_with_strong_cycle
+    - leave_header_unannotated
+    - use_exception_for_recoverable_error
+    - run_whole_scheme_tests
+    - respond
+  loaded_action_order:
+    - load_reference
+    - load_reference
+    - load_reference
+    - load_reference
+    - load_reference
+    - detect_memory_management_mode
+    - use_copy_block_property
+    - break_block_owner_cycle
+    - annotate_nullability_and_generics
+    - return_nserror
+    - add_focused_objc_and_swift_tests
+    - run_validation
+    - respond
+  baseline_text_contains:
+    - assumes ARC everywhere
+    - block that captures its owner
+    - public header unannotated
+    - throws for request failures
+  loaded_text_contains:
+    - per-file ARC mode
+    - copied block ownership
+    - broken owner cycle
+    - NSError failure flow
+    - Swift-facing nullability and generics
+    - focused Objective-C/Swift tests
+  loaded_text_forbids:
+    - assumes ARC everywhere
+    - block that captures its owner
+    - public header unannotated
+    - throws for request failures
