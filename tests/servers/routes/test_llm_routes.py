@@ -957,13 +957,21 @@ def test_vision_extract_upload_preserves_missing_ocr_text(
 
 @pytest.mark.asyncio
 async def test_bounded_vision_upload_read_accepts_exact_limit() -> None:
+    remaining = bytearray(b"x" * MAX_IMAGE_BYTES)
+
+    async def read(size: int) -> bytes:
+        chunk = bytes(remaining[:size])
+        del remaining[:size]
+        return chunk
+
     upload = MagicMock()
-    upload.read = AsyncMock(return_value=b"x" * MAX_IMAGE_BYTES)
+    upload.read = AsyncMock(side_effect=read)
 
     image_bytes = await llm_module._read_bounded_image_upload(upload)
 
     assert len(image_bytes) == MAX_IMAGE_BYTES
-    upload.read.assert_awaited_once_with(MAX_IMAGE_BYTES + 1)
+    assert upload.read.await_count > 1
+    assert max(call.args[0] for call in upload.read.await_args_list) <= 1024 * 1024
 
 
 def test_vision_extract_rejects_oversize_before_temp_write(client: TestClient) -> None:

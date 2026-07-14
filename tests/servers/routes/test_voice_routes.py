@@ -493,6 +493,26 @@ class TestVoiceRoutes:
         assert data["provider"] == "whisper"
         assert data["model"] == "base"
 
+    def test_transcribe_rejects_configured_oversize_upload(
+        self,
+        client: TestClient,
+        server_with_voice: MagicMock,
+    ) -> None:
+        server_with_voice.config.voice = VoiceConfig(enabled=True)
+        server_with_voice.services.config_store.get.side_effect = (
+            lambda key: 4 if key == "chat.attachment_max_file_bytes" else None
+        )
+
+        with patch.object(voice_module, "build_daemon_audio_service") as build_service:
+            response = client.post(
+                "/api/voice/transcribe",
+                files={"file": ("oversize.webm", b"12345", "audio/webm")},
+            )
+
+        assert response.status_code == 413
+        assert response.json() == {"detail": "Audio exceeds 4 byte limit"}
+        build_service.assert_not_called()
+
     def test_transcribe_selects_openai_compatible_provider(
         self, client: TestClient, server_with_voice: MagicMock
     ) -> None:

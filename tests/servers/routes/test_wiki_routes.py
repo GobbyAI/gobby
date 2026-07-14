@@ -5,9 +5,10 @@ import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import MagicMock
 
 import pytest
-from fastapi import FastAPI, UploadFile
+from fastapi import FastAPI, HTTPException, UploadFile
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
@@ -898,5 +899,65 @@ async def test_stage_upload_unlinks_temp_file_on_read_error(
     with pytest.raises(RuntimeError, match="upload read failed"):
         await _stage_upload(cast(UploadFile, FailingUpload()))
 
+    assert created_paths
+    assert created_paths[0].exists() is False
+
+
+@pytest.mark.asyncio
+async def test_stage_upload_checks_disk_and_accepts_exact_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checked: list[tuple[Path, int, str]] = []
+    original_named_temporary_file = tempfile.NamedTemporaryFile
+
+    def named_temporary_file(*args: Any, **kwargs: Any) -> Any:
+        kwargs["dir"] = tmp_path
+        return original_named_temporary_file(*args, **kwargs)
+
+    def check_disk(directory: Path, incoming_bytes: int, *, label: str) -> None:
+        checked.append((directory, incoming_bytes, label))
+
+    upload = UploadFile(filename="note.md", file=tempfile.SpooledTemporaryFile())
+    upload.file.write(b"1234")
+    upload.file.seek(0)
+    upload.size = 4
+    monkeypatch.setattr(tempfile, "NamedTemporaryFile", named_temporary_file)
+    monkeypatch.setattr(wiki_routes, "ensure_disk_space", check_disk)
+
+    staged_path = await _stage_upload(upload, max_bytes=4)
+    try:
+        assert staged_path.read_bytes() == b"1234"
+        assert checked == [(tmp_path, 4, "Wiki upload")]
+    finally:
+        staged_path.unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
+async def test_stage_upload_rejects_oversize_and_unlinks_temp_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created_paths: list[Path] = []
+    original_named_temporary_file = tempfile.NamedTemporaryFile
+
+    def named_temporary_file(*args: Any, **kwargs: Any) -> Any:
+        kwargs["dir"] = tmp_path
+        staged = original_named_temporary_file(*args, **kwargs)
+        created_paths.append(Path(staged.name))
+        return staged
+
+    upload = UploadFile(filename="note.md", file=tempfile.SpooledTemporaryFile())
+    upload.file.write(b"12345")
+    upload.file.seek(0)
+    upload.size = 5
+    monkeypatch.setattr(tempfile, "NamedTemporaryFile", named_temporary_file)
+    monkeypatch.setattr(wiki_routes, "ensure_disk_space", MagicMock())
+
+    with pytest.raises(HTTPException) as exc_info:
+        await _stage_upload(upload, max_bytes=4)
+
+    assert exc_info.value.status_code == 413
+    assert exc_info.value.detail == "Wiki upload exceeds 4 byte limit"
     assert created_paths
     assert created_paths[0].exists() is False

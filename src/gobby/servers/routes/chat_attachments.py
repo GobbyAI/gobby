@@ -7,10 +7,9 @@ import codecs
 import logging
 import mimetypes
 import re
-import shutil
 import stat
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 import aiofiles
@@ -20,8 +19,8 @@ from fastapi.responses import FileResponse
 import gobby.storage.chat_attachments as chat_attachments
 from gobby.paths import get_gobby_home
 from gobby.servers.chat_attachment_files import unlink_stored_attachment_file
-from gobby.servers.chat_attachment_limits import resolve_chat_attachment_limits
-from gobby.storage.config_store import ConfigStore
+from gobby.servers.chat_attachment_limits import resolve_server_attachment_limits
+from gobby.servers.upload_limits import ensure_disk_space
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
 
@@ -111,12 +110,7 @@ def _validate_uuid_param(value: str, name: str) -> None:
 
 
 def _ensure_disk_space(directory: Path, incoming_bytes: int) -> None:
-    try:
-        usage = shutil.disk_usage(directory)
-    except OSError as exc:
-        raise HTTPException(status_code=507, detail="Attachment storage unavailable") from exc
-    if usage.free < incoming_bytes:
-        raise HTTPException(status_code=507, detail="Insufficient disk space for attachment")
+    ensure_disk_space(directory, incoming_bytes, label="Attachment")
 
 
 def _content_disposition(mime_type: str) -> str:
@@ -241,13 +235,6 @@ async def _remove_empty_directory(path: Path) -> None:
         return
 
 
-def _get_config_store(server: HTTPServer) -> ConfigStore:
-    existing = getattr(server.services, "config_store", None)
-    if existing is not None:
-        return cast(ConfigStore, existing)
-    return ConfigStore(server.services.database)
-
-
 def _resolve_upload_project_id(
     db: HubDatabase,
     requested_project_id: str | None,
@@ -278,11 +265,7 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
         draft_id: str | None = Form(default=None),
         project_id: str | None = Form(default=None),
     ) -> dict[str, Any]:
-        config_store = _get_config_store(server)
-        limits = resolve_chat_attachment_limits(
-            config_store=config_store,
-            daemon_config=server.config,
-        )
+        limits = resolve_server_attachment_limits(server)
         try:
             resolved_project_id = await server.run_db(
                 _resolve_upload_project_id,

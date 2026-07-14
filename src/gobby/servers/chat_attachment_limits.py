@@ -6,6 +6,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from gobby.storage.config_store import ConfigStore
+
 DEFAULT_ATTACHMENT_MAX_FILE_BYTES = 100_000_000
 DEFAULT_ATTACHMENT_MAX_FILES_PER_MESSAGE = 20
 DEFAULT_ATTACHMENT_MAX_TOTAL_BYTES_PER_MESSAGE = (
@@ -105,4 +107,20 @@ def resolve_chat_attachment_limits(
         max_file_bytes=_positive_int(store_max_file, default_max_file),
         max_total_bytes_per_message=_positive_int(store_max_total, default_max_total),
         max_files_per_message=_positive_int(store_max_count, default_max_count),
+    )
+
+
+def resolve_server_attachment_limits(server: Any) -> ChatAttachmentLimits:
+    """Resolve attachment limits from a server's live config store and defaults."""
+    config_store = getattr(server.services, "config_store", None)
+    if config_store is None:
+        database = getattr(server.services, "database", None)
+        if database is not None:
+            config_store = ConfigStore(database)
+    daemon_config = getattr(server, "config", None)
+    if daemon_config is None:
+        daemon_config = getattr(server.services, "config", None)
+    return resolve_chat_attachment_limits(
+        config_store=config_store,
+        daemon_config=daemon_config,
     )

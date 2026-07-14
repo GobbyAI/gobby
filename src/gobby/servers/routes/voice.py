@@ -25,6 +25,8 @@ from gobby.ai.registry import (
     build_daemon_ai_capability_registry,
     normalize_capability,
 )
+from gobby.servers.chat_attachment_limits import resolve_server_attachment_limits
+from gobby.servers.upload_limits import read_bounded_upload
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -242,7 +244,12 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
         if not config or not hasattr(config, "voice"):
             return {"error": "Voice not enabled", "text": ""}
 
-        audio_bytes = await file.read()
+        max_upload_bytes = resolve_server_attachment_limits(server).max_file_bytes
+        audio_bytes = await read_bounded_upload(
+            file,
+            max_bytes=max_upload_bytes,
+            label="Audio",
+        )
         content_type = file.content_type or "audio/webm"
         selected_capability = capability or AICapability.AUDIO_TRANSCRIBE.value
         failure_label = _audio_failure_label(selected_capability)
