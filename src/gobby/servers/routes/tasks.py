@@ -20,6 +20,8 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks._models import (
     TASK_TYPE_CHOICES,
     VALID_CATEGORIES,
+    TaskHasChildrenError,
+    TaskHasDependentsError,
     TaskNotFoundError,
     validate_task_type,
 )
@@ -480,6 +482,10 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 raise HTTPException(status_code=404, detail="Task not found")
             await _broadcast_task("task_deleted", {"id": resolved_id})
             return {"deleted": True, "id": resolved_id}
+        except HTTPException:
+            raise
+        except (TaskHasChildrenError, TaskHasDependentsError) as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
         except (ValueError, TaskNotFoundError) as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:

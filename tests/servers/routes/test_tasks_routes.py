@@ -525,6 +525,36 @@ class TestDeleteTask:
         response = client.delete("/api/tasks/nonexistent-id-000")
         assert response.status_code == 404
 
+    def test_delete_false_result_returns_not_found(
+        self,
+        client: TestClient,
+        sample_task: dict,
+        task_manager: LocalTaskManager,
+    ) -> None:
+        with patch.object(task_manager, "delete_task", return_value=False):
+            response = client.delete(f"/api/tasks/{sample_task['id']}")
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Task not found"
+
+    def test_delete_with_children_without_cascade_returns_conflict(
+        self,
+        client: TestClient,
+        sample_task: dict,
+        task_manager: LocalTaskManager,
+        project_id: str,
+    ) -> None:
+        task_manager.create_task(
+            project_id=project_id,
+            title="Child",
+            parent_task_id=sample_task["id"],
+        )
+
+        response = client.delete(f"/api/tasks/{sample_task['id']}")
+
+        assert response.status_code == 409
+        assert "has children" in response.json()["detail"]
+
     def test_delete_with_cascade(
         self, client: TestClient, sample_task: dict, task_manager: LocalTaskManager, project_id: str
     ) -> None:
