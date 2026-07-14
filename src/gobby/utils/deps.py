@@ -349,8 +349,8 @@ def get_lmstudio_info() -> dict[str, Any] | None:
             running = (
                 result.returncode == 0 and "running" in combined and "not running" not in combined
             )
-        except Exception:
-            pass
+        except (subprocess.TimeoutExpired, OSError):
+            logger.debug("Failed to determine LM Studio server status", exc_info=True)
     return {"running": running}
 
 

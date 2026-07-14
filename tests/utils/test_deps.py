@@ -1,4 +1,5 @@
 import json
+import logging
 import subprocess
 from contextlib import contextmanager
 from pathlib import Path
@@ -282,13 +283,33 @@ def test_lmstudio_info() -> None:
             assert deps.get_lmstudio_info() == {"running": False}
 
 
-def test_lmstudio_info_exception() -> None:
+@pytest.mark.parametrize(
+    "error",
+    [subprocess.TimeoutExpired(cmd=["lms"], timeout=5), OSError("lms failed")],
+)
+def test_lmstudio_info_expected_exception(
+    error: Exception,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with (
+        caplog.at_level(logging.DEBUG, logger="gobby.utils.deps"),
+        patch("shutil.which", return_value=True),
+        patch("gobby.utils.deps._run_cmd", return_value=None),
+        patch("subprocess.run", side_effect=error),
+    ):
+        assert deps.get_lmstudio_info() == {"running": False}
+    assert caplog.messages == ["Failed to determine LM Studio server status"]
+    assert caplog.records[0].exc_info is not None
+
+
+def test_lmstudio_info_unexpected_exception_propagates() -> None:
     with (
         patch("shutil.which", return_value=True),
         patch("gobby.utils.deps._run_cmd", return_value=None),
+        patch("subprocess.run", side_effect=RuntimeError("programming error")),
+        pytest.raises(RuntimeError, match="programming error"),
     ):
-        with patch("subprocess.run", side_effect=Exception):
-            assert deps.get_lmstudio_info() == {"running": False}
+        deps.get_lmstudio_info()
 
 
 @pytest.mark.unit
