@@ -6,7 +6,12 @@ import shlex
 from dataclasses import dataclass
 from typing import Any
 
-from gobby.project_verification.evidence import STANDARD_SLOTS, EvidenceBundle, EvidenceItem
+from gobby.project_verification.evidence import (
+    FRONTEND_SUBDIRS,
+    STANDARD_SLOTS,
+    EvidenceBundle,
+    EvidenceItem,
+)
 
 GENERIC_EXISTING_COMMANDS = {
     "cargo test",
@@ -121,7 +126,11 @@ def generate_candidates(bundle: EvidenceBundle) -> list[CommandCandidate]:
             if candidate:
                 candidates.append(candidate)
 
-    return [candidate for candidate in candidates if is_safe_validation_command(candidate.command)]
+    return [
+        candidate
+        for candidate in candidates
+        if is_safe_validation_command(candidate.command, candidate.slot)
+    ]
 
 
 def select_best_candidates(candidates: list[CommandCandidate]) -> dict[str, CommandCandidate]:
@@ -185,7 +194,7 @@ def is_safe_validation_command(command: str, slot: str | None = None) -> bool:
     if not invocation:
         return False
     lowered = command.lower()
-    tokens = _command_tokens(lowered)
+    tokens = [token.lower() for token in invocation]
     if _has_mutating_option(tokens):
         return False
     if _has_token_sequence(tokens, ("npm", "run", "format")):
@@ -259,7 +268,11 @@ def _command_tokens(command: str) -> list[str]:
 
 def _has_mutating_option(tokens: list[str]) -> bool:
     return any(
-        token in {"--fix", "--write"} or token.startswith(("--fix=", "--write="))
+        token.startswith("--")
+        and any(
+            part.startswith(("fix", "write"))
+            for part in token.removeprefix("--").partition("=")[0].split("-")
+        )
         for token in tokens
     )
 
@@ -594,4 +607,11 @@ def _is_build_command(lowered: str) -> bool:
 
 def _is_frontend_command(command: str) -> bool:
     lowered = command.lower()
-    return lowered.startswith("cd web &&") or " npm " in f" {lowered} " or " npx " in f" {lowered} "
+    tokens = _command_tokens(lowered)
+    frontend_subdir = (
+        len(tokens) >= 3
+        and tokens[0] == "cd"
+        and tokens[1] in FRONTEND_SUBDIRS
+        and tokens[2] == "&&"
+    )
+    return frontend_subdir or " npm " in f" {lowered} " or " npx " in f" {lowered} "

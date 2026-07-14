@@ -11,6 +11,7 @@ import pytest
 from gobby.ai.text_generation import TextGenerationRequest
 from gobby.config.features import ProjectVerificationSynthesisConfig
 from gobby.project_verification.candidates import (
+    _is_frontend_command,
     _package_script_command,
     generate_candidates,
     is_safe_validation_command,
@@ -18,6 +19,7 @@ from gobby.project_verification.candidates import (
     verification_dict_from_candidates,
 )
 from gobby.project_verification.evidence import (
+    FRONTEND_SUBDIRS,
     MAX_FILE_BYTES,
     _split_run_commands,
     collect_evidence,
@@ -408,9 +410,20 @@ def test_safe_validation_command_uses_complete_tokens_for_format_scripts() -> No
     assert is_safe_validation_command("npm run format", slot="format") is False
     assert is_safe_validation_command("cd web && npm run format", slot="format") is False
     assert is_safe_validation_command("eslint --fix=true src", slot="lint") is False
+    assert is_safe_validation_command("ruff check --fix-only src", slot="lint") is False
+    assert is_safe_validation_command("ruff check --unsafe-fixes src", slot="lint") is False
     assert is_safe_validation_command("prettier --write=src", slot="format") is False
     assert is_safe_validation_command("npm run format:check", slot="format") is True
     assert is_safe_validation_command("yarn format:check", slot="format") is True
+
+
+@pytest.mark.parametrize("subdir", FRONTEND_SUBDIRS)
+def test_frontend_command_uses_shared_frontend_subdirectories(subdir: str) -> None:
+    assert _is_frontend_command(f"cd {subdir} && cargo clippy") is True
+
+
+def test_frontend_command_requires_frontend_root_for_non_node_tool() -> None:
+    assert _is_frontend_command("cd backend && cargo clippy") is False
 
 
 @pytest.mark.parametrize(
