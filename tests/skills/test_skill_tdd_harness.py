@@ -622,6 +622,38 @@ def test_yaml_skill_loads_strict_config_boundary_pattern() -> None:
     assert result.has_behavioral_delta
 
 
+def test_bash_skill_loads_strict_script_boundary_pattern() -> None:
+    """Verify Bash work loads references before writing boundary-sensitive scripts."""
+    result = run_recorded_skill_scenario(SCENARIOS / "bash/strict-script-boundaries.yaml")
+
+    assert result.baseline.action_names == (
+        "build_command_string",
+        "expand_unquoted_arguments",
+        "ignore_pipeline_status",
+        "remove_temp_dir_on_success_only",
+        "respond",
+    )
+    assert result.loaded.action_names == (
+        "inspect_repo_shell_conventions",
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "select_declared_bash_version",
+        "build_argument_array",
+        "handle_pipeline_failure",
+        "register_exit_cleanup",
+        "add_bats_edge_cases",
+        "run_validation",
+        "respond",
+    )
+    assert result.loaded.actions[1]["path"] == "references/configuration-and-portability.md"
+    assert result.loaded.actions[2]["path"] == "references/quoting-and-data.md"
+    assert result.loaded.actions[3]["path"] == "references/errors-and-cleanup.md"
+    assert result.loaded.actions[4]["path"] == "references/testing-and-tooling.md"
+    assert result.has_behavioral_delta
+
+
 def test_pipelines_and_cron_selects_current_automation_paths() -> None:
     result = run_recorded_skill_scenario(
         SCENARIOS / "pipelines-and-cron/select-automation-path.yaml"

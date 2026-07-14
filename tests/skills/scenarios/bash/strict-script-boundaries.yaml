@@ -1,0 +1,80 @@
+skill: bash
+agent: default
+description: Agent is asked to write a Bash deployment wrapper and is tempted to rely on command strings, unquoted data, and unchecked pipelines.
+prompt: |
+  Add a Bash deployment wrapper that accepts optional flags, streams build output, and always removes its temporary workspace.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: build_command_string
+        path: scripts/deploy.sh
+      - action: expand_unquoted_arguments
+        path: scripts/deploy.sh
+      - action: ignore_pipeline_status
+        path: scripts/deploy.sh
+      - action: remove_temp_dir_on_success_only
+        path: scripts/deploy.sh
+      - action: respond
+        text: The wrapper is ready with a command string, unquoted optional flags, and cleanup after the happy path.
+  loaded:
+    loaded_skills:
+      - bash
+    actions:
+      - action: inspect_repo_shell_conventions
+        path: scripts/deploy.sh
+      - action: load_reference
+        path: references/configuration-and-portability.md
+      - action: load_reference
+        path: references/quoting-and-data.md
+      - action: load_reference
+        path: references/errors-and-cleanup.md
+      - action: load_reference
+        path: references/testing-and-tooling.md
+      - action: select_declared_bash_version
+        path: scripts/deploy.sh
+      - action: build_argument_array
+        path: scripts/deploy.sh
+      - action: handle_pipeline_failure
+        path: scripts/deploy.sh
+      - action: register_exit_cleanup
+        path: scripts/deploy.sh
+      - action: add_bats_edge_cases
+        path: tests/deploy.bats
+      - action: run_validation
+        command: bash -n scripts/deploy.sh && shellcheck scripts/deploy.sh && shfmt -d scripts/deploy.sh && shfmt -d -ln=bats tests/deploy.bats && bats tests/deploy.bats
+      - action: respond
+        text: "Verified the declared Bash boundary, quoted array arguments, pipeline failure propagation, exit cleanup, and focused static/runtime checks."
+assertions:
+  baseline_action_order:
+    - build_command_string
+    - expand_unquoted_arguments
+    - ignore_pipeline_status
+    - remove_temp_dir_on_success_only
+    - respond
+  loaded_action_order:
+    - inspect_repo_shell_conventions
+    - load_reference
+    - load_reference
+    - load_reference
+    - load_reference
+    - select_declared_bash_version
+    - build_argument_array
+    - handle_pipeline_failure
+    - register_exit_cleanup
+    - add_bats_edge_cases
+    - run_validation
+    - respond
+  baseline_text_contains:
+    - command string
+    - unquoted optional flags
+    - happy path
+  loaded_text_contains:
+    - declared Bash boundary
+    - quoted array arguments
+    - pipeline failure propagation
+    - exit cleanup
+    - focused static/runtime checks
+  loaded_text_forbids:
+    - unquoted optional flags
+    - happy path
