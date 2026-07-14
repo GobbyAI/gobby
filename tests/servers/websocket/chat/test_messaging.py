@@ -108,7 +108,7 @@ class DummyLifecycleMixin(ChatLifecycleMixin):
     ) -> None:
         return None
 
-    def _mark_pending_messages_delivered(self, message_ids: list[str]) -> None:
+    def _mark_pending_messages_delivered(self, message_ids: list[str], db_session_id: str) -> None:
         return None
 
 
