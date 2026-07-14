@@ -245,12 +245,6 @@ function AgentCard({
                   {agent.tasksEscalated.length}
                 </span>
               </div>
-              <div className="agent-detail-row">
-                <span>Escalated</span>
-                <span className="agent-detail-value agent-detail-value--warn">
-                  {agent.tasksEscalated.length}
-                </span>
-              </div>
             </div>
 
             {/* Domain strengths */}
