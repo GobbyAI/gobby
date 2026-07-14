@@ -366,16 +366,21 @@ class ChatterboxTurboProvider(BaseTTSProvider):
         model = await self._ensure_model()
 
         try:
+
+            def _generate_pcm() -> bytes:
+                wav = self._generate_with_token_cap(model, text)
+
+                import numpy as np
+
+                samples = wav.squeeze().cpu().numpy()
+                pcm_int16 = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)
+                return bytes(pcm_int16.tobytes())
+
             async with self._synthesis_lock:
-                wav = await asyncio.to_thread(self._generate_with_token_cap, model, text)
+                pcm_bytes = await asyncio.to_thread(_generate_pcm)
                 self._runtime_primed = True
 
-            # Convert torch.Tensor to PCM int16 bytes
-            import numpy as np
-
-            samples = wav.squeeze().cpu().numpy()
-            pcm_int16 = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)
-            yield pcm_int16.tobytes(), self._sample_rate
+            yield pcm_bytes, self._sample_rate
 
         except asyncio.CancelledError:
             logger.debug("Chatterbox TTS synthesis cancelled")

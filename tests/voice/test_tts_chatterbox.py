@@ -93,7 +93,9 @@ class TestChatterboxTurboProvider:
         mock_available.assert_called_once_with("chatterbox")
 
     @pytest.mark.asyncio
-    async def test_synthesize_stream_yields_pcm(self, voice_config: VoiceConfig) -> None:
+    async def test_synthesize_stream_yields_pcm(
+        self, voice_config: VoiceConfig, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Test that synthesize_stream yields correct PCM int16 bytes."""
         from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
 
@@ -101,10 +103,25 @@ class TestChatterboxTurboProvider:
 
         # Create a mock torch.Tensor-like object
         mock_samples = np.array([0.5, -0.5, 0.0, 1.0, -1.0], dtype=np.float32)
+        event_loop_thread = threading.get_ident()
+        conversion_threads: list[int] = []
+
+        def observe_conversion(result: Any) -> Any:
+            conversion_threads.append(threading.get_ident())
+            return result
+
         mock_wav = MagicMock()
-        mock_wav.squeeze.return_value = mock_wav
-        mock_wav.cpu.return_value = mock_wav
-        mock_wav.numpy.return_value = mock_samples
+        mock_wav.squeeze.side_effect = lambda: observe_conversion(mock_wav)
+        mock_wav.cpu.side_effect = lambda: observe_conversion(mock_wav)
+        mock_wav.numpy.side_effect = lambda: observe_conversion(mock_samples)
+
+        original_clip = np.clip
+
+        def observed_clip(samples: Any, minimum: float, maximum: float) -> Any:
+            conversion_threads.append(threading.get_ident())
+            return original_clip(samples, minimum, maximum)
+
+        monkeypatch.setattr(np, "clip", observed_clip)
 
         mock_model = MagicMock()
         mock_model.sr = 24000
@@ -127,6 +144,9 @@ class TestChatterboxTurboProvider:
         assert len(decoded) == 5
         assert decoded[0] == 16383  # 0.5 * 32767
         assert decoded[1] == -16383  # -0.5 * 32767
+        assert len(conversion_threads) == 4
+        assert set(conversion_threads) != {event_loop_thread}
+        assert len(set(conversion_threads)) == 1
 
     @pytest.mark.asyncio
     async def test_synthesize_stream_uses_cached_conditioning(
