@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import TYPE_CHECKING, Any, Protocol
+from weakref import WeakValueDictionary
 
 from gobby.sessions.message_stats import MessageStats
 from gobby.sessions.transcript_index import TranscriptIndexAppender
@@ -45,6 +46,7 @@ class ProcessorHost(Protocol):
     session_manager: SessionManager | None
     _hook_manager: HookManager | None
     _active_sessions: dict[str, str]
+    _processing_locks: WeakValueDictionary[str, asyncio.Lock]
     _parsers: dict[str, TranscriptParser]
     _last_mtime: dict[str, float]
     _byte_offsets: dict[str, int]
@@ -79,6 +81,14 @@ class ProcessorHost(Protocol):
     ) -> ContextUsageSnapshot | None: ...
 
     async def _process_session(
+        self,
+        session_id: str,
+        transcript_path: str,
+        *,
+        at_eof: bool = False,
+    ) -> None: ...
+
+    async def _process_session_unlocked(
         self,
         session_id: str,
         transcript_path: str,

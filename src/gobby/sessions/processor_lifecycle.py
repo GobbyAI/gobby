@@ -125,18 +125,17 @@ class ProcessorLifecycleMixin:
 
     def unregister_session(self: ProcessorHost, session_id: str) -> None:
         """Stop monitoring a session."""
-        if session_id in self._active_sessions:
-            del self._active_sessions[session_id]
-            if session_id in self._parsers:
-                del self._parsers[session_id]
-            self._last_mtime.pop(session_id, None)
-            self._stats.pop(session_id, None)
-            self._stats_hydration_skipped.discard(session_id)
-            self._byte_offsets.pop(session_id, None)
-            self._message_indices.pop(session_id, None)
-            self._index_appenders.pop(session_id, None)
-            logger.debug("Unregistered session %s", session_id)
+        was_registered = self._active_sessions.pop(session_id, None) is not None
+        self._parsers.pop(session_id, None)
+        self._last_mtime.pop(session_id, None)
+        self._stats.pop(session_id, None)
+        self._stats_hydration_skipped.discard(session_id)
+        self._byte_offsets.pop(session_id, None)
+        self._message_indices.pop(session_id, None)
+        self._index_appenders.pop(session_id, None)
         self._render_states.pop(session_id, None)
+        if was_registered:
+            logger.debug("Unregistered session %s", session_id)
 
     def _revive_expired_terminal_session(self: ProcessorHost, session_id: str) -> None:
         """Repair false-expired terminal rows when transcript activity resumes."""

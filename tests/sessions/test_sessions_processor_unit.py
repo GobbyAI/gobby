@@ -5,6 +5,7 @@ Tests edge cases, error handling, and branch coverage not covered
 by integration tests.
 """
 
+import asyncio
 import json
 from collections.abc import Iterable
 from datetime import datetime
@@ -13,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import psycopg
 import pytest
 
+from gobby.sessions.message_stats import MessageStats
 from gobby.sessions.processor import SessionMessageProcessor
 from gobby.sessions.transcript_index import (
     build_index_from_file,
@@ -541,6 +543,140 @@ class TestProcessSession:
             "session-1", str(transcript), at_eof=True
         )
         assert "Failed to flush session transcript" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_concurrent_poll_and_flush_do_not_double_process_jsonl(
+        self, processor, tmp_path
+    ) -> None:
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text(_codex_response_message("user", "test"))
+        processor.register_session("session-1", str(transcript), source="codex")
+        batch_entered = asyncio.Event()
+        release_batch = asyncio.Event()
+        second_batch_entered = asyncio.Event()
+        original_process_batch = processor._process_parsed_batch
+        batch_count = 0
+
+        async def blocked_process_batch(
+            session_id: str, messages: list[ParsedMessage]
+        ) -> MessageStats:
+            nonlocal batch_count
+            batch_count += 1
+            if batch_count > 1:
+                second_batch_entered.set()
+            batch_entered.set()
+            await asyncio.wait_for(release_batch.wait(), timeout=1)
+            return await original_process_batch(session_id, messages)
+
+        processor._process_parsed_batch = blocked_process_batch
+
+        async with asyncio.TaskGroup() as tasks:
+            poll_task = tasks.create_task(processor._process_all_sessions())
+            await asyncio.wait_for(batch_entered.wait(), timeout=1)
+            flush_task = tasks.create_task(processor.flush_session("session-1"))
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(second_batch_entered.wait(), timeout=0.05)
+            release_batch.set()
+
+        assert poll_task.result() is None
+        assert flush_task.result().flushed is True
+        assert batch_count == 1
+        assert processor._stats["session-1"]["message_count"] == 1
+        assert processor._message_indices["session-1"] == 0
+        assert processor._index_appenders["session-1"].index.raw_record_count == 1
+
+    @pytest.mark.asyncio
+    async def test_concurrent_poll_and_flush_do_not_double_process_json(
+        self, processor, tmp_path
+    ) -> None:
+        transcript = tmp_path / "session.json"
+        transcript.write_text(
+            json.dumps(
+                {
+                    "sessionId": "abc",
+                    "messages": [
+                        {
+                            "id": "1",
+                            "timestamp": "2024-01-01T10:00:00Z",
+                            "type": "user",
+                            "content": "Hello",
+                        }
+                    ],
+                }
+            )
+        )
+        processor.register_session("session-1", str(transcript), source="qwen")
+        batch_entered = asyncio.Event()
+        release_batch = asyncio.Event()
+        second_batch_entered = asyncio.Event()
+        original_process_batch = processor._process_parsed_batch
+        batch_count = 0
+
+        async def blocked_process_batch(
+            session_id: str, messages: list[ParsedMessage]
+        ) -> MessageStats:
+            nonlocal batch_count
+            batch_count += 1
+            if batch_count > 1:
+                second_batch_entered.set()
+            batch_entered.set()
+            await asyncio.wait_for(release_batch.wait(), timeout=1)
+            return await original_process_batch(session_id, messages)
+
+        processor._process_parsed_batch = blocked_process_batch
+
+        async with asyncio.TaskGroup() as tasks:
+            poll_task = tasks.create_task(processor._process_all_sessions())
+            await asyncio.wait_for(batch_entered.wait(), timeout=1)
+            flush_task = tasks.create_task(processor.flush_session("session-1"))
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(second_batch_entered.wait(), timeout=0.05)
+            release_batch.set()
+
+        assert poll_task.result() is None
+        assert flush_task.result().flushed is True
+        assert batch_count == 1
+        assert processor._stats["session-1"]["message_count"] == 1
+        assert processor._message_indices["session-1"] == 0
+
+    @pytest.mark.asyncio
+    async def test_unregister_during_processing_does_not_resurrect_state(
+        self, processor, tmp_path
+    ) -> None:
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text(_codex_response_message("user", "test"))
+        processor.register_session("session-1", str(transcript), source="codex")
+        batch_entered = asyncio.Event()
+        release_batch = asyncio.Event()
+        original_process_batch = processor._process_parsed_batch
+
+        async def blocked_process_batch(
+            session_id: str, messages: list[ParsedMessage]
+        ) -> MessageStats:
+            batch_entered.set()
+            await asyncio.wait_for(release_batch.wait(), timeout=1)
+            return await original_process_batch(session_id, messages)
+
+        processor._process_parsed_batch = blocked_process_batch
+
+        processing_task = asyncio.create_task(processor._process_all_sessions())
+        await asyncio.wait_for(batch_entered.wait(), timeout=1)
+        processor.unregister_session("session-1")
+        release_batch.set()
+        await asyncio.wait_for(processing_task, timeout=1)
+
+        state_maps = (
+            processor._active_sessions,
+            processor._parsers,
+            processor._last_mtime,
+            processor._stats,
+            processor._byte_offsets,
+            processor._message_indices,
+            processor._index_appenders,
+            processor._render_states,
+            processor._processing_locks,
+        )
+        assert all("session-1" not in state for state in state_maps)
 
     @pytest.mark.asyncio
     async def test_process_session_no_new_lines(self, processor, tmp_path):
