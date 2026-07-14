@@ -7,7 +7,7 @@ import pytest
 
 from gobby.config.persistence import MemoryBackupConfig
 from gobby.storage.memories import Memory
-from gobby.sync.memories import MemoryBackupManager, MemoryImportError
+from gobby.sync.memories import MemoryBackupManager, MemoryExportError, MemoryImportError
 
 pytestmark = pytest.mark.unit
 
@@ -112,7 +112,10 @@ async def test_import_from_files(sync_manager, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_import_from_files_parses_timestamp_fields(sync_manager, tmp_path) -> None:
+async def test_import_from_files_preserves_sync_metadata_for_existing_content(
+    sync_manager, tmp_path
+) -> None:
+    sync_manager.memory_manager.content_exists.return_value = True
     mem_file = tmp_path / "memories.jsonl"
     sync_manager.export_path = mem_file
     mem_file.write_text(
@@ -141,6 +144,7 @@ async def test_import_from_files_parses_timestamp_fields(sync_manager, tmp_path)
     assert call_args["updated_at"] == datetime(2023, 1, 2, 0, 30, tzinfo=UTC)
     assert call_args["source_session_id"] == "session-1"
     assert call_args["project_id"] == "project-1"
+    sync_manager.memory_manager.content_exists.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -387,14 +391,43 @@ def test_export_sync_no_memory_manager(mock_db) -> None:
     assert count == 0
 
 
-def test_export_sync_error(sync_manager, caplog) -> None:
-    """Test export_sync handles errors."""
+def test_export_sync_error(sync_manager) -> None:
+    """Test export_sync surfaces typed errors."""
     sync_manager.memory_manager.list_memories.side_effect = Exception("Export failed")
 
-    count = sync_manager.export_sync()
+    with pytest.raises(MemoryExportError, match="Failed to export memories: Export failed"):
+        sync_manager.export_sync()
 
-    assert count == 0
-    assert "Failed to export memories" in caplog.text
+
+def test_import_sync_ignores_unrelated_database_count(sync_manager, tmp_path) -> None:
+    """A valid backup imports regardless of the total database record count."""
+    mem_file = tmp_path / "memories.jsonl"
+    sync_manager.export_path = mem_file
+    sync_manager.memory_manager.count_memories.return_value = 500
+    mem_file.write_text(json.dumps({"content": "imported memory", "type": "fact"}) + "\n")
+
+    assert sync_manager.import_sync() == 1
+    sync_manager.memory_manager.storage.create_memory.assert_called_once()
+    sync_manager.memory_manager.count_memories.assert_not_called()
+
+
+def test_import_sync_empty_file_is_valid(sync_manager, tmp_path) -> None:
+    """An empty backup is a successful zero-record import."""
+    mem_file = tmp_path / "memories.jsonl"
+    sync_manager.export_path = mem_file
+    mem_file.write_text("\n", encoding="utf-8")
+
+    assert sync_manager.import_sync() == 0
+
+
+def test_import_sync_malformed_file_raises(sync_manager, tmp_path) -> None:
+    """Malformed backup data is distinguishable from an empty import."""
+    mem_file = tmp_path / "memories.jsonl"
+    sync_manager.export_path = mem_file
+    mem_file.write_text("{\n", encoding="utf-8")
+
+    with pytest.raises(MemoryImportError, match="Invalid JSON in memories file on line 1"):
+        sync_manager.import_sync()
 
 
 @pytest.mark.asyncio
@@ -493,14 +526,12 @@ def test_export_memories_sync_no_manager(mock_db, tmp_path) -> None:
     assert count == 0
 
 
-def test_export_memories_sync_error(sync_manager, tmp_path, caplog) -> None:
-    """Test _export_memories_sync handles errors."""
+def test_export_memories_sync_error(sync_manager, tmp_path) -> None:
+    """Test _export_memories_sync surfaces typed errors."""
     sync_manager.memory_manager.list_memories.side_effect = Exception("List failed")
 
-    count = sync_manager._export_memories_sync(tmp_path / "test.jsonl")
-
-    assert count == 0
-    assert "Failed to export memories" in caplog.text
+    with pytest.raises(MemoryExportError, match="Failed to export memories: List failed"):
+        sync_manager._export_memories_sync(tmp_path / "test.jsonl")
 
 
 # =============================================================================
@@ -632,6 +663,26 @@ class TestExportMerge:
         # C added from DB
         assert "memory C" in results
 
+    def test_export_merge_compares_updated_at_as_utc_datetimes(self, manager_with_memories) -> None:
+        newer_record = {
+            "id": "newer",
+            "content": "shared memory",
+            "type": "fact",
+            "tags": [],
+            "updated_at": "2026-01-01T11:30:00+00:00",
+        }
+        older_record = {
+            "id": "older",
+            "content": "shared memory",
+            "type": "fact",
+            "tags": [],
+            "updated_at": "2026-01-01T12:00:00+02:00",
+        }
+
+        deduped = manager_with_memories._deduplicate_records_by_id([newer_record, older_record])
+
+        assert deduped[0]["id"] == "newer"
+
     def test_export_deduplicates_near_duplicate_memory_records(self, manager_with_memories) -> None:
         """Near-identical cross-machine records collapse into one canonical memory."""
         old_record = {
@@ -706,7 +757,51 @@ class TestExportMerge:
         assert "remote memory X" in contents
         assert "remote memory Y" in contents
 
-    def test_export_handles_corrupt_file_lines(self, manager_with_memories, tmp_path) -> None:
+    def test_deleted_memory_tombstone_replaces_stale_file_record(self, hub_db, tmp_path) -> None:
+        memory_id = "00000000-0000-0000-0000-000000000001"
+        hub_db.execute(
+            """
+            INSERT INTO memories (id, memory_type, content, created_at, updated_at)
+            VALUES (%s, 'fact', 'deleted locally', %s, %s)
+            """,
+            (
+                memory_id,
+                "2026-01-01T00:00:00+00:00",
+                "2026-01-01T00:00:00+00:00",
+            ),
+        )
+        hub_db.execute("DELETE FROM memories WHERE id = %s", (memory_id,))
+        mm = MagicMock()
+        mm.list_memories.return_value = []
+        manager = MemoryBackupManager(
+            hub_db,
+            mm,
+            MemoryBackupConfig(enabled=True, export_debounce=0.1),
+        )
+        mem_file = tmp_path / "memories.jsonl"
+        mem_file.write_text(
+            json.dumps(
+                {
+                    "id": memory_id,
+                    "content": "deleted locally",
+                    "type": "fact",
+                    "created_at": "2026-01-01T00:00:00+00:00",
+                    "updated_at": "2026-01-01T00:00:00+00:00",
+                }
+            )
+            + "\n"
+        )
+
+        count = manager._export_memories_sync(mem_file)
+
+        record = json.loads(mem_file.read_text())
+        assert count == 1
+        assert record["_deleted"] is True
+        assert record["deleted_at"] > "2026-01-01T00:00:00+00:00"
+
+    def test_export_handles_corrupt_file_lines(
+        self, manager_with_memories, tmp_path, caplog
+    ) -> None:
         """Corrupt JSON lines in existing file are skipped, valid lines preserved."""
         mem_file = tmp_path / "memories.jsonl"
         with open(mem_file, "w") as f:
@@ -723,3 +818,40 @@ class TestExportMerge:
         with open(mem_file) as f:
             contents = {json.loads(line)["content"].strip() for line in f}
         assert contents == {"memory A", "memory B", "memory C", "memory D"}
+        assert "Skipped 1 malformed JSONL line(s)" in caplog.text
+
+    def test_export_refuses_to_shrink_without_force(self, mock_db, tmp_path) -> None:
+        mm = MagicMock()
+        mm.list_memories = MagicMock(return_value=[])
+        manager = MemoryBackupManager(
+            mock_db, mm, MemoryBackupConfig(enabled=True, export_debounce=0.1)
+        )
+        mem_file = tmp_path / "memories.jsonl"
+        original = (
+            '{"id":"old","content":"shared memory","updated_at":"2023-01-01T00:00:00Z"}\n'
+            '{"id":"new","content":"shared memory","updated_at":"2023-01-02T00:00:00Z"}\n'
+        )
+        mem_file.write_text(original, encoding="utf-8")
+        manager.export_path = mem_file
+
+        with pytest.raises(MemoryExportError, match="Refusing to shrink memory export"):
+            manager.backup_sync()
+        assert mem_file.read_text(encoding="utf-8") == original
+
+        assert manager.backup_sync(force=True) == 1
+        assert len(mem_file.read_text(encoding="utf-8").splitlines()) == 1
+
+    def test_export_replace_failure_preserves_existing_file(
+        self, manager_with_memories, tmp_path
+    ) -> None:
+        mem_file = tmp_path / "memories.jsonl"
+        original = b'{"id":"m-a","content":"memory A"}\n'
+        mem_file.write_bytes(original)
+        manager_with_memories.export_path = mem_file
+
+        with patch("gobby.sync.jsonl_io.os.replace", side_effect=OSError("interrupted")):
+            with pytest.raises(MemoryExportError, match="Failed to export memories: interrupted"):
+                manager_with_memories.backup_sync()
+
+        assert mem_file.read_bytes() == original
+        assert list(tmp_path.glob(".memories.jsonl.*.tmp")) == []

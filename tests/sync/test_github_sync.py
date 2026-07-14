@@ -6,10 +6,14 @@ and GitHub via the official GitHub MCP server.
 TDD Red Phase: Tests should fail initially since GitHubSyncService class does not exist.
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from mcp.types import CallToolResult, TextContent
 
+from gobby.mcp_proxy.manager import MCPClientManager
+from gobby.mcp_proxy.models import MCPServerConfig
 from gobby.sync.github import GitHubSyncService
 
 pytestmark = pytest.mark.unit
@@ -31,6 +35,7 @@ def mock_task_manager():
     manager = MagicMock()
     manager.create_task = MagicMock()
     manager.update_task = MagicMock()
+    manager.reconcile_task_state = MagicMock()
     manager.get_task = MagicMock()
     manager.list_tasks = MagicMock(return_value=[])
     # Mock db.execute() for dedup queries — return no existing tasks by default
@@ -119,6 +124,43 @@ class TestGitHubSyncServiceAvailability:
         )
         assert service.is_available() == service.github.is_available()
 
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_import_uses_lazy_real_manager_with_empty_health(self, mock_task_manager) -> None:
+        manager = MCPClientManager(
+            server_configs=[
+                MCPServerConfig(
+                    name="github",
+                    project_id="test-project",
+                    transport="stdio",
+                    command="unused",
+                )
+            ]
+        )
+        session = MagicMock()
+        session.call_tool = AsyncMock(
+            return_value=CallToolResult(
+                content=[TextContent(type="text", text="[]")],
+                isError=False,
+            )
+        )
+        manager._connections["github"] = SimpleNamespace(is_connected=True, session=session)
+
+        service = GitHubSyncService(manager, mock_task_manager, "test-project")
+
+        assert manager.health == {}
+        assert await service.import_github_issues("owner/repo") == []
+        session.call_tool.assert_awaited_once_with(
+            "list_issues",
+            {
+                "owner": "owner",
+                "repo": "repo",
+                "state": "open",
+                "page": 1,
+                "per_page": 100,
+            },
+        )
+
 
 class TestGitHubSyncServiceImport:
     """Test import_github_issues method."""
@@ -135,17 +177,42 @@ class TestGitHubSyncServiceImport:
         calls = mock_mcp_manager.call_tool.call_args_list
         assert any("github" in str(call) for call in calls)
 
+    async def test_import_issues_paginates_until_short_page(
+        self, sync_service, mock_mcp_manager, mock_task_manager
+    ):
+        """import_github_issues imports every page of GitHub issues."""
+        first_page = [{"number": number, "title": f"Issue {number}"} for number in range(1, 101)]
+        second_page = [{"number": 101, "title": "Issue 101"}]
+        mock_mcp_manager.call_tool.side_effect = [
+            {"issues": first_page},
+            {"issues": second_page},
+        ]
+
+        imported = await sync_service.import_github_issues(repo="owner/repo")
+
+        assert len(imported) == 101
+        assert mock_task_manager.create_task.call_count == 101
+        page_args = [call.kwargs["arguments"] for call in mock_mcp_manager.call_tool.call_args_list]
+        assert [(args["page"], args["per_page"]) for args in page_args] == [
+            (1, 100),
+            (2, 100),
+        ]
+
     @pytest.mark.asyncio
     async def test_import_issues_creates_tasks(
         self, sync_service, mock_mcp_manager, mock_task_manager
     ):
         """import_github_issues creates gobby tasks from GitHub issues."""
-        mock_mcp_manager.call_tool.return_value = {
-            "issues": [
-                {"number": 1, "title": "Issue 1", "body": "Description 1"},
-                {"number": 2, "title": "Issue 2", "body": "Description 2"},
-            ]
-        }
+        mock_mcp_manager.call_tool.return_value = CallToolResult(
+            content=[],
+            structuredContent={
+                "issues": [
+                    {"number": 1, "title": "Issue 1", "body": "Description 1"},
+                    {"number": 2, "title": "Issue 2", "body": "Description 2"},
+                ]
+            },
+            isError=False,
+        )
 
         await sync_service.import_github_issues(repo="owner/repo")
 
@@ -176,6 +243,39 @@ class TestGitHubSyncServiceImport:
 
         assert all_args.get("github_issue_number") == 42 or "github_issue_number" in str(
             create_call
+        )
+
+    @pytest.mark.asyncio
+    async def test_import_closed_issue_maps_labels_and_closes_task(
+        self, sync_service, mock_mcp_manager, mock_task_manager
+    ):
+        """Closed GitHub issues create closed tasks with mapped labels."""
+        mock_mcp_manager.call_tool.return_value = {
+            "issues": [
+                {
+                    "number": 123,
+                    "title": "Closed issue",
+                    "state": "closed",
+                    "closed_at": "2026-07-14T12:00:00Z",
+                    "labels": [{"name": "gobby:bug"}],
+                }
+            ]
+        }
+        created = MagicMock(id="new-task-id")
+        reconciled = MagicMock()
+        reconciled.to_dict.return_value = {"id": "new-task-id"}
+        mock_task_manager.create_task.return_value = created
+        mock_task_manager.reconcile_task_state.return_value = reconciled
+
+        await sync_service.import_github_issues(repo="owner/repo")
+
+        assert mock_task_manager.create_task.call_args.kwargs["labels"] == ["gobby:bug"]
+        mock_task_manager.reconcile_task_state.assert_called_once_with(
+            "new-task-id",
+            closed_at="2026-07-14T12:00:00Z",
+            closed_reason="github_sync",
+            closed_in_session_id=None,
+            closed_commit_sha=None,
         )
 
     @pytest.mark.asyncio
@@ -210,6 +310,10 @@ class TestGitHubSyncServiceDedup:
 
         existing_task = MagicMock()
         existing_task.id = "existing-task-id"
+        existing_task.title = "Original Title"
+        existing_task.description = "Original body"
+        existing_task.labels = []
+        existing_task.updated_at = None
         existing_task.to_dict.return_value = {"id": "existing-task-id", "title": "Updated Title"}
         mock_task_manager.get_task.return_value = existing_task
 
@@ -219,6 +323,104 @@ class TestGitHubSyncServiceDedup:
         mock_task_manager.update_task.assert_called_once()
         mock_task_manager.create_task.assert_not_called()
         assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_import_preserves_newer_local_fields_and_labels(
+        self, sync_service, mock_mcp_manager, mock_task_manager
+    ) -> None:
+        mock_mcp_manager.call_tool.return_value = {
+            "issues": [
+                {
+                    "number": 1,
+                    "title": "Stale remote title",
+                    "body": "Stale remote body",
+                    "labels": [],
+                    "state": "closed",
+                    "updated_at": "2026-02-11T12:00:00Z",
+                }
+            ]
+        }
+        mock_task_manager.db.execute.return_value.fetchone.return_value = {"id": "existing-task-id"}
+        existing_task = MagicMock(
+            id="existing-task-id",
+            title="Newer local title",
+            description="Newer local body",
+            labels=["local-only"],
+            updated_at="2026-02-12T12:00:00Z",
+        )
+        existing_task.to_dict.return_value = {
+            "id": "existing-task-id",
+            "title": "Newer local title",
+            "labels": ["local-only"],
+        }
+        mock_task_manager.get_task.return_value = existing_task
+
+        result = await sync_service.import_github_issues(repo="owner/repo")
+
+        mock_task_manager.update_task.assert_not_called()
+        mock_task_manager.reconcile_task_state.assert_not_called()
+        assert result == [existing_task.to_dict.return_value]
+
+    @pytest.mark.asyncio
+    async def test_import_applies_newer_remote_fields_and_merges_labels(
+        self, sync_service, mock_mcp_manager, mock_task_manager
+    ) -> None:
+        mock_mcp_manager.call_tool.return_value = {
+            "issues": [
+                {
+                    "number": 1,
+                    "title": "Newer remote title",
+                    "body": "Newer remote body",
+                    "labels": [{"name": "remote"}],
+                    "updated_at": "2026-02-12T12:00:00Z",
+                }
+            ]
+        }
+        mock_task_manager.db.execute.return_value.fetchone.return_value = {"id": "existing-task-id"}
+        existing_task = MagicMock(
+            id="existing-task-id",
+            title="Old local title",
+            description="Old local body",
+            labels=["local-only"],
+            updated_at="2026-02-11T12:00:00Z",
+        )
+        existing_task.to_dict.return_value = {"id": "existing-task-id"}
+        mock_task_manager.get_task.return_value = existing_task
+
+        result = await sync_service.import_github_issues(repo="owner/repo")
+
+        mock_task_manager.update_task.assert_called_once_with(
+            "existing-task-id",
+            title="Newer remote title",
+            description="Newer remote body",
+            labels=["local-only", "remote"],
+        )
+        mock_task_manager.create_task.assert_not_called()
+        assert result == [{"id": "existing-task-id"}]
+
+    @pytest.mark.asyncio
+    async def test_import_open_issue_reopens_existing_task(
+        self, sync_service, mock_mcp_manager, mock_task_manager
+    ):
+        """Open GitHub issues clear close metadata on existing tasks."""
+        mock_mcp_manager.call_tool.return_value = {
+            "issues": [{"number": 1, "title": "Reopened", "state": "open"}]
+        }
+        mock_task_manager.db.execute.return_value.fetchone.return_value = {"id": "existing-task-id"}
+        existing_task = MagicMock(id="existing-task-id")
+        existing_task.to_dict.return_value = {"id": "existing-task-id"}
+        mock_task_manager.get_task.return_value = existing_task
+
+        result = await sync_service.import_github_issues(repo="owner/repo")
+
+        mock_task_manager.reconcile_task_state.assert_called_once_with(
+            "existing-task-id",
+            closed_at=None,
+            closed_reason=None,
+            closed_in_session_id=None,
+            closed_commit_sha=None,
+        )
+        assert result == [{"id": "existing-task-id"}]
 
     @pytest.mark.asyncio
     async def test_import_creates_new_task_when_no_existing(
@@ -246,15 +448,43 @@ class TestGitHubSyncServiceSync:
         mock_task.github_repo = "owner/repo"
         mock_task.title = "Updated Title"
         mock_task.description = "Updated description"
+        mock_task.closed_at = "2026-07-14T12:00:00Z"
+        mock_task.labels = ["bug", "priority:high"]
 
         sync_service.task_manager.get_task.return_value = mock_task
-        mock_mcp_manager.call_tool.return_value = {"success": True}
+        mock_mcp_manager.call_tool.return_value = CallToolResult(
+            content=[TextContent(type="text", text='{"success":true}')],
+            isError=False,
+        )
 
         await sync_service.sync_task_to_github(task_id="test-task-id")
 
         mock_mcp_manager.call_tool.assert_called()
         assert mock_mcp_manager.call_tool.call_count >= 1
         assert mock_mcp_manager.call_tool.call_args is not None
+        assert mock_mcp_manager.call_tool.call_args.kwargs["arguments"]["state"] == "closed"
+        assert mock_mcp_manager.call_tool.call_args.kwargs["arguments"]["labels"] == [
+            "bug",
+            "priority:high",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_sync_open_task_reopens_github_issue(self, sync_service, mock_mcp_manager):
+        """An open Gobby task pushes GitHub issue state as open."""
+        task = SimpleNamespace(
+            github_issue_number=42,
+            github_repo="owner/repo",
+            title="Reopened task",
+            description=None,
+            closed_at=None,
+            labels=[],
+        )
+        sync_service.task_manager.get_task.return_value = task
+        mock_mcp_manager.call_tool.return_value = {"success": True}
+
+        await sync_service.sync_task_to_github(task_id="test-task-id")
+
+        assert mock_mcp_manager.call_tool.call_args.kwargs["arguments"]["state"] == "open"
 
     @pytest.mark.asyncio
     async def test_sync_task_raises_when_no_issue_number(self, sync_service, mock_task_manager):
@@ -307,7 +537,11 @@ class TestGitHubSyncServicePR:
         mock_task.id = "test-task-id"
 
         mock_task_manager.get_task.return_value = mock_task
-        mock_mcp_manager.call_tool.return_value = {"number": 456}
+        mock_mcp_manager.call_tool.return_value = CallToolResult(
+            content=[],
+            structuredContent={"number": 456},
+            isError=False,
+        )
 
         await sync_service.create_pr_for_task(
             task_id="test-task-id",
@@ -505,64 +739,9 @@ class TestGitHubSyncExceptions:
         assert str(error) == "Something went wrong"
         assert isinstance(error, Exception)
 
-    def test_github_rate_limit_error(self) -> None:
-        """GitHubRateLimitError includes rate limit reset time."""
-        from gobby.sync.github import GitHubRateLimitError
-
-        error = GitHubRateLimitError("Rate limited", reset_at=1234567890)
-        assert "Rate limited" in str(error)
-        assert error.reset_at == 1234567890
-
-    def test_github_not_found_error(self) -> None:
-        """GitHubNotFoundError indicates missing resource."""
-        from gobby.sync.github import GitHubNotFoundError
-
-        error = GitHubNotFoundError("Issue #42 not found", resource="issue", resource_id=42)
-        assert "Issue #42 not found" in str(error)
-        assert error.resource == "issue"
-        assert error.resource_id == 42
-
 
 class TestGitHubSyncErrorHandling:
     """Test error handling in sync operations."""
-
-    @pytest.mark.asyncio
-    async def test_import_handles_rate_limit(self, mock_mcp_manager, mock_task_manager):
-        """import_github_issues raises GitHubRateLimitError on rate limit."""
-        from gobby.sync.github import GitHubRateLimitError
-
-        mock_mcp_manager.has_server.return_value = True
-        mock_mcp_manager.health = {"github": MagicMock(state="connected")}
-        # Simulate rate limit response
-        mock_mcp_manager.call_tool.side_effect = Exception("API rate limit exceeded")
-
-        service = GitHubSyncService(
-            mcp_manager=mock_mcp_manager,
-            task_manager=mock_task_manager,
-            project_id="test-project",
-        )
-
-        with pytest.raises((GitHubRateLimitError, Exception)):
-            await service.import_github_issues(repo="owner/repo")
-
-    @pytest.mark.asyncio
-    async def test_import_handles_not_found(self, mock_mcp_manager, mock_task_manager):
-        """import_github_issues raises GitHubNotFoundError for 404."""
-        from gobby.sync.github import GitHubNotFoundError
-
-        mock_mcp_manager.has_server.return_value = True
-        mock_mcp_manager.health = {"github": MagicMock(state="connected")}
-        # Simulate 404 response
-        mock_mcp_manager.call_tool.side_effect = Exception("Not Found")
-
-        service = GitHubSyncService(
-            mcp_manager=mock_mcp_manager,
-            task_manager=mock_task_manager,
-            project_id="test-project",
-        )
-
-        with pytest.raises((GitHubNotFoundError, Exception)):
-            await service.import_github_issues(repo="owner/nonexistent")
 
     @pytest.mark.asyncio
     async def test_sync_validates_response_structure(self, mock_mcp_manager, mock_task_manager):

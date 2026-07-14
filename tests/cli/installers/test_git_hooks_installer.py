@@ -938,6 +938,78 @@ class TestHookTemplates:
         assert "GOBBY_JSONL_EXPORT_CONTEXT=pre-push" in content
         assert "gobby tasks sync --export" in content
         assert "gobby memory backup" in content
+        assert '--no-verify --only -- "$@"' in content
+        assert "run git push again to publish it" in content
+
+    def test_prepush_sync_commit_preserves_unrelated_staged_files(self, tmp_path: Path) -> None:
+        """The generated sync commit contains only JSONL changes and reports a second push."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+
+        gobby_dir = repo / ".gobby"
+        gobby_dir.mkdir()
+        (gobby_dir / "tasks.jsonl").write_text("old task\n")
+        (gobby_dir / "memories.jsonl").write_text("old memory\n")
+        unrelated = repo / "unrelated.txt"
+        unrelated.write_text("original\n")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-m", "initial"], cwd=repo, check=True)
+
+        unrelated.write_text("staged user change\n")
+        subprocess.run(["git", "add", "unrelated.txt"], cwd=repo, check=True)
+
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        fake_gobby = bin_dir / "gobby"
+        fake_gobby.write_text(
+            "#!/bin/sh\n"
+            'if [ "$1 $2" = "tasks sync" ]; then echo "new task" > .gobby/tasks.jsonl; fi\n'
+            'if [ "$1 $2" = "memory backup" ]; then echo "new memory" > .gobby/memories.jsonl; fi\n'
+        )
+        fake_gobby.chmod(0o755)
+
+        hook = repo / "pre-push"
+        hook.write_text(HOOK_TEMPLATES["pre-push"])
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
+        ).stdout.strip()
+        push_ref = f"refs/heads/main {head} refs/heads/main {'0' * 40}\n"
+        env = {
+            **{key: value for key, value in os.environ.items() if key != "GOBBY_AGENT_RUN_ID"},
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        }
+
+        result = subprocess.run(
+            ["bash", str(hook), "origin", "unused"],
+            cwd=repo,
+            input=push_ref,
+            text=True,
+            capture_output=True,
+            check=True,
+            env=env,
+        )
+
+        committed_files = subprocess.run(
+            ["git", "show", "--pretty=format:", "--name-only", "HEAD"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+        staged_files = subprocess.run(
+            ["git", "diff", "--cached", "--name-only"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+
+        assert committed_files == [".gobby/memories.jsonl", ".gobby/tasks.jsonl"]
+        assert staged_files == ["unrelated.txt"]
+        assert "run git push again to publish it" in result.stderr
 
     def test_post_commit_template_escapes_nul_delimiter(self, tmp_path: Path) -> None:
         """Generated post-commit hooks must not embed a literal NUL byte."""

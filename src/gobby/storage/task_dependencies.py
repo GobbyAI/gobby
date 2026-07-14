@@ -80,6 +80,7 @@ class TaskDependencyManager:
             if row is None:
                 raise ValueError("Failed to retrieve dependency ID")
 
+            conn.execute("UPDATE tasks SET updated_at = %s WHERE id = %s", (now, task_id))
             dep_id = int(row["id"])
             return TaskDependency(dep_id, task_id, depends_on, dep_type, now)
 
@@ -91,6 +92,8 @@ class TaskDependencyManager:
                 (task_id, depends_on),
             )
             deleted: bool = cursor.rowcount > 0
+            if deleted:
+                conn.execute("UPDATE tasks SET updated_at = %s WHERE id = %s", (utc_now(), task_id))
             return deleted
 
     def get_blockers(self, task_id: str) -> list[TaskDependency]:
