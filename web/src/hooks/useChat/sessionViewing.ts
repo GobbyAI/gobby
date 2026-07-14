@@ -53,6 +53,7 @@ export function useChatSessionViewing(params: UseChatSessionViewingParams) {
     pendingProxySessionQueuesRef,
     pendingSessionInteractionModeRef,
     preAttachContextUsageRef,
+    projectIdRef,
     resolveAgentName,
     sessionInteractionModeRef,
     setAttachedSessionId,
@@ -343,6 +344,7 @@ const attachToSession = useCallback(
       JSON.stringify({
         type: "attach_to_session",
         session_id: sessionId,
+        project_id: projectIdRef.current,
       }),
     );
   },

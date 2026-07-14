@@ -108,7 +108,8 @@ async def handle_attach_to_session(
     Message format:
     {
         "type": "attach_to_session",
-        "session_id": "db-uuid-of-session"
+        "session_id": "db-uuid-of-session",
+        "project_id": "project-uuid"
     }
     """
     session_id = data.get("session_id")
@@ -139,6 +140,30 @@ async def handle_attach_to_session(
         )
         return
 
+    client_metadata = mixin.clients.get(websocket)
+    if not isinstance(client_metadata, dict):
+        await mixin._send_error(
+            websocket,
+            "Not authorized to observe session",
+            code="FORBIDDEN",
+        )
+        return
+
+    client_user_id = _as_str(client_metadata.get("user_id"))
+    requested_project_id = _as_str(data.get("project_id"))
+    session_project_id = _as_str(getattr(session, "project_id", None))
+    if (
+        client_user_id is None
+        or requested_project_id is None
+        or requested_project_id != session_project_id
+    ):
+        await mixin._send_error(
+            websocket,
+            "Not authorized to observe session",
+            code="FORBIDDEN",
+        )
+        return
+
     workflow_name = _as_str(getattr(session, "workflow_name", None))
     agent_run_id = _as_str(getattr(session, "agent_run_id", None))
     agent_name = await _observe_facade()._resolve_agent_name_for_session(
@@ -166,9 +191,7 @@ async def handle_attach_to_session(
     websocket.subscriptions.add(f"hook_event:session_id={session.external_id}")
 
     # Track attached session on websocket metadata
-    metadata = mixin.clients.get(websocket)
-    if metadata:
-        metadata["attached_session_id"] = session_id
+    client_metadata["attached_session_id"] = session_id
 
     # Send response with initial messages and session metadata
     session_meta = _session_meta_payload(

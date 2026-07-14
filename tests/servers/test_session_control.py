@@ -1224,6 +1224,7 @@ class TestContinueInChatTerminalKill:
         source_session = MagicMock()
         source_session.id = "source-uuid"
         source_session.external_id = "cli-session-123"
+        source_session.project_id = "project-1"
         source_session.seq_num = 42
         source_session.source = "claude"
         source_session.title = "Observed Session"
@@ -1251,7 +1252,7 @@ class TestContinueInChatTerminalKill:
 
         host = self._make_host()
         host.session_manager = session_manager
-        host.clients = {ws: {}}
+        host.clients = {ws: {"user_id": "local-cli"}}
         host._send_error = AsyncMock()
 
         mock_run = MagicMock()
@@ -1261,7 +1262,7 @@ class TestContinueInChatTerminalKill:
             await SessionControlMixin._handle_attach_to_session(
                 host,
                 ws,
-                {"session_id": "source-uuid"},
+                {"session_id": "source-uuid", "project_id": "project-1"},
             )
 
         payload = ws.send.await_args_list[0].args[0]
@@ -1294,6 +1295,7 @@ class TestContinueInChatTerminalKill:
         source_session = MagicMock()
         source_session.id = "source-uuid"
         source_session.external_id = "cli-session-123"
+        source_session.project_id = "project-1"
         source_session.seq_num = 42
         source_session.source = "codex"
         source_session.title = "Observed Session"
@@ -1314,7 +1316,7 @@ class TestContinueInChatTerminalKill:
 
         host = self._make_host()
         host.session_manager = session_manager
-        host.clients = {ws: {}}
+        host.clients = {ws: {"user_id": "local-cli"}}
         host._send_error = AsyncMock()
 
         with patch(
@@ -1329,7 +1331,7 @@ class TestContinueInChatTerminalKill:
             await SessionControlMixin._handle_attach_to_session(
                 host,
                 ws,
-                {"session_id": "source-uuid"},
+                {"session_id": "source-uuid", "project_id": "project-1"},
             )
 
         payload = ws.send.await_args_list[0].args[0]
@@ -1351,6 +1353,7 @@ class TestContinueInChatTerminalKill:
         source_session = MagicMock()
         source_session.id = "source-uuid"
         source_session.external_id = "cli-session-123"
+        source_session.project_id = "project-1"
         source_session.seq_num = 42
         source_session.source = "codex"
         source_session.title = "Observed Session"
@@ -1371,7 +1374,7 @@ class TestContinueInChatTerminalKill:
 
         host = self._make_host()
         host.session_manager = session_manager
-        host.clients = {ws: {}}
+        host.clients = {ws: {"user_id": "local-cli"}}
         host._send_error = AsyncMock()
 
         with patch(
@@ -1381,7 +1384,7 @@ class TestContinueInChatTerminalKill:
             await SessionControlMixin._handle_attach_to_session(
                 host,
                 ws,
-                {"session_id": "source-uuid"},
+                {"session_id": "source-uuid", "project_id": "project-1"},
             )
 
         payload = ws.send.await_args_list[0].args[0]
@@ -1401,6 +1404,7 @@ class TestContinueInChatTerminalKill:
         source_session = MagicMock()
         source_session.id = "source-uuid"
         source_session.external_id = "cli-session-456"
+        source_session.project_id = "project-1"
         source_session.seq_num = 43
         source_session.source = "gemini"
         source_session.title = "Handoff Session"
@@ -1420,13 +1424,13 @@ class TestContinueInChatTerminalKill:
 
         host = self._make_host()
         host.session_manager = session_manager
-        host.clients = {ws: {}}
+        host.clients = {ws: {"user_id": "local-cli"}}
         host._send_error = AsyncMock()
 
         await SessionControlMixin._handle_attach_to_session(
             host,
             ws,
-            {"session_id": "source-uuid"},
+            {"session_id": "source-uuid", "project_id": "project-1"},
         )
 
         payload = ws.send.await_args_list[0].args[0]
@@ -1434,6 +1438,57 @@ class TestContinueInChatTerminalKill:
         assert response["type"] == "attach_to_session_result"
         assert response["status"] == "handoff_ready"
         assert response["can_proxy_attach"] is True
+
+    @pytest.mark.parametrize(
+        ("client_metadata", "requested_project_id"),
+        [
+            ({}, "project-1"),
+            ({"user_id": "local-cli"}, "project-2"),
+        ],
+    )
+    async def test_attach_to_session_rejects_unauthorized_scope(
+        self,
+        client_metadata: dict[str, str],
+        requested_project_id: str,
+    ) -> None:
+        """Attach must authorize the client and project before subscribing."""
+        from gobby.servers.websocket.session_control import SessionControlMixin
+
+        ws = MagicMock()
+        ws.send = AsyncMock()
+        ws.subscriptions = set()
+
+        source_session = MagicMock()
+        source_session.id = "source-uuid"
+        source_session.external_id = "cli-session-123"
+        source_session.project_id = "project-1"
+        source_session.session_type = "terminal"
+
+        session_manager = MagicMock()
+        session_manager.get = MagicMock(return_value=source_session)
+
+        host = self._make_host()
+        host.session_manager = session_manager
+        host.clients = {ws: client_metadata}
+        host._send_error = AsyncMock()
+
+        await SessionControlMixin._handle_attach_to_session(
+            host,
+            ws,
+            {
+                "session_id": "source-uuid",
+                "project_id": requested_project_id,
+            },
+        )
+
+        host._send_error.assert_awaited_once_with(
+            ws,
+            "Not authorized to observe session",
+            code="FORBIDDEN",
+        )
+        ws.send.assert_not_awaited()
+        assert ws.subscriptions == set()
+        assert "attached_session_id" not in client_metadata
 
     @pytest.mark.asyncio
     async def test_attach_to_session_rejects_web_chat_sessions(self) -> None:
