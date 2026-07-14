@@ -1569,6 +1569,49 @@ class TestImportSeqNumPreservation:
         assert task.seq_num > 5
 
     @pytest.mark.integration
+    def test_import_update_keeps_local_sequence_metadata_on_collision(
+        self, sync_manager, task_manager, sample_project
+    ) -> None:
+        """Updating a task keeps its local sequence metadata when the JSONL seq is occupied."""
+        task = task_manager.create_task(sample_project["id"], "Task to update")
+        occupant = task_manager.create_task(sample_project["id"], "Sequence occupant")
+        sync_manager.db.execute(
+            "UPDATE tasks SET seq_num = 5, path_cache = '5', "
+            "updated_at = '2020-01-01T00:00:00+00:00' WHERE id = %s",
+            (task.id,),
+        )
+        sync_manager.db.execute(
+            "UPDATE tasks SET seq_num = 100, path_cache = '100' WHERE id = %s",
+            (occupant.id,),
+        )
+
+        task_data = {
+            "id": task.id,
+            "title": "Updated task",
+            "description": "Desc",
+            "status": "open",
+            "created_at": task.created_at.isoformat(),
+            "updated_at": "2023-01-02T00:00:00+00:00",
+            "project_id": sample_project["id"],
+            "parent_id": None,
+            "deps_on": [],
+            "seq_num": 100,
+            "path_cache": "100",
+        }
+
+        sync_manager.export_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(sync_manager.export_path, "w") as f:
+            f.write(json.dumps(task_data) + "\n")
+
+        sync_manager.import_from_jsonl()
+
+        updated = task_manager.get_task(task.id)
+        assert updated is not None
+        assert updated.title == "Updated task"
+        assert updated.seq_num == 5
+        assert updated.path_cache == "5"
+
+    @pytest.mark.integration
     def test_import_batch_dedup(self, sync_manager, task_manager, sample_project) -> None:
         """Two JSONL tasks with same seq_num → first wins, second gets fresh."""
         now = "2023-01-02T00:00:00+00:00"

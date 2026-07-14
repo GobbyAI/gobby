@@ -588,9 +588,9 @@ class TaskSyncManager:
                             "escalation_reason": data.get(
                                 "escalation_reason", state.get("escalation_reason")
                             ),
-                            "seq_num": data["seq_num"] if "seq_num" in data else existing_seq_num,
+                            "seq_num": existing_seq_num if existing_row else data.get("seq_num"),
                             "path_cache": (
-                                data["path_cache"] if "path_cache" in data else existing_path_cache
+                                existing_path_cache if existing_row else data.get("path_cache")
                             ),
                         }
 
