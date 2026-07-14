@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from gobby.storage.hub.postgres import PostgresHubDatabase
+from gobby.storage.hub.postgres import PostgresHubDatabase, _advisory_lock_keys
 from gobby.storage.hub.protocol import (
     DispatchMutexRow,
     HubDatabase,
@@ -238,13 +238,21 @@ def test_nested_lock_target_acquires_both_lookup_branch(
 ) -> None:
     db = postgres_db_factory()
     web_lock = WebChatSessionBootstrap("ext", "machine", "codex", "project", "web_chat")
-    registration_lock = SessionRegistration("ext", "machine", "codex", "project", "web_chat")
+    registration_lock = SessionRegistration("ext", "machine", "codex", "web_chat")
     try:
         with db.transaction_immediate(web_lock) as outer:
             with db.transaction_immediate(registration_lock) as inner:
                 assert inner is outer
     finally:
         db.close()
+
+
+def test_session_registration_lock_key_excludes_project_identity() -> None:
+    registration_lock = SessionRegistration("ext", "machine", "codex", "terminal")
+
+    assert _advisory_lock_keys(registration_lock) == (
+        "session_register:ext|machine|codex|terminal",
+    )
 
 
 def test_nested_lock_target_acquires_both_recovery_branch(
@@ -266,10 +274,13 @@ def test_nested_lock_target_out_of_order_priority_raises(
 ) -> None:
     db = postgres_db_factory()
     web_lock = WebChatSessionBootstrap("ext", "machine", "codex", "project", "web_chat")
+    second_web_lock = WebChatSessionBootstrap(
+        "other-ext", "machine", "codex", "project", "web_chat"
+    )
     try:
         with db.transaction_immediate(web_lock):
             with pytest.raises(LockAcquisitionOrderError) as exc_info:
-                with db.transaction_immediate(web_lock):
+                with db.transaction_immediate(second_web_lock):
                     pass
     finally:
         db.close()

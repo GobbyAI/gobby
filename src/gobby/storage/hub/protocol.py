@@ -167,7 +167,6 @@ class SessionRegistration:
     external_id: str
     machine_id: str
     source: str
-    project_id: str | None
     session_type: str
 
 

@@ -945,8 +945,7 @@ def _advisory_lock_keys(lock: LockTarget) -> tuple[str, ...]:
     if isinstance(lock, SessionRegistration):
         return (
             "session_register:"
-            f"{lock.external_id}|{lock.machine_id}|{lock.source}|"
-            f"{lock.project_id or ''}|{lock.session_type}",
+            f"{lock.external_id}|{lock.machine_id}|{lock.source}|{lock.session_type}",
         )
     if isinstance(lock, SessionLineageMutation):
         return ("session_lineage_mutation",)
