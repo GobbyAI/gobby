@@ -272,8 +272,13 @@ class _LifecycleHost(ChatLifecycleMixin):
         self,
         db_session_id: str,
         event_type: HookEventType,
+        *,
+        pending_message_ids: list[str] | None = None,
     ) -> str | None:
         return None
+
+    def _mark_pending_messages_delivered(self, message_ids: list[str]) -> None:
+        pass
 
     async def _dispatch_mcp_calls(
         self,

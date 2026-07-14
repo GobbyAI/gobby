@@ -192,20 +192,27 @@ async def cleanup_idle_sessions(mixin: SessionControlMixin) -> None:
         try:
             await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
             now = datetime.now(UTC)
-            stale_ids = [
-                conv_id
+            stale_sessions = [
+                (conv_id, session)
                 for conv_id, session in mixin._chat_sessions.items()
                 if (now - session.last_activity).total_seconds() > IDLE_TIMEOUT_SECONDS
             ]
-            for conv_id in stale_ids:
+            cleaned_count = 0
+            for conv_id, session in stale_sessions:
                 # Fire SESSION_END before teardown (needs session in dict for lookup)
                 await mixin._fire_session_end(conv_id)
                 await mixin._cancel_active_chat(conv_id)
-                session = mixin._chat_sessions.pop(conv_id, None)
+                # Awaited teardown may have allowed a replacement session to register.
+                # Only remove the same stale session selected by this cleanup pass.
+                if mixin._chat_sessions.get(conv_id) is not session:
+                    continue
+                registry = getattr(mixin, "web_chat_session_registry", None)
+                if registry is not None:
+                    registry.unregister(conv_id)
+                else:
+                    mixin._chat_sessions.pop(conv_id, None)
                 if hasattr(mixin, "_session_create_locks"):
                     mixin._session_create_locks.pop(conv_id, None)
-                if session is None:
-                    continue
                 # Mark as paused in database before stopping
                 if session.db_session_id:
                     session_manager = getattr(mixin, "session_manager", None)
@@ -220,9 +227,10 @@ async def cleanup_idle_sessions(mixin: SessionControlMixin) -> None:
                         except Exception as e:
                             logger.warning(f"Failed to update session status: {e}")
                 await session.stop()
+                cleaned_count += 1
                 logger.debug(f"Cleaned up idle chat session {conv_id}")
-            if stale_ids:
-                logger.info(f"Cleaned up {len(stale_ids)} idle chat session(s)")
+            if cleaned_count:
+                logger.info(f"Cleaned up {cleaned_count} idle chat session(s)")
                 # Unload voice models if no sessions remain
                 if hasattr(mixin, "_check_voice_idle"):
                     await mixin._check_voice_idle()
