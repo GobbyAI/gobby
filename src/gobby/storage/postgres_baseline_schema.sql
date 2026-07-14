@@ -1784,10 +1784,9 @@ CREATE TABLE chat_messages (
     content_blocks_json JSONB,
     metadata_json JSONB,
     seq INTEGER NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chat_messages_conversation_seq_unique UNIQUE (conversation_id, seq)
 );
-
-CREATE INDEX idx_chat_messages_conv_seq ON chat_messages(conversation_id, seq);
 
 CREATE TABLE chat_attachments (
     id UUID PRIMARY KEY,

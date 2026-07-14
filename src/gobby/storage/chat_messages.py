@@ -30,32 +30,49 @@ def save_message(
     msg_id = str(uuid.uuid4())
     with db.transaction() as conn:
         if seq is None:
-            row = conn.execute(
-                """
-                SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq
-                  FROM chat_messages
-                 WHERE conversation_id = %s
-                """,
-                (conversation_id,),
-            ).fetchone()
-            seq = int(row["next_seq"]) if row is not None else 1
-        conn.execute(
-            """INSERT INTO chat_messages (
-                   id, conversation_id, role, content, tool_calls_json,
-                   content_blocks_json, metadata_json, seq
-               )
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
-            (
-                msg_id,
-                conversation_id,
-                role,
-                content,
-                tool_calls_json,
-                content_blocks_json,
-                metadata_json,
-                seq,
-            ),
-        )
+            while True:
+                inserted = conn.execute(
+                    """INSERT INTO chat_messages (
+                           id, conversation_id, role, content, tool_calls_json,
+                           content_blocks_json, metadata_json, seq
+                       )
+                       SELECT %s, %s, %s, %s, %s, %s, %s,
+                              COALESCE(MAX(seq), 0) + 1
+                         FROM chat_messages
+                        WHERE conversation_id = %s
+                       ON CONFLICT (conversation_id, seq) DO NOTHING
+                       RETURNING id""",
+                    (
+                        msg_id,
+                        conversation_id,
+                        role,
+                        content,
+                        tool_calls_json,
+                        content_blocks_json,
+                        metadata_json,
+                        conversation_id,
+                    ),
+                ).fetchone()
+                if inserted is not None:
+                    break
+        else:
+            conn.execute(
+                """INSERT INTO chat_messages (
+                       id, conversation_id, role, content, tool_calls_json,
+                       content_blocks_json, metadata_json, seq
+                   )
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                (
+                    msg_id,
+                    conversation_id,
+                    role,
+                    content,
+                    tool_calls_json,
+                    content_blocks_json,
+                    metadata_json,
+                    seq,
+                ),
+            )
     return msg_id
 
 
@@ -72,7 +89,7 @@ def get_messages(
                   metadata_json, seq, created_at
            FROM chat_messages
            WHERE conversation_id = %s AND seq > %s
-           ORDER BY seq ASC
+           ORDER BY seq ASC, id ASC
            LIMIT %s""",
         (conversation_id, after_seq, limit),
     )
