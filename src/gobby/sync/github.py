@@ -156,16 +156,27 @@ class GitHubSyncService:
         if state:
             args["state"] = state
 
-        result = await self._call_github_mcp("list_issues", args)
-        if isinstance(result, list):
-            issues = result
-        elif isinstance(result, dict):
-            issues = result.get("issues", [])
-        else:
-            raise GitHubSyncError(
-                "Invalid response from GitHub MCP when listing issues: "
-                f"expected list or dict, got {type(result).__name__}"
+        issues: list[dict[str, Any]] = []
+        page = 1
+        page_size = 100
+        while True:
+            result = await self._call_github_mcp(
+                "list_issues",
+                {**args, "page": page, "per_page": page_size},
             )
+            if isinstance(result, list):
+                page_issues = result
+            elif isinstance(result, dict):
+                page_issues = result.get("issues", [])
+            else:
+                raise GitHubSyncError(
+                    "Invalid response from GitHub MCP when listing issues: "
+                    f"expected list or dict, got {type(result).__name__}"
+                )
+            issues.extend(page_issues)
+            if len(page_issues) < page_size:
+                break
+            page += 1
         imported = []
         updated = []
 

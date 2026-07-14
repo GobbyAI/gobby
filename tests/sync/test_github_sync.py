@@ -171,6 +171,27 @@ class TestGitHubSyncServiceImport:
         calls = mock_mcp_manager.call_tool.call_args_list
         assert any("github" in str(call) for call in calls)
 
+    async def test_import_issues_paginates_until_short_page(
+        self, sync_service, mock_mcp_manager, mock_task_manager
+    ):
+        """import_github_issues imports every page of GitHub issues."""
+        first_page = [{"number": number, "title": f"Issue {number}"} for number in range(1, 101)]
+        second_page = [{"number": 101, "title": "Issue 101"}]
+        mock_mcp_manager.call_tool.side_effect = [
+            {"issues": first_page},
+            {"issues": second_page},
+        ]
+
+        imported = await sync_service.import_github_issues(repo="owner/repo")
+
+        assert len(imported) == 101
+        assert mock_task_manager.create_task.call_count == 101
+        page_args = [call.kwargs["arguments"] for call in mock_mcp_manager.call_tool.call_args_list]
+        assert [(args["page"], args["per_page"]) for args in page_args] == [
+            (1, 100),
+            (2, 100),
+        ]
+
     @pytest.mark.asyncio
     async def test_import_issues_creates_tasks(
         self, sync_service, mock_mcp_manager, mock_task_manager
