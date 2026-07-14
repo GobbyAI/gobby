@@ -85,6 +85,8 @@ class BuildRequest(BaseModel):
 class BuildControlRequest(BaseModel):
     """Request body for POST /api/build/{stop,resume,clean,restart}."""
 
+    model_config = ConfigDict(extra="forbid")
+
     input_ref: str | None = None
     project_id: str | None = None
     cwd: str | None = None
@@ -134,20 +136,6 @@ _RESTART_OPTION_FIELDS = frozenset(
         "coordinator",
     }
 )
-
-
-def _build_control_default(field_name: str) -> Any:
-    field = BuildControlRequest.model_fields[field_name]
-    return field.get_default(call_default_factory=True)
-
-
-def _restart_option_field_was_supplied(
-    request_data: BuildControlRequest,
-    field_name: str,
-) -> bool:
-    return field_name in request_data.model_fields_set and getattr(
-        request_data, field_name
-    ) != _build_control_default(field_name)
 
 
 def _existing_directory(value: str | None, *, field_name: str) -> Path | None:
@@ -250,10 +238,7 @@ def _restart_options(request_data: BuildControlRequest) -> BuildOptions:
 
 
 def _restart_options_were_supplied(request_data: BuildControlRequest) -> bool:
-    return any(
-        _restart_option_field_was_supplied(request_data, field_name)
-        for field_name in _RESTART_OPTION_FIELDS
-    )
+    return bool(request_data.model_fields_set & _RESTART_OPTION_FIELDS)
 
 
 def _project_was_explicit(request_data: BuildRequest | BuildControlRequest) -> bool:

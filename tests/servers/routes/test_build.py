@@ -603,7 +603,41 @@ def test_post_api_build_restart_forwards_destructive_flags() -> None:
     ] == [("planning", 99, 99)]
 
 
-def test_post_api_build_restart_explicit_default_options_do_not_create_opts() -> None:
+def test_post_api_build_control_rejects_unknown_fields() -> None:
+    response = _client().post(
+        "/api/build/stop",
+        json={"unknown_option": True},
+    )
+
+    assert response.status_code == 422
+
+
+def test_post_api_build_restart_omitted_options_do_not_create_opts() -> None:
+    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+
+    target_result = BuildTargetControlResult(
+        action="restart",
+        project_id="project-1",
+        root_task_id="task-1",
+        affected_tasks=[
+            BuildTaskSummary("task-1", "#1", "Task", "task"),
+        ],
+    )
+
+    with patch(
+        "gobby.servers.routes.build.build_restart_target",
+        new=AsyncMock(return_value=target_result),
+    ) as restart:
+        response = _client().post(
+            "/api/build/restart",
+            json={"input_ref": "#1"},
+        )
+
+    assert response.status_code == 200
+    assert restart.call_args.kwargs["opts"] is None
+
+
+def test_post_api_build_restart_explicit_default_options_create_opts() -> None:
     from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
 
     target_result = BuildTargetControlResult(
@@ -634,7 +668,12 @@ def test_post_api_build_restart_explicit_default_options_do_not_create_opts() ->
         )
 
     assert response.status_code == 200
-    assert restart.call_args.kwargs["opts"] is None
+    opts = restart.call_args.kwargs["opts"]
+    assert opts is not None
+    assert opts.skip_stages == []
+    assert opts.isolation == "worktree"
+    assert opts.no_merge is False
+    assert opts.max_retries is None
 
 
 def test_post_api_build_restart_empty_pr_creates_opts() -> None:
