@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from websockets.exceptions import ConnectionClosedOK
@@ -179,6 +179,32 @@ class TestTmuxAttach:
         errors = ws.messages_of_type("error")
         assert len(errors) == 1
         assert "not found" in errors[0]["message"].lower()
+
+    @pytest.mark.asyncio
+    async def test_attach_configures_session_through_manager(self, server: WebSocketServer) -> None:
+        ws = MockWebSocket()
+        reader = MagicMock(start_reader=AsyncMock())
+        manager = server._tmux_mgr_default
+
+        with (
+            patch.object(manager, "has_session", new_callable=AsyncMock, return_value=True),
+            patch.object(manager, "set_option", new_callable=AsyncMock) as set_option,
+            patch.object(manager, "refresh_client", new_callable=AsyncMock) as refresh_client,
+            patch.object(server._tmux_bridge, "attach", new_callable=AsyncMock, return_value=42),
+            patch("gobby.agents.pty_reader.get_pty_reader_manager", return_value=reader),
+        ):
+            await server._handle_tmux_attach(ws, {"session_name": "demo"})
+
+        set_option.assert_has_awaits([call("demo", "status", "off"), call("demo", "mouse", "on")])
+        refresh_client.assert_awaited_once_with("demo")
+        reader.start_reader.assert_awaited_once()
+        response = ws.last_message()
+        assert response["success"] is True
+        assert response["session_name"] == "demo"
+        assert response["socket"] == "default"
+        streaming_id = response["streaming_id"]
+        assert streaming_id.startswith("tmux-")
+        assert streaming_id in server._tmux_client_bridges[ws]
 
 
 class TestTmuxDetach:
@@ -405,6 +431,38 @@ class TestTmuxResize:
             mock_resize.assert_called_once_with("s1", 24, 80)
             assert mock_resize.call_count == 1
             assert mock_resize.call_args is not None
+
+    @pytest.mark.asyncio
+    async def test_resize_refreshes_through_manager(self, server: WebSocketServer) -> None:
+        ws = MockWebSocket()
+        bridge = MagicMock(socket_name="gobby", session_name="demo")
+
+        with (
+            patch.object(
+                server._tmux_bridge, "resize", new_callable=AsyncMock, return_value=bridge
+            ),
+            patch.object(
+                server._tmux_mgr_gobby, "refresh_client", new_callable=AsyncMock
+            ) as refresh_client,
+        ):
+            await server._handle_tmux_resize(ws, {"streaming_id": "s1", "rows": 24, "cols": 80})
+
+        refresh_client.assert_awaited_once_with("demo")
+        assert ws.sent_messages == []
+
+
+class TestTmuxRefreshClient:
+    @pytest.mark.asyncio
+    async def test_refreshes_through_manager(self, server: WebSocketServer) -> None:
+        ws = MockWebSocket()
+
+        with patch.object(
+            server._tmux_mgr_default, "refresh_client", new_callable=AsyncMock
+        ) as refresh_client:
+            await server._handle_tmux_refresh_client(ws, {"session_name": "demo"})
+
+        refresh_client.assert_awaited_once_with("demo")
+        assert ws.sent_messages == []
 
 
 class TestTmuxClientCleanup:
