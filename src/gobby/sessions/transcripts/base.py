@@ -148,7 +148,7 @@ class ParsedMessage:
 
     index: int
     role: str
-    content: str
+    content: str | dict[str, Any]
     content_type: str  # text, thinking, tool_use, tool_result
     tool_name: str | None
     tool_input: dict[str, Any] | None

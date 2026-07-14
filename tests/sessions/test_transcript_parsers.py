@@ -763,6 +763,33 @@ class TestClaudeExpandLine:
         assert msgs[0].content == "Hello"
         assert msgs[0].content_type == "text"
 
+    def test_expand_user_image_and_document_blocks(self, parser) -> None:
+        image_source = {"type": "base64", "media_type": "image/png", "data": "abc"}
+        document_source = {"type": "base64", "media_type": "application/pdf", "data": "pdf"}
+        line = json.dumps(
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {"type": "image", "source": image_source},
+                        {"type": "document", "source": document_source, "title": "notes.pdf"},
+                    ]
+                },
+                "timestamp": "2024-01-01T12:00:00Z",
+            }
+        )
+
+        msgs = parser._expand_line(line, 0)
+        rendered = render_transcript(msgs)
+
+        assert [msg.content_type for msg in msgs] == ["image", "document"]
+        assert msgs[0].content == image_source
+        assert msgs[1].content == {**document_source, "name": "notes.pdf"}
+        blocks = [block for message in rendered for block in message.content_blocks]
+        assert [block.type for block in blocks] == ["image", "document"]
+        assert blocks[0].source == image_source
+        assert blocks[1].source == {**document_source, "name": "notes.pdf"}
+
     def test_expand_user_tool_result_blocks(self, parser) -> None:
         """User message with tool_result blocks produces tool_result messages."""
         line = json.dumps(

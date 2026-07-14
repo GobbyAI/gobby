@@ -318,6 +318,7 @@ def _process_message_block(
             block.tool_calls = [tool_call]
             if msg.tool_use_id:
                 state.pending_tool_calls[msg.tool_use_id] = tool_call
+                state.tool_call_messages[msg.tool_use_id] = state.current_message
 
         state.current_message.content_blocks.append(block)
 
