@@ -22,6 +22,10 @@ logger = logging.getLogger(__name__)
 RETIRED_SYSTEM_CRON_JOBS = ("gobby:conductor-tick",)
 
 
+class _CronDependencyUnavailable(Exception):
+    """Stop cron setup after a required dependency already logged its failure."""
+
+
 async def _send_tmux_session_wake(
     tmux_session_name: str,
     message: str,
@@ -212,30 +216,47 @@ def init_orchestration(runner: GobbyRunner) -> None:
     runner.cron_scheduler = None
     runner.system_automation_loop = None
     try:
-        from gobby.scheduler.executor import CronExecutor
-        from gobby.scheduler.scheduler import CronScheduler
-        from gobby.storage.cron import CronJobStorage
-        from gobby.system_automation import SystemAutomationLoop
+        try:
+            from gobby.storage.cron import CronJobStorage
 
-        runner.cron_storage = CronJobStorage(runner.database)
-        cron_executor = CronExecutor(
-            storage=runner.cron_storage,
-            agent_runner=runner.agent_runner,
-            pipeline_executor=runner.pipeline_executor,
-            services=runner,
-            config=runner.config.cron,
-            run_db=runner.db_executor.run,
-        )
+            runner.cron_storage = CronJobStorage(runner.database)
+        except Exception:
+            mark_service_degraded(runner, "cron_storage")
+            logger.exception("Failed to initialize CronJobStorage")
+            raise _CronDependencyUnavailable from None
+
+        try:
+            from gobby.scheduler.executor import CronExecutor
+
+            cron_executor = CronExecutor(
+                storage=runner.cron_storage,
+                agent_runner=runner.agent_runner,
+                pipeline_executor=runner.pipeline_executor,
+                services=runner,
+                config=runner.config.cron,
+                run_db=runner.db_executor.run,
+            )
+        except Exception:
+            mark_service_degraded(runner, "cron_executor")
+            logger.exception("Failed to initialize CronExecutor")
+            raise _CronDependencyUnavailable from None
+
         pipeline_heartbeat = _init_pipeline_heartbeat(runner)
 
-        runner.system_automation_loop = SystemAutomationLoop(
-            db=runner.database,
-            config=runner.config,
-            services=runner,
-            config_store=runner.config_store,
-            pipeline_heartbeat=pipeline_heartbeat,
-            run_db=runner.db_executor.run,
-        )
+        try:
+            from gobby.system_automation import SystemAutomationLoop
+
+            runner.system_automation_loop = SystemAutomationLoop(
+                db=runner.database,
+                config=runner.config,
+                services=runner,
+                config_store=runner.config_store,
+                pipeline_heartbeat=pipeline_heartbeat,
+                run_db=runner.db_executor.run,
+            )
+        except Exception:
+            mark_service_degraded(runner, "system_automation_loop")
+            logger.exception("Failed to initialize SystemAutomationLoop")
 
         for job_name in RETIRED_SYSTEM_CRON_JOBS:
             try:
@@ -460,16 +481,26 @@ def init_orchestration(runner: GobbyRunner) -> None:
                 "Skipping code index maintenance registration; code indexer is unavailable"
             )
 
-        runner.cron_scheduler = CronScheduler(
-            storage=runner.cron_storage,
-            executor=cron_executor,
-            config=runner.config.cron,
-            run_db=runner.db_executor.run,
-        )
-        logger.debug("CronScheduler initialized")
+        try:
+            from gobby.scheduler.scheduler import CronScheduler
+
+            runner.cron_scheduler = CronScheduler(
+                storage=runner.cron_storage,
+                executor=cron_executor,
+                config=runner.config.cron,
+                run_db=runner.db_executor.run,
+            )
+            logger.debug("CronScheduler initialized")
+        except Exception:
+            runner.system_automation_loop = None
+            mark_service_degraded(runner, "cron_scheduler")
+            logger.exception("Failed to initialize CronScheduler")
+    except _CronDependencyUnavailable:
+        pass
     except Exception:
+        runner.system_automation_loop = None
         mark_service_degraded(runner, "cron_scheduler")
-        logger.exception("Failed to initialize CronScheduler")
+        logger.exception("Failed to register cron handlers")
 
     if runner.memory_manager is not None:
         try:

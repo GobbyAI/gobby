@@ -14,6 +14,7 @@ from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.config.tasks import GobbyTasksConfig, TaskExpansionConfig, TaskValidationConfig
 from gobby.runner import GobbyRunner
 from gobby.runner_init.orchestration import _send_tmux_pane_wake, _send_tmux_session_wake
+from gobby.runner_lifecycle_subsystems import _start_system_automation_loop
 from gobby.telemetry.span_store import GobbySpanExporter
 from tests.runner_helpers import (
     apply_safe_runner_config_defaults,
@@ -155,6 +156,7 @@ class TestGobbyRunnerInit:
         with (
             patch("gobby.runner_init.storage.load_config", return_value=mock_config),
             patch("gobby.runner_init.storage.init_telemetry"),
+            patch("gobby.runner_init.storage.setup_file_logging"),
             patch("gobby.runner_init.storage.get_machine_id", return_value="test-machine"),
             patch("gobby.runner_init.storage.init_hub_database", return_value=mock_db),
             patch("gobby.storage.secrets.SecretStore", return_value=mock_store),
@@ -843,6 +845,81 @@ class TestGobbyRunnerInitialization:
                 if record.message == "Failed to initialize LLM service"
             )
             assert llm_error.exc_info is not None
+
+
+class TestCronInitializationFailures:
+    @pytest.mark.parametrize(
+        ("failed_target", "expected_message"),
+        [
+            ("gobby.storage.cron.CronJobStorage", "Failed to initialize CronJobStorage"),
+            ("gobby.scheduler.executor.CronExecutor", "Failed to initialize CronExecutor"),
+            (
+                "gobby.system_automation.SystemAutomationLoop",
+                "Failed to initialize SystemAutomationLoop",
+            ),
+            ("gobby.scheduler.scheduler.CronScheduler", "Failed to initialize CronScheduler"),
+        ],
+    )
+    def test_each_component_logs_its_own_failure_with_traceback(
+        self,
+        failed_target: str,
+        expected_message: str,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mock_config = MagicMock()
+        patches = create_base_patches(mock_config=mock_config)
+        cron_targets = [
+            "gobby.storage.cron.CronJobStorage",
+            "gobby.scheduler.executor.CronExecutor",
+            "gobby.system_automation.SystemAutomationLoop",
+            "gobby.scheduler.scheduler.CronScheduler",
+        ]
+
+        with ExitStack() as stack:
+            for patch_context in patches:
+                stack.enter_context(patch_context)
+            constructors = {target: stack.enter_context(patch(target)) for target in cron_targets}
+            constructors[failed_target].side_effect = RuntimeError("component failed")
+
+            GobbyRunner()
+
+        matching_records = [
+            record for record in caplog.records if record.getMessage() == expected_message
+        ]
+        assert len(matching_records) == 1
+        assert matching_records[0].exc_info is not None
+
+    @pytest.mark.asyncio
+    async def test_scheduler_failure_prevents_automation_loop_start(self) -> None:
+        mock_config = MagicMock()
+        patches = create_base_patches(mock_config=mock_config)
+        automation_loop = MagicMock()
+        automation_loop.start = AsyncMock()
+
+        with ExitStack() as stack:
+            for patch_context in patches:
+                stack.enter_context(patch_context)
+            stack.enter_context(patch("gobby.storage.cron.CronJobStorage"))
+            stack.enter_context(patch("gobby.scheduler.executor.CronExecutor"))
+            stack.enter_context(
+                patch(
+                    "gobby.system_automation.SystemAutomationLoop",
+                    return_value=automation_loop,
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "gobby.scheduler.scheduler.CronScheduler",
+                    side_effect=RuntimeError("scheduler failed"),
+                )
+            )
+
+            runner = GobbyRunner()
+            await _start_system_automation_loop(runner, tracker=None)
+
+        assert runner.cron_scheduler is None
+        assert runner.system_automation_loop is None
+        automation_loop.start.assert_not_awaited()
 
 
 class TestGobbyRunnerInitEdgeCases:
