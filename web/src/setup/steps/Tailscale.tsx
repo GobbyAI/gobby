@@ -2,7 +2,6 @@ import React, { useState } from "react";
 import { Text, Box } from "ink";
 import SelectInput from "ink-select-input";
 import { spawnSync } from "child_process";
-import { setBindHost } from "../utils/config.js";
 import { StatusMessage } from "../components/StatusMessage.js";
 import { saveState } from "../utils/state.js";
 import type { StepProps } from "../types.js";
@@ -52,7 +51,6 @@ export function Tailscale({ state, setState, onNext }: StepProps): React.ReactEl
             );
 
             if (r.status === 0) {
-              setBindHost("0.0.0.0");
               setResult("success");
               finish(true);
             } else {

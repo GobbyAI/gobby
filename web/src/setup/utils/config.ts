@@ -46,9 +46,3 @@ export function patchPorts(
   data.ui_port = uiPort;
   writeBootstrap(data);
 }
-
-export function setBindHost(host: string): void {
-  const data = readBootstrap();
-  data.bind_host = host;
-  writeBootstrap(data);
-}
