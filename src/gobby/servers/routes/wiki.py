@@ -201,7 +201,10 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
         if not urls and not paths:
             raise HTTPException(status_code=400, detail="Provide path, paths, or urls")
 
-        gateway = await _gateway(server, project, topic)
+        resolved = await _resolve_scope(server, project, topic)
+        if paths:
+            paths = _resolve_ingest_paths(paths, resolved.project_root)
+        gateway = _gateway_from_scope(resolved)
         if urls and paths:
             result = await _ingest_mixed(gateway, urls, paths)
         elif urls:
@@ -513,6 +516,23 @@ def _ingest_paths(request: dict[str, Any]) -> list[str]:
     if path is not None:
         paths.insert(0, _required_string(path, "path must be a string"))
     return paths
+
+
+def _resolve_ingest_paths(paths: list[str], project_root: Path | None) -> list[str]:
+    if project_root is None:
+        raise HTTPException(status_code=400, detail="Project scope is required for path ingestion")
+
+    root = project_root.resolve()
+    resolved_paths: list[str] = []
+    for path in paths:
+        source = Path(path).expanduser()
+        if source.is_absolute():
+            raise HTTPException(status_code=403, detail="Ingest path must stay inside project")
+        resolved = (root / source).resolve()
+        if not resolved.is_relative_to(root):
+            raise HTTPException(status_code=403, detail="Ingest path must stay inside project")
+        resolved_paths.append(str(resolved))
+    return resolved_paths
 
 
 async def _ingest_many(gateway: GwikiGateway, paths: list[str]) -> dict[str, Any]:
