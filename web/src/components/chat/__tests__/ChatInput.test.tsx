@@ -453,7 +453,7 @@ describe('ChatInput', () => {
     expect(screen.queryByLabelText('Start push to talk')).toBeNull()
   })
 
-  it('short tap latches recording and second tap stops it', () => {
+  it('short tap latches recording and keeps the stop affordance after typing', () => {
     vi.useFakeTimers()
     const onStopRecording = vi.fn()
     render(<PTTHarness onStopRecording={onStopRecording} />)
@@ -463,6 +463,8 @@ describe('ChatInput', () => {
 
     fireEvent.pointerDown(button, { pointerId: 1, button: 0 })
     fireEvent.pointerUp(button, { pointerId: 1 })
+
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'hello' } })
 
     const recordingButton = screen.getByLabelText('Push to talk recording') as HTMLButtonElement
     installPointerHelpers(recordingButton)

@@ -44,7 +44,7 @@ export function useChatInputPrimaryAction({
 
   const primaryButtonKind: ChatInputPrimaryButtonKind = isStreaming
     ? 'stop'
-    : pttEnabled && !hasInput
+    : pttEnabled && (isRecording || !hasInput)
       ? isRecording
         ? 'mic-recording'
         : 'mic-idle'
