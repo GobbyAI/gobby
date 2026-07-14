@@ -595,6 +595,49 @@ class TestListBranches:
             # _run_git should only be called for the first request (3 calls)
             assert mock_git.call_count == 3
 
+    def test_branches_does_not_cache_partial_result_after_git_failure(
+        self, client, mock_server
+    ) -> None:
+        """A partial branch list is retried after an expected git failure."""
+        mock_server.services.worktree_storage = None
+
+        current_result = MagicMock(returncode=0, stdout="main\n")
+        local_result = MagicMock(returncode=0, stdout="main\t\t\t2025-01-01\n")
+        remote_result = MagicMock(
+            returncode=0,
+            stdout="origin/develop\t2025-01-02\n",
+        )
+
+        with (
+            patch(
+                "gobby.servers.routes.source_control._resolve_project",
+                return_value=("/tmp/repo", None),
+            ),
+            patch(
+                "gobby.servers.routes.source_control._run_git",
+                new_callable=AsyncMock,
+                side_effect=[
+                    current_result,
+                    local_result,
+                    subprocess.TimeoutExpired("git", 15),
+                    current_result,
+                    local_result,
+                    remote_result,
+                ],
+            ) as mock_git,
+        ):
+            partial_response = client.get("/api/source-control/branches")
+            retried_response = client.get("/api/source-control/branches")
+
+        assert partial_response.status_code == 200
+        assert [branch["name"] for branch in partial_response.json()["branches"]] == ["main"]
+        assert retried_response.status_code == 200
+        assert [branch["name"] for branch in retried_response.json()["branches"]] == [
+            "main",
+            "develop",
+        ]
+        assert mock_git.call_count == 6
+
     def test_branches_skips_remote_head(self, client, mock_server) -> None:
         """origin/HEAD should be excluded from remote branches."""
         mock_server.services.worktree_storage = None

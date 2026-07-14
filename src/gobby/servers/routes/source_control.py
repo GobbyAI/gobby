@@ -299,8 +299,9 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
                         }
                     )
 
-        except (subprocess.TimeoutExpired, Exception) as e:
+        except (subprocess.SubprocessError, OSError) as e:
             logger.warning(f"Failed to list branches: {e}")
+            return {"branches": branches, "current_branch": current_branch}
 
         result = {"branches": branches, "current_branch": current_branch}
         _set_cached(cache_key, result)
