@@ -538,8 +538,8 @@ class TestClaudeRecordEnvelopes:
     """Record-level envelope handling: session-metadata records are recognized
     and not surfaced as cards, compaction boundaries are first-classed, and a
     genuinely-unknown record type becomes a non-rendering sentinel
-    (content_type=unmodeled_record) routed to the T2 observation worklist at
-    render time, replacing the parser-error.log stopgap."""
+    (content_type=unmodeled_record) routed to the T2 observation worklist while
+    also being recorded in parser-error.log."""
 
     @pytest.fixture
     def parser(self):
@@ -692,10 +692,8 @@ class TestClaudeRecordEnvelopes:
         assert len(msgs) == 1
         assert msgs[0].content == "Conversation compacted"
 
-    def test_unknown_record_type_emits_sentinel_not_logged(self, parser, monkeypatch) -> None:
-        """The genuinely-unknown record becomes a non-rendering sentinel via
-        BOTH _expand_line and parse_line, and is NO LONGER sent to the
-        parser-error.log discovery channel (the T2 worklist replaces it)."""
+    def test_unknown_record_type_emits_sentinel_and_logs(self, parser, monkeypatch) -> None:
+        """Unknown records use both discovery channels and remain non-rendering."""
         calls: list[tuple] = []
         monkeypatch.setattr(
             parser.error_log,
@@ -725,7 +723,8 @@ class TestClaudeRecordEnvelopes:
         assert single.content == "brand-new-envelope"
         assert single.raw_json == data
 
-        assert calls == []  # parser-error.log discovery channel no longer used
+        expected_call = ((0, "probe", "brand-new-envelope", data), {})
+        assert calls == [expected_call, expected_call]
 
     def test_block_level_unknown_content_still_passes_through(self, parser) -> None:
         """Regression guard: record-level changes must not disturb block-level

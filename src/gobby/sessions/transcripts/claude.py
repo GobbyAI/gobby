@@ -673,9 +673,7 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             pass
 
         else:
-            # Genuinely-unknown record type: emit a non-rendering sentinel so the
-            # discovery signal reaches the T2 observation worklist at render time
-            # (no card, no group), replacing the parser-error.log stopgap.
+            self.error_log.log_unknown_block(index, self.session_id, msg_type, data)
             results.append(
                 _make_unmodeled_record(
                     index=index, msg_type=msg_type, data=data, timestamp=timestamp
@@ -832,9 +830,7 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             return None  # known session-metadata envelope record — not rendered
 
         else:
-            # Genuinely-unknown record type: emit a non-rendering sentinel so the
-            # discovery signal reaches the T2 observation worklist at render time
-            # (no card), replacing the parser-error.log stopgap.
+            self.error_log.log_unknown_block(index, self.session_id, msg_type, data)
             return _make_unmodeled_record(
                 index=index, msg_type=msg_type, data=data, timestamp=timestamp
             )
