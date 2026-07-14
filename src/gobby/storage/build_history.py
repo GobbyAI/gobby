@@ -288,15 +288,18 @@ class BuildHistoryStorage:
         ancestor_rows = self.db.fetchall(
             """
             -- Walk the task hierarchy so coordinator sessions on any parent task are considered.
-            WITH RECURSIVE ancestors(id, parent_task_id) AS (
-                SELECT id, parent_task_id
+            WITH RECURSIVE ancestors(id, parent_task_id, depth, path) AS (
+                SELECT id, parent_task_id, 0, ARRAY[id]
                   FROM tasks
                  WHERE id = %s AND project_id = %s
                 UNION ALL
-                SELECT parent.id, parent.parent_task_id
+                SELECT parent.id, parent.parent_task_id, child.depth + 1,
+                       child.path || parent.id
                   FROM tasks parent
                   JOIN ancestors child ON child.parent_task_id = parent.id
                  WHERE parent.project_id = %s
+                   AND child.depth < 100
+                   AND NOT parent.id = ANY(child.path)
             )
             SELECT id FROM ancestors
             """,

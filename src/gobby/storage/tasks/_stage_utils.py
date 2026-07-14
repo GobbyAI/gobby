@@ -192,10 +192,16 @@ def _cascade_close_descendants(
 ) -> None:
     conn.execute(
         """
-        WITH RECURSIVE subtree(id) AS (
-            SELECT id FROM tasks WHERE parent_task_id = %s
+        WITH RECURSIVE subtree(id, depth, path) AS (
+            SELECT id, 1, ARRAY[parent_task_id, id]
+              FROM tasks
+             WHERE parent_task_id = %s
             UNION ALL
-            SELECT tasks.id FROM tasks JOIN subtree ON tasks.parent_task_id = subtree.id
+            SELECT tasks.id, subtree.depth + 1, subtree.path || tasks.id
+              FROM tasks
+              JOIN subtree ON tasks.parent_task_id = subtree.id
+             WHERE subtree.depth < 100
+               AND NOT tasks.id = ANY(subtree.path)
         )
         UPDATE tasks
            SET closed_at = %s,

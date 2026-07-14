@@ -11,6 +11,8 @@ from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
+MAX_TASK_HIERARCHY_DEPTH = 100
+
 
 def compute_path_cache(db: HubDatabase, task_id: str) -> str | None:
     """Compute the hierarchical path for a task.
@@ -30,11 +32,14 @@ def compute_path_cache(db: HubDatabase, task_id: str) -> str | None:
     path_parts: list[str] = []
     current_id: str | None = task_id
 
-    # Safety limit to prevent infinite loops (max 100 levels deep)
-    max_depth = 100
+    visited: set[str] = set()
     depth = 0
 
-    while current_id and depth < max_depth:
+    while current_id and depth < MAX_TASK_HIERARCHY_DEPTH:
+        if current_id in visited:
+            logger.warning("Task %s has a cycle in its parent chain at %s", task_id, current_id)
+            return None
+        visited.add(current_id)
         row = db.fetchone(
             "SELECT seq_num, parent_task_id FROM tasks WHERE id = %s",
             (current_id,),
@@ -52,8 +57,12 @@ def compute_path_cache(db: HubDatabase, task_id: str) -> str | None:
         current_id = row["parent_task_id"]
         depth += 1
 
-    if depth >= max_depth:
-        logger.warning(f"Task {task_id} exceeded max depth ({max_depth}) when computing path")
+    if current_id is not None:
+        logger.warning(
+            "Task %s exceeded max depth (%s) when computing path",
+            task_id,
+            MAX_TASK_HIERARCHY_DEPTH,
+        )
         return None
 
     # Reverse to get root-to-leaf order
@@ -93,18 +102,25 @@ def update_descendant_paths(db: HubDatabase, task_id: str) -> int:
     Returns:
         Number of tasks updated
     """
-    updated_count = 0
+    task_ids: list[str] = []
+    pending: list[tuple[str, int]] = [(task_id, 0)]
+    visited: set[str] = set()
 
-    # Update the task itself
-    if update_path_cache(db, task_id):
-        updated_count += 1
+    while pending:
+        current_id, depth = pending.pop()
+        if current_id in visited:
+            raise ValueError(f"Cycle detected while updating descendant paths at task {current_id}")
+        if depth >= MAX_TASK_HIERARCHY_DEPTH:
+            raise ValueError(
+                f"Task hierarchy exceeded max depth ({MAX_TASK_HIERARCHY_DEPTH}) "
+                f"while updating descendants of {task_id}"
+            )
+        visited.add(current_id)
+        task_ids.append(current_id)
+        children = db.fetchall(
+            "SELECT id FROM tasks WHERE parent_task_id = %s",
+            (current_id,),
+        )
+        pending.extend((str(child["id"]), depth + 1) for child in children)
 
-    # Find and update all descendants (recursive)
-    children = db.fetchall(
-        "SELECT id FROM tasks WHERE parent_task_id = %s",
-        (task_id,),
-    )
-    for child in children:
-        updated_count += update_descendant_paths(db, child["id"])
-
-    return updated_count
+    return sum(update_path_cache(db, current_id) is not None for current_id in task_ids)

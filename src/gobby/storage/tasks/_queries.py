@@ -96,13 +96,18 @@ def _external_blocker_exists_sql(task_alias: str = "t") -> str:
           AND d.dep_type = 'blocks'
           AND blocker.closed_at IS NULL
           AND NOT EXISTS (
-              WITH RECURSIVE ancestors AS (
-                  SELECT blocker.parent_task_id AS ancestor_id
+              WITH RECURSIVE ancestors(ancestor_id, path, depth) AS (
+                  SELECT blocker.parent_task_id,
+                         ARRAY[blocker.id, blocker.parent_task_id],
+                         1
+                  WHERE blocker.parent_task_id IS NOT NULL
                   UNION ALL
-                  SELECT p.parent_task_id
+                  SELECT p.parent_task_id, a.path || p.parent_task_id, a.depth + 1
                   FROM tasks p
                   JOIN ancestors a ON p.id = a.ancestor_id
                   WHERE p.parent_task_id IS NOT NULL
+                    AND a.depth < 100
+                    AND NOT p.parent_task_id = ANY(a.path)
               )
               SELECT 1 FROM ancestors WHERE ancestor_id = {task_alias}.id
           )
@@ -259,9 +264,9 @@ def list_ready_tasks(
     """
     # Use recursive CTE to find tasks with ready parent chains
     query = f"""
-    WITH RECURSIVE ready_tasks AS (
+    WITH RECURSIVE ready_tasks(id, path, depth) AS (
         -- Base case: open/in_progress tasks with no parent and no external blocking deps
-        SELECT t.id FROM tasks t
+        SELECT t.id, ARRAY[t.id], 0 FROM tasks t
         {_current_stage_join_sql("t")}
         WHERE {_not_closed_or_escalated_sql("t")}
         AND (
@@ -276,7 +281,7 @@ def list_ready_tasks(
         UNION ALL
 
         -- Recursive case: open/in_progress tasks whose parent is ready and no external blocking deps
-        SELECT t.id FROM tasks t
+        SELECT t.id, rt.path || t.id, rt.depth + 1 FROM tasks t
         JOIN ready_tasks rt ON t.parent_task_id = rt.id
         {_current_stage_join_sql("t")}
         WHERE {_not_closed_or_escalated_sql("t")}
@@ -287,6 +292,8 @@ def list_ready_tasks(
             )
         )
         AND {_no_external_blocker_sql("t")}
+        AND rt.depth < 100
+        AND NOT t.id = ANY(rt.path)
     )
     SELECT t.* FROM tasks t
     JOIN ready_tasks rt ON t.id = rt.id

@@ -105,14 +105,16 @@ def _cascade_target_branch_to_subtree(
     with task_manager.db.transaction() as conn:
         conn.execute(
             """
-            WITH RECURSIVE subtree(id) AS (
-                SELECT id
+            WITH RECURSIVE subtree(id, depth, path) AS (
+                SELECT id, 1, ARRAY[parent_task_id, id]
                 FROM tasks
                 WHERE parent_task_id = %s
                 UNION ALL
-                SELECT child.id
+                SELECT child.id, parent.depth + 1, parent.path || child.id
                 FROM tasks child
                 JOIN subtree parent ON child.parent_task_id = parent.id
+                WHERE parent.depth < 100
+                  AND NOT child.id = ANY(parent.path)
             )
             INSERT INTO task_artifacts (task_id, target_branch, updated_at)
             SELECT id, %s, CURRENT_TIMESTAMP

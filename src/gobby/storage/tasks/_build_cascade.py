@@ -52,14 +52,16 @@ def cascade_build_state_to_subtree(
     with db.transaction_immediate(TaskSubtreeCascade(project_id=project_id)) as conn:
         rows = conn.execute(
             """
-            WITH RECURSIVE subtree(id) AS (
-                SELECT id
+            WITH RECURSIVE subtree(id, depth, path) AS (
+                SELECT id, 0, ARRAY[id]
                 FROM tasks
                 WHERE id = %s
                 UNION ALL
-                SELECT child.id
+                SELECT child.id, parent.depth + 1, parent.path || child.id
                 FROM tasks child
                 JOIN subtree parent ON child.parent_task_id = parent.id
+                WHERE parent.depth < 100
+                  AND NOT child.id = ANY(parent.path)
             )
             SELECT id, task_type, closed_at
             FROM tasks

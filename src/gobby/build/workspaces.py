@@ -204,12 +204,14 @@ def _project_repo_path(db: HubDatabase, project_id: str) -> Path:
 def _subtree_tasks(db: HubDatabase, root_task_id: str) -> list[Task]:
     rows = db.fetchall(
         """
-        WITH RECURSIVE subtree(id, depth) AS (
-            SELECT id, 0 FROM tasks WHERE id = %s
+        WITH RECURSIVE subtree(id, depth, path) AS (
+            SELECT id, 0, ARRAY[id] FROM tasks WHERE id = %s
             UNION ALL
-            SELECT child.id, parent.depth + 1
+            SELECT child.id, parent.depth + 1, parent.path || child.id
               FROM tasks child
               JOIN subtree parent ON child.parent_task_id = parent.id
+             WHERE parent.depth < 100
+               AND NOT child.id = ANY(parent.path)
         )
         SELECT tasks.*
           FROM tasks
