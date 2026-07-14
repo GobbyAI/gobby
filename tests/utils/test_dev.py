@@ -49,6 +49,14 @@ class TestIsDevMode:
         (tmp_path / "pyproject.toml").write_text('[project]\nname = "gobby"\n')
         assert is_dev_mode(tmp_path) is True
 
+    def test_true_for_gobby_project_subdirectory(self, tmp_path: Path) -> None:
+        (tmp_path / "src" / "gobby" / "install" / "shared").mkdir(parents=True)
+        (tmp_path / "pyproject.toml").write_text('[project]\nname = "gobby"\n')
+        subdirectory = tmp_path / "src" / "gobby" / "cli"
+        subdirectory.mkdir(parents=True)
+
+        assert is_dev_mode(subdirectory) is True
+
     def test_false_for_random_dir(self, tmp_path: Path) -> None:
         assert is_dev_mode(tmp_path) is False
 

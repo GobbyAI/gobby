@@ -66,4 +66,4 @@ def is_dev_mode(project_path: Path | None = None) -> bool:
         True if the path is inside the gobby source repo
     """
     path = project_path or Path.cwd()
-    return is_gobby_project(path)
+    return any(is_gobby_project(candidate) for candidate in (path, *path.parents))
