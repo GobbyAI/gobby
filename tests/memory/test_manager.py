@@ -666,6 +666,16 @@ class TestUpdateMemory:
         assert updated.tags == ["new", "tags"]
 
     @pytest.mark.asyncio
+    async def test_update_memory_type(self, memory_manager):
+        """Test updating and persisting a memory type."""
+        memory = await memory_manager.create_memory(content="Test", memory_type="fact")
+
+        updated = await memory_manager.update_memory(memory.id, memory_type="preference")
+
+        assert updated.memory_type == "preference"
+        assert memory_manager.get_memory(memory.id).memory_type == "preference"
+
+    @pytest.mark.asyncio
     async def test_update_memory_not_found_raises(self, memory_manager):
         """Test updating non-existent memory raises ValueError."""
         with pytest.raises(ValueError, match="not found"):

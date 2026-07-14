@@ -397,6 +397,7 @@ class MemoryLifecycleService:
         memory_id: str,
         content: str | None = None,
         tags: list[str] | None = None,
+        memory_type: str | None = None,
     ) -> Memory:
         """Update a memory and refresh secondary indices after content revisions."""
         old_memory = (
@@ -409,6 +410,7 @@ class MemoryLifecycleService:
             memory_id=memory_id,
             content=content,
             tags=tags,
+            memory_type=memory_type,
         )
         if old_memory is not None and old_memory.content != result.content:
             await self._refresh_content_indices(old_memory=old_memory, memory=result)
