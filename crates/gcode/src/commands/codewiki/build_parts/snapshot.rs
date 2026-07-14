@@ -84,7 +84,10 @@ pub(crate) fn build_codewiki_index_snapshot(
 
 /// Hash one snapshot source from disk; `Ok(None)` means the file no longer
 /// exists (deleted since indexing) and the caller should skip it (#18109).
-fn hash_snapshot_file(project_root: &Path, file: &str) -> anyhow::Result<Option<String>> {
+pub(crate) fn hash_snapshot_file(
+    project_root: &Path,
+    file: &str,
+) -> anyhow::Result<Option<String>> {
     let canonical_root = project_root
         .canonicalize()
         .map_err(|err| anyhow::anyhow!("failed to resolve codewiki project root: {err}"))?;

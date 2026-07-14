@@ -346,3 +346,33 @@ fn publish_still_fails_on_real_broken_link_after_unmatched_backtick() {
             .contains("has no staged target code/missing.md")
     );
 }
+
+#[test]
+fn fingerprint_skips_sources_missing_from_disk() {
+    // The index can list files deleted (or not yet born on a frozen checkout)
+    // between indexing and the run; fingerprinting must skip them like the
+    // snapshot builder does instead of aborting the run (#18248, cf. #18109).
+    let (_temp, project, _live) = fixture();
+    let fingerprint = PublicationFingerprint::from_run(
+        &project,
+        &[
+            "src/lib.rs".to_string(),
+            "src/deleted_since_indexing.py".to_string(),
+        ],
+        "off",
+        &AiGenerationSettings::default(),
+        CodewikiAiOutcome::default(),
+        CodewikiAiOutcome::default(),
+        &[],
+        None,
+        &CodewikiIndexSnapshot::default(),
+    )
+    .expect("fingerprint must skip missing sources, not abort");
+
+    let json = serde_json::to_value(&fingerprint).expect("serialize fingerprint");
+    let hashes = json["source_hashes"]
+        .as_object()
+        .expect("source_hashes map");
+    assert!(hashes.contains_key("src/lib.rs"));
+    assert!(!hashes.contains_key("src/deleted_since_indexing.py"));
+}
