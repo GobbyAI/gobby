@@ -109,6 +109,7 @@ export const TasksTab = memo(function TasksTab({
   const [taskDependencies, setTaskDependencies] = useState<DependencyTree | null>(null);
   const [taskSubtasks, setTaskSubtasks] = useState<GobbyTask[]>([]);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -151,7 +152,9 @@ export const TasksTab = memo(function TasksTab({
       const response = await fetch(`${baseUrl}/api/tasks?${params}`, {
         signal: controller.signal,
       });
-      if (!response.ok) return [];
+      if (!response.ok) {
+        throw new Error(`Failed to refresh tasks (${response.status})`);
+      }
       const data = await response.json();
       return normalizeTaskPayloads(data.tasks ?? []) as GobbyTask[];
     };
@@ -167,10 +170,15 @@ export const TasksTab = memo(function TasksTab({
         taskList,
         controller.signal,
       );
-      if (!controller.signal.aborted) setTasks(tasksWithAncestors);
+      if (!controller.signal.aborted) {
+        setTasks(tasksWithAncestors);
+        setFetchError(null);
+      }
     })()
       .catch((err) => {
-        if (err.name !== "AbortError") setTasks([]);
+        if (!(err instanceof Error && err.name === "AbortError")) {
+          setFetchError("Failed to refresh tasks");
+        }
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
@@ -623,6 +631,15 @@ export const TasksTab = memo(function TasksTab({
           style={{ color: "var(--color-error)" }}
         >
           {actionError}
+        </div>
+      )}
+      {fetchError && (
+        <div
+          className="px-2.5 py-1.5 border-b border-border text-xs"
+          role="alert"
+          style={{ color: "var(--color-error)" }}
+        >
+          {fetchError}
         </div>
       )}
 

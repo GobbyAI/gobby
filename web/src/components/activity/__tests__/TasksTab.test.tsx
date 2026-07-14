@@ -80,6 +80,30 @@ describe("TasksTab", () => {
     expect(screen.queryByLabelText("Board view")).toBeNull();
   });
 
+  it("keeps the current tasks and selection when a refresh fails", async () => {
+    render(<TasksTab projectId="proj-1" />);
+
+    const selectedTask = await screen.findByText("Open task 2");
+    fireEvent.click(selectedTask);
+    const selectedRow = selectedTask.closest('[role="treeitem"]');
+    expect(selectedRow).toHaveAttribute("aria-selected", "true");
+
+    mockFetch.resetRoutes();
+    mockFetch.mockErrorResponse(/\/api\/tasks\?/, 500);
+
+    fireEvent.click(screen.getByTitle("Filter by task state"));
+    fireEvent.click(screen.getByLabelText("Closed"));
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Failed to refresh tasks",
+      );
+    });
+    expect(screen.getByText("Open task 2")).toBeTruthy();
+    expect(selectedRow).toHaveAttribute("aria-selected", "true");
+  });
+
   it("checks all stage filters by default and narrows by deselection", async () => {
     render(<TasksTab projectId="proj-1" />);
 
