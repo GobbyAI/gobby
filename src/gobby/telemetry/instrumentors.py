@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ def setup_llm_instrumentors(
         capture_content: Whether to capture prompt/completion content in spans.
         providers: List of provider names to instrument. Defaults to all known.
     """
+    os.environ["TRACELOOP_TRACE_CONTENT"] = str(capture_content).lower()
     target_providers = providers or list(_INSTRUMENTOR_MAP.keys())
 
     for provider in target_providers:
@@ -56,7 +58,8 @@ def setup_llm_instrumentors(
         try:
             mod = importlib.import_module(module_path)
             instrumentor_cls = getattr(mod, class_name)
-            instrumentor_cls().instrument(enrich_token_usage=True, capture_content=capture_content)
+            constructor_kwargs = {"enrich_token_usage": True} if provider == "anthropic" else {}
+            instrumentor_cls(**constructor_kwargs).instrument()
             _instrumented.add(provider)
             logger.info(f"Activated LLM instrumentor for {provider}")
         except ImportError:
