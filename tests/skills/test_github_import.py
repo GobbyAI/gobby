@@ -442,3 +442,23 @@ Content
             loader.load_from_github("https://github.com/owner/repo/tree/main/linked-skill")
 
         mock_load.assert_not_called()
+
+    def test_load_from_github_rejects_symlinked_root_skill_file(self, tmp_path) -> None:
+        """A repository root SKILL.md symlink is rejected before parsing."""
+        from gobby.skills.loader import SkillLoader, SkillLoadError
+
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        outside_skill = tmp_path / "outside-skill.md"
+        outside_skill.write_text("host file must not be read")
+        (repo_path / "SKILL.md").symlink_to(outside_skill)
+        loader = SkillLoader()
+
+        with (
+            patch("gobby.skills.loader.clone_skill_repo", return_value=repo_path),
+            patch("gobby.skills.loader.parse_skill_file") as mock_parse,
+            pytest.raises(SkillLoadError, match="must not be a symlink"),
+        ):
+            loader.load_from_github("owner/repo")
+
+        mock_parse.assert_not_called()

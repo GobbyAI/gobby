@@ -113,6 +113,9 @@ class SkillLoader:
                 raise SkillLoadError("SKILL.md not found in directory", path)
             is_directory_load = True
 
+        if skill_file.is_symlink():
+            raise SkillLoadError("SKILL.md must not be a symlink", skill_file)
+
         # Parse the skill file
         try:
             skill = parse_skill_file(skill_file)
