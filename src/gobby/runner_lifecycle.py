@@ -181,11 +181,17 @@ async def run_daemon(runner: GobbyRunner) -> None:
                 if runner._shutdown_requested:
                     return
                 unexpected_server_exit.set()
+                failure_context = (
+                    "HTTP server exited unexpectedly"
+                    if server.started
+                    else "HTTP server failed before binding"
+                )
                 logger.error(
-                    "HTTP server exited unexpectedly (%r); requesting daemon shutdown",
+                    "%s (%r); requesting daemon shutdown",
+                    failure_context,
                     task.result(),
                 )
-                runner.request_shutdown()
+                runner._shutdown_requested = True
 
             server_task.add_done_callback(observe_server_exit)
 

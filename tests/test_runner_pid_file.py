@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from contextlib import ExitStack
 from pathlib import Path
@@ -46,6 +47,7 @@ def test_second_pid_claim_preserves_winners_record(tmp_path: Path) -> None:
 async def test_serve_failure_cleans_up_and_exits_zero_when_winner_is_healthy(
     mock_config: MagicMock,
     tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     patches = create_base_patches(mock_config=mock_config)
     pid_file = tmp_path / "gobby.pid"
@@ -81,8 +83,12 @@ async def test_serve_failure_cleans_up_and_exits_zero_when_winner_is_healthy(
         server_class.return_value = server
         runner = GobbyRunner()
 
-        await runner.run()
+        with caplog.at_level(logging.ERROR, logger="gobby.runner_lifecycle"):
+            await runner.run()
 
     shutdown.assert_awaited_once()
     cleanup_pid_file.assert_called_once()
+    assert runner._shutdown_requested is True
+    assert "HTTP server failed before binding (SystemExit(1))" in caplog.text
+    assert "requesting daemon shutdown" in caplog.text
     assert not pid_file.exists()
