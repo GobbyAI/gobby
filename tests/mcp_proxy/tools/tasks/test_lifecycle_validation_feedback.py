@@ -60,6 +60,9 @@ class _NoBackoffConn:
 class _NoBackoffDB:
     """HubDatabase stub so TaskValidationBackoffStore reads as 'no active backoff'."""
 
+    def fetchone(self, *_args: object, **_kwargs: object) -> None:
+        return None
+
     @contextlib.contextmanager
     def transaction(self) -> Iterator[_NoBackoffConn]:
         yield _NoBackoffConn()

@@ -4,6 +4,8 @@ These tests verify that new tasks receive sequential seq_num values
 that auto-increment per project.
 """
 
+from uuid import uuid4
+
 import pytest
 
 from gobby.storage.tasks import LocalTaskManager
@@ -60,21 +62,23 @@ class TestSeqNumAutoIncrement:
 
     def test_seq_num_unique_per_project(self, task_manager, temp_db) -> None:
         """Test that each project maintains its own seq_num sequence."""
+        project_a_id = str(uuid4())
+        project_b_id = str(uuid4())
         # Create two projects
         temp_db.execute(
             "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
-            ("proj-a", "Project A"),
+            (project_a_id, "Project A"),
         )
         temp_db.execute(
             "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
-            ("proj-b", "Project B"),
+            (project_b_id, "Project B"),
         )
 
         # Create tasks in each project
-        task_a1 = task_manager.create_task(project_id="proj-a", title="A1")
-        task_a2 = task_manager.create_task(project_id="proj-a", title="A2")
-        task_b1 = task_manager.create_task(project_id="proj-b", title="B1")
-        task_b2 = task_manager.create_task(project_id="proj-b", title="B2")
+        task_a1 = task_manager.create_task(project_id=project_a_id, title="A1")
+        task_a2 = task_manager.create_task(project_id=project_a_id, title="A2")
+        task_b1 = task_manager.create_task(project_id=project_b_id, title="B1")
+        task_b2 = task_manager.create_task(project_id=project_b_id, title="B2")
 
         # Each project should have independent sequence
         assert task_a1.seq_num == 1

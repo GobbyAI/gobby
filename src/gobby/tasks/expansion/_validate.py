@@ -8,12 +8,13 @@ from typing import Any
 
 from gobby.plans.parser import Kind, PlanParseError, parse_plan
 from gobby.plans.semantic_lint import lint_plan_document
-from gobby.tasks.categories import DEVELOPMENT_FORWARD_LEAF_CATEGORIES
+from gobby.tasks.categories import DEVELOPMENT_FORWARD_LEAF_CATEGORIES, IMPLEMENTATION_DOMAINS
 from gobby.tasks.expansion._common import (
     _CONTRACT_PHASE_ID_RE,
     _clean_contract_section_title,
     _contract_phase_number,
 )
+from gobby.tasks.task_types import VALID_TASK_TYPES
 
 
 def validate_plan_file(self: Any, plan_path: Path) -> dict[str, Any]:
@@ -119,6 +120,18 @@ def validate_compiled_spec(self: Any, compiled_spec: dict[str, Any]) -> dict[str
             errors.append(
                 f"Task {task_item.get('id')} cannot be a {category} expansion leaf; "
                 "plan expansion output must be development-forward"
+            )
+        task_type = task_item.get("task_type", "task")
+        if not isinstance(task_type, str) or task_type not in VALID_TASK_TYPES:
+            errors.append(f"Task {task_item.get('id')} has unsupported task_type:{task_type}")
+        implementation_domain = task_item.get("implementation_domain")
+        if implementation_domain is not None and (
+            not isinstance(implementation_domain, str)
+            or implementation_domain not in IMPLEMENTATION_DOMAINS
+        ):
+            errors.append(
+                f"Task {task_item.get('id')} has unsupported "
+                f"implementation_domain:{implementation_domain}"
             )
 
     for phase in phases:

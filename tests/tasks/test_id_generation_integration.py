@@ -7,6 +7,8 @@ These tests verify the full task ID generation system:
 - Interaction between create, reparent, and delete operations
 """
 
+from uuid import uuid4
+
 import pytest
 
 from gobby.storage.sessions import SessionManager
@@ -72,21 +74,23 @@ class TestCompleteIDGenerationFlow:
 
     def test_multiple_projects_independent_sequences(self, task_manager, temp_db) -> None:
         """Test that each project has independent ID sequences."""
+        alpha_project_id = str(uuid4())
+        beta_project_id = str(uuid4())
         # Create two projects
         temp_db.execute(
             "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
-            ("proj-alpha", "Alpha Project"),
+            (alpha_project_id, "Alpha Project"),
         )
         temp_db.execute(
             "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
-            ("proj-beta", "Beta Project"),
+            (beta_project_id, "Beta Project"),
         )
 
         # Create tasks in each project
-        alpha_task1 = task_manager.create_task(project_id="proj-alpha", title="Alpha 1")
-        alpha_task2 = task_manager.create_task(project_id="proj-alpha", title="Alpha 2")
-        beta_task1 = task_manager.create_task(project_id="proj-beta", title="Beta 1")
-        beta_task2 = task_manager.create_task(project_id="proj-beta", title="Beta 2")
+        alpha_task1 = task_manager.create_task(project_id=alpha_project_id, title="Alpha 1")
+        alpha_task2 = task_manager.create_task(project_id=alpha_project_id, title="Alpha 2")
+        beta_task1 = task_manager.create_task(project_id=beta_project_id, title="Beta 1")
+        beta_task2 = task_manager.create_task(project_id=beta_project_id, title="Beta 2")
 
         # Each project has independent seq_num sequences
         assert alpha_task1.seq_num == 1

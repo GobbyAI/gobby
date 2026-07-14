@@ -22,6 +22,7 @@ from gobby.tasks._validation_feedback import (
     matched_successful_validation_pattern_unchecked as _matched_successful_validation_pattern_unchecked,
 )
 from gobby.tasks.state_semantics import is_task_closed
+from gobby.tasks.validation_history import ValidationHistoryManager
 from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
@@ -62,6 +63,29 @@ class ValidationContext:
     validation_context: str | None
     raw_diff: str | None
     file_context_text: str | None = None
+
+
+def _record_validation_iteration(
+    task: Task,
+    ctx: "RegistryContext",
+    *,
+    status: str,
+    feedback: str | None,
+    context_type: str,
+    validator_type: str = "llm",
+) -> None:
+    """Record one live validation attempt with a monotonic task-local number."""
+    history_manager = ValidationHistoryManager(ctx.task_manager.db)
+    latest = history_manager.get_latest_iteration(task.id)
+    history_manager.record_iteration(
+        task_id=task.id,
+        iteration=latest.iteration + 1 if latest else 1,
+        status=status,
+        feedback=feedback,
+        context_type=context_type,
+        context_summary="Live close-task validation",
+        validator_type=validator_type,
+    )
 
 
 def _path_matches_reference(path: str, reference: str) -> bool:
@@ -398,10 +422,19 @@ async def validate_leaf_task_with_llm(
     # Auto-skip LLM validation for doc-only changes
     if raw_diff and is_doc_only_diff(raw_diff):
         logger.info(f"Skipping LLM validation for task {task.id}: doc-only changes")
+        feedback = "Auto-validated: documentation-only changes"
         ctx.task_manager.update_task(
             resolved_id,
             validation_status="valid",
-            validation_feedback="Auto-validated: documentation-only changes",
+            validation_feedback=feedback,
+        )
+        _record_validation_iteration(
+            task,
+            ctx,
+            status="valid",
+            feedback=feedback,
+            context_type="documentation_diff",
+            validator_type="automatic",
         )
         return ValidationResult(can_close=True)
 
@@ -453,6 +486,13 @@ async def validate_leaf_task_with_llm(
             resolved_id,
             validation_status="error",
             validation_feedback=result.feedback,
+        )
+        _record_validation_iteration(
+            task,
+            ctx,
+            status="error",
+            feedback=result.feedback,
+            context_type="validation_context",
         )
         retry_at = state.next_retry_at.isoformat() if state.next_retry_at else "later"
         if state.should_escalate():
@@ -552,6 +592,13 @@ async def validate_leaf_task_with_llm(
         resolved_id,
         validation_status=validation_status,
         validation_feedback=original_feedback,
+    )
+    _record_validation_iteration(
+        task,
+        ctx,
+        status=validation_status,
+        feedback=original_feedback,
+        context_type="validation_context",
     )
 
     if validation_status != "valid":

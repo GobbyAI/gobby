@@ -6,6 +6,8 @@ These tests verify that:
 3. The path_cache correctly reflects the task's hierarchy
 """
 
+from uuid import uuid4
+
 import pytest
 
 from gobby.storage.tasks import LocalTaskManager
@@ -144,20 +146,22 @@ class TestPathCacheOnInsert:
 
     def test_multiple_projects_independent_paths(self, task_manager, temp_db) -> None:
         """Test that each project has independent path sequences."""
+        project_a_id = str(uuid4())
+        project_b_id = str(uuid4())
         # Create two projects
         temp_db.execute(
             "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
-            ("proj-a", "Project A"),
+            (project_a_id, "Project A"),
         )
         temp_db.execute(
             "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
-            ("proj-b", "Project B"),
+            (project_b_id, "Project B"),
         )
 
         # Create tasks in each project
-        task_a1 = task_manager.create_task(project_id="proj-a", title="A1")
-        task_a2 = task_manager.create_task(project_id="proj-a", title="A2")
-        task_b1 = task_manager.create_task(project_id="proj-b", title="B1")
+        task_a1 = task_manager.create_task(project_id=project_a_id, title="A1")
+        task_a2 = task_manager.create_task(project_id=project_a_id, title="A2")
+        task_b1 = task_manager.create_task(project_id=project_b_id, title="B1")
 
         # Each project starts fresh with seq 1
         assert task_a1.path_cache == "1"

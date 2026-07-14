@@ -357,7 +357,10 @@ def _excerpt_file_diff(
         head_count = max(1, max_hunk_lines * 3 // 5)
         tail_count = max(1, max_hunk_lines - head_count)
         omitted_body = body[head_count : len(body) - tail_count]
-        signatures = _added_signature_names(omitted_body)
+        signatures = _added_signature_names(
+            omitted_body,
+            test_first=file.category == "test",
+        )
         signature_note = f"; omitted definitions: {', '.join(signatures)}" if signatures else ""
         lines.extend(body[:head_count])
         lines.append(
@@ -385,7 +388,8 @@ def _excerpt_file_diff(
     head_chars = keep_chars * 3 // 5
     tail_chars = keep_chars - head_chars
     signatures = _added_signature_names(
-        excerpt[head_chars : len(excerpt) - tail_chars].splitlines()
+        excerpt[head_chars : len(excerpt) - tail_chars].splitlines(),
+        test_first=file.category == "test",
     )
     marker = (
         f"\n... [diff excerpt truncated for {file.path}; middle omitted; "
@@ -399,7 +403,8 @@ def _excerpt_file_diff(
     head_chars = keep_chars * 3 // 5
     tail_chars = keep_chars - head_chars
     signatures = _added_signature_names(
-        excerpt[head_chars : len(excerpt) - tail_chars].splitlines()
+        excerpt[head_chars : len(excerpt) - tail_chars].splitlines(),
+        test_first=file.category == "test",
     )
     marker = (
         f"\n... [diff excerpt truncated for {file.path}; middle omitted; "
@@ -422,17 +427,30 @@ _SIGNATURE_LINE_RE = re.compile(
 )
 
 
-def _added_signature_names(lines: Sequence[str], limit: int = 12) -> list[str]:
+def _added_signature_names(
+    lines: Sequence[str],
+    limit: int = 12,
+    *,
+    test_first: bool = False,
+) -> list[str]:
     """Names of added definitions in omitted diff lines, so elision markers
     still prove the definitions exist."""
     names: list[str] = []
+    seen: set[str] = set()
     for line in lines:
         match = _SIGNATURE_LINE_RE.match(line)
-        if match:
-            names.append(match.group(1))
-            if len(names) >= limit:
-                break
-    return names
+        if not match:
+            continue
+        name = match.group(1)
+        if name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+    if test_first:
+        tests = [name for name in names if name.casefold().startswith("test")]
+        helpers = [name for name in names if not name.casefold().startswith("test")]
+        names = tests + helpers
+    return names[:limit]
 
 
 def _render_omissions(omissions: Sequence[EvidenceOmission]) -> str:

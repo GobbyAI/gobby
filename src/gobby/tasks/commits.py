@@ -18,6 +18,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+TASK_DIFF_MAX_CHARS = 30_000
+_TASK_DIFF_TRUNCATION_MARKER = "\n\n... [task diff truncated] ..."
+
 
 @dataclass
 class TaskDiffResult:
@@ -135,11 +138,14 @@ def get_task_diff(
             diff_parts.append(uncommitted)
             has_uncommitted = True
 
-    # Combine all diff parts
+    # Combine all diff parts and count files before bounding the returned payload.
     combined_diff = "\n".join(diff_parts)
-
-    # Count files in the diff
     file_count = _count_unique_diff_paths(combined_diff)
+    combined_diff = _safe_truncate(
+        combined_diff,
+        TASK_DIFF_MAX_CHARS,
+        _TASK_DIFF_TRUNCATION_MARKER,
+    )
 
     return TaskDiffResult(
         diff=combined_diff,
@@ -165,16 +171,12 @@ def is_doc_only_diff(diff: str) -> bool:
     if not diff:
         return False
 
-    # Find all file paths in the diff
-    file_pattern = r"^diff --git a/(.+?) b/"
-    matches = re.findall(file_pattern, diff, re.MULTILINE)
-
-    if not matches:
+    files = _parse_diff_files(diff)
+    if not files:
         return False
 
-    # Check if all files are doc files
-    for file_path in matches:
-        ext = Path(file_path).suffix.lower()
+    for file in files:
+        ext = Path(file.path).suffix.lower()
         if ext not in DOC_EXTENSIONS:
             return False
 
@@ -511,11 +513,11 @@ def extract_mentioned_symbols(task: dict[str, Any]) -> list[str]:
 # Patterns capture both project name and task number for validation
 TASK_ID_PATTERNS = [
     # [project-#N] - bracket format (primary)
-    r"\[(\w+)-#(\d+)\]",
+    r"\[(\w+(?:[ -]\w+)*)-#(\d+)\]",
     # project-#N - standalone format (word boundary before, after digits)
-    r"(?:^|\s)(\w+)-#(\d+)\b",
+    r"(?:^|\s)(\w+(?:[ -]\w+)*)-#(\d+)\b",
     # Implements/Fixes/Closes/Refs project-#N
-    r"(?:implements|fixes|closes|refs)\s+(\w+)-#(\d+)",
+    r"(?:implements|fixes|closes|refs)\s+(\w+(?:[ -]\w+)*)-#(\d+)",
 ]
 
 

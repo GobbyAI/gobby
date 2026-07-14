@@ -14,7 +14,7 @@ from gobby.config.feature_base import candidate_labels
 from gobby.config.tasks import TaskExpansionConfig
 from gobby.plans.parser import Kind, PlanDocument, parse_plan
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.tasks.expansion._compile import _expansion_feature_config
+from gobby.tasks.expansion._compile import _build_file_context, _expansion_feature_config
 from gobby.tasks.expansion_service import ExpansionService
 
 pytestmark = pytest.mark.unit
@@ -43,6 +43,42 @@ def _regression_plan_doc() -> PlanDocument:
 
 def _deps_for(spec: dict[str, Any], task_id: str) -> set[str]:
     return {edge["depends_on"] for edge in spec["dependencies"] if edge["task_id"] == task_id}
+
+
+def test_build_file_context_rejects_parent_traversal(tmp_path: Path) -> None:
+    repo_path = tmp_path / "repo"
+    (repo_path / "src").mkdir(parents=True)
+    (repo_path / "src" / "safe.txt").write_text("safe content", encoding="utf-8")
+    (repo_path / "decoy.txt").write_text("decoy content", encoding="utf-8")
+    (tmp_path / "secret.txt").write_text("secret content", encoding="utf-8")
+    task = SimpleNamespace(
+        title="Read src/safe.txt",
+        description="Also read ../../decoy.txt and src/../../secret.txt",
+        validation_criteria="",
+    )
+
+    context = _build_file_context(None, task, repo_path)
+
+    assert "safe content" in context
+    assert "decoy content" not in context
+    assert "secret content" not in context
+
+
+def test_build_file_context_rejects_symlink_outside_repo(tmp_path: Path) -> None:
+    repo_path = tmp_path / "repo"
+    (repo_path / "src").mkdir(parents=True)
+    secret_path = tmp_path / "secret.txt"
+    secret_path.write_text("secret content", encoding="utf-8")
+    (repo_path / "src" / "linked.txt").symlink_to(secret_path)
+    task = SimpleNamespace(
+        title="Read src/linked.txt",
+        description="",
+        validation_criteria="",
+    )
+
+    context = _build_file_context(None, task, repo_path)
+
+    assert context == ""
 
 
 def test_expansion_feature_config_resolves_structured_candidate_overrides() -> None:

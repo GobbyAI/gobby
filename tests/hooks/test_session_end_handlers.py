@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -61,10 +62,13 @@ class TestSessionEndHandling:
         from unittest.mock import patch
 
         mock_session = MagicMock()
-        mock_session.created_at = "2024-01-01T00:00:00Z"
+        mock_session.created_at = datetime(2024, 1, 1, tzinfo=UTC)
         mock_session.agent_run_id = None
+        mock_session.project_id = "d45545c5-ded5-4335-b115-0245752edacf"
         mock_dependencies["session_storage"].get.return_value = mock_session
 
+        mock_project = MagicMock()
+        mock_project.name = "session-project"
         mock_link_result = MagicMock()
         mock_link_result.total_linked = 2
         mock_link_result.linked_tasks = {"task-1": ["abc123"], "task-2": ["def456"]}
@@ -76,10 +80,20 @@ class TestSessionEndHandling:
             data={"cwd": "/some/dir"},
         )
 
-        with patch("gobby.tasks.commits.auto_link_commits", return_value=mock_link_result):
+        with (
+            patch("gobby.storage.projects.LocalProjectManager") as project_manager_cls,
+            patch(
+                "gobby.tasks.commits.auto_link_commits", return_value=mock_link_result
+            ) as mock_auto_link,
+        ):
+            project_manager_cls.return_value.get.return_value = mock_project
             response = handlers.handle_session_end(event)
 
         assert response.decision == "allow"
+        project_manager_cls.assert_called_once_with(mock_dependencies["session_storage"].db)
+        project_manager_cls.return_value.get.assert_called_once_with(mock_session.project_id)
+        assert mock_auto_link.call_args.kwargs["project_id"] == mock_session.project_id
+        assert mock_auto_link.call_args.kwargs["project_name"] == "session-project"
 
     def test_session_end_auto_link_error(self, mock_dependencies: dict) -> None:
         """Test error auto-linking commits is handled gracefully."""
@@ -196,8 +210,9 @@ class TestSessionEndHandling:
             metadata={},
         )
 
-        handlers.handle_session_end(event)
+        response = handlers.handle_session_end(event)
 
+        assert response.decision == "allow"
         mock_dependencies["message_processor"].unregister_session.assert_not_called()
 
     def test_session_end_unregister_error(self, mock_dependencies: dict) -> None:
