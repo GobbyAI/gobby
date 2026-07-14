@@ -896,7 +896,8 @@ CREATE TABLE worktrees (
     cleanup_after TIMESTAMPTZ,
     workspace_role TEXT NOT NULL DEFAULT 'task',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_activity_at TIMESTAMPTZ
 );
 
 CREATE INDEX idx_worktrees_project ON worktrees(project_id);

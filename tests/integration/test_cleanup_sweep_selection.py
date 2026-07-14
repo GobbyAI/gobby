@@ -51,8 +51,10 @@ def test_worktree_sweeps_exclude_claimed_and_ineligible_rows(
     )
 
     temp_db.execute(
-        "UPDATE worktrees SET updated_at = %s WHERE id IN (%s, %s)",
-        (stale_at, stale.id, claimed_stale.id),
+        """UPDATE worktrees
+           SET updated_at = %s, last_activity_at = %s
+           WHERE id IN (%s, %s)""",
+        (stale_at, stale_at, stale.id, claimed_stale.id),
     )
     temp_db.execute(
         "UPDATE worktrees SET cleanup_after = %s WHERE id = %s",

@@ -31,6 +31,7 @@ class WorktreeStatus(str, Enum):
         "updated_at",
     ),
     optional=(
+        "last_activity_at",
         "merged_at",
         "cleanup_after",
     ),
@@ -49,6 +50,7 @@ class Worktree:
     status: str
     created_at: datetime
     updated_at: datetime
+    last_activity_at: datetime | None
     merged_at: datetime | None
     merge_state: str | None = None  # "pending", "resolved", or None
     cleanup_after: datetime | None = None  # ISO timestamp for auto-cleanup after merge
@@ -78,6 +80,7 @@ class Worktree:
             status=row["status"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            last_activity_at=_safe_get("last_activity_at"),
             merged_at=row["merged_at"],
             merge_state=_safe_get("merge_state"),
             cleanup_after=_safe_get("cleanup_after"),
@@ -97,6 +100,7 @@ class Worktree:
             "status": self.status,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "last_activity_at": self.last_activity_at,
             "merged_at": self.merged_at,
             "merge_state": self.merge_state,
             "cleanup_after": self.cleanup_after,
@@ -143,9 +147,9 @@ class LocalWorktreeManager:
             INSERT INTO worktrees (
                 id, project_id, task_id, branch_name, worktree_path,
                 base_branch, agent_session_id, status, created_at, updated_at,
-                workspace_role
+                last_activity_at, workspace_role
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 worktree_id,
@@ -156,6 +160,7 @@ class LocalWorktreeManager:
                 base_branch,
                 agent_session_id,
                 WorktreeStatus.ACTIVE.value,
+                now,
                 now,
                 now,
                 workspace_role,
@@ -173,6 +178,7 @@ class LocalWorktreeManager:
             status=WorktreeStatus.ACTIVE.value,
             created_at=now,
             updated_at=now,
+            last_activity_at=now,
             merged_at=None,
             workspace_role=workspace_role,
         )
@@ -324,9 +330,10 @@ class LocalWorktreeManager:
 
     def touch(self, worktree_id: str) -> Worktree | None:
         """Refresh a worktree's activity timestamp."""
+        now = utc_now()
         self.db.execute(
-            "UPDATE worktrees SET updated_at = %s WHERE id = %s",
-            (utc_now(), worktree_id),
+            "UPDATE worktrees SET last_activity_at = %s, updated_at = %s WHERE id = %s",
+            (now, now, worktree_id),
         )
         return self.get(worktree_id)
 
@@ -385,7 +392,8 @@ class LocalWorktreeManager:
         """Claim a worktree only if it is unowned or owned by an allowed prior session."""
         allowed = [value for value in allowed_existing_session_ids if value]
         conditions = ["id = %s", "(agent_session_id IS NULL"]
-        params: list[Any] = [session_id, utc_now(), worktree_id]
+        now = utc_now()
+        params: list[Any] = [session_id, now, now, worktree_id]
         if allowed:
             placeholders = ", ".join("%s" for _ in allowed)
             conditions[-1] += f" OR agent_session_id IN ({placeholders})"
@@ -395,7 +403,7 @@ class LocalWorktreeManager:
         cursor = self.db.execute(
             f"""
             UPDATE worktrees
-            SET agent_session_id = %s, updated_at = %s
+            SET agent_session_id = %s, last_activity_at = %s, updated_at = %s
             WHERE {" AND ".join(conditions)}
             """,  # nosec B608
             tuple(params),
@@ -487,8 +495,8 @@ class LocalWorktreeManager:
             WHERE project_id = %s
               AND status = %s
               AND agent_session_id IS NULL
-              AND updated_at < %s
-            ORDER BY updated_at ASC
+              AND COALESCE(last_activity_at, updated_at) < %s
+            ORDER BY COALESCE(last_activity_at, updated_at) ASC
             LIMIT %s
             """,
             (project_id, WorktreeStatus.ACTIVE.value, cutoff, limit),

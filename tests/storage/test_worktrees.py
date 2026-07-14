@@ -48,6 +48,7 @@ class TestWorktree:
             "status": "active",
             "created_at": "2025-01-01T00:00:00+00:00",
             "updated_at": "2025-01-01T00:00:00+00:00",
+            "last_activity_at": "2025-01-01T00:00:00+00:00",
             "merged_at": None,
         }
 
@@ -61,6 +62,7 @@ class TestWorktree:
         assert worktree.base_branch == "main"
         assert worktree.agent_session_id == "sess-xyz"
         assert worktree.status == "active"
+        assert worktree.last_activity_at == datetime(2025, 1, 1, tzinfo=UTC)
         assert worktree.merged_at is None
 
     def test_to_dict(self) -> None:
@@ -76,6 +78,7 @@ class TestWorktree:
             status="active",
             created_at="2025-01-01T00:00:00+00:00",
             updated_at="2025-01-01T00:00:00+00:00",
+            last_activity_at="2025-01-01T00:00:00+00:00",
             merged_at=None,
         )
 
@@ -91,6 +94,7 @@ class TestWorktree:
         assert result["status"] == "active"
         assert result["created_at"] == "2025-01-01T00:00:00+00:00"
         assert result["updated_at"] == "2025-01-01T00:00:00+00:00"
+        assert result["last_activity_at"] == "2025-01-01T00:00:00+00:00"
         assert result["merged_at"] is None
 
 
@@ -644,8 +648,8 @@ class TestLocalWorktreeManagerUpdate:
         )
         stale_timestamp = datetime.now(UTC) - timedelta(hours=48)
         temp_db.execute(
-            "UPDATE worktrees SET updated_at = %s WHERE id = %s",
-            (stale_timestamp, worktree.id),
+            "UPDATE worktrees SET updated_at = %s, last_activity_at = %s WHERE id = %s",
+            (stale_timestamp, stale_timestamp, worktree.id),
         )
         assert [item.id for item in manager.find_stale(str(sample_project["id"]), hours=24)] == [
             worktree.id
@@ -655,6 +659,8 @@ class TestLocalWorktreeManagerUpdate:
 
         assert touched is not None
         assert touched.updated_at > stale_timestamp
+        assert touched.last_activity_at is not None
+        assert touched.last_activity_at > stale_timestamp
         assert manager.find_stale(str(sample_project["id"]), hours=24) == []
 
     def test_update_single_field(
@@ -815,6 +821,7 @@ class TestLocalWorktreeManagerStatusTransitions:
         call_args = mock_db.execute.call_args
         query = call_args[0][0]
         assert "agent_session_id = %s" in query
+        assert "last_activity_at = %s" in query
 
     def test_claim_returns_none_when_conditional_update_loses(
         self,
@@ -1055,7 +1062,7 @@ class TestLocalWorktreeManagerFindStale:
         mock_db.fetchall.assert_called_once()
         call_args = mock_db.fetchall.call_args
         query = call_args[0][0]
-        assert "updated_at <" in query
+        assert "COALESCE(last_activity_at, updated_at) <" in query
         assert "status = %s" in query
 
     def test_find_stale_custom_hours(
