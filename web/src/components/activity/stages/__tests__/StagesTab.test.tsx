@@ -137,6 +137,13 @@ function installStagesFetch() {
     }
 
     const stageMatch = requestUrl.pathname.match(/^\/api\/stages\/registry\/([^/]+)$/);
+    if (stageMatch && method === "DELETE") {
+      const stageName = decodeURIComponent(stageMatch[1]);
+      const stage = stages.find((candidate) => candidate.name === stageName);
+      if (stage) stage.deleted_at = "2026-07-14T00:00:00Z";
+      return jsonResponse(stage ?? { detail: "not found" }, stage ? 200 : 404);
+    }
+
     if (stageMatch && method === "PUT") {
       const stageName = decodeURIComponent(stageMatch[1]);
       const index = stages.findIndex((stage) => stage.name === stageName);
@@ -163,6 +170,13 @@ function installStagesFetch() {
     }
 
     const profileMatch = requestUrl.pathname.match(/^\/api\/profiles\/([^/]+)$/);
+    if (profileMatch && method === "DELETE") {
+      const profileName = decodeURIComponent(profileMatch[1]);
+      const profile = profiles.find((candidate) => candidate.name === profileName);
+      if (profile) profile.deleted_at = "2026-07-14T00:00:00Z";
+      return jsonResponse(profile ?? { detail: "not found" }, profile ? 200 : 404);
+    }
+
     if (profileMatch && method === "PUT") {
       const profileName = decodeURIComponent(profileMatch[1]);
       const index = profiles.findIndex((profile) => profile.name === profileName);
@@ -298,6 +312,55 @@ describe("Stages activity tab", () => {
             call.url.endsWith("/api/profiles") &&
             call.method === "POST" &&
             (call.body as ProfileRecord).name === "default",
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("requires confirmation before deleting stages and profiles", async () => {
+    const { calls } = installStagesFetch();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const user = userEvent.setup();
+
+    render(<StagesTab projectId="project-1" />);
+
+    const stageRow = await screen.findByRole("listitem", { name: /Implementation stage/i });
+    await user.click(
+      within(stageRow).getByRole("button", { name: "Open actions for Implementation" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+
+    expect(confirm).toHaveBeenCalledWith('Delete "Implementation"?');
+    expect(calls.some((call) => call.method === "DELETE")).toBe(false);
+
+    confirm.mockReturnValue(true);
+    await user.click(
+      within(stageRow).getByRole("button", { name: "Open actions for Implementation" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (call) =>
+            call.url.endsWith("/api/stages/registry/implementation") &&
+            call.method === "DELETE",
+        ),
+      ).toBe(true),
+    );
+
+    await user.click(screen.getByRole("radio", { name: "Profiles" }));
+    const profileRow = await screen.findByRole("listitem", { name: /Fast build profile/i });
+    await user.click(
+      within(profileRow).getByRole("button", { name: "Open actions for Fast build" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+
+    expect(confirm).toHaveBeenCalledWith('Delete "Fast build"?');
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (call) => call.url.includes("/api/profiles/fast") && call.method === "DELETE",
         ),
       ).toBe(true),
     );

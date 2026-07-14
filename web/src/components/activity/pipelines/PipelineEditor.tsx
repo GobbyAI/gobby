@@ -129,7 +129,7 @@ export const PipelineEditor = forwardRef<PipelineEditorHandle, PipelineEditorPro
         const ids = steps.map((step) => step.id)
         const step = createDefaultStep(type, ids)
         setSteps((prev) => [...prev, step])
-        setExpandedId(step.id)
+        setExpandedIndex(steps.length)
         markDirty()
       },
       [steps, markDirty],

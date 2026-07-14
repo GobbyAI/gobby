@@ -53,7 +53,9 @@ export function ProfilesList({
                 label: "Delete",
                 destructive: true,
                 disabled: busy,
-                onSelect: () => onDelete(profile),
+                onSelect: () => {
+                  if (window.confirm(`Delete "${profile.display_label}"?`)) onDelete(profile);
+                },
               },
         ];
 

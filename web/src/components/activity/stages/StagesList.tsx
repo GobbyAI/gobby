@@ -32,7 +32,9 @@ export function StagesList({
                 label: "Delete",
                 destructive: true,
                 disabled: busy,
-                onSelect: () => onDelete(stage),
+                onSelect: () => {
+                  if (window.confirm(`Delete "${stage.display_label}"?`)) onDelete(stage);
+                },
               },
             ];
 
