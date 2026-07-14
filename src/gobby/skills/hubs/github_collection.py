@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from gobby.skills.hubs.base import DownloadResult, HubProvider, HubSkillDetails, HubSkillInfo
-from gobby.skills.loader import GitHubRef, clone_skill_repo
+from gobby.skills.loader import GitHubRef, clone_skill_repo, resolve_github_skill_path
 
 if TYPE_CHECKING:
     from gobby.llm.service import LLMService
@@ -372,7 +372,7 @@ Output ONLY the description text, no quotes, no explanation, no preamble."""
         repo_path = clone_skill_repo(ref)
 
         # Path to the skill within the repo
-        skill_path = repo_path / skill_subpath
+        skill_path = resolve_github_skill_path(repo_path, skill_subpath)
 
         # If target_dir specified, copy skill there
         if target_dir:

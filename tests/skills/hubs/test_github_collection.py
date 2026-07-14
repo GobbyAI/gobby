@@ -524,6 +524,37 @@ class TestGitHubCollectionProviderCloneSkill:
                 # Skill should be copied to target
                 assert (Path(target_dir) / "SKILL.md").exists()
 
+    @pytest.mark.asyncio
+    async def test_clone_skill_rejects_traversal_slug_before_copy(self, tmp_path) -> None:
+        """A hub slug cannot select or copy a directory outside the repository."""
+        from gobby.skills.loader import SkillLoadError, clone_skill_repo
+
+        provider = GitHubCollectionProvider(
+            hub_name="my-collection",
+            base_url="",
+            repo="anthropics/skills",
+            branch="main",
+        )
+        target = tmp_path / "target"
+
+        def clone_into_test_cache(ref):
+            return clone_skill_repo(ref, cache_dir=tmp_path / "cache")
+
+        with (
+            patch(
+                "gobby.skills.hubs.github_collection.clone_skill_repo",
+                side_effect=clone_into_test_cache,
+            ),
+            patch("gobby.skills.hubs.github_collection.shutil.copytree") as mock_copy,
+            patch("subprocess.run") as mock_run,
+            pytest.raises(SkillLoadError, match="Invalid GitHub skill path"),
+        ):
+            await provider._clone_skill("../../outside", target_dir=str(target))
+
+        mock_run.assert_not_called()
+        mock_copy.assert_not_called()
+        assert not target.exists()
+
 
 class TestGitHubCollectionProviderFetchSkillContent:
     """Tests for GitHubCollectionProvider _fetch_skill_content functionality."""

@@ -14,7 +14,12 @@ import logging
 from pathlib import Path
 
 from gobby.skills._loader_files import _classify_file, load_skill_files, scan_subdirectory
-from gobby.skills._loader_github import DEFAULT_CACHE_DIR, clone_skill_repo, parse_github_url
+from gobby.skills._loader_github import (
+    DEFAULT_CACHE_DIR,
+    clone_skill_repo,
+    parse_github_url,
+    resolve_github_skill_path,
+)
 from gobby.skills._loader_models import GitHubRef, LoadedSkillFile, SkillLoadError
 from gobby.skills._loader_zip import _resolve_within_directory, extract_zip
 from gobby.skills.parser import ParsedSkill, SkillParseError, parse_skill_file
@@ -33,6 +38,7 @@ __all__ = [
     "clone_skill_repo",
     "extract_zip",
     "parse_github_url",
+    "resolve_github_skill_path",
 ]
 
 
@@ -287,10 +293,7 @@ class SkillLoader:
         repo_path = clone_skill_repo(ref, cache_dir=cache_dir)
 
         # Determine the skill path within the repo
-        if ref.path:
-            skill_path = repo_path / ref.path
-        else:
-            skill_path = repo_path
+        skill_path = resolve_github_skill_path(repo_path, ref.path)
 
         if load_all:
             # Load all skills from the repo
