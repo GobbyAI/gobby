@@ -246,9 +246,10 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
         if restart_lock.locked():
             return {"status": "already_restarting", "message": "Restart already in progress"}
 
+        shutdown_initiated = False
         try:
             await restart_lock.acquire()
-            service_managed = _should_restart_via_service_manager()
+            service_managed = await asyncio.to_thread(_should_restart_via_service_manager)
             logger.info(
                 "Restart requested via HTTP endpoint (service_managed=%s)",
                 service_managed,
@@ -256,22 +257,25 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
 
             current_pid = os.getpid()
 
+            from gobby.runner_maintenance import write_shutdown_source
+
+            write_shutdown_source("http_restart", intent="restart")
+            runner_shutdown_requested = _request_runner_shutdown(server, ShutdownIntent.RESTART)
+
+            if runner_shutdown_requested:
+                shutdown_initiated = True
+            else:
+                task = asyncio.create_task(server._process_shutdown())
+                server._background_tasks.add(task)
+                task.add_done_callback(server._background_tasks.discard)
+                shutdown_initiated = True
+
             _spawn_restart_helper(
                 current_pid=current_pid,
                 port=server.port,
                 service_managed=service_managed,
                 shutdown_source="http_restart",
             )
-
-            from gobby.runner_maintenance import write_shutdown_source
-
-            write_shutdown_source("http_restart", intent="restart")
-            runner_shutdown_requested = _request_runner_shutdown(server, ShutdownIntent.RESTART)
-
-            if not runner_shutdown_requested:
-                task = asyncio.create_task(server._process_shutdown())
-                server._background_tasks.add(task)
-                task.add_done_callback(server._background_tasks.discard)
 
             response_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -282,7 +286,8 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
             }
 
         except Exception as e:
-            restart_lock.release()
+            if not shutdown_initiated and restart_lock.locked():
+                restart_lock.release()
 
             logger.error(f"Error initiating restart: {e}", exc_info=True)
             return {

@@ -581,6 +581,86 @@ class TestAdminRoutes:
         mock_write_shutdown.assert_called_once_with("http_restart", intent="restart")
         mock_server._process_shutdown.assert_called_once()
 
+    @patch("gobby.servers.routes.admin._lifecycle._spawn_restart_helper")
+    @patch(
+        "gobby.servers.routes.admin._lifecycle.asyncio.to_thread",
+        new_callable=AsyncMock,
+        return_value=False,
+    )
+    @patch("gobby.servers.routes.admin._lifecycle._should_restart_via_service_manager")
+    def test_restart_endpoint_offloads_service_manager_probe(
+        self,
+        mock_service_mode,
+        mock_to_thread,
+        _mock_spawn,
+        client,
+    ) -> None:
+        response = client.post("/api/admin/restart")
+
+        assert response.json()["status"] == "restarting"
+        mock_to_thread.assert_awaited_once_with(mock_service_mode)
+
+    @patch(
+        "gobby.servers.routes.admin._lifecycle.asyncio.to_thread",
+        new_callable=AsyncMock,
+        return_value=False,
+    )
+    def test_restart_endpoint_starts_shutdown_before_spawning_helper(
+        self,
+        _mock_to_thread,
+        client,
+    ) -> None:
+        events: list[str] = []
+
+        with (
+            patch(
+                "gobby.runner_maintenance.write_shutdown_source",
+                side_effect=lambda *_args, **_kwargs: events.append("write_shutdown_source"),
+            ),
+            patch(
+                "gobby.servers.routes.admin._lifecycle._request_runner_shutdown",
+                side_effect=lambda *_args: events.append("request_runner_shutdown") or True,
+            ),
+            patch(
+                "gobby.servers.routes.admin._lifecycle._spawn_restart_helper",
+                side_effect=lambda **_kwargs: events.append("spawn_restart_helper"),
+            ),
+        ):
+            response = client.post("/api/admin/restart")
+
+        assert response.json()["status"] == "restarting"
+        assert events == [
+            "write_shutdown_source",
+            "request_runner_shutdown",
+            "spawn_restart_helper",
+        ]
+
+    @patch("gobby.servers.routes.admin._lifecycle._spawn_restart_helper")
+    @patch(
+        "gobby.servers.routes.admin._lifecycle.asyncio.to_thread",
+        new_callable=AsyncMock,
+        return_value=False,
+    )
+    def test_restart_endpoint_releases_lock_when_shutdown_not_initiated(
+        self,
+        _mock_to_thread,
+        mock_spawn,
+        client,
+    ) -> None:
+        with (
+            patch("gobby.runner_maintenance.write_shutdown_source"),
+            patch(
+                "gobby.servers.routes.admin._lifecycle._request_runner_shutdown",
+                side_effect=[RuntimeError("shutdown failed"), True],
+            ),
+        ):
+            failed_response = client.post("/api/admin/restart")
+            retry_response = client.post("/api/admin/restart")
+
+        assert failed_response.json()["status"] == "error"
+        assert retry_response.json()["status"] == "restarting"
+        mock_spawn.assert_called_once()
+
     @patch(
         "gobby.servers.routes.admin._lifecycle._should_restart_via_service_manager",
         return_value=False,
