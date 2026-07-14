@@ -91,17 +91,29 @@ export function useChatControlActions(
   const sendMode: SendModeAction = useCallback((mode) => {
     const normalizedMode = normalizeChatMode(mode);
     if (currentModeRef.current === normalizedMode) return;
+    const conversationId = conversationIdRef.current;
+    if (!conversationId) {
+      setCurrentMode(normalizedMode);
+      return;
+    }
+
+    const socket = wsRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    try {
+      socket.send(
+        JSON.stringify({
+          type: "set_mode",
+          mode: normalizedMode,
+          conversation_id: conversationId,
+        }),
+      );
+    } catch {
+      return;
+    }
+    if (wsRef.current !== socket || socket.readyState !== WebSocket.OPEN) return;
+
     setCurrentMode(normalizedMode);
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    if (!conversationIdRef.current) return;
     setPlanPendingApproval(false);
-    wsRef.current.send(
-      JSON.stringify({
-        type: "set_mode",
-        mode: normalizedMode,
-        conversation_id: conversationIdRef.current,
-      }),
-    );
   }, []);
 
   const sendAttachedSessionMode: SendAttachedSessionModeAction = useCallback(

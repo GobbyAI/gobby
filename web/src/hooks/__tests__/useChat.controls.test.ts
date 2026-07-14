@@ -72,7 +72,11 @@ describe("useChat project and mode controls", () => {
     const { result } = renderHook(() => useChat());
 
     const ws = mockWs.instances[0];
+    const modeChanges: string[] = [];
     act(() => ws.simulateOpen());
+    act(() => {
+      result.current.setOnModeChanged((mode) => modeChanges.push(mode));
+    });
     ws.send.mockClear();
 
     act(() => {
@@ -87,6 +91,39 @@ describe("useChat project and mode controls", () => {
       .filter((m) => m.type === "set_mode");
     expect(setModeMsgs).toHaveLength(2);
     expect(setModeMsgs.map((m) => m.mode)).toEqual(["normal", "plan"]);
+    expect(modeChanges).toEqual(["normal", "plan"]);
+  });
+
+  it("sendMode keeps the current mode when an existing chat transport is unavailable", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const modeChanges: string[] = [];
+    act(() => {
+      result.current.setOnModeChanged((mode) => modeChanges.push(mode));
+      result.current.sendMode("normal");
+    });
+
+    expect(modeChanges).toEqual([]);
+  });
+
+  it("sendMode keeps the current mode when the socket closes during send", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    const modeChanges: string[] = [];
+    act(() => ws.simulateOpen());
+    act(() => {
+      result.current.setOnModeChanged((mode) => modeChanges.push(mode));
+    });
+    ws.send.mockImplementation(() => {
+      ws.readyState = WebSocket.CLOSED;
+    });
+
+    act(() => {
+      result.current.sendMode("normal");
+    });
+
+    expect(modeChanges).toEqual([]);
   });
 
   it("sendMode treats accept_edits as normal for the no-op guard", async () => {

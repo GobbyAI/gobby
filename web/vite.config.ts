@@ -60,7 +60,7 @@ export default defineConfig({
     emptyOutDir: true,
     // Largest chunks are intentional lazy/vendor bundles; keep this just above
     // the current main bundle so future growth still warns.
-    chunkSizeWarningLimit: 1300,
+    chunkSizeWarningLimit: 1320,
     rollupOptions: {
       output: {
         manualChunks(id) {
