@@ -406,7 +406,7 @@ def test_upsert_on_conflict_do_nothing_dialect_parity(hub_db: Any) -> None:
         txn.execute(
             """
             INSERT INTO projects (id, name) VALUES (%s, %s)
-            ON CONFLICT (name) DO NOTHING
+            ON CONFLICT (name) WHERE deleted_at IS NULL DO NOTHING
             """,
             (_PROJ_UPSERT_DUPLICATE, "parity-upsert"),
         )
