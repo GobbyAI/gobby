@@ -71,6 +71,30 @@ async def test_execute_retry_error_uses_attempt_constant() -> None:
 
 
 @pytest.mark.asyncio
+async def test_execute_retries_429_after_server_delay() -> None:
+    rate_limited = httpx.Response(
+        429,
+        headers={"Retry-After": "3"},
+        request=httpx.Request("POST", "https://api.linear.app/graphql"),
+    )
+    success = _response(200, {"data": {"viewer": {"id": "viewer-1"}}})
+    async_client = _mock_http_client(rate_limited, success)
+    client = LinearGraphQLClient("lin_api_key")
+    sleep = AsyncMock()
+
+    with (
+        patch("gobby.integrations.linear_graphql.httpx.AsyncClient", return_value=async_client),
+        patch("gobby.integrations.linear_graphql.asyncio.sleep", new=sleep),
+        patch("gobby.integrations.linear_graphql.random.uniform", return_value=0.0),
+    ):
+        data = await client.execute("query Test { viewer { id } }")
+
+    assert data == {"viewer": {"id": "viewer-1"}}
+    sleep.assert_awaited_once_with(3.0)
+    assert async_client.post.await_count == 2
+
+
+@pytest.mark.asyncio
 async def test_list_issues_paginates_past_one_hundred_and_stops_at_terminal_cursor() -> None:
     client = LinearGraphQLClient("lin_api_key")
     first_page = [{"id": f"issue-{index}"} for index in range(100)]
@@ -203,6 +227,28 @@ async def test_non_idempotent_creation_never_retries_ambiguous_failures(
     ):
         await _create_issue(client)
 
+    assert async_client.post.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_non_idempotent_creation_does_not_retry_429() -> None:
+    rate_limited = httpx.Response(
+        429,
+        headers={"Retry-After": "12"},
+        request=httpx.Request("POST", "https://api.linear.app/graphql"),
+    )
+    async_client = _mock_http_client(rate_limited)
+    client = LinearGraphQLClient("lin_api_key")
+    sleep = AsyncMock()
+
+    with (
+        patch("gobby.integrations.linear_graphql.httpx.AsyncClient", return_value=async_client),
+        patch("gobby.integrations.linear_graphql.asyncio.sleep", new=sleep),
+        pytest.raises(LinearGraphQLError, match="HTTP 429"),
+    ):
+        await _create_issue(client)
+
+    sleep.assert_not_awaited()
     assert async_client.post.await_count == 1
 
 

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, cast
 
 import httpx
 
-from gobby.integrations.linear_graphql import LinearGraphQLError
+from gobby.integrations.linear_graphql import LinearGraphQLClient, LinearGraphQLError
 from gobby.sync.linear_project_ops import LinearProjectOpsMixin
 from gobby.sync.linear_support import (
     LinearSyncError,
@@ -15,6 +17,7 @@ from gobby.sync.linear_support import (
     _gobby_seq_from_linear_title,
     _linear_fetch_failure_limiter,
     _local_title_from_linear,
+    _parse_linear_mcp_result,
     is_transient_linear_fetch_error,
     logger,
     project_gobby_state_for_linear,
@@ -26,8 +29,71 @@ from gobby.sync.linear_support import (
     map_linear_state_to_gobby as _map_linear_state_to_gobby,
 )
 
+_LINEAR_ISSUE_PAGE_SIZE = 100
 
-def _parse_linear_timestamp(value: str | None) -> datetime | None:
+_GOBBY_TO_LINEAR_PRIORITY = {
+    0: 1,  # critical -> urgent
+    1: 2,  # high -> high
+    2: 3,  # medium -> medium
+    3: 4,  # low -> low
+    4: 0,  # backlog -> no priority
+}
+_LINEAR_TO_GOBBY_PRIORITY = {
+    0: 4,  # no priority -> backlog
+    1: 0,  # urgent -> critical
+    2: 1,  # high -> high
+    3: 2,  # medium -> medium
+    4: 3,  # low -> low
+}
+
+
+def _gobby_priority_to_linear(priority: int) -> int:
+    """Translate a Gobby priority, defaulting unsupported values to no priority."""
+    return _GOBBY_TO_LINEAR_PRIORITY.get(priority, 0)
+
+
+def _linear_priority_to_gobby(priority: Any) -> int:
+    """Translate a Linear priority, defaulting missing or unsupported values to backlog."""
+    if type(priority) is not int:
+        return 4
+    return _LINEAR_TO_GOBBY_PRIORITY.get(priority, 4)
+
+
+def _next_linear_issue_cursor(result: Any, page_size: int) -> str | None:
+    if not isinstance(result, dict):
+        if page_size < _LINEAR_ISSUE_PAGE_SIZE:
+            return None
+        raise LinearSyncError("Linear MCP returned a full issue page without pagination metadata")
+
+    pagination = result
+    issues = result.get("issues")
+    if isinstance(issues, dict):
+        pagination = issues
+    page_info = pagination.get("pageInfo")
+    if isinstance(page_info, dict):
+        pagination = page_info
+
+    has_next_page = pagination.get("hasNextPage")
+    if has_next_page is None:
+        if page_size < _LINEAR_ISSUE_PAGE_SIZE:
+            return None
+        raise LinearSyncError("Linear MCP returned a full issue page without pagination metadata")
+    if not isinstance(has_next_page, bool):
+        raise LinearSyncError("Linear MCP returned invalid hasNextPage pagination metadata")
+    if not has_next_page:
+        return None
+
+    cursor = pagination.get("cursor", pagination.get("endCursor"))
+    if not isinstance(cursor, str) or not cursor:
+        raise LinearSyncError("Linear MCP reported another issue page without a cursor")
+    return cursor
+
+
+def _parse_linear_timestamp(value: str | datetime | None) -> datetime | None:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
     if not isinstance(value, str) or not value:
         return None
     try:
@@ -37,6 +103,23 @@ def _parse_linear_timestamp(value: str | None) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
+
+
+_TIMESTAMP_FIELDS = {"closed_at", "escalated_at"}
+
+
+def _linear_update_changes_task(row: Mapping[str, Any], updates: Mapping[str, Any]) -> bool:
+    for field, value in updates.items():
+        current = row.get(field)
+        if field in _TIMESTAMP_FIELDS:
+            if _parse_linear_timestamp(current) != _parse_linear_timestamp(value):
+                return True
+        elif field == "description":
+            if (current or "") != (value or ""):
+                return True
+        elif current != value:
+            return True
+    return False
 
 
 def _linear_issue_state_name(issue: dict[str, Any]) -> str | None:
@@ -90,11 +173,44 @@ def _linear_lifecycle_fields(
 class LinearTaskOpsMixin(LinearProjectOpsMixin):
     """Task-level Linear import, push, pull, and sync operations."""
 
+    async def _list_issues_via_mcp(
+        self,
+        team_id: str,
+        *,
+        state: str | None = None,
+        labels: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        issues: list[dict[str, Any]] = []
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
+
+        while True:
+            result = await self.mcp_manager.call_tool(
+                server_name="linear",
+                tool_name="list_issues",
+                arguments=self._issue_list_args(
+                    team_id,
+                    state=state,
+                    labels=labels,
+                    cursor=cursor,
+                ),
+            )
+            page = _extract_records(result)
+            issues.extend(page)
+            cursor = _next_linear_issue_cursor(result, len(page))
+            if cursor is None:
+                return issues
+            if cursor in seen_cursors:
+                raise LinearSyncError("Linear MCP repeated an issue pagination cursor")
+            seen_cursors.add(cursor)
+
     async def import_linear_issues(
         self,
         team_id: str | None = None,
         state: str | None = None,
         labels: list[str] | None = None,
+        *,
+        allow_team_wide: bool = False,
     ) -> list[dict[str, Any]]:
         """Import Linear issues as gobby tasks with dedup."""
         self.linear.require_available()
@@ -102,18 +218,20 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
         effective_team_id = team_id or self.linear_team_id
         if not effective_team_id:
             raise ValueError("No team_id provided and no default linear_team_id configured.")
-
-        args = self._issue_list_args(effective_team_id, state=state, labels=labels)
+        if not self._get_linear_project_id() and not allow_team_wide:
+            raise ValueError(
+                "No Linear project binding configured. Run 'gobby linear setup --bootstrap' "
+                "or explicitly allow a team-wide import."
+            )
 
         try:
             if not self._linear_mcp_has_tool("list_issues"):
                 raise LinearSyncError("Linear MCP server does not expose list_issues.")
-            result = await self.mcp_manager.call_tool(
-                server_name="linear",
-                tool_name="list_issues",
-                arguments=args,
+            issues = await self._list_issues_via_mcp(
+                effective_team_id,
+                state=state,
+                labels=labels,
             )
-            issues = _extract_records(result)
         except LinearSyncError:
             client = await self._get_graphql_client()
             if not client:
@@ -134,11 +252,27 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
             title = issue.get("title", "Untitled Issue")
             local_title = _local_title_from_linear(title)
             description = issue.get("description", "")
-            priority_val = issue.get("priority", 2)
+            priority_val = _linear_priority_to_gobby(issue.get("priority"))
+            state_name = _linear_issue_state_name(issue)
+            gobby_state = (
+                self.map_linear_state_to_gobby(state_name) if state_name is not None else None
+            )
+            linear_updated = _parse_linear_timestamp(issue.get("updatedAt"))
+            changed_at = (
+                linear_updated.isoformat()
+                if linear_updated is not None
+                else datetime.now(UTC).isoformat()
+            )
+            lifecycle_updates = _linear_lifecycle_fields(
+                gobby_state,
+                state_name=state_name,
+                changed_at=changed_at,
+            )
 
             with self.task_manager.db.transaction():
                 existing = self.task_manager.db.fetchone(
-                    "SELECT id FROM tasks WHERE linear_issue_id = %s AND project_id = %s",
+                    "SELECT id, updated_at FROM tasks "
+                    "WHERE linear_issue_id = %s AND project_id = %s",
                     (issue_id, self.project_id),
                 )
 
@@ -146,7 +280,8 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
                     ref_seq = _gobby_seq_from_linear_title(title)
                     if ref_seq is not None:
                         existing = self.task_manager.db.fetchone(
-                            "SELECT id FROM tasks WHERE project_id = %s AND seq_num = %s",
+                            "SELECT id, updated_at FROM tasks "
+                            "WHERE project_id = %s AND seq_num = %s",
                             (self.project_id, ref_seq),
                         )
                         if existing:
@@ -157,12 +292,18 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
                             )
 
                 if existing:
-                    self.task_manager.reconcile_task_state(
-                        existing["id"],
-                        title=local_title,
-                        description=description,
-                        priority=priority_val,
+                    local_updated = _parse_linear_timestamp(existing.get("updated_at"))
+                    is_stale = bool(
+                        local_updated and linear_updated and local_updated > linear_updated
                     )
+                    if not is_stale:
+                        self.task_manager.reconcile_task_state(
+                            existing["id"],
+                            title=local_title,
+                            description=description,
+                            priority=priority_val,
+                            **lifecycle_updates,
+                        )
                     task = self.task_manager.get_task(existing["id"])
                     result_tasks.append(task.to_dict())
                 else:
@@ -174,6 +315,11 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
                         linear_team_id=effective_team_id,
                         priority=priority_val,
                     )
+                    if any(value is not None for value in lifecycle_updates.values()):
+                        task = self.task_manager.reconcile_task_state(
+                            task.id,
+                            **lifecycle_updates,
+                        )
                     result_tasks.append(task.to_dict())
 
         logger.info("Imported %d issues from Linear team %s", len(result_tasks), effective_team_id)
@@ -183,7 +329,21 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
         """Sync a gobby task to its linked Linear issue."""
         self.linear.require_available()
 
-        task = self.task_manager.get_task(task_id)
+        client = await self._get_graphql_client()
+        return await self._sync_task_to_linear(
+            task_id,
+            client=client,
+            state_ids_by_team={},
+        )
+
+    async def _sync_task_to_linear(
+        self,
+        task_id: str,
+        *,
+        client: LinearGraphQLClient | None,
+        state_ids_by_team: dict[str, dict[str, str]],
+    ) -> dict[str, Any]:
+        task = await asyncio.to_thread(self.task_manager.get_task, task_id)
         if not task.linear_issue_id:
             raise ValueError(
                 f"Task {task_id} has no linked Linear issue. Set linear_issue_id to sync."
@@ -191,19 +351,19 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
 
         linear_state = self.map_gobby_state_to_linear(self._project_gobby_state_for_linear(task))
         issue_title = self._linear_issue_title(task)
-        client = await self._get_graphql_client()
         if client:
             effective_team_id = task.linear_team_id or self.linear_team_id
             state_id = await self._linear_state_id_for_name(
                 client,
                 effective_team_id,
                 linear_state,
+                state_ids_by_team,
             )
             result = await client.update_issue(
                 issue_id=task.linear_issue_id,
                 title=issue_title,
                 description=task.description or "",
-                priority=task.priority,
+                priority=_gobby_priority_to_linear(task.priority),
                 state_id=state_id,
             )
             logger.info("Synced task %s to Linear issue %s", task_id, task.linear_issue_id)
@@ -214,7 +374,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
             "issueId": task.linear_issue_id,
             "title": issue_title,
             "description": task.description or "",
-            "priority": task.priority,
+            "priority": _gobby_priority_to_linear(task.priority),
         }
         if linear_state:
             update_args["status"] = linear_state
@@ -277,7 +437,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
                 team_id=effective_team_id,
                 title=title,
                 description=task.description or "",
-                priority=task.priority,
+                priority=_gobby_priority_to_linear(task.priority),
                 project_id=linear_project_id,
             )
             result_dict = self._extract_created_issue(result, task_id)
@@ -300,7 +460,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
             "teamId": effective_team_id,
             "title": title,
             "description": task.description or "",
-            "priority": task.priority,
+            "priority": _gobby_priority_to_linear(task.priority),
         }
         if linear_project_id:
             arguments["projectId"] = linear_project_id
@@ -339,13 +499,8 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
         """Find a deterministic existing Linear issue for a Gobby task."""
         issues: list[dict[str, Any]] | None = None
         if self._linear_mcp_has_tool("list_issues"):
-            result = await self.mcp_manager.call_tool(
-                server_name="linear",
-                tool_name="list_issues",
-                arguments=self._issue_list_args(team_id),
-            )
             try:
-                issues = _extract_records(result)
+                issues = await self._list_issues_via_mcp(team_id)
             except LinearSyncError as exc:
                 logger.warning(
                     "Failed to parse Linear issues while checking for existing %s: %s",
@@ -390,9 +545,17 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
 
     async def _push_task_rows(self, rows: list[Any]) -> dict[str, int]:
         stats = {"pushed": 0, "skipped": 0, "errors": 0, "deferred": 0}
+        if not rows:
+            return stats
+        client = await self._get_graphql_client()
+        state_ids_by_team: dict[str, dict[str, str]] = {}
         for row in rows:
             try:
-                await self.sync_task_to_linear(row["id"])
+                await self._sync_task_to_linear(
+                    row["id"],
+                    client=client,
+                    state_ids_by_team=state_ids_by_team,
+                )
                 stats["pushed"] += 1
             except Exception as e:
                 logger.warning("Failed to push task %s to Linear: %s", row["id"], e)
@@ -402,7 +565,8 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
     async def push_active_tasks(self) -> dict[str, int]:
         """Push all linked active non-closed Gobby tasks to Linear."""
         self.linear.require_available()
-        rows = self.task_manager.db.fetchall(
+        rows = await asyncio.to_thread(
+            self.task_manager.db.fetchall,
             "SELECT id FROM tasks "
             "WHERE project_id = %s AND linear_issue_id IS NOT NULL AND closed_at IS NULL",
             (self.project_id,),
@@ -443,7 +607,9 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
         stats = {"updated": 0, "skipped": 0, "errors": 0, "deferred": 0}
 
         rows = self.task_manager.db.fetchall(
-            "SELECT id, linear_issue_id FROM tasks "
+            "SELECT id, linear_issue_id, title, description, priority, updated_at, "
+            "closed_at, closed_reason, closed_in_session_id, closed_commit_sha, "
+            "escalated_at, escalation_reason FROM tasks "
             "WHERE project_id = %s AND linear_issue_id IS NOT NULL",
             (self.project_id,),
         )
@@ -453,12 +619,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
         try:
             if not self._linear_mcp_has_tool("list_issues"):
                 raise LinearSyncError("Linear MCP server does not expose list_issues.")
-            result = await self.mcp_manager.call_tool(
-                server_name="linear",
-                tool_name="list_issues",
-                arguments=self._issue_list_args(effective_team_id),
-            )
-            issues = _extract_records(result)
+            issues = await self._list_issues_via_mcp(effective_team_id)
         except LinearSyncError as e:
             client = await self._get_graphql_client()
             if not client:
@@ -487,7 +648,8 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
             linear_id = row["linear_issue_id"]
             issue = issue_map.get(linear_id)
             if not issue:
-                stats["skipped"] += 1
+                logger.warning("Linked Linear issue %s was missing for task %s", linear_id, task_id)
+                stats["errors"] += 1
                 continue
 
             try:
@@ -505,18 +667,32 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
                     if linear_updated is not None
                     else datetime.now(UTC).isoformat()
                 )
-                priority_val = issue.get("priority", 2)
-                self.task_manager.reconcile_task_state(
-                    task_id,
-                    title=_local_title_from_linear(issue.get("title", "")),
-                    description=issue.get("description", ""),
-                    priority=priority_val,
+                priority_val = _linear_priority_to_gobby(issue.get("priority"))
+                updates = {
+                    "title": _local_title_from_linear(issue.get("title", "")),
+                    "description": issue.get("description", ""),
+                    "priority": priority_val,
                     **_linear_lifecycle_fields(
                         gobby_state,
                         state_name=state_name,
                         changed_at=changed_at,
                     ),
-                )
+                }
+                if not _linear_update_changes_task(row, updates):
+                    stats["skipped"] += 1
+                    continue
+
+                local_updated = _parse_linear_timestamp(row.get("updated_at"))
+                if local_updated and linear_updated and local_updated > linear_updated:
+                    logger.warning(
+                        "Skipped Linear update for task %s because local changes are newer",
+                        task_id,
+                    )
+                    stats["skipped"] += 1
+                    stats["errors"] += 1
+                    continue
+
+                self.task_manager.reconcile_task_state(task_id, **updates)
                 stats["updated"] += 1
             except Exception as e:
                 logger.warning("Failed to update task %s from Linear: %s", task_id, e)
@@ -528,16 +704,18 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
         """Push gobby tasks that changed since last sync to Linear."""
         self.linear.require_available()
 
-        synced_at = self._get_project_synced_at()
+        synced_at = await asyncio.to_thread(self._get_project_synced_at)
         if synced_at:
-            rows = self.task_manager.db.fetchall(
+            rows = await asyncio.to_thread(
+                self.task_manager.db.fetchall,
                 "SELECT id FROM tasks "
                 "WHERE project_id = %s AND linear_issue_id IS NOT NULL "
                 "AND updated_at > %s",
                 (self.project_id, synced_at),
             )
         else:
-            rows = self.task_manager.db.fetchall(
+            rows = await asyncio.to_thread(
+                self.task_manager.db.fetchall,
                 "SELECT id FROM tasks WHERE project_id = %s AND linear_issue_id IS NOT NULL",
                 (self.project_id,),
             )
@@ -547,6 +725,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
     async def sync_all(self, team_id: str | None = None) -> dict[str, Any]:
         """Full bidirectional sync: pull first, then push."""
         effective_team_id = team_id or self.linear_team_id
+        sync_started_at = datetime.now(UTC).isoformat()
 
         pull_stats = await self.pull_linear_updates(team_id=effective_team_id)
         pull_errors = int(pull_stats.get("errors", 0))
@@ -561,7 +740,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
         cursor_updated = not (pull_errors or pull_deferred or push_errors or push_deferred)
         synced_at: str | None
         if cursor_updated:
-            synced_at = datetime.now(UTC).isoformat()
+            synced_at = sync_started_at
             self._update_synced_at(synced_at)
         else:
             synced_at = self._get_project_synced_at()
@@ -578,6 +757,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
         return _map_gobby_state_to_linear(gobby_state)
 
     def _extract_created_issue(self, result: Any, task_id: str) -> dict[str, Any]:
+        result = _parse_linear_mcp_result(result)
         if isinstance(result, dict):
             issue = result.get("issue")
             if isinstance(issue, dict):
