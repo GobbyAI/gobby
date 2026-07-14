@@ -607,6 +607,8 @@ def load_config(
             telemetry_config["log_file"] = safe_client
         if safe_error := os.environ.get("GOBBY_LOGGING_CLIENT_ERROR"):
             telemetry_config["log_file_error"] = safe_error
+        if safe_stderr := os.environ.get("GOBBY_LOGGING_CLIENT_STDERR"):
+            telemetry_config["log_file_stderr"] = safe_stderr
         if safe_mcp_server := os.environ.get("GOBBY_LOGGING_MCP_SERVER"):
             telemetry_config["log_file_mcp_server"] = safe_mcp_server
         if safe_mcp_client := os.environ.get("GOBBY_LOGGING_MCP_CLIENT"):

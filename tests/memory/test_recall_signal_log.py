@@ -210,6 +210,61 @@ def test_append_recall_signal_events_writes_parseable_jsonl_and_appends(tmp_path
     assert [json.loads(line)["query"] for line in lines] == ["raw user query", "raw user query"]
 
 
+def test_append_rotates_at_cap_and_shifts_backups(tmp_path: Path) -> None:
+    path = tmp_path / "recall_signal.jsonl"
+    event = build_recall_signal_event(
+        snapshot=_snapshot(),
+        timestamp="2026-06-15T00:00:00+00:00",
+        weighting={},
+    )
+    backup_one = tmp_path / "recall_signal.jsonl.1"
+    backup_two = tmp_path / "recall_signal.jsonl.2"
+
+    path.write_text("live-generation-1\n", encoding="utf-8")
+    backup_one.write_text("backup-generation-0\n", encoding="utf-8")
+
+    append_recall_signal_events([event], path, max_bytes=1)
+
+    assert backup_two.read_text(encoding="utf-8") == "backup-generation-0\n"
+    assert backup_one.read_text(encoding="utf-8") == "live-generation-1\n"
+    [line] = path.read_text(encoding="utf-8").splitlines()
+    assert json.loads(line)["query"] == "raw user query"
+
+
+def test_append_does_not_rotate_under_cap(tmp_path: Path) -> None:
+    path = tmp_path / "recall_signal.jsonl"
+    event = build_recall_signal_event(
+        snapshot=_snapshot(),
+        timestamp="2026-06-15T00:00:00+00:00",
+        weighting={},
+    )
+
+    append_recall_signal_events([event], path, max_bytes=1024 * 1024)
+    append_recall_signal_events([event], path, max_bytes=1024 * 1024)
+
+    assert not (tmp_path / "recall_signal.jsonl.1").exists()
+    assert len(path.read_text(encoding="utf-8").splitlines()) == 2
+
+
+def test_sink_threads_configured_rotation_cap(tmp_path: Path) -> None:
+    path = tmp_path / "recall_signal.jsonl"
+    path.write_text("x" * (1024 * 1024) + "\n", encoding="utf-8")
+    sink = make_recall_signal_sink(
+        MemoryConfig(
+            recall_signal_logging=True,
+            recall_signal_log_path=str(path),
+            recall_signal_log_max_mb=1,
+        )
+    )
+    assert sink is not None
+
+    sink(_snapshot())
+
+    assert (tmp_path / "recall_signal.jsonl.1").exists()
+    [line] = path.read_text(encoding="utf-8").splitlines()
+    assert json.loads(line)["query"] == "raw user query"
+
+
 def test_append_recall_signal_events_fails_open(tmp_path: Path) -> None:
     event = build_recall_signal_event(
         snapshot=_snapshot(),

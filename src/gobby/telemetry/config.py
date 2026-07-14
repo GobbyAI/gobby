@@ -74,7 +74,15 @@ class TelemetrySettings(BaseModel):
     )
     log_file_error: str = Field(
         default="~/.gobby/logs/gobby-error.log",
-        description="Daemon error log file path",
+        description="Daemon error log file path (rotating-handler-exclusive)",
+    )
+    log_file_stderr: str = Field(
+        default="~/.gobby/logs/gobby-stderr.log",
+        description=(
+            "OS-level daemon stderr capture path (subprocess stderr and service-manager "
+            "StandardErrorPath). Separate from log_file_error so the fd-level redirect "
+            "cannot break the rotating error handler (#18196)."
+        ),
     )
     log_file_hook_manager: str = Field(
         default="~/.gobby/logs/hook-manager.log",
@@ -95,6 +103,17 @@ class TelemetrySettings(BaseModel):
     backup_count: int = Field(
         default=5,
         description="Number of backup log files to keep",
+    )
+    stderr_log_max_mb: int = Field(
+        default=50,
+        description="Truncate the stderr capture file when it exceeds this size in MB",
+    )
+    logs_growth_warn_mb_per_interval: int = Field(
+        default=100,
+        description=(
+            "Resource monitor warns when the logs directory grows by more than "
+            "this many MB within one monitor interval"
+        ),
     )
 
     # Tracing settings
@@ -134,7 +153,9 @@ class TelemetrySettings(BaseModel):
         description="LLM call auto-instrumentation via OpenLLMetry",
     )
 
-    @field_validator("max_size_mb", "backup_count")
+    @field_validator(
+        "max_size_mb", "backup_count", "stderr_log_max_mb", "logs_growth_warn_mb_per_interval"
+    )
     @classmethod
     def validate_positive(cls, v: int) -> int:
         """Validate value is positive."""

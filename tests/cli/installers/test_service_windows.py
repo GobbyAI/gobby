@@ -28,7 +28,7 @@ _INSTALL_CONTEXT = {
     "home_dir": r"C:\Users\test",
     "path_env": r"C:\Python313;C:\Windows\system32;C:\Windows",
     "log_file": r"C:\Users\test\.gobby\logs\gobby.log",
-    "error_log_file": r"C:\Users\test\.gobby\logs\gobby-error.log",
+    "stderr_log_file": r"C:\Users\test\.gobby\logs\gobby-stderr.log",
     "gobby_home": "",
     "verbose": False,
 }
