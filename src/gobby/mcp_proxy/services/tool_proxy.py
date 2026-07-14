@@ -1,7 +1,7 @@
 """Tool proxy service."""
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.mcp_proxy.manager import MCPClientManager
 
@@ -85,8 +85,18 @@ class ToolProxyService:
 
     @property
     def session_manager(self) -> "SessionManager | None":
-        """Expose the MCP manager session manager for shared context helpers."""
-        return getattr(self._mcp_manager, "session_manager", None)
+        """Expose the runtime session manager for shared context helpers."""
+        session_manager = cast(
+            "SessionManager | None",
+            getattr(self._mcp_manager, "session_manager", None),
+        )
+        if session_manager is not None:
+            return session_manager
+        hook_manager = self._resolve_hook_manager()
+        return cast(
+            "SessionManager | None",
+            getattr(hook_manager, "_session_manager", None) if hook_manager else None,
+        )
 
     def _resolve_server_name(self, server_name: str) -> str:
         """Auto-redirect known server name aliases to the correct server."""
@@ -238,7 +248,6 @@ class ToolProxyService:
         session_id: str | None = None,
         strip_unknown: bool = False,
         enforce_workflow: bool = True,
-        timeout: float | None = None,
     ) -> Any:
         """Execute a tool with optional pre-validation."""
         return await call_tool_impl(
@@ -249,7 +258,6 @@ class ToolProxyService:
             session_id,
             strip_unknown,
             enforce_workflow,
-            timeout,
         )
 
     async def read_resource(self, server_name: str, uri: str) -> Any:

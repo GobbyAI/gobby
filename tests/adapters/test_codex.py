@@ -24,6 +24,7 @@ from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter, _get_daemon_machine_id
 from gobby.adapters.codex_impl.client import CodexAppServerClient
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+from gobby.adapters.codex_impl.item_normalization import build_post_tool_lifecycle_payload
 from gobby.adapters.codex_impl.types import (
     CodexConnectionState,
     CodexItem,
@@ -1491,6 +1492,50 @@ class TestCodexAdapterTranslateToHookEvent:
             assert hook_event is not None
             assert hook_event.event_type == HookEventType.AFTER_TOOL
             assert hook_event.data["item_type"] == item_type
+
+    def test_item_completed_command_execution_normalizes_shell_result(self) -> None:
+        adapter = CodexAdapter()
+        native_event = {
+            "method": "item/completed",
+            "params": {
+                "threadId": "thr-tool",
+                "item": {
+                    "id": "item-command-1",
+                    "type": "commandExecution",
+                    "command": "uv run pytest tests/adapters/test_codex.py -q",
+                    "aggregatedOutput": "1 passed",
+                    "exitCode": 0,
+                    "status": "completed",
+                },
+            },
+        }
+
+        hook_event = adapter.translate_to_hook_event(native_event)
+
+        assert hook_event is not None
+        expected_response = {"output": "1 passed", "exitCode": 0, "status": "completed"}
+        assert hook_event.data["tool_response"] == expected_response
+        assert hook_event.data["tool_output"] == expected_response
+
+    def test_web_chat_post_tool_payload_forwards_shell_result(self) -> None:
+        params = {
+            "threadId": "thr-tool",
+            "item": {
+                "id": "item-command-1",
+                "type": "commandExecution",
+                "command": "uv run pytest tests/adapters/test_codex.py -q",
+                "aggregatedOutput": "1 passed",
+                "exitCode": 0,
+                "status": "completed",
+            },
+        }
+
+        payload = build_post_tool_lifecycle_payload(params, tool_name_map=CodexAdapter.TOOL_MAP)
+
+        assert payload is not None
+        tool_name, _, tool_response = payload
+        assert tool_name == "Bash"
+        assert tool_response == {"output": "1 passed", "exitCode": 0, "status": "completed"}
 
     def test_item_completed_file_change_uses_cached_cwd(self, tmp_path: Path) -> None:
         """Cached thread cwd should flow into synthetic AFTER_TOOL hook events."""

@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.hub.protocol import HubDatabase
@@ -1531,6 +1532,94 @@ class TestDetectVerificationEvidence:
         assert variables["verification_evidence_recorded"] is False
         assert variables["verification_evidence"][-1]["evidence_type"] == "validation_command"
         assert variables["verification_evidence"][-1]["success"] is False
+
+    def test_codex_completed_validation_records_success_without_unknown_log(
+        self,
+        variables,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        event = CodexAdapter().translate_to_hook_event(
+            {
+                "method": "item/completed",
+                "params": {
+                    "threadId": AGENT_SESSION_ID,
+                    "item": {
+                        "id": "item-command-1",
+                        "type": "commandExecution",
+                        "command": "uv run pytest tests/workflows/test_hooks.py -v",
+                        "aggregatedOutput": "1 passed",
+                        "exitCode": 0,
+                        "status": "completed",
+                    },
+                },
+            }
+        )
+        assert event is not None
+
+        with caplog.at_level(logging.INFO, logger="gobby.workflows.observers"):
+            detect_verification_evidence(event, variables, SESSION_ID)
+
+        assert variables["verification_evidence_recorded"] is True
+        evidence = variables["verification_evidence"][-1]
+        assert evidence["success"] is True
+        assert evidence["exit_code"] == 0
+        assert "unknown outcome" not in caplog.text
+
+    def test_codex_failed_validation_clears_readiness(self, variables) -> None:
+        variables["verification_evidence_recorded"] = True
+        event = CodexAdapter().translate_to_hook_event(
+            {
+                "method": "item/completed",
+                "params": {
+                    "threadId": AGENT_SESSION_ID,
+                    "item": {
+                        "id": "item-command-1",
+                        "type": "commandExecution",
+                        "command": "uv run pytest tests/workflows/test_hooks.py -v",
+                        "aggregatedOutput": "1 failed",
+                        "exitCode": 1,
+                        "status": "failed",
+                    },
+                },
+            }
+        )
+        assert event is not None
+
+        detect_verification_evidence(event, variables, SESSION_ID)
+
+        assert variables["verification_evidence_recorded"] is False
+        evidence = variables["verification_evidence"][-1]
+        assert evidence["success"] is False
+        assert evidence["exit_code"] == 1
+
+    @pytest.mark.parametrize("outcome", [{"status": "declined"}, {}])
+    def test_codex_unknown_validation_outcome_preserves_readiness(
+        self,
+        variables,
+        caplog: pytest.LogCaptureFixture,
+        outcome: dict[str, object],
+    ) -> None:
+        variables["verification_evidence_recorded"] = True
+        item = {
+            "id": "item-command-1",
+            "type": "commandExecution",
+            "command": "uv run pytest tests/workflows/test_hooks.py -v",
+            **outcome,
+        }
+        event = CodexAdapter().translate_to_hook_event(
+            {
+                "method": "item/completed",
+                "params": {"threadId": AGENT_SESSION_ID, "item": item},
+            }
+        )
+        assert event is not None
+
+        with caplog.at_level(logging.INFO, logger="gobby.workflows.observers"):
+            detect_verification_evidence(event, variables, SESSION_ID)
+
+        assert variables["verification_evidence_recorded"] is True
+        assert variables["verification_evidence"][-1]["success"] is None
+        assert "verification readiness unchanged" in caplog.text
 
     def test_unknown_dict_tool_response_does_not_record_readiness(self, variables) -> None:
         raw_data: dict[str, object] = {

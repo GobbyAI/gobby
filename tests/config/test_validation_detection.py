@@ -46,6 +46,9 @@ pytestmark = pytest.mark.unit
         ("mix format --check-formatted", "elixir-format-check"),
         ("prettier . --check", "js-ts-format-check"),
         ("swift test", "swift-validation"),
+        ("jq empty .gobby/project.json", "json-jq-validation"),
+        ("jq -e '.verification' .gobby/project.json", "json-jq-validation"),
+        ("jq --exit-status '.verification' .gobby/project.json", "json-jq-validation"),
     ],
 )
 def test_builtin_validation_detection_accepts_common_commands(
@@ -79,6 +82,7 @@ def test_builtin_validation_detection_accepts_common_commands(
         "pytest --markers",
         "ruff check --help",
         "mypy --install-types",
+        "jq '.verification' .gobby/project.json",
     ],
 )
 def test_builtin_validation_detection_rejects_non_validation_commands(command: str) -> None:
