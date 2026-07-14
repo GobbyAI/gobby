@@ -2044,7 +2044,7 @@ class TestCodexTranscriptParser:
         assert msg.usage is not None
         assert msg.usage.input_tokens == 451
         assert msg.usage.cache_read_tokens == 25_984
-        assert msg.usage.output_tokens == 12
+        assert msg.usage.output_tokens == 10
 
 
 class TestQwenTranscriptParser:

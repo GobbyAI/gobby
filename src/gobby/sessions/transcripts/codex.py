@@ -425,11 +425,6 @@ class CodexTranscriptParser(BaseTranscriptParser):
         output_tokens = _parse_int_token(
             usage_data.get("output_tokens") or usage_data.get("outputTokens")
         )
-        reasoning_output_tokens = _parse_int_token(
-            usage_data.get("reasoning_output_tokens")
-            or usage_data.get("reasoningOutputTokens")
-            or 0
-        )
         cache_creation_tokens = _parse_int_token(
             usage_data.get("cache_creation_input_tokens")
             or usage_data.get("cacheCreationInputTokens")
@@ -438,7 +433,7 @@ class CodexTranscriptParser(BaseTranscriptParser):
 
         usage = TokenUsage(
             input_tokens=max(0, input_tokens - cached_input_tokens),
-            output_tokens=output_tokens + reasoning_output_tokens,
+            output_tokens=output_tokens,
             cache_creation_tokens=cache_creation_tokens,
             cache_read_tokens=cached_input_tokens,
         )
