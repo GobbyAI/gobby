@@ -7,7 +7,6 @@ Uses ChatterboxTurboTTS for sub-200ms latency with zero-shot voice cloning.
 from __future__ import annotations
 
 import asyncio
-import importlib
 import logging
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -79,15 +78,6 @@ def _reference_availability_error(reference_audio: Path) -> str | None:
 def _runtime_import_error() -> str | None:
     if not _module_is_available("chatterbox"):
         return "daemon environment is missing required package chatterbox-tts; run uv sync"
-
-    try:
-        with suppress_perth_pkg_resources_warning():
-            importlib.import_module("chatterbox.tts_turbo")
-    except Exception as exc:
-        message = str(exc).strip()
-        if message:
-            return f"Chatterbox runtime import failed: {message}"
-        return f"Chatterbox runtime import failed: {type(exc).__name__}"
     return None
 
 
@@ -309,14 +299,12 @@ class ChatterboxTurboProvider(BaseTTSProvider):
             if self._model is not None and self._conditioning_ready:
                 return self._model
 
-            device = self._config.tts_device
-            if device == "auto":
-                device = _auto_device()
-
             if self._model is None:
-                logger.info(f"Loading Chatterbox Turbo model (device={device})")
+                configured_device = self._config.tts_device
+                logger.info(f"Loading Chatterbox Turbo model (device={configured_device})")
 
                 def _load() -> Any:
+                    device = _auto_device() if configured_device == "auto" else configured_device
                     with suppress_perth_pkg_resources_warning():
                         from chatterbox.tts_turbo import ChatterboxTurboTTS
 
