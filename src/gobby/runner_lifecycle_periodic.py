@@ -54,6 +54,7 @@ def _default_loops() -> dict[str, Any]:
         metric_snapshot_loop,
         metrics_archive_loop,
         metrics_cleanup_loop,
+        purge_deleted_skills_loop,
         recall_drift_monitor_loop,
         span_cleanup_loop,
         tmux_window_name_repair_loop,
@@ -70,6 +71,7 @@ def _default_loops() -> dict[str, Any]:
         "memory_reconcile_loop": memory_reconcile_loop,
         "cleanup_zombie_messages_loop": cleanup_zombie_messages_loop,
         "cleanup_comms_messages_loop": cleanup_comms_messages_loop,
+        "purge_deleted_skills_loop": purge_deleted_skills_loop,
         "cleanup_chat_attachments_loop": cleanup_chat_attachments_loop,
         "cleanup_expired_isolation_loop": cleanup_expired_isolation_loop,
         "metric_snapshot_loop": metric_snapshot_loop,
@@ -247,6 +249,17 @@ def start_periodic_tasks(
         ),
         name="comms-message-cleanup",
     )
+    skills_config = getattr(runner.config, "skills", None)
+    skill_retention_days = getattr(skills_config, "soft_delete_retention_days", 30)
+    runner._skill_purge_task = asyncio.create_task(
+        loops["purge_deleted_skills_loop"](
+            runner.database,
+            lambda: runner._shutdown_requested,
+            retention_days=skill_retention_days,
+            run_db=getattr(db_executor, "run", None),
+        ),
+        name="skill-retention-purge",
+    )
     chat_config = getattr(runner.config, "chat", None)
     attachment_retention_hours = getattr(
         chat_config,
@@ -359,6 +372,7 @@ def start_periodic_tasks(
             getattr(runner, "_recall_drift_task", None),
             runner._zombie_messages_task,
             runner._comms_messages_task,
+            runner._skill_purge_task,
             runner._chat_attachments_cleanup_task,
             runner._expired_isolation_task,
             runner._metric_snapshot_task,
