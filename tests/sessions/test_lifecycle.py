@@ -23,6 +23,9 @@ _SESSION_MANAGER_PATCH = "gobby.sessions.lifecycle.SessionManager"
 DROID_FIXTURE_DIR = Path(__file__).parent / "transcripts" / "fixtures" / "droid"
 DROID_FIXTURE_JSONL = DROID_FIXTURE_DIR / "dbf95187-5fa4-43a0-b207-8c24f412baf7.jsonl"
 DROID_FIXTURE_SETTINGS = DROID_FIXTURE_DIR / "dbf95187-5fa4-43a0-b207-8c24f412baf7.settings.json"
+QWEN_FIXTURE_JSON = (
+    Path(__file__).parent.parent / "fixtures" / "transcripts" / "qwen" / "session.json"
+)
 
 
 class EmptyTokenEventStore:
@@ -1398,6 +1401,49 @@ class TestProcessSessionTranscriptJsonDispatch:
         await manager._process_session_transcript("s1", str(transcript_path))
         manager.session_manager.update_usage.assert_not_called()
         assert manager.session_manager.update_usage.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_qwen_backfill_records_native_token_usage(self, tmp_path, manager):
+        transcript_path = tmp_path / "qwen-session.json"
+        transcript_path.write_text(QWEN_FIXTURE_JSON.read_text(encoding="utf-8"), encoding="utf-8")
+
+        session = MagicMock()
+        session.source = "qwen"
+        session.project_id = "project-id"
+        session.context_window = None
+        session.model = "qwen3-coder"
+        manager.session_manager.get.return_value = session
+
+        zero_totals = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_creation_tokens": 0,
+            "cache_read_tokens": 0,
+        }
+        manager.token_event_store = MagicMock()
+        manager.token_event_store.get_session_totals.side_effect = [
+            dict(zero_totals),
+            dict(zero_totals),
+        ]
+        manager.token_event_store.record.return_value = True
+
+        await manager._process_session_transcript("s1", str(transcript_path))
+
+        event = manager.token_event_store.record.call_args.args[0]
+        assert event.source == "qwen"
+        assert event.origin == "transcript"
+        assert event.input_tokens == 750
+        assert event.output_tokens == 100
+        assert event.cache_read_tokens == 250
+        manager.session_manager.update_usage.assert_called_once_with(
+            session_id="s1",
+            input_tokens=750,
+            output_tokens=100,
+            cache_creation_tokens=0,
+            cache_read_tokens=250,
+            context_window=None,
+            model="qwen3-coder",
+        )
 
     @pytest.mark.asyncio
     async def test_json_messages_aggregate_tokens(self, tmp_path, manager):
