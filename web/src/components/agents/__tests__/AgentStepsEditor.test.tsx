@@ -1,0 +1,47 @@
+import { fireEvent, render, screen } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
+
+import { AgentStepsEditor, type WorkflowStep } from '../AgentStepsEditor'
+
+describe('AgentStepsEditor advanced JSON fields', () => {
+  it('preserves draft text across rerenders and commits valid arrays on blur', () => {
+    const steps: WorkflowStep[] = [{
+      name: 'step-one',
+      allowed_tools: [],
+      blocked_tools: [],
+      allowed_mcp_tools: [],
+      blocked_mcp_tools: [],
+      transitions: [],
+    }]
+    const onChange = vi.fn()
+    const { rerender } = render(<AgentStepsEditor steps={steps} onChange={onChange} />)
+
+    fireEvent.click(screen.getByText('step-one'))
+    fireEvent.click(screen.getByRole('button', { name: /Advanced/ }))
+
+    const editor = screen.getByLabelText('on_enter')
+    fireEvent.change(editor, { target: { value: '[{' } })
+    rerender(<AgentStepsEditor steps={steps} onChange={onChange} />)
+
+    expect(editor).toHaveValue('[{')
+    expect(onChange).not.toHaveBeenCalled()
+
+    fireEvent.blur(editor)
+    expect(screen.getByRole('alert')).toHaveTextContent('Invalid JSON')
+    expect(editor).toHaveAttribute('aria-invalid', 'true')
+    expect(onChange).not.toHaveBeenCalled()
+
+    fireEvent.change(editor, { target: { value: '{}' } })
+    fireEvent.blur(editor)
+    expect(screen.getByRole('alert')).toHaveTextContent('Value must be a JSON array')
+    expect(onChange).not.toHaveBeenCalled()
+
+    fireEvent.change(editor, { target: { value: '[{"tool":"Read"}]' } })
+    fireEvent.blur(editor)
+
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(onChange).toHaveBeenCalledWith([
+      { ...steps[0], on_enter: [{ tool: 'Read' }] },
+    ])
+  })
+})
