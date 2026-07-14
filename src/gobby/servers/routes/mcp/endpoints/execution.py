@@ -18,6 +18,7 @@ from gobby.mcp_proxy.wait_tools import (
     mcp_wrapper_fingerprint_stale_result,
 )
 from gobby.servers.routes.dependencies import get_internal_manager, get_mcp_manager, get_server
+from gobby.servers.routes.mcp.endpoints.discovery import _mcp_call_timeout
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.telemetry.instruments import inc_counter, observe_histogram
 from gobby.utils.datetime import to_json_safe
@@ -56,6 +57,14 @@ def _success_response_payload(result: Any, response_time_ms: float) -> dict[str,
             "response_time_ms": response_time_ms,
         }
     )
+
+
+def _timeout_response_payload(timeout: float, response_time_ms: float) -> dict[str, Any]:
+    return {
+        "success": False,
+        "error": f"Tool call timed out after {timeout:g} seconds",
+        "response_time_ms": response_time_ms,
+    }
 
 
 def _stale_stdio_wrapper_wait_result(
@@ -667,6 +676,7 @@ async def call_mcp_tool(
         # _set_context_for_request reads it non-destructively via .get().
         # InternalToolRegistry.call strips unknown kwargs via signature inspection.
         try:
+            timeout = _mcp_call_timeout(server)
             # Route through ToolProxyService for consistent error enrichment
             if server.tool_proxy:
                 result = await server.tool_proxy.call_tool(
@@ -674,6 +684,7 @@ async def call_mcp_tool(
                     tool_name,
                     arguments,
                     session_id=get_current_session_id(),
+                    timeout=timeout,
                 )
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 return _process_tool_proxy_result(result, server_name, tool_name, response_time_ms)
@@ -695,12 +706,18 @@ async def call_mcp_tool(
 
             # Call external MCP tool
             try:
-                result = await server.mcp_manager.call_tool(server_name, tool_name, arguments)
+                result = await server.mcp_manager.call_tool(
+                    server_name, tool_name, arguments, timeout=timeout
+                )
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 inc_counter("mcp_tool_calls_succeeded_total")
 
                 return _success_response_payload(result, response_time_ms)
 
+            except TimeoutError:
+                inc_counter("mcp_tool_calls_failed_total")
+                response_time_ms = (time.perf_counter() - start_time) * 1000
+                return _timeout_response_payload(timeout, response_time_ms)
             except Exception as e:
                 inc_counter("mcp_tool_calls_failed_total")
                 error_msg = str(e) or f"{type(e).__name__}: (no message)"
@@ -760,6 +777,7 @@ async def mcp_proxy(
         # Set project context from session_id or stdio proxy headers
         ctx_token = _set_context_for_request(server, arguments, request)
         try:
+            timeout = _mcp_call_timeout(server)
             # Route through ToolProxyService for consistent error enrichment
             if server.tool_proxy:
                 result = await server.tool_proxy.call_tool(
@@ -767,6 +785,7 @@ async def mcp_proxy(
                     tool_name,
                     arguments,
                     session_id=get_current_session_id(),
+                    timeout=timeout,
                 )
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 return _process_tool_proxy_result(result, server_name, tool_name, response_time_ms)
@@ -795,7 +814,9 @@ async def mcp_proxy(
 
             # Call MCP tool
             try:
-                result = await server.mcp_manager.call_tool(server_name, tool_name, arguments)
+                result = await server.mcp_manager.call_tool(
+                    server_name, tool_name, arguments, timeout=timeout
+                )
 
                 response_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -812,6 +833,10 @@ async def mcp_proxy(
 
                 return _success_response_payload(result, response_time_ms)
 
+            except TimeoutError:
+                inc_counter("mcp_tool_calls_failed_total")
+                response_time_ms = (time.perf_counter() - start_time) * 1000
+                return _timeout_response_payload(timeout, response_time_ms)
             except ValueError as e:
                 inc_counter("mcp_tool_calls_failed_total")
                 logger.warning(

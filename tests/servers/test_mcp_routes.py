@@ -41,6 +41,7 @@ from gobby.hooks.runtime_compat import SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION
 from gobby.mcp_proxy.lazy import CircuitBreakerOpen
 from gobby.mcp_proxy.models import MCPError
 from gobby.mcp_proxy.schema_hash import SchemaHashManager, compute_schema_hash
+from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.mcp_proxy.wait_tools import (
     MCP_WRAPPER_FINGERPRINT_HEADER,
     MCP_WRAPPER_STALE_ERROR_CODE,
@@ -1416,6 +1417,57 @@ class TestCallMCPTool:
             )
 
         assert response.status_code == 500
+
+    @pytest.mark.parametrize(
+        ("path", "payload"),
+        [
+            (
+                "/api/mcp/tools/call",
+                {
+                    "server_name": "slow-server",
+                    "tool_name": "slow_tool",
+                    "arguments": {},
+                },
+            ),
+            ("/api/mcp/slow-server/tools/slow_tool", {}),
+        ],
+    )
+    def test_external_tool_timeout_returns_failure_envelope(
+        self,
+        session_storage: SessionManager,
+        path: str,
+        payload: dict[str, Any],
+    ) -> None:
+        """External calls use the configured timeout and return a flat failure envelope."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mcp_manager = MagicMock()
+        mcp_manager.call_tool = AsyncMock(side_effect=TimeoutError)
+        server._tools_handler = MagicMock(
+            tool_proxy=ToolProxyService(mcp_manager, validate_arguments=False)
+        )
+
+        with (
+            patch(
+                "gobby.servers.routes.mcp.endpoints.execution._mcp_call_timeout",
+                return_value=0.01,
+            ),
+            TestClient(server.app) as client,
+        ):
+            response = client.post(path, json=payload)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert data["error"] == "Tool call timed out after 0.01 seconds"
+        assert data["error_code"] == "CONNECTION_ERROR"
+        assert "response_time_ms" in data
+        mcp_manager.call_tool.assert_awaited_once_with(
+            "slow-server", "slow_tool", {}, session_id=None, timeout=0.01
+        )
 
 
 # ============================================================================
