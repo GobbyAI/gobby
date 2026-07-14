@@ -148,7 +148,6 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
             external_id=external_id,
             machine_id=machine_id,
             source=source,
-            project_id=storage_project_id,
             session_type=session_type,
         )
 
@@ -180,6 +179,13 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                             previous_project_id,
                             project_id,
                         )
+            elif existing is None:
+                existing = self.find_by_external_id_any_project(
+                    external_id,
+                    machine_id,
+                    source,
+                    session_type=session_type,
+                )
 
             if existing:
                 registration_title = title

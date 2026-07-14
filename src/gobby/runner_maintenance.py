@@ -381,11 +381,15 @@ async def cleanup_comms_messages_loop(
         try:
             cutoff = datetime.now(UTC) - timedelta(days=retention_days)
 
-            deleted_messages = await _run_db(
+            deleted_messages, attachment_paths = await _run_db(
                 run_db,
                 store.delete_messages_before,
                 cutoff,
                 limit=_COMMS_CLEANUP_BATCH_LIMIT,
+            )
+            deleted_attachment_paths = await asyncio.to_thread(
+                attachment_manager.delete_paths,
+                attachment_paths,
             )
             deleted_mailbox_messages = await _run_db(
                 run_db,
@@ -393,7 +397,7 @@ async def cleanup_comms_messages_loop(
                 cutoff,
                 limit=_COMMS_CLEANUP_BATCH_LIMIT,
             )
-            deleted_attachments = await asyncio.to_thread(
+            deleted_old_attachments = await asyncio.to_thread(
                 attachment_manager.cleanup_old,
                 days=retention_days,
                 limit=_COMMS_CLEANUP_BATCH_LIMIT,
@@ -401,15 +405,20 @@ async def cleanup_comms_messages_loop(
 
             if deleted_messages > 0:
                 logger.info(f"Comms message cleanup: removed {deleted_messages} old messages")
+            if deleted_attachment_paths > 0:
+                logger.info(
+                    "Comms attachment cleanup: removed %s files for retained messages",
+                    deleted_attachment_paths,
+                )
             if deleted_mailbox_messages > 0:
                 logger.info(
                     "Mailbox message cleanup: removed %s old delivered messages",
                     deleted_mailbox_messages,
                 )
-            if deleted_attachments > 0:
+            if deleted_old_attachments > 0:
                 logger.info(
                     "Comms attachment cleanup: removed %s old local files",
-                    deleted_attachments,
+                    deleted_old_attachments,
                 )
         except asyncio.CancelledError:
             break

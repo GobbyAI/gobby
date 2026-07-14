@@ -104,6 +104,20 @@ def test_create_job(cron_storage: CronJobStorage) -> None:
     assert job.enabled is True
 
 
+def test_create_job_rejects_invalid_enabled_schedule(cron_storage: CronJobStorage) -> None:
+    with pytest.raises(ValueError, match="valid future schedule"):
+        cron_storage.create_job(
+            project_id=PROJECT_ID,
+            name="Invalid Cron",
+            schedule_type="cron",
+            action_type="shell",
+            action_config={"command": "echo"},
+            cron_expr="invalid",
+        )
+
+    assert cron_storage.list_jobs(project_id=PROJECT_ID) == []
+
+
 def test_create_interval_job_clamps_to_minimum_interval(
     cron_storage: CronJobStorage,
 ) -> None:
@@ -136,6 +150,24 @@ def test_update_interval_job_clamps_to_minimum_interval(
 
     assert updated is not None
     assert updated.interval_seconds == 60
+
+
+def test_update_interval_job_recomputes_next_run(cron_storage: CronJobStorage) -> None:
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Reschedule Interval",
+        schedule_type="interval",
+        action_type="shell",
+        action_config={"command": "echo"},
+        interval_seconds=300,
+    )
+
+    updated = cron_storage.update_job(job.id, interval_seconds=600)
+
+    assert updated is not None
+    assert updated.next_run_at is not None
+    assert job.next_run_at is not None
+    assert updated.next_run_at > job.next_run_at
 
 
 def test_get_job(cron_storage: CronJobStorage) -> None:
@@ -428,6 +460,38 @@ def test_get_due_jobs(cron_storage: CronJobStorage) -> None:
     due = cron_storage.get_due_jobs()
     assert len(due) == 1
     assert due[0].id == job1.id
+
+
+def test_claim_due_job_compare_and_sets_next_run_at(
+    cron_storage: CronJobStorage,
+) -> None:
+    """Only the first claimant can advance a selected due schedule."""
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Claim due",
+        schedule_type="interval",
+        action_type="shell",
+        action_config={"command": "echo"},
+        interval_seconds=60,
+    )
+    due_at = datetime.now(UTC) - timedelta(minutes=1)
+    next_run_at = datetime.now(UTC) + timedelta(minutes=1)
+    cron_storage.update_job(job.id, next_run_at=due_at)
+
+    assert cron_storage.claim_due_job(
+        job.id,
+        expected_next_run_at=due_at,
+        next_run_at=next_run_at,
+    )
+    assert not cron_storage.claim_due_job(
+        job.id,
+        expected_next_run_at=due_at,
+        next_run_at=next_run_at + timedelta(minutes=1),
+    )
+
+    persisted = cron_storage.get_job(job.id)
+    assert persisted is not None
+    assert persisted.next_run_at == next_run_at
 
 
 # --- CronRun CRUD tests (#7621) ---

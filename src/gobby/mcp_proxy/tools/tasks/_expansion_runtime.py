@@ -287,6 +287,7 @@ def start_expansion_run_impl(
         )
 
     if not force_new:
+        run_manager.cleanup_stale_runs(parent_task_id=task.id)
         active_run = run_manager.get_active_for_task(task.id)
         if active_run is not None:
             return ExpansionRunResult(

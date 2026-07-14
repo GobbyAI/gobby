@@ -664,6 +664,49 @@ class TestMergeResolutionManagerMergeLookup:
         assert different_target is None
         assert different_source is None
 
+    def test_get_or_create_resolution_creates_rows_for_different_targets(
+        self, hub_db: HubDatabase
+    ) -> None:
+        """The target branch participates in deterministic resolution identity."""
+        manager, _db = self._manager_with_worktree(hub_db)
+
+        main_resolution, main_created = manager.get_or_create_resolution(
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
+            source_branch="feature/test",
+            target_branch="main",
+        )
+        develop_resolution, develop_created = manager.get_or_create_resolution(
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
+            source_branch="feature/test",
+            target_branch="develop",
+        )
+
+        assert main_created is True
+        assert develop_created is True
+        assert main_resolution.id != develop_resolution.id
+
+    def test_get_or_create_resolution_reuses_resolved_exact_match(
+        self, hub_db: HubDatabase
+    ) -> None:
+        """Resolved rows remain idempotent for an exact repeated merge."""
+        manager, _db = self._manager_with_worktree(hub_db)
+        resolved = manager.create_resolution(
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
+            source_branch="feature/test",
+            target_branch="main",
+            status="resolved",
+        )
+
+        result, created = manager.get_or_create_resolution(
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
+            source_branch="feature/test",
+            target_branch="main",
+        )
+
+        assert created is False
+        assert result.id == resolved.id
+        assert result.status == "resolved"
+
 
 class TestMergeResolutionManagerUpdate:
     """Tests for MergeResolutionManager.update_resolution()."""

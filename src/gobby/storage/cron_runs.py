@@ -42,7 +42,13 @@ class CronRunStorageMixin:
 
     db: HubDatabase
 
-    def create_run(self, cron_job_id: str, *, scheduler_owner: str | None = None) -> CronRun | None:
+    def create_run(
+        self,
+        cron_job_id: str,
+        *,
+        scheduler_owner: str | None = None,
+        start_immediately: bool = False,
+    ) -> CronRun | None:
         """Create a cron run unless this job already has pending/running work."""
         run_id = str(uuid.uuid4())
         now = utc_now()
@@ -52,6 +58,8 @@ class CronRunStorageMixin:
             cron_job_id=cron_job_id,
             triggered_at=now,
             created_at=now,
+            started_at=now if start_immediately else None,
+            status="running" if start_immediately else "pending",
         )
 
         row = self.db.fetchone(

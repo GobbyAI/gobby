@@ -5,7 +5,7 @@ CREATE TABLE schema_migrations (
 
 CREATE TABLE projects (
     id UUID PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
     repo_path TEXT,
     github_url TEXT,
     github_repo TEXT,
@@ -18,6 +18,9 @@ CREATE TABLE projects (
 );
 
 CREATE INDEX idx_projects_name ON projects(name);
+
+CREATE UNIQUE INDEX idx_projects_active_name ON projects(name)
+WHERE deleted_at IS NULL;
 
 CREATE TABLE mcp_servers (
     id UUID PRIMARY KEY,
@@ -929,7 +932,8 @@ CREATE TABLE worktrees (
     cleanup_after TIMESTAMPTZ,
     workspace_role TEXT NOT NULL DEFAULT 'task',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_activity_at TIMESTAMPTZ
 );
 
 CREATE INDEX idx_worktrees_project ON worktrees(project_id);
@@ -1091,7 +1095,7 @@ CREATE UNIQUE INDEX idx_clones_path ON clones(clone_path);
 CREATE TABLE cron_jobs (
     id UUID PRIMARY KEY,
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
-    name TEXT NOT NULL,
+    name TEXT NOT NULL UNIQUE,
     description TEXT,
     schedule_type TEXT NOT NULL,
     cron_expr TEXT,

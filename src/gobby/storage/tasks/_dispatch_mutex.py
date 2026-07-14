@@ -137,11 +137,22 @@ class TaskDispatchMutexManager:
             )
             return True
 
-    def release_mutex(self, task_id: str, holder: str) -> bool:
+    def release_mutex(
+        self,
+        task_id: str,
+        holder: str,
+        now: datetime | str | None = None,
+    ) -> bool:
+        now_value = _coerce_timestamp(now)
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "DELETE FROM task_dispatch_mutex WHERE task_id = %s AND lease_holder = %s",
-                (task_id, holder),
+                """
+                DELETE FROM task_dispatch_mutex
+                 WHERE task_id = %s
+                   AND lease_holder = %s
+                   AND lease_until >= %s
+                """,
+                (task_id, holder, now_value),
             )
             return cursor.rowcount > 0
 
@@ -161,8 +172,14 @@ class TaskDispatchMutexManager:
             )
             return cursor.rowcount
 
-    def attach_run_id(self, mutex_id: str, run_id: str) -> bool:
-        updated_at = _coerce_timestamp(None)
+    def attach_run_id(
+        self,
+        mutex_id: str,
+        run_id: str,
+        holder: str,
+        now: datetime | str | None = None,
+    ) -> bool:
+        updated_at = _coerce_timestamp(now)
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 """
@@ -170,8 +187,10 @@ class TaskDispatchMutexManager:
                    SET run_id = %s,
                        updated_at = %s
                  WHERE task_id = %s
+                   AND lease_holder = %s
+                   AND lease_until >= %s
                 """,
-                (run_id, updated_at, mutex_id),
+                (run_id, updated_at, mutex_id, holder, updated_at),
             )
             return cursor.rowcount > 0
 
@@ -241,8 +260,13 @@ def acquire_mutex(
     )
 
 
-def release_mutex(db: HubDatabase, task_id: str, holder: str) -> bool:
-    return TaskDispatchMutexManager(db).release_mutex(task_id, holder)
+def release_mutex(
+    db: HubDatabase,
+    task_id: str,
+    holder: str,
+    now: datetime | str | None = None,
+) -> bool:
+    return TaskDispatchMutexManager(db).release_mutex(task_id, holder, now=now)
 
 
 def force_release(db: HubDatabase, task_id: str) -> bool:
@@ -253,8 +277,14 @@ def clear_by_run_id(db: HubDatabase, run_id: str) -> int:
     return TaskDispatchMutexManager(db).clear_by_run_id(run_id)
 
 
-def attach_run_id(db: HubDatabase, mutex_id: str, run_id: str) -> bool:
-    return TaskDispatchMutexManager(db).attach_run_id(mutex_id, run_id)
+def attach_run_id(
+    db: HubDatabase,
+    mutex_id: str,
+    run_id: str,
+    holder: str,
+    now: datetime | str | None = None,
+) -> bool:
+    return TaskDispatchMutexManager(db).attach_run_id(mutex_id, run_id, holder, now=now)
 
 
 def refresh_mutex_for_run(

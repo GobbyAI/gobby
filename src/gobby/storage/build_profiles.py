@@ -481,7 +481,9 @@ class BuildProfileManager:
         if current is None:
             self._insert_profile(installed)
             return
-        self._update_profile(replace(installed, id=current.id), restore_deleted=True)
+        self._update_profile(
+            replace(installed, id=current.id, enabled=current.enabled), restore_deleted=True
+        )
 
     @classmethod
     def row_hash(cls, row: Mapping[str, Any]) -> str:
@@ -630,7 +632,6 @@ class BuildProfileManager:
             "plan_enhancement_rounds": profile.plan_enhancement_rounds,
             "delivery_mode": profile.delivery_mode,
             "delivery_target_repo": profile.delivery_target_repo,
-            "enabled": profile.enabled,
             "tags": list(profile.tags or []),
         }
 
@@ -670,7 +671,6 @@ class BuildProfileManager:
             "plan_enhancement_rounds": int(row["plan_enhancement_rounds"] or 0),
             "delivery_mode": row["delivery_mode"],
             "delivery_target_repo": row["delivery_target_repo"],
-            "enabled": bool(row["enabled"]),
             "tags": _json_list(row["tags_json"], "tags_json"),
         }
 
@@ -689,7 +689,6 @@ class BuildProfileManager:
             "unattended": bool(row["unattended"]),
             "delivery_mode": row["delivery_mode"],
             "delivery_target_repo": row["delivery_target_repo"],
-            "enabled": bool(row["enabled"]),
             "tags": _json_list(row["tags_json"], "tags_json"),
         }
 

@@ -87,6 +87,20 @@ def test_holistic_descendant_gate_allows_closed_or_terminal_descendants(
     assert gate is None
 
 
+def test_holistic_descendant_gate_bounds_cyclic_subtree(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    root = _holistic_root(temp_db, sample_project)
+    child = _child(temp_db, sample_project, root.id, stage_state="ready")
+    temp_db.execute("UPDATE tasks SET parent_task_id = %s WHERE id = %s", (child.id, root.id))
+
+    gate = _gate(temp_db, root.id)
+
+    assert gate is not None
+    assert [blocker.task_id for blocker in gate.blockers] == [child.id]
+
+
 def _holistic_root(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],

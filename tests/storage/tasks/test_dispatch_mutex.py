@@ -61,7 +61,11 @@ def test_acquire_release_round_trip(
     assert mutex.action_kind == "lifecycle"
     assert mutex.lease_until == now + timedelta(seconds=130)
 
-    assert manager.release_mutex(task.id, holder="state-dispatcher:1")
+    assert manager.release_mutex(
+        task.id,
+        holder="state-dispatcher:1",
+        now=now + timedelta(seconds=10),
+    )
     assert manager.get_mutex(task.id) is None
 
 
@@ -232,12 +236,79 @@ def test_attach_run_id_links_run_to_lease(temp_db, sample_project) -> None:
         ttl_seconds=30,
     )
 
-    assert manager.attach_run_id(task.id, "dddddddd-dddd-4ddd-8ddd-dddddddd0123") is True
+    assert (
+        manager.attach_run_id(
+            task.id,
+            "dddddddd-dddd-4ddd-8ddd-dddddddd0123",
+            holder="owner",
+        )
+        is True
+    )
     mutex = manager.get_mutex(task.id)
     assert mutex is not None
     assert mutex.run_id == "dddddddd-dddd-4ddd-8ddd-dddddddd0123"
     assert manager.clear_by_run_id("dddddddd-dddd-4ddd-8ddd-dddddddd0123") == 1
     assert manager.get_mutex(task.id) is None
+
+
+def test_stale_holder_cannot_attach_or_release_lease(temp_db, sample_project) -> None:
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Stale mutex holder",
+    )
+    manager = _manager_class()(temp_db)
+    acquired_at = datetime(2026, 1, 1, tzinfo=UTC)
+
+    assert manager.acquire_mutex(
+        task.id,
+        holder="new-owner",
+        kind="agent",
+        run_id=None,
+        ttl_seconds=30,
+        now=acquired_at,
+    )
+
+    assert not manager.attach_run_id(
+        task.id,
+        "dddddddd-dddd-4ddd-8ddd-dddddddd0123",
+        holder="old-owner",
+        now=acquired_at,
+    )
+    assert not manager.release_mutex(task.id, holder="old-owner", now=acquired_at)
+    mutex = manager.get_mutex(task.id)
+    assert mutex is not None
+    assert mutex.run_id is None
+    assert mutex.lease_holder == "new-owner"
+
+
+def test_expired_holder_cannot_attach_or_release_lease(temp_db, sample_project) -> None:
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Expired mutex holder",
+    )
+    manager = _manager_class()(temp_db)
+    acquired_at = datetime(2026, 1, 1, tzinfo=UTC)
+    expired_at = acquired_at + timedelta(seconds=31)
+
+    assert manager.acquire_mutex(
+        task.id,
+        holder="owner",
+        kind="agent",
+        run_id=None,
+        ttl_seconds=30,
+        now=acquired_at,
+    )
+
+    assert not manager.attach_run_id(
+        task.id,
+        "dddddddd-dddd-4ddd-8ddd-dddddddd0123",
+        holder="owner",
+        now=expired_at,
+    )
+    assert not manager.release_mutex(task.id, holder="owner", now=expired_at)
+    mutex = manager.get_mutex(task.id)
+    assert mutex is not None
+    assert mutex.run_id is None
 
 
 def test_refresh_mutex_for_run_extends_matching_lease_only(temp_db, sample_project) -> None:

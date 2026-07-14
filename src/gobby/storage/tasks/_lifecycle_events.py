@@ -47,29 +47,6 @@ class TaskLifecycleEventManager:
     def __init__(self, db: HubDatabase):
         self.db = db
 
-    def ensure_table(self) -> None:
-        """Create the table for focused tests before the canonical migration lands."""
-        with self.db.transaction() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS task_lifecycle_events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-                    from_state TEXT,
-                    to_state TEXT NOT NULL,
-                    reason TEXT NOT NULL,
-                    by_actor TEXT NOT NULL,
-                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_lifecycle_events_task
-                    ON task_lifecycle_events (task_id, created_at)
-                """
-            )
-
     def record_lifecycle_event(
         self,
         task_id: str,

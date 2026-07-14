@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal
 
-import psycopg
 from psycopg.errors import UniqueViolation
 
 from gobby.storage.hub.protocol import HubDatabase
@@ -299,7 +298,7 @@ class GitHubTriageStore:
                 ),
             )
             inserted = True
-        except (psycopg.IntegrityError, UniqueViolation):
+        except UniqueViolation:
             inserted = False
 
         delivery = self.get_delivery(project_id, delivery_id)

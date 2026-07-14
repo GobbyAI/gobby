@@ -276,7 +276,7 @@ class TestLocalAgentRunManager:
         sample_session: dict,
     ) -> None:
         """Test that create logs debug message."""
-        with patch("gobby.storage.agents.logger") as mock_logger:
+        with patch("gobby.storage.agents._lifecycle.logger") as mock_logger:
             agent_run = agent_manager.create(
                 parent_session_id=sample_session["id"],
                 provider="claude",
@@ -889,6 +889,56 @@ class TestLocalAgentRunManager:
         assert cancelled is not None
         assert completed is None
 
+    def test_update_runtime_can_clear_pid(
+        self,
+        agent_manager: LocalAgentRunManager,
+        sample_session: dict,
+    ) -> None:
+        agent_run = agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="Clear PID",
+        )
+        agent_manager.update_runtime(agent_run.id, pid=12345)
+
+        agent_manager.update_runtime(agent_run.id, pid=None)
+
+        updated = agent_manager.get(agent_run.id)
+        assert updated is not None
+        assert updated.pid is None
+
+    @pytest.mark.parametrize(
+        ("transition", "expected_status"),
+        [
+            ("complete", "success"),
+            ("fail", "error"),
+            ("timeout", "timeout"),
+            ("cancel", "cancelled"),
+        ],
+    )
+    def test_terminal_transitions_clear_pid(
+        self,
+        agent_manager: LocalAgentRunManager,
+        sample_session: dict,
+        transition: str,
+        expected_status: str,
+    ) -> None:
+        agent_run = agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="Terminal PID cleanup",
+        )
+        agent_manager.start(agent_run.id)
+        agent_manager.update_runtime(agent_run.id, pid=12345)
+
+        kwargs = {"error": "failed"} if transition == "fail" else {}
+        getattr(agent_manager, transition)(agent_run.id, **kwargs)
+
+        updated = agent_manager.get(agent_run.id)
+        assert updated is not None
+        assert updated.status == expected_status
+        assert updated.pid is None
+
     def test_update_child_session(
         self,
         agent_manager: LocalAgentRunManager,
@@ -1227,27 +1277,6 @@ class TestLocalAgentRunManager:
         counts = agent_manager.count_by_session(sample_session["id"])
         assert counts == {}
 
-    def test_delete_agent_run(
-        self,
-        agent_manager: LocalAgentRunManager,
-        sample_session: dict,
-    ) -> None:
-        """Test deleting an agent run."""
-        agent_run = agent_manager.create(
-            parent_session_id=sample_session["id"],
-            provider="claude",
-            prompt="Delete me",
-        )
-
-        result = agent_manager.delete(agent_run.id)
-        assert result is True
-        assert agent_manager.get(agent_run.id) is None
-
-    def test_delete_nonexistent(self, agent_manager: LocalAgentRunManager) -> None:
-        """Test deleting nonexistent run returns False."""
-        result = agent_manager.delete("00000000-0000-0000-0000-0000000000ff")
-        assert result is False
-
     def test_cleanup_stale_runs(
         self,
         agent_manager: LocalAgentRunManager,
@@ -1397,7 +1426,7 @@ class TestLocalAgentRunManager:
             (run.id,),
         )
 
-        with patch("gobby.storage.agents.logger") as mock_logger:
+        with patch("gobby.storage.agents._cleanup.logger") as mock_logger:
             count = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
             assert count == 1
             mock_logger.info.assert_called_once_with(
@@ -1452,8 +1481,12 @@ class TestLocalAgentRunManager:
 
         # Backdate the created_at
         agent_manager.db.execute(
-            "UPDATE agent_runs SET created_at = NOW() - INTERVAL '65 minutes' WHERE id = %s",
-            (pending.id,),
+            """
+            UPDATE agent_runs
+            SET created_at = NOW() - INTERVAL '65 minutes', pid = %s
+            WHERE id = %s
+            """,
+            (12345, pending.id),
         )
 
         count = agent_manager.cleanup_stale_pending_runs(timeout_minutes=60)
@@ -1463,6 +1496,7 @@ class TestLocalAgentRunManager:
         assert cleaned.status == "error"
         assert cleaned.error == "Pending run never started"
         assert cleaned.completed_at is not None
+        assert cleaned.pid is None
 
     def test_cleanup_stale_pending_runs_no_stale(
         self,
@@ -1528,7 +1562,7 @@ class TestLocalAgentRunManager:
             (pending.id,),
         )
 
-        with patch("gobby.storage.agents.logger") as mock_logger:
+        with patch("gobby.storage.agents._cleanup.logger") as mock_logger:
             count = agent_manager.cleanup_stale_pending_runs(timeout_minutes=60)
             assert count == 1
             mock_logger.info.assert_called_once()
@@ -1823,19 +1857,6 @@ class TestAgentRunEdgeCases:
         retrieved = agent_manager.get(agent_run.id)
         assert retrieved.tool_calls_count == 999999
         assert retrieved.turns_used == 50000
-
-    def test_delete_cursor_rowcount_none(
-        self,
-        agent_manager: LocalAgentRunManager,
-    ) -> None:
-        """Test delete handles cursor with None rowcount."""
-        # Mock execute to return cursor with None rowcount
-        mock_cursor = MagicMock()
-        mock_cursor.rowcount = None
-
-        with patch.object(agent_manager.db, "execute", return_value=mock_cursor):
-            result = agent_manager.delete("00000000-0000-0000-0000-0000000000ff")
-            assert result is False
 
     def test_cleanup_stale_runs_cursor_rowcount_none(
         self,

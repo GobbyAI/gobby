@@ -2,7 +2,6 @@
 
 Tests cover:
 - Merge initiation from worktree context
-- Automatic merge on worktree sync
 - Task status updates during merge resolution
 - Merge state persistence across daemon restarts
 - Concurrent merges in different worktrees
@@ -76,33 +75,6 @@ class TestMergeInitiationFromWorktree:
         from gobby.storage.worktrees import LocalWorktreeManager
 
         assert hasattr(LocalWorktreeManager, "get_by_merge_state")
-
-
-# ==============================================================================
-# Automatic Merge on Worktree Sync Tests
-# ==============================================================================
-
-
-class TestAutomaticMergeOnSync:
-    """Tests for automatic merge when syncing worktrees."""
-
-    def test_worktree_manager_has_sync_with_merge_resolution(self) -> None:
-        """WorktreeManager should have sync_with_merge_resolution method."""
-        from gobby.storage.worktrees import LocalWorktreeManager
-
-        assert hasattr(LocalWorktreeManager, "sync_with_merge_resolution")
-
-    def test_worktree_sync_returns_merge_info(self) -> None:
-        """Worktree sync should return merge resolution info when conflicts occur."""
-        # Check method signature includes merge info
-        import inspect
-
-        from gobby.storage.worktrees import LocalWorktreeManager
-
-        if hasattr(LocalWorktreeManager, "sync_with_merge_resolution"):
-            sig = inspect.signature(LocalWorktreeManager.sync_with_merge_resolution)
-            params = list(sig.parameters.keys())
-            assert "merge_manager" in params or "return" in str(sig)
 
 
 # ==============================================================================

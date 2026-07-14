@@ -665,6 +665,7 @@ class TestWorktreeIsolationHandler:
             isolated_path="/tmp/worktrees/existing-branch",
             provider="claude",
         )
+        mock_worktree_storage.touch.assert_called_once_with("existing-wt-456")
         # Should NOT create a new worktree
         mock_git_manager.create_worktree.assert_not_called()
 

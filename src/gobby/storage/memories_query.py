@@ -113,7 +113,7 @@ class MemoryQueryMixin(MemoryStoreBase):
         if accessed_at_dt is None:
             raise ValueError("accessed_at is required")
         with self.db.transaction() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 """
                 UPDATE memories
                 SET access_count = access_count + 1,
@@ -122,6 +122,8 @@ class MemoryQueryMixin(MemoryStoreBase):
                 """,
                 (accessed_at_dt, memory_id),
             )
+            if cursor.rowcount == 0:
+                raise ValueError(f"Memory not found: {memory_id}")
 
     def search_memories(
         self,

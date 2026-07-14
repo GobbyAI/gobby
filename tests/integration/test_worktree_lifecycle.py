@@ -371,11 +371,18 @@ class TestWorktreeStatusTransitions:
 
         # Initially no session
         assert worktree.agent_session_id is None
+        stale_activity = datetime.now(UTC) - timedelta(hours=48)
+        worktree_manager.db.execute(
+            "UPDATE worktrees SET last_activity_at = %s WHERE id = %s",
+            (stale_activity, worktree.id),
+        )
 
         # Claim
         claimed = worktree_manager.claim(worktree.id, sess.id)
         assert claimed is not None
         assert claimed.agent_session_id == sess.id
+        assert claimed.last_activity_at is not None
+        assert claimed.last_activity_at > stale_activity
 
         # Verify persistence
         retrieved = worktree_manager.get(worktree.id)
@@ -600,10 +607,10 @@ class TestStaleWorktreeDetection:
             worktree_path="/tmp/wt/old",
         )
 
-        # Manually set old worktree's updated_at to 48 hours ago
+        # Manually set old worktree's activity to 48 hours ago
         old_time = (datetime.now(UTC) - timedelta(hours=48)).isoformat()
         temp_db.execute(
-            "UPDATE worktrees SET updated_at = %s WHERE id = %s",
+            "UPDATE worktrees SET last_activity_at = %s WHERE id = %s",
             (old_time, old.id),
         )
 
@@ -629,10 +636,10 @@ class TestStaleWorktreeDetection:
             worktree_path="/tmp/wt/custom",
         )
 
-        # Set updated_at to 12 hours ago
+        # Set activity to 12 hours ago
         old_time = (datetime.now(UTC) - timedelta(hours=12)).isoformat()
         temp_db.execute(
-            "UPDATE worktrees SET updated_at = %s WHERE id = %s",
+            "UPDATE worktrees SET last_activity_at = %s WHERE id = %s",
             (old_time, worktree.id),
         )
 
@@ -663,7 +670,7 @@ class TestStaleWorktreeDetection:
         # Make it stale
         old_time = (datetime.now(UTC) - timedelta(hours=48)).isoformat()
         temp_db.execute(
-            "UPDATE worktrees SET updated_at = %s WHERE id = %s",
+            "UPDATE worktrees SET last_activity_at = %s WHERE id = %s",
             (old_time, worktree.id),
         )
 
@@ -695,7 +702,7 @@ class TestStaleWorktreeDetection:
         # Make it stale
         old_time = (datetime.now(UTC) - timedelta(hours=48)).isoformat()
         temp_db.execute(
-            "UPDATE worktrees SET updated_at = %s WHERE id = %s",
+            "UPDATE worktrees SET last_activity_at = %s WHERE id = %s",
             (old_time, worktree.id),
         )
 
@@ -779,26 +786,25 @@ class TestWorktreeDataIntegrity:
         assert data["status"] == WorktreeStatus.ACTIVE.value
         assert data["created_at"] is not None
         assert data["updated_at"] is not None
+        assert data["last_activity_at"] is not None
         assert data["merged_at"] is None
 
-    def test_worktree_timestamps_are_strings(
+    def test_worktree_timestamps_are_datetimes(
         self, worktree_manager: LocalWorktreeManager, project: Project
     ) -> None:
-        """Worktree timestamps are stored as ISO strings."""
+        """Worktree timestamps are normalized to aware datetimes."""
         worktree = worktree_manager.create(
             project_id=project.id,
             branch_name="feature/timestamps",
             worktree_path="/tmp/worktrees/timestamps",
         )
 
-        assert isinstance(worktree.created_at, str)
-        assert isinstance(worktree.updated_at, str)
-
-        # Should be parseable as ISO datetime
-        from datetime import datetime
-
-        datetime.fromisoformat(worktree.created_at.replace("Z", "+00:00"))
-        datetime.fromisoformat(worktree.updated_at.replace("Z", "+00:00"))
+        assert isinstance(worktree.created_at, datetime)
+        assert isinstance(worktree.updated_at, datetime)
+        assert isinstance(worktree.last_activity_at, datetime)
+        assert worktree.created_at.tzinfo is not None
+        assert worktree.updated_at.tzinfo is not None
+        assert worktree.last_activity_at.tzinfo is not None
 
     def test_merged_at_only_set_on_merge(
         self, worktree_manager: LocalWorktreeManager, project: Project

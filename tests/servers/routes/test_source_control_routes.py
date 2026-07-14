@@ -1606,20 +1606,19 @@ class TestSyncWorktree:
         assert data["message"] == "Synced successfully"
         assert data["id"] == "wt-1"
 
-    def test_sync_without_git_manager_falls_back(self, client, mock_server) -> None:
+    def test_sync_without_git_manager_returns_unavailable(self, client, mock_server) -> None:
         wt = MagicMock()
         wt.worktree_path = "/tmp/wt"
         wt.base_branch = "main"
 
         mock_storage = MagicMock()
         mock_storage.get.return_value = wt
-        mock_storage.sync.return_value = {"success": True, "id": "wt-1"}
         mock_server.services.worktree_storage = mock_storage
         mock_server.services.git_manager = None
 
         response = client.post("/api/source-control/worktrees/wt-1/sync")
-        assert response.status_code == 200
-        mock_storage.sync.assert_called_once_with("wt-1")
+        assert response.status_code == 503
+        assert response.json()["detail"] == "Git manager not available"
 
 
 # ---------------------------------------------------------------------------

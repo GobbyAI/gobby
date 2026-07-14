@@ -135,6 +135,7 @@ def test_apply_run_persists_agent_selection_fields_to_created_leaf(
         triggering_session_id=None,
         input_source="task",
     )
+    run_manager.start(run.id)
     run_manager.save_compiled_spec(run.id, _compiled_spec())
 
     applied = service.apply_run(run.id, session_id=None)
@@ -160,6 +161,7 @@ def test_apply_run_rejects_manual_leaf_without_creating_children(
         triggering_session_id=None,
         input_source="task",
     )
+    run_manager.start(run.id)
     run_manager.save_compiled_spec(run.id, _compiled_spec(category="manual"))
 
     with pytest.raises(ValueError, match="category:manual"):

@@ -112,7 +112,7 @@ async def resume_existing_lifecycle(
         artifacts = task_manager.artifacts.get_artifacts(task.id)
         integration_target = target_branch or artifacts.target_branch
         if not resume_opts.dry_run:
-            task_manager.cascade_build_state_to_subtree(
+            cascade_result = task_manager.cascade_build_state_to_subtree(
                 task.id,
                 isolation=resume_opts.isolation,
                 unattended=opts.unattended,
@@ -120,6 +120,11 @@ async def resume_existing_lifecycle(
                 parent_manifest_specs=cascade_parent_specs,
                 include_merge_stage=resume_opts.isolation in {"worktree", "clone"}
                 and not opts.no_merge,
+            )
+            warnings.extend(
+                f"Build cascade skipped task {failure.task_id}: "
+                f"{failure.error_type}: {failure.message}"
+                for failure in cascade_result.failures
             )
             specs = stage_state_specs(task_manager, task.id)
         initial_lifecycle = current_stage_name(task_manager, task.id, specs)

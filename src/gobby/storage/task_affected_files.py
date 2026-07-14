@@ -72,19 +72,18 @@ class TaskAffectedFileManager:
             )
             results = []
             for file_path in files:
-                try:
-                    row = conn.execute(
-                        """
-                        INSERT INTO task_affected_files (task_id, file_path, annotation_source)
-                        VALUES (%s, %s, %s)
-                        RETURNING id, task_id, file_path, annotation_source, created_at
-                        """,
-                        (task_id, file_path, source),
-                    ).fetchone()
-                    if row is not None:
-                        results.append(TaskAffectedFile.from_row(row))
-                except psycopg.IntegrityError:
-                    # UNIQUE constraint — file already exists from another source
+                row = conn.execute(
+                    """
+                    INSERT INTO task_affected_files (task_id, file_path, annotation_source)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (task_id, file_path) DO NOTHING
+                    RETURNING id, task_id, file_path, annotation_source, created_at
+                    """,
+                    (task_id, file_path, source),
+                ).fetchone()
+                if row is not None:
+                    results.append(TaskAffectedFile.from_row(row))
+                else:
                     logger.debug(f"File {file_path} already tracked for task {task_id}")
             return results
 

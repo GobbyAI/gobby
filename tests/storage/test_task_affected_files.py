@@ -60,6 +60,31 @@ class TestSetFiles:
         assert "src/c.py" in paths  # new expansion
         assert "src/a.py" not in paths  # old expansion removed
 
+    def test_set_files_conflict_does_not_poison_ambient_transaction(
+        self, db: HubDatabase, af_manager: TaskAffectedFileManager
+    ) -> None:
+        af_manager.set_files(TASK_1, ["src/shared.py"], source="manual")
+
+        with db.transaction() as conn:
+            results = af_manager.set_files(
+                TASK_1,
+                ["src/shared.py", "src/new.py"],
+                source="expansion",
+            )
+            conn.execute(
+                "INSERT INTO task_affected_files (task_id, file_path, annotation_source) "
+                "VALUES (%s, %s, %s)",
+                (TASK_1, "src/after-conflict.py", "observed"),
+            )
+
+        assert [result.file_path for result in results] == ["src/new.py"]
+        files = {item.file_path: item.annotation_source for item in af_manager.get_files(TASK_1)}
+        assert files == {
+            "src/after-conflict.py": "observed",
+            "src/new.py": "expansion",
+            "src/shared.py": "manual",
+        }
+
 
 class TestGetFiles:
     def test_get_files_empty(self, af_manager: TaskAffectedFileManager) -> None:

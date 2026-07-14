@@ -132,6 +132,21 @@ class TestLocalTaskManager:
         _assert_stage_state(updated, "ready")
         assert updated.updated_at > task.updated_at
 
+    def test_update_task_persists_schedule_fields(self, task_manager, project_id) -> None:
+        task = task_manager.create_task(project_id=project_id, title="Scheduled Task")
+
+        updated = task_manager.update_task(
+            task.id,
+            start_date="2026-07-14",
+            due_date="2026-07-21",
+        )
+
+        assert updated.start_date == "2026-07-14"
+        assert updated.due_date == "2026-07-21"
+        persisted = task_manager.get_task(task.id)
+        assert persisted.start_date == "2026-07-14"
+        assert persisted.due_date == "2026-07-21"
+
     def test_update_task_rejects_self_parent(self, task_manager, project_id) -> None:
         task = task_manager.create_task(project_id=project_id, title="Original Title")
 
@@ -155,6 +170,15 @@ class TestLocalTaskManager:
 
         with pytest.raises(ValueError, match="does not allow legacy state fields"):
             task_manager.update_task(task.id, status="in_progress")
+
+    @pytest.mark.parametrize("field_name", ["verification", "sequence_order"])
+    def test_update_task_rejects_unsupported_fields(
+        self, task_manager, project_id, field_name
+    ) -> None:
+        task = task_manager.create_task(project_id=project_id, title="Original Title")
+
+        with pytest.raises(ValueError, match=f"unsupported fields: {field_name}"):
+            task_manager.update_task(task.id, **{field_name: "unsupported"})
 
     def test_update_task_rejects_mixed_metadata_and_lifecycle_fields(
         self, task_manager, project_id
@@ -735,7 +759,7 @@ class TestLocalTaskManager:
             priority=5,
             task_type="chore",
             labels=["l1"],
-            category="strat",
+            category="test",
             validation_criteria="crit",
             validation_fail_count=2,
             validation_status="valid",
@@ -746,7 +770,7 @@ class TestLocalTaskManager:
         assert updated.priority == 5
         assert updated.task_type == "chore"
         assert updated.labels == ["l1"]
-        assert updated.category == "strat"
+        assert updated.category == "test"
         assert updated.validation_criteria == "crit"
         assert updated.validation_fail_count == 2
         assert updated.validation_status == "valid"
@@ -1165,7 +1189,11 @@ class TestLocalTaskManager:
             source="codex",
             project_id=project_id,
         )
-        task = task_manager.create_task(project_id, "Dedup me")
+        task = task_manager.create_task(
+            project_id,
+            "Dedup me",
+            description="## Adversary Findings — Round 70\n\nfuture findings",
+        )
         task_manager.claim_task(task.id, session.id)
         _start_current_stage(task_manager, task.id, session.id)
         task_manager.submit_for_review(task.id, review_notes="Ready")
@@ -1174,7 +1202,7 @@ class TestLocalTaskManager:
         first = task_manager.reject_review(
             task.id, rejection_notes="initial findings", round_number=7
         )
-        assert (first.description or "").count("## Adversary Findings — Round 7") == 1
+        assert (first.description or "").splitlines().count("## Adversary Findings — Round 7") == 1
         assert "initial findings" in (first.description or "")
 
         # Re-claim and reject the same round again with different notes.
@@ -1186,9 +1214,10 @@ class TestLocalTaskManager:
         )
 
         # Exactly one Round 7 section, with the NEW body, and the old body gone.
-        assert (second.description or "").count("## Adversary Findings — Round 7") == 1
+        assert (second.description or "").splitlines().count("## Adversary Findings — Round 7") == 1
         assert "updated findings" in (second.description or "")
         assert "initial findings" not in (second.description or "")
+        assert "## Adversary Findings — Round 70\n\nfuture findings" in (second.description or "")
 
     def test_record_plan_enhancement_suggestions_route_back_to_ready(
         self, task_manager, project_id, session_manager
@@ -1660,6 +1689,29 @@ class TestLocalTaskManager:
         for t in tasks:
             assert "Fix bug" in t.title
 
+    @pytest.mark.parametrize(
+        ("literal_title", "wildcard_match"),
+        [
+            ("100% complete", "100X complete"),
+            ("under_score", "underXscore"),
+            (r"path\segment", "pathXsegment"),
+        ],
+    )
+    def test_list_tasks_title_like_escapes_wildcards(
+        self,
+        task_manager,
+        project_id,
+        literal_title: str,
+        wildcard_match: str,
+    ) -> None:
+        """Treat SQL LIKE metacharacters in title filters as literals."""
+        task_manager.create_task(project_id, literal_title)
+        task_manager.create_task(project_id, wildcard_match)
+
+        tasks = task_manager.list_tasks(project_id=project_id, title_like=literal_title)
+
+        assert [task.title for task in tasks] == [literal_title]
+
     def test_list_tasks_with_label_filter(self, task_manager, project_id) -> None:
         """Test filtering tasks by label."""
         task_manager.create_task(project_id, "Task 1", labels=["urgent", "backend"])
@@ -1682,6 +1734,16 @@ class TestLocalTaskManager:
         assert len(tasks) == 1
         assert tasks[0].task_type == "bug"
 
+    def test_list_tasks_with_critical_priority_filter(self, task_manager, project_id) -> None:
+        """Test filtering tasks by critical priority."""
+        task_manager.create_task(project_id, "Critical Priority", priority=0)
+        task_manager.create_task(project_id, "Low Priority", priority=3)
+
+        tasks = task_manager.list_tasks(project_id=project_id, priority=0)
+
+        assert len(tasks) == 1
+        assert tasks[0].priority == 0
+
     # =========================================================================
     # List Ready Tasks Filter Tests
     # =========================================================================
@@ -1700,13 +1762,13 @@ class TestLocalTaskManager:
 
     def test_list_ready_tasks_with_priority_filter(self, task_manager, project_id) -> None:
         """Test filtering ready tasks by priority."""
-        task_manager.create_task(project_id, "High Priority", priority=1)
+        task_manager.create_task(project_id, "Critical Priority", priority=0)
         task_manager.create_task(project_id, "Low Priority", priority=3)
 
-        tasks = task_manager.list_ready_tasks(project_id=project_id, priority=1)
+        tasks = task_manager.list_ready_tasks(project_id=project_id, priority=0)
 
         assert len(tasks) == 1
-        assert tasks[0].priority == 1
+        assert tasks[0].priority == 0
 
     def test_list_ready_tasks_with_parent_filter(self, task_manager, project_id) -> None:
         """Test filtering ready tasks by parent."""
@@ -1845,6 +1907,19 @@ class TestLocalTaskManager:
         # Ready 1, Ready 2, and Blocker are ready; Blocked is blocked
         assert count == 3
 
+    def test_count_ready_tasks_excludes_descendants_of_blocked_parent(
+        self, task_manager, dep_manager, project_id
+    ) -> None:
+        blocker = task_manager.create_task(project_id, "Blocker")
+        parent = task_manager.create_task(project_id, "Blocked parent")
+        task_manager.create_task(project_id, "Child", parent_task_id=parent.id)
+        dep_manager.add_dependency(parent.id, blocker.id, "blocks")
+
+        ready = task_manager.list_ready_tasks(project_id=project_id)
+
+        assert {task.id for task in ready} == {blocker.id}
+        assert task_manager.count_ready_tasks(project_id=project_id) == len(ready)
+
     def test_count_blocked_tasks(self, task_manager, dep_manager, project_id) -> None:
         """Test counting blocked tasks."""
         blocked = task_manager.create_task(project_id, "Blocked")
@@ -1974,7 +2049,7 @@ class TestLocalTaskManager:
             task_type="feature",
             claimed_by_session_id=session.id,
             labels=["important"],
-            category="Unit tests",
+            category="TEST",
             validation_criteria="All tests pass",
         )
 
@@ -1985,7 +2060,7 @@ class TestLocalTaskManager:
         assert task.task_type == "feature"
         assert task.claimed_by_session_id == session.id
         assert task.labels == ["important"]
-        assert task.category == "Unit tests"
+        assert task.category == "test"
         assert task.validation_criteria == "All tests pass"
         # Validation status should be pending when criteria is set
         assert task.validation_status == "pending"
@@ -2126,7 +2201,7 @@ class TestCreateTaskWithDecomposition:
             priority=1,
             task_type="feature",
             labels=["backend", "urgent"],
-            category="unit",
+            category="test",
             validation_criteria="Tests must pass",
         )
 
@@ -2134,7 +2209,17 @@ class TestCreateTaskWithDecomposition:
         assert result["task"]["title"] == "Full Task"
         assert result["task"]["priority"] == 1
         assert result["task"]["task_type"] == "feature"
-        assert result["task"]["category"] == "unit"
+        assert result["task"]["category"] == "test"
+
+    def test_create_task_rejects_invalid_category(self, task_manager, project_id) -> None:
+        with pytest.raises(ValueError, match="Invalid category"):
+            task_manager.create_task(project_id, "Invalid category", category="unit")
+
+    def test_update_task_rejects_invalid_category(self, task_manager, project_id) -> None:
+        task = task_manager.create_task(project_id, "Valid category", category="code")
+
+        with pytest.raises(ValueError, match="Invalid category"):
+            task_manager.update_task(task.id, category="strategy")
 
     def test_create_task_rejects_unexpected_decomposition_fields(
         self, task_manager, project_id
@@ -2149,29 +2234,6 @@ class TestCreateTaskWithDecomposition:
                 title="Unexpected Field",
                 unknown_field="ignored",
             )
-
-
-@pytest.mark.integration
-class TestUpdateTaskWithResult:
-    """Test update_task_with_result returns task dict."""
-
-    def test_update_description(self, task_manager, project_id) -> None:
-        """Test updating task description."""
-        task = task_manager.create_task(project_id, "Task")
-
-        result = task_manager.update_task_with_result(task.id, description="Updated description")
-
-        assert "task" in result
-        assert result["task"]["description"] == "Updated description"
-
-    def test_update_with_none_description(self, task_manager, project_id) -> None:
-        """Test updating with None description clears it."""
-        task = task_manager.create_task(project_id, "Task", description="Original")
-
-        result = task_manager.update_task_with_result(task.id, description=None)
-
-        assert "task" in result
-        assert result["task"]["description"] is None
 
 
 @pytest.mark.integration

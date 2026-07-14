@@ -79,10 +79,12 @@ async def test_plan_storage_tools_dispatch_off_event_loop(
 ) -> None:
     caller_thread = threading.get_ident()
     worker_threads: list[int] = []
+    create_kwargs: list[dict[str, object]] = []
     manifest_path = tmp_path / "plan.coverage.yaml"
 
-    def create_plan(self: LocalPlanManager, **_kwargs: object) -> SimpleNamespace:
+    def create_plan(self: LocalPlanManager, **kwargs: object) -> SimpleNamespace:
         worker_threads.append(threading.get_ident())
+        create_kwargs.append(kwargs)
         return SimpleNamespace(to_dict=lambda: {"plan_id": "plan"})
 
     def regenerate_manifest(
@@ -104,11 +106,13 @@ async def test_plan_storage_tools_dispatch_off_event_loop(
             "plan_id": "plan",
             "plan_path": str(tmp_path / "plan.md"),
             "root_task_ref": "#1",
+            "reactivate": True,
         },
     )
     regenerated = await registry.call("regenerate_coverage_manifest", {"plan_id": "plan"})
 
     assert created == {"ok": True, "plan": {"plan_id": "plan"}}
+    assert create_kwargs[0]["reactivate"] is True
     assert regenerated == {"ok": True, "manifest_path": str(manifest_path)}
     assert len(worker_threads) == 2
     assert all(thread_id != caller_thread for thread_id in worker_threads)

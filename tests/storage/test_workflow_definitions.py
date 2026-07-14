@@ -7,7 +7,9 @@ import pytest
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import (
     LocalWorkflowDefinitionManager,
+    compute_definition_hash,
 )
+from gobby.workflows.template_hashes import TemplateHashCache
 
 pytestmark = pytest.mark.unit
 
@@ -37,6 +39,31 @@ SAMPLE_DEFINITION = json.dumps(
         "steps": [{"name": "work", "tools": ["all"]}],
     }
 )
+
+
+def test_definition_hash_uses_canonical_json() -> None:
+    template_json = '{"name": "test-workflow", "steps": [{"b": 2, "a": 1}]}'
+    postgres_json = '{"name":"test-workflow","steps":[{"a":1,"b":2}]}'
+
+    assert compute_definition_hash(template_json) == compute_definition_hash(postgres_json)
+
+
+def test_definition_hash_rejects_malformed_json() -> None:
+    with pytest.raises(json.JSONDecodeError):
+        compute_definition_hash('{"name":')
+
+
+def test_template_hash_has_no_drift_after_postgres_json_round_trip(
+    manager: LocalWorkflowDefinitionManager,
+) -> None:
+    template_json = '{"name": "test-workflow", "steps": [{"b": 2, "a": 1}]}'
+    postgres_json = json.dumps(json.loads(template_json), sort_keys=True, separators=(",", ":"))
+    row = manager.create("test-workflow", postgres_json)
+    cache = TemplateHashCache()
+    cache._hashes["test-workflow"] = compute_definition_hash(template_json)
+
+    assert cache.has_drift(row) is False
+
 
 SAMPLE_PIPELINE_DEFINITION = json.dumps(
     {

@@ -1,6 +1,8 @@
 """Tests for the LocalProjectManager storage layer."""
 
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from psycopg.errors import UniqueViolation
@@ -81,6 +83,17 @@ class TestLocalProjectManager:
         with pytest.raises(UniqueViolation):
             project_manager.create(name="unique-project")
 
+    def test_create_reuses_name_from_soft_deleted_project(
+        self, project_manager: LocalProjectManager
+    ) -> None:
+        deleted = project_manager.create(name="reusable-project")
+        project_manager.soft_delete(deleted.id)
+
+        created = project_manager.create(name="reusable-project")
+
+        assert created.id != deleted.id
+        assert project_manager.get_by_name("reusable-project") == created
+
     def test_get_project(self, project_manager: LocalProjectManager) -> None:
         """Test getting a project by ID."""
         created = project_manager.create(name="get-test")
@@ -124,6 +137,45 @@ class TestLocalProjectManager:
 
         assert result.name == "new-project"
         assert result.repo_path == "/new/path"
+
+    def test_get_or_create_is_atomic_for_concurrent_calls(
+        self,
+        project_manager: LocalProjectManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        original_get_by_name = project_manager.get_by_name
+        lookups_ready = threading.Barrier(2)
+
+        def synchronized_get_by_name(name: str, include_deleted: bool = False) -> Project | None:
+            lookups_ready.wait(timeout=5)
+            return original_get_by_name(name, include_deleted)
+
+        monkeypatch.setattr(project_manager, "get_by_name", synchronized_get_by_name)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(
+                executor.map(
+                    lambda _: project_manager.get_or_create(name="concurrent-project"),
+                    range(2),
+                )
+            )
+
+        assert results[0].id == results[1].id
+        row = project_manager.db.fetchone(
+            "SELECT COUNT(*) AS count FROM projects WHERE name = %s AND deleted_at IS NULL",
+            ("concurrent-project",),
+        )
+        assert row is not None
+        assert row["count"] == 1
+
+    def test_ensure_exists_returns_project_with_conflicting_name(
+        self, project_manager: LocalProjectManager
+    ) -> None:
+        existing = project_manager.create(name="synced-project")
+
+        ensured = project_manager.ensure_exists(str(uuid.uuid4()), "synced-project")
+
+        assert ensured.id == existing.id
 
     def test_list_projects(self, project_manager: LocalProjectManager) -> None:
         """Test listing all projects."""

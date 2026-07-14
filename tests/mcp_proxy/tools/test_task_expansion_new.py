@@ -237,6 +237,7 @@ class TestExpansionRuns:
             triggering_session_id=None,
             input_source="task",
         )
+        run_manager.start(run.id)
         run_manager.save_compiled_spec(run.id, _compiled_spec())
         child = task_manager.create_task(
             project_id=parent.project_id,
@@ -244,6 +245,7 @@ class TestExpansionRuns:
             parent_task_id=parent.id,
             category="code",
         )
+        run_manager.mark_applying(run.id)
         run_manager.save_apply_result(
             run.id,
             task_id_map={"task-1": child.id},
@@ -320,6 +322,10 @@ class TestExpansionRuns:
             input_source="task",
         )
         if terminal_status == "completed":
+            run_manager.db.execute(
+                "UPDATE expansion_runs SET status = 'applying' WHERE id = %s",
+                (run.id,),
+            )
             before = run_manager.save_apply_result(
                 run.id,
                 task_id_map={},

@@ -6,7 +6,7 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import table_column_names
@@ -271,21 +271,26 @@ class StageRegistryManager:
         return restored
 
     def delete_stage(self, name: str) -> StageRegistryEntry:
-        current = self.get(name)
-        if current is None:
-            raise StageRegistryNotFoundError(f"Unknown stage '{name}'")
-        blocker = self._delete_blocker(name)
-        if blocker is not None:
-            raise ValueError(blocker)
         deleted_at = utc_now()
-        self.db.execute(
-            """
-            UPDATE task_stages_registry
-               SET deleted_at = %s, updated_at = CURRENT_TIMESTAMP
-             WHERE name = %s
-            """,
-            (deleted_at, name),
-        )
+        with self.db.transaction() as conn:
+            current_row = conn.execute(
+                """SELECT * FROM task_stages_registry
+                   WHERE name = %s AND deleted_at IS NULL FOR UPDATE""",
+                (name,),
+            ).fetchone()
+            if current_row is None:
+                raise StageRegistryNotFoundError(f"Unknown stage '{name}'")
+            blocker = self._delete_blocker(name, conn)
+            if blocker is not None:
+                raise ValueError(blocker)
+            conn.execute(
+                """
+                UPDATE task_stages_registry
+                   SET deleted_at = %s, updated_at = CURRENT_TIMESTAMP
+                 WHERE name = %s
+                """,
+                (deleted_at, name),
+            )
         deleted = self.get(name, include_deleted=True)
         if deleted is None:
             raise ValueError(f"Stage '{name}' could not be deleted")
@@ -427,8 +432,13 @@ class StageRegistryManager:
             "default_max_review_rounds": entry.default_max_review_rounds,
         }
 
-    def _delete_blocker(self, name: str) -> str | None:
-        active_state = self.db.fetchone(
+    def _delete_blocker(self, name: str, conn: Any | None = None) -> str | None:
+        def fetchone(sql: str, params: tuple[Any, ...] = ()) -> Mapping[str, Any] | None:
+            if conn is not None:
+                return cast(Mapping[str, Any] | None, conn.execute(sql, params).fetchone())
+            return self.db.fetchone(sql, params)
+
+        active_state = fetchone(
             """
             SELECT task_id
               FROM task_stage_states
@@ -440,13 +450,13 @@ class StageRegistryManager:
         )
         if active_state is not None:
             return f"Stage '{name}' is referenced by active task stage states"
-        default_ref = self.db.fetchone(
+        default_ref = fetchone(
             "SELECT task_type FROM task_type_default_stages WHERE stage_name = %s LIMIT 1",
             (name,),
         )
         if default_ref is not None:
             return f"Stage '{name}' is referenced by task type defaults"
-        build_profiles = self.db.fetchone(
+        build_profiles = fetchone(
             """
             SELECT tablename AS name
               FROM pg_tables
@@ -456,7 +466,7 @@ class StageRegistryManager:
         )
         if build_profiles is None:
             return None
-        profile_ref = self.db.fetchone(
+        profile_ref = fetchone(
             """
             SELECT name
               FROM build_profiles

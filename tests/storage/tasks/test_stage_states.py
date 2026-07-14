@@ -135,6 +135,29 @@ def test_initialize_manifest_updates_caps_without_resetting_active_rows(
     assert rows[1].max_work_attempts is None
 
 
+def test_initialize_manifest_repositions_future_stages_through_disjoint_range(
+    temp_db,
+    sample_project,
+) -> None:
+    task, manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("development", 0), spec("pr", 2), spec("merge", 4)],
+    )
+
+    rows = manager.initialize_manifest(
+        task.id,
+        [spec("development", 0), spec("pr", 1), spec("merge", 2)],
+        by_session_id="session-stage-tests",
+    )
+
+    assert [(row.stage_name, row.position) for row in rows] == [
+        ("development", 0),
+        ("pr", 1),
+        ("merge", 2),
+    ]
+
+
 def test_development_manifest_resolves_docs_reviewer_from_selector(
     temp_db,
     sample_project,
@@ -278,6 +301,48 @@ def test_start_stage_increments_work_attempts_only_and_emits_event(
         "to_state": "development:in_progress",
         "reason": "start_stage",
         "by_actor": "dev-session",
+    }
+
+
+def test_empty_artifact_refs_survive_subsequent_stage_transition(
+    temp_db,
+    sample_project,
+) -> None:
+    task, manager = make_task_with_manifest(temp_db, sample_project, [spec("development", 0)])
+    manager.start_stage(task.id, "development", by_session_id="dev-session")
+
+    manager._transition(
+        task.id,
+        "development",
+        "fail_stage",
+        by_session_id="dev-session",
+        reason="retry",
+        artifact_updates={},
+    )
+
+    assert manager.get(task.id, "development").artifact_refs == {}
+    restarted = manager.start_stage(task.id, "development", by_session_id="dev-session")
+    assert restarted.state == "in_progress"
+
+
+def test_artifact_updates_merge_with_existing_refs(temp_db, sample_project) -> None:
+    task, manager = make_task_with_manifest(temp_db, sample_project, [spec("development", 0)])
+    manager.start_stage(task.id, "development", by_session_id="dev-session")
+    temp_db.execute(
+        "UPDATE task_stage_states SET artifact_refs = %s WHERE task_id = %s AND stage_name = %s",
+        ('{"plan": "plan.md", "commit": "first"}', task.id, "development"),
+    )
+    manager.complete_stage(
+        task.id,
+        "development",
+        by_session_id="dev-session",
+        artifact_updates={"commit": "second"},
+        validation_override_reason="artifact merge test",
+    )
+
+    assert manager.get(task.id, "development").artifact_refs == {
+        "plan": "plan.md",
+        "commit": "second",
     }
 
 

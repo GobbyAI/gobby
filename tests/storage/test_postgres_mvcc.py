@@ -11,8 +11,12 @@ from typing import Any, ClassVar
 
 import pytest
 
-from gobby.storage.hub.protocol import TaskSeqAllocation
-from gobby.storage.tasks import _creation
+from gobby.storage.hub.protocol import TaskSeqAllocation, Transaction
+from gobby.storage.projects import LocalProjectManager
+from gobby.storage.sessions import SessionManager
+from gobby.storage.sessions import _field_update as session_field_update
+from gobby.storage.task_dependencies import DependencyCycleError, TaskDependencyManager
+from gobby.storage.tasks import LocalTaskManager, TaskArtifactManager, _creation
 
 _HEX40 = re.compile(r"^[0-9a-f]{40}$")
 
@@ -192,6 +196,201 @@ def test_read_modify_write_path_serializes_concurrent_writers(postgres_db: Any) 
         assert row["value"] == 2
     finally:
         _drop_table(postgres_db, table)
+
+
+def test_task_artifact_merge_serializes_concurrent_writers(postgres_db: Any) -> None:
+    project = LocalProjectManager(postgres_db).create(f"artifact-merge-race-{uuid.uuid4()}")
+    task = LocalTaskManager(postgres_db).create_task(project.id, "artifact merge race")
+    manager = TaskArtifactManager(postgres_db)
+    manager.set_artifacts_atomic(task.id)
+    errors: queue.Queue[BaseException] = queue.Queue()
+    started = threading.Barrier(3)
+
+    def set_field(field: str, value: str) -> None:
+        try:
+            started.wait(timeout=5)
+            manager.set_artifacts_atomic(task.id, **{field: value})
+        except BaseException as exc:  # pragma: no cover - re-raised in main thread
+            errors.put(exc)
+
+    threads = [
+        threading.Thread(target=set_field, args=("plan_file_path", "/tmp/plan.md")),
+        threading.Thread(target=set_field, args=("target_branch", "feature/race")),
+    ]
+    with postgres_db.transaction() as txn:
+        txn.execute("SELECT 1 FROM task_artifacts WHERE task_id = %s FOR UPDATE", (task.id,))
+        for thread in threads:
+            thread.start()
+        started.wait(timeout=5)
+
+    for thread in threads:
+        thread.join(timeout=10)
+    assert all(not thread.is_alive() for thread in threads)
+    if not errors.empty():
+        raise AssertionError("concurrent artifact merge failed") from errors.get()
+
+    artifacts = manager.get_artifacts(task.id)
+    assert artifacts.plan_file_path == "/tmp/plan.md"
+    assert artifacts.target_branch == "feature/race"
+
+
+def test_expansion_attempt_increment_is_atomic(postgres_db: Any) -> None:
+    project = LocalProjectManager(postgres_db).create(f"artifact-increment-race-{uuid.uuid4()}")
+    task = LocalTaskManager(postgres_db).create_task(project.id, "artifact increment race")
+    manager = TaskArtifactManager(postgres_db)
+    manager.set_artifacts_atomic(task.id)
+    errors: queue.Queue[BaseException] = queue.Queue()
+    results: queue.Queue[int] = queue.Queue()
+    started = threading.Barrier(3)
+
+    def increment() -> None:
+        try:
+            started.wait(timeout=5)
+            results.put(manager.increment_expansion_attempts(task.id))
+        except BaseException as exc:  # pragma: no cover - re-raised in main thread
+            errors.put(exc)
+
+    threads = [threading.Thread(target=increment) for _ in range(2)]
+    with postgres_db.transaction() as txn:
+        txn.execute("SELECT 1 FROM task_artifacts WHERE task_id = %s FOR UPDATE", (task.id,))
+        for thread in threads:
+            thread.start()
+        started.wait(timeout=5)
+
+    for thread in threads:
+        thread.join(timeout=10)
+    assert all(not thread.is_alive() for thread in threads)
+    if not errors.empty():
+        raise AssertionError("concurrent expansion attempt increment failed") from errors.get()
+
+    assert sorted(results.queue) == [1, 2]
+    assert manager.get_artifacts(task.id).expansion_attempts == 2
+
+
+def test_dependency_cycle_check_and_insert_are_serialized(postgres_db: Any) -> None:
+    project = LocalProjectManager(postgres_db).create(f"dependency-race-{uuid.uuid4()}")
+    task_manager = LocalTaskManager(postgres_db)
+    first_task = task_manager.create_task(project.id, "first")
+    second_task = task_manager.create_task(project.id, "second")
+    first_check_started = threading.Event()
+    release_first_check = threading.Event()
+    second_finished = threading.Event()
+    errors: queue.Queue[BaseException] = queue.Queue()
+
+    class PausingDependencyManager(TaskDependencyManager):
+        def _would_create_cycle(self, task_id: str, depends_on: str, conn: Transaction) -> bool:
+            first_check_started.set()
+            assert release_first_check.wait(timeout=5)
+            return super()._would_create_cycle(task_id, depends_on, conn)
+
+    def add_first_edge() -> None:
+        try:
+            PausingDependencyManager(postgres_db).add_dependency(first_task.id, second_task.id)
+        except BaseException as exc:  # pragma: no cover - re-raised in main thread
+            errors.put(exc)
+
+    def add_opposite_edge() -> None:
+        try:
+            TaskDependencyManager(postgres_db).add_dependency(second_task.id, first_task.id)
+        except DependencyCycleError:
+            pass
+        except BaseException as exc:  # pragma: no cover - re-raised in main thread
+            errors.put(exc)
+        finally:
+            second_finished.set()
+
+    first_thread = threading.Thread(target=add_first_edge)
+    second_thread = threading.Thread(target=add_opposite_edge)
+    first_thread.start()
+    assert first_check_started.wait(timeout=5)
+    second_thread.start()
+
+    second_was_blocked = not second_finished.wait(timeout=0.5)
+    release_first_check.set()
+    first_thread.join(timeout=10)
+    second_thread.join(timeout=10)
+
+    assert all(not thread.is_alive() for thread in (first_thread, second_thread))
+    if not errors.empty():
+        raise AssertionError("concurrent dependency addition failed") from errors.get()
+
+    assert second_was_blocked
+    rows = postgres_db.fetchall(
+        "SELECT task_id, depends_on FROM task_dependencies WHERE task_id IN (%s, %s)",
+        (first_task.id, second_task.id),
+    )
+    assert [(row["task_id"], row["depends_on"]) for row in rows] == [
+        (first_task.id, second_task.id)
+    ]
+
+
+def test_session_parent_cycle_check_and_update_are_serialized(
+    postgres_db: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = LocalProjectManager(postgres_db).create(f"session-lineage-race-{uuid.uuid4()}")
+    session_manager = SessionManager(postgres_db)
+    first = session_manager.register(
+        external_id=f"first-{uuid.uuid4()}",
+        machine_id="session-lineage-race",
+        source="codex",
+        project_id=project.id,
+    )
+    second = session_manager.register(
+        external_id=f"second-{uuid.uuid4()}",
+        machine_id="session-lineage-race",
+        source="codex",
+        project_id=project.id,
+    )
+    first_check_started = threading.Event()
+    release_first_check = threading.Event()
+    second_finished = threading.Event()
+    errors: queue.Queue[BaseException] = queue.Queue()
+    original_sanitize = session_field_update.sanitize_parent_session_id
+
+    def pausing_sanitize(*args: Any, **kwargs: Any) -> str | None:
+        if kwargs["child_session_id"] == first.id:
+            first_check_started.set()
+            assert release_first_check.wait(timeout=5)
+        return original_sanitize(*args, **kwargs)
+
+    monkeypatch.setattr(session_field_update, "sanitize_parent_session_id", pausing_sanitize)
+
+    def update_first_parent() -> None:
+        try:
+            session_manager.update_parent_session_id(first.id, second.id)
+        except BaseException as exc:  # pragma: no cover - re-raised in main thread
+            errors.put(exc)
+
+    def update_second_parent() -> None:
+        try:
+            session_manager.update_parent_session_id(second.id, first.id)
+        except BaseException as exc:  # pragma: no cover - re-raised in main thread
+            errors.put(exc)
+        finally:
+            second_finished.set()
+
+    first_thread = threading.Thread(target=update_first_parent)
+    second_thread = threading.Thread(target=update_second_parent)
+    first_thread.start()
+    assert first_check_started.wait(timeout=5)
+    second_thread.start()
+
+    second_was_blocked = not second_finished.wait(timeout=0.5)
+    release_first_check.set()
+    first_thread.join(timeout=10)
+    second_thread.join(timeout=10)
+
+    assert all(not thread.is_alive() for thread in (first_thread, second_thread))
+    if not errors.empty():
+        raise AssertionError("concurrent session parent update failed") from errors.get()
+
+    assert second_was_blocked
+    updated_first = session_manager.get(first.id)
+    updated_second = session_manager.get(second.id)
+    assert updated_first is not None
+    assert updated_second is not None
+    assert updated_first.parent_session_id == second.id
+    assert updated_second.parent_session_id is None
 
 
 def test_task_seq_allocation_serializes_across_project_visibility(postgres_db: Any) -> None:

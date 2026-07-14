@@ -27,12 +27,17 @@ _WORKFLOW_DEFINITIONS_REVISION_LOCK = Lock()
 
 
 def compute_definition_hash(definition_json: str) -> str:
-    """Compute a SHA-256 hash of a definition JSON string.
+    """Compute a SHA-256 hash of a canonical definition JSON string.
 
     Used for cheap drift detection between installed definitions
     and their on-disk template files.
     """
-    return hashlib.sha256(definition_json.encode()).hexdigest()
+    canonical_json = json.dumps(
+        json.loads(definition_json),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical_json.encode()).hexdigest()
 
 
 def get_workflow_definitions_revision() -> int:
@@ -96,9 +101,9 @@ class WorkflowDefinitionRow:
             name=row["name"],
             description=row["description"],
             workflow_type=row["workflow_type"],
-            version=row["version"] or "1.0",
+            version=row["version"] if row["version"] is not None else "1.0",
             enabled=bool(row["enabled"]),
-            priority=int(row["priority"]) if row["priority"] else 100,
+            priority=int(row["priority"]) if row["priority"] is not None else 100,
             sources=_parse_json_list(row["sources"]),
             definition_json=row["definition_json"],
             canvas_json=row["canvas_json"],
@@ -222,6 +227,22 @@ class LocalWorkflowDefinitionManager:
 
     def update(self, definition_id: str, **fields: Any) -> WorkflowDefinitionRow:
         """Partial update of a workflow definition."""
+        allowed_fields = {
+            "name",
+            "description",
+            "workflow_type",
+            "version",
+            "enabled",
+            "priority",
+            "sources",
+            "definition_json",
+            "canvas_json",
+            "tags",
+        }
+        unknown_fields = set(fields) - allowed_fields
+        if unknown_fields:
+            names = ", ".join(sorted(unknown_fields))
+            raise ValueError(f"Unknown workflow definition field(s): {names}")
         json_fields = {"sources", "tags"}
         values: dict[str, Any] = {}
         for key, val in fields.items():
@@ -453,8 +474,25 @@ class LocalWorkflowDefinitionManager:
 
     def move_to_project(self, definition_id: str, project_id: str) -> WorkflowDefinitionRow:
         """Move a definition to project scope."""
-        return self.update(definition_id, source="project", project_id=project_id)
+        return self._move_scope(definition_id, source="project", project_id=project_id)
 
     def move_to_global(self, definition_id: str) -> WorkflowDefinitionRow:
         """Move a definition to global (installed) scope."""
-        return self.update(definition_id, source="installed", project_id=None)
+        return self._move_scope(definition_id, source="installed", project_id=None)
+
+    def _move_scope(
+        self,
+        definition_id: str,
+        *,
+        source: DefinitionSource,
+        project_id: str | None,
+    ) -> WorkflowDefinitionRow:
+        cursor = self.db.safe_update(
+            "workflow_definitions",
+            {"source": source, "project_id": project_id, "updated_at": utc_now()},
+            "id = %s",
+            (definition_id,),
+        )
+        if cursor.rowcount > 0:
+            bump_workflow_definitions_revision()
+        return self.get(definition_id)

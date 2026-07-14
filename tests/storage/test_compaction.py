@@ -29,9 +29,9 @@ def test_find_candidates(manager, sample_project):
     t2 = manager.create_task(proj_id, "Old Closed")
     manager.close_task(t2.id)
 
-    # Manually update updated_at to be old
+    # Manually update closed_at to be old
     old_date = (datetime.now(UTC) - timedelta(days=40)).isoformat()
-    manager.db.execute("UPDATE tasks SET updated_at = %s WHERE id = %s", (old_date, t2.id))
+    manager.db.execute("UPDATE tasks SET closed_at = %s WHERE id = %s", (old_date, t2.id))
 
     # 3. Open task (not candidate)
     t3 = manager.create_task(proj_id, "Open Task")
@@ -43,6 +43,20 @@ def test_find_candidates(manager, sample_project):
 
     assert len(candidates) == 1
     assert candidates[0]["id"] == t2.id
+
+
+@pytest.mark.integration
+def test_compact_task_rejects_open_or_already_compacted_task(manager, sample_project):
+    task = manager.create_task(sample_project["id"], "Guarded compaction")
+    compactor = TaskCompactor(manager)
+
+    with pytest.raises(ValueError, match="open, missing, or already compacted"):
+        compactor.compact_task(task.id, "summary")
+
+    manager.close_task(task.id)
+    compactor.compact_task(task.id, "summary")
+    with pytest.raises(ValueError, match="open, missing, or already compacted"):
+        compactor.compact_task(task.id, "second summary")
 
 
 @pytest.mark.integration

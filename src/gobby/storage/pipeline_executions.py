@@ -15,6 +15,30 @@ from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution, S
 logger = logging.getLogger("gobby.storage.pipelines")
 
 
+def _execution_search_filter(
+    query: str,
+    *,
+    search_errors: bool,
+    search_outputs: bool,
+    status: ExecutionStatus | None,
+) -> tuple[str, str, list[Any]]:
+    escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    pattern = f"%{escaped}%"
+    conditions = ["pe.pipeline_name LIKE %s ESCAPE '\\'"]
+    params: list[Any] = [pattern]
+    if search_errors:
+        conditions.append("se.error LIKE %s ESCAPE '\\'")
+        params.append(pattern)
+    if search_outputs:
+        conditions.append("CAST(se.output_json AS TEXT) LIKE %s ESCAPE '\\'")
+        params.append(pattern)
+    status_clause = ""
+    if status is not None:
+        status_clause = " AND pe.status = %s"
+        params.append(status.value)
+    return " OR ".join(conditions), status_clause, params
+
+
 class PipelineExecutionNotFoundError(RuntimeError):
     """Raised when an execution-scoped update matches no rows."""
 
@@ -507,30 +531,14 @@ class PipelineExecutionStorageMixin:
             raise ValueError(f"limit must be > 0, got {limit}")
         if offset < 0:
             raise ValueError(f"offset must be >= 0, got {offset}")
-        escaped_query = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        like_pattern = f"%{escaped_query}%"
         project_clause, project_params = self._project_predicate("pe.project_id")
-        params: list[Any] = [*project_params]
-
-        # Build LIKE conditions
-        like_conditions = ["pe.pipeline_name LIKE %s ESCAPE '\\'"]
-        params.append(like_pattern)
-
-        if search_errors:
-            like_conditions.append("se.error LIKE %s ESCAPE '\\'")
-            params.append(like_pattern)
-
-        if search_outputs:
-            like_conditions.append("se.output_json LIKE %s ESCAPE '\\'")
-            params.append(like_pattern)
-
-        like_clause = " OR ".join(like_conditions)
-
-        if status is not None:
-            status_clause = " AND pe.status = %s"
-            params.append(status.value)
-        else:
-            status_clause = ""
+        like_clause, status_clause, filter_params = _execution_search_filter(
+            query,
+            search_errors=search_errors,
+            search_outputs=search_outputs,
+            status=status,
+        )
+        params: list[Any] = [*project_params, *filter_params]
 
         params.extend([limit, offset])
 
@@ -559,30 +567,14 @@ class PipelineExecutionStorageMixin:
         Returns:
             Total number of matching executions (independent of limit/offset).
         """
-        escaped_query = (
-            query.replace(chr(92), chr(92) * 2)
-            .replace("%", chr(92) + "%")
-            .replace("_", chr(92) + "_")
-        )
-        like_pattern = f"%{escaped_query}%"
         project_clause, project_params = self._project_predicate("pe.project_id")
-        params: list[Any] = [*project_params]
-
-        like_conditions = ["pe.pipeline_name LIKE %s ESCAPE '" + chr(92) + "'"]
-        params.append(like_pattern)
-        if search_errors:
-            like_conditions.append("se.error LIKE %s ESCAPE '" + chr(92) + "'")
-            params.append(like_pattern)
-        if search_outputs:
-            like_conditions.append("se.output_json LIKE %s ESCAPE '" + chr(92) + "'")
-            params.append(like_pattern)
-        like_clause = " OR ".join(like_conditions)
-
-        if status is not None:
-            status_clause = " AND pe.status = %s"
-            params.append(status.value)
-        else:
-            status_clause = ""
+        like_clause, status_clause, filter_params = _execution_search_filter(
+            query,
+            search_errors=search_errors,
+            search_outputs=search_outputs,
+            status=status,
+        )
+        params: list[Any] = [*project_params, *filter_params]
 
         # Clauses are assembled from fixed predicates and parameter placeholders.
         sql = f"""

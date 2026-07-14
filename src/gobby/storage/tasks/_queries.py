@@ -14,6 +14,7 @@ from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._models import Task, task_type_filter_values
 from gobby.storage.tasks._ordering import order_tasks_hierarchically
+from gobby.storage.tasks._read import _escape_like_pattern
 from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
 
 
@@ -96,13 +97,18 @@ def _external_blocker_exists_sql(task_alias: str = "t") -> str:
           AND d.dep_type = 'blocks'
           AND blocker.closed_at IS NULL
           AND NOT EXISTS (
-              WITH RECURSIVE ancestors AS (
-                  SELECT blocker.parent_task_id AS ancestor_id
+              WITH RECURSIVE ancestors(ancestor_id, path, depth) AS (
+                  SELECT blocker.parent_task_id,
+                         ARRAY[blocker.id, blocker.parent_task_id],
+                         1
+                  WHERE blocker.parent_task_id IS NOT NULL
                   UNION ALL
-                  SELECT p.parent_task_id
+                  SELECT p.parent_task_id, a.path || p.parent_task_id, a.depth + 1
                   FROM tasks p
                   JOIN ancestors a ON p.id = a.ancestor_id
                   WHERE p.parent_task_id IS NOT NULL
+                    AND a.depth < 100
+                    AND NOT p.parent_task_id = ANY(a.path)
               )
               SELECT 1 FROM ancestors WHERE ancestor_id = {task_alias}.id
           )
@@ -201,8 +207,8 @@ def list_tasks(
         query += " AND parent_task_id = %s"
         params.append(parent_task_id)
     if title_like:
-        query += " AND title LIKE %s"
-        params.append(f"%{title_like}%")
+        query += " AND title LIKE %s ESCAPE '\\'"
+        params.append(f"%{_escape_like_pattern(title_like)}%")
 
     valid_sorts = {
         "hierarchy": "priority ASC, created_at ASC, id ASC",
@@ -213,13 +219,13 @@ def list_tasks(
     order_clause = valid_sorts.get(sort_by, valid_sorts["hierarchy"])
     direction = "DESC" if sort_order.lower() == "desc" else "ASC"
     if sort_by == "hierarchy":
-        query += f" ORDER BY {order_clause} LIMIT %s OFFSET %s"
+        query += f" ORDER BY {order_clause}"
     else:
         query += (
             f" ORDER BY {order_clause} {direction}, priority ASC, created_at DESC, id ASC "
             "LIMIT %s OFFSET %s"
         )
-    params.extend([limit, offset])
+        params.extend([limit, offset])
 
     rows = db.fetchall(query, tuple(params))
     tasks = [Task.from_row(row) for row in rows]
@@ -227,8 +233,46 @@ def list_tasks(
     hydrate_task_blocking_state(db, tasks)
 
     if sort_by == "hierarchy":
-        return order_tasks_hierarchically(tasks)
+        ordered = order_tasks_hierarchically(tasks)
+        return ordered[offset : offset + limit] if limit else ordered[offset:]
     return tasks
+
+
+def _ready_tasks_cte_sql() -> str:
+    """Build the CTE shared by ready-task list and count queries."""
+    return f"""
+    WITH RECURSIVE ready_tasks(id, path, depth) AS (
+        -- Base case: open/in_progress tasks with no parent and no external blocking deps
+        SELECT t.id, ARRAY[t.id], 0 FROM tasks t
+        {_current_stage_join_sql("t")}
+        WHERE {_not_closed_or_escalated_sql("t")}
+        AND (
+            current_stage.state IN ('ready', 'in_progress')
+            OR NOT EXISTS (
+                SELECT 1 FROM task_stage_states stage_any WHERE stage_any.task_id = t.id
+            )
+        )
+        AND t.parent_task_id IS NULL
+        AND {_no_external_blocker_sql("t")}
+
+        UNION ALL
+
+        -- Recursive case: open/in_progress tasks whose parent is ready and no external blocking deps
+        SELECT t.id, rt.path || t.id, rt.depth + 1 FROM tasks t
+        JOIN ready_tasks rt ON t.parent_task_id = rt.id
+        {_current_stage_join_sql("t")}
+        WHERE {_not_closed_or_escalated_sql("t")}
+        AND (
+            current_stage.state IN ('ready', 'in_progress')
+            OR NOT EXISTS (
+                SELECT 1 FROM task_stage_states stage_any WHERE stage_any.task_id = t.id
+            )
+        )
+        AND {_no_external_blocker_sql("t")}
+        AND rt.depth < 100
+        AND NOT t.id = ANY(rt.path)
+    )
+    """
 
 
 def list_ready_tasks(
@@ -257,37 +301,9 @@ def list_ready_tasks(
     tree structures. We fetch all ready tasks, order them hierarchically,
     then return the first N tasks in tree traversal order.
     """
-    # Use recursive CTE to find tasks with ready parent chains
+    # Use recursive CTE to find tasks with ready parent chains.
     query = f"""
-    WITH RECURSIVE ready_tasks AS (
-        -- Base case: open/in_progress tasks with no parent and no external blocking deps
-        SELECT t.id FROM tasks t
-        {_current_stage_join_sql("t")}
-        WHERE {_not_closed_or_escalated_sql("t")}
-        AND (
-            current_stage.state IN ('ready', 'in_progress')
-            OR NOT EXISTS (
-                SELECT 1 FROM task_stage_states stage_any WHERE stage_any.task_id = t.id
-            )
-        )
-        AND t.parent_task_id IS NULL
-        AND {_no_external_blocker_sql("t")}
-
-        UNION ALL
-
-        -- Recursive case: open/in_progress tasks whose parent is ready and no external blocking deps
-        SELECT t.id FROM tasks t
-        JOIN ready_tasks rt ON t.parent_task_id = rt.id
-        {_current_stage_join_sql("t")}
-        WHERE {_not_closed_or_escalated_sql("t")}
-        AND (
-            current_stage.state IN ('ready', 'in_progress')
-            OR NOT EXISTS (
-                SELECT 1 FROM task_stage_states stage_any WHERE stage_any.task_id = t.id
-            )
-        )
-        AND {_no_external_blocker_sql("t")}
-    )
+    {_ready_tasks_cte_sql()}
     SELECT t.* FROM tasks t
     JOIN ready_tasks rt ON t.id = rt.id
     WHERE 1=1
@@ -297,7 +313,7 @@ def list_ready_tasks(
     if project_id:
         query += " AND t.project_id = %s"
         params.append(project_id)
-    if priority:
+    if priority is not None:
         query += " AND t.priority = %s"
         params.append(priority)
     if task_type:
@@ -357,10 +373,9 @@ def list_blocked_tasks(
         query += " AND t.parent_task_id = %s"
         params.append(parent_task_id)
 
-    # Fetch all matching tasks (no SQL limit) so we can order hierarchically first
-    internal_limit = 1000
-    query += " ORDER BY t.priority ASC, t.created_at ASC LIMIT %s"
-    params.append(internal_limit)
+    # Fetch every matching task so hierarchical ordering and caller pagination
+    # cannot silently discard rows beyond an internal cap.
+    query += " ORDER BY t.priority ASC, t.created_at ASC, t.id ASC"
 
     rows = db.fetchall(query, tuple(params))
     tasks = [Task.from_row(row) for row in rows]

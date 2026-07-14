@@ -153,6 +153,28 @@ def _put_session_mapping(
         state._session_mapping_timestamps[key] = now
 
 
+def invalidate_session_caches(state: Any, session_id: str | None = None) -> None:
+    """Remove cached registration data for one session, or clear all entries."""
+    with state._session_mapping_lock:
+        if session_id is None:
+            state._session_mapping.clear()
+            state._session_mapping_timestamps.clear()
+        else:
+            keys = [
+                key
+                for key, cached_session_id in state._session_mapping.items()
+                if cached_session_id == session_id
+            ]
+            for key in keys:
+                state._session_mapping.pop(key, None)
+                state._session_mapping_timestamps.pop(key, None)
+    with state._session_metadata_lock:
+        if session_id is None:
+            state._session_metadata.clear()
+        else:
+            state._session_metadata.pop(session_id, None)
+
+
 class _RegistrationCacheMixin(_RegistrationRecoveryMixin):
     def mark_session_expired(self: _ManagerState, session_id: str) -> bool:
         """

@@ -9,7 +9,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_text_expr, newer_than_now_expr
 
 from ._constants import TERMINAL_AGENT_RUN_STATUSES, AgentRunStatus
-from ._helpers import _positive_rowcount
 from ._models import AgentRun
 
 
@@ -292,9 +291,3 @@ class _AgentRunQueryMixin:
 
         rows = self.db.fetchall(sql, params)
         return {row["child_session_id"] for row in rows}
-
-    def delete(self: _AgentRunQueryHost, run_id: str) -> bool:
-        """Delete an agent run."""
-        with self.db.transaction() as conn:
-            cursor = conn.execute("DELETE FROM agent_runs WHERE id = %s", (run_id,))
-        return bool(_positive_rowcount(cursor))

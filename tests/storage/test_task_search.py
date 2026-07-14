@@ -2,6 +2,7 @@
 
 from typing import Any
 
+import psycopg
 import pytest
 
 from gobby.storage.projects import LocalProjectManager
@@ -446,7 +447,7 @@ class TestTaskSearchBackend:
             dialect = "postgres"
 
             def fetchall(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
-                raise RuntimeError("could not parse query string: `title:(-)`")
+                raise psycopg.DatabaseError("could not parse query string: `title:(-)`")
 
         with pytest.raises(SearchQuerySyntaxError, match="plain words") as exc_info:
             TaskSearchBackend(FakePostgresDB()).search(
@@ -455,7 +456,23 @@ class TestTaskSearchBackend:
             )
 
         assert exc_info.value.query == "alpha"
-        assert isinstance(exc_info.value.__cause__, RuntimeError)
+        assert isinstance(exc_info.value.__cause__, psycopg.DatabaseError)
+
+    def test_postgres_stage_state_non_database_error_propagates(self) -> None:
+        """Message matching alone does not classify unrelated exceptions as parser failures."""
+        from gobby.storage.tasks._search import TaskSearchBackend
+
+        class FakePostgresDB:
+            dialect = "postgres"
+
+            def fetchall(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
+                raise RuntimeError("could not parse query string: unrelated application failure")
+
+        with pytest.raises(RuntimeError, match="unrelated application failure"):
+            TaskSearchBackend(FakePostgresDB()).search(
+                "alpha",
+                current_stage_state="ready",
+            )
 
     def test_postgres_stage_state_zero_rows_returns_empty(self) -> None:
         """A successful stage-state query with no rows remains an empty result."""

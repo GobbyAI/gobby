@@ -21,6 +21,10 @@ from gobby.storage.tasks._aggregates import (
     count_tasks as _count_tasks,
 )
 from gobby.storage.tasks._artifacts import TaskArtifactManager
+from gobby.storage.tasks._blocking import hydrate_task_blocking_state
+from gobby.storage.tasks._build_cascade import (
+    CascadeBuildResult,
+)
 from gobby.storage.tasks._build_cascade import (
     cascade_build_state_to_subtree as _cascade_build_state_to_subtree,
 )
@@ -84,6 +88,7 @@ from gobby.storage.tasks._read import (
     get_task as _get_task,
 )
 from gobby.storage.tasks._search import TaskSearchBackend
+from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
 from gobby.storage.tasks._stage_manifest import initialize_task_manifest_for_task
 from gobby.storage.tasks._stage_registry import StageRegistryManager
 from gobby.storage.tasks._stage_states import StageStatesManager
@@ -337,6 +342,8 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         assigned_agent: MaybeUnset[str | None] = UNSET,
         implementation_domain: MaybeUnset[str | None] = UNSET,
         additional_skills: MaybeUnset[list[str] | None] = UNSET,
+        start_date: MaybeUnset[str | None] = UNSET,
+        due_date: MaybeUnset[str | None] = UNSET,
         **kwargs: Any,
     ) -> Task:
         """Update metadata fields only.
@@ -344,49 +351,51 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         Stage and ownership mutations must go through the dedicated task
         transition methods so claim/session state stays coherent.
         """
-        parent_changed = _update_task_metadata(
-            self.db,
-            task_id=task_id,
-            title=title,
-            description=description,
-            priority=priority,
-            task_type=task_type,
-            claimed_by_session_id=claimed_by_session_id,
-            labels=labels,
-            parent_task_id=parent_task_id,
-            closed_reason=closed_reason,
-            closed_at=closed_at,
-            closed_in_session_id=closed_in_session_id,
-            closed_commit_sha=closed_commit_sha,
-            validation_status=validation_status,
-            validation_feedback=validation_feedback,
-            category=category,
-            validation_criteria=validation_criteria,
-            validation_fail_count=validation_fail_count,
-            dispatch_failure_count=dispatch_failure_count,
-            merge_in_progress=merge_in_progress,
-            blocked_by_merge=blocked_by_merge,
-            escalated_at=escalated_at,
-            escalation_reason=escalation_reason,
-            github_issue_number=github_issue_number,
-            github_pr_number=github_pr_number,
-            github_repo=github_repo,
-            linear_issue_id=linear_issue_id,
-            linear_team_id=linear_team_id,
-            validation_override_reason=validation_override_reason,
-            allow_automation=allow_automation,
-            unattended=unattended,
-            yolo=yolo,
-            isolation=isolation,
-            assigned_agent=assigned_agent,
-            implementation_domain=implementation_domain,
-            additional_skills=additional_skills,
-            **kwargs,
-        )
+        with self.db.transaction():
+            parent_changed = _update_task_metadata(
+                self.db,
+                task_id=task_id,
+                title=title,
+                description=description,
+                priority=priority,
+                task_type=task_type,
+                claimed_by_session_id=claimed_by_session_id,
+                labels=labels,
+                parent_task_id=parent_task_id,
+                closed_reason=closed_reason,
+                closed_at=closed_at,
+                closed_in_session_id=closed_in_session_id,
+                closed_commit_sha=closed_commit_sha,
+                validation_status=validation_status,
+                validation_feedback=validation_feedback,
+                category=category,
+                validation_criteria=validation_criteria,
+                validation_fail_count=validation_fail_count,
+                dispatch_failure_count=dispatch_failure_count,
+                merge_in_progress=merge_in_progress,
+                blocked_by_merge=blocked_by_merge,
+                escalated_at=escalated_at,
+                escalation_reason=escalation_reason,
+                github_issue_number=github_issue_number,
+                github_pr_number=github_pr_number,
+                github_repo=github_repo,
+                linear_issue_id=linear_issue_id,
+                linear_team_id=linear_team_id,
+                validation_override_reason=validation_override_reason,
+                allow_automation=allow_automation,
+                unattended=unattended,
+                yolo=yolo,
+                isolation=isolation,
+                assigned_agent=assigned_agent,
+                implementation_domain=implementation_domain,
+                additional_skills=additional_skills,
+                start_date=start_date,
+                due_date=due_date,
+                **kwargs,
+            )
 
-        # If parent_task_id was changed, update path_cache for this task and all descendants
-        if parent_changed:
-            self.update_descendant_paths(task_id)
+            if parent_changed:
+                self.update_descendant_paths(task_id)
 
         self._notify_listeners()
         return self.get_task(task_id)
@@ -419,11 +428,11 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         yolo: bool | None = None,
         parent_manifest_specs: Iterable[Any] | None = None,
         include_merge_stage: bool = False,
-    ) -> int:
+    ) -> CascadeBuildResult:
         """Apply build dispatch state to an epic and every descendant task."""
         if unattended is None:
             unattended = bool(yolo)
-        updated_count = _cascade_build_state_to_subtree(
+        result = _cascade_build_state_to_subtree(
             self.db,
             epic_id=epic_id,
             isolation=isolation,
@@ -434,7 +443,7 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
             include_merge_stage=include_merge_stage,
         )
         self._notify_listeners()
-        return updated_count
+        return result
 
     def add_label(self, task_id: str, label: str) -> Task:
         """Add a label to a task if not present."""
@@ -699,16 +708,17 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         if not search_results:
             return []
 
-        # Batch-fetch tasks for the result set
-        results: list[tuple[Task, float]] = []
-        for task_id, score in search_results:
-            try:
-                task = self.get_task(task_id)
-            except (ValueError, TaskNotFoundError):
-                continue
-            results.append((task, score))
-
-        return results
+        task_ids = [task_id for task_id, _ in search_results]
+        rows = self.db.fetchall("SELECT * FROM tasks WHERE id = ANY(%s)", (task_ids,))
+        tasks = [Task.from_row(row) for row in rows]
+        hydrate_task_stage_state(self.db, tasks)
+        hydrate_task_blocking_state(self.db, tasks)
+        task_by_id = {task.id: task for task in tasks}
+        return [
+            (task_by_id[task_id], score)
+            for task_id, score in search_results
+            if task_id in task_by_id
+        ]
 
     def reindex_search(self, project_id: str | None = None) -> dict[str, Any]:
         """Return task search index statistics.

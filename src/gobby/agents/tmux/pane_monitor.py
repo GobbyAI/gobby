@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from gobby.agents.kill import pid_matches_agent_identity
 from gobby.agents.tmux.session_manager import TMUX_COMMAND_TIMEOUT_SECONDS, TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource, parse_session_source
@@ -171,15 +171,18 @@ class TmuxPaneMonitor:
             # Check if the agent's PID is still alive (catches remain-on-exit cases)
             pid_dead = False
             if live_info and not live_info.pane_dead and agent.pid:
-                try:
-                    os.kill(agent.pid, 0)
-                except ProcessLookupError:
+                session_id = agent.child_session_id or agent.parent_session_id
+                if not await pid_matches_agent_identity(
+                    agent.pid,
+                    provider=agent.provider,
+                    session_id=session_id,
+                ):
                     pid_dead = True
                     logger.info(
-                        f"Agent PID {agent.pid} is dead but tmux session {session_name} still alive (remain-on-exit)",
+                        "Agent PID %s no longer matches identity but tmux session %s is alive",
+                        agent.pid,
+                        session_name,
                     )
-                except PermissionError:
-                    pass  # PID exists but we can't signal it — it's alive
 
             if live_info and not live_info.pane_dead and not pid_dead:
                 continue

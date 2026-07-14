@@ -192,7 +192,8 @@ class MergeResolutionManager:
             The created MergeResolution
         """
         now = utc_now()
-        resolution_id = str(uuid.uuid5(_NS_MERGE_RESOLUTIONS, worktree_id + source_branch))
+        resolution_identity = "\0".join((worktree_id, source_branch, target_branch))
+        resolution_id = str(uuid.uuid5(_NS_MERGE_RESOLUTIONS, resolution_identity))
 
         with self.db.transaction() as conn:
             conn.execute(
@@ -383,7 +384,7 @@ class MergeResolutionManager:
         source_branch: str | None = None,
         target_branch: str | None = None,
         status: str | None = None,
-        limit: int = 100,
+        limit: int | None = None,
         offset: int = 0,
     ) -> list[MergeResolution]:
         """List resolutions with optional filters.
@@ -418,8 +419,13 @@ class MergeResolutionManager:
             query += " AND status = %s"
             params.append(status)
 
-        query += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
-        params.extend([limit, offset])
+        query += " ORDER BY created_at DESC"
+        if limit is not None:
+            query += " LIMIT %s OFFSET %s"
+            params.extend([limit, offset])
+        elif offset:
+            query += " OFFSET %s"
+            params.append(offset)
 
         rows = self.db.fetchall(query, tuple(params))
         return [MergeResolution.from_row(row) for row in rows]

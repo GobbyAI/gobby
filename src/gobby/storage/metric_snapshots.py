@@ -31,8 +31,8 @@ class MetricSnapshotStorage:
                 "INSERT INTO metric_snapshots (metrics_json) VALUES (%s)",
                 (json.dumps(metrics),),
             )
-        except Exception as e:
-            logger.error(f"Failed to save metric snapshot: {e}")
+        except Exception:
+            logger.exception("Failed to save metric snapshot")
 
     def get_snapshots(self, hours: int = 1, limit: int = 120) -> list[dict[str, Any]]:
         """Get recent snapshots within the time window.

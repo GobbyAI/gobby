@@ -82,6 +82,53 @@ def test_register_assigns_unique_projectless_seq_nums_under_concurrency(
     assert sorted(seq_nums) == [1, 2, 3, 4]
 
 
+def test_register_same_identity_with_different_projects_is_atomic(
+    temp_db: HubDatabase,
+    sample_project: dict[str, str],
+) -> None:
+    barrier = threading.Barrier(2)
+    session_ids: list[str] = []
+    errors: list[BaseException] = []
+    lock = threading.Lock()
+
+    def _register(project_id: str | None) -> None:
+        manager = SessionManager(temp_db)
+        try:
+            barrier.wait(timeout=5)
+            session = manager.register(
+                external_id="concurrent-project-discovery",
+                machine_id="machine-1",
+                source="codex",
+                project_id=project_id,
+            )
+            with lock:
+                session_ids.append(session.id)
+        except BaseException as exc:  # pragma: no cover - asserted below
+            with lock:
+                errors.append(exc)
+
+    threads = [
+        threading.Thread(target=_register, args=(None,)),
+        threading.Thread(target=_register, args=(sample_project["id"],)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    rows = temp_db.fetchall(
+        """
+        SELECT id FROM sessions
+        WHERE external_id = %s AND machine_id = %s AND source = %s AND session_type = %s
+        """,
+        ("concurrent-project-discovery", "machine-1", "codex", "terminal"),
+    )
+
+    assert errors == []
+    assert len(set(session_ids)) == 1
+    assert len(rows) == 1
+
+
 def test_create_web_chat_session_rolls_back_when_follow_up_update_fails(
     session_manager: SessionManager,
     sample_project: dict[str, str],

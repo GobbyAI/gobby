@@ -299,6 +299,23 @@ class TestLocalSkillManager:
                 content="Content",
             )
 
+    def test_rename_then_recreate_skill(self, skill_manager) -> None:
+        original = skill_manager.create_skill(
+            name="original-skill",
+            description="Original",
+            content="First",
+        )
+        skill_manager.update_skill(original.id, name="renamed-skill")
+
+        recreated = skill_manager.create_skill(
+            name="original-skill",
+            description="Recreated",
+            content="Second",
+        )
+
+        assert recreated.id != original.id
+        assert recreated.name == "original-skill"
+
     def test_get_skill(self, skill_manager) -> None:
         """Test getting a skill by ID."""
         created = skill_manager.create_skill(

@@ -1431,7 +1431,11 @@ async def test_spawn_attach_failure_terminalizes_created_run(
         self: TaskDispatchMutexManager,
         mutex_id: str,
         _run_id: str,
+        _holder: str,
+        *,
+        now: datetime | str | None = None,
     ) -> bool:
+        del now
         assert mutex_id == task.id
         self.force_release(mutex_id)
         return False

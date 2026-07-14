@@ -10,6 +10,7 @@ from gobby.storage.tasks._models import (
     UNSET,
     Isolation,
     MaybeUnset,
+    validate_category,
     validate_implementation_domain,
     validate_task_type,
 )
@@ -84,6 +85,8 @@ def update_task(
     assigned_agent: MaybeUnset[str | None] = UNSET,
     implementation_domain: MaybeUnset[str | None] = UNSET,
     additional_skills: MaybeUnset[list[str] | None] = UNSET,
+    start_date: MaybeUnset[str | None] = UNSET,
+    due_date: MaybeUnset[str | None] = UNSET,
 ) -> bool:
     """Internal storage primitive for task field updates.
 
@@ -132,7 +135,7 @@ def update_task(
         params.append(validation_feedback)
     if category is not UNSET:
         updates.append("category = %s")
-        params.append(category)
+        params.append(validate_category(cast(str | None, category)))
     if validation_criteria is not UNSET:
         updates.append("validation_criteria = %s")
         params.append(validation_criteria)
@@ -192,6 +195,12 @@ def update_task(
     if additional_skills is not UNSET:
         updates.append("additional_skills = %s")
         params.append(json.dumps(additional_skills) if additional_skills is not None else None)
+    if start_date is not UNSET:
+        updates.append("start_date = %s")
+        params.append(start_date)
+    if due_date is not UNSET:
+        updates.append("due_date = %s")
+        params.append(due_date)
     next_closed_at = current_task.closed_at if closed_at is UNSET else cast(str | None, closed_at)
     next_escalated_at = (
         current_task.escalated_at
@@ -301,6 +310,8 @@ def update_task_metadata(
     assigned_agent: MaybeUnset[str | None] = UNSET,
     implementation_domain: MaybeUnset[str | None] = UNSET,
     additional_skills: MaybeUnset[list[str] | None] = UNSET,
+    start_date: MaybeUnset[str | None] = UNSET,
+    due_date: MaybeUnset[str | None] = UNSET,
     **kwargs: Any,
 ) -> bool:
     """Validate a metadata-only update and dispatch to ``update_task``."""
@@ -337,6 +348,11 @@ def update_task_metadata(
         raise ValueError(
             f"LocalTaskManager.update_task does not allow {field_class}. "
             f"{transition_hint} Blocked fields: {blocked_display}"
+        )
+    if kwargs:
+        unsupported_display = ", ".join(sorted(kwargs))
+        raise ValueError(
+            f"LocalTaskManager.update_task received unsupported fields: {unsupported_display}"
         )
 
     return update_task(
@@ -376,4 +392,6 @@ def update_task_metadata(
         assigned_agent=assigned_agent,
         implementation_domain=implementation_domain,
         additional_skills=additional_skills,
+        start_date=start_date,
+        due_date=due_date,
     )

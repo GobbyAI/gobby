@@ -88,6 +88,7 @@ class WorktreeIsolationHandler(IsolationHandler):
                     isolated_path=existing.worktree_path,
                     provider=config.provider,
                 )
+                await asyncio.to_thread(self._worktree_storage.touch, existing.id)
                 extra = {"main_repo_path": str(self._git_manager.repo_path)}
                 existing_base_commit_sha = getattr(sync_result, "base_commit_sha", None)
                 if isinstance(existing_base_commit_sha, str) and existing_base_commit_sha:
