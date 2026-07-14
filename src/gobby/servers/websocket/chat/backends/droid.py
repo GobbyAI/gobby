@@ -12,9 +12,11 @@ import signal
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from gobby.adapters.acp_client import StreamEvent
+from gobby.agents.provider_capabilities import provider_reasoning_efforts
 from gobby.agents.sandbox import SandboxConfig
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.llm.claude_models import (
@@ -42,6 +44,21 @@ from gobby.servers.websocket.chat.backends.droid_stream import parse_droid_strea
 from gobby.servers.websocket.chat.permissions import ManagedWebChatPermissionsMixin
 
 logger = logging.getLogger(__name__)
+
+
+def _validated_droid_option(value: str, option: str) -> str:
+    cleaned = value.strip()
+    if not cleaned or cleaned.startswith("-"):
+        raise ValueError(f"Invalid Droid {option}: {value!r}")
+    return cleaned
+
+
+def _resolve_droid_cwd(project_path: str | None) -> str:
+    cwd = Path(project_path or ".").expanduser().resolve()
+    if not cwd.is_dir():
+        raise ValueError(f"Droid working directory does not exist: {cwd}")
+    return str(cwd)
+
 
 DROID_JSONRPC_VERSION = "2.0"
 DROID_FACTORY_API_VERSION = "1.0.0"
@@ -89,10 +106,10 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
     chat_mode: str = field(default="plan")
     _pending_question: dict[str, Any] | None = field(default=None, repr=False)
     _pending_answer_event: asyncio.Event | None = field(default=None, repr=False)
-    _pending_answers: dict[str, str] | None = field(default=None, repr=False)
-    _pending_approval: PendingApproval | None = field(default=None, repr=False)
-    _pending_approval_event: asyncio.Event | None = field(default=None, repr=False)
-    _pending_approval_decision: str | None = field(default=None, repr=False)
+    _pending_answers: dict[str, Any] | None = field(default=None, repr=False)
+    _pending_approvals: dict[str, PendingApproval] = field(default_factory=dict, repr=False)
+    _pending_approval_events: dict[str, asyncio.Event] = field(default_factory=dict, repr=False)
+    _pending_approval_decisions: dict[str, str] = field(default_factory=dict, repr=False)
     _plan_approved: bool = field(default=False, repr=False)
     _plan_feedback: str | None = field(default=None, repr=False)
     # Turn-scoped guard set by the permission resolver when it broadcasts and
@@ -271,7 +288,7 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
                     sdk_session_id=self.sdk_session_id,
                     context_window=self._resolve_context_window(),
                 )
-            except (RuntimeError, OSError, ConnectionError, asyncio.CancelledError) as exc:
+            except OSError as exc:
                 logger.error("Droid managed session %s error: %s", self.conversation_id, exc)
                 yield TextChunk(content=f"Generation failed: {exc}")
                 yield DoneEvent(
@@ -418,7 +435,7 @@ class DroidWebChatBackend:
         if not droid_path:
             raise RuntimeError("droid CLI not found in PATH")
 
-        cwd = session.project_path or "."
+        cwd = await asyncio.to_thread(_resolve_droid_cwd, session.project_path)
         cmd = [
             droid_path,
             "exec",
@@ -432,9 +449,14 @@ class DroidWebChatBackend:
             cwd,
         ]
         if session._model:
+            session._model = _validated_droid_option(session._model, "model")
             cmd.extend(["--model", session._model])
         if session.reasoning_effort and session.reasoning_effort != "auto":
-            cmd.extend(["--reasoning-effort", session.reasoning_effort])
+            reasoning_effort = _validated_droid_option(session.reasoning_effort, "reasoning effort")
+            if reasoning_effort not in provider_reasoning_efforts("droid"):
+                raise ValueError(f"Unsupported Droid reasoning effort: {reasoning_effort}")
+            session.reasoning_effort = reasoning_effort
+            cmd.extend(["--reasoning-effort", reasoning_effort])
 
         env = os.environ.copy()
         env["GOBBY_HOOKS_DISABLED"] = "1"

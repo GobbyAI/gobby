@@ -139,6 +139,30 @@ async def handle_attach_to_session(
         )
         return
 
+    client_metadata = mixin.clients.get(websocket)
+    if not isinstance(client_metadata, dict):
+        await mixin._send_error(
+            websocket,
+            "Not authorized to observe session",
+            code="FORBIDDEN",
+        )
+        return
+
+    client_user_id = _as_str(client_metadata.get("user_id"))
+    client_project_id = _as_str(client_metadata.get("project_id"))
+    session_project_id = _as_str(getattr(session, "project_id", None))
+    if (
+        client_user_id is None
+        or client_project_id is None
+        or client_project_id != session_project_id
+    ):
+        await mixin._send_error(
+            websocket,
+            "Not authorized to observe session",
+            code="FORBIDDEN",
+        )
+        return
+
     workflow_name = _as_str(getattr(session, "workflow_name", None))
     agent_run_id = _as_str(getattr(session, "agent_run_id", None))
     agent_name = await _observe_facade()._resolve_agent_name_for_session(
@@ -166,9 +190,7 @@ async def handle_attach_to_session(
     websocket.subscriptions.add(f"hook_event:session_id={session.external_id}")
 
     # Track attached session on websocket metadata
-    metadata = mixin.clients.get(websocket)
-    if metadata:
-        metadata["attached_session_id"] = session_id
+    client_metadata["attached_session_id"] = session_id
 
     # Send response with initial messages and session metadata
     session_meta = _session_meta_payload(
@@ -286,10 +308,11 @@ async def handle_send_to_cli_session(
     # Persist the message via InterSessionMessageManager
     from gobby.storage.inter_session_messages import InterSessionMessageManager
 
-    inter_msg_manager: InterSessionMessageManager | None = None
-    if session_manager and hasattr(session_manager, "db"):
+    inter_msg_manager = vars(mixin).get("inter_session_msg_manager")
+    if inter_msg_manager is None and hasattr(session_manager, "db"):
         try:
             inter_msg_manager = InterSessionMessageManager(session_manager.db)
+            mixin.inter_session_msg_manager = inter_msg_manager
         except Exception as e:
             logger.warning(f"Failed to create InterSessionMessageManager: {e}")
 
@@ -395,6 +418,8 @@ async def handle_detach_from_session(
     metadata = mixin.clients.get(websocket)
     if metadata:
         metadata.pop("attached_session_id", None)
+
+    await mixin._cleanup_attached_tts(session_id)
 
     await websocket.send(
         json_dumps(

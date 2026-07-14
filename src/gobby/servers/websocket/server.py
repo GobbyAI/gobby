@@ -145,6 +145,9 @@ class WebSocketServer(
         # Pending provider overrides queued before session creation
         self._pending_providers: dict[str, str] = {}
 
+        # Last update time for pending conversation configuration.
+        self._pending_config_updated_at: dict[str, datetime] = {}
+
         # Hidden context to inject on the first post-resume user turn
         self._pending_inject_contexts: dict[str, str] = {}
 
@@ -246,7 +249,10 @@ class WebSocketServer(
             # Clean up tmux bridges owned by this client
             await self._cleanup_tmux_client(websocket)
             # Always cleanup client state (but NOT chat sessions — they persist)
-            self.clients.pop(websocket, None)
+            metadata = self.clients.pop(websocket, None)
+            attached_session_id = metadata.get("attached_session_id") if metadata else None
+            if isinstance(attached_session_id, str):
+                await self._cleanup_attached_tts(attached_session_id)
             logger.debug(f"Client {client_id} cleaned up. Remaining clients: {len(self.clients)}")
 
     async def _handle_message(self, websocket: Any, message: str) -> None:
@@ -263,6 +269,11 @@ class WebSocketServer(
             message: JSON string message
         """
         data = json.loads(message)
+        if not isinstance(data, dict):
+            await self._send_error(websocket, "Message must be a JSON object")
+            return
+
+        data = cast(dict[str, Any], data)
         msg_type = data.get("type")
 
         # Lazily initialize dispatch table
@@ -303,7 +314,7 @@ class WebSocketServer(
                 "heartbeat": self._handle_heartbeat,
             }
 
-        handler = self._dispatch_table.get(msg_type)
+        handler = self._dispatch_table.get(cast(str, msg_type))
         if handler:
             await handler(websocket, data)
         else:

@@ -422,5 +422,5 @@ class WebChatSessionRegistry:
                     close_result = aclose()
                     if inspect.isawaitable(close_result):
                         await close_result
-                except BaseException:
+                except Exception:
                     pass

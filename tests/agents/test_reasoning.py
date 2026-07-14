@@ -170,14 +170,13 @@ def test_get_provider_models_reuses_fallback_catalog(monkeypatch: pytest.MonkeyP
     created_for: list[object | None] = []
 
     class FakeCatalog:
-        def __init__(self, daemon_config: object | None) -> None:
-            created_for.append(daemon_config)
+        def __init__(self) -> None:
+            created_for.append(None)
 
         def get_provider_snapshot(self, provider: str) -> dict[str, object]:
             return {"models": [{"value": f"{provider}-sonnet"}]}
 
     monkeypatch.setattr(reasoning, "_fallback_catalog", None)
-    monkeypatch.setattr(reasoning, "_fallback_catalog_config", None)
     monkeypatch.setattr("gobby.app_context.get_app_context", lambda: None)
     monkeypatch.setattr("gobby.servers.provider_models.ProviderModelCatalog", FakeCatalog)
 
@@ -188,20 +187,19 @@ def test_get_provider_models_reuses_fallback_catalog(monkeypatch: pytest.MonkeyP
     assert created_for == [None]
 
 
-def test_new_fallback_catalog_supports_config_keyword(
+def test_new_fallback_catalog_uses_no_arg_constructor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config = DaemonConfig()
     created_for: list[DaemonConfig | None] = []
 
     class FakeCatalog:
-        def __init__(self, *, config: DaemonConfig | None) -> None:
-            created_for.append(config)
+        def __init__(self) -> None:
+            created_for.append(None)
 
     monkeypatch.setattr("gobby.servers.provider_models.ProviderModelCatalog", FakeCatalog)
 
-    assert reasoning._new_fallback_catalog(config).__class__ is FakeCatalog
-    assert created_for == [config]
+    assert reasoning._new_fallback_catalog().__class__ is FakeCatalog
+    assert created_for == [None]
 
 
 def test_new_fallback_catalog_supports_no_arg_constructor(
@@ -216,7 +214,7 @@ def test_new_fallback_catalog_supports_no_arg_constructor(
 
     monkeypatch.setattr("gobby.servers.provider_models.ProviderModelCatalog", FakeCatalog)
 
-    assert reasoning._new_fallback_catalog(None).__class__ is FakeCatalog
+    assert reasoning._new_fallback_catalog().__class__ is FakeCatalog
     assert created == 1
 
 
@@ -229,14 +227,8 @@ def test_new_fallback_catalog_chains_last_constructor_error(
 
     monkeypatch.setattr("gobby.servers.provider_models.ProviderModelCatalog", FakeCatalog)
 
-    with pytest.raises(
-        TypeError,
-        match="ProviderModelCatalog could not be constructed: constructor failed",
-    ) as exc_info:
-        reasoning._new_fallback_catalog(None)
-
-    assert isinstance(exc_info.value.__cause__, TypeError)
-    assert str(exc_info.value.__cause__) == "constructor failed"
+    with pytest.raises(TypeError, match="constructor failed"):
+        reasoning._new_fallback_catalog()
 
 
 def test_get_provider_models_reuses_fallback_catalog_for_equal_config(
@@ -247,14 +239,13 @@ def test_get_provider_models_reuses_fallback_catalog_for_equal_config(
     created_for: list[DaemonConfig | None] = []
 
     class FakeCatalog:
-        def __init__(self, daemon_config: DaemonConfig | None) -> None:
-            created_for.append(daemon_config)
+        def __init__(self) -> None:
+            created_for.append(None)
 
         def get_provider_snapshot(self, provider: str) -> dict[str, object]:
             return {"models": [{"value": provider}]}
 
     monkeypatch.setattr(reasoning, "_fallback_catalog", None)
-    monkeypatch.setattr(reasoning, "_fallback_catalog_config", None)
     monkeypatch.setattr("gobby.app_context.get_app_context", lambda: None)
     monkeypatch.setattr("gobby.servers.provider_models.ProviderModelCatalog", FakeCatalog)
 
@@ -262,11 +253,10 @@ def test_get_provider_models_reuses_fallback_catalog_for_equal_config(
     reasoning._get_provider_models("claude", config_b)
 
     assert config_a == config_b
-    assert created_for == [config_a]
-    assert reasoning._fallback_catalog_config == config_b
+    assert created_for == [None]
 
 
-def test_get_provider_models_rebuilds_fallback_catalog_on_config_change(
+def test_get_provider_models_reuses_fallback_catalog_on_config_change(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config_a = DaemonConfig(daemon_port=60887)
@@ -274,19 +264,17 @@ def test_get_provider_models_rebuilds_fallback_catalog_on_config_change(
     created_for: list[DaemonConfig | None] = []
 
     class FakeCatalog:
-        def __init__(self, daemon_config: DaemonConfig | None) -> None:
-            created_for.append(daemon_config)
+        def __init__(self) -> None:
+            created_for.append(None)
 
         def get_provider_snapshot(self, provider: str) -> dict[str, object]:
             return {"models": [{"value": provider}]}
 
     monkeypatch.setattr(reasoning, "_fallback_catalog", None)
-    monkeypatch.setattr(reasoning, "_fallback_catalog_config", None)
     monkeypatch.setattr("gobby.app_context.get_app_context", lambda: None)
     monkeypatch.setattr("gobby.servers.provider_models.ProviderModelCatalog", FakeCatalog)
 
     reasoning._get_provider_models("claude", config_a)
     reasoning._get_provider_models("claude", config_b)
 
-    assert created_for == [config_a, config_b]
-    assert reasoning._fallback_catalog_config is config_b
+    assert created_for == [None]

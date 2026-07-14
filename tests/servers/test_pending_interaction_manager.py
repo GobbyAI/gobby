@@ -7,6 +7,8 @@ expire_all_pending.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -129,6 +131,31 @@ class TestExpire:
         await manager.expire(iid)
         result = await task
         assert result["decision"] == "timeout"
+
+    async def test_resolve_wins_race_before_expire_wakes_waiter(self, db: HubDatabase) -> None:
+        resolve_db_written = asyncio.Event()
+        release_resolve = asyncio.Event()
+
+        async def run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+            result = func(*args, **kwargs)
+            if func.__name__ == "_resolve_pending":
+                resolve_db_written.set()
+                await release_resolve.wait()
+            return result
+
+        manager = PendingInteractionManager(db, run_db=run_db)
+        iid = await manager.create(session_id=SESSION_1, kind="tool", provider="claude", payload={})
+        waiter = asyncio.create_task(manager.wait(iid))
+        resolve_task = asyncio.create_task(manager.resolve(iid, "approve"))
+
+        await resolve_db_written.wait()
+        await manager.expire(iid)
+        release_resolve.set()
+
+        assert await resolve_task is True
+        assert (await waiter)["decision"] == "approve"
+        row = db.fetchone("SELECT status, decision FROM pending_interactions WHERE id = %s", (iid,))
+        assert row == {"status": "resolved", "decision": "approve"}
 
 
 class TestSupersede:

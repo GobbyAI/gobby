@@ -84,10 +84,11 @@ class TestChatSessionHooks:
         mock_cb = AsyncMock(return_value={})
         session._on_pre_tool = mock_cb
 
-        async def approve(tool_name: str, arguments: dict[str, object]) -> None:
+        async def approve(tool_use_id: str, tool_name: str, arguments: dict[str, object]) -> None:
+            assert tool_use_id == "tool-123"
             assert tool_name == "Bash"
             assert arguments == {"command": "echo ok > approval.txt"}
-            session.provide_approval("approve")
+            session.provide_approval(tool_use_id, "approve")
 
         session._tool_approval_callback = AsyncMock(side_effect=approve)
 
@@ -101,6 +102,7 @@ class TestChatSessionHooks:
 
         mock_cb.assert_awaited_once_with(inp)
         session._tool_approval_callback.assert_awaited_once_with(
+            "tool-123",
             "Bash",
             {"command": "echo ok > approval.txt"},
         )

@@ -45,6 +45,10 @@ def _make_session(chat_mode: str = "normal", db_session_id: str | None = "db-123
     return session
 
 
+async def _run_sync(_owner: Any, func: Any, *args: Any, **kwargs: Any) -> Any:
+    return func(*args, **kwargs)
+
+
 class TestSetModeValidation:
     async def test_invalid_mode_sends_error(self) -> None:
         server = ConcreteSessionControl()
@@ -112,7 +116,14 @@ class TestSetModeIdempotency:
         server._chat_sessions["conv-1"] = session
         ws = _make_ws()
 
-        with patch("gobby.workflows.state_manager.SessionVariableManager") as svm_cls:
+        with (
+            patch("gobby.workflows.state_manager.SessionVariableManager") as svm_cls,
+            patch(
+                "gobby.servers.websocket.handlers.session_config.run_db",
+                new_callable=AsyncMock,
+                side_effect=_run_sync,
+            ) as run_db,
+        ):
             svm_instance = MagicMock()
             svm_cls.return_value = svm_instance
             await server._handle_set_mode(ws, {"conversation_id": "conv-1", "mode": "plan"})
@@ -122,6 +133,12 @@ class TestSetModeIdempotency:
         svm_instance.merge_variables.assert_called_once()
         merged_vars = svm_instance.merge_variables.call_args[0][1]
         assert merged_vars["chat_mode"] == "plan"
+        run_db.assert_awaited_once_with(
+            server,
+            svm_instance.merge_variables,
+            "db-123",
+            {"chat_mode": "plan", "mode_level": 0},
+        )
         assert server._pending_modes == {}
 
 
@@ -135,7 +152,14 @@ class TestSetModeAttachedSession:
         server.session_manager.get = MagicMock(return_value=attached_session)
         ws = _make_ws()
 
-        with patch("gobby.workflows.state_manager.SessionVariableManager") as svm_cls:
+        with (
+            patch("gobby.workflows.state_manager.SessionVariableManager") as svm_cls,
+            patch(
+                "gobby.servers.websocket.handlers.session_config.run_db",
+                new_callable=AsyncMock,
+                side_effect=_run_sync,
+            ) as run_db,
+        ):
             svm_instance = MagicMock()
             svm_cls.return_value = svm_instance
             await server._handle_set_mode(
@@ -147,6 +171,12 @@ class TestSetModeAttachedSession:
         svm_instance.merge_variables.assert_called_once()
         merged_vars = svm_instance.merge_variables.call_args[0][1]
         assert merged_vars["chat_mode"] == "plan"
+        run_db.assert_any_await(
+            server,
+            svm_instance.merge_variables,
+            "tmux-uuid-1",
+            {"chat_mode": "plan", "mode_level": 0},
+        )
         assert attached_session.chat_mode == "normal"
 
     async def test_target_session_id_no_change_skips_update(self) -> None:

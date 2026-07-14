@@ -66,6 +66,7 @@ export interface SessionRefs {
   observedSessionIdRef: MutableRefObject<string | null>;
   observedSessionMetaRef: MutableRefObject<SessionObservationMeta | null>;
   planContentRef: MutableRefObject<string | null>;
+  planToolCallIdRef: MutableRefObject<string | null>;
   preAttachContextUsageRef: MutableRefObject<ContextUsage | null>;
   sessionInteractionModeRef: MutableRefObject<SessionInteractionMode>;
   sessionRefRef: MutableRefObject<string | null>;

@@ -169,6 +169,7 @@ export interface TokenEventMessage {
 export interface PlanPendingApprovalMessage {
   type: "plan_pending_approval";
   conversation_id?: string;
+  tool_call_id?: string;
   plan_content?: string;
   /** Originating CLI (claude, codex, droid, grok, qwen). */
   source?: string;

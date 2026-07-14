@@ -419,6 +419,47 @@ class TestTmuxSessionManager:
         args = mgr._base_args()
         assert args == ["tmux", "-S", "/tmp/tmux-1000/gobby", "-f", "/dev/null"]
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("method_name", "method_args", "tmux_args"),
+        [
+            (
+                "set_option",
+                ("demo", "status", "off"),
+                ("set-option", "-t", "demo", "status", "off"),
+            ),
+            ("refresh_client", ("demo",), ("refresh-client", "-t", "demo")),
+        ],
+    )
+    async def test_client_commands_use_base_args(
+        self,
+        method_name: str,
+        method_args: tuple[str, ...],
+        tmux_args: tuple[str, ...],
+    ) -> None:
+        mgr = TmuxSessionManager()
+        assert mgr._base_args()[-2:] == ["-f", "/dev/null"]
+        proc = MagicMock(returncode=0)
+        proc.communicate = AsyncMock(return_value=(b"", b""))
+
+        with patch(
+            "gobby.agents.tmux.session_manager.asyncio.create_subprocess_exec",
+            new_callable=AsyncMock,
+            return_value=proc,
+        ) as mock_exec:
+            await getattr(mgr, method_name)(*method_args)
+
+        mock_exec.assert_awaited_once_with(
+            "tmux",
+            "-L",
+            "gobby",
+            "-f",
+            "/dev/null",
+            *tmux_args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
     @patch("shutil.which", return_value="/usr/bin/tmux")
     def test_is_available_true(self, mock_which: MagicMock) -> None:
         mgr = TmuxSessionManager()

@@ -48,11 +48,26 @@ def _make_session(
 
     broadcasts: list[tuple[str | None, dict[str, Any]]] = []
 
-    async def _on_plan_ready(content: str | None, input_data: dict[str, Any]) -> None:
+    async def _on_plan_ready(
+        content: str | None, input_data: dict[str, Any], tool_use_id: str | None
+    ) -> None:
         broadcasts.append((content, input_data))
 
     session._on_plan_ready = _on_plan_ready
     return session, broadcasts
+
+
+async def test_managed_session_propagates_programming_errors() -> None:
+    session, _ = _make_session("default", [])
+
+    async def failing_send_message(_session: Any, _prompt: Any) -> AsyncIterator[StreamEvent]:
+        raise RuntimeError("boom")
+        yield
+
+    session._backend.send_message = failing_send_message
+
+    with pytest.raises(RuntimeError, match="boom"):
+        _ = [event async for event in session.send_message("hello")]
 
 
 @pytest.mark.asyncio

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -25,7 +24,6 @@ ReasoningStatus = Literal[
 ]
 
 _fallback_catalog: ProviderModelCatalog | None = None
-_fallback_catalog_config: DaemonConfig | None = None
 _fallback_catalog_lock = threading.Lock()
 
 
@@ -69,37 +67,25 @@ class SpawnReasoningResolution:
 def _get_provider_models(provider: str, daemon_config: DaemonConfig | None) -> list[dict[str, Any]]:
     from gobby.app_context import get_app_context
 
-    global _fallback_catalog, _fallback_catalog_config
+    global _fallback_catalog
 
     ctx = get_app_context()
     catalog = getattr(ctx, "provider_model_catalog", None) if ctx else None
     if catalog is None:
         with _fallback_catalog_lock:
-            if _fallback_catalog is None or _fallback_catalog_config != daemon_config:
-                _fallback_catalog = _new_fallback_catalog(daemon_config)
-                _fallback_catalog_config = daemon_config
+            if _fallback_catalog is None:
+                _fallback_catalog = _new_fallback_catalog()
             catalog = _fallback_catalog
     snapshot = catalog.get_provider_snapshot(provider)
     models = snapshot.get("models")
     return list(models) if isinstance(models, list) else []
 
 
-def _new_fallback_catalog(daemon_config: DaemonConfig | None) -> ProviderModelCatalog:
-    """Instantiate the provider catalog across production and test constructor shapes."""
+def _new_fallback_catalog() -> ProviderModelCatalog:
+    """Instantiate the provider catalog."""
     from gobby.servers.provider_models import ProviderModelCatalog
 
-    last_error: TypeError | None = None
-    creators: tuple[Callable[[], ProviderModelCatalog], ...] = (
-        lambda: ProviderModelCatalog(daemon_config),  # type: ignore[misc,arg-type]
-        lambda: ProviderModelCatalog(config=daemon_config),  # type: ignore[call-arg]
-        lambda: ProviderModelCatalog(),
-    )
-    for create in creators:
-        try:
-            return create()
-        except TypeError as exc:
-            last_error = exc
-    raise TypeError(f"ProviderModelCatalog could not be constructed: {last_error}") from last_error
+    return ProviderModelCatalog()
 
 
 def _select_model_entries(

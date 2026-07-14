@@ -520,7 +520,9 @@ class TestQwenBackend:
         )
         approval_ready = asyncio.Event()
 
-        async def mark_approval_ready(_tool_name: str, _input_data: dict[str, Any]) -> None:
+        async def mark_approval_ready(
+            _tool_use_id: str, _tool_name: str, _input_data: dict[str, Any]
+        ) -> None:
             approval_ready.set()
 
         session._tool_approval_callback = mark_approval_ready
@@ -652,6 +654,7 @@ async def _collect_codex_backend_events(
     *,
     transcript_path: Path | None = None,
     transcript_lines: list[str] | None = None,
+    is_connected: bool = True,
 ) -> tuple[list[Any], CodexManagedChatSession]:
     handlers: dict[str, list[Any]] = {}
 
@@ -667,7 +670,7 @@ async def _collect_codex_backend_events(
         return SimpleNamespace(id="turn-1")
 
     client = MagicMock()
-    client.is_connected = True
+    client.is_connected = is_connected
     client.start = AsyncMock()
     client.stop = AsyncMock()
     client.add_notification_handler = MagicMock(side_effect=add_handler)
@@ -932,6 +935,25 @@ class TestCodexBackend:
 
         assert session.message_index == 1
         assert [e.content for e in events if isinstance(e, TextChunk)] == ["codex ok"]
+
+    @pytest.mark.asyncio
+    async def test_send_message_stops_when_app_server_disconnects(self) -> None:
+        events, _session = await _collect_codex_backend_events([], is_connected=False)
+
+        assert isinstance(events[0], TextChunk)
+        assert events[0].content == "Error: Codex app-server disconnected before turn completed"
+        assert isinstance(events[-1], DoneEvent)
+
+    @pytest.mark.asyncio
+    async def test_send_message_stops_at_turn_deadline(self) -> None:
+        with patch(
+            "gobby.servers.websocket.chat.backends.codex_turns._CODEX_TURN_TIMEOUT_SECONDS",
+            0.001,
+        ):
+            events, _session = await _collect_codex_backend_events([])
+
+        assert isinstance(events[0], TextChunk)
+        assert events[0].content == "Error: Codex turn timed out after 0.001 seconds"
         assert isinstance(events[-1], DoneEvent)
 
     @pytest.mark.asyncio

@@ -20,7 +20,7 @@ class TestExceptionHandlers:
     def test_global_exception_handler_logs_details(self, session_storage: SessionManager) -> None:
         """Test that global exception handler logs request details."""
         services = ServiceContainer(
-            config=DaemonConfig(),
+            config=DaemonConfig(bind_host="127.0.0.1"),
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -42,15 +42,15 @@ class TestExceptionHandlers:
 
             assert mock_logger.error.called
 
-        assert response.status_code == 200
+        assert response.status_code == 500
         data = response.json()
         assert data["status"] == "error"
         assert data["error_logged"] is True
 
-    def test_global_exception_handler_includes_path(self, session_storage: SessionManager) -> None:
-        """Test exception handler includes request path in logs."""
+    def test_hook_exception_is_acknowledged(self, session_storage: SessionManager) -> None:
+        """Hook ingress keeps its acknowledgement-on-error contract."""
         services = ServiceContainer(
-            config=DaemonConfig(),
+            config=DaemonConfig(bind_host="127.0.0.1"),
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -61,12 +61,12 @@ class TestExceptionHandlers:
             test_mode=True,
         )
 
-        @server.app.get("/custom/error/path")
+        @server.app.get("/api/hooks/custom-error")
         def trigger_error() -> None:
             raise ValueError("Custom error")
 
         client = TestClient(server.app, raise_server_exceptions=False)
-        response = client.get("/custom/error/path")
+        response = client.get("/api/hooks/custom-error")
 
         assert response.status_code == 200
         data = response.json()

@@ -64,7 +64,10 @@ class TestFinders:
     def test_find_mcp_config(self, tmp_path) -> None:
         cwd_config = tmp_path / ".mcp.json"
 
-        with patch("gobby.servers.chat_session_helpers.Path.cwd", return_value=tmp_path):
+        with (
+            patch("gobby.servers.chat_session_helpers.Path.cwd", return_value=tmp_path),
+            patch("gobby.servers.chat_session_helpers._find_project_root", return_value=None),
+        ):
             assert _find_mcp_config() is None
 
             cwd_config.touch()

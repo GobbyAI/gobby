@@ -16,6 +16,8 @@ class ChatPendingMessagesMixin:
         self,
         db_session_id: str,
         event_type: HookEventType,
+        *,
+        pending_message_ids: list[str] | None = None,
     ) -> str | None:
         """Check for and inject undelivered inter-session messages.
 
@@ -41,22 +43,17 @@ class ChatPendingMessagesMixin:
                 return None
 
             groups: dict[tuple[str, str], list[str]] = {}
+            collected_message_ids: list[str] = []
             for msg in undelivered:
                 msg_type = getattr(msg, "message_type", "message") or "message"
                 header = self._message_group_header(msg_type)
                 urgent = "[URGENT] " if getattr(msg, "priority", "normal") == "urgent" else ""
                 sender = self._resolve_chat_sender(getattr(msg, "from_session", None))
                 rendered = f"- {urgent}{sender}{msg.content}"
-                try:
-                    inter_session_msg_manager.mark_delivered(msg.id, db_session_id)
-                except Exception:
-                    logger.debug(
-                        "Failed to mark inter-session message %s delivered",
-                        getattr(msg, "id", None),
-                        exc_info=True,
-                    )
-                    continue
                 groups.setdefault((msg_type, header), []).append(rendered)
+                msg_id = getattr(msg, "id", None)
+                if isinstance(msg_id, str):
+                    collected_message_ids.append(msg_id)
 
             if not groups:
                 return None
@@ -67,10 +64,29 @@ class ChatPendingMessagesMixin:
                 lines.extend(rendered_messages)
                 sections.append("\n".join(lines))
 
-            return "\n\n".join(sections)
+            context = "\n\n".join(sections)
+            if pending_message_ids is not None:
+                pending_message_ids.extend(collected_message_ids)
+            return context
         except Exception as exc:
             logger.debug("Inter-session message piggyback failed: %s", exc, exc_info=True)
             return None
+
+    def _mark_pending_messages_delivered(self, message_ids: list[str], db_session_id: str) -> None:
+        """Acknowledge messages after their context survives lifecycle processing."""
+        inter_session_msg_manager = getattr(self, "inter_session_msg_manager", None)
+        if not inter_session_msg_manager:
+            return
+
+        for message_id in message_ids:
+            try:
+                inter_session_msg_manager.mark_delivered(message_id, db_session_id)
+            except Exception:
+                logger.debug(
+                    "Failed to mark inter-session message %s delivered",
+                    message_id,
+                    exc_info=True,
+                )
 
     @staticmethod
     def _message_group_header(message_type: str) -> str:

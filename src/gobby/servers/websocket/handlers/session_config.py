@@ -6,9 +6,11 @@ message types.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
+from datetime import UTC, datetime
 from shlex import quote
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -22,6 +24,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _SAFE_PERSONA_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _mark_pending_config(mixin: SessionControlMixin, conversation_id: str) -> None:
+    pending_config_updated_at = getattr(mixin, "_pending_config_updated_at", None)
+    if pending_config_updated_at is None:
+        pending_config_updated_at = {}
+        mixin._pending_config_updated_at = pending_config_updated_at
+    pending_config_updated_at[conversation_id] = datetime.now(UTC)
 
 
 async def _set_attached_session_mode(
@@ -86,7 +96,9 @@ async def _set_attached_session_mode(
         db = getattr(session_manager, "db", None) or getattr(mixin, "db", None)
         if db is not None:
             svm = SessionVariableManager(db)
-            svm.merge_variables(
+            await run_db(
+                mixin,
+                svm.merge_variables,
                 target_session_id,
                 {"chat_mode": mode, "mode_level": compute_mode_level(mode)},
             )
@@ -284,7 +296,7 @@ async def handle_set_mode(mixin: SessionControlMixin, websocket: Any, data: dict
         # If user toggles away from plan while ExitPlanMode is blocking,
         # cancel the pending approval to unblock the streaming loop.
         if mode != "plan" and session.has_pending_plan:
-            session.provide_plan_decision("request_changes")
+            session.provide_plan_decision(None, "request_changes")
         # Sync mode_level to session variables
         db_sid = getattr(session, "db_session_id", None)
         if db_sid:
@@ -300,7 +312,9 @@ async def handle_set_mode(mixin: SessionControlMixin, websocket: Any, data: dict
                     logger.warning("No database instance available for session variable sync")
                     return
                 svm = SessionVariableManager(db)
-                svm.merge_variables(
+                await run_db(
+                    mixin,
+                    svm.merge_variables,
                     db_sid,
                     {"chat_mode": mode, "mode_level": compute_mode_level(mode)},
                 )
@@ -310,6 +324,7 @@ async def handle_set_mode(mixin: SessionControlMixin, websocket: Any, data: dict
     elif conversation_id:
         # Store mode for when session is created
         mixin._pending_modes[conversation_id] = mode
+        _mark_pending_config(mixin, conversation_id)
         logger.debug(f"Chat mode '{mode}' queued for future conversation {conversation_id[:8]}")
 
 
@@ -338,6 +353,10 @@ async def handle_set_project(
 
     session = mixin._chat_sessions.get(conversation_id)
     old_project_id = getattr(session, "project_id", None) if session else None
+    client_info = mixin.clients.get(websocket)
+    if client_info is not None:
+        client_info["conversation_id"] = conversation_id
+        client_info["project_id"] = new_project_id
 
     if session and old_project_id == new_project_id:
         logger.debug("Project unchanged for conversation %s", conversation_id[:8])
@@ -367,6 +386,7 @@ async def handle_set_project(
 
     # Store project for next session creation (works whether or not session existed)
     mixin._pending_projects[conversation_id] = new_project_id
+    _mark_pending_config(mixin, conversation_id)
 
     await websocket.send(
         json_dumps(
@@ -418,7 +438,7 @@ async def handle_set_worktree(
                 from gobby.storage.worktrees import LocalWorktreeManager
 
                 wm = LocalWorktreeManager(session_manager.db)
-                wt = wm.get(worktree_id)
+                wt = await run_db(mixin, wm.get, worktree_id)
                 if wt:
                     worktree_path = wt.worktree_path
             except Exception as e:
@@ -428,7 +448,7 @@ async def handle_set_worktree(
         await mixin._send_error(websocket, "set_worktree requires worktree_path or worktree_id")
         return
 
-    if not os.path.isdir(worktree_path):
+    if not await asyncio.to_thread(os.path.isdir, worktree_path):
         await mixin._send_error(websocket, f"Worktree path does not exist: {worktree_path}")
         return
 
@@ -457,6 +477,7 @@ async def handle_set_worktree(
 
     # Store worktree path for next session creation
     mixin._pending_worktree_paths[conversation_id] = worktree_path
+    _mark_pending_config(mixin, conversation_id)
 
     # Resolve the branch name for the new worktree
     new_branch, _ = await _resolve_git_branch(worktree_path)
@@ -575,6 +596,7 @@ async def handle_set_agent(
 
     # Store agent name for next session creation
     mixin._pending_agents[conversation_id] = agent_name
+    _mark_pending_config(mixin, conversation_id)
 
     await websocket.send(
         json_dumps(
@@ -636,6 +658,7 @@ async def handle_set_provider(
             mixin._chat_sessions.pop(conversation_id, None)
 
     mixin._pending_providers[conversation_id] = provider
+    _mark_pending_config(mixin, conversation_id)
 
     await websocket.send(
         json_dumps(

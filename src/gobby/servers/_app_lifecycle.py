@@ -321,6 +321,7 @@ def create_lifespan(
             yield
 
         logger.debug("Shutting down Gobby HTTP server")
+        set_artifact_broadcaster(None)
 
         if hasattr(app.state, "session_change_listener") and server.session_manager is not None:
             server.session_manager.unregister_session_change_listener(

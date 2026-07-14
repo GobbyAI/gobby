@@ -225,6 +225,26 @@ class TestWebChatSessionRegistry:
         assert result["compacted"] is False
         assert "boom" in result["reason"]
 
+    async def test_drain_cleanup_propagates_cancellation(self) -> None:
+        class CancelOnCloseStream:
+            def __aiter__(self) -> CancelOnCloseStream:
+                return self
+
+            async def __anext__(self) -> DoneEvent:
+                return DoneEvent(tool_calls_count=0)
+
+            async def aclose(self) -> None:
+                raise asyncio.CancelledError
+
+        registry = WebChatSessionRegistry()
+        session = MagicMock()
+        session.db_session_id = "db-id"
+        session.send_message.return_value = CancelOnCloseStream()
+        registry.register("conv-1", session)
+
+        with pytest.raises(asyncio.CancelledError):
+            await registry.compact_session("db-id")
+
 
 class _LifecycleHost(ChatLifecycleMixin):
     """Lightweight ChatLifecycleMixin harness capturing HookEvents and MCP call payloads."""
@@ -252,8 +272,13 @@ class _LifecycleHost(ChatLifecycleMixin):
         self,
         db_session_id: str,
         event_type: HookEventType,
+        *,
+        pending_message_ids: list[str] | None = None,
     ) -> str | None:
         return None
+
+    def _mark_pending_messages_delivered(self, message_ids: list[str]) -> None:
+        pass
 
     async def _dispatch_mcp_calls(
         self,

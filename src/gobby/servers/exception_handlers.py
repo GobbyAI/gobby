@@ -14,6 +14,10 @@ from gobby.servers.responses import JSONResponse
 logger = logging.getLogger(__name__)
 
 
+def _is_hook_path(path: str) -> bool:
+    return path == "/api/hooks" or path.startswith("/api/hooks/")
+
+
 def _is_client_disconnect(exc: BaseException) -> bool:
     """Detect Starlette disconnects, including middleware-wrapped test-client cases."""
     seen: set[int] = set()
@@ -46,7 +50,8 @@ def register_exception_handlers(app: FastAPI) -> None:
     """
     Register global exception handlers.
 
-    All exceptions return 200 OK to prevent Claude Code hook failures.
+    Hook exceptions return 200 OK to prevent CLI hook failures. Other routes
+    preserve the standard 500 response status.
 
     Args:
         app: FastAPI application instance
@@ -60,8 +65,8 @@ def register_exception_handlers(app: FastAPI) -> None:
         """Handle all uncaught exceptions.
 
         HTTPException is re-raised to let FastAPI's built-in handler
-        return proper status codes (404, 422, etc.). All other exceptions
-        return 200 OK to prevent hook failures.
+        return proper status codes (404, 422, etc.). Hook failures are
+        acknowledged with 200; other uncaught failures return 500.
         """
         # Let HTTPException pass through to FastAPI's built-in handler
         # so proper status codes (404, 422, etc.) are returned
@@ -95,12 +100,16 @@ def register_exception_handlers(app: FastAPI) -> None:
             },
         )
 
-        # Return 200 OK to prevent hook failure for non-HTTP exceptions
+        is_hook_request = _is_hook_path(request.url.path)
         return JSONResponse(
-            status_code=200,
+            status_code=200 if is_hook_request else 500,
             content={
                 "status": "error",
-                "message": "Internal error occurred but request acknowledged",
+                "message": (
+                    "Internal error occurred but request acknowledged"
+                    if is_hook_request
+                    else "Internal server error"
+                ),
                 "error_logged": True,
             },
         )

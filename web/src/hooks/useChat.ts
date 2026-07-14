@@ -84,6 +84,7 @@ export function useChat() {
     planApprovalOptions,
     planApproved,
     planContentRef,
+    planToolCallIdRef,
     planPendingApproval,
     setOnArtifactEvent,
     setOnChatCleared,
@@ -259,6 +260,7 @@ export function useChat() {
     setPlanPendingApproval(false);
     setPlanApproved(false);
     planContentRef.current = null;
+    planToolCallIdRef.current = null;
     setContextUsage(createEmptyContextUsage());
     setAcpAvailableCommands([]);
     setMessages([]);
@@ -266,6 +268,7 @@ export function useChat() {
   }, [
     lastSeqRef,
     planContentRef,
+    planToolCallIdRef,
     setContextUsage,
     setAcpAvailableCommands,
     setCurrentBranch,
@@ -427,6 +430,7 @@ export function useChat() {
     pendingProxySessionQueuesRef,
     pendingSessionInteractionModeRef,
     planContentRef,
+    planToolCallIdRef,
     preAttachContextUsageRef,
     reconnectTimeoutRef,
     reportTransportError,
@@ -554,6 +558,7 @@ export function useChat() {
     pendingProxyMessagesRef,
     pendingProxySessionQueuesRef,
     planContentRef,
+    planToolCallIdRef,
     projectIdRef,
     proxyDeliveryNotice,
     resetMainChatState,

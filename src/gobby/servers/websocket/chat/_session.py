@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from websockets.exceptions import ConnectionClosed, ConnectionClosedError
@@ -156,6 +157,7 @@ class ChatSessionMixin:
     _pending_agents: dict[str, str]
     _pending_projects: dict[str, str]
     _pending_providers: dict[str, str]
+    _pending_config_updated_at: dict[str, datetime]
     _pending_inject_contexts: dict[str, str]
     _session_create_locks: dict[str, asyncio.Lock]
     web_chat_session_registry: Any
@@ -198,6 +200,8 @@ class ChatSessionMixin:
             self,
             db_session_id: str,
             event_type: HookEventType,
+            *,
+            pending_message_ids: list[str] | None = None,
         ) -> str | None: ...
 
         async def _evaluate_blocking_webhooks(
@@ -452,7 +456,9 @@ class ChatSessionMixin:
         session._on_mode_changed = _notify_mode_changed
 
         # Wire plan-ready callback so ExitPlanMode sends plan content to frontend
-        async def _notify_plan_ready(content: str | None, input_data: dict[str, Any]) -> None:
+        async def _notify_plan_ready(
+            content: str | None, input_data: dict[str, Any], tool_use_id: str | None
+        ) -> None:
             session._pending_plan_content = content
             allowed_prompts = input_data.get("allowedPrompts")
             session._pending_plan_allowed_prompts = (
@@ -467,6 +473,7 @@ class ChatSessionMixin:
                 {
                     "type": "plan_pending_approval",
                     "conversation_id": session_key,
+                    "tool_call_id": tool_use_id,
                     "plan_content": content,
                     "allowed_prompts": session._pending_plan_allowed_prompts,
                     "source": plan_source,
@@ -725,6 +732,7 @@ class ChatSessionMixin:
         wt_override = pending_wt.pop(session_key, None)
         if wt_override:
             session.project_path = wt_override
+        getattr(self, "_pending_config_updated_at", {}).pop(session_key, None)
 
         # Persona / agent prompt bootstrap.
         session._pending_agent_name = agent_name
