@@ -768,7 +768,8 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
             raise HTTPException(404, "Worktree not found")
 
         # Delete git worktree if git_manager is available
-        result = None
+        git_deleted = True
+        git_error = None
         if server.services.git_manager:
             from gobby.worktrees.git import WorktreeGitManager
 
@@ -784,22 +785,24 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
             target = git_mgr or server.services.git_manager
             try:
                 result = target.delete_worktree(wt.worktree_path, force=True)
+                git_deleted = result.success
                 if not result.success:
                     logger.warning(f"Git worktree deletion failed: {result.message}")
-            except Exception:
+                    git_error = result.message
+            except Exception as exc:
+                git_deleted = False
+                git_error = str(exc)
                 logger.warning("Git worktree deletion raised an exception", exc_info=True)
 
-        # Delete DB record (even if git deletion had warnings)
-        git_deleted = result.success if result is not None else True
-
-        deleted = server.services.worktree_storage.delete(worktree_id)
+        deleted = server.services.worktree_storage.delete(worktree_id) if git_deleted else False
         response: dict[str, Any] = {
             "success": deleted,
             "id": worktree_id,
             "git_deleted": git_deleted,
         }
         if not git_deleted:
-            response["message"] = "Git worktree deletion failed but DB record was removed"
+            response["git_error"] = git_error
+            response["message"] = "Git worktree deletion failed; DB record was preserved"
         return response
 
     @router.post("/worktrees/cleanup")

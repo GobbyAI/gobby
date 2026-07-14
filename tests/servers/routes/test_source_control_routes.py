@@ -1505,9 +1505,42 @@ class TestDeleteWorktree:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["success"] is True  # DB record still deleted
+        assert data["success"] is False
         assert data["git_deleted"] is False
-        assert "message" in data
+        assert data["git_error"] == "worktree locked"
+        assert data["message"] == "Git worktree deletion failed; DB record was preserved"
+        mock_storage.delete.assert_not_called()
+
+    def test_delete_git_deletion_raises(self, client, mock_server) -> None:
+        wt = MagicMock()
+        wt.worktree_path = "/tmp/wt"
+        wt.project_id = "proj-1"
+
+        mock_storage = MagicMock()
+        mock_storage.get.return_value = wt
+        mock_server.services.worktree_storage = mock_storage
+        mock_server.services.git_manager = MagicMock()
+
+        with (
+            patch(
+                "gobby.servers.routes.source_control._resolve_project",
+                return_value=("/tmp/repo", None),
+            ),
+            patch(
+                "gobby.worktrees.git.WorktreeGitManager",
+            ) as mock_wgm_cls,
+        ):
+            mock_wgm_cls.return_value.delete_worktree.side_effect = RuntimeError("git failed")
+
+            response = client.delete("/api/source-control/worktrees/wt-1")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert data["git_deleted"] is False
+        assert data["git_error"] == "git failed"
+        assert data["message"] == "Git worktree deletion failed; DB record was preserved"
+        mock_storage.delete.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
