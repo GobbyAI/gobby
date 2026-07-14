@@ -198,8 +198,8 @@ def test_rich_existing_rust_commands_survive_weaker_manifest_detection(tmp_path:
     assert result.after["lint"] == "cargo clippy --workspace --no-default-features -- -D warnings"
 
 
-def test_ci_replaces_weak_existing_generic_command(tmp_path: Path) -> None:
-    write_project_json(tmp_path, {"unit_tests": "pytest"})
+def test_short_deliberate_existing_command_survives_ci_refresh(tmp_path: Path) -> None:
+    project_json_path = write_project_json(tmp_path, {"unit_tests": "pytest -x"})
     workflows = tmp_path / ".github" / "workflows"
     workflows.mkdir(parents=True)
     (workflows / "ci.yml").write_text(
@@ -213,9 +213,33 @@ jobs:
         encoding="utf-8",
     )
 
-    result = refresh_project_verification_deterministic(tmp_path)
+    result = refresh_project_verification_deterministic(tmp_path, fix=True)
+    persisted = json.loads(project_json_path.read_text(encoding="utf-8"))
+
+    assert result.after["unit_tests"] == "pytest -x"
+    assert persisted["verification"]["unit_tests"] == "pytest -x"
+
+
+def test_ci_replaces_weak_existing_generic_command(tmp_path: Path) -> None:
+    project_json_path = write_project_json(tmp_path, {"unit_tests": "pytest"})
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "ci.yml").write_text(
+        """
+jobs:
+  test:
+    steps:
+      - name: Run tests
+        run: uv run pytest tests/ -v
+""",
+        encoding="utf-8",
+    )
+
+    result = refresh_project_verification_deterministic(tmp_path, fix=True)
+    persisted = json.loads(project_json_path.read_text(encoding="utf-8"))
 
     assert result.after["unit_tests"] == "uv run pytest tests/ -v"
+    assert persisted["verification"]["unit_tests"] == "uv run pytest tests/ -v"
 
 
 def test_split_run_commands_joins_backslash_continuations() -> None:

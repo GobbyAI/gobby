@@ -541,7 +541,7 @@ def _existing_confidence(command: str, *, custom: bool) -> float:
         return 0.9 if custom else 0.88
     if len(normalized.split()) >= 4:
         return 0.86 if custom else 0.84
-    return 0.76 if custom else 0.74
+    return 0.84 if custom else 0.82
 
 
 def _is_better(candidate: CommandCandidate, current: CommandCandidate) -> bool:
