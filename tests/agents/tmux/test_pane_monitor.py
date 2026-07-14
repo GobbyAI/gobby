@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -131,6 +131,42 @@ async def test_all_alive_noop() -> None:
     callback.assert_not_called()
     assert callback.call_count == 0
     assert not callback.called
+
+
+@pytest.mark.asyncio
+async def test_alive_tmux_reused_pid_triggers_callback() -> None:
+    callback = MagicMock()
+    agent = _make_agent_run(pid=999)
+    session_obj = _make_session_obj()
+    monitor = _make_monitor_with_db(callback)
+
+    with (
+        patch(
+            "gobby.agents.tmux.pane_monitor.TmuxSessionManager.list_sessions",
+            return_value=[TmuxSessionInfo(name="gobby-agent-1")],
+        ),
+        patch("gobby.storage.agents.LocalAgentRunManager") as mock_arm_cls,
+        patch.object(monitor, "_lookup_session", return_value=session_obj),
+        patch(
+            "gobby.agents.tmux.pane_monitor.pid_matches_agent_identity",
+            new_callable=AsyncMock,
+            return_value=False,
+        ) as mock_identity,
+    ):
+        mock_arm_cls.return_value.list_active.return_value = [agent]
+        await monitor._check_panes()
+
+    mock_identity.assert_awaited_once_with(
+        999,
+        provider="test",
+        session_id="sess-1",
+    )
+    callback.assert_called_once()
+    event: HookEvent = callback.call_args[0][0]
+    assert event.event_type == HookEventType.SESSION_END
+    assert event.session_id == "ext-1"
+    assert event.metadata["_platform_session_id"] == "sess-1"
+    assert event.metadata["_tmux_pane_death"] is True
 
 
 @pytest.mark.asyncio

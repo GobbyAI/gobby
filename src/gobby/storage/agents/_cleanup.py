@@ -133,6 +133,7 @@ class _AgentRunCleanupMixin:
                         WHEN tmux_session_name IS NULL THEN 'Pending run never started'
                         ELSE 'Pending tmux-initialized run never started'
                     END,
+                    pid = NULL,
                     completed_at = %s,
                     updated_at = %s
                 WHERE status = 'pending'

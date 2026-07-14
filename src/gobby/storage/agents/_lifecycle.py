@@ -216,6 +216,7 @@ class _AgentRunLifecycleMixin:
             SET status = 'success',
                 result = COALESCE(%s, result),
                 terminal_reason = NULL,
+                pid = NULL,
                 tool_calls_count = %s,
                 turns_used = %s,
                 completed_at = %s,
@@ -256,6 +257,7 @@ class _AgentRunLifecycleMixin:
             SET status = 'error',
                 error = %s,
                 terminal_reason = NULL,
+                pid = NULL,
                 tool_calls_count = %s,
                 turns_used = %s,
                 completed_at = %s,
@@ -285,6 +287,7 @@ class _AgentRunLifecycleMixin:
             SET status = 'timeout',
                 error = %s,
                 terminal_reason = NULL,
+                pid = NULL,
                 tool_calls_count = %s,
                 turns_used = %s,
                 completed_at = %s,
@@ -312,6 +315,7 @@ class _AgentRunLifecycleMixin:
             UPDATE agent_runs
             SET status = 'cancelled',
                 terminal_reason = %s,
+                pid = NULL,
                 completed_at = %s,
                 updated_at = %s
             WHERE id = %s

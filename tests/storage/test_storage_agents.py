@@ -889,6 +889,56 @@ class TestLocalAgentRunManager:
         assert cancelled is not None
         assert completed is None
 
+    def test_update_runtime_can_clear_pid(
+        self,
+        agent_manager: LocalAgentRunManager,
+        sample_session: dict,
+    ) -> None:
+        agent_run = agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="Clear PID",
+        )
+        agent_manager.update_runtime(agent_run.id, pid=12345)
+
+        agent_manager.update_runtime(agent_run.id, pid=None)
+
+        updated = agent_manager.get(agent_run.id)
+        assert updated is not None
+        assert updated.pid is None
+
+    @pytest.mark.parametrize(
+        ("transition", "expected_status"),
+        [
+            ("complete", "success"),
+            ("fail", "error"),
+            ("timeout", "timeout"),
+            ("cancel", "cancelled"),
+        ],
+    )
+    def test_terminal_transitions_clear_pid(
+        self,
+        agent_manager: LocalAgentRunManager,
+        sample_session: dict,
+        transition: str,
+        expected_status: str,
+    ) -> None:
+        agent_run = agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="Terminal PID cleanup",
+        )
+        agent_manager.start(agent_run.id)
+        agent_manager.update_runtime(agent_run.id, pid=12345)
+
+        kwargs = {"error": "failed"} if transition == "fail" else {}
+        getattr(agent_manager, transition)(agent_run.id, **kwargs)
+
+        updated = agent_manager.get(agent_run.id)
+        assert updated is not None
+        assert updated.status == expected_status
+        assert updated.pid is None
+
     def test_update_child_session(
         self,
         agent_manager: LocalAgentRunManager,
@@ -1452,8 +1502,12 @@ class TestLocalAgentRunManager:
 
         # Backdate the created_at
         agent_manager.db.execute(
-            "UPDATE agent_runs SET created_at = NOW() - INTERVAL '65 minutes' WHERE id = %s",
-            (pending.id,),
+            """
+            UPDATE agent_runs
+            SET created_at = NOW() - INTERVAL '65 minutes', pid = %s
+            WHERE id = %s
+            """,
+            (12345, pending.id),
         )
 
         count = agent_manager.cleanup_stale_pending_runs(timeout_minutes=60)
@@ -1463,6 +1517,7 @@ class TestLocalAgentRunManager:
         assert cleaned.status == "error"
         assert cleaned.error == "Pending run never started"
         assert cleaned.completed_at is not None
+        assert cleaned.pid is None
 
     def test_cleanup_stale_pending_runs_no_stale(
         self,

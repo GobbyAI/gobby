@@ -161,15 +161,14 @@ class AgentHealthMonitor:
                     tmux_alive = await self._tmux.has_session(run.tmux_session_name)
                     if tmux_alive:
                         if run.pid:
-                            try:
-                                os.kill(run.pid, 0)
-                            except ProcessLookupError:
-                                reason = (
-                                    f"PID {run.pid} dead but tmux '{run.tmux_session_name}' alive"
-                                )
+                            session_id = run.child_session_id or run.parent_session_id
+                            if not await pid_matches_agent_identity(
+                                run.pid,
+                                provider=run.provider,
+                                session_id=session_id,
+                            ):
+                                reason = f"PID {run.pid} no longer matches agent identity"
                                 logger.info(f"Agent {run.id} {reason} - cleaning up")
-                            except PermissionError:
-                                pass
                     else:
                         reason = "tmux session died unexpectedly"
                         logger.info(
