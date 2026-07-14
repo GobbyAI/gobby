@@ -328,6 +328,8 @@ export function ChatInput({
   ])
 
   const handleKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.nativeEvent.isComposing) return
+
     if (e.key === 'Escape') {
       if (showPalette) { e.preventDefault(); setInput(''); return }
       if (isStreaming && onStop) { e.preventDefault(); onStop(); return }

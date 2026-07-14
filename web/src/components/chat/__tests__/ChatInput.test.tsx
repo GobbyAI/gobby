@@ -247,6 +247,18 @@ describe('ChatInput', () => {
     })
   })
 
+  it('does not send while an IME composition is in progress', async () => {
+    const onSend = vi.fn()
+    render(<ChatInput {...defaultProps} onSend={onSend} />)
+
+    const textarea = screen.getByRole('textbox')
+    await userEvent.type(textarea, 'Composing')
+    fireEvent.keyDown(textarea, { key: 'Enter', isComposing: true })
+
+    expect(onSend).not.toHaveBeenCalled()
+    expect(textarea).toHaveValue('Composing')
+  })
+
   it('sends selected ACP slash commands as prompt text', async () => {
     const onSend = vi.fn()
     const onPaletteSelect = vi.fn()
@@ -852,6 +864,34 @@ describe('ChatInput', () => {
       action: 'restart_daemon',
     })
     expect(onSend).not.toHaveBeenCalled()
+  })
+
+  it('does not activate a palette item while an IME composition is in progress', async () => {
+    const onSend = vi.fn()
+    const onPaletteSelect = vi.fn()
+    render(
+      <ChatInput
+        {...defaultProps}
+        onSend={onSend}
+        onPaletteSelect={onPaletteSelect}
+        paletteItems={[
+          {
+            kind: 'command' as const,
+            name: 'restart',
+            description: 'Restart the Gobby daemon',
+            action: 'restart_daemon',
+          },
+        ]}
+      />,
+    )
+
+    const textarea = screen.getByRole('textbox')
+    await userEvent.type(textarea, '/restart')
+    fireEvent.keyDown(textarea, { key: 'Enter', isComposing: true })
+
+    expect(onPaletteSelect).not.toHaveBeenCalled()
+    expect(onSend).not.toHaveBeenCalled()
+    expect(textarea).toHaveValue('/restart')
   })
 
   it('renders the observe overlay and calls attach', async () => {
