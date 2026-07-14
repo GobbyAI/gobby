@@ -237,34 +237,9 @@ def list_tasks(
     return tasks
 
 
-def list_ready_tasks(
-    db: HubDatabase,
-    project_id: str | None = None,
-    priority: int | None = None,
-    task_type: str | None = None,
-    parent_task_id: str | None = None,
-    limit: int = 50,
-    offset: int = 0,
-) -> list[Task]:
-    """List tasks that are ready to work on (open or in_progress) and not blocked.
-
-    A task is ready if:
-    1. It is open or in_progress
-    2. It has no open blocking dependencies
-    3. Its parent (if any) is also ready (recursive check up the chain)
-
-    Note: in_progress tasks are included because they represent active work
-    that should remain visible in the ready queue.
-
-    Results are ordered hierarchically: parents appear before their children,
-    with siblings sorted by priority ASC, then created_at ASC.
-
-    Note: The limit is applied AFTER hierarchical ordering to ensure coherent
-    tree structures. We fetch all ready tasks, order them hierarchically,
-    then return the first N tasks in tree traversal order.
-    """
-    # Use recursive CTE to find tasks with ready parent chains
-    query = f"""
+def _ready_tasks_cte_sql() -> str:
+    """Build the CTE shared by ready-task list and count queries."""
+    return f"""
     WITH RECURSIVE ready_tasks(id, path, depth) AS (
         -- Base case: open/in_progress tasks with no parent and no external blocking deps
         SELECT t.id, ARRAY[t.id], 0 FROM tasks t
@@ -296,6 +271,38 @@ def list_ready_tasks(
         AND rt.depth < 100
         AND NOT t.id = ANY(rt.path)
     )
+    """
+
+
+def list_ready_tasks(
+    db: HubDatabase,
+    project_id: str | None = None,
+    priority: int | None = None,
+    task_type: str | None = None,
+    parent_task_id: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[Task]:
+    """List tasks that are ready to work on (open or in_progress) and not blocked.
+
+    A task is ready if:
+    1. It is open or in_progress
+    2. It has no open blocking dependencies
+    3. Its parent (if any) is also ready (recursive check up the chain)
+
+    Note: in_progress tasks are included because they represent active work
+    that should remain visible in the ready queue.
+
+    Results are ordered hierarchically: parents appear before their children,
+    with siblings sorted by priority ASC, then created_at ASC.
+
+    Note: The limit is applied AFTER hierarchical ordering to ensure coherent
+    tree structures. We fetch all ready tasks, order them hierarchically,
+    then return the first N tasks in tree traversal order.
+    """
+    # Use recursive CTE to find tasks with ready parent chains.
+    query = f"""
+    {_ready_tasks_cte_sql()}
     SELECT t.* FROM tasks t
     JOIN ready_tasks rt ON t.id = rt.id
     WHERE 1=1

@@ -1858,6 +1858,19 @@ class TestLocalTaskManager:
         # Ready 1, Ready 2, and Blocker are ready; Blocked is blocked
         assert count == 3
 
+    def test_count_ready_tasks_excludes_descendants_of_blocked_parent(
+        self, task_manager, dep_manager, project_id
+    ) -> None:
+        blocker = task_manager.create_task(project_id, "Blocker")
+        parent = task_manager.create_task(project_id, "Blocked parent")
+        task_manager.create_task(project_id, "Child", parent_task_id=parent.id)
+        dep_manager.add_dependency(parent.id, blocker.id, "blocks")
+
+        ready = task_manager.list_ready_tasks(project_id=project_id)
+
+        assert {task.id for task in ready} == {blocker.id}
+        assert task_manager.count_ready_tasks(project_id=project_id) == len(ready)
+
     def test_count_blocked_tasks(self, task_manager, dep_manager, project_id) -> None:
         """Test counting blocked tasks."""
         blocked = task_manager.create_task(project_id, "Blocked")

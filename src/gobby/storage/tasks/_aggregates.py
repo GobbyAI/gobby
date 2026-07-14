@@ -4,6 +4,7 @@ from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import newer_than_now_expr
+from gobby.storage.tasks._queries import _ready_tasks_cte_sql
 
 
 def _current_stage_join_sql(task_alias: str = "t", *, join_type: str = "LEFT JOIN") -> str:
@@ -152,11 +153,11 @@ def count_ready_tasks(
     db: HubDatabase,
     project_id: str | None = None,
 ) -> int:
-    """Count tasks that are ready (open and not blocked).
+    """Count tasks that are ready to work on (open or in_progress) and not blocked.
 
-    A task is ready if it is open and has no external blocking dependencies.
-    Excludes parent tasks blocked by their own descendants (completion block, not work block).
-    In-progress tasks are not counted as "ready" — they are already being worked on.
+    A task is ready if it has no external blocking dependencies and every task
+    in its parent chain is also ready. In-progress tasks remain in the ready
+    count because they represent active work.
 
     Args:
         db: Database protocol instance
@@ -165,20 +166,12 @@ def count_ready_tasks(
     Returns:
         Count of ready tasks
     """
-    # Uses the same descendant-aware predicate as list_ready_tasks.
-    # The is_descendant_of check uses a recursive CTE to walk up the blocker's
-    # ancestor chain and check if the blocked task (t.id) appears anywhere.
+    # Match list_ready_tasks by materializing only tasks whose full parent chain is ready.
     query = f"""
+    {_ready_tasks_cte_sql()}
     SELECT COUNT(*) as count FROM tasks t
-    {_current_stage_join_sql("t")}
-    WHERE {_not_closed_or_escalated_sql("t")}
-    AND (
-        current_stage.state IN ('ready', 'in_progress')
-        OR NOT EXISTS (
-            SELECT 1 FROM task_stage_states stage_any WHERE stage_any.task_id = t.id
-        )
-    )
-    AND {_no_external_blocker_sql("t")}
+    JOIN ready_tasks rt ON t.id = rt.id
+    WHERE 1=1
     """
     params: list[Any] = []
 
