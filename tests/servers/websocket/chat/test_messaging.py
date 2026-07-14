@@ -381,7 +381,8 @@ class TestHandleChatMessage:
         await mixin._active_chat_tasks["c1"]
 
         assert mixin._voice_enabled["c1"] is True
-        mixin.start_voice_warmup.assert_called_once_with(want_stt=False, want_tts=True)
+        # Intent must not preload models; first synthesis lazy-loads instead.
+        mixin.start_voice_warmup.assert_not_called()
         assert mixin._created_tts_pipelines == 1
         assert mixin._last_tts_pipeline is not None
         mixin._last_tts_pipeline.feed_text.assert_called_once_with("spoken response.")

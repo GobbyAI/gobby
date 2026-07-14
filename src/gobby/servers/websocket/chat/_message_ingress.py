@@ -158,13 +158,11 @@ class ChatMessageIngressMixin:
         if not isinstance(tts_enabled, bool) or not isinstance(voice_enabled, dict):
             return
 
+        # Intent alone never loads models: a tts_enabled flag on every chat
+        # message kept a multi-GB model resident even when nothing was spoken.
+        # Explicit warmup remains on voice-prepare and voice-mode toggle;
+        # first synthesis lazy-loads via the provider.
         voice_enabled[conversation_id] = tts_enabled
-        start_voice_warmup = getattr(self, "start_voice_warmup", None)
-        if tts_enabled and callable(start_voice_warmup):
-            try:
-                start_voice_warmup(want_stt=False, want_tts=True)
-            except Exception:
-                logger.debug("TTS warmup start from chat intent failed", exc_info=True)
 
     def _build_inject_context(
         self,
