@@ -486,6 +486,7 @@ class LocalWorktreeManager:
             SELECT * FROM worktrees
             WHERE project_id = %s
               AND status = %s
+              AND agent_session_id IS NULL
               AND updated_at < %s
             ORDER BY updated_at ASC
             LIMIT %s
@@ -513,7 +514,13 @@ class LocalWorktreeManager:
             List of expired Worktree instances
         """
         now = utc_now()
-        sql = "SELECT * FROM worktrees WHERE status = %s AND cleanup_after IS NOT NULL AND cleanup_after < %s"
+        sql = """
+            SELECT * FROM worktrees
+            WHERE status = %s
+              AND agent_session_id IS NULL
+              AND cleanup_after IS NOT NULL
+              AND cleanup_after < %s
+        """
         params: list[Any] = [WorktreeStatus.MERGED.value, now]
         if project_id:
             sql += " AND project_id = %s"
