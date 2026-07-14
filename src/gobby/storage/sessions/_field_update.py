@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
+from gobby.storage.hub.protocol import SessionLineageMutation
 from gobby.storage.session_models import Session
 from gobby.utils.datetime import utc_now
 
@@ -334,7 +335,7 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
         if parent_session_id == SYSTEM_SESSION_ID:
             ensure_system_session(self.db)
         now = utc_now()
-        with self.db.transaction() as conn:
+        with self.db.transaction_immediate(SessionLineageMutation()) as conn:
             sanitized_parent_session_id = sanitize_parent_session_id(
                 conn,
                 child_session_id=session_id,

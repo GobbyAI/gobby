@@ -23,6 +23,7 @@ __all__ = [
     "ReviewLearningPatternMutation",
     "Row",
     "Savepoint",
+    "SessionLineageMutation",
     "SessionRecoveryByProject",
     "SessionRegistration",
     "SessionSeqMutation",
@@ -168,6 +169,13 @@ class SessionRegistration:
     source: str
     project_id: str | None
     session_type: str
+
+
+@dataclass(frozen=True)
+class SessionLineageMutation:
+    """Serializes session parent cycle checks and mutations."""
+
+    PRIORITY: ClassVar[int] = 650
 
 
 @dataclass(frozen=True)

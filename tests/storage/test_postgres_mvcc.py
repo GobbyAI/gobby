@@ -13,6 +13,8 @@ import pytest
 
 from gobby.storage.hub.protocol import TaskSeqAllocation, Transaction
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.sessions import SessionManager
+from gobby.storage.sessions import _field_update as session_field_update
 from gobby.storage.task_dependencies import DependencyCycleError, TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager, _creation
 
@@ -251,6 +253,75 @@ def test_dependency_cycle_check_and_insert_are_serialized(postgres_db: Any) -> N
     assert [(row["task_id"], row["depends_on"]) for row in rows] == [
         (first_task.id, second_task.id)
     ]
+
+
+def test_session_parent_cycle_check_and_update_are_serialized(
+    postgres_db: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = LocalProjectManager(postgres_db).create(f"session-lineage-race-{uuid.uuid4()}")
+    session_manager = SessionManager(postgres_db)
+    first = session_manager.register(
+        external_id=f"first-{uuid.uuid4()}",
+        machine_id="session-lineage-race",
+        source="codex",
+        project_id=project.id,
+    )
+    second = session_manager.register(
+        external_id=f"second-{uuid.uuid4()}",
+        machine_id="session-lineage-race",
+        source="codex",
+        project_id=project.id,
+    )
+    first_check_started = threading.Event()
+    release_first_check = threading.Event()
+    second_finished = threading.Event()
+    errors: queue.Queue[BaseException] = queue.Queue()
+    original_sanitize = session_field_update.sanitize_parent_session_id
+
+    def pausing_sanitize(*args: Any, **kwargs: Any) -> str | None:
+        if kwargs["child_session_id"] == first.id:
+            first_check_started.set()
+            assert release_first_check.wait(timeout=5)
+        return original_sanitize(*args, **kwargs)
+
+    monkeypatch.setattr(session_field_update, "sanitize_parent_session_id", pausing_sanitize)
+
+    def update_first_parent() -> None:
+        try:
+            session_manager.update_parent_session_id(first.id, second.id)
+        except BaseException as exc:  # pragma: no cover - re-raised in main thread
+            errors.put(exc)
+
+    def update_second_parent() -> None:
+        try:
+            session_manager.update_parent_session_id(second.id, first.id)
+        except BaseException as exc:  # pragma: no cover - re-raised in main thread
+            errors.put(exc)
+        finally:
+            second_finished.set()
+
+    first_thread = threading.Thread(target=update_first_parent)
+    second_thread = threading.Thread(target=update_second_parent)
+    first_thread.start()
+    assert first_check_started.wait(timeout=5)
+    second_thread.start()
+
+    second_was_blocked = not second_finished.wait(timeout=0.5)
+    release_first_check.set()
+    first_thread.join(timeout=10)
+    second_thread.join(timeout=10)
+
+    assert all(not thread.is_alive() for thread in (first_thread, second_thread))
+    if not errors.empty():
+        raise AssertionError("concurrent session parent update failed") from errors.get()
+
+    assert second_was_blocked
+    updated_first = session_manager.get(first.id)
+    updated_second = session_manager.get(second.id)
+    assert updated_first is not None
+    assert updated_second is not None
+    assert updated_first.parent_session_id == second.id
+    assert updated_second.parent_session_id is None
 
 
 def test_task_seq_allocation_serializes_across_project_visibility(postgres_db: Any) -> None:

@@ -38,6 +38,7 @@ from gobby.storage.hub.protocol import (
     ReviewLearningPatternMutation,
     Row,
     Savepoint,
+    SessionLineageMutation,
     SessionRecoveryByProject,
     SessionRegistration,
     SessionSeqMutation,
@@ -945,6 +946,8 @@ def _advisory_lock_keys(lock: LockTarget) -> tuple[str, ...]:
             f"{lock.external_id}|{lock.machine_id}|{lock.source}|"
             f"{lock.project_id or ''}|{lock.session_type}",
         )
+    if isinstance(lock, SessionLineageMutation):
+        return ("session_lineage_mutation",)
     if isinstance(lock, SessionSeqMutation):
         return (f"session_seq:{lock.project_id}",)
     if isinstance(lock, SessionRecoveryByProject):
