@@ -18,6 +18,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+TASK_DIFF_MAX_CHARS = 30_000
+_TASK_DIFF_TRUNCATION_MARKER = "\n\n... [task diff truncated] ..."
+
 
 @dataclass
 class TaskDiffResult:
@@ -135,11 +138,14 @@ def get_task_diff(
             diff_parts.append(uncommitted)
             has_uncommitted = True
 
-    # Combine all diff parts
+    # Combine all diff parts and count files before bounding the returned payload.
     combined_diff = "\n".join(diff_parts)
-
-    # Count files in the diff
     file_count = _count_unique_diff_paths(combined_diff)
+    combined_diff = _safe_truncate(
+        combined_diff,
+        TASK_DIFF_MAX_CHARS,
+        _TASK_DIFF_TRUNCATION_MARKER,
+    )
 
     return TaskDiffResult(
         diff=combined_diff,

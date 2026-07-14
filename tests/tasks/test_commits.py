@@ -8,6 +8,7 @@ import pytest
 
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.commits import (
+    TASK_DIFF_MAX_CHARS,
     AutoLinkResult,
     TaskDiffResult,
     auto_link_commits,
@@ -318,6 +319,22 @@ diff --git a/file2.py b/file2.py
             result = get_task_diff("gt-test123", mock_task_manager)
 
             assert result.file_count == 2
+
+    def test_caps_large_combined_diff_with_explicit_marker(self, mock_task_manager) -> None:
+        mock_task = MagicMock()
+        mock_task.commits = ["abc123", "def456"]
+        mock_task_manager.get_task.return_value = mock_task
+
+        with patch("gobby.tasks.commits.run_git_command") as mock_git:
+            mock_git.return_value = "diff --git a/file.py b/file.py\n" + (
+                "+large payload\n" * TASK_DIFF_MAX_CHARS
+            )
+
+            result = get_task_diff("gt-test123", mock_task_manager)
+
+        assert len(result.diff) <= TASK_DIFF_MAX_CHARS
+        assert result.diff.endswith("... [task diff truncated] ...")
+        assert result.file_count == 1
 
 
 class TestExtractTaskIdsFromMessage:
