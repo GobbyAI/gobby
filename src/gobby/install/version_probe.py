@@ -1,20 +1,23 @@
 """Shared probe for managed native-binary versions.
 
-Runs ``<binary> --version`` and returns the trailing version token. The
+Runs ``<binary> --version`` and extracts its semantic version. The
 install-time per-binary probes, the bin-freshness inspector, and the
 dependency dashboard all route through this single helper so the
-probe/last-token logic lives in exactly one place.
+probe/parsing logic lives in exactly one place.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 import subprocess  # nosec B404 # used only for fixed `<binary> --version` probes
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 __all__ = ["probe_native_bin_version"]
+
+_VERSION_PATTERN = re.compile(r"\bv?(\d+(?:\.\d+){1,3})(?:[-+][^\s]+)?\b")
 
 
 def probe_native_bin_version(
@@ -24,10 +27,10 @@ def probe_native_bin_version(
     logger: logging.Logger | None = None,
     label: str | None = None,
 ) -> str | None:
-    """Return the trailing token of ``<binary> --version``, or ``None``.
+    """Return the semantic version from ``<binary> --version``, or ``None``.
 
     ``None`` is returned when the binary cannot be executed, exits non-zero, or
-    prints no token. ``runner`` is injected so install-time callers can route
+    prints no version. ``runner`` is injected so install-time callers can route
     through their module-level ``subprocess`` seam; when both ``logger`` and
     ``label`` are supplied, failures are logged as warnings (matching the
     install-time probes).
@@ -64,5 +67,5 @@ def probe_native_bin_version(
     stdout = (result.stdout or "").strip()
     stderr = (result.stderr or "").strip()
     output = stdout or stderr
-    parts = output.split()
-    return parts[-1] if parts else None
+    match = _VERSION_PATTERN.search(output)
+    return match.group(1) if match else None
