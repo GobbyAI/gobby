@@ -20,13 +20,18 @@ from gobby.mcp_proxy.tools._task_query_pagination import collect_task_query_page
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.tasks import LocalTaskManager, TaskNotFoundError
 from gobby.tasks.state_semantics import projected_task_state
-from gobby.tasks.validation import TaskValidator
+from gobby.tasks.validation import TaskValidator, ValidationResult
 from gobby.tasks.validation_history import ValidationHistoryManager
 
 if TYPE_CHECKING:
     from gobby.storage.projects import LocalProjectManager
 
 logger = logging.getLogger(__name__)
+
+UNATTRIBUTED_CONTEXT_NOTICE = (
+    "UNATTRIBUTED FALLBACK CONTEXT: This evidence was gathered from repository state "
+    "without task or session attribution. It cannot establish task completion."
+)
 
 
 def create_validation_registry(
@@ -108,8 +113,6 @@ def create_validation_registry(
             open_children = [c for c in children if projected_task_state(c) != "closed"]
             all_closed = len(open_children) == 0
 
-            from gobby.tasks.validation import ValidationResult
-
             if all_closed:
                 result = ValidationResult(
                     status="valid",
@@ -130,6 +133,7 @@ def create_validation_registry(
 
             # Use provided changes_summary or auto-gather via smart context
             validation_context = changes_summary
+            used_unattributed_context = False
             if not validation_context:
                 from gobby.tasks.validation import get_validation_context_smart
 
@@ -145,7 +149,10 @@ def create_validation_registry(
                     cwd=repo_path,
                 )
                 if smart_context:
-                    validation_context = f"Validation context:\n\n{smart_context}"
+                    used_unattributed_context = True
+                    validation_context = (
+                        f"{UNATTRIBUTED_CONTEXT_NOTICE}\n\nValidation context:\n\n{smart_context}"
+                    )
 
             if not validation_context:
                 raise ValueError(
@@ -162,6 +169,15 @@ def create_validation_registry(
                 context_files=context_files,
                 category=task.category,
             )
+            if used_unattributed_context and result.status == "valid":
+                result = ValidationResult(
+                    status="pending",
+                    feedback=(
+                        "Validation remains pending because the LLM verdict relied solely on "
+                        "unattributed fallback context. Provide a task-specific changes_summary "
+                        "or link the implementation commits before validating."
+                    ),
+                )
 
         # Record validation iteration to history
         # Calculate iteration number based on fail count (current fail count + 1 for this attempt)

@@ -728,10 +728,10 @@ async def test_validate_task_beyond_max_retries(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_validate_task_without_changes_summary_uses_smart_context(
+async def test_validate_task_without_changes_summary_keeps_unattributed_verdict_pending(
     mock_task_manager: MagicMock, mock_task_validator: AsyncMock
 ) -> None:
-    """Test that validation without changes_summary uses smart context gathering."""
+    """Smart context without attribution cannot produce an auto-valid result."""
     task = _task(
         id="t1",
         title="Task 1",
@@ -766,12 +766,13 @@ async def test_validate_task_without_changes_summary_uses_smart_context(
         # Call without changes_summary
         result = await registry.call("validate_task", {"task_id": "t1"})
 
-        assert result["is_valid"] is True
-        # Smart context should have been called
+        assert result["is_valid"] is False
+        assert result["status"] == "pending"
         mock_smart_context.assert_called_once()
-        # Validator should have received the smart context
         validator_call = mock_task_validator.validate_task.call_args
+        assert "UNATTRIBUTED FALLBACK CONTEXT" in validator_call.kwargs["changes_summary"]
         assert "Smart context from git diff" in validator_call.kwargs["changes_summary"]
+        mock_task_manager.close_task.assert_not_called()
 
 
 @pytest.mark.integration

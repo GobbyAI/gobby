@@ -442,13 +442,13 @@ class TestValidateTaskTool:
         assert update_kwargs.get("validation_fail_count") == 2
 
     @pytest.mark.asyncio
-    async def test_validate_task_auto_gathers_context(
+    async def test_validate_task_does_not_close_from_unattributed_context(
         self,
         mock_task_manager: MagicMock,
         mock_task_validator: AsyncMock,
         validation_registry: Any,
     ) -> None:
-        """Test that validate_task auto-gathers context when changes_summary not provided."""
+        """A valid verdict from unattributed fallback context must not close the task."""
         task = _task(
             id="t1",
             title="Task",
@@ -471,15 +471,20 @@ class TestValidateTaskTool:
         with patch("gobby.tasks.validation.get_validation_context_smart") as mock_context:
             mock_context.return_value = "Auto-gathered context from git"
 
-            await validation_registry.call(
+            result = await validation_registry.call(
                 "validate_task",
                 {"task_id": "t1"},  # No changes_summary
             )
 
-            # Should call smart context gathering
             mock_context.assert_called_once()
-            assert mock_context.call_count == 1
-            assert mock_context.call_args is not None
+            validator_context = mock_task_validator.validate_task.call_args.kwargs[
+                "changes_summary"
+            ]
+            assert "UNATTRIBUTED FALLBACK CONTEXT" in validator_context
+            assert result["is_valid"] is False
+            assert result["status"] == "pending"
+            assert "unattributed fallback context" in result["feedback"]
+            mock_task_manager.close_task.assert_not_called()
 
 
 # ============================================================================
