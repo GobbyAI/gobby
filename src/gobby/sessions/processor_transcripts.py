@@ -261,7 +261,7 @@ class ProcessorTranscriptMixin:
         if appender is not None:
             try:
                 appender_stat = await asyncio.to_thread(os.stat, transcript_path)
-                pending_appender = deepcopy(appender)
+                pending_appender = appender.clone()
                 pending_appender.append_positioned_lines(
                     new_lines,
                     new_line_offsets,

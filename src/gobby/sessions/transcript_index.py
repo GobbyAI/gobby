@@ -31,6 +31,7 @@ from __future__ import annotations
 import bisect
 import logging
 from collections.abc import Iterable, Iterator
+from copy import copy, deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
@@ -358,6 +359,15 @@ class TranscriptIndexAppender:
             next_raw_line_no=0,
             safe_to_start_event=True,
         )
+
+    def clone(self) -> TranscriptIndexAppender:
+        """Copy mutable indexing state while sharing the observation sink."""
+        cloned = copy(self)
+        cloned._parser = deepcopy(self._parser)
+        cloned._state = deepcopy(self._state)
+        cloned._role_counts = dict(self._role_counts)
+        cloned.index = deepcopy(self.index)
+        return cloned
 
     def append_raw_lines(
         self, raw_lines: Iterable[RawLine], *, mtime_ns: int, size: int

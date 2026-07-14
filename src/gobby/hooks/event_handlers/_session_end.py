@@ -43,8 +43,9 @@ class SessionEndMixin(EventHandlersBase):
             event.metadata["_platform_session_id"] = session_id
 
         # Prevent the liveness monitor from racing this hook's summary/status work.
-        if session_id and self._liveness_monitor:
-            self._liveness_monitor.mark_recently_handled(session_id)
+        liveness_monitor = getattr(self, "_liveness_monitor", None)
+        if session_id and liveness_monitor:
+            liveness_monitor.mark_recently_handled(session_id)
 
         # Fetch session once and reuse for auto-link and agent completion
         session = None

@@ -63,7 +63,8 @@ def render_transcript(
         observation_tracker = ObservationTracker()
 
     state = RenderState()
-    rendered_messages = []
+    rendered_messages: list[RenderedMessage] = []
+    rendered_message_objects: set[int] = set()
 
     for msg in parsed_messages:
         completed, state = render_incremental(
@@ -74,9 +75,12 @@ def render_transcript(
             source=source or cli_name,
             observation_tracker=observation_tracker,
         )
-        rendered_messages.extend(completed)
+        for message in completed:
+            if id(message) not in rendered_message_objects:
+                rendered_messages.append(message)
+                rendered_message_objects.add(id(message))
 
-    if state.current_message:
+    if state.current_message and id(state.current_message) not in rendered_message_objects:
         rendered_messages.append(state.current_message)
 
     return rendered_messages

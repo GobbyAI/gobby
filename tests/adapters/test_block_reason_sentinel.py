@@ -70,7 +70,7 @@ def test_qwen_block_blank_reason_uses_sentinel(
     with caplog.at_level(logging.WARNING, logger="gobby"):
         result = adapter.translate_from_hook_response(response, hook_type="BeforeTool")
 
-    assert result["decision"] == "block"
+    assert result["decision"] == "deny"
     assert result["continue"] is False
     assert result["reason"] == ADAPTER_EMPTY_BLOCK_REASON_SENTINEL
     assert any(

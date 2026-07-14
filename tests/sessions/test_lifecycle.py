@@ -1314,14 +1314,14 @@ class TestProcessSessionTranscriptParsers:
         assert event.origin == "transcript"
         assert event.model == "claude-3-7-sonnet-latest"
         assert event.input_tokens == 22571
-        assert event.output_tokens == 384
+        assert event.output_tokens == 512
         assert event.cache_creation_tokens == 0
         assert event.cache_read_tokens == 26112
         assert event.metadata == {"content_type": "tool_use"}
         manager.session_manager.update_usage.assert_called_once_with(
             session_id="s1",
             input_tokens=22571,
-            output_tokens=384,
+            output_tokens=512,
             cache_creation_tokens=0,
             cache_read_tokens=26112,
             context_window=None,
@@ -1341,7 +1341,7 @@ class TestProcessSessionTranscriptParsers:
         adjustment = index.post_pass_adjustments[0]
         assert adjustment.field == "usage"
         assert adjustment.value.input_tokens == 22571
-        assert adjustment.value.output_tokens == 384
+        assert adjustment.value.output_tokens == 512
 
     @pytest.mark.asyncio
     async def test_codex_backfill_uses_latest_context_window_for_session_usage(
