@@ -261,11 +261,22 @@ def test_lmstudio_info() -> None:
         assert deps.get_lmstudio_info() == {"running": True}
     with (
         patch("shutil.which", return_value=True),
+        patch("gobby.utils.deps._run_cmd", return_value="The server is not running"),
+    ):
+        assert deps.get_lmstudio_info() == {"running": False}
+    with (
+        patch("shutil.which", return_value=True),
         patch("gobby.utils.deps._run_cmd", return_value=None),
     ):
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="server RUNNING")
             assert deps.get_lmstudio_info() == {"running": True}
+            mock_run.return_value = MagicMock(
+                returncode=0,
+                stdout="",
+                stderr="The server is NOT RUNNING",
+            )
+            assert deps.get_lmstudio_info() == {"running": False}
 
 
 def test_lmstudio_info_exception() -> None:

@@ -331,7 +331,8 @@ def get_lmstudio_info() -> dict[str, Any] | None:
     # Check if running based on output or fallback
     running = False
     if output:
-        running = "running" in output.lower()
+        normalized_output = output.lower()
+        running = "running" in normalized_output and "not running" not in normalized_output
     else:
         # Try with stderr too
         try:
@@ -342,7 +343,9 @@ def get_lmstudio_info() -> dict[str, Any] | None:
                 timeout=5,
             )
             combined = (result.stdout + result.stderr).lower()
-            running = result.returncode == 0 and "running" in combined
+            running = (
+                result.returncode == 0 and "running" in combined and "not running" not in combined
+            )
         except Exception:
             pass
     return {"running": running}
