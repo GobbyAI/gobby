@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.adapters.plan_options import serialize_plan_accept_options
@@ -49,7 +50,9 @@ class SessionControlMixin:
     _pending_agents: dict[str, str]
     _pending_projects: dict[str, str]
     _pending_providers: dict[str, str]
+    _pending_config_updated_at: dict[str, datetime]
     _pending_inject_contexts: dict[str, str]
+    inter_session_msg_manager: Any | None
     session_manager: AttachmentSessionManager | None
     daemon_config: DaemonConfig | None
 

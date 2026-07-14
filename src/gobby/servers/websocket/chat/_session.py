@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from websockets.exceptions import ConnectionClosed, ConnectionClosedError
@@ -156,6 +157,7 @@ class ChatSessionMixin:
     _pending_agents: dict[str, str]
     _pending_projects: dict[str, str]
     _pending_providers: dict[str, str]
+    _pending_config_updated_at: dict[str, datetime]
     _pending_inject_contexts: dict[str, str]
     _session_create_locks: dict[str, asyncio.Lock]
     web_chat_session_registry: Any
@@ -730,6 +732,7 @@ class ChatSessionMixin:
         wt_override = pending_wt.pop(session_key, None)
         if wt_override:
             session.project_path = wt_override
+        self._pending_config_updated_at.pop(session_key, None)
 
         # Persona / agent prompt bootstrap.
         session._pending_agent_name = agent_name

@@ -7,7 +7,6 @@ guideline. ChatSession inherits from ChatSessionPermissionsMixin.
 
 import asyncio
 import logging
-import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import uuid4
@@ -98,14 +97,6 @@ class ChatSessionPermissionsMixin:
     _pending_approval_events: dict[str, asyncio.Event]
     _preapproved_tool_use_ids: set[str]
 
-    # Patterns that indicate dangerous bash commands (used by accept_edits mode)
-    _DANGEROUS_BASH_PATTERNS = re.compile(
-        r"(?:^|[;&|]\s*)(?:sudo|rm|chmod|chown|kill|killall|mkfs|dd|reboot|shutdown|halt|"
-        r"systemctl|service|init|"
-        r"mv\s+/|>\s*/|git\s+(?:push|reset\s+--hard|clean\s+-f))\b"
-        r"|(?:curl|wget)\s+.*\|\s*(?:ba)?sh\b",
-        re.MULTILINE,
-    )
     _READ_ONLY_MCP_TOOL_PREFIXES = (
         "get_",
         "list_",
@@ -397,21 +388,6 @@ class ChatSessionPermissionsMixin:
             project_rules=project_rules,
             global_rules=global_rules,
         )
-
-    def _is_dangerous_bash(self, input_data: dict[str, Any]) -> bool:
-        """Check if a Bash command matches dangerous patterns."""
-        command = input_data.get("command", "")
-        if not command:
-            return False
-        return bool(self._DANGEROUS_BASH_PATTERNS.search(command))
-
-    @staticmethod
-    def _mcp_call_tool_key(input_data: dict[str, Any]) -> str:
-        """Build a composite key for an MCP call_tool invocation.
-
-        Returns the shared `mcp:<server>:<tool>` approval identity.
-        """
-        return approval_key_for_tool("mcp__gobby__call_tool", input_data)
 
     def _is_write_mcp_call(self, input_data: dict[str, Any]) -> bool:
         """Check if an MCP call_tool invocation targets a write operation."""

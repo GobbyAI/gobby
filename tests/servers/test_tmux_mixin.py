@@ -424,6 +424,15 @@ class TestTmuxResize:
         assert ws.sent_messages == []
 
     @pytest.mark.asyncio
+    async def test_resize_ignores_malformed_dimensions(self, server: WebSocketServer) -> None:
+        ws = MockWebSocket()
+        with patch.object(server._tmux_bridge, "resize", new_callable=AsyncMock) as mock_resize:
+            await server._handle_tmux_resize(ws, {"streaming_id": "s1", "rows": "many", "cols": 80})
+
+        mock_resize.assert_not_awaited()
+        assert ws.sent_messages == []
+
+    @pytest.mark.asyncio
     async def test_resize_calls_bridge(self, server: WebSocketServer) -> None:
         ws = MockWebSocket()
         with patch.object(server._tmux_bridge, "resize", new_callable=AsyncMock) as mock_resize:

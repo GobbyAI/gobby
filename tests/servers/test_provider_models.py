@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.config.app import DaemonConfig
 from gobby.servers.provider_model_defaults import AGY_MODELS
 from gobby.servers.provider_model_discovery import CLAUDE_ALIASES
 from gobby.servers.provider_models import (
@@ -21,6 +20,7 @@ from gobby.servers.provider_models import (
     _model_discovery_cwd_path,
     create_provider_model_catalog,
 )
+from gobby.servers.provider_models_grok import models_from_cache
 
 pytestmark = pytest.mark.unit
 
@@ -31,13 +31,23 @@ class TestProviderModelCatalog:
         with pytest.raises(TypeError, match="config"):
             ProviderModelCatalog(config=None, cache_path=temp_dir / "provider-model-catalog.json")
 
-    def test_factory_accepts_daemon_config_without_constructor_probe(self, temp_dir: Path) -> None:
-        """Factory is the daemon-aware entry point; the catalog itself stays config-free."""
+    def test_factory_has_no_inert_daemon_config(self, temp_dir: Path) -> None:
+        """Factory and catalog use the same config-free constructor contract."""
         with patch.dict("os.environ", {"GOBBY_HOME": str(temp_dir)}, clear=False):
-            catalog = create_provider_model_catalog(DaemonConfig())
+            catalog = create_provider_model_catalog()
 
         assert isinstance(catalog, ProviderModelCatalog)
         assert catalog.cache_path == temp_dir / "provider-model-catalog.json"
+
+    @pytest.mark.parametrize("contents", [None, "not-json"])
+    def test_grok_cache_read_failures_return_empty(
+        self, tmp_path: Path, contents: str | None
+    ) -> None:
+        cache_path = tmp_path / "models_cache.json"
+        if contents is not None:
+            cache_path.write_text(contents, encoding="utf-8")
+
+        assert models_from_cache(cache_path) == []
 
     @pytest.mark.asyncio
     async def test_probe_claude_model_records_canonical_id(self, temp_dir: Path) -> None:

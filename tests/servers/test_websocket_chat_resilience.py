@@ -6,9 +6,11 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 from websockets.exceptions import ConnectionClosedError
 
@@ -228,38 +230,57 @@ class TestClassifyChatError:
     """Tests for the _classify_chat_error static method."""
 
     def test_rate_limit(self) -> None:
-        msg, code = ChatMessagingMixin._classify_chat_error(Exception("rate_limit exceeded"))
+        exc = RuntimeError("provider rejected request")
+        exc.status_code = 429  # type: ignore[attr-defined]
+        msg, code = ChatMessagingMixin._classify_chat_error(exc)
         assert code == "RATE_LIMITED"
         assert "rate limit" in msg.lower()
 
     def test_429_status(self) -> None:
-        msg, code = ChatMessagingMixin._classify_chat_error(Exception("HTTP 429 Too Many Requests"))
+        response = SimpleNamespace(status_code=429)
+        exc = RuntimeError("provider rejected request")
+        exc.response = response  # type: ignore[attr-defined]
+        msg, code = ChatMessagingMixin._classify_chat_error(exc)
         assert code == "RATE_LIMITED"
 
     def test_auth_error(self) -> None:
-        msg, code = ChatMessagingMixin._classify_chat_error(Exception("401 Unauthorized"))
+        exc = RuntimeError("provider rejected request")
+        exc.status_code = 401  # type: ignore[attr-defined]
+        msg, code = ChatMessagingMixin._classify_chat_error(exc)
         assert code == "AUTH_ERROR"
         assert "authentication" in msg.lower()
 
     def test_forbidden(self) -> None:
-        msg, code = ChatMessagingMixin._classify_chat_error(Exception("403 Forbidden"))
+        exc = RuntimeError("provider rejected request")
+        exc.status_code = 403  # type: ignore[attr-defined]
+        msg, code = ChatMessagingMixin._classify_chat_error(exc)
         assert code == "AUTH_ERROR"
 
-    def test_api_key_error(self) -> None:
-        msg, code = ChatMessagingMixin._classify_chat_error(Exception("Invalid api_key provided"))
-        assert code == "AUTH_ERROR"
+    def test_auth_substring_is_not_misclassified(self) -> None:
+        msg, code = ChatMessagingMixin._classify_chat_error(Exception("auth cache refreshed"))
+        assert code == "INTERNAL_ERROR"
 
     def test_timeout(self) -> None:
         msg, code = ChatMessagingMixin._classify_chat_error(TimeoutError())
         assert code == "TIMEOUT"
         assert "timed out" in msg.lower()
 
-    def test_timeout_in_message(self) -> None:
+    def test_timeout_substring_is_not_misclassified(self) -> None:
         msg, code = ChatMessagingMixin._classify_chat_error(Exception("request timeout after 30s"))
-        assert code == "TIMEOUT"
+        assert code == "INTERNAL_ERROR"
 
     def test_connection_error(self) -> None:
-        msg, code = ChatMessagingMixin._classify_chat_error(Exception("connection refused"))
+        msg, code = ChatMessagingMixin._classify_chat_error(ConnectionError("connection refused"))
+        assert code == "CONNECTION_ERROR"
+
+    def test_httpx_connection_cause(self) -> None:
+        request = httpx.Request("GET", "https://example.invalid")
+        cause = httpx.ConnectError("connection refused", request=request)
+        exc = RuntimeError("provider request failed")
+        exc.__cause__ = cause
+
+        msg, code = ChatMessagingMixin._classify_chat_error(exc)
+
         assert code == "CONNECTION_ERROR"
 
     def test_unknown_error_includes_type(self) -> None:

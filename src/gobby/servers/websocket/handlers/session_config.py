@@ -10,6 +10,7 @@ import asyncio
 import logging
 import os
 import re
+from datetime import UTC, datetime
 from shlex import quote
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -23,6 +24,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _SAFE_PERSONA_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _mark_pending_config(mixin: SessionControlMixin, conversation_id: str) -> None:
+    mixin._pending_config_updated_at[conversation_id] = datetime.now(UTC)
 
 
 async def _set_attached_session_mode(
@@ -315,6 +320,7 @@ async def handle_set_mode(mixin: SessionControlMixin, websocket: Any, data: dict
     elif conversation_id:
         # Store mode for when session is created
         mixin._pending_modes[conversation_id] = mode
+        _mark_pending_config(mixin, conversation_id)
         logger.debug(f"Chat mode '{mode}' queued for future conversation {conversation_id[:8]}")
 
 
@@ -376,6 +382,7 @@ async def handle_set_project(
 
     # Store project for next session creation (works whether or not session existed)
     mixin._pending_projects[conversation_id] = new_project_id
+    _mark_pending_config(mixin, conversation_id)
 
     await websocket.send(
         json_dumps(
@@ -466,6 +473,7 @@ async def handle_set_worktree(
 
     # Store worktree path for next session creation
     mixin._pending_worktree_paths[conversation_id] = worktree_path
+    _mark_pending_config(mixin, conversation_id)
 
     # Resolve the branch name for the new worktree
     new_branch, _ = await _resolve_git_branch(worktree_path)
@@ -584,6 +592,7 @@ async def handle_set_agent(
 
     # Store agent name for next session creation
     mixin._pending_agents[conversation_id] = agent_name
+    _mark_pending_config(mixin, conversation_id)
 
     await websocket.send(
         json_dumps(
@@ -645,6 +654,7 @@ async def handle_set_provider(
             mixin._chat_sessions.pop(conversation_id, None)
 
     mixin._pending_providers[conversation_id] = provider
+    _mark_pending_config(mixin, conversation_id)
 
     await websocket.send(
         json_dumps(

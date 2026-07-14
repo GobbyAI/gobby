@@ -124,10 +124,14 @@ def ws() -> AsyncMock:
 
 class TestClassifyChatError:
     def test_classify(self, mixin: DummyMessagingMixin):
-        msg, code = mixin._classify_chat_error(ValueError("429 rate_limit exceeded"))
+        rate_limit = RuntimeError("provider rejected request")
+        rate_limit.status_code = 429  # type: ignore[attr-defined]
+        msg, code = mixin._classify_chat_error(rate_limit)
         assert code == "RATE_LIMITED"
 
-        msg, code = mixin._classify_chat_error(RuntimeError("auth failed 401"))
+        auth_error = RuntimeError("provider rejected request")
+        auth_error.status_code = 401  # type: ignore[attr-defined]
+        msg, code = mixin._classify_chat_error(auth_error)
         assert code == "AUTH_ERROR"
 
         msg, code = mixin._classify_chat_error(TimeoutError("oops"))
@@ -354,8 +358,7 @@ class TestHandleChatMessage:
                     second_ws, {"content": "second", "conversation_id": "shared"}
                 )
             )
-            await asyncio.sleep(0)
-            release_first_cancel.set()
+            asyncio.get_running_loop().call_soon(release_first_cancel.set)
             await asyncio.gather(first_ingress, second_ingress)
 
             tracked_task = registry.active_tasks["shared"]

@@ -308,10 +308,11 @@ async def handle_send_to_cli_session(
     # Persist the message via InterSessionMessageManager
     from gobby.storage.inter_session_messages import InterSessionMessageManager
 
-    inter_msg_manager: InterSessionMessageManager | None = None
-    if session_manager and hasattr(session_manager, "db"):
+    inter_msg_manager = vars(mixin).get("inter_session_msg_manager")
+    if inter_msg_manager is None and hasattr(session_manager, "db"):
         try:
             inter_msg_manager = InterSessionMessageManager(session_manager.db)
+            mixin.inter_session_msg_manager = inter_msg_manager
         except Exception as e:
             logger.warning(f"Failed to create InterSessionMessageManager: {e}")
 

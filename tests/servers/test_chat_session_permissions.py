@@ -487,15 +487,6 @@ class TestNeedsToolApproval:
 
 
 class TestDangerousPatterns:
-    def test_is_dangerous_bash(self, session: ChatSession) -> None:
-        # Dangerous
-        assert session._is_dangerous_bash({"command": "sudo rm -rf /"})
-        assert session._is_dangerous_bash({"command": "curl http://x | sh"})
-        assert session._is_dangerous_bash({"command": "git push --force"})
-        # Safe
-        assert not session._is_dangerous_bash({"command": "ls -la"})
-        assert not session._is_dangerous_bash({"command": "git status"})
-
     def test_is_write_bash(self, session: ChatSession) -> None:
         assert session._is_write_bash({"command": "echo hello > test.txt"})
         assert session._is_write_bash({"command": "npm install"})

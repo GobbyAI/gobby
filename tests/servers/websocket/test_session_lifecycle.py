@@ -100,3 +100,29 @@ async def test_idle_cleanup_unregisters_registry_state(
     queued_compaction_task.cancel.assert_called_once_with()
     queued_wake_task.cancel.assert_called_once_with()
     stale_session.stop.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_idle_cleanup_expires_abandoned_pending_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stale_time = datetime.now(UTC) - timedelta(seconds=session_lifecycle.IDLE_TIMEOUT_SECONDS + 1)
+    mixin = SimpleNamespace(
+        _chat_sessions={},
+        _pending_modes={"abandoned": "plan"},
+        _pending_projects={"abandoned": "project"},
+        _pending_providers={"abandoned": "codex"},
+        _pending_agents={"abandoned": "reviewer"},
+        _pending_worktree_paths={"abandoned": "/tmp/worktree"},
+        _pending_config_updated_at={"abandoned": stale_time},
+    )
+    _stop_after_one_pass(monkeypatch)
+
+    await session_lifecycle.cleanup_idle_sessions(mixin)
+
+    assert mixin._pending_modes == {}
+    assert mixin._pending_projects == {}
+    assert mixin._pending_providers == {}
+    assert mixin._pending_agents == {}
+    assert mixin._pending_worktree_paths == {}
+    assert mixin._pending_config_updated_at == {}

@@ -145,6 +145,9 @@ class WebSocketServer(
         # Pending provider overrides queued before session creation
         self._pending_providers: dict[str, str] = {}
 
+        # Last update time for pending conversation configuration.
+        self._pending_config_updated_at: dict[str, datetime] = {}
+
         # Hidden context to inject on the first post-resume user turn
         self._pending_inject_contexts: dict[str, str] = {}
 

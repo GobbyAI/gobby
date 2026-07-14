@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.adapters.acp_client import ACPClient
 from gobby.agents.trust import authorize_model_discovery_trust
-from gobby.config.app import DaemonConfig, deep_merge
+from gobby.config.app import deep_merge
 from gobby.llm.context_windows import (
     CONTEXT_LENGTH_SOURCE_KEY,
     ContextLengthCandidate,
@@ -195,14 +195,8 @@ def _short_error(exc: BaseException) -> str:
     return message[:240]
 
 
-def create_provider_model_catalog(
-    daemon_config: DaemonConfig | None = None,
-) -> ProviderModelCatalog:
-    """Create the provider model catalog.
-
-    ``daemon_config`` is accepted as a reserved daemon-aware extension point for callers that
-    already construct the catalog from daemon configuration paths.
-    """
+def create_provider_model_catalog() -> ProviderModelCatalog:
+    """Create the provider model catalog."""
     return ProviderModelCatalog()
 
 
@@ -532,8 +526,6 @@ class ProviderModelCatalog:
         if provider == "codex":
             return await self._discover_codex_models(codex_client=codex_client)
         if provider == "droid":
-            return _static_provider_models(provider)
-        if provider == "agy":
             return _static_provider_models(provider)
         raise ValueError(f"Unknown provider: {provider}")
 

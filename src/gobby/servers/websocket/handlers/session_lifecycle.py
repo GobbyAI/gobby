@@ -192,6 +192,22 @@ async def cleanup_idle_sessions(mixin: SessionControlMixin) -> None:
         try:
             await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
             now = datetime.now(UTC)
+            pending_config_updated_at = getattr(mixin, "_pending_config_updated_at", {})
+            stale_pending_config = [
+                conversation_id
+                for conversation_id, updated_at in pending_config_updated_at.items()
+                if (now - updated_at).total_seconds() > IDLE_TIMEOUT_SECONDS
+            ]
+            for conversation_id in stale_pending_config:
+                for pending_name in (
+                    "_pending_modes",
+                    "_pending_projects",
+                    "_pending_providers",
+                    "_pending_agents",
+                    "_pending_worktree_paths",
+                ):
+                    getattr(mixin, pending_name, {}).pop(conversation_id, None)
+                pending_config_updated_at.pop(conversation_id, None)
             stale_sessions = [
                 (conv_id, session)
                 for conv_id, session in mixin._chat_sessions.items()

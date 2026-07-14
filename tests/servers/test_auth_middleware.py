@@ -60,7 +60,10 @@ def test_tooling_routes_bypass_ui_auth(
     assert response.status_code == 200, path
 
 
-@pytest.mark.parametrize("path", ["/api/tasks", "/api/config", "/api/agents"])
+@pytest.mark.parametrize(
+    "path",
+    ["/api/tasks", "/api/config", "/api/agents", "/api/authentic", "/api/mcpx"],
+)
 def test_ui_api_routes_require_auth_when_enabled(
     auth_client: tuple[TestClient, MagicMock], path: str
 ) -> None:

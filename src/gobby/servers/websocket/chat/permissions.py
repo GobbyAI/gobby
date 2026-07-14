@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import uuid4
@@ -83,14 +82,6 @@ class ManagedWebChatPermissionsMixin:
     # (Codex / ACP / Droid-prose) never set the event and so never block.
     _pending_plan_event: asyncio.Event | None
     _pending_plan_decision: str | None
-
-    _DANGEROUS_BASH_PATTERNS = re.compile(
-        r"(?:^|[;&|]\s*)(?:sudo|rm|chmod|chown|kill|killall|mkfs|dd|reboot|shutdown|halt|"
-        r"systemctl|service|init|"
-        r"mv\s+/|>\s*/|git\s+(?:push|reset\s+--hard|clean\s+-f))\b"
-        r"|(?:curl|wget)\s+.*\|\s*(?:ba)?sh\b",
-        re.MULTILINE,
-    )
 
     def provide_answer(self, tool_use_id: str, answers: dict[str, Any]) -> bool:
         self._pending_answers = answers

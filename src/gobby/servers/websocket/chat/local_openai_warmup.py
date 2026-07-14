@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -410,7 +411,8 @@ async def ensure_qwen_local_openai_model_ready(
     local_generation_endpoints: dict[str, LocalGenerationEndpointConfig] | None = None,
 ) -> None:
     """Warm the local backend for a Qwen OpenAI-compatible model when needed."""
-    target = resolve_qwen_local_openai_target(
+    target = await asyncio.to_thread(
+        resolve_qwen_local_openai_target,
         model_value,
         project_path=project_path,
         local_generation_endpoints=local_generation_endpoints,

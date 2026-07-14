@@ -528,7 +528,14 @@ class TmuxMixin:
         if not streaming_id or not rows or not cols:
             return  # Silent failure for resize events
 
-        bridge = await self._tmux_bridge.resize(streaming_id, int(rows), int(cols))
+        try:
+            parsed_rows = int(rows)
+            parsed_cols = int(cols)
+        except (TypeError, ValueError):
+            logger.debug("Invalid tmux_resize dimensions: rows=%r cols=%r", rows, cols)
+            return
+
+        bridge = await self._tmux_bridge.resize(streaming_id, parsed_rows, parsed_cols)
 
         # After resizing the PTY, tell tmux to redraw at the new dimensions
         if bridge:

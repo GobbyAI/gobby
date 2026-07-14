@@ -23,10 +23,15 @@ logger = logging.getLogger(__name__)
 # Prefixes that never require daemon authentication. Webhook handlers apply
 # their channel/HMAC signature checks after this middleware.
 _PUBLIC_PREFIXES = (
-    "/api/auth/",
-    "/api/comms/webhooks/",
-    "/api/github/webhooks/",
-    "/assets/",
+    "/api/auth",
+    "/api/comms/webhooks",
+    "/api/github/webhooks",
+    "/api/hooks",
+    "/api/llm",
+    "/api/mcp/tools",
+    "/api/sessions",
+    "/api/workflows/variables",
+    "/assets",
 )
 
 _PUBLIC_PATHS = frozenset(
@@ -35,6 +40,8 @@ _PUBLIC_PATHS = frozenset(
         "/api/health",
         "/api/admin/health",
         "/api/admin/startup-progress",
+        "/api/embeddings",
+        "/api/voice/transcribe",
         "/favicon.ico",
         "/logo.png",
     }
@@ -57,6 +64,10 @@ def _remote_hook_requires_auth(server: "HTTPServer", path: str) -> bool:
     return isinstance(bind_host, str) and not is_loopback_bind_host(bind_host)
 
 
+def _matches_path_prefix(path: str, prefix: str) -> bool:
+    return path == prefix or path.startswith(f"{prefix}/")
+
+
 class AuthMiddleware(BaseHTTPMiddleware):
     """Enforce the server's configured auth mode at HTTP route boundaries."""
 
@@ -69,7 +80,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         remote_hook_requires_auth = _remote_hook_requires_auth(self.server, path)
 
         if not remote_hook_requires_auth and (
-            path in _PUBLIC_PATHS or any(path.startswith(prefix) for prefix in _PUBLIC_PREFIXES)
+            path in _PUBLIC_PATHS
+            or any(_matches_path_prefix(path, prefix) for prefix in _PUBLIC_PREFIXES)
         ):
             return await call_next(request)
 

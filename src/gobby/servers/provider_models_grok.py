@@ -85,7 +85,10 @@ def models_from_acp_session(session_info: dict[str, Any]) -> list[dict[str, Any]
 def models_from_cache(cache_path: Path | None = None) -> list[dict[str, Any]]:
     """Read ``~/.grok/models_cache.json`` if present."""
     path = cache_path or (_grok_home() / "models_cache.json")
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
     raw_models = payload.get("models") if isinstance(payload, dict) else None
     if isinstance(raw_models, dict):
         raw_models = raw_models.get("availableModels") or raw_models.get("models")

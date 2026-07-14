@@ -1646,12 +1646,12 @@ class TestContinueInChatTerminalKill:
         host.session_manager = session_manager
         host.clients = {ws: {"attached_session_id": "web-123"}}
         host._send_error = AsyncMock()
+        host.inter_session_msg_manager = inter_msg_manager
 
         with (
             patch(
                 "gobby.storage.inter_session_messages.InterSessionMessageManager",
-                return_value=inter_msg_manager,
-            ),
+            ) as manager_class,
             patch(
                 "gobby.servers.websocket.handlers.session_observe.get_tmux_manager_for_context",
                 return_value=tmux_manager,
@@ -1664,6 +1664,7 @@ class TestContinueInChatTerminalKill:
             )
 
         mock_get_tmux_manager.assert_called_once_with(source_session.terminal_context)
+        manager_class.assert_not_called()
         tmux_manager.send_keys.assert_awaited_once_with("%7", "hello\n")
         assert inter_msg_manager.create_message.call_args.kwargs["from_session"] == "web-123"
         inter_msg_manager.mark_delivered.assert_called_once_with("msg-1")
