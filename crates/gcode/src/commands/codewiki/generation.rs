@@ -545,9 +545,27 @@ pub(crate) fn generate_hierarchical_docs(
             .iter()
             .map(|module| module.module.clone())
             .collect::<BTreeSet<String>>();
-        emit(BuiltDoc::healthy(
-            "code/_ownership.md",
-            build_ownership_doc(
+        // The page's provenance hashes cannot see a cluster re-partition: the
+        // same source files re-cluster under new module names, so an unkeyed
+        // page would be retained stale and its module links would dangle,
+        // failing publish closed (#18190). Key it on the emitted module set —
+        // the rename guard _architecture.md carries (#17731) — while
+        // requires_sources keeps ownership content refreshing when the
+        // underlying files change.
+        let ownership_key = format!(
+            "ownership-links:{}",
+            hasher::content_hash(
+                emitted_modules
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    .as_bytes(),
+            )
+        );
+        emit(BuiltDoc {
+            path: "code/_ownership.md".to_string(),
+            content: build_ownership_doc(
                 project_root,
                 &files,
                 &file_modules,
@@ -555,7 +573,12 @@ pub(crate) fn generate_hierarchical_docs(
                 ownership_meta,
                 OwnershipOptions::default(),
             )?,
-        ))?;
+            degraded: false,
+            summary: None,
+            neighbors: BTreeSet::new(),
+            invalidation_key: Some(ownership_key),
+            invalidation_key_requires_sources: true,
+        })?;
     }
     Ok(())
 }

@@ -1599,3 +1599,82 @@ fn child_cluster_rename_regenerates_parent_module_page() {
         "renamed cluster's old module page must be pruned"
     );
 }
+
+#[test]
+fn cluster_rename_rewrites_stale_ownership_module_links() {
+    let (project, input) = cluster_rename_project();
+    // Declared owners make the ownership page's Modules section emit module
+    // links; blame data is irrelevant to the rename scenario.
+    std::fs::write(project.path().join("CODEOWNERS"), "* @gobby-owners\n").expect("codeowners");
+    let out_dir = project.path().join("codewiki");
+
+    let mut first_generator =
+        |_prompt: &str, _system: &str, _tier: PromptTier| Some("First prose.".to_string());
+    let mut progress = CodewikiProgress::silent();
+    let mut first_meta = OwnershipMeta::default();
+    let first = collect_docs(
+        &input,
+        GenerateDocsOptions {
+            ownership: Some((project.path(), &mut first_meta)),
+            generate: Some(&mut first_generator),
+            ai_depth: AiDepth::Symbols,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
+    );
+    write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &first,
+        None,
+        "symbols",
+        DocPruneScope::unscoped(),
+    )
+    .expect("first write");
+    let ownership_before = std::fs::read_to_string(out_dir.join("code/_ownership.md"))
+        .expect("ownership page on disk");
+    assert!(ownership_before.contains("code/modules/src/ids_plan|"));
+
+    // Only the write.rs -> sync_plan.rs call edge disappears: no file content
+    // changes, so every provenance hash the ownership page records still
+    // matches. The cluster splits and renames; only the module-link
+    // invalidation key (#18190) forces the stale page to be rewritten.
+    let mut second_input = input;
+    second_input.graph_edges.truncate(1);
+
+    let mut second_generator =
+        |_prompt: &str, _system: &str, _tier: PromptTier| Some("Second prose.".to_string());
+    let mut plan = ReusePlan::load(project.path(), &out_dir, "symbols").expect("reuse plan loads");
+    let reuse = Some(&mut plan);
+    let mut progress = CodewikiProgress::silent();
+    let mut second_meta = OwnershipMeta::default();
+    let second = collect_docs(
+        &second_input,
+        GenerateDocsOptions {
+            ownership: Some((project.path(), &mut second_meta)),
+            generate: Some(&mut second_generator),
+            ai_depth: AiDepth::Symbols,
+            reuse,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
+    );
+    assert_module_links_resolve(&second);
+
+    write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &second,
+        None,
+        "symbols",
+        DocPruneScope::unscoped(),
+    )
+    .expect("second write");
+    let ownership_after = std::fs::read_to_string(out_dir.join("code/_ownership.md"))
+        .expect("ownership page after rename");
+    assert!(ownership_after.contains("code/modules/src/ids_write|"));
+    assert!(
+        !ownership_after.contains("ids_plan"),
+        "stale ownership page retained with a dangling module link"
+    );
+}
