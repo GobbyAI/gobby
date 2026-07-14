@@ -206,6 +206,7 @@ function SessionEntryRow({
             onClick={(event) => onMenuButtonClick(event, entry)}
             title="Session actions"
             aria-label="Session actions"
+            aria-haspopup="menu"
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
               <circle cx="12" cy="5" r="2" />

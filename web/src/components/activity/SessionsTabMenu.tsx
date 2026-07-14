@@ -2,6 +2,7 @@ import {
   SessionInteractionModal,
   type InteractionMode,
 } from "./SessionInteractionModal";
+import { QuickMenu, type QuickMenuItem } from "./QuickMenu";
 import type {
   SessionContextMenu,
   WatchingSessionEntry,
@@ -47,87 +48,55 @@ export function SessionsContextMenu({
   // Whether any session-ending action renders below the interaction divider.
   const showEndingDivider = showExpire || canClose || canDelete;
 
+  const items: QuickMenuItem[] = [
+    { label: "Send Context", onSelect: () => openModal("context", entry) },
+  ];
+  if (entry.hasTmux) {
+    items.push(
+      { label: "Send Keys", onSelect: () => openModal("keys", entry) },
+      { label: "Capture Pane", onSelect: () => openModal("pane", entry) },
+    );
+  }
+  if (canResume && onResumeSession) {
+    items.push({
+      label: "Resume Session",
+      onSelect: () => void onResumeSession(entry.id),
+    });
+  }
+  if (showEndingDivider) items.push({ type: "separator" });
+  if (showExpire) {
+    items.push({
+      label: "Expire Session",
+      destructive: true,
+      onSelect: () => void handleExpire(entry),
+    });
+  }
+  if (canClose) {
+    items.push({
+      label: "Close Session",
+      destructive: true,
+      onSelect: () => void handleClose(entry),
+    });
+  }
+  if (canDelete) {
+    // Delete is irreversible — isolate it below its own divider so the
+    // terminal action never sits flush against a recoverable one.
+    if (canClose) items.push({ type: "separator" });
+    items.push({
+      label: "Delete Session",
+      destructive: true,
+      onSelect: () => void handleDelete(entry),
+    });
+  }
+
   return (
-    <>
-      <div className="session-ctx-backdrop" onClick={closeCtxMenu} />
-      <div
-        className="session-ctx-menu"
-        style={{ position: "fixed", left: ctxMenu.x, top: ctxMenu.y }}
-      >
-        <button
-          className="session-ctx-item"
-          onClick={() => openModal("context", entry)}
-        >
-          Send Context
-        </button>
-        {entry.hasTmux && (
-          <>
-            <button
-              className="session-ctx-item"
-              onClick={() => openModal("keys", entry)}
-            >
-              Send Keys
-            </button>
-            <button
-              className="session-ctx-item"
-              onClick={() => openModal("pane", entry)}
-            >
-              Capture Pane
-            </button>
-          </>
-        )}
-        {canResume && onResumeSession && (
-          <button
-            className="session-ctx-item"
-            onClick={() => {
-              closeCtxMenu();
-              void onResumeSession(entry.id);
-            }}
-          >
-            Resume Session
-          </button>
-        )}
-        {showEndingDivider && <div className="session-ctx-divider" />}
-        {showExpire && (
-          <button
-            className="session-ctx-item session-ctx-item--destructive"
-            onClick={() => {
-              closeCtxMenu();
-              void handleExpire(entry);
-            }}
-          >
-            Expire Session
-          </button>
-        )}
-        {canClose && (
-          <button
-            className="session-ctx-item session-ctx-item--destructive"
-            onClick={() => {
-              closeCtxMenu();
-              void handleClose(entry);
-            }}
-          >
-            Close Session
-          </button>
-        )}
-        {canDelete && (
-          <>
-            {/* Delete is irreversible — isolate it below its own divider so the
-                terminal action never sits flush against a recoverable one. */}
-            {canClose && <div className="session-ctx-divider" />}
-            <button
-              className="session-ctx-item session-ctx-item--destructive"
-              onClick={() => {
-                closeCtxMenu();
-                void handleDelete(entry);
-              }}
-            >
-              Delete Session
-            </button>
-          </>
-        )}
-      </div>
-    </>
+    <QuickMenu
+      anchor={ctxMenu}
+      items={items}
+      menuLabel="Session actions"
+      onClose={closeCtxMenu}
+      returnFocusTo={ctxMenu.trigger}
+    />
   );
 }
 

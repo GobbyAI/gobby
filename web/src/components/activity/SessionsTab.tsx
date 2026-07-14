@@ -507,20 +507,19 @@ export const SessionsTab = memo(function SessionsTab({
     (event: React.MouseEvent<HTMLButtonElement>, entry: WatchingSessionEntry) => {
       event.stopPropagation();
       const rect = event.currentTarget.getBoundingClientRect();
-      const menuWidth = 160;
-      setCtxMenu({ x: rect.left - menuWidth, y: rect.top, entry });
+      setCtxMenu({
+        x: rect.left,
+        y: rect.top,
+        width: rect.width,
+        height: rect.height,
+        entry,
+        trigger: event.currentTarget,
+      });
     },
     [],
   );
 
   const closeCtxMenu = useCallback(() => setCtxMenu(null), []);
-
-  useEffect(() => {
-    if (!ctxMenu) return;
-    const handler = () => setCtxMenu(null);
-    window.addEventListener("click", handler);
-    return () => window.removeEventListener("click", handler);
-  }, [ctxMenu]);
 
   const openModal = useCallback(
     (mode: InteractionMode, entry: WatchingSessionEntry) => {

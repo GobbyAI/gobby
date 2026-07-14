@@ -38,7 +38,10 @@ export interface WatchingSessionEntry {
 export interface SessionContextMenu {
   x: number;
   y: number;
+  width: number;
+  height: number;
   entry: WatchingSessionEntry;
+  trigger: HTMLButtonElement;
 }
 
 export interface Badge {

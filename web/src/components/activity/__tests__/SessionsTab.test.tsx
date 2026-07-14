@@ -1234,9 +1234,9 @@ describe("SessionsTab", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
-    expect(screen.getByRole("button", { name: "Send Context" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Send Context" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Send Command" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Expire Session" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Expire Session" }));
 
     expect(onExpireSession).toHaveBeenCalledWith("paused-1");
     expect(screen.queryByText("#202: Paused Terminal")).toBeNull();
@@ -1248,6 +1248,29 @@ describe("SessionsTab", () => {
     await waitFor(() => {
       expect(screen.getByText("#202: Paused Terminal")).toBeInTheDocument();
     });
+  });
+
+  it("supports menu semantics, roving focus, and Escape focus restoration", async () => {
+    render(<SessionsTab sessions={[PAUSED_SESSION]} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("#202: Paused Terminal")).toBeInTheDocument();
+    });
+
+    const trigger = screen.getByRole("button", { name: "Session actions" });
+    expect(trigger).toHaveAttribute("aria-haspopup", "menu");
+    fireEvent.click(trigger);
+
+    const menu = screen.getByRole("menu", { name: "Session actions" });
+    const items = screen.getAllByRole("menuitem");
+    expect(document.activeElement).toBe(items[0]);
+
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(items[1]);
+
+    fireEvent.keyDown(menu, { key: "Escape" });
+    expect(screen.queryByRole("menu", { name: "Session actions" })).toBeNull();
+    expect(document.activeElement).toBe(trigger);
   });
 
   it("lets users dismiss selected session detail errors", async () => {
@@ -1327,15 +1350,15 @@ describe("SessionsTab", () => {
       await openRowMenu();
 
       expect(
-        screen.getByRole("button", { name: "Resume Session" }),
+        screen.getByRole("menuitem", { name: "Resume Session" }),
       ).toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: "Close Session" }),
+        screen.getByRole("menuitem", { name: "Close Session" }),
       ).toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: "Delete Session" }),
+        screen.getByRole("menuitem", { name: "Delete Session" }),
       ).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: "Expire Session" })).toBeNull();
+      expect(screen.queryByRole("menuitem", { name: "Expire Session" })).toBeNull();
     });
 
     it("invokes the resume handler from the menu", async () => {
@@ -1350,7 +1373,7 @@ describe("SessionsTab", () => {
       );
       await openRowMenu();
 
-      fireEvent.click(screen.getByRole("button", { name: "Resume Session" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Resume Session" }));
       expect(onResumeSession).toHaveBeenCalledWith("acp-1");
     });
 
@@ -1372,7 +1395,7 @@ describe("SessionsTab", () => {
       );
       await openRowMenu();
 
-      fireEvent.click(screen.getByRole("button", { name: "Close Session" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Close Session" }));
       expect(onAcpCloseSession).toHaveBeenCalledWith("acp-1");
       expect(screen.queryByText("#301: ACP Session")).toBeNull();
 
@@ -1402,7 +1425,7 @@ describe("SessionsTab", () => {
       );
       await openRowMenu();
 
-      fireEvent.click(screen.getByRole("button", { name: "Delete Session" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Delete Session" }));
       expect(onAcpDeleteSession).toHaveBeenCalledWith("acp-1");
       expect(screen.queryByText("#301: ACP Session")).toBeNull();
 
@@ -1427,11 +1450,11 @@ describe("SessionsTab", () => {
       await openRowMenu();
 
       expect(
-        screen.getByRole("button", { name: "Close Session" }),
+        screen.getByRole("menuitem", { name: "Close Session" }),
       ).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: "Resume Session" })).toBeNull();
-      expect(screen.queryByRole("button", { name: "Delete Session" })).toBeNull();
-      expect(screen.queryByRole("button", { name: "Expire Session" })).toBeNull();
+      expect(screen.queryByRole("menuitem", { name: "Resume Session" })).toBeNull();
+      expect(screen.queryByRole("menuitem", { name: "Delete Session" })).toBeNull();
+      expect(screen.queryByRole("menuitem", { name: "Expire Session" })).toBeNull();
     });
 
     it("degrades to Send Context only when an ACP row advertises no capabilities", async () => {
@@ -1446,12 +1469,12 @@ describe("SessionsTab", () => {
       await openRowMenu();
 
       expect(
-        screen.getByRole("button", { name: "Send Context" }),
+        screen.getByRole("menuitem", { name: "Send Context" }),
       ).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: "Resume Session" })).toBeNull();
-      expect(screen.queryByRole("button", { name: "Close Session" })).toBeNull();
-      expect(screen.queryByRole("button", { name: "Delete Session" })).toBeNull();
-      expect(screen.queryByRole("button", { name: "Expire Session" })).toBeNull();
+      expect(screen.queryByRole("menuitem", { name: "Resume Session" })).toBeNull();
+      expect(screen.queryByRole("menuitem", { name: "Close Session" })).toBeNull();
+      expect(screen.queryByRole("menuitem", { name: "Delete Session" })).toBeNull();
+      expect(screen.queryByRole("menuitem", { name: "Expire Session" })).toBeNull();
     });
 
     it("keeps Expire and omits ACP actions for non-ACP rows", async () => {
@@ -1469,11 +1492,11 @@ describe("SessionsTab", () => {
       fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
 
       expect(
-        screen.getByRole("button", { name: "Expire Session" }),
+        screen.getByRole("menuitem", { name: "Expire Session" }),
       ).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: "Close Session" })).toBeNull();
-      expect(screen.queryByRole("button", { name: "Delete Session" })).toBeNull();
-      expect(screen.queryByRole("button", { name: "Resume Session" })).toBeNull();
+      expect(screen.queryByRole("menuitem", { name: "Close Session" })).toBeNull();
+      expect(screen.queryByRole("menuitem", { name: "Delete Session" })).toBeNull();
+      expect(screen.queryByRole("menuitem", { name: "Resume Session" })).toBeNull();
     });
 
     it("hides the detail-pane Resume button when the ACP resume capability is absent", async () => {

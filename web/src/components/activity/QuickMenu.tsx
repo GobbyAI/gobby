@@ -36,6 +36,7 @@ interface QuickMenuProps {
   menuLabel: string;
   triggerLabel?: string;
   anchor?: QuickMenuAnchor;
+  returnFocusTo?: HTMLElement | null;
   disabled?: boolean;
   onClose?: () => void;
   onOpenChange?: (open: boolean) => void;
@@ -105,6 +106,7 @@ export function QuickMenu({
   menuLabel,
   triggerLabel = "Open actions",
   anchor,
+  returnFocusTo,
   disabled,
   onClose,
   onOpenChange,
@@ -197,10 +199,9 @@ export function QuickMenu({
     if (event.key === "Escape") {
       event.preventDefault();
       closeMenu();
-      // The focused menuitem is about to unmount; without an explicit return
-      // focus lands on <body> and keyboard users lose their place. Anchor-mode
-      // menus have no trigger — their opener owns focus.
-      triggerRef.current?.focus();
+      // The focused menuitem is about to unmount; return keyboard users to the
+      // control that opened the menu. Anchor-mode callers supply that control.
+      (returnFocusTo ?? triggerRef.current)?.focus();
       return;
     }
     if (focusableItems.length === 0) return;

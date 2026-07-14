@@ -65,6 +65,7 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (id.includes('node_modules')) {
+            if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/scheduler/')) return 'vendor-react'
             if (id.includes('@codemirror') || id.includes('codemirror')) return 'vendor-codemirror'
             if (id.includes('@xterm') || id.includes('xterm')) return 'vendor-xterm'
             if (id.includes('react-syntax-highlighter') || id.includes('refractor') || id.includes('prismjs') || id.includes('highlight.js')) return 'vendor-syntax'
