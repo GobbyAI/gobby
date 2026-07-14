@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -12,6 +14,8 @@ from gobby.sessions.compact_continuation import (
     COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE,
     COMPACT_SELF_CONTINUE_PROMPT,
     COMPACT_SELF_CONTINUE_VARIABLE,
+    _merge_session_variable,
+    _pop_session_variable,
     build_compact_self_continue_prompt,
     consume_and_schedule_compact_self_continuation,
     mark_compact_self_continuation_pending,
@@ -36,6 +40,57 @@ class _FakeTmux:
     async def send_keys(self, pane_id: str, text: str, *, literal: bool = False) -> bool:
         self.sent_keys.append((pane_id, text, literal))
         return True
+
+
+def test_merge_session_variable_serializes_with_workflow_first_write(
+    hub_db: HubDatabase,
+) -> None:
+    manager = SessionVariableManager(hub_db)
+    barrier = threading.Barrier(3)
+
+    def merge_compact_variable() -> None:
+        barrier.wait()
+        _merge_session_variable(hub_db, SESSION_ID, "compact", True)
+
+    def merge_workflow_variable() -> None:
+        barrier.wait()
+        manager.merge_variables(SESSION_ID, {"workflow": True})
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(merge_compact_variable),
+            executor.submit(merge_workflow_variable),
+        ]
+        barrier.wait()
+        for future in futures:
+            future.result()
+
+    assert manager.get_variables(SESSION_ID) == {"compact": True, "workflow": True}
+
+
+def test_pop_session_variable_serializes_with_workflow_write(
+    hub_db: HubDatabase,
+) -> None:
+    manager = SessionVariableManager(hub_db)
+    manager.merge_variables(SESSION_ID, {"discard": True})
+    barrier = threading.Barrier(3)
+
+    def pop_compact_variable() -> bool:
+        barrier.wait()
+        return bool(_pop_session_variable(hub_db, SESSION_ID, "discard"))
+
+    def merge_workflow_variable() -> None:
+        barrier.wait()
+        manager.merge_variables(SESSION_ID, {"workflow": True})
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        pop_future = executor.submit(pop_compact_variable)
+        merge_future = executor.submit(merge_workflow_variable)
+        barrier.wait()
+        assert pop_future.result() is True
+        merge_future.result()
+
+    assert manager.get_variables(SESSION_ID) == {"workflow": True}
 
 
 @pytest.mark.asyncio
