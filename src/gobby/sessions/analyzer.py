@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import Any
 
 from gobby.hooks.normalization import is_shell_tool
@@ -251,7 +250,7 @@ class TranscriptAnalyzer:
         tool_input = block.get("input", {})
 
         # -- Gobby Tasks --
-        if tool_name == "mcp_call_tool":
+        if tool_name in ("mcp_call_tool", "mcp__gobby__call_tool"):
             server = tool_input.get("server_name")
             tool = tool_input.get("tool_name")
             args = tool_input.get("arguments", {})
@@ -304,8 +303,8 @@ class TranscriptAnalyzer:
                 # This is a bit brittle, but useful context
                 context.git_commits.append(
                     {
-                        "command": command,
-                        "timestamp": datetime.now(UTC).isoformat(),  # Approx time
+                        "hash": "",
+                        "message": command,
                     }
                 )
 
