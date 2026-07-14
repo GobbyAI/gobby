@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 import logging
@@ -109,7 +110,7 @@ class ReviewLearningService:
     ) -> dict[str, Any]:
         """Search memories for review-context relevant to each finding."""
         normalized_findings = _normalize_recall_findings(findings)
-        project_id, _ = self._resolve_scope(session_id)
+        project_id, _ = await self._resolve_scope(session_id)
         grouped: list[dict[str, Any]] = []
         flat_matches: list[dict[str, Any]] = []
         for index, finding in enumerate(normalized_findings):
@@ -151,7 +152,7 @@ class ReviewLearningService:
         limit: int = 3,
     ) -> dict[str, Any]:
         """Recall confirmed review lessons with deterministic file-path matching."""
-        resolved_project_id = project_id or self._resolve_scope(session_id)[0]
+        resolved_project_id = project_id or (await self._resolve_scope(session_id))[0]
         normalized_paths = _coerce_file_paths(
             file_paths=file_paths, file_paths_json=file_paths_json
         )
@@ -207,7 +208,7 @@ class ReviewLearningService:
                 "promotable": False,
             }
 
-        project_id, source_session_id = self._resolve_scope(session_id)
+        project_id, source_session_id = await self._resolve_scope(session_id)
         finding_fingerprint = derive_finding_fingerprint(finding)
         occurrence_key = build_occurrence_key(source_review, finding_fingerprint)
         normalized = normalize_lesson(
@@ -329,7 +330,10 @@ class ReviewLearningService:
                     )
         return matches
 
-    def _resolve_scope(self, session_id: str | None) -> tuple[str, str | None]:
+    async def _resolve_scope(self, session_id: str | None) -> tuple[str, str | None]:
+        return await asyncio.to_thread(self._resolve_scope_sync, session_id)
+
+    def _resolve_scope_sync(self, session_id: str | None) -> tuple[str, str | None]:
         project_id = _current_project_id()
         effective_session_id = session_id or get_current_session_id()
         if not effective_session_id:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any
 
 import pytest
@@ -17,6 +18,30 @@ SESSION_ID = "11111111-1111-1111-1111-111111111111"
 
 def _scoped_memory_manager(project_id: str = "project") -> FakeMemoryManager:
     return FakeMemoryManager(db=FakeDB(session_id=SESSION_ID, project_id=project_id))
+
+
+@pytest.mark.asyncio
+async def test_resolve_scope_offloads_database_io(
+    fake_task_manager: FakeTaskManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    event_loop_thread = threading.get_ident()
+    database_threads: list[int] = []
+    db = FakeDB(session_id=SESSION_ID)
+    fetchone = db.fetchone
+
+    def tracking_fetchone(sql: str, params: tuple[Any, ...]) -> dict[str, str] | None:
+        database_threads.append(threading.get_ident())
+        return fetchone(sql, params)
+
+    monkeypatch.setattr(db, "fetchone", tracking_fetchone)
+    service = ReviewLearningService(FakeMemoryManager(db=db), fake_task_manager)
+
+    project_id, resolved_session_id = await service._resolve_scope(SESSION_ID)
+
+    assert project_id == "session-project"
+    assert resolved_session_id == SESSION_ID
+    assert database_threads
+    assert all(thread_id != event_loop_thread for thread_id in database_threads)
 
 
 def test_query_construction_includes_diagnostic_and_fix_terms() -> None:
