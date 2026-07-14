@@ -30,7 +30,6 @@ from gobby.servers.routes.sessions.statusline_activity import (
     STATUSLINE_GAP_OBSERVATION_THRESHOLD_MS,
     STATUSLINE_GAP_WARNING_THRESHOLD_MS,
     last_session_activity,
-    prune_trackers,
     record_statusline_seen,
     should_emit_statusline_gap_warning,
 )
@@ -401,7 +400,6 @@ def register_core_routes(
             return {"status": "ok", "warning": "session_not_found"}
 
         now = datetime.now(UTC)
-        prune_trackers(now)
         previous = record_statusline_seen(session.id, now)
         if previous is not None:
             gap_ms = int((now - previous).total_seconds() * 1000)
