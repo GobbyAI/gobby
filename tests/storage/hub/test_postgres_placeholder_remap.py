@@ -46,6 +46,50 @@ def test_postgres_transaction_is_closed_when_context_exits(
     assert transaction.closed is True
 
 
+def test_postgres_execute_materializes_results_before_transaction_exits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _postgres_module()
+    checkout_active = True
+
+    class Result:
+        description = object()
+
+        @property
+        def rowcount(self) -> int:
+            assert checkout_active
+            return 2
+
+        def fetchone(self):
+            assert checkout_active
+            return {"id": 1}
+
+        def fetchall(self):
+            assert checkout_active
+            return [{"id": 1}, {"id": 2}]
+
+    class Transaction:
+        def execute(self, sql: str, params: object = ()):
+            return module._PostgresCursor(Result())
+
+    @contextmanager
+    def transaction() -> Iterator[Transaction]:
+        nonlocal checkout_active
+        try:
+            yield Transaction()
+        finally:
+            checkout_active = False
+
+    database = object.__new__(module.PostgresHubDatabase)
+    monkeypatch.setattr(database, "transaction", transaction)
+
+    cursor = database.execute("SELECT id FROM tasks")
+
+    assert cursor.rowcount == 2
+    assert cursor.fetchone() == {"id": 1}
+    assert cursor.fetchall() == [{"id": 2}]
+
+
 def test_postgres_after_commit_callback_failures_are_isolated(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,

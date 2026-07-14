@@ -316,7 +316,8 @@ class PostgresHubDatabase:
         if ambient is not None:
             return ambient.execute(sql, params)
         with self.transaction() as txn:
-            return txn.execute(sql, params)
+            cursor = cast(_PostgresCursor, txn.execute(sql, params))
+            return cursor.materialize()
 
     def executemany(self, sql: str, rows: Iterable[Sequence[Any]]) -> Cursor:
         ambient = ambient_transaction(self)
@@ -483,16 +484,45 @@ class _PostgresTransaction:
 
 
 class _PostgresCursor:
+    """Cursor adapter that can detach results from a checked-out connection.
+
+    Non-ambient database execution materializes rows before returning its
+    connection to the pool. The buffered cursor retains normal sequential
+    ``fetchone`` and ``fetchall`` behavior after that checkout ends.
+    """
+
     def __init__(self, cursor: Any | None, *, rowcount: int = -1) -> None:
         self._cursor = cursor
         self._rowcount = rowcount
+        self._rows: list[Row] | None = None
+        self._position = 0
+
+    def materialize(self) -> _PostgresCursor:
+        if self._cursor is None:
+            return self
+        rows = self.fetchall() if getattr(self._cursor, "description", None) is not None else []
+        self._rowcount = self.rowcount
+        self._cursor = None
+        self._rows = rows
+        self._position = 0
+        return self
 
     def fetchone(self) -> Row | None:
+        if self._rows is not None:
+            if self._position >= len(self._rows):
+                return None
+            row = self._rows[self._position]
+            self._position += 1
+            return row
         if self._cursor is None:
             return None
         return _normalize_row(cast(Row | None, self._cursor.fetchone()))
 
     def fetchall(self) -> list[Row]:
+        if self._rows is not None:
+            rows = self._rows[self._position :]
+            self._position = len(self._rows)
+            return rows
         if self._cursor is None:
             return []
         return [
