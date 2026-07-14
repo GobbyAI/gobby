@@ -4,11 +4,15 @@ import os
 import queue
 import re
 import threading
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
 
 import pytest
+
+from gobby.storage.hub.protocol import TaskSeqAllocation
+from gobby.storage.tasks import _creation
 
 _HEX40 = re.compile(r"^[0-9a-f]{40}$")
 
@@ -188,6 +192,119 @@ def test_read_modify_write_path_serializes_concurrent_writers(postgres_db: Any) 
         assert row["value"] == 2
     finally:
         _drop_table(postgres_db, table)
+
+
+def test_task_seq_allocation_serializes_across_project_visibility(postgres_db: Any) -> None:
+    project_id = str(uuid.uuid4())
+    errors: queue.Queue[BaseException] = queue.Queue()
+    project_inserted = threading.Event()
+    release_project = threading.Event()
+    project_committed = threading.Event()
+    first_lock_acquired = threading.Event()
+    allow_first_task = threading.Event()
+    first_task_created = threading.Event()
+    release_first_allocator = threading.Event()
+    second_attempted = threading.Event()
+    second_lock_acquired = threading.Event()
+    allow_second_task = threading.Event()
+    second_task_created = threading.Event()
+
+    def create_project() -> None:
+        try:
+            with postgres_db.transaction() as txn:
+                txn.execute(
+                    "INSERT INTO projects (id, name) VALUES (%s, %s)",
+                    (project_id, "visibility-race"),
+                )
+                project_inserted.set()
+                assert release_project.wait(timeout=5)
+            project_committed.set()
+        except BaseException as exc:  # pragma: no cover - re-raised in main thread
+            errors.put(exc)
+            project_inserted.set()
+            project_committed.set()
+
+    def create_first_task() -> None:
+        try:
+            assert project_inserted.wait(timeout=5)
+            with postgres_db.transaction_immediate(TaskSeqAllocation(project_id)) as txn:
+                first_lock_acquired.set()
+                assert project_committed.wait(timeout=5)
+                assert allow_first_task.wait(timeout=5)
+                _creation._create_task_in_transaction(
+                    postgres_db,
+                    txn,
+                    project_id=project_id,
+                    title="first",
+                )
+                first_task_created.set()
+                assert release_first_allocator.wait(timeout=5)
+        except BaseException as exc:  # pragma: no cover - re-raised in main thread
+            errors.put(exc)
+            first_lock_acquired.set()
+            first_task_created.set()
+
+    def create_second_task() -> None:
+        try:
+            assert project_committed.wait(timeout=5)
+            second_attempted.set()
+            with postgres_db.transaction_immediate(TaskSeqAllocation(project_id)) as txn:
+                second_lock_acquired.set()
+                assert allow_second_task.wait(timeout=5)
+                _creation._create_task_in_transaction(
+                    postgres_db,
+                    txn,
+                    project_id=project_id,
+                    title="second",
+                )
+                second_task_created.set()
+        except BaseException as exc:  # pragma: no cover - re-raised in main thread
+            errors.put(exc)
+            second_lock_acquired.set()
+            second_task_created.set()
+
+    project_thread = threading.Thread(target=create_project)
+    first_thread = threading.Thread(target=create_first_task)
+    second_thread = threading.Thread(target=create_second_task)
+    threads = [project_thread, first_thread, second_thread]
+
+    project_thread.start()
+    assert project_inserted.wait(timeout=5)
+    first_thread.start()
+    assert first_lock_acquired.wait(timeout=5)
+    release_project.set()
+    assert project_committed.wait(timeout=5)
+
+    second_thread.start()
+    assert second_attempted.wait(timeout=5)
+    second_was_blocked = not second_lock_acquired.wait(timeout=0.5)
+
+    if second_was_blocked:
+        allow_first_task.set()
+        assert first_task_created.wait(timeout=5)
+        release_first_allocator.set()
+        assert second_lock_acquired.wait(timeout=5)
+        allow_second_task.set()
+    else:
+        allow_second_task.set()
+        assert second_task_created.wait(timeout=5)
+        allow_first_task.set()
+        assert first_task_created.wait(timeout=5)
+        release_first_allocator.set()
+
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert all(not thread.is_alive() for thread in threads)
+    if not errors.empty():
+        raise AssertionError("concurrent task creation failed") from errors.get()
+
+    rows = postgres_db.fetchall(
+        "SELECT seq_num FROM tasks WHERE project_id = %s ORDER BY seq_num",
+        (project_id,),
+    )
+    assert second_was_blocked
+    assert [row["seq_num"] for row in rows] == [1, 2]
 
 
 @pytest.mark.integration

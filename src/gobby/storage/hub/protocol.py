@@ -283,6 +283,10 @@ class HubDatabase(Protocol):
         """Hold a session advisory lock without keeping a transaction open."""
         ...
 
+    def after_commit(self, callback: Callable[[], None]) -> None:
+        """Run a callback after the ambient transaction commits, or immediately."""
+        ...
+
     def execute(self, sql: str, params: Sequence[Any] | Mapping[str, Any] = ()) -> Cursor:
         """Execute a SQL statement, joining an ambient transaction when present."""
         ...

@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from contextvars import ContextVar
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
 from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
+
+_DISPATCH_CONTEXT = ContextVar("_DISPATCH_CONTEXT", default="fresh")
 
 
 def _capture_dispatch_schedules(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
@@ -79,6 +83,52 @@ def test_close_task_schedules_direct_dispatch_tick(
     from gobby.storage.cron import CronJobStorage
 
     assert CronJobStorage(temp_db).get_job_by_name("gobby:dispatcher") is None
+
+
+@pytest.mark.asyncio
+async def test_close_task_with_commit_fallback_tick_uses_fresh_context(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.storage.tasks import LocalTaskManager
+
+    manager = LocalTaskManager(temp_db)
+    services = SimpleNamespace(
+        agent_runner=SimpleNamespace(),
+        task_manager=manager,
+    )
+    observed_contexts: list[str] = []
+
+    async def fake_kick_dispatcher_tick(**_kwargs: object) -> None:
+        assert temp_db.fetchone("SELECT 1 AS value")["value"] == 1
+        observed_contexts.append(_DISPATCH_CONTEXT.get())
+
+    monkeypatch.setattr("gobby.app_context._current_container", services)
+    monkeypatch.setattr(
+        "gobby.build.dispatch_tick.kick_dispatcher_tick",
+        fake_kick_dispatcher_tick,
+    )
+    task = manager.create_task(
+        project_id=sample_project["id"],
+        title="No-review leaf",
+        category="code",
+        task_type="feature",
+    )
+    manager.update_task(task.id, allow_automation=True, assigned_agent="backend-developer")
+
+    token = _DISPATCH_CONTEXT.set("inherited-transaction")
+    try:
+        with patch("gobby.utils.git.normalize_commit_sha", return_value="abc123"):
+            manager.close_task_with_commit(task.id, "abc123")
+        await wait_for_async_condition(
+            lambda: observed_contexts,
+            description="dispatcher tick",
+        )
+    finally:
+        _DISPATCH_CONTEXT.reset(token)
+
+    assert observed_contexts == ["fresh"]
 
 
 def test_dispatcher_wake_respects_stopped_automation(

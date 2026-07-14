@@ -3,10 +3,18 @@ from __future__ import annotations
 import asyncio
 import importlib
 import inspect
+import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, timezone
+from typing import ClassVar
 
 import pytest
 
+from gobby.build import lifecycle as build_lifecycle
+from gobby.build.options import BuildOptions
+from gobby.build.results import BuildResult
 from gobby.config.postgres_pool import PostgresPoolConfig
 
 pytestmark = pytest.mark.unit
@@ -14,6 +22,263 @@ pytestmark = pytest.mark.unit
 
 def _postgres_module():
     return importlib.import_module("gobby.storage.hub.postgres")
+
+
+def test_postgres_transaction_is_closed_when_context_exits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _postgres_module()
+
+    class Connection:
+        @contextmanager
+        def transaction(self) -> Iterator[None]:
+            yield
+
+    connection = Connection()
+    database = object.__new__(module.PostgresHubDatabase)
+    monkeypatch.setattr(database, "open", lambda: None)
+
+    @contextmanager
+    def pool_connection() -> Iterator[Connection]:
+        yield connection
+
+    monkeypatch.setattr(database, "_pool_connection", pool_connection)
+
+    with database._transaction_context(is_immediate=False) as transaction:
+        assert transaction.closed is False
+
+    assert transaction.closed is True
+
+
+def test_postgres_execute_materializes_results_before_transaction_exits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _postgres_module()
+    checkout_active = True
+
+    class Result:
+        description = object()
+
+        @property
+        def rowcount(self) -> int:
+            assert checkout_active
+            return 2
+
+        def fetchone(self):
+            assert checkout_active
+            return {"id": 1}
+
+        def fetchall(self):
+            assert checkout_active
+            return [{"id": 1}, {"id": 2}]
+
+    class Transaction:
+        def execute(self, sql: str, params: object = ()):
+            return module._PostgresCursor(Result())
+
+    @contextmanager
+    def transaction() -> Iterator[Transaction]:
+        nonlocal checkout_active
+        try:
+            yield Transaction()
+        finally:
+            checkout_active = False
+
+    database = object.__new__(module.PostgresHubDatabase)
+    monkeypatch.setattr(database, "transaction", transaction)
+
+    cursor = database.execute("SELECT id FROM tasks")
+
+    assert cursor.rowcount == 2
+    assert cursor.fetchone() == {"id": 1}
+    assert cursor.fetchall() == [{"id": 2}]
+
+
+def test_postgres_after_commit_callback_failures_are_isolated(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    module = _postgres_module()
+
+    class Connection:
+        @contextmanager
+        def transaction(self) -> Iterator[None]:
+            yield
+
+    database = object.__new__(module.PostgresHubDatabase)
+    monkeypatch.setattr(database, "open", lambda: None)
+
+    @contextmanager
+    def pool_connection() -> Iterator[Connection]:
+        yield Connection()
+
+    monkeypatch.setattr(database, "_pool_connection", pool_connection)
+    callbacks_run: list[str] = []
+
+    def failing_callback() -> None:
+        callbacks_run.append("failing")
+        raise RuntimeError("callback failed")
+
+    def succeeding_callback() -> None:
+        callbacks_run.append("succeeding")
+
+    with caplog.at_level(logging.ERROR, logger=module.__name__):
+        with database._transaction_context(is_immediate=False) as transaction:
+            transaction.after_commit(failing_callback)
+            transaction.after_commit(succeeding_callback)
+
+    assert callbacks_run == ["failing", "succeeding"]
+    record = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "PostgreSQL after-commit callback failed"
+    )
+    assert record.exc_info is not None
+    assert record.exc_info[0] is RuntimeError
+
+
+def test_nested_native_transaction_callbacks_run_on_their_own_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _postgres_module()
+
+    class Connection:
+        @contextmanager
+        def transaction(self) -> Iterator[None]:
+            yield
+
+    database = object.__new__(module.PostgresHubDatabase)
+    monkeypatch.setattr(database, "open", lambda: None)
+
+    @contextmanager
+    def pool_connection() -> Iterator[Connection]:
+        yield Connection()
+
+    monkeypatch.setattr(database, "_pool_connection", pool_connection)
+    callbacks_run: list[str] = []
+
+    with database._transaction_context(is_immediate=False) as outer:
+        outer.after_commit(lambda: callbacks_run.append("outer"))
+        with database._transaction_context(is_immediate=False) as inner:
+            inner.after_commit(lambda: callbacks_run.append("inner"))
+        assert callbacks_run == ["inner"]
+
+    assert callbacks_run == ["inner", "outer"]
+
+
+@pytest.mark.asyncio
+async def test_interleaved_transactions_own_callbacks_and_lock_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _postgres_module()
+
+    @dataclass(frozen=True)
+    class Lock:
+        PRIORITY: ClassVar[int]
+        name: str
+
+    @dataclass(frozen=True)
+    class OuterLock(Lock):
+        PRIORITY: ClassVar[int] = 20
+
+    @dataclass(frozen=True)
+    class IndependentLock(Lock):
+        PRIORITY: ClassVar[int] = 10
+
+    class Connection:
+        @contextmanager
+        def transaction(self) -> Iterator[None]:
+            yield
+
+        def execute(self, sql: str, params: object = ()) -> object:
+            return object()
+
+    database = object.__new__(module.PostgresHubDatabase)
+    monkeypatch.setattr(database, "open", lambda: None)
+
+    @contextmanager
+    def pool_connection() -> Iterator[Connection]:
+        yield Connection()
+
+    monkeypatch.setattr(database, "_pool_connection", pool_connection)
+    first_entered = asyncio.Event()
+    second_committed = asyncio.Event()
+    callbacks_run: list[str] = []
+
+    async def first_transaction() -> None:
+        with database.transaction_immediate(OuterLock("outer")):
+            database.after_commit(lambda: callbacks_run.append("first"))
+            first_entered.set()
+            await second_committed.wait()
+            assert callbacks_run == ["second"]
+
+    async def second_transaction() -> None:
+        await first_entered.wait()
+        with database.transaction_immediate(IndependentLock("independent")):
+            database.after_commit(lambda: callbacks_run.append("second"))
+        second_committed.set()
+
+    await asyncio.gather(first_transaction(), second_transaction())
+
+    assert callbacks_run == ["second", "first"]
+
+
+@pytest.mark.asyncio
+async def test_build_dry_run_interleaving_keeps_transaction_locks_task_local(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _postgres_module()
+
+    class Connection:
+        @contextmanager
+        def transaction(self) -> Iterator[None]:
+            yield
+
+        def execute(self, sql: str, params: object = ()) -> object:
+            return object()
+
+    database = object.__new__(module.PostgresHubDatabase)
+    monkeypatch.setattr(database, "open", lambda: None)
+
+    @contextmanager
+    def pool_connection() -> Iterator[Connection]:
+        yield Connection()
+
+    monkeypatch.setattr(database, "_pool_connection", pool_connection)
+    both_builds_entered = asyncio.Event()
+    entered_count = 0
+
+    async def build_impl(
+        input_ref: str,
+        opts: BuildOptions,
+        *,
+        db: object,
+        project_id: str,
+        services: object | None,
+    ) -> BuildResult:
+        nonlocal entered_count
+        entered_count += 1
+        if entered_count == 2:
+            both_builds_entered.set()
+        await both_builds_entered.wait()
+        return BuildResult(
+            task_id=input_ref,
+            created=False,
+            initial_lifecycle=project_id,
+            applied_stages_skipped=[],
+            tick_dispatched=0,
+        )
+
+    monkeypatch.setattr(build_lifecycle, "_build_impl", build_impl)
+    opts = BuildOptions(dry_run=True)
+
+    results = await asyncio.gather(
+        build_lifecycle._build_dry_run("#first", opts, db=database, project_id="first-project"),
+        build_lifecycle._build_dry_run("#second", opts, db=database, project_id="second-project"),
+    )
+
+    assert entered_count == 2
+    assert [result.dry_run for result in results] == [True, True]
 
 
 @pytest.mark.asyncio
@@ -122,6 +387,9 @@ def test_postgres_hub_database_exposes_backend_neutral_surface() -> None:
     assert list(advisory_lock.parameters) == ["self", "lock"]
     assert advisory_lock.parameters["lock"].default is inspect.Parameter.empty
 
+    after_commit = inspect.signature(module.PostgresHubDatabase.after_commit)
+    assert list(after_commit.parameters) == ["self", "callback"]
+
     for method in (
         "execute",
         "executemany",
@@ -131,6 +399,7 @@ def test_postgres_hub_database_exposes_backend_neutral_surface() -> None:
         "apply_migrations",
         "close",
         "advisory_lock",
+        "after_commit",
     ):
         assert hasattr(module.PostgresHubDatabase, method), method
 

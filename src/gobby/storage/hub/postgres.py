@@ -90,16 +90,93 @@ _BASELINE_BOOKKEEPING_TABLES: frozenset[str] = frozenset(
         "schema_migrations",
     }
 )
-_GCORE_CODE_INDEX_TABLES: frozenset[str] = frozenset(
-    {
-        "code_indexed_projects",
-        "code_indexed_files",
-        "code_symbols",
-        "code_imports",
-        "code_calls",
-        "code_content_chunks",
-    }
-)
+_GCORE_CODE_INDEX_COLUMNS: Mapping[str, frozenset[str]] = {
+    "code_indexed_projects": frozenset(
+        {
+            "id",
+            "root_path",
+            "total_files",
+            "total_symbols",
+            "last_indexed_at",
+            "index_duration_ms",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "code_indexed_files": frozenset(
+        {
+            "id",
+            "project_id",
+            "file_path",
+            "language",
+            "content_hash",
+            "symbol_count",
+            "byte_size",
+            "graph_synced",
+            "vectors_synced",
+            "graph_sync_attempted_at",
+            "vector_sync_attempted_at",
+            "indexed_at",
+        }
+    ),
+    "code_symbols": frozenset(
+        {
+            "id",
+            "project_id",
+            "file_path",
+            "name",
+            "qualified_name",
+            "kind",
+            "language",
+            "byte_start",
+            "byte_end",
+            "line_start",
+            "line_end",
+            "signature",
+            "docstring",
+            "parent_symbol_id",
+            "content_hash",
+            "summary",
+            "summary_attempted_at",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "code_imports": frozenset({"id", "project_id", "source_file", "target_module"}),
+    "code_calls": frozenset(
+        {
+            "id",
+            "project_id",
+            "caller_symbol_id",
+            "callee_symbol_id",
+            "callee_name",
+            "callee_target_kind",
+            "callee_external_module",
+            "file_path",
+            "line",
+        }
+    ),
+    "code_content_chunks": frozenset(
+        {
+            "id",
+            "project_id",
+            "file_path",
+            "chunk_index",
+            "line_start",
+            "line_end",
+            "content",
+            "language",
+            "created_at",
+        }
+    ),
+}
+_GWIKI_COLUMNS: Mapping[str, frozenset[str]] = {
+    "gwiki_documents": frozenset({"id"}),
+    "gwiki_chunks": frozenset({"id", "document_id"}),
+    "gwiki_sources": frozenset({"id"}),
+}
+_GCORE_CODE_INDEX_TABLES = frozenset(_GCORE_CODE_INDEX_COLUMNS)
+_GWIKI_TABLES = frozenset(_GWIKI_COLUMNS)
 _PG_SEARCH_MISSING_MESSAGE = (
     "pg_search extension is not present on this database. Rebuild the Docker PostgreSQL "
     "image with `gobby postgres install --mode docker`."
@@ -139,7 +216,6 @@ class PostgresHubDatabase:
                 "row_factory": dict_row,
             },
         )
-        self._state = threading.local()
         self._open_lock = threading.Lock()
         self._pool_opened = False
         self._pool_closed = False
@@ -275,31 +351,24 @@ class PostgresHubDatabase:
         initial_lock: LockTarget | None = None,
     ) -> Iterator[Transaction]:
         self.open()
-        start_len = _lock_stack_len(self._state)
-        try:
+        with self._pool_connection() as conn, conn.transaction():
+            txn = _PostgresTransaction(
+                conn,
+                is_immediate=is_immediate,
+                initial_lock=initial_lock,
+            )
             if initial_lock is not None:
-                _acquire_lock(self._state, initial_lock)
-            callbacks: list[Callable[[], Any]] = []
-            _push_after_commit_scope(self._state)
+                txn._acquire_lock_target(initial_lock)
             try:
-                with self._pool_connection() as conn, conn.transaction():
-                    txn = _PostgresTransaction(
-                        conn,
-                        is_immediate=is_immediate,
-                        state=self._state,
-                    )
-                    if initial_lock is not None:
-                        txn._acquire_lock_target(initial_lock)
-                    yield txn
-                callbacks = _pop_after_commit_scope(self._state, committed=True)
-            except Exception:
-                _pop_after_commit_scope(self._state, committed=False)
-                raise
+                yield txn
+            finally:
+                txn.closed = True
 
-            for callback in callbacks:
+        for callback in txn._after_commit_callbacks:
+            try:
                 callback()
-        finally:
-            _truncate_lock_stack(self._state, start_len)
+            except Exception:
+                logger.exception("PostgreSQL after-commit callback failed")
 
     def execute(
         self,
@@ -310,7 +379,8 @@ class PostgresHubDatabase:
         if ambient is not None:
             return ambient.execute(sql, params)
         with self.transaction() as txn:
-            return txn.execute(sql, params)
+            cursor = cast(_PostgresCursor, txn.execute(sql, params))
+            return cursor.materialize()
 
     def executemany(self, sql: str, rows: Iterable[Sequence[Any]]) -> Cursor:
         ambient = ambient_transaction(self)
@@ -318,6 +388,13 @@ class PostgresHubDatabase:
             return ambient.executemany(sql, rows)
         with self.transaction() as txn:
             return txn.executemany(sql, rows)
+
+    def after_commit(self, callback: Callable[[], None]) -> None:
+        ambient = ambient_transaction(self)
+        if ambient is None:
+            callback()
+            return
+        ambient.after_commit(callback)
 
     def fetchone(
         self,
@@ -376,6 +453,7 @@ class PostgresHubDatabase:
                     f"require backup/export and recreation under Gobby baseline {BASELINE_VERSION}."
                 )
             _require_baseline_extensions(conn)
+            _verify_adopted_table_columns(conn, state)
 
             sql = (
                 importlib.resources.files("gobby.storage")
@@ -407,11 +485,13 @@ class _PostgresTransaction:
         conn: psycopg.Connection[Any],
         *,
         is_immediate: bool = False,
-        state: threading.local | None = None,
+        initial_lock: LockTarget | None = None,
     ) -> None:
         self._conn = conn
         self.is_immediate = is_immediate
-        self._state = state if state is not None else threading.local()
+        self.closed = False
+        self._locks = [initial_lock] if initial_lock is not None else []
+        self._after_commit_callbacks: list[Callable[[], Any]] = []
 
     def execute(
         self,
@@ -440,28 +520,24 @@ class _PostgresTransaction:
         return _PostgresSavepoint(self._conn, quoted_name)
 
     def after_commit(self, callback: Callable[[], None]) -> None:
-        _after_commit(self._state, callback)
+        if self.closed:
+            callback()
+            return
+        self._after_commit_callbacks.append(callback)
 
     def acquire_additional_lock(self, lock: LockTarget) -> None:
         if not self.is_immediate:
             raise RuntimeError("additional locks require an immediate transaction")
 
-        start_len = _lock_stack_len(self._state)
-        _acquire_lock(self._state, lock)
+        _acquire_lock(self._locks, lock)
         try:
             self._acquire_lock_target(lock)
         except Exception:
-            _truncate_lock_stack(self._state, start_len)
+            self._locks.pop()
             raise
 
     def _acquire_lock_target(self, lock: LockTarget) -> None:
         if isinstance(lock, TaskSeqAllocation):
-            row = self.execute(
-                "SELECT 1 FROM projects WHERE id = %s FOR UPDATE",
-                (lock.project_id,),
-            ).fetchone()
-            if row is not None:
-                return
             self._acquire_advisory_lock(f"task_seq:{lock.project_id}")
             return
 
@@ -473,16 +549,45 @@ class _PostgresTransaction:
 
 
 class _PostgresCursor:
+    """Cursor adapter that can detach results from a checked-out connection.
+
+    Non-ambient database execution materializes rows before returning its
+    connection to the pool. The buffered cursor retains normal sequential
+    ``fetchone`` and ``fetchall`` behavior after that checkout ends.
+    """
+
     def __init__(self, cursor: Any | None, *, rowcount: int = -1) -> None:
         self._cursor = cursor
         self._rowcount = rowcount
+        self._rows: list[Row] | None = None
+        self._position = 0
+
+    def materialize(self) -> _PostgresCursor:
+        if self._cursor is None:
+            return self
+        rows = self.fetchall() if getattr(self._cursor, "description", None) is not None else []
+        self._rowcount = self.rowcount
+        self._cursor = None
+        self._rows = rows
+        self._position = 0
+        return self
 
     def fetchone(self) -> Row | None:
+        if self._rows is not None:
+            if self._position >= len(self._rows):
+                return None
+            row = self._rows[self._position]
+            self._position += 1
+            return row
         if self._cursor is None:
             return None
         return _normalize_row(cast(Row | None, self._cursor.fetchone()))
 
     def fetchall(self) -> list[Row]:
+        if self._rows is not None:
+            rows = self._rows[self._position :]
+            self._position = len(self._rows)
+            return rows
         if self._cursor is None:
             return []
         return [
@@ -560,18 +665,11 @@ def _classify_baseline_state(conn: Any) -> _BaselineState:
         if tables & _PRE_BASELINE_INFRA_TABLES:
             return "fresh_with_install_infra"
         return "fresh"
-    if (
-        not has_bookkeeping
-        and _GCORE_CODE_INDEX_TABLES.issubset(application_tables)
-        and all(
-            table in _GCORE_CODE_INDEX_TABLES or _is_gwiki_table(table)
-            for table in application_tables
-        )
-    ):
+    if not has_bookkeeping and _GCORE_CODE_INDEX_TABLES.issubset(application_tables):
         return "gcore_code_index"
     if (
         not has_bookkeeping
-        and application_tables
+        and _GWIKI_TABLES.issubset(application_tables)
         and all(_is_gwiki_table(table) for table in application_tables)
     ):
         return "gwiki_standalone"
@@ -585,24 +683,62 @@ def _baseline_statements_for_state(sql: str, state: _BaselineState) -> Iterator[
         return
 
     for statement in statements:
-        if state == "gcore_code_index" and _is_code_index_create_statement(statement):
+        if state == "gcore_code_index" and _is_code_index_table_statement(statement):
             continue
-        if _is_gwiki_create_statement(statement):
+        if _is_gwiki_table_statement(statement):
             continue
+        if _is_adopted_index_statement(statement, state):
+            statement = _add_index_if_not_exists(statement)
         yield statement
 
 
-def _is_code_index_create_statement(statement: str) -> bool:
-    return _is_create_statement_for_table(
+def _verify_adopted_table_columns(conn: Any, state: _BaselineState) -> None:
+    contract: Mapping[str, frozenset[str]]
+    if state == "gcore_code_index":
+        contract = {**_GCORE_CODE_INDEX_COLUMNS, **_GWIKI_COLUMNS}
+        required_tables = _GCORE_CODE_INDEX_TABLES
+    elif state == "gwiki_standalone":
+        contract = _GWIKI_COLUMNS
+        required_tables = _GWIKI_TABLES
+    else:
+        return
+
+    rows = conn.execute(
+        """SELECT table_name, column_name
+        FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = ANY(%s)""",
+        (list(contract),),
+    ).fetchall()
+    actual: dict[str, set[str]] = {table: set() for table in contract}
+    for row in rows:
+        table = str(_row_value(row, "table_name"))
+        actual[table].add(str(_row_value(row, "column_name", 1)))
+
+    missing = {
+        table: sorted(expected - actual[table])
+        for table, expected in contract.items()
+        if (table in required_tables or actual[table]) and expected - actual[table]
+    }
+    if missing:
+        details = "; ".join(
+            f"{table}: {', '.join(columns)}" for table, columns in sorted(missing.items())
+        )
+        raise MigrationUnsupportedError(
+            f"Cannot adopt external PostgreSQL schema; missing required columns: {details}"
+        )
+
+
+def _is_code_index_table_statement(statement: str) -> bool:
+    return _is_create_table_statement_for(
         statement, lambda table: table in _GCORE_CODE_INDEX_TABLES
     )
 
 
-def _is_gwiki_create_statement(statement: str) -> bool:
-    return _is_create_statement_for_table(statement, _is_gwiki_table)
+def _is_gwiki_table_statement(statement: str) -> bool:
+    return _is_create_table_statement_for(statement, _is_gwiki_table)
 
 
-def _is_create_statement_for_table(
+def _is_create_table_statement_for(
     statement: str,
     table_matches: Callable[[str], bool],
 ) -> bool:
@@ -615,6 +751,11 @@ def _is_create_statement_for_table(
     if table_match:
         return table_matches(table_match.group(1))
 
+    return False
+
+
+def _is_adopted_index_statement(statement: str, state: _BaselineState) -> bool:
+    text = statement.strip()
     index_match = re.match(
         r"CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?"
         r"\"?[A-Za-z_][A-Za-z0-9_]*\"?"
@@ -623,9 +764,22 @@ def _is_create_statement_for_table(
         re.IGNORECASE,
     )
     if index_match:
-        return table_matches(index_match.group(1))
+        table = index_match.group(1)
+        return _is_gwiki_table(table) or (
+            state == "gcore_code_index" and table in _GCORE_CODE_INDEX_TABLES
+        )
 
     return False
+
+
+def _add_index_if_not_exists(statement: str) -> str:
+    return re.sub(
+        r"^(\s*CREATE\s+(?:UNIQUE\s+)?INDEX\s+)",
+        r"\1IF NOT EXISTS ",
+        statement,
+        count=1,
+        flags=re.IGNORECASE,
+    )
 
 
 def _is_gwiki_table(table: str) -> bool:
@@ -811,28 +965,7 @@ def _advisory_lock_keys(lock: LockTarget) -> tuple[str, ...]:
     return (f"{lock_type.__module__}.{lock_type.__qualname__}:{lock}",)
 
 
-def _lock_stack(state: threading.local) -> list[LockTarget]:
-    stack = getattr(state, "lock_stack", None)
-    if stack is None:
-        stack = []
-        state.lock_stack = stack
-    return cast(list[LockTarget], stack)
-
-
-def _lock_stack_len(state: threading.local) -> int:
-    stack = getattr(state, "lock_stack", None)
-    if stack is None:
-        return 0
-    return len(cast(list[LockTarget], stack))
-
-
-def _truncate_lock_stack(state: threading.local, length: int) -> None:
-    stack = _lock_stack(state)
-    del stack[length:]
-
-
-def _acquire_lock(state: threading.local, lock: LockTarget) -> None:
-    stack = _lock_stack(state)
+def _acquire_lock(stack: list[LockTarget], lock: LockTarget) -> None:
     if stack:
         current = stack[-1]
         if lock.PRIORITY <= current.PRIORITY:
@@ -841,43 +974,3 @@ def _acquire_lock(state: threading.local, lock: LockTarget) -> None:
                 f"{current.PRIORITY} ({current}) -> {lock.PRIORITY} ({lock})"
             )
     stack.append(lock)
-
-
-def _after_commit(state: threading.local, callback: Callable[[], Any]) -> None:
-    stack = getattr(state, "after_commit_stack", None)
-    if not stack:
-        callback()
-        return
-    cast(list[list[Callable[[], Any]]], stack)[-1].append(callback)
-
-
-def _push_after_commit_scope(state: threading.local) -> None:
-    stack = cast(
-        list[list[Callable[[], Any]]] | None,
-        getattr(state, "after_commit_stack", None),
-    )
-    if stack is None:
-        stack = []
-        state.after_commit_stack = stack
-    stack.append([])
-
-
-def _pop_after_commit_scope(
-    state: threading.local,
-    *,
-    committed: bool,
-) -> list[Callable[[], Any]]:
-    stack = cast(
-        list[list[Callable[[], Any]]] | None,
-        getattr(state, "after_commit_stack", None),
-    )
-    if not stack:
-        return []
-
-    callbacks = stack.pop()
-    if committed and stack:
-        stack[-1].extend(callbacks)
-        callbacks = []
-    if not stack:
-        state.after_commit_stack = []
-    return callbacks

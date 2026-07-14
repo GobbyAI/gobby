@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextvars import Context
 from dataclasses import dataclass
 from typing import Any
 
@@ -68,6 +69,7 @@ def schedule_dispatcher_tick_for_project(
             services=dispatcher_services,
         ),
         name=f"gobby-dispatcher-tick-{reason}",
+        context=Context(),
     )
     return True
 
