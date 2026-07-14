@@ -2087,14 +2087,21 @@ class TestCodexTranscriptParser:
         msgs = parser.extract_last_messages(turns, num_pairs=5)
         assert len(msgs) == 2
 
-    def test_extract_last_messages_developer_mapped(self, parser) -> None:
+    def test_extract_last_messages_filters_instruction_dumps(self, parser) -> None:
         turns = [
             json.loads(self._msg("developer", "System instructions")),
+            json.loads(self._msg("system", "System instructions")),
+            json.loads(self._msg("user", "<user_instructions>synthetic dump</user_instructions>")),
+            json.loads(self._msg("user", "AGENTS.md instructions for /tmp/project\n\n# Rules")),
             json.loads(self._msg("user", "hello")),
+            json.loads(self._msg("assistant", "answer")),
         ]
         msgs = parser.extract_last_messages(turns, num_pairs=5)
         assert len(msgs) == 2
-        assert msgs[0]["role"] == "system"
+        assert msgs == [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "answer"},
+        ]
 
     def test_extract_last_messages_empty(self, parser) -> None:
         assert parser.extract_last_messages([], num_pairs=2) == []
@@ -2218,6 +2225,8 @@ class TestCodexTranscriptParser:
         assert msg.usage.input_tokens == 451
         assert msg.usage.cache_read_tokens == 25_984
         assert msg.usage.output_tokens == 10
+        assert msg.content_type == "usage"
+        assert render_transcript([msg]) == []
 
 
 class TestQwenTranscriptParser:
