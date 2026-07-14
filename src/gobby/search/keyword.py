@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
@@ -253,7 +252,7 @@ class KeywordAsyncSearchBackend:
             return []
         fitted_ids = set(fitted_id_values)
         try:
-            hits = [
+            return [
                 (hit.id, hit.score)
                 for hit in self._backend.search(
                     query,
@@ -264,10 +263,7 @@ class KeywordAsyncSearchBackend:
             ]
         except Exception:
             logger.debug("Keyword backend search failed; using fitted item fallback", exc_info=True)
-            hits = []
-        if hits:
-            return hits
-        return _search_fitted_items(query, fitted_items, top_k)
+            return _search_fitted_items(query, fitted_items, top_k)
 
     def needs_refit(self) -> bool:
         return self._needs_refit
@@ -316,7 +312,7 @@ def _search_fitted_items(
 
 
 def _tokenize(value: str) -> list[str]:
-    return re.findall(r"[a-z0-9]+", value.lower())
+    return sanitize_pg_search_query(value.casefold()).split()
 
 
 def fetch_all(hub: Any, sql: str, params: Sequence[Any]) -> list[Any]:

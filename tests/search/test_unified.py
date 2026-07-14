@@ -545,7 +545,7 @@ class TestKeywordAsyncSearchBackend:
         def blocking_search(*_args: object, **_kwargs: object) -> list[SearchHit]:
             search_started.set()
             assert release_search.wait(timeout=1)
-            return []
+            raise RuntimeError("backend unavailable")
 
         backend._backend.search = blocking_search
 
@@ -592,6 +592,40 @@ class TestKeywordAsyncSearchBackend:
             10,
             allowed_ids=("inside",),
         )
+
+    async def test_successful_empty_database_search_does_not_use_fitted_fallback(self) -> None:
+        backend = KeywordAsyncSearchBackend(SimpleNamespace(dialect="postgres"), "skills")
+        backend._backend.search = MagicMock(return_value=[])
+        await backend.fit_async([("inside", "shared query")])
+
+        with patch(
+            "gobby.search.keyword._search_fitted_items",
+            side_effect=AssertionError("fallback must only run after backend errors"),
+        ):
+            results = await backend.search_async("shared query", top_k=10)
+
+        assert results == []
+
+    @pytest.mark.parametrize(
+        ("query", "content"),
+        [
+            ("你好", "你好 世界"),
+            ("привет", "ПРИВЕТ мир"),
+            ("café", "CAFÉ menu"),
+        ],
+    )
+    async def test_backend_error_fallback_tokenizes_unicode(
+        self,
+        query: str,
+        content: str,
+    ) -> None:
+        backend = KeywordAsyncSearchBackend(SimpleNamespace(dialect="postgres"), "skills")
+        backend._backend.search = MagicMock(side_effect=RuntimeError("backend unavailable"))
+        await backend.fit_async([("match", content), ("other", "unrelated")])
+
+        results = await backend.search_async(query, top_k=10)
+
+        assert results == [("match", 1.0)]
 
     @pytest.mark.asyncio
     async def test_empty_fit_returns_no_results_without_querying_database(self) -> None:
