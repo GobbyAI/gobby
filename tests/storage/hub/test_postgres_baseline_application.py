@@ -70,6 +70,19 @@ class _ClassifyConnection:
             "gcore_code_index",
         ),
         (
+            {
+                "code_indexed_projects",
+                "code_indexed_files",
+                "code_symbols",
+                "code_imports",
+                "code_calls",
+                "code_content_chunks",
+                "code_index_future_table",
+            },
+            set(),
+            "gcore_code_index",
+        ),
+        (
             {"gwiki_documents", "gwiki_chunks", "gwiki_sources"},
             set(),
             "gwiki_standalone",
@@ -121,10 +134,18 @@ class _ApplyConnection:
         *,
         pg_search_present: bool = True,
         pgcrypto_present: bool = True,
+        columns: dict[str, set[str]] | None = None,
     ) -> None:
         self.state = state
         self.pg_search_present = pg_search_present
         self.pgcrypto_present = pgcrypto_present
+        module = _postgres_module()
+        contracts = {**module._GCORE_CODE_INDEX_COLUMNS, **module._GWIKI_COLUMNS}
+        self.columns = (
+            {table: set(expected) for table, expected in contracts.items()}
+            if columns is None
+            else columns
+        )
         self.statements: list[str] = []
         self.transaction_entered = False
         self.transaction_exited = False
@@ -145,6 +166,15 @@ class _ApplyConnection:
             return _Result([(1,)] if self.pg_search_present else [])
         if "pg_extension" in sql and extension == "pgcrypto":
             return _Result([(1,)] if self.pgcrypto_present else [])
+        if "information_schema.columns" in sql:
+            requested_tables = params[0]
+            return _Result(
+                [
+                    (table, column)
+                    for table in requested_tables
+                    for column in sorted(self.columns.get(table, set()))
+                ]
+            )
         return _Result()
 
 
@@ -552,12 +582,18 @@ def test_apply_postgres_baseline_adopts_gcore_code_index_state(monkeypatch) -> N
     stripped = [statement.strip() for statement in locked.statements]
     assert "CREATE TABLE tasks(id INTEGER)" in stripped
     assert "CREATE TABLE code_symbols(id TEXT PRIMARY KEY)" not in stripped
-    assert "CREATE INDEX idx_cs_project ON code_symbols(project_id)" not in stripped
+    assert "CREATE INDEX IF NOT EXISTS idx_cs_project ON code_symbols(project_id)" in stripped
     assert "CREATE TABLE gwiki_documents(id TEXT PRIMARY KEY)" not in stripped
     assert "CREATE TABLE gwiki_chunks(id TEXT PRIMARY KEY, document_id TEXT)" not in stripped
-    assert "CREATE INDEX idx_gwiki_chunks_document ON gwiki_chunks(document_id)" not in stripped
+    assert (
+        "CREATE INDEX IF NOT EXISTS idx_gwiki_chunks_document ON gwiki_chunks(document_id)"
+        in stripped
+    )
     assert "CREATE TABLE gwiki_sources(id TEXT PRIMARY KEY)" not in stripped
-    assert not any("code_symbols_search_bm25" in statement for statement in locked.statements)
+    assert any(
+        statement.lstrip().startswith("CREATE INDEX IF NOT EXISTS code_symbols_search_bm25")
+        for statement in locked.statements
+    )
     assert any("INSERT INTO schema_migrations" in statement for statement in locked.statements)
     assert resources.read_count == 1
 
@@ -577,11 +613,37 @@ def test_apply_postgres_baseline_adopts_gwiki_standalone_state(monkeypatch) -> N
     stripped = [statement.strip() for statement in locked.statements]
     assert "CREATE TABLE gwiki_documents(id TEXT PRIMARY KEY)" not in stripped
     assert "CREATE TABLE gwiki_chunks(id TEXT PRIMARY KEY, document_id TEXT)" not in stripped
-    assert "CREATE INDEX idx_gwiki_chunks_document ON gwiki_chunks(document_id)" not in stripped
+    assert (
+        "CREATE INDEX IF NOT EXISTS idx_gwiki_chunks_document ON gwiki_chunks(document_id)"
+        in stripped
+    )
     assert "CREATE TABLE gwiki_sources(id TEXT PRIMARY KEY)" not in stripped
     assert "CREATE TABLE tasks(id INTEGER)" in stripped
     assert any("INSERT INTO schema_migrations" in statement for statement in locked.statements)
     assert resources.read_count == 1
+
+
+def test_apply_postgres_baseline_rejects_adopted_schema_with_missing_columns(
+    monkeypatch,
+) -> None:
+    module = _postgres_module()
+    fast = _ApplyConnection("gcore_code_index")
+    contracts = {**module._GCORE_CODE_INDEX_COLUMNS, **module._GWIKI_COLUMNS}
+    columns = {table: set(expected) for table, expected in contracts.items()}
+    columns["code_symbols"].remove("summary")
+    locked = _ApplyConnection("gcore_code_index", columns=columns)
+
+    monkeypatch.setattr(module, "_classify_baseline_state", lambda conn: conn.state)
+    monkeypatch.setattr(module.importlib, "resources", _GcoreAdoptionResources())
+    db = _new_db(module, _Pool(fast, locked))
+
+    with pytest.raises(
+        MigrationUnsupportedError,
+        match=r"code_symbols: summary",
+    ):
+        db._apply_postgres_baseline()
+
+    assert not any("INSERT INTO schema_migrations" in statement for statement in locked.statements)
 
 
 def test_apply_postgres_baseline_rejects_missing_pg_search_without_extension_ddl(

@@ -37,6 +37,9 @@ def enter_transaction(
     adapter_id = id(adapter)
     current = dict(_AMBIENT.get() or {})
     existing = current.get(adapter_id)
+    if existing is not None and getattr(existing, "closed", False):
+        current.pop(adapter_id)
+        existing = None
     if existing is not None:
         if immediate and not existing.is_immediate:
             raise RuntimeError("transaction_immediate() inside a non-immediate transaction()")
@@ -58,4 +61,7 @@ def ambient_transaction(adapter: object) -> Transaction | None:
     current = _AMBIENT.get()
     if current is None:
         return None
-    return current.get(id(adapter))
+    transaction = current.get(id(adapter))
+    if transaction is not None and getattr(transaction, "closed", False):
+        return None
+    return transaction

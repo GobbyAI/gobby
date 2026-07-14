@@ -7,6 +7,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
+from gobby.storage.hub._ambient import ambient_transaction
+from gobby.storage.hub.protocol import TaskLifecycleMutation
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
@@ -59,6 +61,53 @@ def test_append_description_section_is_idempotent_for_same_heading_and_body(
     assert second["appended"] is False
     assert updated.description.count("## Agent Selection") == 1
     assert "Defaulted to backend-developer" in updated.description
+
+
+def test_append_description_section_notifies_after_committed_state_is_visible(
+    temp_db,
+    sample_project,
+) -> None:
+    task_manager, registry = _registry(temp_db)
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Committed listener state",
+        description="Existing description.",
+    )
+    observed: list[tuple[object | None, str | None]] = []
+
+    def listener() -> None:
+        observed.append(
+            (
+                ambient_transaction(temp_db),
+                task_manager.get_task(task.id).description,
+            )
+        )
+
+    task_manager.add_change_listener(listener)
+
+    result = registry.get_tool("append_description_section")(
+        task_id=task.id,
+        heading="Committed",
+        body="Visible to listeners.",
+    )
+
+    assert result["appended"] is True
+    assert observed == [(None, "Existing description.\n\n## Committed\nVisible to listeners.\n")]
+
+
+def test_after_commit_listener_is_discarded_when_transaction_rolls_back(
+    temp_db,
+) -> None:
+    task_manager = LocalTaskManager(temp_db)
+    listener_calls: list[bool] = []
+    task_manager.add_change_listener(lambda: listener_calls.append(True))
+
+    with pytest.raises(RuntimeError, match="roll back"):
+        with temp_db.transaction_immediate(TaskLifecycleMutation(task_id="rollback-test")):
+            task_manager._notify_listeners()
+            raise RuntimeError("roll back")
+
+    assert listener_calls == []
 
 
 def test_artifact_tools_mutate_and_fetch_artifacts(temp_db, sample_project) -> None:

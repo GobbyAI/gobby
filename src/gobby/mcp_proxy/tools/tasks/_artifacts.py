@@ -257,7 +257,7 @@ def create_ops_artifact_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 """,
                 (next_description, utc_now(), resolved_id),
             )
-            ctx.task_manager._notify_listeners()
+        ctx.task_manager._notify_listeners()
         return {"ok": True, "task_id": resolved_id, "appended": True}
 
     registry.register(
