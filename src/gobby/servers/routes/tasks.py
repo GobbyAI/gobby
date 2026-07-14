@@ -269,6 +269,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         router,
         server,
         resolve_task=_resolve_task,
+        resolve_session_ref=_resolve_session_ref,
         broadcast_task=_broadcast_task,
         stage_view=_stage_view,
     )

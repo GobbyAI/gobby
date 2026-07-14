@@ -126,6 +126,7 @@ def register_task_stage_routes(
     server: HTTPServer,
     *,
     resolve_task: Callable[..., Task],
+    resolve_session_ref: Callable[[str, str | None], str],
     broadcast_task: Callable[[str, dict[str, Any]], Awaitable[None]],
     stage_view: Callable[[StageState], dict[str, Any]],
 ) -> None:
@@ -159,20 +160,32 @@ def register_task_stage_routes(
         try:
             task = resolve_task(task_id)
             manager = server.task_manager.stage_states
-            request_session_id = request.headers.get("x-gobby-session-id")
+            session_ref = request.headers.get("x-gobby-session-id")
+            request_session_id = (
+                resolve_session_ref(session_ref, task.project_id) if session_ref else None
+            )
             if request_data.action == "start":
                 stage_row = manager.start_stage(
-                    task.id, stage_name, by_session_id=None, notes=request_data.notes
+                    task.id,
+                    stage_name,
+                    by_session_id=request_session_id,
+                    notes=request_data.notes,
                 )
                 event = "stage_changed"
             elif request_data.action == "submit_for_review":
                 stage_row = manager.submit_for_review(
-                    task.id, stage_name, by_session_id=None, notes=request_data.notes
+                    task.id,
+                    stage_name,
+                    by_session_id=request_session_id,
+                    notes=request_data.notes,
                 )
                 event = "stage_changed"
             elif request_data.action == "approve_review":
                 stage_row = manager.approve_review(
-                    task.id, stage_name, by_session_id=None, notes=request_data.notes
+                    task.id,
+                    stage_name,
+                    by_session_id=request_session_id,
+                    notes=request_data.notes,
                 )
                 event = "stage_changed"
             elif request_data.action == "reject_review":
@@ -182,7 +195,7 @@ def register_task_stage_routes(
                     task.id,
                     stage_name,
                     reason=request_data.reason,
-                    by_session_id=None,
+                    by_session_id=request_session_id,
                     notes=request_data.notes,
                 )
                 event = "stage_changed"
@@ -190,7 +203,7 @@ def register_task_stage_routes(
                 stage_row = manager.complete_stage(
                     task.id,
                     stage_name,
-                    by_session_id=None,
+                    by_session_id=request_session_id,
                     commit_sha=request_data.commit_sha,
                     artifact_updates=request_data.artifact_updates,
                     validation_override_reason=request_data.validation_override_reason,
@@ -204,14 +217,14 @@ def register_task_stage_routes(
                     stage_name,
                     reason=request_data.reason,
                     needs_human=request_data.needs_human,
-                    by_session_id=None,
+                    by_session_id=request_session_id,
                 )
                 event = "stage_changed"
             elif request_data.action == "move_to":
                 stage_row = manager.move_to_stage(
                     task.id,
                     stage_name,
-                    by_session_id=request_session_id if request_data.force else None,
+                    by_session_id=request_session_id,
                     notes=request_data.notes,
                     force=request_data.force,
                 )
@@ -233,11 +246,11 @@ def register_task_stage_routes(
                 stage_row = manager.add_stage(
                     task.id,
                     StageManifestSpec(stage_name=stage_name, position=request_data.position),
-                    by_session_id=None,
+                    by_session_id=request_session_id,
                 )
                 event = "stage_manifest_changed"
             else:
-                manager.remove_stage(task.id, stage_name, by_session_id=None)
+                manager.remove_stage(task.id, stage_name, by_session_id=request_session_id)
                 stage_row = None
                 event = "stage_manifest_changed"
 
