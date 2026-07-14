@@ -12,6 +12,14 @@ SkillSourceType = Literal["local", "github", "url", "zip", "filesystem", "hub"]
 SkillScope = Literal["installed", "project"]
 
 
+@dataclass(frozen=True, slots=True)
+class SkillUsageStats:
+    """Aggregated session usage for a skill name."""
+
+    loads: int
+    last_used: datetime
+
+
 @normalize_datetime_model(required=("created_at", "updated_at"), optional=("deleted_at",))
 @dataclass
 class Skill:

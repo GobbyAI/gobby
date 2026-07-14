@@ -3,6 +3,7 @@
 import asyncio
 import threading
 from collections.abc import Callable, Iterator
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13,6 +14,7 @@ from gobby.mcp_proxy.tools.skills._context import SkillsContext
 from gobby.mcp_proxy.tools.skills.list_skills import register as register_list_skills
 from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 from gobby.storage.skills import LocalSkillManager
 
 pytestmark = [pytest.mark.integration]
@@ -75,6 +77,54 @@ class TestListSkillsTool:
         assert result["success"] is True
         assert result["count"] == 3
         assert len(result["skills"]) == 3
+
+    @pytest.mark.asyncio
+    async def test_list_skills_returns_session_usage_stats(self, populated_db: HubDatabase) -> None:
+        """Aggregate session loads and last-used timestamps by skill name."""
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+
+        session_manager = SessionManager(populated_db)
+        first_session = session_manager.register(
+            external_id="usage-stats-first",
+            machine_id="test-machine",
+            source="codex",
+            project_id=None,
+        )
+        second_session = session_manager.register(
+            external_id="usage-stats-second",
+            machine_id="test-machine",
+            source="codex",
+            project_id=None,
+        )
+        first_used = datetime(2026, 7, 1, 12, tzinfo=UTC)
+        last_used = datetime(2026, 7, 2, 15, 30, tzinfo=UTC)
+        with populated_db.transaction() as conn:
+            conn.execute(
+                "INSERT INTO session_skills (session_id, skill_name, created_at) "
+                "VALUES (%s, %s, %s)",
+                (first_session.id, "git-commit", first_used),
+            )
+            conn.execute(
+                "INSERT INTO session_skills (session_id, skill_name, created_at) "
+                "VALUES (%s, %s, %s)",
+                (second_session.id, "git-commit", last_used),
+            )
+            conn.execute(
+                "INSERT INTO session_skills (session_id, skill_name, created_at) "
+                "VALUES (%s, %s, %s)",
+                (first_session.id, "code-review", first_used),
+            )
+
+        registry = create_skills_registry(populated_db)
+        result = await registry.get_tool("list_skills")()
+        skills = {skill["name"]: skill for skill in result["skills"]}
+
+        assert skills["git-commit"]["loads"] == 2
+        assert skills["git-commit"]["last_used"] == last_used.isoformat()
+        assert skills["code-review"]["loads"] == 1
+        assert skills["code-review"]["last_used"] == first_used.isoformat()
+        assert skills["disabled-skill"]["loads"] == 0
+        assert skills["disabled-skill"]["last_used"] is None
 
     @pytest.mark.asyncio
     async def test_repeated_list_skills_keeps_postgres_connections_bounded(

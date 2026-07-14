@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 import threading
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -15,6 +16,7 @@ from typing import Any
 
 from gobby.config.voice import VoiceConfig
 from gobby.voice._warnings import suppress_perth_pkg_resources_warning
+from gobby.voice.load_guard import ModelLoadGuard, default_tts_load_guard_path
 from gobby.voice.tts import BaseTTSProvider, TTSProviderCapabilities, _module_is_available
 
 logger = logging.getLogger(__name__)
@@ -170,6 +172,9 @@ class ChatterboxTurboProvider(BaseTTSProvider):
         self._reference_audio = Path(config.tts_reference_audio).expanduser()
         self._conditioning_ready = False
         self._runtime_primed = False
+        self._inflight_load: asyncio.Future[Any] | None = None
+        self._mps_used = False
+        self._load_guard = ModelLoadGuard(default_tts_load_guard_path())
 
     def _availability(self) -> tuple[bool, str]:
         reference_error = _reference_availability_error(self._reference_audio)
@@ -212,13 +217,25 @@ class ChatterboxTurboProvider(BaseTTSProvider):
 
     async def unload(self) -> None:
         """Release the model after active loading and synthesis complete."""
+        inflight = self._inflight_load
+        if inflight is not None and not inflight.done():
+            # A cancelled warmup releases _load_lock while the load thread is
+            # still initializing MPS; wait for the actual thread to finish
+            # before touching the allocator (incident #18196 SIGSEGV).
+            await asyncio.wait([inflight])
+        if inflight is not None and inflight.done() and not inflight.cancelled():
+            inflight.exception()  # consume, avoid never-retrieved warning
+        self._inflight_load = None
         async with self._load_lock:
             async with self._synthesis_lock:
+                had_model = self._model is not None
                 self._model = None
                 self._token_cap_decoder = None
                 self._token_cap_inference = None
                 self._conditioning_ready = False
                 self._runtime_primed = False
+        if had_model or self._mps_used:
+            await asyncio.to_thread(self._release_mps_cache)
 
     def _prepare_reference_conditioning(self, model: Any) -> None:
         _prepare_turbo_conditionals(
@@ -253,9 +270,17 @@ class ChatterboxTurboProvider(BaseTTSProvider):
     ) -> Any:
         with self._inference_lock:
             token_cap_enabled = self._install_token_cap(model)
+            if not token_cap_enabled:
+                # Fail closed: the token cap is the only bound on MPS
+                # generation memory; unbounded generation is incident
+                # #18196's failure class.
+                raise RuntimeError(
+                    "Chatterbox inference API drift: generation token cap could not "
+                    "be installed; synthesis disabled for memory safety — update "
+                    "gobby's chatterbox pin"
+                )
             token_cap = max_generation_tokens or self._config.tts_chatterbox_max_generation_tokens
-            if token_cap_enabled:
-                self._active_token_cap = token_cap
+            self._active_token_cap = token_cap
             try:
                 return model.generate(
                     text,
@@ -295,6 +320,59 @@ class ChatterboxTurboProvider(BaseTTSProvider):
         self._token_cap_inference = _capped_inference_turbo
         return True
 
+    def _apply_mps_memory_cap(self) -> None:
+        """Cap MPS unified-memory use before the first allocator touch (fail-open).
+
+        Uncapped, torch MPS can balloon far past physical RAM on unified
+        memory. The absolute limit converts to an allocator fraction of
+        Metal's recommended working set; breaching it raises a torch OOM
+        instead of OOM-crashing the host.
+        """
+        try:
+            import torch
+
+            mps = getattr(torch, "mps", None)
+            if mps is None or not hasattr(mps, "set_per_process_memory_fraction"):
+                return
+            recommended = getattr(mps, "recommended_max_memory", None)
+            if not callable(recommended):
+                return
+            total = float(recommended())
+            if total <= 0:
+                return
+            limit_bytes = self._config.tts_mps_memory_limit_gb * 1024**3
+            fraction = min(1.0, limit_bytes / total)
+            mps.set_per_process_memory_fraction(fraction)
+            logger.info(
+                "MPS memory cap applied: %.1fGB (fraction %.3f of recommended max)",
+                self._config.tts_mps_memory_limit_gb,
+                fraction,
+            )
+        except Exception:
+            logger.warning("Failed to apply MPS memory cap", exc_info=True)
+
+    def _release_mps_cache(self) -> None:
+        """Release cached MPS memory after a real unload.
+
+        Never the first MPS touch: empty_cache() bootstraps the entire MPS
+        allocator when nothing was loaded — the exact native-crash surface
+        from incident #18196 — so this only runs when this provider actually
+        used MPS and torch is already imported.
+        """
+        if not self._mps_used or "torch" not in sys.modules:
+            return
+        try:
+            import gc
+
+            import torch
+
+            gc.collect()
+            mps = getattr(torch, "mps", None)
+            if mps is not None and hasattr(mps, "empty_cache"):
+                mps.empty_cache()
+        except Exception:
+            logger.debug("MPS cache release skipped", exc_info=True)
+
     def _prime_synthesis_runtime(self, model: Any) -> None:
         self._generate_with_token_cap(
             model,
@@ -318,8 +396,15 @@ class ChatterboxTurboProvider(BaseTTSProvider):
                 configured_device = self._config.tts_device
                 logger.info(f"Loading Chatterbox Turbo model (device={configured_device})")
 
+                guard_reason = self._load_guard.check()
+                if guard_reason is not None:
+                    raise RuntimeError(guard_reason)
+
                 def _load() -> Any:
                     device = _auto_device() if configured_device == "auto" else configured_device
+                    if device == "mps":
+                        self._mps_used = True
+                        self._apply_mps_memory_cap()
                     with suppress_perth_pkg_resources_warning():
                         from chatterbox.tts_turbo import ChatterboxTurboTTS
 
@@ -328,7 +413,20 @@ class ChatterboxTurboProvider(BaseTTSProvider):
                         self._install_token_cap(model)
                     return model
 
-                self._model = await asyncio.to_thread(_load)
+                # A native torch/MPS crash kills the process mid-load; the
+                # fsynced marker (cleared only on success) is what survives.
+                self._load_guard.record_attempt()
+                # run_in_executor (not to_thread): the returned future survives
+                # caller cancellation, so unload() can await true thread
+                # completion instead of racing a detached load thread.
+                loop = asyncio.get_running_loop()
+                self._inflight_load = loop.run_in_executor(None, _load)
+                try:
+                    self._model = await self._inflight_load
+                finally:
+                    if self._inflight_load is not None and self._inflight_load.done():
+                        self._inflight_load = None
+                self._load_guard.record_success()
                 assert self._model is not None  # just loaded above
                 self._sample_rate = self._model.sr
                 logger.info("Chatterbox Turbo model loaded successfully")

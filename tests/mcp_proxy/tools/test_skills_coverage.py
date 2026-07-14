@@ -69,10 +69,11 @@ def _create_registry(db: Any, project_id: str | None = None, hub_manager: Any | 
         patch("gobby.mcp_proxy.tools.skills.SkillUpdater") as MockUpdater,
         patch("gobby.mcp_proxy.tools.skills.SkillLoader") as MockLoader,
         patch("gobby.mcp_proxy.tools.skills.SessionManager") as MockSM,
-        patch("gobby.mcp_proxy.tools.skills.SkillChangeNotifier") as MockNotifier,
+        patch("gobby.mcp_proxy.tools.skills.get_skill_change_notifier") as MockGetNotifier,
     ):
         mock_storage = MagicMock()
         mock_storage.list_skills.return_value = []
+        mock_storage.get_skill_usage_stats.return_value = {}
         MockStorage.return_value = mock_storage
 
         mock_search = MagicMock()
@@ -89,7 +90,7 @@ def _create_registry(db: Any, project_id: str | None = None, hub_manager: Any | 
         MockSM.return_value = mock_sm
 
         mock_notifier = MagicMock()
-        MockNotifier.return_value = mock_notifier
+        MockGetNotifier.return_value = mock_notifier
 
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
