@@ -1,4 +1,4 @@
-import { useId } from 'react'
+import { useId, useState } from 'react'
 import {
   CHECKBOX_LABEL_CLS,
   COMMON_CLS,
@@ -213,18 +213,23 @@ export function CommonFields({
   onChange: StepChangeHandler
 }) {
   const approval = step.approval as Record<string, unknown> | undefined
+  const conditionId = useId()
+  const toolsId = useId()
+  const conditionValue = stripTemplateWrapper((step.condition as string) ?? '')
+  const toolsValue = Array.isArray(step.tools) ? (step.tools as string[]).join(', ') : ''
 
   return (
     <div className={COMMON_CLS}>
-      <label className={FIELD_CLS}>
+      <label className={FIELD_CLS} htmlFor={conditionId}>
         <span className={FIELD_LABEL_CLS}>Condition</span>
-        <input
-          type="text"
-          className={FIELD_INPUT_CLS}
-          value={stripTemplateWrapper((step.condition as string) ?? '')}
-          onChange={(e) => {
-            const val = e.target.value.trim()
-            onChange({ condition: val ? wrapTemplateExpr(val) : undefined })
+        <DraftTextInput
+          key={conditionValue}
+          id={conditionId}
+          value={conditionValue}
+          onCommit={(draft) => {
+            const value = draft.trim()
+            onChange({ condition: value ? wrapTemplateExpr(value) : undefined })
+            return value
           }}
           placeholder="e.g. inputs.mode == 'deploy'"
         />
@@ -242,22 +247,19 @@ export function CommonFields({
       </label>
 
       {type === 'prompt' && (
-        <label className={FIELD_CLS}>
+        <label className={FIELD_CLS} htmlFor={toolsId}>
           <span className={FIELD_LABEL_CLS}>Tools</span>
-          <input
-            type="text"
-            className={FIELD_INPUT_CLS}
-            value={Array.isArray(step.tools) ? (step.tools as string[]).join(', ') : ''}
-            onChange={(e) => {
-              const val = e.target.value.trim()
-              onChange({
-                tools: val
-                  ? val
-                    .split(',')
-                    .map((item) => item.trim())
-                    .filter(Boolean)
-                  : undefined,
-              })
+          <DraftTextInput
+            key={toolsValue}
+            id={toolsId}
+            value={toolsValue}
+            onCommit={(draft) => {
+              const tools = draft
+                .split(',')
+                .map((item) => item.trim())
+                .filter(Boolean)
+              onChange({ tools: tools.length > 0 ? tools : undefined })
+              return tools.join(', ')
             }}
             placeholder="Comma-separated tool list"
           />
@@ -313,7 +315,41 @@ export function CommonFields({
   )
 }
 
-function KeyValueEditor({
+function DraftTextInput({
+  id,
+  value,
+  onCommit,
+  placeholder,
+}: {
+  id: string
+  value: string
+  onCommit: (draft: string) => string
+  placeholder: string
+}) {
+  const [draft, setDraft] = useState(value)
+
+  return (
+    <input
+      id={id}
+      type="text"
+      className={FIELD_INPUT_CLS}
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={() => setDraft(onCommit(draft))}
+      placeholder={placeholder}
+    />
+  )
+}
+
+function KeyValueEditor(props: {
+  sectionName: string
+  pairs: KVPair[]
+  onChange: (pairs: KVPair[]) => void
+}) {
+  return <KeyValueDraftEditor key={JSON.stringify(props.pairs)} {...props} />
+}
+
+function KeyValueDraftEditor({
   sectionName,
   pairs,
   onChange,
@@ -322,9 +358,11 @@ function KeyValueEditor({
   pairs: KVPair[]
   onChange: (pairs: KVPair[]) => void
 }) {
+  const [draftPairs, setDraftPairs] = useState(pairs)
+
   return (
     <div className={KV_CLS}>
-      {pairs.map((pair, index) => (
+      {draftPairs.map((pair, index) => (
         <div key={index} className={KV_ROW_CLS}>
           <input
             type="text"
@@ -332,10 +370,11 @@ function KeyValueEditor({
             value={pair.key}
             aria-label={`${sectionName} key ${index + 1}`}
             onChange={(e) => {
-              const next = [...pairs]
+              const next = [...draftPairs]
               next[index] = { ...next[index], key: e.target.value }
-              onChange(next)
+              setDraftPairs(next)
             }}
+            onBlur={() => onChange(draftPairs)}
             placeholder="key"
           />
           <input
@@ -344,16 +383,21 @@ function KeyValueEditor({
             value={pair.value}
             aria-label={`${sectionName} value ${index + 1}`}
             onChange={(e) => {
-              const next = [...pairs]
+              const next = [...draftPairs]
               next[index] = { ...next[index], value: e.target.value }
-              onChange(next)
+              setDraftPairs(next)
             }}
+            onBlur={() => onChange(draftPairs)}
             placeholder="value"
           />
           <button
             type="button"
             className={KV_REMOVE_CLS}
-            onClick={() => onChange(pairs.filter((_, pairIndex) => pairIndex !== index))}
+            onClick={() => {
+              const next = draftPairs.filter((_, pairIndex) => pairIndex !== index)
+              setDraftPairs(next)
+              onChange(next)
+            }}
             aria-label={`Remove ${sectionName} row ${index + 1}`}
           >
             &times;
@@ -363,7 +407,7 @@ function KeyValueEditor({
       <button
         type="button"
         className={KV_ADD_CLS}
-        onClick={() => onChange([...pairs, { key: '', value: '' }])}
+        onClick={() => setDraftPairs([...draftPairs, { key: '', value: '' }])}
         aria-label={`Add ${sectionName} row`}
       >
         + Add
