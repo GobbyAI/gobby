@@ -6,7 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from gobby.config.validation_detection import (
     clear_project_validation_detection,
@@ -46,10 +46,10 @@ class ProjectUpdate(BaseModel):
 class GitHubTriageConfigUpdate(BaseModel):
     """Request body for project GitHub triage config."""
 
-    enabled: bool | None = None
-    webhook_enabled: bool | None = None
-    repositories: list[str] | None = None
-    reconcile_interval_seconds: int | None = None
+    enabled: bool = False
+    webhook_enabled: bool = False
+    repositories: list[str] = Field(default_factory=list)
+    reconcile_interval_seconds: int = 3600
     webhook_secret_ref: str | None = None
 
 
