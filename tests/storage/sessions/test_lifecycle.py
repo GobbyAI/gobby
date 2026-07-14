@@ -343,6 +343,10 @@ class TestSessionManagerLifecycle:
         assert updated is not None
         assert updated.parent_session_id == parent.id
 
+        cleared = session_manager.update_parent_session_id(session.id, None)
+        assert cleared is not None
+        assert cleared.parent_session_id is None
+
     def test_update_parent_session_id_ignores_self_parent(
         self,
         session_manager: SessionManager,
@@ -451,6 +455,36 @@ class TestSessionManagerLifecycle:
         assert updated.status == "paused"
         assert updated.title == "New Title"
         assert updated.git_branch == "feature/branch"
+
+    def test_update_clears_nullable_metadata(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        session = session_manager.register(
+            external_id="clear-metadata",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            title="Temporary title",
+            transcript_path="/tmp/transcript.jsonl",
+            git_branch="feature/temporary",
+            title_source="manual",
+        )
+
+        updated = session_manager.update(
+            session.id,
+            title=None,
+            title_source=None,
+            transcript_path=None,
+            git_branch=None,
+        )
+
+        assert updated is not None
+        assert updated.title is None
+        assert updated.title_source is None
+        assert updated.transcript_path is None
+        assert updated.git_branch is None
 
     def test_update_single_field(
         self,

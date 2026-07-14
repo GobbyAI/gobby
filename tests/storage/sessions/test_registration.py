@@ -176,8 +176,8 @@ def test_update_existing_session_binds_is_local_as_booleans_for_postgres() -> No
 
     params = conn.calls[0][1]
 
-    assert params[8:11] == (True, True, True)
-    assert all(type(value) is bool for value in params[8:11])
+    assert params[13:16] == (True, True, True)
+    assert all(type(value) is bool for value in params[13:16])
 
 
 def test_update_existing_session_preserve_is_local_uses_boolean_guard_param() -> None:
@@ -203,9 +203,9 @@ def test_update_existing_session_preserve_is_local_uses_boolean_guard_param() ->
 
     params = conn.calls[0][1]
 
-    assert params[8:11] == (False, False, None)
-    assert type(params[8]) is bool
-    assert type(params[9]) is bool
+    assert params[13:16] == (False, False, None)
+    assert type(params[13]) is bool
+    assert type(params[14]) is bool
 
 
 def test_update_existing_session_ignores_invalid_terminal_context_json() -> None:
@@ -232,7 +232,7 @@ def test_update_existing_session_ignores_invalid_terminal_context_json() -> None
 
     params = conn.calls[0][1]
 
-    assert params[5:7] == (None, None)
+    assert params[10:12] == (None, None)
 
 
 def test_update_existing_session_merges_terminal_context_in_sql() -> None:
@@ -260,8 +260,8 @@ def test_update_existing_session_merges_terminal_context_in_sql() -> None:
     sql, params = conn.calls[0]
 
     assert "COALESCE(terminal_context, '{}'::jsonb) || %s::jsonb" in sql
-    assert json.loads(str(params[5])) == {"cwd": "/work/gobby"}
-    assert params[5] == params[6]
+    assert json.loads(str(params[10])) == {"cwd": "/work/gobby"}
+    assert params[10] == params[11]
 
 
 class TestSessionManagerRegistration:
@@ -735,17 +735,24 @@ class TestSessionManagerRegistration:
         assert updated.id == child.id
         assert updated.parent_session_id == parent.id
 
-    def test_register_existing_session_ignores_parent_chain_cycle(
+    def test_register_existing_session_clears_parent_rejected_as_cycle(
         self,
         session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
-        """Re-registration must ignore a parent update that would create a cycle."""
+        """A rejected cyclic parent must clear stale parent attribution."""
+        ancestor = session_manager.register(
+            external_id="cycle-ancestor",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+        )
         root = session_manager.register(
             external_id="cycle-root",
             machine_id="machine-1",
             source="codex",
             project_id=sample_project["id"],
+            parent_session_id=ancestor.id,
         )
         child = session_manager.register(
             external_id="cycle-child",
@@ -986,3 +993,29 @@ class TestSessionManagerRegistration:
         assert session2.git_branch == "feature/new"
         assert session2.parent_session_id == parent.id
         assert session2.status == "active"  # Status reset to active
+
+        preserved = session_manager.register(
+            external_id="update-meta",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        assert preserved.title == "Updated Title"
+        assert preserved.transcript_path == "/new/path.jsonl"
+        assert preserved.git_branch == "feature/new"
+        assert preserved.parent_session_id == parent.id
+
+        cleared = session_manager.register(
+            external_id="update-meta",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            title=None,
+            transcript_path=None,
+            git_branch=None,
+            parent_session_id=None,
+        )
+        assert cleared.title is None
+        assert cleared.transcript_path is None
+        assert cleared.git_branch is None
+        assert cleared.parent_session_id is None

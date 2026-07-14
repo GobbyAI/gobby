@@ -23,6 +23,7 @@ from ._constants import SYSTEM_SESSION_ID, ensure_system_session, get_logger
 from ._identity_crud import _SessionIdentityCRUDMixin
 from ._lineage_guard import repair_self_parent_session, sanitize_parent_session_id
 from ._title_defaults import PROVISIONAL_TITLE_SOURCE, format_provisional_session_title
+from ._update_sentinel import UNSET, UnsetType, is_set
 from ._upsert import is_session_unique_conflict, update_existing_session
 
 
@@ -50,6 +51,8 @@ class _SessionCRUDHost(Protocol):
 
     def get(self, session_id: str) -> Session | None: ...
 
+    def _notify_session_change(self, event: str, session_id: str) -> None: ...
+
     def move_to_project(self, session_id: str, project_id: str) -> Session | None: ...
 
     def register(
@@ -58,10 +61,10 @@ class _SessionCRUDHost(Protocol):
         machine_id: str,
         source: str,
         project_id: str | None,
-        title: str | None = None,
-        transcript_path: str | None = None,
-        git_branch: str | None = None,
-        parent_session_id: str | None = None,
+        title: str | None | UnsetType = UNSET,
+        transcript_path: str | None | UnsetType = UNSET,
+        git_branch: str | None | UnsetType = UNSET,
+        parent_session_id: str | None | UnsetType = UNSET,
         agent_depth: int = 0,
         spawned_by_agent_id: str | None = None,
         terminal_context: dict[str, Any] | None = None,
@@ -70,7 +73,7 @@ class _SessionCRUDHost(Protocol):
         is_local: bool = False,
         sandbox_enabled: bool | None = None,
         sandbox_policy_hash: str | None = None,
-        title_source: str | None = None,
+        title_source: str | None | UnsetType = UNSET,
     ) -> Session: ...
 
 
@@ -81,10 +84,10 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
         machine_id: str,
         source: str,
         project_id: str | None,
-        title: str | None = None,
-        transcript_path: str | None = None,
-        git_branch: str | None = None,
-        parent_session_id: str | None = None,
+        title: str | None | UnsetType = UNSET,
+        transcript_path: str | None | UnsetType = UNSET,
+        git_branch: str | None | UnsetType = UNSET,
+        parent_session_id: str | None | UnsetType = UNSET,
         agent_depth: int = 0,
         spawned_by_agent_id: str | None = None,
         terminal_context: dict[str, Any] | None = None,
@@ -93,7 +96,7 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
         is_local: bool = False,
         sandbox_enabled: bool | None = None,
         sandbox_policy_hash: str | None = None,
-        title_source: str | None = None,
+        title_source: str | None | UnsetType = UNSET,
     ) -> Session:
         """
         Register a new session or return existing one.
@@ -107,11 +110,11 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
             machine_id: Machine identifier
             source: CLI source (claude, qwen, codex, droid)
             project_id: Project ID (None if project context unavailable)
-            title: Optional session title
+            title: Session title; omit to preserve an existing value, or pass None to clear
             title_source: Optional provenance for an explicit session title
-            transcript_path: Path to transcript file
-            git_branch: Git branch name
-            parent_session_id: Parent session for handoff
+            transcript_path: Transcript path; omit to preserve, or pass None to clear
+            git_branch: Git branch; omit to preserve, or pass None to clear
+            parent_session_id: Parent session; omit to preserve, or pass None to clear
             agent_depth: Nesting depth (0 = human-initiated, 1+ = agent-spawned)
             spawned_by_agent_id: ID of the agent that spawned this session
 
@@ -130,11 +133,15 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                 exc_info=True,
             )
 
-        if title_source is not None and title_source not in self._VALID_TITLE_SOURCES:
+        if (
+            is_set(title_source)
+            and title_source is not None
+            and title_source not in self._VALID_TITLE_SOURCES
+        ):
             sources = ", ".join(sorted(self._VALID_TITLE_SOURCES))
             raise ValueError(f"Invalid title_source {title_source!r}. Must be one of: {sources}")
 
-        if parent_session_id == SYSTEM_SESSION_ID:
+        if is_set(parent_session_id) and parent_session_id == SYSTEM_SESSION_ID:
             ensure_system_session(self.db)
 
         registration_lock = SessionRegistration(
@@ -176,10 +183,10 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
 
             if existing:
                 registration_title = title
-                registration_title_source = title_source if title is not None else None
+                registration_title_source = title_source
                 existing_seq_num = existing.seq_num
                 if (
-                    title is None
+                    not is_set(title)
                     and existing_seq_num is not None
                     and not str(existing.title or "").strip()
                 ):
@@ -190,15 +197,20 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                     registration_title_source = PROVISIONAL_TITLE_SOURCE
                 if existing.parent_session_id == existing.id:
                     repair_self_parent_session(conn, session_id=existing.id, now=now)
-                registration_parent_session_id = (
-                    None if parent_session_id == existing.id else parent_session_id
-                )
-                sanitized_parent_session_id = sanitize_parent_session_id(
-                    conn,
-                    child_session_id=existing.id,
-                    parent_session_id=registration_parent_session_id,
-                    context="session registration",
-                )
+                registration_parent_session_id = parent_session_id
+                if is_set(parent_session_id) and parent_session_id == existing.id:
+                    registration_parent_session_id = None
+                if is_set(registration_parent_session_id):
+                    sanitized_parent_session_id: str | None | UnsetType = (
+                        sanitize_parent_session_id(
+                            conn,
+                            child_session_id=existing.id,
+                            parent_session_id=registration_parent_session_id,
+                            context="session registration",
+                        )
+                    )
+                else:
+                    sanitized_parent_session_id = UNSET
                 session = update_existing_session(
                     self,
                     conn,
@@ -224,7 +236,7 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                 sanitized_parent_session_id = sanitize_parent_session_id(
                     conn,
                     child_session_id=session_id,
-                    parent_session_id=parent_session_id,
+                    parent_session_id=parent_session_id if is_set(parent_session_id) else None,
                     context="session registration",
                 )
                 conn.acquire_additional_lock(SessionSeqMutation(project_id=storage_project_id))
@@ -240,8 +252,8 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                 )
 
                 try:
-                    insert_title = title
-                    insert_title_source = title_source if title is not None else None
+                    insert_title = title if is_set(title) else None
+                    insert_title_source = title_source if is_set(title_source) else None
                     if insert_title is None:
                         insert_title = format_provisional_session_title(next_seq_num, source)
                         insert_title_source = PROVISIONAL_TITLE_SOURCE
@@ -265,8 +277,8 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                             storage_project_id,
                             insert_title,
                             insert_title_source,
-                            transcript_path,
-                            git_branch,
+                            transcript_path if is_set(transcript_path) else None,
+                            git_branch if is_set(git_branch) else None,
                             sanitized_parent_session_id,
                             agent_depth,
                             spawned_by_agent_id,
@@ -311,17 +323,20 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                     )
                     if conflicting.parent_session_id == conflicting.id:
                         repair_self_parent_session(conn, session_id=conflicting.id, now=now)
-                    sanitized_parent_session_id = sanitize_parent_session_id(
-                        conn,
-                        child_session_id=conflicting.id,
-                        parent_session_id=parent_session_id,
-                        context="session registration",
-                    )
+                    if is_set(parent_session_id):
+                        sanitized_parent_session_id = sanitize_parent_session_id(
+                            conn,
+                            child_session_id=conflicting.id,
+                            parent_session_id=parent_session_id,
+                            context="session registration",
+                        )
+                    else:
+                        sanitized_parent_session_id = UNSET
                     registration_title = title
-                    registration_title_source = title_source if title is not None else None
+                    registration_title_source = title_source
                     conflicting_seq_num = conflicting.seq_num
                     if (
-                        title is None
+                        not is_set(title)
                         and conflicting_seq_num is not None
                         and not str(conflicting.title or "").strip()
                     ):

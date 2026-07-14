@@ -352,9 +352,9 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
             )
 
     def update_parent_session_id(
-        self: _ManagerState, session_id: str, parent_session_id: str
+        self: _ManagerState, session_id: str, parent_session_id: str | None
     ) -> Session | None:
-        """Update parent session ID."""
+        """Update the parent session ID, using None to clear it."""
         if parent_session_id == SYSTEM_SESSION_ID:
             ensure_system_session(self.db)
         now = utc_now()
@@ -367,7 +367,6 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
             )
             if sanitized_parent_session_id is None:
                 repair_self_parent_session(conn, session_id=session_id, now=now)
-                return self.get(session_id)
 
             conn.execute(
                 "UPDATE sessions SET parent_session_id = %s, updated_at = %s WHERE id = %s",

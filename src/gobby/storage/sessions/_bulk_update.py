@@ -9,6 +9,7 @@ from gobby.storage.session_models import Session
 from gobby.utils.datetime import utc_now
 
 from ._constants import validate_session_status_transition
+from ._update_sentinel import UNSET, UnsetType, is_set
 from ._upsert import is_session_unique_conflict
 
 if TYPE_CHECKING:
@@ -36,11 +37,11 @@ class _BulkUpdateMixin:
         model: str | None = None,
         chat_mode: str | None = None,
         session_type: str | None = None,
-        transcript_path: str | None = None,
+        transcript_path: str | None | UnsetType = UNSET,
         status: str | None = None,
-        title: str | None = None,
-        title_source: str | None = None,
-        git_branch: str | None = None,
+        title: str | None | UnsetType = UNSET,
+        title_source: str | None | UnsetType = UNSET,
+        git_branch: str | None | UnsetType = UNSET,
         terminal_context: dict[str, Any] | None = None,
         project_id: str | None = None,
         sandbox_enabled: bool | None = None,
@@ -56,11 +57,11 @@ class _BulkUpdateMixin:
             model: New model identifier (optional)
             chat_mode: New chat mode (optional)
             session_type: New session type (optional)
-            transcript_path: New transcript path (optional)
+            transcript_path: New transcript path; None clears it
             status: New status (optional)
-            title: New title (optional)
-            title_source: New title provenance (optional)
-            git_branch: New git branch (optional)
+            title: New title; None clears it
+            title_source: New title provenance; None clears it
+            git_branch: New git branch; None clears it
             terminal_context: New terminal context (optional)
             project_id: New project ID (optional)
             sandbox_enabled: Whether the session runtime is sandboxed (optional)
@@ -90,20 +91,20 @@ class _BulkUpdateMixin:
                     f"Invalid session_type {session_type!r}. Must be one of: {', '.join(sorted(self._VALID_SESSION_TYPES))}"
                 )
             values["session_type"] = session_type
-        if transcript_path is not None:
+        if is_set(transcript_path):
             values["transcript_path"] = transcript_path
         if status is not None:
             validate_session_status_transition(current.status if current else None, status)
             values["status"] = status
-        if title is not None:
+        if is_set(title):
             values["title"] = title
-        if title_source is not None:
-            if title_source not in self._VALID_TITLE_SOURCES:
+        if is_set(title_source):
+            if title_source is not None and title_source not in self._VALID_TITLE_SOURCES:
                 raise ValueError(
                     f"Invalid title_source {title_source!r}. Must be one of: {', '.join(sorted(self._VALID_TITLE_SOURCES))}"
                 )
             values["title_source"] = title_source
-        if git_branch is not None:
+        if is_set(git_branch):
             values["git_branch"] = git_branch
         if terminal_context is not None:
             values["terminal_context"] = json.dumps(terminal_context)

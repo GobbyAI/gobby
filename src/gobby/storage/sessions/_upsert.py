@@ -10,6 +10,8 @@ from typing import Protocol
 from gobby.storage.session_models import Session
 from gobby.terminal_context import parse_terminal_context_value
 
+from ._update_sentinel import UnsetType, is_set
+
 
 class _SessionGetter(Protocol):
     def get(self, session_id: str) -> Session | None: ...
@@ -36,11 +38,11 @@ def update_existing_session(
     conn: _TransactionConnection,
     existing: Session,
     *,
-    title: str | None,
-    title_source: str | None,
-    transcript_path: str | None,
-    git_branch: str | None,
-    parent_session_id: str | None,
+    title: str | None | UnsetType,
+    title_source: str | None | UnsetType,
+    transcript_path: str | None | UnsetType,
+    git_branch: str | None | UnsetType,
+    parent_session_id: str | None | UnsetType,
     terminal_context_json: str | None,
     workflow_name: str | None,
     is_local: bool | None,
@@ -60,11 +62,11 @@ def update_existing_session(
     conn.execute(
         """
         UPDATE sessions SET
-            title = COALESCE(%s, title),
-            title_source = COALESCE(%s, title_source),
-            transcript_path = COALESCE(%s, transcript_path),
-            git_branch = COALESCE(%s, git_branch),
-            parent_session_id = COALESCE(%s, parent_session_id),
+            title = CASE WHEN %s THEN %s ELSE title END,
+            title_source = CASE WHEN %s THEN %s ELSE title_source END,
+            transcript_path = CASE WHEN %s THEN %s ELSE transcript_path END,
+            git_branch = CASE WHEN %s THEN %s ELSE git_branch END,
+            parent_session_id = CASE WHEN %s THEN %s ELSE parent_session_id END,
             terminal_context = CASE
                 WHEN %s::jsonb IS NULL THEN terminal_context
                 ELSE COALESCE(terminal_context, '{}'::jsonb) || %s::jsonb
@@ -89,11 +91,16 @@ def update_existing_session(
         WHERE id = %s
         """,
         (
-            title,
-            title_source,
-            transcript_path,
-            git_branch,
-            parent_session_id,
+            is_set(title),
+            title if is_set(title) else None,
+            is_set(title_source),
+            title_source if is_set(title_source) else None,
+            is_set(transcript_path),
+            transcript_path if is_set(transcript_path) else None,
+            is_set(git_branch),
+            git_branch if is_set(git_branch) else None,
+            is_set(parent_session_id),
+            parent_session_id if is_set(parent_session_id) else None,
             terminal_context_update_json,
             terminal_context_update_json,
             workflow_name,
