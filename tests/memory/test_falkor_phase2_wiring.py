@@ -169,11 +169,14 @@ def test_runner_memory_stack_uses_canonical_falkordb_enablement_and_kwargs() -> 
     assert "neo4j_auth" not in kwargs
 
 
-def test_runner_memory_stack_fails_fast_when_embedding_config_incomplete() -> None:
-    """Incomplete embedding config leaves vector and memory services uninitialized."""
+def test_runner_memory_stack_degrades_embeddings_when_config_incomplete(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Incomplete embedding config leaves non-vector memory services available."""
     runner = SimpleNamespace(
         config=SimpleNamespace(
             memory=MemoryConfig(),
+            knowledge_graph_queue=SimpleNamespace(max_deterministic_attempts=3),
             embeddings=SimpleNamespace(
                 dim=768,
                 model="nomic-embed-text",
@@ -199,10 +202,16 @@ def test_runner_memory_stack_fails_fast_when_embedding_config_incomplete() -> No
     with (
         patch("gobby.runner_init.services.VectorStore") as vector_store_cls,
         patch("gobby.runner_init.services.MemoryManager") as memory_manager_cls,
+        patch("gobby.runner_init.services.EmbeddingService") as embedding_service_cls,
+        patch("gobby.runner_init.services.is_falkordb_enabled", return_value=False),
     ):
+        embedding_service_cls.return_value.is_configured.return_value = False
         services._init_memory_stack(runner)
 
-    vector_store_cls.assert_not_called()
-    memory_manager_cls.assert_not_called()
-    assert runner.vector_store is None
-    assert runner.memory_manager is None
+    vector_store_cls.assert_called_once()
+    memory_manager_cls.assert_called_once()
+    assert memory_manager_cls.call_args.kwargs["embed_fn"] is None
+    assert runner.vector_store is vector_store_cls.return_value
+    assert runner.memory_manager is memory_manager_cls.return_value
+    assert "Memory embeddings disabled" in caplog.text
+    assert "Embedding configuration is incomplete" in caplog.text

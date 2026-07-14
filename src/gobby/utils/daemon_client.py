@@ -25,12 +25,13 @@ Example:
 
 import logging
 import threading
+from enum import StrEnum
 from typing import Any, ClassVar, cast
 
 import httpx
 
 from gobby.shutdown_intent import ShutdownIntent, read_active_shutdown_intent
-from gobby.utils.daemon_url import validate_daemon_url
+from gobby.utils.daemon_url import daemon_url, validate_daemon_url
 from gobby.utils.local_token import daemon_auth_headers
 
 PLANNED_RESTART_MARKER_MAX_AGE_SECONDS = 120.0
@@ -42,6 +43,12 @@ DAEMON_AUTH_REMEDIATION = (
 
 class DaemonAuthenticationError(RuntimeError):
     """Raised when the daemon rejects the install-scoped bearer token."""
+
+
+class DaemonHealthError(StrEnum):
+    """Typed daemon health failures that callers need to classify."""
+
+    NOT_RUNNING = "Daemon is not running"
 
 
 class DaemonClient:
@@ -71,7 +78,7 @@ class DaemonClient:
     def __init__(
         self,
         host: str = "localhost",
-        port: int = 60887,
+        port: int | None = None,
         timeout: float = 5.0,
         logger: logging.Logger | None = None,
         *,
@@ -82,26 +89,21 @@ class DaemonClient:
 
         Args:
             host: Daemon host address
-            port: Daemon port number
+            port: Daemon port number. Defaults to the resolved daemon configuration.
             timeout: HTTP request timeout in seconds
             logger: Optional logger instance (creates one if not provided)
             url: Fully resolved daemon base URL. Overrides host/port when provided.
         """
-        self.url = (
-            validate_daemon_url(url, source="daemon client URL")
-            if url is not None
-            else f"http://{host}:{port}"
-        )
+        if url is not None:
+            self.url = validate_daemon_url(url, source="daemon client URL")
+        elif port is None:
+            self.url = daemon_url()
+        else:
+            self.url = f"http://{host}:{port}"
         self.timeout = timeout
         self.logger = logger or logging.getLogger(__name__)
         self._auth_headers = daemon_auth_headers()
 
-        # Health status cache (thread-safe)
-        self._cache_lock = threading.Lock()
-        self._cached_is_ready: bool | None = None
-        self._cached_message: str | None = None
-        self._cached_status: str | None = None
-        self._cached_error: str | None = None
         self._health_log_lock = threading.Lock()
         self._health_failed_since_last_success = False
 
@@ -123,7 +125,7 @@ class DaemonClient:
         Returns:
             Tuple of (is_healthy, error_reason) where:
             - is_healthy: True if daemon is healthy, False otherwise
-            - error_reason: None if healthy, otherwise error description
+            - error_reason: None if healthy, otherwise a typed failure or error description
         """
         try:
             response = httpx.get(
@@ -144,23 +146,20 @@ class DaemonClient:
                 self._mark_health_failed()
                 self.logger.warning(f"Daemon health check failed: status {response.status_code}")
                 return False, error_reason
-        except Exception as e:
-            error_msg = str(e)
+        except httpx.ConnectError as e:
             self._mark_health_failed()
-            # Check if it's a connection refused (daemon not running)
-            if "refused" in error_msg.lower() or "connection" in error_msg.lower():
-                restart_source = self._planned_restart_source()
-                if restart_source:
-                    self.logger.debug(
-                        f"Daemon not running during planned restart ({restart_source}): {e}"
-                    )
-                else:
-                    self.logger.warning(f"Daemon not running: {e}")
-                return False, None  # None means daemon not running
+            restart_source = self._planned_restart_source()
+            if restart_source:
+                self.logger.debug(
+                    f"Daemon not running during planned restart ({restart_source}): {e}"
+                )
             else:
-                # Other errors (timeout, DNS, etc.)
-                self.logger.warning(f"Daemon health check error: {e}")
-                return False, error_msg
+                self.logger.warning(f"Daemon not running: {e}")
+            return False, DaemonHealthError.NOT_RUNNING
+        except httpx.HTTPError as e:
+            self._mark_health_failed()
+            self.logger.warning(f"Daemon health check error: {e}")
+            return False, str(e)
 
     def _log_health_success(self) -> None:
         with self._health_log_lock:
@@ -193,8 +192,8 @@ class DaemonClient:
         is_healthy, health_error = self.check_health()
 
         if not is_healthy:
-            if health_error is None:
-                return False, "Daemon is not running", "not_running", None
+            if health_error is DaemonHealthError.NOT_RUNNING:
+                return False, str(health_error), "not_running", str(health_error)
             else:
                 return False, f"Cannot access daemon: {health_error}", "cannot_access", health_error
 
@@ -228,11 +227,20 @@ class DaemonClient:
             Response object (httpx.Response)
         """
         url = f"{self.url}{endpoint}"
-        timeout_val = timeout or self.timeout
+        timeout_val = self.timeout if timeout is None else timeout
 
         try:
             if method.upper() == "GET":
-                response = httpx.get(url, headers=self._auth_headers, timeout=timeout_val)
+                if json_data is None:
+                    response = httpx.get(url, headers=self._auth_headers, timeout=timeout_val)
+                else:
+                    response = httpx.request(
+                        "GET",
+                        url,
+                        json=json_data,
+                        headers=self._auth_headers,
+                        timeout=timeout_val,
+                    )
             elif method.upper() == "POST":
                 response = httpx.post(
                     url, json=json_data, headers=self._auth_headers, timeout=timeout_val
@@ -242,7 +250,16 @@ class DaemonClient:
                     url, json=json_data, headers=self._auth_headers, timeout=timeout_val
                 )
             elif method.upper() == "DELETE":
-                response = httpx.delete(url, headers=self._auth_headers, timeout=timeout_val)
+                if json_data is None:
+                    response = httpx.delete(url, headers=self._auth_headers, timeout=timeout_val)
+                else:
+                    response = httpx.request(
+                        "DELETE",
+                        url,
+                        json=json_data,
+                        headers=self._auth_headers,
+                        timeout=timeout_val,
+                    )
             else:
                 raise ValueError(f"Unsupported HTTP method: {method}")
 
@@ -284,33 +301,3 @@ class DaemonClient:
         )
         response.raise_for_status()
         return cast(dict[str, Any], response.json())
-
-    def update_status_cache(self) -> None:
-        """Update cached daemon status by calling check_status()."""
-        with self._cache_lock:
-            (
-                self._cached_is_ready,
-                self._cached_message,
-                self._cached_status,
-                self._cached_error,
-            ) = self.check_status()
-
-            self.logger.debug(
-                f"Daemon status updated: {self.DAEMON_STATUS_TEXT.get(self._cached_status, 'Unknown')}"
-            )
-
-    def get_cached_status(self) -> tuple[bool | None, str | None, str | None, str | None]:
-        """
-        Get cached daemon status without making HTTP calls.
-
-        Returns:
-            Tuple of (is_ready, message, status, error_reason)
-            Values may be None if status hasn't been checked yet.
-        """
-        with self._cache_lock:
-            return (
-                self._cached_is_ready,
-                self._cached_message,
-                self._cached_status,
-                self._cached_error,
-            )

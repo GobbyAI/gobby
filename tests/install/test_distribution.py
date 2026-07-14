@@ -8,14 +8,27 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.install.bin_freshness_inspector import _probe_binary_version
 from gobby.install.distribution import (
     HomebrewDistributionError,
+    _probe_helper_version,
     is_homebrew_distribution,
     verify_homebrew_managed_bins,
 )
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 
 pytestmark = pytest.mark.unit
+
+
+def test_install_and_freshness_probes_parse_decorated_version_identically(
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "ghook"
+    binary.write_text("#!/bin/sh\nprintf '%s\\n' 'ghook 0.4.5 (build abc)'\n", encoding="utf-8")
+    binary.chmod(0o755)
+
+    assert _probe_helper_version(str(binary)) == "0.4.5"
+    assert _probe_binary_version(binary) == "0.4.5"
 
 
 def test_homebrew_distribution_detects_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -46,7 +59,9 @@ def test_homebrew_helper_detection_fails_with_brew_guidance_when_missing(
 
 def test_homebrew_helper_detection_fails_with_brew_guidance_when_stale(tmp_path: Path) -> None:
     def fake_which(name: str) -> str:
-        return f"/opt/homebrew/bin/{name}"
+        path = tmp_path / name
+        path.touch()
+        return str(path)
 
     def fake_run(args: Sequence[str], **_kwargs: object) -> MagicMock:
         binary = str(args[0]).rsplit("/", maxsplit=1)[-1]
@@ -64,8 +79,7 @@ def test_homebrew_helper_detection_fails_with_brew_guidance_when_stale(tmp_path:
     message = str(exc_info.value)
     gcode_pin = MANAGED_BIN_VERSION_PINS["gcode"]
     assert (
-        f"gcode >= {gcode_pin} required; gcode 0.1.0 at /opt/homebrew/bin/gcode is too old."
-        in message
+        f"gcode >= {gcode_pin} required; gcode 0.1.0 at {tmp_path / 'gcode'} is too old." in message
     )
     assert "brew install GobbyAI/tap/gobby-code" in message
     assert "brew upgrade GobbyAI/tap/gobby-code" in message
@@ -107,7 +121,9 @@ def test_homebrew_helper_detection_accepts_valid_local_helpers_before_stale_path
 
 def test_homebrew_helper_detection_accepts_pinned_versions(tmp_path: Path) -> None:
     def fake_which(name: str) -> str:
-        return f"/opt/homebrew/bin/{name}"
+        path = tmp_path / name
+        path.touch()
+        return str(path)
 
     def fake_run(args: Sequence[str], **_kwargs: object) -> MagicMock:
         binary = str(args[0]).rsplit("/", maxsplit=1)[-1]

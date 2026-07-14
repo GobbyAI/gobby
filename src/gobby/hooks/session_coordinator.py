@@ -401,7 +401,7 @@ class SessionCoordinator:
                         """
                         SELECT content FROM inter_session_messages
                         WHERE from_session = %s
-                        ORDER BY created_at DESC
+                        ORDER BY sent_at DESC
                         LIMIT 1
                         """,
                         (session.id,),

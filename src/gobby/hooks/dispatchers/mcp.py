@@ -484,7 +484,7 @@ def dispatch_mcp_calls(
             proxy = _get_proxy()
             session_manager = proxy.session_manager if proxy else None
 
-            tokens = resolve_and_seed_contexts(
+            tokens = await resolve_and_seed_contexts(
                 session_ref=_sid or None,
                 session_manager=session_manager,
                 project_ref=_project_id,

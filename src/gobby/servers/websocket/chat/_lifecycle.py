@@ -94,7 +94,13 @@ class ChatLifecycleMixin:
             self,
             db_session_id: str,
             event_type: HookEventType,
+            *,
+            pending_message_ids: list[str] | None = None,
         ) -> str | None: ...
+
+        def _mark_pending_messages_delivered(
+            self, message_ids: list[str], db_session_id: str
+        ) -> None: ...
 
         async def _cancel_active_chat(self, conversation_id: str) -> None: ...
 
@@ -262,7 +268,12 @@ class ChatLifecycleMixin:
                     merged_context = handler_context
 
             # --- Inter-session message piggyback (parity with CLI path D6) ---
-            msg_context = self._inject_pending_messages(db_session_id, event_type)
+            pending_message_ids: list[str] = []
+            msg_context = self._inject_pending_messages(
+                db_session_id,
+                event_type,
+                pending_message_ids=pending_message_ids,
+            )
             if msg_context:
                 if merged_context:
                     merged_context = merged_context + "\n\n" + msg_context
@@ -310,6 +321,8 @@ class ChatLifecycleMixin:
 
             # --- Non-blocking webhook dispatch (parity with hook_manager.py:442-446) ---
             await self._dispatch_non_blocking_webhooks(event)
+
+            self._mark_pending_messages_delivered(pending_message_ids, db_session_id)
 
             return result
         except Exception as e:

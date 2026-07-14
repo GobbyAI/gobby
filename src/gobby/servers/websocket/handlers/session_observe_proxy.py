@@ -361,7 +361,12 @@ async def handle_send_to_cli_session(
                 # Mark as delivered
                 if inter_msg_manager and msg_id:
                     try:
-                        await run_db(mixin, inter_msg_manager.mark_delivered, msg_id)
+                        await run_db(
+                            mixin,
+                            inter_msg_manager.mark_delivered,
+                            msg_id,
+                            session_id,
+                        )
                     except Exception as e:
                         logger.warning(f"Failed to mark message {msg_id} as delivered: {e}")
         except Exception as e:

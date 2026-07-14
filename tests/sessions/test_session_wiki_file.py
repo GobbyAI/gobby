@@ -12,6 +12,15 @@ from gobby.sessions import session_wiki_file as swf
 
 pytestmark = pytest.mark.unit
 
+VALID_SUMMARY = """## Current State
+
+The session completed substantive implementation work and verified the focused behavior.
+
+## Next Steps
+
+Commit the validated changes and complete the configured task lifecycle transition.
+"""
+
 
 def _session(**overrides: object) -> SimpleNamespace:
     defaults: dict[str, object] = {
@@ -70,7 +79,7 @@ def test_write_session_wiki_page_writes_redacted_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("gobby.sessions.session_wiki_file.get_gobby_home", lambda: tmp_path)
-    summary = "## Current State\nShipped the fix. Leaked sk-ABCDEFGHIJKLMNOPQRSTUV here."
+    summary = VALID_SUMMARY + "\nLeaked sk-ABCDEFGHIJKLMNOPQRSTUV here."
 
     result = swf.write_session_wiki_page(_session(), summary)
 
@@ -99,7 +108,7 @@ def test_write_session_wiki_page_reports_write_failure(
     monkeypatch.setattr("gobby.sessions.session_wiki_file.get_gobby_home", lambda: tmp_path)
     monkeypatch.setattr(swf, "_write_file", lambda _path, _content: False)
 
-    result = swf.write_session_wiki_page(_session(), "## Current State\nwork")
+    result = swf.write_session_wiki_page(_session(), VALID_SUMMARY)
 
     assert result["written"] is False
     assert result["skipped"] == "write_failed"
@@ -109,7 +118,7 @@ def test_write_session_wiki_page_skips_subagent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("gobby.sessions.session_wiki_file.get_gobby_home", lambda: tmp_path)
-    result = swf.write_session_wiki_page(_session(agent_depth=1), "## Current State\nwork")
+    result = swf.write_session_wiki_page(_session(agent_depth=1), VALID_SUMMARY)
     assert result == {"written": False, "skipped": "subagent"}
 
 
@@ -118,7 +127,7 @@ def test_write_session_wiki_page_skips_ephemeral_source(
     source: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("gobby.sessions.session_wiki_file.get_gobby_home", lambda: tmp_path)
-    result = swf.write_session_wiki_page(_session(source=source), "## Current State\nwork")
+    result = swf.write_session_wiki_page(_session(source=source), VALID_SUMMARY)
     assert result == {"written": False, "skipped": f"ephemeral_source:{source}"}
 
 
@@ -128,7 +137,7 @@ def test_session_wiki_path_exists_tracks_file(
     monkeypatch.setattr("gobby.sessions.session_wiki_file.get_gobby_home", lambda: tmp_path)
     session = _session()
     assert swf.session_wiki_path_exists(session) is False  # missing → restore needed
-    swf.write_session_wiki_page(session, "## Current State\nwork")
+    swf.write_session_wiki_page(session, VALID_SUMMARY)
     assert swf.session_wiki_path_exists(session) is True
 
 

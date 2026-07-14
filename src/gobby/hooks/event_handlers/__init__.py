@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from gobby.config.tasks import WorkflowConfig
     from gobby.hooks.session_coordinator import SessionCoordinator
     from gobby.hooks.skill_manager import HookSkillManager
+    from gobby.sessions.liveness_monitor import SessionLivenessMonitor
     from gobby.storage.session_tasks import SessionTaskManager
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
@@ -106,6 +107,7 @@ class EventHandlers(
             )
         manager = session_manager if session_manager is not None else session_storage
         self._session_manager = manager
+        self._liveness_monitor: SessionLivenessMonitor | None = None
         self._workflow_handler = workflow_handler
         self._session_task_manager = session_task_manager
         self._message_processor = message_processor
@@ -159,6 +161,10 @@ class EventHandlers(
             HookEventType.ELICITATION: self.handle_elicitation,
             HookEventType.ELICITATION_RESULT: self.handle_elicitation_result,
         }
+
+    def set_liveness_monitor(self, monitor: SessionLivenessMonitor | None) -> None:
+        """Connect the daemon's session liveness monitor to lifecycle hooks."""
+        self._liveness_monitor = monitor
 
     def get_handler(
         self, event_type: HookEventType | str

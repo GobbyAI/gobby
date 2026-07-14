@@ -118,20 +118,15 @@ def register_lifecycle_routes(
 
             moved_ids: list[str] = []
             errors = []
-            with server.session_manager.db.transaction():
-                for sid in session_ids:
-                    try:
-                        session = server.session_manager.get(sid)
-                        if session is None:
-                            errors.append(f"Session {sid} not found")
-                            continue
-                        server.session_manager.db.execute(
-                            "UPDATE sessions SET project_id = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
-                            (target_project_id, sid),
-                        )
-                        moved_ids.append(sid)
-                    except Exception as e:
-                        errors.append(f"Failed to move {sid}: {e}")
+            for sid in session_ids:
+                try:
+                    session = server.session_manager.move_to_project(sid, target_project_id)
+                    if session is None:
+                        errors.append(f"Session {sid} not found")
+                        continue
+                    moved_ids.append(session.id)
+                except Exception as e:
+                    errors.append(f"Failed to move {sid}: {e}")
 
             for sid in moved_ids:
                 await broadcast_session("session_updated", sid)

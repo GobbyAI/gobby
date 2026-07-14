@@ -24,7 +24,6 @@ from gobby.hooks.skill_manager import HookSkillManager
 from gobby.hooks.webhooks import WebhookDispatcher
 from gobby.memory.manager import MemoryManager
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
-from gobby.sessions.transcripts.hook_assembler import HookTranscriptAssembler
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager
@@ -106,7 +105,6 @@ class HookManagerComponents:
     session_manager: SessionManager
     session_coordinator: SessionCoordinator
     health_monitor: HealthMonitor
-    hook_assembler: HookTranscriptAssembler
     event_handlers: EventHandlers
 
 
@@ -244,8 +242,6 @@ class HookManagerFactory:
             logger=hook_logger,
         )
 
-        hook_assembler = HookTranscriptAssembler()
-
         # Build synchronous call_tool wrapper for EventHandlers skill fallback
         call_tool_fn = cls._build_sync_call_tool(tool_proxy_getter, loop, hook_logger)
 
@@ -293,7 +289,6 @@ class HookManagerFactory:
             session_manager=session_mgr,
             session_coordinator=session_coordinator,
             health_monitor=health_monitor,
-            hook_assembler=hook_assembler,
             event_handlers=event_handlers,
         )
 

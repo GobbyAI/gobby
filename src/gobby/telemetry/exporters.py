@@ -1,14 +1,11 @@
 """
-OpenTelemetry exporter factory.
+OpenTelemetry exporter factories.
 
-Creates configured exporters for traces and metrics, and handlers for logs.
+Creates configured exporters independently for traces and metrics.
 """
 
 from __future__ import annotations
 
-import logging
-from logging.handlers import RotatingFileHandler
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 # opentelemetry-api and sdk are in dependencies
@@ -28,23 +25,10 @@ if TYPE_CHECKING:
     from gobby.telemetry.config import TelemetrySettings
 
 
-def create_exporters(
-    config: TelemetrySettings,
-) -> tuple[list[SpanExporter], list[MetricReader], list[logging.Handler]]:
-    """
-    Create and configure telemetry exporters based on settings.
-
-    Args:
-        config: TelemetrySettings instance.
-
-    Returns:
-        Tuple of (span_exporters, metric_readers, log_handlers)
-    """
+def create_span_exporters(config: TelemetrySettings) -> list[SpanExporter]:
+    """Create configured span exporters."""
     span_exporters: list[SpanExporter] = []
-    metric_readers: list[MetricReader] = []
-    log_handlers: list[logging.Handler] = []
 
-    # 1. Span Exporters (Tracing)
     if config.traces_enabled:
         if config.traces_to_console:
             span_exporters.append(ConsoleSpanExporter())
@@ -69,25 +53,15 @@ def create_exporters(
                     )
                 )
 
-    # 2. Metric Readers
+    return span_exporters
+
+
+def create_metric_readers(config: TelemetrySettings) -> list[MetricReader]:
+    """Create configured metric readers."""
+    metric_readers: list[MetricReader] = []
+
     if config.metrics_enabled:
         if config.exporter.prometheus_enabled:
             metric_readers.append(PrometheusMetricReader())
 
-    # 3. Log Handlers (Preserving behavior of RotatingFileHandler)
-    # The plan says to preserve all 6 log file paths.
-    # We create a handler for the main log file here.
-    # Other log files (error, mcp, etc.) might be handled by the logging subsystem
-    # using these settings, but create_exporters returns the main ones.
-
-    log_file_path = Path(config.log_file).expanduser()
-    log_file_path.parent.mkdir(parents=True, exist_ok=True)
-
-    main_handler = RotatingFileHandler(
-        log_file_path,
-        maxBytes=config.max_size_mb * 1024 * 1024,
-        backupCount=config.backup_count,
-    )
-    log_handlers.append(main_handler)
-
-    return span_exporters, metric_readers, log_handlers
+    return metric_readers

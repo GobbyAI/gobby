@@ -96,7 +96,7 @@ def test_qwen_mcp_validation_error_is_plain_block_context() -> None:
         hook_type="BeforeTool",
     )
 
-    assert result["decision"] == "block"
+    assert result["decision"] == "deny"
     assert "updatedInput" not in result
     assert "Retry this tool call" not in str(result)
     assert "invalid_arguments" in result["hookSpecificOutput"]["additionalContext"]

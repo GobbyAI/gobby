@@ -362,8 +362,10 @@ async def cleanup_comms_messages_loop(
 ) -> None:
     from gobby.communications.attachments import AttachmentManager
     from gobby.storage.communications import LocalCommunicationsStore
+    from gobby.storage.inter_session_messages import InterSessionMessageManager
 
     store = LocalCommunicationsStore(db)
+    mailbox_store = InterSessionMessageManager(db)
     attachment_manager = AttachmentManager()
     sleep_fn = sleep or asyncio.sleep
 
@@ -389,6 +391,12 @@ async def cleanup_comms_messages_loop(
                 attachment_manager.delete_paths,
                 attachment_paths,
             )
+            deleted_mailbox_messages = await _run_db(
+                run_db,
+                mailbox_store.delete_delivered_before,
+                cutoff,
+                limit=_COMMS_CLEANUP_BATCH_LIMIT,
+            )
             deleted_old_attachments = await asyncio.to_thread(
                 attachment_manager.cleanup_old,
                 days=retention_days,
@@ -401,6 +409,11 @@ async def cleanup_comms_messages_loop(
                 logger.info(
                     "Comms attachment cleanup: removed %s files for retained messages",
                     deleted_attachment_paths,
+                )
+            if deleted_mailbox_messages > 0:
+                logger.info(
+                    "Mailbox message cleanup: removed %s old delivered messages",
+                    deleted_mailbox_messages,
                 )
             if deleted_old_attachments > 0:
                 logger.info(
@@ -702,7 +715,8 @@ async def cleanup_expired_isolation_loop(
                     try:
                         result = await asyncio.to_thread(
                             _run_git_command,
-                            ["git", "-C", repo_path, "worktree", "remove", "--force", path],
+                            ["git", "worktree", "remove", "--force", path],
+                            cwd=repo_path,
                         )
                         removed = result == 0
                         if not removed:
@@ -719,7 +733,8 @@ async def cleanup_expired_isolation_loop(
                     # Prune stale worktree references
                     prune_result = await asyncio.to_thread(
                         _run_git_command,
-                        ["git", "-C", repo_path, "worktree", "prune"],
+                        ["git", "worktree", "prune"],
+                        cwd=repo_path,
                     )
                     if prune_result != 0:
                         logger.warning(
@@ -731,7 +746,8 @@ async def cleanup_expired_isolation_loop(
                     if wt.branch_name:
                         branch_result = await asyncio.to_thread(
                             _run_git_command,
-                            ["git", "-C", repo_path, "branch", "-D", wt.branch_name],
+                            ["git", "branch", "-D", wt.branch_name],
+                            cwd=repo_path,
                         )
                         if branch_result != 0:
                             logger.warning(
@@ -885,12 +901,12 @@ def _delete_missing_clone_records(clone_storage: Any, *, limit: int) -> int:
     return removed
 
 
-def _run_git_command(args: list[str]) -> int:
-    """Run a git command and return the exit code."""
+def _run_git_command(args: list[str], *, cwd: str) -> int:
+    """Run a git command in the recorded project repository."""
     # This helper receives shell-free argv assembled by the isolation reaper.
     import subprocess  # nosec B404
 
-    result = subprocess.run(args, capture_output=True, timeout=30)  # nosec B603
+    result = subprocess.run(args, cwd=cwd, capture_output=True, timeout=30)  # nosec B603
     return result.returncode
 
 

@@ -57,6 +57,15 @@ def test_grok_updates_jsonl_parser_renders_message_and_tool_records() -> None:
             {
                 "sessionUpdate": "tool_call_update",
                 "toolCallId": "call-grok-tool-0",
+                "status": "in_progress",
+                "content": [{"type": "content", "content": {"type": "text", "text": "Running"}}],
+            }
+        ),
+        _event(
+            {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "call-grok-tool-0",
+                "status": "completed",
                 "content": [{"type": "content", "content": {"type": "text", "text": "/repo"}}],
             }
         ),
@@ -89,6 +98,7 @@ def test_grok_updates_jsonl_parser_renders_message_and_tool_records() -> None:
         "raw": {
             "sessionUpdate": "tool_call_update",
             "toolCallId": "call-grok-tool-0",
+            "status": "completed",
             "content": [{"type": "content", "content": {"type": "text", "text": "/repo"}}],
         },
     }

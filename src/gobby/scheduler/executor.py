@@ -261,6 +261,15 @@ class CronExecutor:
             output=(f"Skipped: active child {child['type']} {child['id']} is {child['status']}"),
         )
 
+    def _pipeline_executor_for(self, project_id: str) -> PipelineExecutor | None:
+        """Resolve pipeline infrastructure in the cron job's project scope."""
+        getter = getattr(self.services, "get_pipeline_executor", None)
+        if callable(getter):
+            executor = getter(project_id)
+            if executor is not None:
+                return cast("PipelineExecutor", executor)
+        return self.pipeline_executor
+
     async def _execute_agent_spawn(self, job: CronJob) -> ActionOutcome:
         """Execute an agent_spawn action."""
         skipped = cast(
@@ -351,7 +360,8 @@ class CronExecutor:
         if skipped is not None:
             return skipped
 
-        if not self.pipeline_executor:
+        pipeline_executor = self._pipeline_executor_for(job.project_id)
+        if pipeline_executor is None:
             raise RuntimeError("pipeline_executor not configured for cron executor")
 
         config = job.action_config
@@ -362,7 +372,7 @@ class CronExecutor:
         inputs = config.get("inputs", {})
 
         # Use pipeline_executor's loader (has DB context) instead of bare WorkflowLoader()
-        loader = self.pipeline_executor.loader
+        loader = pipeline_executor.loader
         if not loader:
             raise RuntimeError("pipeline_executor has no loader configured")
         pipeline = await loader.load_pipeline(pipeline_name, job.project_id)
@@ -375,7 +385,7 @@ class CronExecutor:
         from gobby.storage.sessions import SYSTEM_SESSION_ID
 
         session_id: str | None = None
-        sm = self.pipeline_executor.session_manager
+        sm = pipeline_executor.session_manager
         if sm:
             try:
                 cron_session = await self._run_db(
@@ -403,7 +413,7 @@ class CronExecutor:
                     f"Failed to resolve repo_path for project {job.project_id}", exc_info=True
                 )
 
-        execution_manager = getattr(self.pipeline_executor, "execution_manager", None)
+        execution_manager = getattr(pipeline_executor, "execution_manager", None)
         if execution_manager is None:
             raise RuntimeError("pipeline_executor has no execution_manager configured")
 
@@ -424,6 +434,7 @@ class CronExecutor:
 
         def _background() -> Coroutine[Any, Any, None]:
             return self._run_pipeline_background(
+                pipeline_executor=pipeline_executor,
                 pipeline=pipeline,
                 inputs=inputs,
                 project_id=job.project_id,
@@ -455,6 +466,7 @@ class CronExecutor:
     async def _run_pipeline_background(
         self,
         *,
+        pipeline_executor: PipelineExecutor,
         pipeline: Any,
         inputs: dict[str, Any],
         project_id: str,
@@ -468,15 +480,12 @@ class CronExecutor:
         from gobby.utils.project_context import reset_project_context, set_project_context
         from gobby.workflows.pipeline_state import ApprovalRequired, ExecutionStatus
 
-        if not self.pipeline_executor:
-            return
-
         token = set_project_context(project_ctx)
         try:
             try:
                 completed_execution = await self._wait_for_action(
                     "pipeline",
-                    self.pipeline_executor.execute(
+                    pipeline_executor.execute(
                         pipeline=pipeline,
                         inputs=inputs,
                         project_id=project_id,
@@ -491,6 +500,7 @@ class CronExecutor:
                 try:
                     await self._run_db(
                         self._record_pipeline_execution_failure,
+                        pipeline_executor,
                         execution_id,
                         str(e),
                     )
@@ -537,13 +547,16 @@ class CronExecutor:
         finally:
             reset_project_context(token)
 
-    def _record_pipeline_execution_failure(self, execution_id: str, error: str) -> None:
+    def _record_pipeline_execution_failure(
+        self,
+        pipeline_executor: PipelineExecutor,
+        execution_id: str,
+        error: str,
+    ) -> None:
         """Fail running pipeline steps and their parent execution."""
         from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
 
-        if self.pipeline_executor is None:
-            return
-        execution_manager = self.pipeline_executor.execution_manager
+        execution_manager = pipeline_executor.execution_manager
         steps = execution_manager.get_steps_for_execution(execution_id)
         for step in steps:
             if step.status == StepStatus.RUNNING:

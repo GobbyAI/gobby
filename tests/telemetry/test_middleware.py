@@ -43,6 +43,10 @@ def app(metrics_collector):
     async def test_endpoint():
         return {"status": "ok"}
 
+    @app.get("/items/{item_id}")
+    async def item_endpoint(item_id: str):
+        return {"item_id": item_id}
+
     @app.get("/error")
     async def error_endpoint():
         raise ValueError("Test error")
@@ -110,22 +114,54 @@ def test_middleware_records_error(app, meter_provider, metrics_collector):
     assert all_metrics["counters"]["http_requests_errors_total"]["value"] == 1
 
 
-def test_middleware_extracts_headers(app, meter_provider, metrics_collector):
+def test_middleware_bounds_matched_route_attributes(app, meter_provider, metrics_collector):
     _, reader = meter_provider
     client = TestClient(app)
 
-    client.get("/test", headers={"X-Session-ID": "sess-123", "X-Project-ID": "proj-456"})
+    first = client.get(
+        "/items/first?session_id=query-session&project_id=query-project",
+        headers={"X-Session-ID": "header-session", "X-Project-ID": "header-project"},
+    )
+    second = client.get("/items/second")
+    assert first.status_code == second.status_code == 200
 
     data = reader.get_metrics_data()
     assert data is not None
 
-    found = False
+    data_points = []
     for resource_metrics in data.resource_metrics:
         for scope_metrics in resource_metrics.scope_metrics:
             for metric in scope_metrics.metrics:
                 if metric.name == "http_requests_total":
-                    dp = metric.data.data_points[0]
-                    assert dp.attributes["session_id"] == "sess-123"
-                    assert dp.attributes["project_id"] == "proj-456"
-                    found = True
-    assert found
+                    data_points.extend(metric.data.data_points)
+
+    assert len(data_points) == 1
+    data_point = data_points[0]
+    assert data_point.value == 2
+    assert data_point.attributes["http.target"] == "/items/{item_id}"
+    assert "session_id" not in data_point.attributes
+    assert "project_id" not in data_point.attributes
+
+
+def test_middleware_uses_fixed_target_for_unmatched_routes(app, meter_provider, metrics_collector):
+    _, reader = meter_provider
+    client = TestClient(app)
+
+    first = client.get("/missing/first")
+    second = client.get("/missing/second")
+    assert first.status_code == second.status_code == 404
+
+    data = reader.get_metrics_data()
+    assert data is not None
+
+    data_points = []
+    for resource_metrics in data.resource_metrics:
+        for scope_metrics in resource_metrics.scope_metrics:
+            for metric in scope_metrics.metrics:
+                if metric.name == "http_requests_total":
+                    data_points.extend(metric.data.data_points)
+
+    assert len(data_points) == 1
+    data_point = data_points[0]
+    assert data_point.value == 2
+    assert data_point.attributes["http.target"] == "unmatched"

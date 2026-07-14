@@ -271,6 +271,29 @@ class TestSessionManagerPruning:
         assert nonempty_after.status == "expired"
         assert paused_after.status == "paused"
 
+    def test_prune_empty_sessions_preserves_transcript_backed_session(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        session = session_manager.register(
+            external_id="transcript-backed",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            transcript_path="/tmp/transcript-backed.jsonl",
+        )
+        session_manager.update_status(session.id, "expired")
+        session_manager.db.execute(
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = %s",
+            (session.id,),
+        )
+
+        count = session_manager.prune_empty_sessions(min_age_hours=1)
+
+        assert count == 0
+        assert session_manager.get(session.id) is not None
+
     def test_prune_empty_sessions_skips_retained_references(
         self,
         session_manager: SessionManager,

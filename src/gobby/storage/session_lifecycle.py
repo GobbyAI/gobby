@@ -73,10 +73,11 @@ def expire_stale_sessions(db: HubDatabase, timeout_hours: int = 24) -> int:
                 session_type = 'terminal'
                 AND {empty_terminal_context_sql}
                 AND {empty_terminal_created_stale_sql}
+                AND {updated_stale_sql}
             )
         )
         """,  # nosec B608 # cutoff expressions are selected by storage dialect.
-        (SYSTEM_SESSION_ID, timeout_hours, timeout_hours),
+        (SYSTEM_SESSION_ID, timeout_hours, timeout_hours, timeout_hours),
     )
     count = cursor.rowcount or 0
     if count > 0:
@@ -201,6 +202,7 @@ def prune_empty_sessions(db: HubDatabase, min_age_hours: int = 1) -> int:
         status = 'expired'
         AND id != %s
         AND COALESCE(message_count, 0) = 0
+        AND transcript_path IS NULL
         AND {updated_stale_sql}
     """  # nosec B608 # cutoff expression is selected by storage dialect.
     row = db.fetchone(

@@ -56,7 +56,11 @@ class _TranscriptMixin:
         now = utc_now()
         with self.db.transaction():
             self.db.execute(
-                "UPDATE sessions SET transcript_processed = TRUE, updated_at = %s WHERE id = %s",
+                """
+                UPDATE sessions
+                SET transcript_processed = TRUE, updated_at = %s
+                WHERE id = %s AND status = 'expired'
+                """,
                 (now, session_id),
             )
         return self.get(session_id)

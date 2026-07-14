@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import platform
 import sys
@@ -16,8 +18,13 @@ from gobby.install.bin_freshness_models import (
     ReleaseAsset,
     parse_version_tuple,
 )
+from gobby.install.checksums import parse_sha256_digest
 
 _HELPER_RELEASE_REPOSITORY = "GobbyAI/gobby"
+_MAX_RELEASE_PAGES = 10
+_MAX_RELEASE_METADATA_BYTES = 8 * 1024 * 1024
+_MAX_RELEASE_ASSET_BYTES = 128 * 1024 * 1024
+_MAX_CHECKSUM_BYTES = 16 * 1024
 _PLATFORM_TARGETS: dict[tuple[str, str], str] = {
     ("darwin", "arm64"): "aarch64-apple-darwin",
     ("darwin", "aarch64"): "aarch64-apple-darwin",
@@ -66,6 +73,15 @@ def _urlopen_https(req: Request, *, timeout: float) -> Any:
     return urlopen(req, timeout=timeout)  # nosec B310 # scheme validated above
 
 
+def _read_limited(response: Any, *, max_bytes: int, label: str) -> bytes:
+    payload = response.read(max_bytes + 1)
+    if not isinstance(payload, bytes):
+        raise GithubAPIError(f"{label} returned an unexpected payload")
+    if len(payload) > max_bytes:
+        raise GithubAPIError(f"{label} exceeds the {max_bytes}-byte download limit")
+    return payload
+
+
 class GithubReleaseClient:
     """Minimal GitHub Releases API client."""
 
@@ -78,21 +94,59 @@ class GithubReleaseClient:
 
     def _fetch_releases(self, repository: str) -> list[dict[str, Any]]:
         """Fetch release metadata from a helper release repository."""
-        req = Request(
-            f"https://api.github.com/repos/{repository}/releases?per_page=100",
-            headers={
-                "User-Agent": "gobby-daemon-bin-updater/1.0",
-                "Accept": "application/vnd.github+json",
-            },
-        )
-        try:
-            with _urlopen_https(req, timeout=self.timeout_seconds) as resp:
-                payload = json.loads(resp.read().decode("utf-8"))
-        except (URLError, HTTPException, OSError, ValueError) as exc:
-            raise GithubAPIError(str(exc)) from exc
-        if not isinstance(payload, list):
-            raise GithubAPIError("GitHub Releases API returned an unexpected payload")
-        return [release for release in payload if isinstance(release, dict)]
+        releases: list[dict[str, Any]] = []
+        url = f"https://api.github.com/repos/{repository}/releases?per_page=100"
+        expected_path = f"/repos/{repository}/releases"
+        for _page in range(_MAX_RELEASE_PAGES):
+            req = Request(
+                url,
+                headers={
+                    "User-Agent": "gobby-daemon-bin-updater/1.0",
+                    "Accept": "application/vnd.github+json",
+                },
+            )
+            try:
+                with _urlopen_https(req, timeout=self.timeout_seconds) as resp:
+                    release_bytes = _read_limited(
+                        resp,
+                        max_bytes=_MAX_RELEASE_METADATA_BYTES,
+                        label="GitHub Releases API response",
+                    )
+                    payload = json.loads(release_bytes.decode("utf-8"))
+                    link_header = getattr(resp, "headers", {}).get("Link")
+            except (URLError, HTTPException, OSError, ValueError) as exc:
+                raise GithubAPIError(str(exc)) from exc
+            if not isinstance(payload, list):
+                raise GithubAPIError("GitHub Releases API returned an unexpected payload")
+            releases.extend(release for release in payload if isinstance(release, dict))
+            next_url = self._next_release_page_url(link_header, expected_path=expected_path)
+            if next_url is None:
+                return releases
+            url = next_url
+        raise GithubAPIError(f"GitHub Releases API exceeded {_MAX_RELEASE_PAGES} pages")
+
+    @staticmethod
+    def _next_release_page_url(link_header: object, *, expected_path: str) -> str | None:
+        """Return a validated GitHub ``rel=next`` pagination URL."""
+        if not isinstance(link_header, str):
+            return None
+        for link in link_header.split(","):
+            parts = [part.strip() for part in link.split(";")]
+            if 'rel="next"' not in parts[1:]:
+                continue
+            url_part = parts[0]
+            if not (url_part.startswith("<") and url_part.endswith(">")):
+                raise GithubAPIError("GitHub Releases API returned an invalid pagination link")
+            url = url_part[1:-1]
+            parsed = urlparse(url)
+            if (
+                parsed.scheme != "https"
+                or parsed.netloc != "api.github.com"
+                or parsed.path != expected_path
+            ):
+                raise GithubAPIError("GitHub Releases API returned an invalid pagination URL")
+            return url
+        return None
 
     def resolve_latest_asset(self, spec: ManagedBinSpec, *, target: str) -> ReleaseAsset:
         """Resolve the newest stable release asset matching ``spec`` and ``target``."""
@@ -143,15 +197,36 @@ class GithubReleaseClient:
         raise SourceUnavailableError(f"{tag_name}: missing platform asset {expected_asset}")
 
     def download_asset(self, asset: ReleaseAsset) -> bytes:
-        """Download a resolved release asset."""
-        req = Request(asset.asset_url, headers={"User-Agent": "gobby-daemon-bin-updater/1.0"})
+        """Download and verify a resolved release asset."""
+        headers = {"User-Agent": "gobby-daemon-bin-updater/1.0"}
+        checksum_url = f"{asset.asset_url}.sha256"
         try:
-            with _urlopen_https(req, timeout=self.timeout_seconds) as resp:
-                payload = resp.read()
+            with _urlopen_https(
+                Request(checksum_url, headers=headers), timeout=self.timeout_seconds
+            ) as resp:
+                checksum_bytes = _read_limited(
+                    resp,
+                    max_bytes=_MAX_CHECKSUM_BYTES,
+                    label="GitHub checksum download",
+                )
+            expected = parse_sha256_digest(checksum_bytes.decode("utf-8"))
+            if expected is None:
+                raise GithubAPIError(f"invalid SHA-256 checksum at {checksum_url}")
+            with _urlopen_https(
+                Request(asset.asset_url, headers=headers), timeout=self.timeout_seconds
+            ) as resp:
+                payload = _read_limited(
+                    resp,
+                    max_bytes=_MAX_RELEASE_ASSET_BYTES,
+                    label="GitHub asset download",
+                )
         except (URLError, HTTPException, OSError, ValueError) as exc:
             raise GithubAPIError(str(exc)) from exc
-        if not isinstance(payload, bytes):
-            raise GithubAPIError("GitHub asset download returned an unexpected payload")
+        actual = hashlib.sha256(payload).hexdigest()
+        if not hmac.compare_digest(actual, expected):
+            raise GithubAPIError(
+                f"checksum mismatch for {asset.asset_name}: expected {expected}, got {actual}"
+            )
         return payload
 
     def _resolve_latest_release_from(

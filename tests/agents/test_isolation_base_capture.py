@@ -19,6 +19,7 @@ from gobby.agents.isolation import (
     repair_isolation_environment,
 )
 from gobby.storage.tasks import LocalTaskManager, TaskArtifactManager
+from gobby.utils.project_context import IsolationProjectJsonError
 
 pytestmark = pytest.mark.unit
 
@@ -124,6 +125,29 @@ async def test_repair_isolation_environment_logs_git_hygiene_failures(
 
     assert result is None
     assert "Failed to apply isolation git hygiene for /tmp/isolated" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_repair_isolation_environment_propagates_project_json_failure() -> None:
+    """Project metadata failures stop the remaining isolation repair steps."""
+    error = IsolationProjectJsonError("metadata failed")
+    patch_mcp = AsyncMock()
+    with (
+        patch("gobby.agents.isolation_repair._copy_cli_hooks", new=AsyncMock()),
+        patch("gobby.agents.isolation_repair._patch_mcp_config_for_isolation", new=patch_mcp),
+        patch(
+            "gobby.utils.project_context.ensure_project_json_for_isolation",
+            side_effect=error,
+        ),
+    ):
+        with pytest.raises(IsolationProjectJsonError, match="metadata failed"):
+            await repair_isolation_environment(
+                main_repo_path="/tmp/main",
+                isolated_path="/tmp/isolated",
+                provider="codex",
+            )
+
+    patch_mcp.assert_not_awaited()
 
 
 async def _prepare_with_git_head(

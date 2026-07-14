@@ -7,7 +7,7 @@ from click.testing import CliRunner
 
 from gobby.cli.mcp_proxy import get_daemon_client, mcp_proxy
 from gobby.config.app import DaemonConfig
-from gobby.utils.daemon_client import DaemonClient
+from gobby.utils.daemon_client import DaemonClient, DaemonHealthError
 
 pytestmark = pytest.mark.unit
 
@@ -144,7 +144,7 @@ def test_call_tool_success(cli_runner, mock_daemon_client, mock_config) -> None:
 
 def test_daemon_not_running(cli_runner, mock_daemon_client, mock_config) -> None:
     with patch("gobby.cli.mcp_proxy.get_daemon_client", return_value=mock_daemon_client):
-        mock_daemon_client.check_health.return_value = (False, None)
+        mock_daemon_client.check_health.return_value = (False, DaemonHealthError.NOT_RUNNING)
 
         result = cli_runner.invoke(mcp_proxy, ["list-servers"], obj={"config": mock_config})
 

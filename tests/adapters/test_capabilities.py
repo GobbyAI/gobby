@@ -222,7 +222,7 @@ def test_qwen_tool_block_preserves_native_recoverable_reason(
     )
 
     assert result == {
-        "decision": "block",
+        "decision": "deny",
         "continue": True,
         "reason": reason,
     }

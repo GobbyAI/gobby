@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
-from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.storage.session_models import Session
-from gobby.terminal_context import merge_terminal_context, terminal_context_has_tmux_target
+from gobby.terminal_context import terminal_context_has_tmux_target
+from gobby.utils.datetime import utc_now
+
+from ._registration_recovery import _RegistrationRecoveryMixin
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -16,21 +19,6 @@ if TYPE_CHECKING:
 SessionMappingKey = tuple[str, str, str | None, str | None]
 _SESSION_MAPPING_TTL_SECONDS = 60 * 60
 _SESSION_MAPPING_MAX_ENTRIES = 4096
-
-
-def _recovery_score(session: Session) -> tuple[bool, bool, bool, bool]:
-    """Score recovery candidates by metadata completeness only."""
-    return (
-        not bool(session.transcript_path),
-        not bool(session.title),
-        not terminal_context_has_tmux_target(session.terminal_context),
-        not bool(session.terminal_context),
-    )
-
-
-def _recovery_rank(session: Session) -> tuple[bool, bool, bool, bool, datetime, str]:
-    """Rank cross-source recovery candidates by completeness, then age."""
-    return (*_recovery_score(session), session.created_at, session.id)
 
 
 class _SessionMappingState(Protocol):
@@ -75,12 +63,7 @@ class _ManagerState(_SessionMappingState, Protocol):
 
     def update_status(self, session_id: str, status: str) -> Session | None: ...
 
-    def update(
-        self,
-        session_id: str,
-        *,
-        terminal_context: dict[str, Any] | None = ...,
-    ) -> Session | None: ...
+    def _notify_session_change(self, event: str, session_id: str) -> None: ...
 
     def cache_session_mapping(
         self,
@@ -192,7 +175,7 @@ def invalidate_session_caches(state: Any, session_id: str | None = None) -> None
             state._session_metadata.pop(session_id, None)
 
 
-class _RegistrationCacheMixin:
+class _RegistrationCacheMixin(_RegistrationRecoveryMixin):
     def mark_session_expired(self: _ManagerState, session_id: str) -> bool:
         """
         Mark a session as 'expired' after successful handoff.
@@ -274,67 +257,6 @@ class _RegistrationCacheMixin:
             )
             return None
 
-    def recover_session(
-        self: _ManagerState,
-        external_id: str,
-        source: str,
-        machine_id: str,
-        project_id: str | None,
-        session_type: str | None = None,
-    ) -> Session | None:
-        """Recover an existing session across sources when lookup is otherwise unambiguous."""
-        try:
-            candidates = self.find_by_external_id_all_sources(
-                external_id=external_id,
-                machine_id=machine_id,
-                project_id=project_id,
-                session_type=session_type,
-            )
-            if not candidates:
-                return None
-            if project_id is None and len({candidate.project_id for candidate in candidates}) > 1:
-                self.logger.warning(
-                    "Ambiguous cross-project session recovery for external_id=%s source=%s "
-                    "machine_id=%s candidates=%s",
-                    external_id,
-                    source,
-                    machine_id,
-                    [candidate.id for candidate in candidates],
-                )
-                return None
-
-            ranked = sorted(candidates, key=_recovery_rank)
-            if len(ranked) > 1 and _recovery_score(ranked[0]) == _recovery_score(ranked[1]):
-                self.logger.warning(
-                    "Ambiguous cross-source session recovery for external_id=%s source=%s "
-                    "machine_id=%s project_id=%s candidates=%s",
-                    external_id,
-                    source,
-                    machine_id,
-                    project_id,
-                    [candidate.id for candidate in ranked[:2]],
-                )
-                return None
-
-            recovered = ranked[0]
-            self.cache_session_mapping(
-                external_id,
-                source,
-                recovered.id,
-                machine_id=machine_id,
-                project_id=project_id,
-            )
-            return recovered
-
-        except Exception as e:
-            self.logger.debug(
-                "Failed to recover session_id across sources for external_id=%s: %s",
-                external_id,
-                e,
-                exc_info=True,
-            )
-            return None
-
     def get_session_id(
         self: _ManagerState,
         external_id: str,
@@ -409,18 +331,30 @@ class _RegistrationCacheMixin:
             return None, False
 
         current_ctx = current.terminal_context or {}
-        merged = merge_terminal_context(current_ctx, terminal_context)
-        if merged == current_ctx:
+        incoming = {key: value for key, value in terminal_context.items() if value is not None}
+        if not incoming or all(current_ctx.get(key) == value for key, value in incoming.items()):
             return current, False
 
         had_tmux_target = terminal_context_has_tmux_target(current_ctx)
-        updated = self.update(session_id=session_id, terminal_context=merged)
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE sessions
+                SET terminal_context = COALESCE(terminal_context, '{}'::jsonb) || %s::jsonb,
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (json.dumps(incoming), utc_now(), session_id),
+            )
+        updated = self.get(session_id)
         if updated is None:
             return current, False
 
+        self._notify_session_change("session_updated", session_id)
+
         with self._session_metadata_lock:
             metadata = self._session_metadata.setdefault(session_id, {})
-            metadata["terminal_context"] = merged
+            metadata["terminal_context"] = updated.terminal_context
 
         has_tmux_target = terminal_context_has_tmux_target(updated.terminal_context)
         return updated, has_tmux_target and not had_tmux_target

@@ -194,6 +194,19 @@ class TestSoftDelete:
         result = project_manager.get_by_name("hidden-proj")
         assert result is None
 
+    def test_restore_makes_soft_deleted_project_active(
+        self, project_manager: LocalProjectManager
+    ) -> None:
+        project = project_manager.create(name="restored-proj", repo_path="/tmp/restored")
+        project_manager.soft_delete(project.id)
+
+        restored = project_manager.restore(project.id)
+
+        assert restored is not None
+        assert restored.id == project.id
+        assert restored.deleted_at is None
+        assert project_manager.get_by_name("restored-proj") is not None
+
     def test_soft_delete_include_deleted_in_list(
         self, project_manager: LocalProjectManager
     ) -> None:

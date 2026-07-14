@@ -1,10 +1,13 @@
 import json
+from pathlib import Path
 
 import pytest
 
 from gobby.sessions.transcripts.typed_json import TypedJsonTranscriptParser
 
 pytestmark = pytest.mark.unit
+
+FIXTURES = Path(__file__).parent / "transcripts" / "fixtures"
 
 
 def test_parse_session_json_skips_malformed_items_and_preserves_empty_tool_result() -> None:
@@ -42,6 +45,19 @@ def test_parse_session_json_skips_malformed_items_and_preserves_empty_tool_resul
     assert messages[0].content == "nice plan"
     assert messages[3].tool_result == {"output": {}, "status": "success"}
     assert messages[3].tool_use_id == messages[2].tool_use_id
+
+
+def test_parse_session_json_preserves_failed_tool_call_status() -> None:
+    parser = TypedJsonTranscriptParser(cli_name="test")
+    data = json.loads((FIXTURES / "typed_json_failed_tool_response.json").read_text())
+
+    messages = parser.parse_session_json(data)
+
+    assert [message.content_type for message in messages] == ["tool_use", "tool_result"]
+    assert messages[1].tool_result == {
+        "output": {"error": "File not found"},
+        "status": "failed",
+    }
 
 
 def test_parse_line_inline_function_call_assigns_tool_use_id() -> None:

@@ -1,11 +1,17 @@
 """Tests for the project initialization utilities."""
 
 import json
+import os
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from psycopg.errors import UniqueViolation
 
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
+from gobby.utils.project_context import get_project_context
 from gobby.utils.project_init import (
     InitResult,
     VerificationCommands,
@@ -195,9 +201,9 @@ class TestDetectVerificationCommands:
 
         result = detect_verification_commands(tmp_path)
 
-        assert result.unit_tests == "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v"
-        assert result.type_check == "uv run mypy src/"
-        assert result.lint == "uv run ruff check src/"
+        assert result.unit_tests == "pytest tests/ -v"
+        assert result.type_check == "mypy src/"
+        assert result.lint == "ruff check src/"
 
     def test_python_project_with_tests_no_src(self, tmp_path: Path) -> None:
         """Test detection for Python project with tests/ but no src/ directory."""
@@ -211,9 +217,9 @@ class TestDetectVerificationCommands:
 
         result = detect_verification_commands(tmp_path)
 
-        assert result.unit_tests == "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v"
-        assert result.type_check == "uv run mypy ."
-        assert result.lint == "uv run ruff check ."
+        assert result.unit_tests == "pytest tests/ -v"
+        assert result.type_check == "mypy ."
+        assert result.lint == "ruff check ."
 
     def test_python_project_with_src_no_tests(self, tmp_path: Path) -> None:
         """Test detection for Python project with src/ but no tests/ directory."""
@@ -228,8 +234,8 @@ class TestDetectVerificationCommands:
         result = detect_verification_commands(tmp_path)
 
         assert result.unit_tests is None
-        assert result.type_check == "uv run mypy src/"
-        assert result.lint == "uv run ruff check src/"
+        assert result.type_check == "mypy src/"
+        assert result.lint == "ruff check src/"
 
     def test_python_project_no_dirs(self, tmp_path: Path) -> None:
         """Test detection for Python project without tests/ or src/ directories."""
@@ -240,8 +246,8 @@ class TestDetectVerificationCommands:
         result = detect_verification_commands(tmp_path)
 
         assert result.unit_tests is None
-        assert result.type_check == "uv run mypy ."
-        assert result.lint == "uv run ruff check ."
+        assert result.type_check == "mypy ."
+        assert result.lint == "ruff check ."
 
     def test_nodejs_project_with_test_script(self, tmp_path: Path) -> None:
         """Test detection for Node.js project with test script."""
@@ -407,8 +413,8 @@ class TestDetectVerificationCommands:
         result = detect_verification_commands(tmp_path)
 
         # Should use fallback commands since src is a file
-        assert result.type_check == "uv run mypy ."
-        assert result.lint == "uv run ruff check ."
+        assert result.type_check == "mypy ."
+        assert result.lint == "ruff check ."
 
 
 class TestFindFrontendDirs:
@@ -483,10 +489,10 @@ class TestDetectVerificationMultiLanguage:
         result = detect_verification_commands(tmp_path)
 
         # Python claims primary slots
-        assert result.unit_tests == "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v"
-        assert result.type_check == "uv run mypy src/"
-        assert result.lint == "uv run ruff check src/"
-        assert result.format == "uv run ruff format --check src/"
+        assert result.unit_tests == "pytest tests/ -v"
+        assert result.type_check == "mypy src/"
+        assert result.lint == "ruff check src/"
+        assert result.format == "ruff format --check src/"
 
         # Frontend goes to custom with cd prefix
         assert result.custom["frontend_tests"] == "cd web && npm test"
@@ -499,14 +505,14 @@ class TestDetectVerificationMultiLanguage:
         (tmp_path / "src").mkdir()
 
         result = detect_verification_commands(tmp_path)
-        assert result.format == "uv run ruff format --check src/"
+        assert result.format == "ruff format --check src/"
 
     def test_python_no_src_detects_format_fallback(self, tmp_path: Path) -> None:
         """Python project without src/ uses fallback format command."""
         (tmp_path / "pyproject.toml").write_text("[project]\nname='test'\n")
 
         result = detect_verification_commands(tmp_path)
-        assert result.format == "uv run ruff format --check ."
+        assert result.format == "ruff format --check ."
 
     def test_standalone_web_frontend(self, tmp_path: Path) -> None:
         """Only web/ frontend, no Python — frontend gets primary slots."""
@@ -674,6 +680,31 @@ class TestWriteProjectJson:
         assert content["id"] == "new-id"
         assert content["name"] == "new-name"
 
+    def test_destination_stays_complete_until_atomic_replace(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cwd = tmp_path / "project"
+        project_file = cwd / ".gobby" / "project.json"
+        project_file.parent.mkdir(parents=True)
+        original = {"id": "old-id", "name": "old-name"}
+        project_file.write_text(json.dumps(original), encoding="utf-8")
+        real_replace = os.replace
+
+        def assert_complete_then_replace(src: str, dst: str | Path) -> None:
+            assert json.loads(Path(dst).read_text(encoding="utf-8")) == original
+            assert json.loads(Path(src).read_text(encoding="utf-8")) == {
+                "id": "new-id",
+                "name": "new-name",
+                "created_at": "2024-01-01",
+            }
+            real_replace(src, dst)
+
+        monkeypatch.setattr("gobby.utils.project_init.os.replace", assert_complete_then_replace)
+
+        _write_project_json(cwd, "new-id", "new-name", "2024-01-01")
+
+        assert json.loads(project_file.read_text(encoding="utf-8"))["id"] == "new-id"
+
     def test_handles_existing_gobby_dir(self, tmp_path: Path) -> None:
         """Test that existing .gobby directory is handled correctly."""
         cwd = tmp_path / "project"
@@ -774,6 +805,44 @@ class TestInitializeProject:
             assert result.project_name == "existing-name"
             assert result.already_existed is True
 
+    def test_reinit_from_subdirectory_refreshes_project_root(self, tmp_path: Path) -> None:
+        """Re-init refreshes the discovered project root instead of the requested cwd."""
+        project_id = "existing-id"
+        project_file = tmp_path / ".gobby" / "project.json"
+        project_file.parent.mkdir()
+        project_file.write_text(
+            json.dumps(
+                {
+                    "id": project_id,
+                    "name": "existing-name",
+                    "created_at": "2024-01-01",
+                    "verification": {"unit_tests": "old command"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (tmp_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\n", encoding="utf-8")
+        (tmp_path / "tests").mkdir()
+
+        subdir = tmp_path / "packages" / "api"
+        subdir.mkdir(parents=True)
+        (subdir / "pyproject.toml").write_text("[tool.pytest.ini_options]\n", encoding="utf-8")
+        (subdir / "tests").mkdir()
+
+        result = initialize_project(subdir)
+
+        root_data = json.loads(project_file.read_text(encoding="utf-8"))
+        assert result.project_id == project_id
+        assert not (subdir / ".gobby" / "project.json").exists()
+        assert root_data["id"] == project_id
+        assert root_data["verification"] != {"unit_tests": "old command"}
+        assert result.verification is not None
+        assert result.verification.to_dict() == root_data["verification"]
+        assert get_project_context(subdir) == {
+            **root_data,
+            "project_path": str(tmp_path),
+        }
+
     def test_already_initialized_with_empty_id(self, tmp_path: Path) -> None:
         """Test that project with empty id is treated as uninitialized."""
         with patch("gobby.utils.project_context.get_project_context") as mock_ctx:
@@ -792,7 +861,7 @@ class TestInitializeProject:
                             mock_project = MagicMock()
                             mock_project.id = "new-proj-id"
                             mock_project.name = tmp_path.name
-                            mock_project.created_at = "2024-01-01"
+                            mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
                             mock_pm_instance.create.return_value = mock_project
 
                             mock_pm_cls.return_value = mock_pm_instance
@@ -803,30 +872,27 @@ class TestInitializeProject:
                             assert result.already_existed is False
                             assert result.project_id == "new-proj-id"
 
-    def test_new_project_creation(self, tmp_path: Path) -> None:
-        """Test creating a new project."""
-        # Patch all the imports used inside the function
-        with patch("gobby.utils.project_context.get_project_context", return_value=None):
-            with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
-                    with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
-                        with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
-                            mock_pm_instance = MagicMock()
-                            mock_pm_instance.get_by_name.return_value = None
+    def test_new_project_creation(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Fresh initialization creates the project in the isolated database."""
+        monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
+        with patch(
+            "gobby.storage.hub.runtime.open_runtime_hub_database", return_value=temp_db
+        ) as open_db:
+            result = initialize_project(tmp_path)
 
-                            mock_project = MagicMock()
-                            mock_project.id = "new-proj-id"
-                            mock_project.name = tmp_path.name
-                            mock_project.created_at = "2024-06-15T00:00:00Z"
-                            mock_pm_instance.create.return_value = mock_project
+        open_db.assert_called_once_with(apply_migrations=False)
 
-                            mock_pm_cls.return_value = mock_pm_instance
-
-                            result = initialize_project(tmp_path)
-
-                            assert result.project_id == "new-proj-id"
-                            assert result.project_name == tmp_path.name
-                            assert result.already_existed is False
+        project = LocalProjectManager(temp_db).get(result.project_id)
+        assert project is not None
+        assert project.name == tmp_path.name
+        assert project.repo_path == str(tmp_path)
+        assert result.project_name == tmp_path.name
+        assert result.already_existed is False
 
     def test_uses_provided_name(self, tmp_path: Path) -> None:
         """Test that provided name overrides directory name."""
@@ -841,7 +907,7 @@ class TestInitializeProject:
                             mock_project = MagicMock()
                             mock_project.id = "id"
                             mock_project.name = "custom-name"
-                            mock_project.created_at = "2024-01-01"
+                            mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
                             mock_pm_instance.create.return_value = mock_project
 
                             mock_pm_cls.return_value = mock_pm_instance
@@ -865,7 +931,7 @@ class TestInitializeProject:
                             mock_project = MagicMock()
                             mock_project.id = "id"
                             mock_project.name = "name"
-                            mock_project.created_at = "2024-01-01"
+                            mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
                             mock_pm_instance.create.return_value = mock_project
 
                             mock_pm_cls.return_value = mock_pm_instance
@@ -895,7 +961,7 @@ class TestInitializeProject:
                             mock_project = MagicMock()
                             mock_project.id = "id"
                             mock_project.name = "name"
-                            mock_project.created_at = "2024-01-01"
+                            mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
                             mock_pm_instance.create.return_value = mock_project
 
                             mock_pm_cls.return_value = mock_pm_instance
@@ -909,36 +975,100 @@ class TestInitializeProject:
                             )
                             assert result.project_id == "id"
 
-    def test_existing_db_project_no_local_json(self, tmp_path: Path) -> None:
-        """Test handling when project exists in DB but no local project.json."""
+    def test_existing_db_project_no_local_json(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Initialization adopts a same-name database project and writes local state."""
+        manager = LocalProjectManager(temp_db)
+        existing = manager.create(name=tmp_path.name)
+        monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
+        monkeypatch.setattr(
+            "gobby.storage.hub.runtime.open_runtime_hub_database",
+            lambda *, apply_migrations: temp_db,
+        )
+
+        result = initialize_project(tmp_path)
+
+        adopted = manager.get(existing.id)
+        assert adopted is not None
+        assert adopted.repo_path == str(tmp_path)
+        assert result.project_id == existing.id
+        assert result.already_existed is True
+        project_data = json.loads(
+            (tmp_path / ".gobby" / "project.json").read_text(encoding="utf-8")
+        )
+        assert project_data["id"] == existing.id
+
+    def test_rejects_same_name_project_from_different_repo(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        other_repo = tmp_path.parent / "other" / tmp_path.name
+        other_repo.mkdir(parents=True)
+        manager = LocalProjectManager(temp_db)
+        existing = manager.create(name=tmp_path.name, repo_path=str(other_repo))
+        monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
+        monkeypatch.setattr(
+            "gobby.storage.hub.runtime.open_runtime_hub_database",
+            lambda *, apply_migrations: temp_db,
+        )
+
+        with pytest.raises(ValueError, match=r"different repository.*--name"):
+            initialize_project(tmp_path)
+
+        assert not (tmp_path / ".gobby" / "project.json").exists()
+        unchanged = manager.get(existing.id)
+        assert unchanged is not None
+        assert unchanged.repo_path == str(other_repo)
+
+    def test_restores_soft_deleted_project(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        manager = LocalProjectManager(temp_db)
+        deleted = manager.create(name=tmp_path.name, repo_path=str(tmp_path))
+        assert manager.soft_delete(deleted.id)
+        monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
+        monkeypatch.setattr(
+            "gobby.storage.hub.runtime.open_runtime_hub_database",
+            lambda *, apply_migrations: temp_db,
+        )
+
+        result = initialize_project(tmp_path)
+
+        restored = manager.get(deleted.id)
+        assert restored is not None
+        assert restored.deleted_at is None
+        assert result.project_id == deleted.id
+        assert result.already_existed is True
+
+    def test_adopts_project_created_concurrently(self, tmp_path: Path) -> None:
         with patch("gobby.utils.project_context.get_project_context", return_value=None):
             with patch("gobby.utils.git.get_github_url", return_value=None):
                 with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
-                    with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
-                        with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
-                            # Project exists in database
-                            mock_existing = MagicMock()
-                            mock_existing.id = "db-proj-id"
-                            mock_existing.name = tmp_path.name
-                            mock_existing.created_at = "2023-01-01T00:00:00Z"
+                    with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
+                        winner = MagicMock()
+                        winner.id = "winner-project-id"
+                        winner.name = tmp_path.name
+                        winner.repo_path = str(tmp_path)
+                        winner.created_at = datetime(2024, 6, 15, tzinfo=UTC)
 
-                            mock_pm_instance = MagicMock()
-                            mock_pm_instance.get_by_name.return_value = mock_existing
+                        manager = mock_pm_cls.return_value
+                        manager.get_by_name.side_effect = [None, winner]
+                        manager.create.side_effect = UniqueViolation("duplicate project name")
 
-                            mock_pm_cls.return_value = mock_pm_instance
+                        result = initialize_project(tmp_path)
 
-                            result = initialize_project(tmp_path)
-
-                            # Should return existing project and write local json
-                            assert result.project_id == "db-proj-id"
-                            assert result.already_existed is True
-
-                            # Should write project.json
-                            project_file = tmp_path / ".gobby" / "project.json"
-                            assert project_file.exists()
-
-                            # Should NOT call create
-                            mock_pm_instance.create.assert_not_called()
+                        assert result.project_id == winner.id
+                        assert result.already_existed is True
+                        assert manager.get_by_name.call_count == 2
 
     def test_uses_cwd_when_none(self) -> None:
         """Test that current working directory is used when cwd is None."""
@@ -978,7 +1108,7 @@ class TestInitializeProject:
                             mock_project = MagicMock()
                             mock_project.id = "new-proj-id"
                             mock_project.name = tmp_path.name
-                            mock_project.created_at = "2024-01-01"
+                            mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
                             mock_pm_instance.create.return_value = mock_project
 
                             mock_pm_cls.return_value = mock_pm_instance
@@ -1011,7 +1141,7 @@ class TestInitializeProject:
                             mock_project = MagicMock()
                             mock_project.id = "new-proj-id"
                             mock_project.name = tmp_path.name
-                            mock_project.created_at = "2024-01-01"
+                            mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
                             mock_pm_instance.create.return_value = mock_project
 
                             mock_pm_cls.return_value = mock_pm_instance
@@ -1019,11 +1149,9 @@ class TestInitializeProject:
                             result = initialize_project(tmp_path)
 
                             assert result.verification is not None
-                            assert result.verification.unit_tests == (
-                                "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v"
-                            )
-                            assert result.verification.type_check == "uv run mypy src/"
-                            assert result.verification.lint == "uv run ruff check src/"
+                            assert result.verification.unit_tests == "pytest tests/ -v"
+                            assert result.verification.type_check == "mypy src/"
+                            assert result.verification.lint == "ruff check src/"
 
     def test_existing_db_project_includes_verification(self, tmp_path: Path) -> None:
         """Test that existing DB project includes verification commands when synced."""
@@ -1041,7 +1169,9 @@ class TestInitializeProject:
                             mock_existing = MagicMock()
                             mock_existing.id = "db-proj-id"
                             mock_existing.name = tmp_path.name
-                            mock_existing.created_at = "2023-01-01T00:00:00Z"
+                            mock_existing.repo_path = str(tmp_path)
+                            mock_existing.created_at = datetime(2023, 1, 1, tzinfo=UTC)
+                            mock_existing.deleted_at = None
 
                             mock_pm_instance = MagicMock()
                             mock_pm_instance.get_by_name.return_value = mock_existing
@@ -1052,7 +1182,7 @@ class TestInitializeProject:
 
                             # Should include verification
                             assert result.verification is not None
-                            assert result.verification.type_check == "uv run mypy src/"
+                            assert result.verification.type_check == "mypy src/"
 
     def test_new_project_without_verification_commands(self, tmp_path: Path) -> None:
         """Test that new project without recognizable structure has no verification."""
@@ -1069,7 +1199,7 @@ class TestInitializeProject:
                             mock_project = MagicMock()
                             mock_project.id = "new-proj-id"
                             mock_project.name = tmp_path.name
-                            mock_project.created_at = "2024-01-01"
+                            mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
                             mock_pm_instance.create.return_value = mock_project
 
                             mock_pm_cls.return_value = mock_pm_instance
@@ -1114,7 +1244,7 @@ class TestInitializeProject:
                             mock_project = MagicMock()
                             mock_project.id = "id"
                             mock_project.name = "my-awesome-project"
-                            mock_project.created_at = "2024-01-01"
+                            mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
                             mock_pm_instance.create.return_value = mock_project
 
                             mock_pm_cls.return_value = mock_pm_instance

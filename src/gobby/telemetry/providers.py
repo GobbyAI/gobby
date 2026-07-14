@@ -18,7 +18,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
 
-from gobby.telemetry.exporters import create_exporters
+from gobby.telemetry.exporters import create_metric_readers, create_span_exporters
 
 if TYPE_CHECKING:
     from gobby.storage.spans import SpanStorage
@@ -44,7 +44,7 @@ def get_tracer_provider(config: TelemetrySettings) -> TracerProvider:
             resource = Resource.create({SERVICE_NAME: config.service_name})
             sampler = ParentBased(root=TraceIdRatioBased(config.trace_sample_rate))
 
-            span_exporters, _, _ = create_exporters(config)
+            span_exporters = create_span_exporters(config)
             _TRACER_PROVIDER = TracerProvider(resource=resource, sampler=sampler)
 
             for exporter in span_exporters:
@@ -79,7 +79,7 @@ def get_meter_provider(config: TelemetrySettings) -> MeterProvider:
     with _PROVIDER_LOCK:
         if _METER_PROVIDER is None:
             resource = Resource.create({SERVICE_NAME: config.service_name})
-            _, metric_readers, _ = create_exporters(config)
+            metric_readers = create_metric_readers(config)
             _METER_PROVIDER = MeterProvider(resource=resource, metric_readers=metric_readers)
 
     return _METER_PROVIDER

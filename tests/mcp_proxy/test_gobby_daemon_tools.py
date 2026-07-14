@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 
 from gobby.mcp_proxy.server import GobbyDaemonTools, create_mcp_server
-from gobby.utils.session_context import SeededContextTokens
 
 pytestmark = pytest.mark.unit
 
@@ -251,17 +250,17 @@ class TestGobbyDaemonToolsCallTool:
         lookup_started = threading.Event()
         release_lookup = threading.Event()
 
-        def slow_resolver(*_args, **kwargs):
+        def slow_resolver(session_ref, *_args, **_kwargs):
             resolver_threads.append(threading.get_ident())
-            if kwargs.get("session_ref") == "#123":
+            if session_ref == "#123":
                 lookup_started.set()
                 release_lookup.wait(timeout=1)
-            return SeededContextTokens()
+            return None, None, None, None
 
         tools_handler.tool_proxy.call_tool = AsyncMock(return_value={"success": True})
 
         with patch(
-            "gobby.mcp_proxy.server.resolve_and_seed_contexts",
+            "gobby.utils.session_context._resolve_context_values",
             side_effect=slow_resolver,
         ):
             blocked_call = asyncio.create_task(

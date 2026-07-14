@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -273,6 +274,51 @@ async def test_execute_pipeline_no_executor(
     result = await executor.execute(job, run)
     assert result.status == "failed"
     assert "not configured" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_execute_pipeline_resolves_executor_for_job_project(
+    cron_storage: CronJobStorage,
+) -> None:
+    pipeline = SimpleNamespace(
+        name="cron-test-pipeline",
+        model_dump_json=lambda: '{"name":"cron-test-pipeline"}',
+    )
+    load_pipeline = AsyncMock(return_value=pipeline)
+    create_execution = MagicMock(
+        return_value=SimpleNamespace(id="eeeeeeee-eeee-4eee-8eee-eeeeeeee0200")
+    )
+    execute_pipeline = AsyncMock(return_value=None)
+    pipeline_executor = SimpleNamespace(
+        loader=SimpleNamespace(load_pipeline=load_pipeline),
+        session_manager=None,
+        execution_manager=SimpleNamespace(create_execution=create_execution),
+        execute=execute_pipeline,
+    )
+
+    resolved_projects: list[str] = []
+
+    def get_pipeline_executor(project_id: str) -> SimpleNamespace:
+        resolved_projects.append(project_id)
+        return pipeline_executor
+
+    services = SimpleNamespace(get_pipeline_executor=get_pipeline_executor)
+    executor = CronExecutor(storage=cron_storage, services=services)
+    job = _make_job(
+        cron_storage,
+        "pipeline",
+        {"pipeline_name": "cron-test-pipeline"},
+    )
+    run = cron_storage.create_run(job.id)
+
+    result = await executor.execute(job, run)
+    if executor._background_tasks:
+        await asyncio.gather(*list(executor._background_tasks), return_exceptions=True)
+
+    assert result.status == "dispatched"
+    assert resolved_projects == [job.project_id]
+    load_pipeline.assert_awaited_once_with("cron-test-pipeline", job.project_id)
+    execute_pipeline.assert_awaited_once()
 
 
 @pytest.mark.asyncio

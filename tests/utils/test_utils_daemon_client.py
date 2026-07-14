@@ -1,11 +1,13 @@
 """Tests for src/utils/daemon_client.py - Daemon HTTP Client."""
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from gobby.shutdown_intent import ShutdownIntent, write_shutdown_intent
-from gobby.utils.daemon_client import DaemonClient
+from gobby.utils.daemon_client import DaemonClient, DaemonHealthError
 from gobby.utils.daemon_url import DaemonUrlError
 
 pytestmark = pytest.mark.unit
@@ -14,14 +16,20 @@ pytestmark = pytest.mark.unit
 class TestDaemonClientInit:
     """Tests for DaemonClient initialization."""
 
-    def test_default_values(self) -> None:
-        """Test default initialization values."""
+    def test_default_values(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test default initialization resolves the configured daemon port."""
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+        monkeypatch.delenv("GOBBY_DAEMON_URL", raising=False)
+        monkeypatch.delenv("GOBBY_PORT", raising=False)
+        monkeypatch.delenv("GOBBY_DAEMON_PORT", raising=False)
+        bootstrap_path = tmp_path / "bootstrap.yaml"
+        bootstrap_path.write_text("daemon_port: 61999\n", encoding="utf-8")
+        bootstrap_path.chmod(0o600)
+
         client = DaemonClient()
 
-        assert client.url == "http://localhost:60887"
+        assert client.url == "http://localhost:61999"
         assert client.timeout == 5.0
-        assert client._cached_is_ready is None
-        assert client._cached_status is None
 
     def test_custom_values(self) -> None:
         """Test custom initialization values."""
@@ -80,7 +88,7 @@ class TestDaemonClientCheckHealth:
         logger.debug.assert_called_once_with(
             "Daemon health check passed",
             extra={
-                "url": "http://localhost:60887",
+                "url": "http://127.0.0.1:60887",
                 "health_failed_since_last_success": False,
             },
         )
@@ -106,11 +114,11 @@ class TestDaemonClientCheckHealth:
         logger = MagicMock()
         client = DaemonClient(logger=logger)
 
-        with patch("httpx.get", side_effect=Exception("Connection refused")):
+        with patch("httpx.get", side_effect=httpx.ConnectError("Connection refused")):
             is_healthy, error = client.check_health()
 
         assert is_healthy is False
-        assert error is None  # None indicates daemon not running
+        assert error is DaemonHealthError.NOT_RUNNING
         logger.warning.assert_called_once()
 
     def test_health_check_recovery_logs_info_once(self) -> None:
@@ -130,21 +138,21 @@ class TestDaemonClientCheckHealth:
         logger.info.assert_called_once_with(
             "Daemon health recovered",
             extra={
-                "url": "http://localhost:60887",
+                "url": "http://127.0.0.1:60887",
                 "health_failed_since_last_success": True,
             },
         )
         logger.debug.assert_called_once_with(
             "Daemon health check passed",
             extra={
-                "url": "http://localhost:60887",
+                "url": "http://127.0.0.1:60887",
                 "health_failed_since_last_success": False,
             },
         )
 
     def test_health_check_connection_refused_during_planned_restart_does_not_warn(
         self,
-        tmp_path,
+        tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Planned restarts make transient daemon gaps expected."""
@@ -153,24 +161,31 @@ class TestDaemonClientCheckHealth:
         logger = MagicMock()
         client = DaemonClient(logger=logger)
 
-        with patch("httpx.get", side_effect=Exception("Connection refused")):
+        with patch("httpx.get", side_effect=httpx.ConnectError("Connection refused")):
             is_healthy, error = client.check_health()
 
         assert is_healthy is False
-        assert error is None
+        assert error is DaemonHealthError.NOT_RUNNING
         logger.warning.assert_not_called()
         logger.debug.assert_called_once()
         assert "during planned restart (cli_restart)" in logger.debug.call_args.args[0]
 
-    def test_health_check_other_error(self) -> None:
-        """Test health check with other errors."""
+    @pytest.mark.parametrize(
+        "error",
+        [
+            httpx.ReadError("Connection reset by peer"),
+            httpx.ConnectTimeout("Connection timed out"),
+        ],
+    )
+    def test_health_check_other_http_error(self, error: httpx.HTTPError) -> None:
+        """HTTP failures other than ConnectError preserve their diagnostic."""
         client = DaemonClient()
 
-        with patch("httpx.get", side_effect=Exception("DNS resolution failed")):
-            is_healthy, error = client.check_health()
+        with patch("httpx.get", side_effect=error):
+            is_healthy, health_error = client.check_health()
 
         assert is_healthy is False
-        assert "DNS resolution failed" in error
+        assert health_error == str(error)
 
 
 class TestDaemonClientCheckStatus:
@@ -192,13 +207,17 @@ class TestDaemonClientCheckStatus:
         """Test status when daemon is not running."""
         client = DaemonClient()
 
-        with patch.object(client, "check_health", return_value=(False, None)):
+        with patch.object(
+            client,
+            "check_health",
+            return_value=(False, DaemonHealthError.NOT_RUNNING),
+        ):
             is_ready, message, status, error = client.check_status()
 
         assert is_ready is False
         assert message == "Daemon is not running"
         assert status == "not_running"
-        assert error is None
+        assert error == "Daemon is not running"
 
     def test_status_cannot_access(self) -> None:
         """Test status when daemon cannot be accessed."""
@@ -208,9 +227,29 @@ class TestDaemonClientCheckStatus:
             is_ready, message, status, error = client.check_status()
 
         assert is_ready is False
+        assert message is not None
         assert "Cannot access daemon" in message
         assert status == "cannot_access"
         assert error == "HTTP 503"
+
+    @pytest.mark.parametrize(
+        "health_error",
+        [
+            httpx.ReadError("Connection reset by peer"),
+            httpx.ConnectTimeout("Connection timed out"),
+        ],
+    )
+    def test_http_error_status_is_cannot_access(self, health_error: httpx.HTTPError) -> None:
+        """Transport and timeout failures report cannot-access status."""
+        client = DaemonClient()
+
+        with patch("httpx.get", side_effect=health_error):
+            is_ready, message, status, error = client.check_status()
+
+        assert is_ready is False
+        assert message == f"Cannot access daemon: {health_error}"
+        assert status == "cannot_access"
+        assert error == str(health_error)
 
 
 class TestDaemonClientCallHttpApi:
@@ -288,6 +327,25 @@ class TestDaemonClientCallHttpApi:
         call_args = mock_get.call_args
         assert call_args.kwargs["timeout"] == 30.0
 
+    def test_zero_timeout_is_preserved(self) -> None:
+        client = DaemonClient(timeout=5.0)
+
+        with patch("httpx.get", return_value=MagicMock()) as mock_get:
+            client.call_http_api("/test", method="GET", timeout=0)
+
+        assert mock_get.call_args.kwargs["timeout"] == 0
+
+    @pytest.mark.parametrize("method", ["GET", "DELETE"])
+    def test_request_body_is_preserved(self, method: str) -> None:
+        client = DaemonClient()
+        payload = {"key": "value"}
+
+        with patch("httpx.request", return_value=MagicMock()) as mock_request:
+            client.call_http_api("/test", method=method, json_data=payload)
+
+        assert mock_request.call_args.args[:2] == (method, f"{client.url}/test")
+        assert mock_request.call_args.kwargs["json"] == payload
+
     def test_exception_handling(self) -> None:
         """Test exception is raised on failure."""
         client = DaemonClient()
@@ -337,59 +395,3 @@ class TestDaemonClientCallMcpTool:
         )
         assert mock_call.call_count == 1
         assert mock_call.call_args is not None
-
-
-class TestDaemonClientStatusCache:
-    """Tests for status caching functionality."""
-
-    def test_update_status_cache(self) -> None:
-        """Test updating status cache."""
-        client = DaemonClient()
-
-        with patch.object(client, "check_status", return_value=(True, "Ready", "ready", None)):
-            client.update_status_cache()
-
-        assert client._cached_is_ready is True
-        assert client._cached_message == "Ready"
-        assert client._cached_status == "ready"
-        assert client._cached_error is None
-
-    def test_get_cached_status_initial(self) -> None:
-        """Test getting cached status before any check."""
-        client = DaemonClient()
-
-        is_ready, message, status, error = client.get_cached_status()
-
-        assert is_ready is None
-        assert message is None
-        assert status is None
-        assert error is None
-
-    def test_get_cached_status_after_update(self) -> None:
-        """Test getting cached status after update."""
-        client = DaemonClient()
-
-        with patch.object(
-            client, "check_status", return_value=(False, "Not running", "not_running", None)
-        ):
-            client.update_status_cache()
-
-        is_ready, message, status, error = client.get_cached_status()
-
-        assert is_ready is False
-        assert message == "Not running"
-        assert status == "not_running"
-
-    def test_cache_thread_safety(self) -> None:
-        """Test that cache operations use lock."""
-        client = DaemonClient()
-
-        # Verify the lock exists
-        assert hasattr(client, "_cache_lock")
-
-        # Test that operations work (thread safety is implicit via lock usage)
-        with patch.object(client, "check_status", return_value=(True, "Ready", "ready", None)):
-            client.update_status_cache()
-
-        result = client.get_cached_status()
-        assert result[0] is True

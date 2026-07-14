@@ -680,6 +680,28 @@ class TestHealthEndpoint:
         assert response.json()["hook_runtime"]["state"] == runtime_state.value
         mock_read.assert_called_once_with()
 
+    def test_health_surfaces_forced_runner_init_failure(
+        self,
+        client: TestClient,
+        mock_server: MagicMock,
+    ) -> None:
+        from gobby.runner_init.services import _init_llm_service
+
+        runner = SimpleNamespace(config=SimpleNamespace())
+        mock_server.get_runner.return_value = runner
+
+        with patch(
+            "gobby.runner_init.services.build_daemon_text_generation_service",
+            side_effect=RuntimeError("forced init failure"),
+        ):
+            _init_llm_service(runner)
+
+        response = client.get("/api/admin/health")
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "degraded"
+        assert response.json()["degraded_services"] == ["llm_service"]
+
 
 class TestWorkflowsReloadEndpoint:
     """Tests for POST /admin/workflows/reload."""

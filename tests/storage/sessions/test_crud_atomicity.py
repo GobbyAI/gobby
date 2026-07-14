@@ -155,16 +155,6 @@ def test_create_web_chat_session_rolls_back_when_follow_up_update_fails(
     assert session_manager.list(project_id=sample_project["id"]) == []
 
 
-def test_recalculate_stats_short_circuits_for_missing_session(
-    session_manager: SessionManager,
-) -> None:
-    with patch.object(session_manager.db, "execute", wraps=session_manager.db.execute) as execute:
-        result = session_manager.recalculate_stats("missing-session")
-
-    assert result is None
-    execute.assert_not_called()
-
-
 def test_update_chat_mode_refreshes_updated_at(
     session_manager: SessionManager,
     sample_project: dict[str, str],

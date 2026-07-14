@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import json
 import subprocess
-from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -30,10 +31,10 @@ class _RecordingStorage:
         self.status_updates: list[tuple[str, str]] = []
         self.update_error = update_error
 
-    def update_status(self, session_id: str, status: str) -> None:
+    def expire_if_active(self, session_id: str) -> None:
         if self.update_error is not None:
             raise self.update_error
-        self.status_updates.append((session_id, status))
+        self.status_updates.append((session_id, "expired"))
 
 
 class _RecordingProcessor:
@@ -130,8 +131,53 @@ class TestCheckSessions:
             await monitor._check_sessions()
 
         mock_dispatch_fn.assert_called_once_with("s1", False, None)
-        mock_session_storage.update_status.assert_called_once_with("s1", "expired")
+        mock_session_storage.expire_if_active.assert_called_once_with("s1")
         assert "s1" in monitor._recently_handled
+
+    @pytest.mark.asyncio
+    async def test_offloads_db_tmux_and_touch_work(
+        self,
+        monitor,
+        mock_session_storage,
+        monkeypatch,
+    ):
+        record = SimpleNamespace(
+            session_id="sess-tmux",
+            source="claude",
+            parent_pid=None,
+            tmux_pane="%1",
+            tmux_socket_path=None,
+        )
+
+        def get_active_terminal_sessions():
+            return [record]
+
+        def get_live_tmux_panes_by_socket(records):
+            assert records == [record]
+            return {None: {"%1"}}
+
+        monkeypatch.setattr(monitor, "_get_active_terminal_sessions", get_active_terminal_sessions)
+        monkeypatch.setattr(
+            monitor,
+            "_get_live_tmux_panes_by_socket",
+            get_live_tmux_panes_by_socket,
+        )
+
+        async def run_in_place(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        with patch(
+            "gobby.sessions.liveness_monitor.asyncio.to_thread",
+            new=AsyncMock(side_effect=run_in_place),
+        ) as to_thread:
+            await monitor._check_sessions()
+
+        assert to_thread.await_args_list == [
+            call(get_active_terminal_sessions),
+            call(get_live_tmux_panes_by_socket, [record]),
+            call(mock_session_storage.touch, "sess-tmux"),
+        ]
+        mock_session_storage.touch.assert_called_once_with("sess-tmux")
 
     @pytest.mark.asyncio
     async def test_ignores_alive_pid(self, monitor, mock_session_storage, mock_dispatch_fn):
@@ -213,7 +259,7 @@ class TestCheckSessions:
             await monitor._check_sessions()
 
         mock_dispatch_fn.assert_called_once_with("dead", False, None)
-        mock_session_storage.update_status.assert_called_once_with("dead", "expired")
+        mock_session_storage.expire_if_active.assert_called_once_with("dead")
         assert set(monitor._recently_handled) == {"dead"}
 
     @pytest.mark.asyncio
@@ -314,7 +360,7 @@ class TestCheckSessions:
             await monitor._check_sessions()
 
         mock_dispatch_fn.assert_called_once_with("s1", False, None)
-        mock_session_storage.update_status.assert_called_once_with("s1", "expired")
+        mock_session_storage.expire_if_active.assert_called_once_with("s1")
         assert "s1" in monitor._recently_handled
 
     @pytest.mark.asyncio
@@ -340,7 +386,7 @@ class TestCheckSessions:
             await monitor._check_sessions()
 
         mock_dispatch_fn.assert_called_once_with("s1", False, None)
-        mock_session_storage.update_status.assert_called_once_with("s1", "expired")
+        mock_session_storage.expire_if_active.assert_called_once_with("s1")
         assert set(monitor._recently_handled) == {"s1"}
 
     @pytest.mark.asyncio
@@ -357,10 +403,11 @@ class TestCheckSessions:
 
         with (
             patch.object(SessionLivenessMonitor, "_is_pid_alive", return_value=True),
-            patch.object(
-                SessionLivenessMonitor,
-                "_get_live_tmux_panes_by_socket",
-                return_value={None: None},
+            patch(
+                "subprocess.run",
+                return_value=subprocess.CompletedProcess(
+                    args=[], returncode=1, stdout="", stderr="tmux error"
+                ),
             ),
         ):
             await monitor._check_sessions()
@@ -386,7 +433,7 @@ class TestCheckSessions:
             await monitor._check_sessions()
 
         mock_dispatch_fn.assert_called_once_with("s1", False, None)
-        mock_session_storage.update_status.assert_called_once_with("s1", "expired")
+        mock_session_storage.expire_if_active.assert_called_once_with("s1")
         assert set(monitor._recently_handled) == {"s1"}
 
     @pytest.mark.asyncio
@@ -454,7 +501,7 @@ class TestCheckSessions:
             await monitor._check_sessions()
 
         mock_dispatch_fn.assert_called_once_with("s1", False, None)
-        mock_session_storage.update_status.assert_called_once_with("s1", "expired")
+        mock_session_storage.expire_if_active.assert_called_once_with("s1")
         mock_session_storage.touch.assert_not_called()
         assert set(monitor._recently_handled) == {"s1"}
 
@@ -575,6 +622,7 @@ class TestIsTmuxPaneAlive:
     def test_alive_pane(self):
         """Pane ID in tmux output means pane is alive."""
         mock_result = MagicMock()
+        mock_result.returncode = 0
         mock_result.stdout = "%5\t0\n%6\t0\n%7\t1\n"
         with patch("subprocess.run", return_value=mock_result):
             assert SessionLivenessMonitor._is_tmux_pane_alive("%6") is True
@@ -582,6 +630,7 @@ class TestIsTmuxPaneAlive:
     def test_dead_pane(self):
         """Pane ID not in tmux output means pane is dead."""
         mock_result = MagicMock()
+        mock_result.returncode = 0
         mock_result.stdout = "%5\t0\n%7\t0\n"
         with patch("subprocess.run", return_value=mock_result):
             assert SessionLivenessMonitor._is_tmux_pane_alive("%6") is False
@@ -589,6 +638,7 @@ class TestIsTmuxPaneAlive:
     def test_pane_dead_marker_is_not_alive(self):
         """pane_dead=1 excludes panes that tmux still lists after process exit."""
         mock_result = MagicMock()
+        mock_result.returncode = 0
         mock_result.stdout = "%6\t1\n"
         with patch("subprocess.run", return_value=mock_result):
             assert SessionLivenessMonitor._is_tmux_pane_alive("%6") is False
@@ -596,6 +646,7 @@ class TestIsTmuxPaneAlive:
     def test_alive_pane_with_socket_path(self):
         """When a socket path is known, liveness checks that exact tmux server."""
         mock_result = MagicMock()
+        mock_result.returncode = 0
         mock_result.stdout = "%6\t0\n"
         with patch("subprocess.run", return_value=mock_result) as mock_run:
             assert SessionLivenessMonitor._is_tmux_pane_alive("%6", "/tmp/tmux-1000/gobby") is True
@@ -618,8 +669,10 @@ class TestIsTmuxPaneAlive:
     def test_dead_pane_checks_default_and_gobby_socket_when_path_unknown(self):
         """Legacy rows without a socket path check both the default server and Gobby's socket."""
         default_result = MagicMock()
+        default_result.returncode = 0
         default_result.stdout = ""
         gobby_result = MagicMock()
+        gobby_result.returncode = 0
         gobby_result.stdout = "%6\t0\n"
 
         with patch("subprocess.run", side_effect=[default_result, gobby_result]) as mock_run:
@@ -660,9 +713,16 @@ class TestIsTmuxPaneAlive:
     def test_empty_output(self):
         """Empty tmux output (no panes) returns False."""
         mock_result = MagicMock()
+        mock_result.returncode = 0
         mock_result.stdout = ""
         with patch("subprocess.run", return_value=mock_result):
             assert SessionLivenessMonitor._is_tmux_pane_alive("%6") is False
+
+    def test_nonzero_exit_returns_probe_failure(self):
+        """A non-zero tmux exit is a failed probe, not an empty pane list."""
+        result = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="tmux error")
+        with patch("subprocess.run", return_value=result):
+            assert SessionLivenessMonitor._list_tmux_panes() is None
 
 
 class TestGetActiveTerminalSessions:

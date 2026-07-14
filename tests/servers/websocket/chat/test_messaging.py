@@ -3,7 +3,7 @@
 import asyncio
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 from websockets.exceptions import ConnectionClosed
@@ -103,7 +103,12 @@ class DummyLifecycleMixin(ChatLifecycleMixin):
         self,
         db_session_id: str,
         event_type: HookEventType,
+        *,
+        pending_message_ids: list[str] | None = None,
     ) -> None:
+        return None
+
+    def _mark_pending_messages_delivered(self, message_ids: list[str], db_session_id: str) -> None:
         return None
 
 
@@ -163,9 +168,14 @@ class TestInjectPendingMessages:
         msg2.from_session = None
         msg2.content = "help me"
 
-        mixin.inter_session_msg_manager.claim_undelivered_messages.return_value = [msg1, msg2]
+        mixin.inter_session_msg_manager.get_undelivered_messages.return_value = [msg1, msg2]
 
-        res = mixin._inject_pending_messages("sid", HookEventType.BEFORE_AGENT)
+        pending_message_ids: list[str] = []
+        res = mixin._inject_pending_messages(
+            "sid",
+            HookEventType.BEFORE_AGENT,
+            pending_message_ids=pending_message_ids,
+        )
 
         assert res is not None
         assert "Pending messages from web chat user" in res
@@ -173,8 +183,40 @@ class TestInjectPendingMessages:
         assert "Pending P2P messages from other sessions" in res
         assert "- [URGENT] help me" in res
 
-        mixin.inter_session_msg_manager.claim_undelivered_messages.assert_called_once_with("sid")
+        assert pending_message_ids == ["1", "2"]
         mixin.inter_session_msg_manager.mark_delivered.assert_not_called()
+
+        mixin._mark_pending_messages_delivered(pending_message_ids, "sid")
+
+        mixin.inter_session_msg_manager.mark_delivered.assert_any_call("1", "sid")
+        mixin.inter_session_msg_manager.mark_delivered.assert_any_call("2", "sid")
+
+    def test_inject_build_failure_leaves_message_undelivered(
+        self,
+        mixin: DummyMessagingMixin,
+    ) -> None:
+        mixin.inter_session_msg_manager = MagicMock()
+        message = MagicMock()
+        message.id = "broken"
+        message.message_type = "p2p"
+        type(message).content = PropertyMock(side_effect=RuntimeError("format failed"))
+        mixin.inter_session_msg_manager.get_undelivered_messages.return_value = [message]
+
+        result = mixin._inject_pending_messages("sid", HookEventType.BEFORE_AGENT)
+
+        assert result is None
+        mixin.inter_session_msg_manager.mark_delivered.assert_not_called()
+
+    def test_mark_delivered_swallows_concurrent_claim_errors(
+        self,
+        mixin: DummyMessagingMixin,
+    ) -> None:
+        mixin.inter_session_msg_manager = MagicMock()
+        mixin.inter_session_msg_manager.mark_delivered.side_effect = ValueError("already claimed")
+
+        mixin._mark_pending_messages_delivered(["claimed"], "sid")
+
+        mixin.inter_session_msg_manager.mark_delivered.assert_called_once_with("claimed", "sid")
 
 
 class TestHandleChatMessage:

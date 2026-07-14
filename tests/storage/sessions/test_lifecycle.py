@@ -32,6 +32,86 @@ class TestSessionManagerLifecycle:
         assert updated is not None
         assert updated.status == "paused"
 
+    def test_expire_if_active_does_not_overwrite_handoff_ready(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        session = session_manager.register(
+            external_id="conditional-expiry-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        session_manager.update_status(session.id, "handoff_ready")
+
+        assert session_manager.expire_if_active(session.id) is None
+        preserved = session_manager.get(session.id)
+        assert preserved is not None
+        assert preserved.status == "handoff_ready"
+
+    def test_expire_if_active_updates_active_session(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        session = session_manager.register(
+            external_id="active-expiry-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        expired = session_manager.expire_if_active(session.id)
+
+        assert expired is not None
+        assert expired.status == "expired"
+
+    @pytest.mark.parametrize("bulk", [False, True])
+    def test_status_updates_reject_unknown_values(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+        *,
+        bulk: bool,
+    ) -> None:
+        session = session_manager.register(
+            external_id=f"invalid-status-{bulk}",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        with pytest.raises(ValueError, match="Invalid session status 'immortal'"):
+            if bulk:
+                session_manager.update(session.id, status="immortal")
+            else:
+                session_manager.update_status(session.id, "immortal")
+
+    @pytest.mark.parametrize("terminal_status", ["expired", "deleted"])
+    @pytest.mark.parametrize("bulk", [False, True])
+    def test_status_updates_reject_transitions_out_of_terminal_states(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+        terminal_status: str,
+        *,
+        bulk: bool,
+    ) -> None:
+        session = session_manager.register(
+            external_id=f"terminal-transition-{terminal_status}-{bulk}",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        session_manager.update_status(session.id, terminal_status)
+
+        with pytest.raises(ValueError, match="Cannot transition terminal session status"):
+            if bulk:
+                session_manager.update(session.id, status="active")
+            else:
+                session_manager.update_status(session.id, "active")
+
     def test_list_sessions(
         self,
         session_manager: SessionManager,
@@ -211,6 +291,34 @@ class TestSessionManagerLifecycle:
         pending = session_manager.get_pending_transcript_sessions()
         assert pending == []
 
+    def test_mark_transcript_processed_does_not_clobber_revival(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """A stale finalizer cannot mark a concurrently revived session processed."""
+        session = session_manager.register(
+            external_id="revival-race-test",
+            machine_id="machine",
+            source="codex",
+            project_id=sample_project["id"],
+            transcript_path="/tmp/test.jsonl",
+        )
+        session_manager.update_status(session.id, "expired")
+
+        revived = session_manager.revive_expired_terminal_session(session.id)
+        updated = session_manager.mark_transcript_processed(session.id)
+
+        assert revived is not None
+        assert revived.status == "active"
+        assert updated is not None
+        assert updated.status == "active"
+        row = session_manager.db.fetchone(
+            "SELECT transcript_processed FROM sessions WHERE id = %s",
+            (session.id,),
+        )
+        assert row["transcript_processed"] == 0
+
     def test_update_parent_session_id(
         self,
         session_manager: SessionManager,
@@ -234,6 +342,10 @@ class TestSessionManagerLifecycle:
         updated = session_manager.update_parent_session_id(session.id, parent.id)
         assert updated is not None
         assert updated.parent_session_id == parent.id
+
+        cleared = session_manager.update_parent_session_id(session.id, None)
+        assert cleared is not None
+        assert cleared.parent_session_id is None
 
     def test_update_parent_session_id_ignores_self_parent(
         self,
@@ -343,6 +455,36 @@ class TestSessionManagerLifecycle:
         assert updated.status == "paused"
         assert updated.title == "New Title"
         assert updated.git_branch == "feature/branch"
+
+    def test_update_clears_nullable_metadata(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        session = session_manager.register(
+            external_id="clear-metadata",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            title="Temporary title",
+            transcript_path="/tmp/transcript.jsonl",
+            git_branch="feature/temporary",
+            title_source="manual",
+        )
+
+        updated = session_manager.update(
+            session.id,
+            title=None,
+            title_source=None,
+            transcript_path=None,
+            git_branch=None,
+        )
+
+        assert updated is not None
+        assert updated.title is None
+        assert updated.title_source is None
+        assert updated.transcript_path is None
+        assert updated.git_branch is None
 
     def test_update_single_field(
         self,

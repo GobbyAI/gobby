@@ -376,3 +376,20 @@ class TestSessionEndHandling:
 
         # Should still allow despite error
         assert response.decision == "allow"
+
+    def test_session_end_marks_liveness_monitor_recently_handled(
+        self, mock_dependencies: dict
+    ) -> None:
+        monitor = MagicMock()
+        handlers = EventHandlers(**mock_dependencies)
+        handlers.set_liveness_monitor(monitor)
+        event = make_event(
+            HookEventType.SESSION_END,
+            session_id="ext-123",
+            metadata={"_platform_session_id": "sess-123"},
+        )
+
+        response = handlers.handle_session_end(event)
+
+        assert response.decision == "allow"
+        monitor.mark_recently_handled.assert_called_once_with("sess-123")

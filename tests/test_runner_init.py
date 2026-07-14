@@ -1,5 +1,6 @@
 """Initialization and configuration tests for GobbyRunner."""
 
+import asyncio
 import json
 from contextlib import ExitStack
 from types import SimpleNamespace
@@ -13,7 +14,13 @@ from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.config.tasks import GobbyTasksConfig, TaskExpansionConfig, TaskValidationConfig
 from gobby.runner import GobbyRunner
 from gobby.runner_init.orchestration import _send_tmux_pane_wake, _send_tmux_session_wake
-from tests.runner_helpers import create_base_patches, set_mock_default
+from gobby.runner_lifecycle_subsystems import _start_system_automation_loop
+from gobby.telemetry.span_store import GobbySpanExporter
+from tests.runner_helpers import (
+    apply_safe_runner_config_defaults,
+    create_base_patches,
+    set_mock_default,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_window")]
 
@@ -63,6 +70,79 @@ class TestGobbyRunnerInit:
             mock_http_cls.assert_called_once()
             mock_ws_cls.assert_called_once()
 
+    def test_telemetry_uses_phase_two_config(self) -> None:
+        bootstrap_config = apply_safe_runner_config_defaults(MagicMock())
+        runtime_config = apply_safe_runner_config_defaults(MagicMock())
+        runtime_config.telemetry.exporter.otlp_endpoint = "https://collector.example/v1/traces"
+        runtime_config.telemetry.exporter.otlp_headers = {"Authorization": "resolved-runtime-token"}
+        patches = create_base_patches(mock_config=bootstrap_config)
+
+        with ExitStack() as stack:
+            mocks = [stack.enter_context(p) for p in patches]
+            mocks_by_attribute = {
+                patch_context.attribute: entered_mock
+                for patch_context, entered_mock in zip(patches, mocks, strict=True)
+            }
+            mock_load_config = mocks_by_attribute["load_config"]
+            mock_load_config.side_effect = [bootstrap_config, runtime_config]
+
+            runner = GobbyRunner()
+
+            mocks_by_attribute["setup_file_logging"].assert_called_once_with(
+                bootstrap_config.telemetry,
+                verbose=False,
+            )
+            mocks_by_attribute["init_telemetry"].assert_called_once_with(
+                runtime_config.telemetry,
+                verbose=False,
+            )
+            assert runner.config is runtime_config
+            assert runner.config.telemetry.exporter.otlp_headers == {
+                "Authorization": "resolved-runtime-token"
+            }
+            phase_two_call = mock_load_config.call_args_list[1]
+            assert phase_two_call.kwargs["config_store"] is runner.config_store
+            assert phase_two_call.kwargs["secret_resolver"] == runner.secret_store.get
+
+    async def test_trace_export_broadcasts_from_worker_thread(
+        self, mock_config_with_websocket
+    ) -> None:
+        """Trace exports schedule WebSocket broadcasts on the daemon loop."""
+        websocket_server = MagicMock()
+        broadcast_complete = asyncio.Event()
+        daemon_loop = asyncio.get_running_loop()
+
+        async def broadcast_trace_event(event: dict[str, Any]) -> None:
+            assert asyncio.get_running_loop() is daemon_loop
+            assert event["type"] == "trace_event"
+            broadcast_complete.set()
+
+        websocket_server.broadcast_trace_event = AsyncMock(side_effect=broadcast_trace_event)
+        patches = create_base_patches(
+            mock_config=mock_config_with_websocket,
+            mock_ws_server=websocket_server,
+        )
+        mock_config_with_websocket.telemetry.traces_enabled = True
+
+        with ExitStack() as stack:
+            for patch_context in patches:
+                stack.enter_context(patch_context)
+            add_exporter = stack.enter_context(
+                patch("gobby.telemetry.providers.add_span_storage_exporter")
+            )
+
+            runner = GobbyRunner()
+            callback = add_exporter.call_args.kwargs["broadcast_callback"]
+            exporter = GobbySpanExporter(MagicMock(), broadcast_callback=callback)
+
+            with patch.object(exporter, "_span_to_dict", return_value={"trace_id": "trace-1"}):
+                await asyncio.to_thread(exporter.export, [MagicMock()])
+
+            await asyncio.wait_for(broadcast_complete.wait(), timeout=1)
+
+        websocket_server.broadcast_trace_event.assert_awaited_once()
+        assert runner._pending_tasks == set()
+
     def test_required_secret_migration_failure_aborts_startup(self) -> None:
         """Required legacy secret migration errors must not be swallowed by config load."""
         mock_config = DaemonConfig(database_url="$secret:DB_URL")
@@ -76,6 +156,7 @@ class TestGobbyRunnerInit:
         with (
             patch("gobby.runner_init.storage.load_config", return_value=mock_config),
             patch("gobby.runner_init.storage.init_telemetry"),
+            patch("gobby.runner_init.storage.setup_file_logging"),
             patch("gobby.runner_init.storage.get_machine_id", return_value="test-machine"),
             patch("gobby.runner_init.storage.init_hub_database", return_value=mock_db),
             patch("gobby.storage.secrets.SecretStore", return_value=mock_store),
@@ -433,7 +514,7 @@ class TestGobbyRunnerInitialization:
             assert runner.memory_manager == mock_memory_manager
             assert runner.memory_sync_manager is None
 
-    def test_init_memory_manager_exception(self) -> None:
+    def test_init_memory_manager_exception(self, caplog: pytest.LogCaptureFixture) -> None:
         """Test that MemoryManager initialization exception is handled."""
         mock_config = MagicMock()
         mock_config.daemon_port = 60887
@@ -441,7 +522,7 @@ class TestGobbyRunnerInitialization:
         mock_config.session_lifecycle = MagicMock()
         mock_config.message_tracking = None
         mock_config.memory_sync = MagicMock()
-        mock_config.memory_sync.enabled = False
+        mock_config.memory_sync.enabled = True
         mock_config.memory = MagicMock()
 
         patches = create_base_patches(mock_config=mock_config)
@@ -459,6 +540,41 @@ class TestGobbyRunnerInitialization:
             runner = GobbyRunner()
             assert runner.memory_manager is None
             assert runner.memory_sync_manager is None
+            assert {"memory_manager", "memory_sync_manager"} <= runner.degraded_services
+            assert "Skipping MemoryBackupManager initialization" in caplog.text
+            memory_error = next(
+                record
+                for record in caplog.records
+                if record.message == "Failed to initialize MemoryManager"
+            )
+            assert memory_error.exc_info is not None
+
+    def test_init_code_indexer_exception(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Test that code indexer initialization exceptions are handled."""
+        mock_config = MagicMock()
+        mock_config.code_index.enabled = True
+
+        patches = create_base_patches(mock_config=mock_config)
+        patches.append(
+            patch(
+                "gobby.code_index.storage.CodeIndexStorage",
+                side_effect=ImportError("Code index storage unavailable"),
+            )
+        )
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+
+            runner = GobbyRunner()
+
+            assert runner.code_indexer is None
+            assert "code_indexer" in runner.degraded_services
+            code_index_error = next(
+                record
+                for record in caplog.records
+                if record.message == "Failed to initialize code indexer"
+            )
+            assert code_index_error.exc_info is not None
 
     def test_init_with_memory_backup_manager_does_not_import_jsonl(self) -> None:
         """Test MemoryBackupManager initializes without automatic JSONL import."""
@@ -669,6 +785,7 @@ class TestGobbyRunnerInitialization:
             assert runner.task_validator is None
             assert runner.llm_service == mock_llm_service
             assert runner.text_generation_service == mock_text_generation
+            assert "task_validator" in runner.degraded_services
 
     def test_init_agent_runner_exception(self) -> None:
         """Test AgentRunner initialization exception is handled."""
@@ -695,7 +812,7 @@ class TestGobbyRunnerInitialization:
             assert runner.agent_runner is None
             assert runner.task_sync_manager is not None
 
-    def test_init_llm_service_exception(self) -> None:
+    def test_init_llm_service_exception(self, caplog: pytest.LogCaptureFixture) -> None:
         """Test LLM service initialization exception is handled."""
         mock_config = MagicMock()
         mock_config.daemon_port = 60887
@@ -720,6 +837,89 @@ class TestGobbyRunnerInitialization:
             runner = GobbyRunner()
             assert runner.llm_service is None
             assert runner.task_validator is None
+            assert {"llm_service", "task_validator"} <= runner.degraded_services
+            assert "Skipping TaskValidator initialization" in caplog.text
+            llm_error = next(
+                record
+                for record in caplog.records
+                if record.message == "Failed to initialize LLM service"
+            )
+            assert llm_error.exc_info is not None
+
+
+class TestCronInitializationFailures:
+    @pytest.mark.parametrize(
+        ("failed_target", "expected_message"),
+        [
+            ("gobby.storage.cron.CronJobStorage", "Failed to initialize CronJobStorage"),
+            ("gobby.scheduler.executor.CronExecutor", "Failed to initialize CronExecutor"),
+            (
+                "gobby.system_automation.SystemAutomationLoop",
+                "Failed to initialize SystemAutomationLoop",
+            ),
+            ("gobby.scheduler.scheduler.CronScheduler", "Failed to initialize CronScheduler"),
+        ],
+    )
+    def test_each_component_logs_its_own_failure_with_traceback(
+        self,
+        failed_target: str,
+        expected_message: str,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mock_config = MagicMock()
+        patches = create_base_patches(mock_config=mock_config)
+        cron_targets = [
+            "gobby.storage.cron.CronJobStorage",
+            "gobby.scheduler.executor.CronExecutor",
+            "gobby.system_automation.SystemAutomationLoop",
+            "gobby.scheduler.scheduler.CronScheduler",
+        ]
+
+        with ExitStack() as stack:
+            for patch_context in patches:
+                stack.enter_context(patch_context)
+            constructors = {target: stack.enter_context(patch(target)) for target in cron_targets}
+            constructors[failed_target].side_effect = RuntimeError("component failed")
+
+            GobbyRunner()
+
+        matching_records = [
+            record for record in caplog.records if record.getMessage() == expected_message
+        ]
+        assert len(matching_records) == 1
+        assert matching_records[0].exc_info is not None
+
+    @pytest.mark.asyncio
+    async def test_scheduler_failure_prevents_automation_loop_start(self) -> None:
+        mock_config = MagicMock()
+        patches = create_base_patches(mock_config=mock_config)
+        automation_loop = MagicMock()
+        automation_loop.start = AsyncMock()
+
+        with ExitStack() as stack:
+            for patch_context in patches:
+                stack.enter_context(patch_context)
+            stack.enter_context(patch("gobby.storage.cron.CronJobStorage"))
+            stack.enter_context(patch("gobby.scheduler.executor.CronExecutor"))
+            stack.enter_context(
+                patch(
+                    "gobby.system_automation.SystemAutomationLoop",
+                    return_value=automation_loop,
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "gobby.scheduler.scheduler.CronScheduler",
+                    side_effect=RuntimeError("scheduler failed"),
+                )
+            )
+
+            runner = GobbyRunner()
+            await _start_system_automation_loop(runner, tracker=None)
+
+        assert runner.cron_scheduler is None
+        assert runner.system_automation_loop is None
+        automation_loop.start.assert_not_awaited()
 
 
 class TestGobbyRunnerInitEdgeCases:

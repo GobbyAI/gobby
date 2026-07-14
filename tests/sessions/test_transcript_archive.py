@@ -77,6 +77,25 @@ class TestBackupTranscript:
             content = f.read()
         assert "updated" in content
 
+    def test_backup_failure_preserves_existing_archive(
+        self, sample_jsonl: Path, archive_dir: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        archive = Path(archive_dir) / "ext-failure.jsonl.gz"
+        original_archive = gzip.compress(b"previous archive\n")
+        archive.write_bytes(original_archive)
+
+        def fail_write(_source: str, _dest: str) -> None:
+            raise OSError("write failed")
+
+        monkeypatch.setattr(
+            "gobby.sessions.transcript_archive.write_blocked_gzip_archive", fail_write
+        )
+
+        result = backup_transcript("ext-failure", str(sample_jsonl), archive_dir)
+
+        assert result is None
+        assert archive.read_bytes() == original_archive
+
 
 class TestRestoreTranscript:
     def test_restore_decompresses_correctly(
@@ -117,6 +136,18 @@ class TestRestoreTranscript:
         result = restore_transcript("corrupt-session", str(target), archive_dir)
         assert result is False
         # Partial file should be cleaned up
+        assert not target.exists()
+
+    def test_restore_truncated_archive_removes_partial_target(
+        self, archive_dir: str, tmp_path: Path
+    ) -> None:
+        archive = Path(archive_dir) / "truncated-session.jsonl.gz"
+        archive.write_bytes(gzip.compress(b"partial transcript\n")[:-4])
+
+        target = tmp_path / "from_truncated.jsonl"
+        result = restore_transcript("truncated-session", str(target), archive_dir)
+
+        assert result is False
         assert not target.exists()
 
     def test_restore_creates_parent_directories(

@@ -705,6 +705,26 @@ class TestLoadConfig:
         assert config.memory.crossref_threshold == 0.73
         assert config.memory.recall_signal_log_path == "/tmp/layer-two.jsonl"
 
+    def test_load_config_resolves_telemetry_header_secret_from_database(
+        self,
+        temp_dir: Path,
+    ) -> None:
+        class DummyConfigStore:
+            def get_all(self) -> dict[str, object]:
+                return {
+                    "telemetry.exporter.otlp_endpoint": "https://collector.example/v1/traces",
+                    "telemetry.exporter.otlp_headers": {"Authorization": "$secret:OTLP_TOKEN"},
+                }
+
+        config = load_config(
+            config_file=str(temp_dir / "bootstrap.yaml"),
+            config_store=DummyConfigStore(),
+            secret_resolver=lambda name: "resolved-token" if name == "OTLP_TOKEN" else None,
+        )
+
+        assert config.telemetry.exporter.otlp_endpoint == "https://collector.example/v1/traces"
+        assert config.telemetry.exporter.otlp_headers == {"Authorization": "resolved-token"}
+
     def test_load_config_resolves_voice_audio_api_key_reference_from_db(
         self, temp_dir: Path
     ) -> None:

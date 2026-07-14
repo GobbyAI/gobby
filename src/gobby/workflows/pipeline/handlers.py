@@ -43,7 +43,7 @@ async def execute_mcp_step(
     )
 
     pipeline_session_id = context.get("session_id")
-    tokens = resolve_and_seed_contexts(
+    tokens = await resolve_and_seed_contexts(
         session_ref=pipeline_session_id,
         session_manager=session_manager,
         project_ref=context.get("project_id"),

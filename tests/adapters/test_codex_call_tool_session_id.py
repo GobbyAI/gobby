@@ -13,6 +13,7 @@ pytestmark = pytest.mark.unit
 
 
 def _prepare_manager_for_before_tool(manager: HookManager) -> None:
+    manager._record_machine_ingress = MagicMock()
     manager._event_handlers.get_handler.return_value = MagicMock(
         return_value=HookResponse(decision="allow")
     )

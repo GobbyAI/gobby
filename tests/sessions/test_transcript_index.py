@@ -341,6 +341,126 @@ def test_droid_sidecar_usage_is_post_pass_adjustment(tmp_path: Path) -> None:
     assert loaded_adjustment.value.output_tokens == 7
 
 
+def test_droid_incremental_index_preserves_usage_deltas_across_resume(tmp_path: Path) -> None:
+    transcript = tmp_path / "droid-delta.jsonl"
+    settings = transcript.with_suffix(".settings.json")
+    first_lines = [
+        json.dumps(
+            {
+                "type": "message",
+                "timestamp": "2024-01-01T12:00:00Z",
+                "message": {"role": "user", "content": [{"type": "text", "text": "hi"}]},
+            }
+        ),
+        json.dumps(
+            {
+                "type": "message",
+                "timestamp": "2024-01-01T12:00:01Z",
+                "message": {"role": "assistant", "content": [{"type": "text", "text": "one"}]},
+            }
+        ),
+    ]
+    settings.write_text(
+        json.dumps({"model": "claude", "tokenUsage": {"inputTokens": 5, "outputTokens": 7}}),
+        encoding="utf-8",
+    )
+    appender = TranscriptIndexAppender("droid", SESSION, str(transcript))
+    first_size = sum(len(f"{line}\n".encode()) for line in first_lines)
+    appender.append_raw_lines(
+        [RawLine(byte_offset=0, raw_line_no=i, text=line) for i, line in enumerate(first_lines)],
+        mtime_ns=1,
+        size=first_size,
+    )
+    first_index = appender.snapshot(mtime_ns=1, size=first_size)
+
+    assert [adjustment.value.input_tokens for adjustment in first_index.post_pass_adjustments] == [
+        5
+    ]
+
+    second_lines = [
+        json.dumps(
+            {
+                "type": "message",
+                "timestamp": "2024-01-01T12:00:02Z",
+                "message": {"role": "user", "content": [{"type": "text", "text": "next"}]},
+            }
+        ),
+        json.dumps(
+            {
+                "type": "message",
+                "timestamp": "2024-01-01T12:00:03Z",
+                "message": {"role": "assistant", "content": [{"type": "text", "text": "two"}]},
+            }
+        ),
+    ]
+    settings.write_text(
+        json.dumps({"model": "claude", "tokenUsage": {"inputTokens": 8, "outputTokens": 11}}),
+        encoding="utf-8",
+    )
+    second_size = first_size + sum(len(f"{line}\n".encode()) for line in second_lines)
+    appender.append_raw_lines(
+        [
+            RawLine(byte_offset=first_size, raw_line_no=i + 2, text=line)
+            for i, line in enumerate(second_lines)
+        ],
+        mtime_ns=2,
+        size=second_size,
+    )
+    second_index = appender.snapshot(mtime_ns=2, size=second_size)
+
+    assert [adjustment.value.input_tokens for adjustment in second_index.post_pass_adjustments] == [
+        5,
+        3,
+    ]
+    assert (
+        sum(adjustment.value.output_tokens for adjustment in second_index.post_pass_adjustments)
+        == 11
+    )
+
+    resumed = TranscriptIndexAppender("droid", SESSION, str(transcript))
+    resumed.hydrate_from_index(
+        index=second_index,
+        state=RenderState(),
+        current_id=None,
+        next_parser_index=second_index.next_parser_index or 0,
+        next_raw_line_no=second_index.next_raw_line_no or 0,
+    )
+    settings.write_text(
+        json.dumps({"model": "claude", "tokenUsage": {"inputTokens": 10, "outputTokens": 15}}),
+        encoding="utf-8",
+    )
+    resumed.append_raw_lines(
+        [
+            RawLine(
+                byte_offset=second_size,
+                raw_line_no=4,
+                text=json.dumps(
+                    {
+                        "type": "message",
+                        "timestamp": "2024-01-01T12:00:04Z",
+                        "message": {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": "three"}],
+                        },
+                    }
+                ),
+            )
+        ],
+        mtime_ns=3,
+        size=second_size + 1,
+    )
+    resumed_index = resumed.snapshot(mtime_ns=3, size=second_size + 1)
+
+    assert (
+        sum(adjustment.value.input_tokens for adjustment in resumed_index.post_pass_adjustments)
+        == 10
+    )
+    assert (
+        sum(adjustment.value.output_tokens for adjustment in resumed_index.post_pass_adjustments)
+        == 15
+    )
+
+
 def test_gzip_block_sidecar_requires_logical_size_before_persist(tmp_path: Path) -> None:
     raw_lines = [
         RawLine(byte_offset=0, raw_line_no=index, text=line)

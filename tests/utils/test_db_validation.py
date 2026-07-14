@@ -3,6 +3,7 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 import pytest
 
@@ -50,12 +51,13 @@ def test_orphan_dependencies(manager, dep_manager, sample_project):
 
     # Create valid dependency
     dep_manager.add_dependency(t2.id, t1.id)
+    missing_task_id = str(uuid4())
 
     with manager.db.transaction() as conn:
         conn.execute("SET CONSTRAINTS ALL DEFERRED")
         manager.db.execute(
             "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (%s, %s, %s, %s)",
-            ("non_existent_task", t1.id, "blocks", "2023-01-01T00:00:00Z"),
+            (missing_task_id, t1.id, "blocks", "2023-01-01T00:00:00Z"),
         )
 
         validator = TaskValidator(manager)
@@ -63,7 +65,7 @@ def test_orphan_dependencies(manager, dep_manager, sample_project):
 
         assert len(orphans) == 1
         # We can't assert ID equality easily since it's auto-increment, but we know it's there
-        assert orphans[0]["task_id"] == "non_existent_task"
+        assert orphans[0]["task_id"] == missing_task_id
 
         # Clean before the deferred constraints are checked.
         count = validator.clean_orphans()
@@ -81,6 +83,8 @@ def test_invalid_projects(manager, sample_project):
     manager.create_task(proj_id, "Valid Task")
 
     validator = TaskValidator(manager)
+    orphan_task_id = str(uuid4())
+    missing_project_id = str(uuid4())
     with _deferred_constraints_rollback(manager.db):
         manager.db.execute(
             """
@@ -88,8 +92,8 @@ def test_invalid_projects(manager, sample_project):
             VALUES (%s, %s, %s, %s, %s)
             """,
             (
-                "task_orphan_proj",
-                "invalid_proj",
+                orphan_task_id,
+                missing_project_id,
                 "Orphan Project Task",
                 "2023-01-01",
                 "2023-01-01",
@@ -99,7 +103,7 @@ def test_invalid_projects(manager, sample_project):
         invalid = validator.check_invalid_projects()
 
         assert len(invalid) == 1
-        assert invalid[0]["id"] == "task_orphan_proj"
+        assert invalid[0]["id"] == orphan_task_id
 
 
 @pytest.mark.integration

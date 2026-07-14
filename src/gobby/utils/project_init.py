@@ -9,17 +9,51 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from psycopg.errors import UniqueViolation
 
 from gobby.utils.datetime import datetime_to_required_iso
 
 logger = logging.getLogger(__name__)
 
 
+def _atomic_write_project_json(project_file: Path, project_data: dict[str, Any]) -> None:
+    """Serialize project data before atomically replacing project.json."""
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{project_file.name}.",
+        suffix=".tmp",
+        dir=str(project_file.parent),
+        text=True,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as tmp:
+            json.dump(project_data, tmp, indent=2)
+            tmp.write("\n")
+        os.replace(tmp_name, project_file)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError as exc:
+            logger.debug("Failed to clean up temp project.json %s: %s", tmp_name, exc)
+        raise
+
+
 def _optional_str(value: object) -> str | None:
     return value if isinstance(value, str) else None
+
+
+def _ensure_project_path_matches(name: str, repo_path: str | None, cwd: Path) -> None:
+    """Reject adoption of a same-name project belonging to another repository."""
+    if repo_path and Path(repo_path).expanduser().resolve() != cwd:
+        raise ValueError(
+            f"Project '{name}' belongs to a different repository at '{repo_path}'. "
+            "Choose a different project name with --name."
+        )
 
 
 @dataclass
@@ -165,11 +199,12 @@ def initialize_project(
     project_context = get_project_context(cwd)
     if project_context and project_context.get("id"):
         logger.debug(f"Project already initialized: {project_context.get('name')}")
+        project_root = Path(project_context.get("project_path") or cwd).resolve()
 
         # Re-detect and merge verification commands on re-init
         from gobby.project_verification.refresh import refresh_project_verification_deterministic
 
-        refresh_result = refresh_project_verification_deterministic(cwd, fix=True)
+        refresh_result = refresh_project_verification_deterministic(project_root, fix=True)
         verification = VerificationCommands.from_dict(refresh_result.after)
         if refresh_result.written:
             logger.info("Updated verification commands in project.json")
@@ -199,8 +234,16 @@ def initialize_project(
     verification = detect_verification_commands(cwd)
 
     # Check if project with same name exists in database
-    existing = project_manager.get_by_name(name)
+    existing = project_manager.get_by_name(name, include_deleted=True)
     if existing:
+        _ensure_project_path_matches(existing.name, existing.repo_path, cwd)
+        if existing.deleted_at:
+            restored = project_manager.restore(existing.id)
+            if restored is None:
+                raise RuntimeError(f"Failed to restore project '{name}'")
+            existing = restored
+            logger.info(f"Restored soft-deleted project '{name}'")
+
         # Project exists in DB but no local project.json - write it
         logger.debug(f"Found existing project in database: {name}")
 
@@ -229,11 +272,21 @@ def initialize_project(
 
     # Create new project
     logger.debug(f"Creating new project: {name}")
-    project = project_manager.create(
-        name=name,
-        repo_path=str(cwd),
-        github_url=github_url,
-    )
+    already_existed = False
+    try:
+        project = project_manager.create(
+            name=name,
+            repo_path=str(cwd),
+            github_url=github_url,
+        )
+    except UniqueViolation:
+        concurrent_project = project_manager.get_by_name(name)
+        if concurrent_project is None:
+            raise
+        _ensure_project_path_matches(concurrent_project.name, concurrent_project.repo_path, cwd)
+        project = concurrent_project
+        already_existed = True
+        logger.debug(f"Adopting concurrently created project: {name}")
 
     # Write local .gobby/project.json
     project_created_at = datetime_to_required_iso(project.created_at)
@@ -246,7 +299,7 @@ def initialize_project(
         project_name=project.name,
         project_path=str(cwd),
         created_at=project_created_at,
-        already_existed=False,
+        already_existed=already_existed,
         verification=verification if verification.to_dict() else None,
     )
 
@@ -280,8 +333,7 @@ def _update_project_json_verification(
     if merged_custom:
         project_data["verification"]["custom"] = merged_custom
 
-    with open(project_file, "w") as f:
-        json.dump(project_data, f, indent=2)
+    _atomic_write_project_json(project_file, project_data)
 
     logger.debug(f"Updated verification in {project_file}")
 
@@ -302,9 +354,7 @@ def update_project_json_fields(cwd: Path, **fields: Any) -> None:
     for key, value in fields.items():
         project_data[key] = value
 
-    with open(project_file, "w", encoding="utf-8") as f:
-        json.dump(project_data, f, indent=2)
-        f.write("\n")
+    _atomic_write_project_json(project_file, project_data)
 
     logger.debug(f"Updated project.json fields in {project_file}")
 
@@ -347,8 +397,6 @@ def _write_project_json(
         if verification_dict:
             project_data["verification"] = verification_dict
 
-    with open(project_file, "w") as f:
-        json.dump(project_data, f, indent=2)
-        f.write("\n")
+    _atomic_write_project_json(project_file, project_data)
 
     logger.debug(f"Wrote project.json to {project_file}")

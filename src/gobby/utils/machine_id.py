@@ -4,6 +4,7 @@ Provides stable machine identification stored in ~/.gobby/machine_id.
 Uses py-machineid for hardware-based IDs with UUID fallback.
 """
 
+import fcntl
 import logging
 import os
 import threading
@@ -91,24 +92,33 @@ def _get_or_create_machine_id() -> str:
     # Ensure directory exists
     MACHINE_ID_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-    # Check if file exists and has content
-    if MACHINE_ID_FILE.exists():
-        content = MACHINE_ID_FILE.read_text().strip()
-        if content:
-            return content
+    lock_path = MACHINE_ID_FILE.with_name(f".{MACHINE_ID_FILE.name}.lock")
+    lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        os.fchmod(lock_fd, 0o600)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
 
-    # Generate new ID and save with atomic permissions
-    new_id = _generate_machine_id()
-    _write_file_secure(MACHINE_ID_FILE, new_id)
+        # Check if file exists and has content
+        if MACHINE_ID_FILE.exists():
+            MACHINE_ID_FILE.chmod(0o600)
+            content = MACHINE_ID_FILE.read_text().strip()
+            if content:
+                return content
 
-    return new_id
+        # Generate new ID and save with atomic permissions
+        new_id = _generate_machine_id()
+        _write_file_secure(MACHINE_ID_FILE, new_id)
+
+        return new_id
+    finally:
+        os.close(lock_fd)
 
 
 def _write_file_secure(path: Path, content: str) -> None:
     """Write content to file with restrictive permissions atomically.
 
-    Uses os.open with O_CREAT to set permissions at creation time,
-    avoiding TOCTOU race condition with write_text()/chmod() pattern.
+    Writes and syncs an owner-only temporary file in the destination directory,
+    then atomically replaces the destination.
 
     Args:
         path: File path to write to
@@ -117,17 +127,30 @@ def _write_file_secure(path: Path, content: str) -> None:
     Raises:
         OSError: If file operations fail
     """
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    temp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    fd = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
-        os.write(fd, content.encode())
+        try:
+            os.fchmod(fd, 0o600)
+            remaining = memoryview(content.encode())
+            while remaining:
+                written = os.write(fd, remaining)
+                if written <= 0:
+                    raise OSError("Failed to write machine ID")
+                remaining = remaining[written:]
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+        os.replace(temp_path, path)
     finally:
-        os.close(fd)
+        temp_path.unlink(missing_ok=True)
 
 
 def _generate_machine_id() -> str:
     """Generate a new machine ID.
 
-    Uses py-machineid for hardware-based ID, falls back to UUID4.
+    Uses py-machineid for an app-scoped hardware ID hash, falls back to UUID4.
 
     Returns:
         Generated machine ID string
@@ -135,13 +158,13 @@ def _generate_machine_id() -> str:
     try:
         import machineid
 
-        return str(machineid.id())
+        return str(machineid.hashed_id("gobby"))
     except ImportError:
         # Library not available, use UUID fallback
         return str(uuid.uuid4())
     except Exception as e:
         # machineid library failed (hardware access issues, etc.)
-        logger.debug(f"machineid.id() failed, using UUID fallback: {e}")
+        logger.debug(f"machineid.hashed_id() failed, using UUID fallback: {e}")
         return str(uuid.uuid4())
 
 

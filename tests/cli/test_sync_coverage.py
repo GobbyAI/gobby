@@ -40,6 +40,39 @@ def mock_runtime_hub_database():
 # ---------------------------------------------------------------------------
 class TestSyncDevMode:
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
+    @patch("gobby.sync.integrity.verify_bundled_integrity")
+    @patch("gobby.config.app.load_config")
+    @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
+    def test_repo_subdirectory_skips_integrity_check(
+        self,
+        _install: MagicMock,
+        mock_load: MagicMock,
+        mock_verify: MagicMock,
+        mock_sync: MagicMock,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        (tmp_path / "src" / "gobby" / "install" / "shared").mkdir(parents=True)
+        (tmp_path / "pyproject.toml").write_text('[project]\nname = "gobby"\n')
+        subdirectory = tmp_path / "src" / "gobby" / "cli"
+        subdirectory.mkdir(parents=True)
+        monkeypatch.chdir(subdirectory)
+
+        mock_config = MagicMock()
+        mock_config.database_url = str(tmp_path / "test.db")
+        mock_load.return_value = mock_config
+        (tmp_path / "test.db").write_text("")
+        mock_sync.return_value = {"total_synced": 0, "errors": [], "details": {}}
+
+        result = runner.invoke(sync, ["--verbose"], catch_exceptions=False)
+
+        assert result.exit_code == 0
+        assert "Dev mode: skipping integrity check" in result.output
+        mock_verify.assert_not_called()
+        assert mock_sync.call_args.kwargs["skip_types"] is None
+
+    @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
     @patch("gobby.config.app.load_config")
     @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
     @patch("gobby.utils.dev.is_dev_mode", return_value=True)
