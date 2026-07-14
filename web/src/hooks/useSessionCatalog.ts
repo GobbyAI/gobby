@@ -81,6 +81,7 @@ export function useSessionCatalog(
   const [cursor, setCursor] = useState<SessionCursor | null>(null);
   const debouncedRefetchRef = useRef<number | null>(null);
   const filterDebounceRef = useRef<number | null>(null);
+  const fetchGenerationRef = useRef(0);
 
   // Latest filters + projectId in refs so callbacks captured by websocket
   // listeners always see current values without requiring re-subscription.
@@ -109,6 +110,7 @@ export function useSessionCatalog(
   // older pages no longer match and would create stale results.
   const resetAndFetch = useCallback(async () => {
     const currentProjectId = projectIdRef.current;
+    const currentGeneration = fetchGenerationRef.current;
     if (!currentProjectId) {
       setSessions([]);
       setCursor(null);
@@ -120,13 +122,34 @@ export function useSessionCatalog(
     setError(null);
     try {
       const result = await fetchSessionPage(currentProjectId, filtersRef.current, null);
-      setSessions(result.sessions);
-      setCursor(result.next_cursor);
+      setSessions((prev) =>
+        fetchGenerationRef.current === currentGeneration &&
+        projectIdRef.current === currentProjectId
+          ? result.sessions
+          : prev,
+      );
+      setCursor((prev) =>
+        fetchGenerationRef.current === currentGeneration &&
+        projectIdRef.current === currentProjectId
+          ? result.next_cursor
+          : prev,
+      );
     } catch (e) {
+      if (
+        fetchGenerationRef.current !== currentGeneration ||
+        projectIdRef.current !== currentProjectId
+      ) {
+        return;
+      }
       console.error("Failed to fetch sessions:", e);
       setError(e instanceof Error ? e : new Error(String(e)));
     } finally {
-      setIsLoading(false);
+      if (
+        fetchGenerationRef.current === currentGeneration &&
+        projectIdRef.current === currentProjectId
+      ) {
+        setIsLoading(false);
+      }
     }
   }, []);
 
@@ -137,10 +160,17 @@ export function useSessionCatalog(
   // history.
   const refreshPageOne = useCallback(async () => {
     const currentProjectId = projectIdRef.current;
+    const currentGeneration = fetchGenerationRef.current;
     if (!currentProjectId) return;
     try {
       const result = await fetchSessionPage(currentProjectId, filtersRef.current, null);
       setSessions((prev) => {
+        if (
+          fetchGenerationRef.current !== currentGeneration ||
+          projectIdRef.current !== currentProjectId
+        ) {
+          return prev;
+        }
         const merged = new Map<string, GobbySession>();
         for (const s of prev) merged.set(s.id, s);
         for (const s of result.sessions) merged.set(s.id, s);
@@ -149,10 +179,22 @@ export function useSessionCatalog(
       // next_cursor only resets if page 1 already covers everything we had.
       // Otherwise we keep our deeper cursor so loadMore continues from there.
       setCursor((prev) => {
+        if (
+          fetchGenerationRef.current !== currentGeneration ||
+          projectIdRef.current !== currentProjectId
+        ) {
+          return prev;
+        }
         if (result.next_cursor === null) return prev;
         return prev ?? result.next_cursor;
       });
     } catch (e) {
+      if (
+        fetchGenerationRef.current !== currentGeneration ||
+        projectIdRef.current !== currentProjectId
+      ) {
+        return;
+      }
       console.error("Failed to refresh sessions page 1:", e);
     }
   }, []);
@@ -162,6 +204,7 @@ export function useSessionCatalog(
   useEffect(() => {
     if (projectId !== previousProjectIdRef.current) {
       previousProjectIdRef.current = projectId;
+      fetchGenerationRef.current += 1;
       setSessions([]);
       setCursor(null);
     }
@@ -176,6 +219,7 @@ export function useSessionCatalog(
       initialFilterMountRef.current = false;
       return;
     }
+    fetchGenerationRef.current += 1;
     if (filterDebounceRef.current) {
       window.clearTimeout(filterDebounceRef.current);
     }
