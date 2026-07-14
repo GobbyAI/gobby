@@ -15,6 +15,53 @@ function makeCall(overrides: Partial<ToolCall> & { id: string; tool_name: string
 }
 
 describe('ToolCallCard interactions', () => {
+  it('expands a single tool card with the keyboard and exposes its result', () => {
+    renderWithProviders(
+      <ToolCallCards
+        toolCalls={[
+          makeCall({
+            id: 'read-1',
+            tool_name: 'Read',
+            status: 'completed',
+            arguments: { file_path: '/tmp/example.txt' },
+            result: { content: 'keyboard-accessible result', kind: 'text', truncated: false },
+          }),
+        ]}
+      />,
+    )
+
+    const header = screen.getByRole('button', { name: /Read/ })
+    expect(header).toHaveAttribute('tabindex', '0')
+    expect(header).toHaveAttribute('aria-expanded', 'false')
+
+    header.focus()
+    fireEvent.keyDown(header, { key: 'Enter' })
+
+    expect(header).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('keyboard-accessible result')).toBeInTheDocument()
+  })
+
+  it('toggles a grouped tool-call header with Space and Enter', () => {
+    const calls = ['one', 'two', 'three'].map((content, index) => makeCall({
+      id: `read-group-${index}`,
+      tool_name: 'Read',
+      status: 'completed',
+      result: { content, kind: 'text', truncated: false },
+    }))
+    renderWithProviders(<ToolCallCards toolCalls={calls} />)
+
+    const header = screen.getByRole('button', { name: /Read.*×3/ })
+    expect(header).toHaveAttribute('tabindex', '0')
+    expect(header).toHaveAttribute('aria-expanded', 'true')
+
+    header.focus()
+    fireEvent.keyDown(header, { key: ' ' })
+    expect(header).toHaveAttribute('aria-expanded', 'false')
+
+    fireEvent.keyDown(header, { key: 'Enter' })
+    expect(header).toHaveAttribute('aria-expanded', 'true')
+  })
+
   it('dispatches approval once and disables every decision button after success', () => {
     const onRespondToApproval = vi.fn(() => true)
 

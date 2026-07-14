@@ -373,7 +373,16 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
     )}>
       <div
         className={cn(TOOL_CARD_SPACING.header, 'text-sm cursor-pointer hover:bg-muted/50 transition-colors')}
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
         onClick={() => hasDetails && setExpanded(!expanded)}
+        onKeyDown={(event) => {
+          if (event.target === event.currentTarget && hasDetails && (event.key === 'Enter' || event.key === ' ')) {
+            event.preventDefault()
+            setExpanded(!expanded)
+          }
+        }}
       >
         <StatusIcon status={call.status} />
         <span className="font-mono text-foreground">{displayName}</span>
@@ -807,7 +816,16 @@ function ToolCallGroupHeader({ group, expanded, onToggle, onRespond, onRespondTo
     <div className={cn('border-l my-1', groupBorderClass)}>
       <div
         className="flex items-center gap-2 pl-3 pr-2 py-1 text-sm cursor-pointer hover:bg-muted/30 transition-colors"
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
         onClick={onToggle}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            onToggle()
+          }
+        }}
       >
         <GroupStatusIcon hasErrors={group.hasErrors} allCompleted={group.allCompleted} hasInFlight={group.hasInFlight} />
         <span className="font-mono text-foreground">{group.displayName}</span>
