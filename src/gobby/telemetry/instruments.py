@@ -354,17 +354,20 @@ class TelemetryMetrics:
 
 # Global metrics collector instance
 _telemetry_metrics: TelemetryMetrics | None = None
+_telemetry_metrics_lock = threading.Lock()
 
 
 def get_telemetry_metrics() -> TelemetryMetrics:
     """Get global telemetry metrics instance."""
     global _telemetry_metrics
     if _telemetry_metrics is None:
-        # Avoid circular import
-        from opentelemetry import metrics
+        with _telemetry_metrics_lock:
+            if _telemetry_metrics is None:
+                # Avoid circular import
+                from opentelemetry import metrics
 
-        meter = metrics.get_meter("gobby")
-        _telemetry_metrics = TelemetryMetrics(meter)
+                meter = metrics.get_meter("gobby")
+                _telemetry_metrics = TelemetryMetrics(meter)
     return _telemetry_metrics
 
 
