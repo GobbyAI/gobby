@@ -11,17 +11,8 @@ from gobby.project_verification.evidence import (
     STANDARD_SLOTS,
     EvidenceBundle,
     EvidenceItem,
+    existing_command_confidence,
 )
-
-GENERIC_EXISTING_COMMANDS = {
-    "cargo test",
-    "cargo clippy",
-    "go test ./...",
-    "go vet ./...",
-    "npm test",
-    "pytest",
-    "uv run pytest",
-}
 
 SHELL_CONTROL_CHARACTERS = frozenset(";&|<>")
 VALIDATION_EXECUTABLES = frozenset(
@@ -303,7 +294,7 @@ def _existing_candidates(bundle: EvidenceBundle) -> list[CommandCandidate]:
                             name=str(custom_name),
                             slot=classify_command(command) or "custom",
                             command=command,
-                            confidence=_existing_confidence(command, custom=True),
+                            confidence=existing_command_confidence(command, custom=True),
                             source=".gobby/project.json",
                             source_kind="existing",
                             rationale="Existing custom verification command",
@@ -317,7 +308,7 @@ def _existing_candidates(bundle: EvidenceBundle) -> list[CommandCandidate]:
                     name=name,
                     slot=name,
                     command=value,
-                    confidence=_existing_confidence(value, custom=False),
+                    confidence=existing_command_confidence(value, custom=False),
                     source=".gobby/project.json",
                     source_kind="existing",
                     rationale="Existing project verification command",
@@ -544,17 +535,6 @@ def _as_custom(candidate: CommandCandidate, name: str) -> CommandCandidate:
         rationale=candidate.rationale,
         custom=True,
     )
-
-
-def _existing_confidence(command: str, *, custom: bool) -> float:
-    normalized = " ".join(command.split())
-    if normalized in GENERIC_EXISTING_COMMANDS:
-        return 0.62
-    if any(token in normalized for token in ("--workspace", "--strict", "nextest", " --", "cd ")):
-        return 0.9 if custom else 0.88
-    if len(normalized.split()) >= 4:
-        return 0.86 if custom else 0.84
-    return 0.84 if custom else 0.82
 
 
 def _is_better(candidate: CommandCandidate, current: CommandCandidate) -> bool:

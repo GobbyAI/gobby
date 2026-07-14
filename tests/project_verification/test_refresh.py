@@ -222,6 +222,29 @@ jobs:
     assert persisted["verification"]["unit_tests"] == "pytest -x"
 
 
+@pytest.mark.parametrize(
+    ("command", "expected_confidence"),
+    [("pytest", 0.62), ("pytest -x", 0.82), ("uv run pytest tests/ -v", 0.84)],
+)
+def test_existing_evidence_and_candidate_share_confidence_policy(
+    tmp_path: Path,
+    command: str,
+    expected_confidence: float,
+) -> None:
+    write_project_json(tmp_path, {"unit_tests": command})
+
+    bundle = collect_evidence(tmp_path)
+    existing_item = next(item for item in bundle.items if item.kind == "existing")
+    existing_candidate = next(
+        candidate
+        for candidate in generate_candidates(bundle)
+        if candidate.source_kind == "existing"
+    )
+
+    assert existing_item.confidence == expected_confidence
+    assert existing_candidate.confidence == expected_confidence
+
+
 def test_ci_replaces_weak_existing_generic_command(tmp_path: Path) -> None:
     project_json_path = write_project_json(tmp_path, {"unit_tests": "pytest"})
     workflows = tmp_path / ".github" / "workflows"
@@ -237,9 +260,19 @@ jobs:
         encoding="utf-8",
     )
 
+    bundle = collect_evidence(tmp_path)
+    candidates = generate_candidates(bundle)
     result = refresh_project_verification_deterministic(tmp_path, fix=True)
     persisted = json.loads(project_json_path.read_text(encoding="utf-8"))
 
+    unit_test_candidates = [candidate for candidate in candidates if candidate.name == "unit_tests"]
+    assert [
+        (candidate.source_kind, candidate.confidence) for candidate in unit_test_candidates
+    ] == [
+        ("existing", 0.62),
+        ("ci", 0.82),
+    ]
+    assert select_best_candidates(unit_test_candidates)["unit_tests"].source_kind == "ci"
     assert result.after["unit_tests"] == "uv run pytest tests/ -v"
     assert persisted["verification"]["unit_tests"] == "uv run pytest tests/ -v"
 

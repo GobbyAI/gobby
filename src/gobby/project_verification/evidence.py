@@ -37,6 +37,16 @@ MAX_FILE_BYTES = 64 * 1024
 MAX_DOC_COMMANDS = 80
 MAX_CI_COMMANDS = 120
 
+GENERIC_EXISTING_COMMANDS = {
+    "cargo test",
+    "cargo clippy",
+    "go test ./...",
+    "go vet ./...",
+    "npm test",
+    "pytest",
+    "uv run pytest",
+}
+
 COMMAND_LINE_RE = re.compile(
     r"\b("
     r"uv run|pytest|ruff|mypy|cargo|nextest|clippy|go test|go vet|go build|"
@@ -50,6 +60,18 @@ DOC_COMMAND_START_RE = re.compile(
     r")\b"
 )
 INLINE_CODE_RE = re.compile(r"`([^`]+)`")
+
+
+def existing_command_confidence(command: str, *, custom: bool) -> float:
+    """Score existing commands while preserving deliberate CI-strength commands."""
+    normalized = " ".join(command.split())
+    if normalized in GENERIC_EXISTING_COMMANDS:
+        return 0.62
+    if any(token in normalized for token in ("--workspace", "--strict", "nextest", " --", "cd ")):
+        return 0.9 if custom else 0.88
+    if len(normalized.split()) >= 4:
+        return 0.86 if custom else 0.84
+    return 0.84 if custom else 0.82
 
 
 @dataclass(frozen=True)
@@ -191,7 +213,7 @@ def _collect_existing_project_json(bundle: EvidenceBundle) -> None:
                             kind="existing",
                             command=custom_command,
                             name=str(custom_name),
-                            confidence=0.75,
+                            confidence=existing_command_confidence(custom_command, custom=True),
                         )
                     )
             continue
@@ -203,7 +225,7 @@ def _collect_existing_project_json(bundle: EvidenceBundle) -> None:
                     command=command,
                     slot=name,
                     name=name,
-                    confidence=0.75,
+                    confidence=existing_command_confidence(command, custom=False),
                 )
             )
 
