@@ -404,11 +404,11 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
     gobby_dir = get_gobby_home()
     pid_file = gobby_dir / "gobby.pid"
     log_file = Path(config.telemetry.log_file).expanduser()
-    error_log_file = Path(config.telemetry.log_file_error).expanduser()
+    stderr_log_file = Path(config.telemetry.log_file_stderr).expanduser()
 
     gobby_dir.mkdir(parents=True, exist_ok=True)
     log_file.parent.mkdir(parents=True, exist_ok=True)
-    error_log_file.parent.mkdir(parents=True, exist_ok=True)
+    stderr_log_file.parent.mkdir(parents=True, exist_ok=True)
 
     click.echo("Starting Gobby daemon...")
     click.echo("")
@@ -484,13 +484,13 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
 
     with contextlib.ExitStack() as log_stack:
         log_f = log_stack.enter_context(open(log_file, "a"))
-        error_log_f = log_stack.enter_context(open(error_log_file, "a"))
+        stderr_log_f = log_stack.enter_context(open(stderr_log_file, "a"))
 
         try:
             process = subprocess.Popen(  # nosec B603 # cmd built from sys.executable and module path
                 cmd,
                 stdout=log_f,
-                stderr=error_log_f,
+                stderr=stderr_log_f,
                 stdin=subprocess.DEVNULL,
                 start_new_session=True,
                 env=os.environ.copy(),
@@ -504,7 +504,7 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
             # Check for immediate crash
             if process.poll() is not None:
                 _step("Daemon process exited immediately", error=True)
-                _show_error_log_tail(error_log_file)
+                _show_error_log_tail(stderr_log_file)
                 sys.exit(1)
 
             _step(f"Daemon process launched (PID: {process.pid})")
@@ -516,13 +516,13 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
                 _step(f"Health check passed ({elapsed:.1f}s)")
             else:
                 _step("Health check failed", error=True)
-                _show_error_log_tail(error_log_file)
+                _show_error_log_tail(stderr_log_file)
                 sys.exit(1)
 
             # Poll startup progress from daemon
             if not _poll_startup_progress(http_port):
                 _step("Startup readiness did not complete", error=True)
-                _show_error_log_tail(error_log_file)
+                _show_error_log_tail(stderr_log_file)
                 sys.exit(1)
 
             # Spawn UI server if enabled

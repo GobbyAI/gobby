@@ -44,13 +44,14 @@ class TestTemplateRendering:
             home_dir="/Users/test",
             path_env="/usr/bin:/bin",
             log_file="/tmp/gobby.log",
-            error_log_file="/tmp/gobby-error.log",
+            stderr_log_file="/tmp/gobby-stderr.log",
             gobby_home="",
             verbose=False,
         )
         assert '<?xml version="1.0"' in content
         assert "<plist" in content
         assert f"<string>{LAUNCHD_LABEL}</string>" in content
+        assert "<string>/tmp/gobby-stderr.log</string>" in content
         assert "<string>/usr/bin/python3</string>" in content
         assert "<key>RunAtLoad</key>" in content
         assert "<key>KeepAlive</key>" in content
@@ -65,7 +66,7 @@ class TestTemplateRendering:
             home_dir="/Users/test",
             path_env="/usr/bin:/bin",
             log_file="/tmp/gobby.log",
-            error_log_file="/tmp/gobby-error.log",
+            stderr_log_file="/tmp/gobby-stderr.log",
             gobby_home="",
             verbose=True,
         )
@@ -80,7 +81,7 @@ class TestTemplateRendering:
             home_dir="/Users/test",
             path_env="/usr/bin:/bin",
             log_file="/tmp/gobby.log",
-            error_log_file="/tmp/gobby-error.log",
+            stderr_log_file="/tmp/gobby-stderr.log",
             gobby_home="/custom/gobby/home",
             verbose=False,
         )
@@ -96,7 +97,7 @@ class TestTemplateRendering:
             home_dir="/Users/test",
             path_env="/usr/bin:/bin",
             log_file="/tmp/gobby.log",
-            error_log_file="/tmp/gobby-error.log",
+            stderr_log_file="/tmp/gobby-stderr.log",
             gobby_home="",
             verbose=False,
         )
@@ -111,13 +112,14 @@ class TestTemplateRendering:
             home_dir="/home/test",
             path_env="/usr/bin:/bin",
             log_file="/tmp/gobby.log",
-            error_log_file="/tmp/gobby-error.log",
+            stderr_log_file="/tmp/gobby-stderr.log",
             gobby_home="",
             verbose=False,
         )
         assert "[Unit]" in content
         assert "[Service]" in content
         assert "[Install]" in content
+        assert "StandardError=append:/tmp/gobby-stderr.log" in content
         assert "ExecStart=/usr/bin/python3 -m gobby.runner" in content
         assert "Restart=on-failure" in content
         assert "WantedBy=default.target" in content
@@ -132,7 +134,7 @@ class TestTemplateRendering:
             home_dir="/home/test",
             path_env="/usr/bin:/bin",
             log_file="/tmp/gobby.log",
-            error_log_file="/tmp/gobby-error.log",
+            stderr_log_file="/tmp/gobby-stderr.log",
             gobby_home="",
             verbose=True,
         )
@@ -147,7 +149,7 @@ class TestTemplateRendering:
             home_dir="/home/test",
             path_env="/usr/bin:/bin",
             log_file="/tmp/gobby.log",
-            error_log_file="/tmp/gobby-error.log",
+            stderr_log_file="/tmp/gobby-stderr.log",
             gobby_home="/custom/gobby/home",
             verbose=False,
         )
@@ -498,7 +500,7 @@ class TestMacOSInstall:
             "home_dir": "/Users/test",
             "path_env": "/usr/bin:/bin",
             "log_file": "/tmp/gobby.log",
-            "error_log_file": "/tmp/gobby-error.log",
+            "stderr_log_file": "/tmp/gobby-stderr.log",
             "gobby_home": "",
             "verbose": False,
         }
@@ -539,7 +541,7 @@ class TestMacOSInstall:
             "home_dir": "/Users/test",
             "path_env": "/usr/bin:/bin",
             "log_file": "/tmp/gobby.log",
-            "error_log_file": "/tmp/gobby-error.log",
+            "stderr_log_file": "/tmp/gobby-stderr.log",
             "gobby_home": "",
             "verbose": False,
         }
@@ -949,7 +951,7 @@ class TestLinuxInstall:
             "home_dir": "/home/test",
             "path_env": "/usr/bin:/bin",
             "log_file": "/tmp/gobby.log",
-            "error_log_file": "/tmp/gobby-error.log",
+            "stderr_log_file": "/tmp/gobby-stderr.log",
             "gobby_home": "",
             "verbose": False,
         }

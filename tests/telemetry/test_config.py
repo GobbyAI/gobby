@@ -15,6 +15,10 @@ def test_telemetry_settings_defaults() -> None:
     assert settings.log_level == "info"
     assert settings.log_format == "text"
     assert settings.log_file == "~/.gobby/logs/gobby.log"
+    assert settings.log_file_error == "~/.gobby/logs/gobby-error.log"
+    assert settings.log_file_stderr == "~/.gobby/logs/gobby-stderr.log"
+    assert settings.stderr_log_max_mb == 50
+    assert settings.logs_growth_warn_mb_per_interval == 100
     assert settings.traces_enabled is True
     assert settings.traces_to_console is False
     assert settings.trace_sample_rate == 1.0
@@ -32,6 +36,10 @@ def test_telemetry_settings_validation_positive() -> None:
         TelemetrySettings(backup_count=0)
     with pytest.raises(ValidationError):
         TelemetrySettings(max_size_mb=-1)
+    with pytest.raises(ValidationError):
+        TelemetrySettings(stderr_log_max_mb=0)
+    with pytest.raises(ValidationError):
+        TelemetrySettings(logs_growth_warn_mb_per_interval=0)
 
 
 def test_telemetry_settings_trace_sample_rate_validation() -> None:

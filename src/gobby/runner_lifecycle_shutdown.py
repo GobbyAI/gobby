@@ -360,6 +360,7 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
         "_span_cleanup_task",
         "_unmodeled_observations_cleanup_task",
         "_metric_snapshot_task",
+        "_resource_monitor_task",
         "_hook_inbox_task",
         "_bin_freshness_task",
         "_approval_timeout_task",
