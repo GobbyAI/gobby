@@ -144,16 +144,9 @@ class TestBulkMoveSessions:
         mock_server.session_manager.db.transaction.assert_not_called()
         mock_server.session_manager.get.assert_not_called()
 
-    def test_row_failure_rolls_back_to_savepoint_and_continues(self, client, mock_server) -> None:
-        db = mock_server.session_manager.db
-        transaction = MagicMock()
-        db.transaction.return_value.__enter__.return_value = transaction
-        failed_savepoint = MagicMock()
-        successful_savepoint = MagicMock()
-        transaction.savepoint.side_effect = [failed_savepoint, successful_savepoint]
-        transaction.execute.side_effect = [RuntimeError("constraint failure"), MagicMock()]
-        mock_server.session_manager.get.side_effect = [
-            _make_session(id="session-1"),
+    def test_row_failure_continues_and_reports_partial_success(self, client, mock_server) -> None:
+        mock_server.session_manager.move_to_project.side_effect = [
+            RuntimeError("constraint failure"),
             _make_session(id="session-2"),
         ]
 
@@ -177,15 +170,10 @@ class TestBulkMoveSessions:
             "errors": ["Failed to move session-1: constraint failure"],
             "total": 2,
         }
-        assert transaction.savepoint.call_args_list == [
-            call("bulk_move_session_0"),
-            call("bulk_move_session_1"),
+        assert mock_server.session_manager.move_to_project.call_args_list == [
+            call("session-1", "target-project"),
+            call("session-2", "target-project"),
         ]
-        failed_savepoint.rollback.assert_called_once_with()
-        failed_savepoint.release.assert_called_once_with()
-        successful_savepoint.rollback.assert_not_called()
-        successful_savepoint.release.assert_called_once_with()
-        assert transaction.execute.call_count == 2
 
 
 def test_app_wires_session_change_listener_to_websocket(session_storage, sample_project) -> None:
