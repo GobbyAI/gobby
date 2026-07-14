@@ -454,14 +454,17 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
 function ToolApprovalCard({ call, onRespondToApproval }: { call: ToolCall; onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => boolean | void }) {
   const displayName = getToolDisplayName(call)
   const isLive = onRespondToApproval && call.status === 'pending_approval'
+  const [decided, setDecided] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
 
   const handleDecision = (decision: 'approve' | 'reject' | 'approve_always') => {
+    if (decided) return
     const sent = onRespondToApproval?.(call.id, decision)
     if (sent === false) {
       setSendError('Disconnected — reconnecting...')
     } else {
       setSendError(null)
+      setDecided(true)
     }
   }
 
@@ -503,13 +506,13 @@ function ToolApprovalCard({ call, onRespondToApproval }: { call: ToolCall; onRes
         </div>
       )}
       <div className="flex items-center gap-2 px-3 pb-2">
-        <Button size="sm" variant="accent" onClick={() => handleDecision('approve')}>
+        <Button size="sm" variant="accent" onClick={() => handleDecision('approve')} disabled={decided}>
           Approve
         </Button>
-        <Button size="sm" variant="outline" onClick={() => handleDecision('approve_always')}>
+        <Button size="sm" variant="outline" onClick={() => handleDecision('approve_always')} disabled={decided}>
           Always Approve
         </Button>
-        <Button size="sm" variant="destructive" onClick={() => handleDecision('reject')}>
+        <Button size="sm" variant="destructive" onClick={() => handleDecision('reject')} disabled={decided}>
           Reject
         </Button>
       </div>
@@ -521,19 +524,38 @@ function ToolApprovalCard({ call, onRespondToApproval }: { call: ToolCall; onRes
 }
 
 /** Parse answered values from AskUserQuestion result content. */
+function normalizeAnsweredValues(value: unknown): Record<string, string> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+
+  const answers: Record<string, string> = {}
+  for (const [question, answer] of Object.entries(value)) {
+    if (typeof answer === 'string') {
+      answers[question] = answer
+    } else if (Array.isArray(answer) && answer.every((item) => typeof item === 'string')) {
+      answers[question] = answer.join(', ')
+    } else {
+      const serialized = JSON.stringify(answer)
+      if (serialized !== undefined) answers[question] = serialized
+    }
+  }
+  return answers
+}
+
 function parseAnsweredValues(result: ToolResult | undefined): Record<string, string> | null {
   if (!result?.content) return null
   if (result.kind === 'json') {
+    if (typeof result.content !== 'object' || Array.isArray(result.content)) return null
     const obj = result.content as Record<string, unknown>
-    const answers = (obj.answers ?? obj) as Record<string, string>
-    return answers
+    return normalizeAnsweredValues(obj.answers ?? obj)
   }
   if (result.kind === 'text') {
-    const text = result.content as string
+    if (typeof result.content !== 'string') return null
+    const text = result.content
     try {
       const parsed = JSON.parse(text)
       if (parsed && typeof parsed === 'object') {
-        return parsed.answers ?? parsed
+        const answers = normalizeAnsweredValues(parsed.answers ?? parsed)
+        if (answers) return answers
       }
     } catch {
       // Fall back to treating content as a plain string
