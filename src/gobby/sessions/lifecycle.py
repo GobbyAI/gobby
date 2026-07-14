@@ -553,7 +553,6 @@ class SessionLifecycleManager:
                 )
 
             # Step 4: Best-effort backup of the transcript archive
-            # On success, purge DB messages (gzip is now the source of truth).
             # Skipped when the file is already gone — nothing to archive.
             if not transcript_missing and session.transcript_path and session.external_id:
                 try:

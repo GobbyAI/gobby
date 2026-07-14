@@ -179,32 +179,6 @@ class _BulkUpdateMixin:
             self.db.safe_update("sessions", values, "id = %s", (session_id,))
         return self.get(session_id)
 
-    def recalculate_stats(self: _ManagerState, session_id: str) -> Session | None:
-        """Recalculate session stats from session_messages table.
-
-        Args:
-            session_id: Session ID
-
-        Returns:
-            Updated session or None if not found
-        """
-        if self.get(session_id) is None:
-            return None
-
-        sql = """
-        UPDATE sessions SET
-          message_count = (SELECT COUNT(*) FROM session_messages WHERE session_id = sessions.id),
-          turn_count = (SELECT COUNT(*) FROM session_messages WHERE session_id = sessions.id AND role = 'assistant'),
-          tool_call_count = (SELECT COUNT(*) FROM session_messages WHERE session_id = sessions.id AND tool_name IS NOT NULL),
-          last_assistant_content = (SELECT content FROM session_messages WHERE session_id = sessions.id AND role = 'assistant' AND tool_name IS NULL ORDER BY message_index DESC LIMIT 1),
-          updated_at = %s
-        WHERE id = %s
-        """
-        now = utc_now()
-        with self.db.transaction():
-            self.db.execute(sql, (now, session_id))
-        return self.get(session_id)
-
 
 def _conflicting_web_chat_session(
     manager: _ManagerState,
