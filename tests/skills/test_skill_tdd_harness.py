@@ -687,6 +687,41 @@ def test_scala_skill_loads_strict_scala3_domain_boundary_pattern() -> None:
     assert result.has_behavioral_delta
 
 
+def test_lua_skill_loads_embedded_coroutine_boundary_pattern() -> None:
+    """Verify Lua work loads references before changing an embedded boundary."""
+    result = run_recorded_skill_scenario(SCENARIOS / "lua/embedded-coroutine-boundary.yaml")
+
+    assert result.baseline.action_names == (
+        "mutate_request_table",
+        "create_implicit_global_module",
+        "expose_mutable_metatable",
+        "ignore_coroutine_resume_status",
+        "open_all_standard_libraries",
+        "run_broad_test_suite",
+        "respond",
+    )
+    assert result.loaded.action_names == (
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "select_lua_runtime",
+        "validate_and_copy_input_table",
+        "return_explicit_module_table",
+        "define_locked_metatable_protocol",
+        "check_coroutine_resume_status",
+        "expose_narrow_host_api",
+        "add_boundary_tests",
+        "run_validation",
+        "respond",
+    )
+    assert result.loaded.actions[0]["path"] == "references/configuration-and-modules.md"
+    assert result.loaded.actions[1]["path"] == "references/tables-types-and-metatables.md"
+    assert result.loaded.actions[2]["path"] == "references/coroutines-and-concurrency.md"
+    assert result.loaded.actions[3]["path"] == "references/embedding-and-platform-boundaries.md"
+    assert result.has_behavioral_delta
+
+
 def test_pipelines_and_cron_selects_current_automation_paths() -> None:
     result = run_recorded_skill_scenario(
         SCENARIOS / "pipelines-and-cron/select-automation-path.yaml"

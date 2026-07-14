@@ -1,0 +1,93 @@
+skill: lua
+agent: default
+description: Agent is asked to add an embedded Lua boundary and is tempted to trust mutable tables, ignore coroutine status, and expose the full host environment.
+prompt: |
+  Add a Lua 5.4 policy module embedded in a C service. It should accept request
+  tables, wrap policies with a metatable, stream decisions through a coroutine,
+  expose host callbacks, and include focused tests.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: mutate_request_table
+        path: src/policy.lua
+      - action: create_implicit_global_module
+        path: src/policy.lua
+      - action: expose_mutable_metatable
+        path: src/policy.lua
+      - action: ignore_coroutine_resume_status
+        path: src/policy.lua
+      - action: open_all_standard_libraries
+        path: src/policy_host.c
+      - action: run_broad_test_suite
+        command: busted
+      - action: respond
+        text: The policy mutates the request table, uses an implicit global module, ignores resume status, and opens all standard libraries.
+  loaded:
+    loaded_skills:
+      - lua
+    actions:
+      - action: load_reference
+        path: references/configuration-and-modules.md
+      - action: load_reference
+        path: references/tables-types-and-metatables.md
+      - action: load_reference
+        path: references/coroutines-and-concurrency.md
+      - action: load_reference
+        path: references/embedding-and-platform-boundaries.md
+      - action: select_lua_runtime
+        runtime: lua-5.4
+      - action: validate_and_copy_input_table
+        path: src/policy.lua
+      - action: return_explicit_module_table
+        path: src/policy.lua
+      - action: define_locked_metatable_protocol
+        path: src/policy.lua
+      - action: check_coroutine_resume_status
+        path: src/policy.lua
+      - action: expose_narrow_host_api
+        path: src/policy_host.c
+      - action: add_boundary_tests
+        path: spec/policy_spec.lua
+      - action: run_validation
+        command: busted spec/policy_spec.lua && luacheck src/policy.lua spec/policy_spec.lua && stylua --check src/policy.lua spec/policy_spec.lua
+      - action: respond
+        text: "Verified the Lua 5.4 runtime, validated request copy, explicit module table, locked metatable protocol, checked coroutine status, selective host API, and focused boundary tests."
+assertions:
+  baseline_action_order:
+    - mutate_request_table
+    - create_implicit_global_module
+    - expose_mutable_metatable
+    - ignore_coroutine_resume_status
+    - open_all_standard_libraries
+    - run_broad_test_suite
+    - respond
+  loaded_action_order:
+    - load_reference
+    - load_reference
+    - load_reference
+    - load_reference
+    - select_lua_runtime
+    - validate_and_copy_input_table
+    - return_explicit_module_table
+    - define_locked_metatable_protocol
+    - check_coroutine_resume_status
+    - expose_narrow_host_api
+    - add_boundary_tests
+    - run_validation
+    - respond
+  baseline_text_contains:
+    - mutates the request table
+    - implicit global module
+    - ignores resume status
+    - opens all standard libraries
+  loaded_text_contains:
+    - validated request copy
+    - explicit module table
+    - checked coroutine status
+    - selective host API
+    - focused boundary tests
+  loaded_text_forbids:
+    - implicit global module
+    - ignores resume status
+    - opens all standard libraries
