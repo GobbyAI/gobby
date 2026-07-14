@@ -8,6 +8,14 @@ from typing import Any
 
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.jsonl_io import atomic_write_text, export_file_lock
+from gobby.sync.tombstones import (
+    apply_tombstone,
+    is_tombstone,
+    load_tombstones,
+    merge_jsonl_records,
+    newer_record,
+    record_timestamp,
+)
 from gobby.tasks.state_semantics import serialize_task_state
 from gobby.utils.json_helpers import json_dumps
 
@@ -237,16 +245,11 @@ class TaskSyncManager:
             project_id: Optional project to export. If matches context, uses project path.
         """
         try:
-            # Determine target path
             target_path = self._get_export_path(project_id)
-
-            # Filter tasks by project_id if provided
-            # This ensures we only export tasks for the specific project
 
             tasks = self.task_manager.list_tasks(limit=100000, project_id=project_id)
 
-            # Fetch all dependencies
-            # We'll use a raw query for efficiency here instead of calling get_blockers for every task
+            # Fetch dependencies in one query instead of once per task.
             deps_rows = self.db.fetchall("SELECT task_id, depends_on FROM task_dependencies")
 
             # Build dependency map: task_id -> list[depends_on]
@@ -322,54 +325,14 @@ class TaskSyncManager:
                 export_data.append(task_dict)
 
             with export_file_lock(target_path):
-                merged_data = {item["id"]: item for item in export_data}
-                if target_path.exists():
-                    for line_number, line in enumerate(
-                        target_path.read_text(encoding="utf-8").splitlines(), start=1
-                    ):
-                        if not line.strip():
-                            continue
-                        try:
-                            file_record = json.loads(line)
-                            if not isinstance(file_record, dict) or not isinstance(
-                                file_record.get("id"), str
-                            ):
-                                raise TypeError
-                            file_id = file_record["id"]
-                        except (json.JSONDecodeError, KeyError, TypeError):
-                            logger.warning(
-                                "Skipping malformed task export record at %s:%d",
-                                target_path,
-                                line_number,
-                            )
-                            continue
-
-                        current_record = merged_data.get(file_id)
-                        if current_record is None:
-                            merged_data[file_id] = file_record
-                            continue
-
-                        try:
-                            file_updated_at = _parse_optional_timestamp(
-                                file_record.get("updated_at")
-                            )
-                            current_updated_at = _parse_optional_timestamp(
-                                current_record.get("updated_at")
-                            )
-                        except (TypeError, ValueError):
-                            logger.warning(
-                                "Skipping task export record with malformed updated_at at %s:%d",
-                                target_path,
-                                line_number,
-                            )
-                            continue
-
-                        if file_updated_at is not None and (
-                            current_updated_at is None or file_updated_at > current_updated_at
-                        ):
-                            merged_data[file_id] = file_record
-
-                merged_records = sorted(merged_data.values(), key=lambda item: item["id"])
+                current_records = [
+                    *export_data,
+                    *load_tombstones(self.db, "task", project_id),
+                ]
+                merged_records = sorted(
+                    merge_jsonl_records(target_path, current_records, logger),
+                    key=lambda item: item["id"],
+                )
                 content = "".join(json_dumps(item) + "\n" for item in merged_records)
                 atomic_write_text(target_path, content)
 
@@ -397,12 +360,28 @@ class TaskSyncManager:
             with open(target_path, encoding="utf-8") as f:
                 lines = f.readlines()
 
+            tombstones: dict[str, dict[str, Any]] = {}
+            for line in lines:
+                if not line.strip():
+                    continue
+                candidate = json.loads(line)
+                if not isinstance(candidate, dict) or not is_tombstone(candidate):
+                    continue
+                task_id = candidate.get("id")
+                if not isinstance(task_id, str):
+                    continue
+                current = tombstones.get(task_id)
+                tombstones[task_id] = (
+                    candidate if current is None else newer_record(current, candidate)
+                )
+
             imported_count = 0
             updated_count = 0
+            deleted_count = 0
             skipped_count = 0
 
             # Phase 1: Import Tasks (Upsert)
-            pending_deps: list[tuple[str, str]] = []
+            pending_deps: dict[str, list[str]] = {}
             pending_path_rebuilds: list[str] = []
 
             with self.db.transaction() as conn:
@@ -437,12 +416,21 @@ class TaskSyncManager:
                 existing_session_ids = {
                     row["id"] for row in self.db.fetchall("SELECT id FROM sessions")
                 }
+                for task_id, deletion_record in tombstones.items():
+                    deleted_at = record_timestamp(deletion_record)
+                    if deleted_at is not None and apply_tombstone(
+                        conn, "task", task_id, deleted_at
+                    ):
+                        existing_tasks.pop(task_id, None)
+                        deleted_count += 1
                 for line in lines:
                     if not line.strip():
                         continue
 
                     data = json.loads(line)
                     task_id = data["id"]
+                    if is_tombstone(data):
+                        continue
                     # Guard against None/missing updated_at in JSONL
                     raw_updated_at = data.get("updated_at")
                     if raw_updated_at is None:
@@ -456,6 +444,14 @@ class TaskSyncManager:
                         logger.warning(
                             f"Task {task_id}: malformed timestamp '{raw_updated_at}': {e}, skipping"
                         )
+                        skipped_count += 1
+                        continue
+
+                    task_tombstone = tombstones.get(task_id)
+                    tombstone_at = (
+                        record_timestamp(task_tombstone) if task_tombstone is not None else None
+                    )
+                    if tombstone_at is not None and tombstone_at >= updated_at_file:
                         skipped_count += 1
                         continue
 
@@ -664,9 +660,8 @@ class TaskSyncManager:
                             updated_count += 1
 
                     # Collect dependencies for Phase 2
-                    if "deps_on" in data:
-                        for dep_id in data["deps_on"]:
-                            pending_deps.append((task_id, dep_id))
+                    if should_update and "deps_on" in data:
+                        pending_deps[task_id] = data["deps_on"]
 
                 # Phase 2: Rebuild paths after all parents are available.
                 for task_id in pending_path_rebuilds:
@@ -685,24 +680,29 @@ class TaskSyncManager:
                     task_meta["path_cache"] = path_cache
 
                 # Phase 3: Import Dependencies
-                for task_id, depends_on in pending_deps:
+                for task_id, dependencies in pending_deps.items():
                     conn.execute(
-                        """
-                        INSERT INTO task_dependencies (
-                            task_id, depends_on, dep_type, created_at
-                        ) VALUES (%s, %s, 'blocks', %s)
-                        ON CONFLICT (task_id, depends_on, dep_type) DO NOTHING
-                        """,
-                        (task_id, depends_on, datetime.now(UTC)),
+                        "DELETE FROM task_dependencies WHERE task_id = %s AND dep_type = 'blocks'",
+                        (task_id,),
                     )
+                    for depends_on in dependencies:
+                        conn.execute(
+                            """
+                            INSERT INTO task_dependencies (
+                                task_id, depends_on, dep_type, created_at
+                            ) VALUES (%s, %s, 'blocks', %s)
+                            ON CONFLICT (task_id, depends_on, dep_type) DO NOTHING
+                            """,
+                            (task_id, depends_on, datetime.now(UTC)),
+                        )
 
             logger.info(
-                f"Import complete: {imported_count} imported, "
+                f"Import complete: {imported_count} imported, {deleted_count} deleted, "
                 f"{updated_count} updated, {skipped_count} skipped"
             )
 
             # Rebuild search index to include imported tasks
-            if imported_count > 0 or updated_count > 0:
+            if imported_count > 0 or updated_count > 0 or deleted_count > 0:
                 try:
                     stats = self.task_manager.reindex_search(project_id)
                     logger.debug(f"Search index rebuilt with {stats.get('item_count', 0)} tasks")

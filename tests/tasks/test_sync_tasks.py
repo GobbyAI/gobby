@@ -420,6 +420,69 @@ class TestTaskSyncManager:
             file_only_record
         )
 
+    def test_deleted_task_exports_tombstone_and_import_deletes_peer(
+        self, sync_manager, task_manager, sample_project
+    ) -> None:
+        task = task_manager.create_task(sample_project["id"], "Delete everywhere")
+        sync_manager.export_to_jsonl()
+
+        assert task_manager.delete_task(task.id)
+        sync_manager.export_to_jsonl()
+
+        tombstone = json.loads(sync_manager.export_path.read_text())
+        assert tombstone["id"] == task.id
+        assert tombstone["_deleted"] is True
+        assert tombstone["deleted_at"]
+
+        sync_manager.db.execute(
+            """
+            INSERT INTO tasks (id, project_id, title, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (
+                task.id,
+                sample_project["id"],
+                "Stale peer copy",
+                "2020-01-01T00:00:00+00:00",
+                "2020-01-01T00:00:00+00:00",
+            ),
+        )
+
+        sync_manager.import_from_jsonl()
+
+        assert sync_manager.db.fetchone("SELECT id FROM tasks WHERE id = %s", (task.id,)) is None
+
+    def test_import_replaces_removed_dependencies(
+        self, sync_manager, task_manager, sample_project
+    ) -> None:
+        blocker = task_manager.create_task(sample_project["id"], "Blocker")
+        task = task_manager.create_task(sample_project["id"], "Dependent")
+        sync_manager.db.execute(
+            """
+            INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at)
+            VALUES (%s, %s, 'blocks', %s)
+            """,
+            (task.id, blocker.id, "2020-01-01T00:00:00+00:00"),
+        )
+        record = {
+            "id": task.id,
+            "title": task.title,
+            "created_at": "2020-01-01T00:00:00+00:00",
+            "updated_at": "2099-01-01T00:00:00+00:00",
+            "project_id": sample_project["id"],
+            "parent_id": None,
+            "deps_on": [],
+        }
+        sync_manager.export_path.parent.mkdir(parents=True, exist_ok=True)
+        sync_manager.export_path.write_text(json.dumps(record) + "\n")
+
+        sync_manager.import_from_jsonl()
+
+        dependencies = sync_manager.db.fetchall(
+            "SELECT depends_on FROM task_dependencies WHERE task_id = %s", (task.id,)
+        )
+        assert dependencies == []
+
     @pytest.mark.integration
     def test_export_replace_failure_preserves_existing_file(
         self, sync_manager, task_manager, sample_project

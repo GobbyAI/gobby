@@ -730,6 +730,48 @@ class TestExportMerge:
         assert "remote memory X" in contents
         assert "remote memory Y" in contents
 
+    def test_deleted_memory_tombstone_replaces_stale_file_record(self, hub_db, tmp_path) -> None:
+        memory_id = "00000000-0000-0000-0000-000000000001"
+        hub_db.execute(
+            """
+            INSERT INTO memories (id, memory_type, content, created_at, updated_at)
+            VALUES (%s, 'fact', 'deleted locally', %s, %s)
+            """,
+            (
+                memory_id,
+                "2026-01-01T00:00:00+00:00",
+                "2026-01-01T00:00:00+00:00",
+            ),
+        )
+        hub_db.execute("DELETE FROM memories WHERE id = %s", (memory_id,))
+        mm = MagicMock()
+        mm.list_memories.return_value = []
+        manager = MemoryBackupManager(
+            hub_db,
+            mm,
+            MemoryBackupConfig(enabled=True, export_debounce=0.1),
+        )
+        mem_file = tmp_path / "memories.jsonl"
+        mem_file.write_text(
+            json.dumps(
+                {
+                    "id": memory_id,
+                    "content": "deleted locally",
+                    "type": "fact",
+                    "created_at": "2026-01-01T00:00:00+00:00",
+                    "updated_at": "2026-01-01T00:00:00+00:00",
+                }
+            )
+            + "\n"
+        )
+
+        count = manager._export_memories_sync(mem_file)
+
+        record = json.loads(mem_file.read_text())
+        assert count == 1
+        assert record["_deleted"] is True
+        assert record["deleted_at"] > "2026-01-01T00:00:00+00:00"
+
     def test_export_handles_corrupt_file_lines(
         self, manager_with_memories, tmp_path, caplog
     ) -> None:

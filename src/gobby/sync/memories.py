@@ -34,6 +34,13 @@ from gobby.config.persistence import MemoryBackupConfig
 from gobby.memory.manager import MemoryManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.sync.jsonl_io import atomic_write_text, export_file_lock
+from gobby.sync.tombstones import (
+    apply_tombstone,
+    is_tombstone,
+    load_tombstones,
+    newer_record,
+    record_timestamp,
+)
 from gobby.utils.datetime import datetime_to_iso, parse_stored_datetime, utc_now
 from gobby.utils.json_helpers import json_dumps
 
@@ -187,6 +194,8 @@ def _record_tags(record: Mapping[str, Any]) -> list[str]:
 
 def _merge_memory_records(existing: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
     """Merge duplicate JSONL records while preserving durable provenance fields."""
+    if is_tombstone(existing) or is_tombstone(candidate):
+        return newer_record(existing, candidate)
     latest = (
         candidate
         if _parse_updated_at(candidate.get("updated_at"))
@@ -437,6 +446,13 @@ class MemoryBackupManager:
                 try:
                     data = json.loads(line)
 
+                    if is_tombstone(data):
+                        if not isinstance(data.get("id"), str) or record_timestamp(data) is None:
+                            skipped += 1
+                            continue
+                        parsed_records.append(data)
+                        continue
+
                     if not self._validate_memory_record(data, line_num):
                         skipped += 1
                         continue
@@ -463,6 +479,16 @@ class MemoryBackupManager:
             raise
 
         for data in self._deduplicate_records_by_id(parsed_records):
+            if is_tombstone(data):
+                deleted_at = record_timestamp(data)
+                if deleted_at is None:
+                    skipped += 1
+                    continue
+                with self.db.transaction() as conn:
+                    if apply_tombstone(conn, "memory", data["id"], deleted_at):
+                        count += 1
+                continue
+
             content = data.get("content", "")
             if not data.get("id") and self.memory_manager.content_exists(content):
                 skipped += 1
@@ -715,8 +741,14 @@ class MemoryBackupManager:
                 ]
             else:
                 filtered_existing = existing_records
+            tombstones = load_tombstones(
+                self.db,
+                "memory",
+                project_id,
+                include_global=True,
+            )
             sorted_records = sorted(
-                self._deduplicate_records_by_id([*filtered_existing, *db_records]),
+                self._deduplicate_records_by_id([*filtered_existing, *db_records, *tombstones]),
                 key=lambda record: record.get("id") or record.get("content", ""),
             )
 
