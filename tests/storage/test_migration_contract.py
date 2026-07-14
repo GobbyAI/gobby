@@ -243,6 +243,7 @@ def test_postgres_migrations_limited_to_known_post_baseline() -> None:
         "317_sync_tombstones.sql",
         "318_chat_messages_sequence_unique.sql",
         "319_worktree_last_activity.sql",
+        "320_projects_active_name_unique.sql",
     ]
 
 
@@ -296,7 +297,7 @@ def test_postgres_baseline_version_is_flattened_to_305() -> None:
     # The 0.5.0 pre-release flatten folded 295-305 into the baseline. Hubs below
     # 305 take the corrupt_partial backup/recreate path; later migrations replay.
     assert module.BASELINE_VERSION == 305
-    assert module.latest_known_version() == 319
+    assert module.latest_known_version() == 320
 
 
 def test_postgres_baseline_uses_uuid_for_internal_identity_columns() -> None:

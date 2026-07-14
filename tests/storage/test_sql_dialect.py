@@ -100,8 +100,6 @@ def test_task_list_label_filter_uses_postgres_jsonb_contains() -> None:
     assert db.params[task_query_index] == (
         "proj1",
         '["interactive:planning-in-progress:sess"]',
-        50,
-        0,
     )
 
 
