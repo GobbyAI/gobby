@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -11,6 +12,7 @@ from unittest.mock import patch
 import pytest
 
 from gobby.sessions.compact_continuation import (
+    _COMPACT_SELF_CONTINUATION_TASKS,
     COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE,
     COMPACT_SELF_CONTINUE_PROMPT,
     COMPACT_SELF_CONTINUE_VARIABLE,
@@ -20,6 +22,7 @@ from gobby.sessions.compact_continuation import (
     consume_and_schedule_compact_self_continuation,
     mark_compact_self_continuation_pending,
     persist_compact_resume_required_skills,
+    schedule_compact_self_continuation,
     schedule_compact_self_continuation_fallback,
 )
 from gobby.skills.formatting import skill_fetch_batch_directive
@@ -40,6 +43,40 @@ class _FakeTmux:
     async def send_keys(self, pane_id: str, text: str, *, literal: bool = False) -> bool:
         self.sent_keys.append((pane_id, text, literal))
         return True
+
+
+@pytest.mark.asyncio
+async def test_scheduled_task_is_retained_and_multiline_prompt_is_sent_once() -> None:
+    send_started = asyncio.Event()
+    release_send = asyncio.Event()
+
+    class BlockingTmux(_FakeTmux):
+        async def send_keys(self, pane_id: str, text: str, *, literal: bool = False) -> bool:
+            self.sent_keys.append((pane_id, text, literal))
+            send_started.set()
+            await release_send.wait()
+            return True
+
+    session = SimpleNamespace(id=SESSION_ID, terminal_context={"tmux_pane": "%12"})
+    tmux = BlockingTmux()
+    prompt = "Continue the task.\nPreserve the existing context."
+
+    with patch(
+        "gobby.sessions.compact_continuation.get_tmux_manager_for_context",
+        return_value=tmux,
+    ):
+        assert schedule_compact_self_continuation(session, prompt, delay_seconds=0)
+        await send_started.wait()
+
+        assert len(_COMPACT_SELF_CONTINUATION_TASKS) == 1
+        assert tmux.sent_keys == [("%12", f"{prompt}\n", True)]
+        task = next(iter(_COMPACT_SELF_CONTINUATION_TASKS))
+
+        release_send.set()
+        await task
+        await drain_asyncio_tasks()
+
+    assert not _COMPACT_SELF_CONTINUATION_TASKS
 
 
 def test_merge_session_variable_serializes_with_workflow_first_write(
