@@ -310,6 +310,85 @@ class TestToolApproval:
         assert "Write" in result.message
 
 
+class TestStopPendingInteractions:
+    @pytest.mark.asyncio
+    async def test_stop_rejects_pending_tool_approval(self, session: ChatSession) -> None:
+        from claude_agent_sdk import PermissionResultDeny, ToolPermissionContext
+
+        config = MagicMock(enabled=True, default_policy="ask", policies=[])
+        session._tool_approval_config = config
+        session.set_chat_mode("normal")
+        session._client = AsyncMock()
+
+        async def assert_released_before_disconnect() -> None:
+            assert session._pending_approval_decisions["tool-approval"] == "reject"
+            assert session._pending_approval_events["tool-approval"].is_set()
+
+        session._client.disconnect.side_effect = assert_released_before_disconnect
+        task = asyncio.create_task(
+            session._can_use_tool(
+                "Write",
+                {"file_path": "/tmp/test"},
+                ToolPermissionContext(tool_use_id="tool-approval"),
+            )
+        )
+        await wait_for_async_condition(
+            lambda: session.has_pending_approval, description="pending approval"
+        )
+
+        await session.stop()
+        result = await asyncio.wait_for(task, timeout=1)
+
+        assert isinstance(result, PermissionResultDeny)
+        assert session.has_pending_approval is False
+
+    @pytest.mark.asyncio
+    async def test_stop_denies_pending_plan_approval(self, session: ChatSession) -> None:
+        from claude_agent_sdk import PermissionResultDeny, ToolPermissionContext
+
+        session.set_chat_mode("plan")
+        session._client = AsyncMock()
+        task = asyncio.create_task(
+            session._can_use_tool(
+                "ExitPlanMode",
+                {"plan": "draft plan"},
+                ToolPermissionContext(tool_use_id="tool-plan"),
+            )
+        )
+        await wait_for_async_condition(lambda: session.has_pending_plan, description="pending plan")
+
+        await session.stop()
+        result = await asyncio.wait_for(task, timeout=1)
+
+        assert isinstance(result, PermissionResultDeny)
+        assert session.has_pending_plan is False
+
+    @pytest.mark.asyncio
+    async def test_stop_releases_pending_question(self, session: ChatSession) -> None:
+        from claude_agent_sdk import PermissionResultAllow, ToolPermissionContext
+
+        session._client = AsyncMock()
+        input_data = {"questions": [{"question": "Which auth?"}]}
+        task = asyncio.create_task(
+            session._can_use_tool(
+                "AskUserQuestion",
+                input_data,
+                ToolPermissionContext(tool_use_id="tool-question"),
+            )
+        )
+        await wait_for_async_condition(
+            lambda: session.has_pending_question, description="pending question"
+        )
+
+        await session.stop()
+        result = await asyncio.wait_for(task, timeout=1)
+
+        assert isinstance(result, PermissionResultAllow)
+        assert result.updated_input is not None
+        assert result.updated_input["answers"] == {"error": "Session stopped before user response"}
+        assert session.has_pending_question is False
+
+
 class TestProjectRouting:
     """Tests for project_id and project_path propagation in ChatSession.start()."""
 

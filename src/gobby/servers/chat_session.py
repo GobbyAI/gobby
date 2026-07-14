@@ -298,6 +298,7 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
 
     async def stop(self) -> None:
         """Disconnect the ClaudeSDKClient and clean up."""
+        self._abort_pending_interactions()
         if self._client:
             try:
                 await self._client.disconnect()

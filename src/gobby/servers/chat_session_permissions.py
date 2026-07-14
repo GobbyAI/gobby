@@ -709,6 +709,18 @@ class ChatSessionPermissionsMixin:
             self._pending_approval_decisions[tool_use_id] = "reject"
             event.set()
 
+    def _abort_pending_interactions(self) -> None:
+        """Release every waiter with a safe default when the session stops."""
+        self.cancel_pending_approval()
+
+        for tool_use_id, event in self._pending_plan_events.items():
+            self._pending_plan_decisions[tool_use_id] = "deny"
+            event.set()
+
+        for tool_use_id, event in self._pending_answer_events.items():
+            self._pending_answers[tool_use_id] = {"error": "Session stopped before user response"}
+            event.set()
+
     @property
     def has_pending_approval(self) -> bool:
         """Whether a tool approval is currently awaiting a response."""
