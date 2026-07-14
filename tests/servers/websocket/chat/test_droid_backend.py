@@ -253,6 +253,39 @@ def test_parse_stream_json_normalizes_content_blocks() -> None:
     assert events[1].data["kind"] == "tool_result"
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"type": "permission_request", "kind": "untrusted", "id": "perm-1"},
+        {
+            "type": "message",
+            "role": "assistant",
+            "message": {
+                "content": [{"type": "permission_request", "kind": "untrusted", "id": "perm-1"}]
+            },
+        },
+    ],
+)
+def test_parse_stream_json_strips_permission_request_kind(payload: dict[str, Any]) -> None:
+    events = parse_droid_stream_line(json.dumps(payload))
+
+    assert len(events) == 1
+    assert events[0].event_type == "content_delta"
+    assert events[0].data == {"kind": "permission_request", "id": "perm-1"}
+
+
+@pytest.mark.parametrize("exception_type", [TypeError, KeyError, AttributeError, ValueError])
+def test_parse_stream_json_skips_record_conversion_errors(
+    exception_type: type[Exception], caplog: pytest.LogCaptureFixture
+) -> None:
+    target = "gobby.servers.websocket.chat.backends.droid_stream._stream_events_from_droid_record"
+    with patch(target, side_effect=exception_type("bad record")):
+        events = parse_droid_stream_line('{"type": "message"}')
+
+    assert events == []
+    assert "Skipping malformed Droid stream-json record" in caplog.text
+
+
 @pytest.mark.asyncio
 async def test_managed_session_translates_text_thinking_and_done() -> None:
     backend = DroidWebChatBackend()

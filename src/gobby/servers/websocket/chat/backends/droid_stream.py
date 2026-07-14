@@ -71,6 +71,7 @@ def _events_from_content_blocks(content: Any) -> list[StreamEvent]:
         elif block_type == "permission_request":
             data = dict(block)
             data.pop("type", None)
+            data.pop("kind", None)
             events.append(_content_delta("permission_request", **data))
     return events
 
@@ -248,6 +249,7 @@ def _stream_events_from_droid_record(record: dict[str, Any]) -> list[StreamEvent
     if record_type == "permission_request":
         data = dict(record)
         data.pop("type", None)
+        data.pop("kind", None)
         return [_content_delta("permission_request", **data)]
     if record_type == "reasoning":
         text = record.get("text")
@@ -311,7 +313,11 @@ def parse_droid_stream_line(line: bytes | str) -> list[StreamEvent]:
     if not isinstance(record, dict):
         logger.warning("Skipping non-object Droid stream-json line")
         return []
-    return _stream_events_from_droid_record(record)
+    try:
+        return _stream_events_from_droid_record(record)
+    except (TypeError, KeyError, AttributeError, ValueError) as exc:
+        logger.warning("Skipping malformed Droid stream-json record: %s", exc)
+        return []
 
 
 __all__ = ["parse_droid_stream_line"]
