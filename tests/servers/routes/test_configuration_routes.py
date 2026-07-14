@@ -1245,6 +1245,31 @@ class TestPromptsEndpoints:
         assert data["offset"] == 1
         assert data["count"] == len(data["prompts"])
 
+    def test_list_prompts_total_is_filter_scoped_and_unpaginated(
+        self,
+        client: TestClient,
+        temp_db: HubDatabase,
+    ) -> None:
+        initial = client.get("/api/config/prompts").json()
+        prompt_path = initial["prompts"][0]["path"]
+
+        override = client.put(
+            f"/api/config/prompts/{prompt_path}",
+            json={"content": "# Override"},
+        )
+        assert override.status_code == 200
+        LocalPromptManager(temp_db).create_prompt(
+            name="test/disabled",
+            content="disabled",
+            scope="global",
+            enabled=False,
+        )
+
+        data = client.get("/api/config/prompts?limit=1").json()
+        assert data["total"] == initial["total"]
+        assert data["count"] == 1
+        assert len(data["prompts"]) == 1
+
     def test_list_prompts_source_is_bundled(self, client: TestClient) -> None:
         """Without overrides, all sources should be 'bundled'."""
         response = client.get("/api/config/prompts")

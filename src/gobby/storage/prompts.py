@@ -617,18 +617,30 @@ class LocalPromptManager:
         self,
         project_id: str | None = None,
         scope: PromptScope | None = None,
+        category: str | None = None,
+        enabled: bool | None = None,
     ) -> int:
-        """Count prompts matching criteria."""
-        query = "SELECT COUNT(*) as count FROM prompts WHERE 1=1"
+        """Count distinct prompt names matching criteria."""
+        query = "SELECT COUNT(DISTINCT name) as count FROM prompts WHERE 1=1"
         params: list[Any] = []
 
         if project_id:
             query += " AND (project_id = %s OR project_id IS NULL)"
             params.append(project_id)
+        elif scope != "project":
+            query += " AND project_id IS NULL"
 
         if scope is not None:
             query += " AND scope = %s"
             params.append(scope)
+
+        if category is not None:
+            query += " AND name LIKE %s"
+            params.append(f"{category}/%")
+
+        if enabled is not None:
+            query += " AND enabled = %s"
+            params.append(enabled)
 
         row = self.db.fetchone(query, tuple(params))
         return row["count"] if row else 0
