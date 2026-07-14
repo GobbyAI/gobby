@@ -316,6 +316,30 @@ class TestLinearImport:
         )
         assert result.exit_code == 0
 
+    @patch("gobby.cli.linear.asyncio.run")
+    @patch("gobby.cli.linear.LinearSyncService")
+    @patch("gobby.cli.linear.get_linear_deps")
+    def test_import_forwards_team_wide_override(
+        self, mock_deps: MagicMock, mock_svc: MagicMock, mock_async: MagicMock, runner: CliRunner
+    ) -> None:
+        tm, mcp, pm, pid = _mock_linear_deps()
+        mock_deps.return_value = (tm, mcp, pm, pid)
+        mock_async.return_value = []
+
+        result = runner.invoke(
+            linear,
+            ["import", "TEAM-1", "--allow-team-wide"],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 0
+        mock_svc.return_value.import_linear_issues.assert_called_once_with(
+            team_id="TEAM-1",
+            state=None,
+            labels=None,
+            allow_team_wide=True,
+        )
+
 
 # ---------------------------------------------------------------------------
 # linear sync

@@ -7,10 +7,13 @@ This service delegates all GitHub operations to the official GitHub MCP server
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.integrations.github import GitHubIntegration
-from gobby.integrations.github_helper import parse_github_repo
+from gobby.integrations.github_helper import parse_github_mcp_result, parse_github_repo
+from gobby.tasks.state_semantics import is_task_closed
+from gobby.utils.datetime import parse_stored_datetime
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.manager import MCPClientManager
@@ -19,8 +22,6 @@ if TYPE_CHECKING:
 __all__ = [
     "GitHubSyncService",
     "GitHubSyncError",
-    "GitHubRateLimitError",
-    "GitHubNotFoundError",
 ]
 
 logger = logging.getLogger(__name__)
@@ -30,37 +31,6 @@ class GitHubSyncError(Exception):
     """Base exception for GitHub sync errors."""
 
     pass
-
-
-class GitHubRateLimitError(GitHubSyncError):
-    """Raised when GitHub API rate limit is exceeded.
-
-    Attributes:
-        reset_at: Unix timestamp when rate limit resets.
-    """
-
-    def __init__(self, message: str, reset_at: int | None = None) -> None:
-        super().__init__(message)
-        self.reset_at = reset_at
-
-
-class GitHubNotFoundError(GitHubSyncError):
-    """Raised when a GitHub resource is not found.
-
-    Attributes:
-        resource: Type of resource (e.g., "issue", "repo", "pr").
-        resource_id: Identifier of the missing resource.
-    """
-
-    def __init__(
-        self,
-        message: str,
-        resource: str | None = None,
-        resource_id: int | str | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.resource = resource
-        self.resource_id = resource_id
 
 
 class GitHubSyncService:
@@ -110,6 +80,19 @@ class GitHubSyncService:
         """
         return self.github.is_available()
 
+    async def _call_github_mcp(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> Any:
+        """Call GitHub through the manager and unwrap its MCP SDK result."""
+        result = await self.mcp_manager.call_tool(
+            server_name="github",
+            tool_name=tool_name,
+            arguments=arguments,
+        )
+        return parse_github_mcp_result(result, tool_name)
+
     async def import_github_issues(
         self,
         repo: str,
@@ -141,13 +124,27 @@ class GitHubSyncService:
         if state:
             args["state"] = state
 
-        result = await self.mcp_manager.call_tool(
-            server_name="github",
-            tool_name="list_issues",
-            arguments=args,
-        )
-
-        issues = result.get("issues", [])
+        issues: list[dict[str, Any]] = []
+        page = 1
+        page_size = 100
+        while True:
+            result = await self._call_github_mcp(
+                "list_issues",
+                {**args, "page": page, "per_page": page_size},
+            )
+            if isinstance(result, list):
+                page_issues = result
+            elif isinstance(result, dict):
+                page_issues = result.get("issues", [])
+            else:
+                raise GitHubSyncError(
+                    "Invalid response from GitHub MCP when listing issues: "
+                    f"expected list or dict, got {type(result).__name__}"
+                )
+            issues.extend(page_issues)
+            if len(page_issues) < page_size:
+                break
+            page += 1
         imported = []
         updated = []
 
@@ -158,16 +155,56 @@ class GitHubSyncService:
             issue_labels = [
                 lbl["name"] if isinstance(lbl, dict) else lbl for lbl in (issue.get("labels") or [])
             ]
+            mapped_labels = self.map_github_labels_to_gobby(issue_labels)
+            issue_state = issue.get("state")
+            lifecycle_updates: dict[str, Any] = {}
+            if issue_state == "closed":
+                lifecycle_updates = {
+                    "closed_at": issue.get("closed_at") or datetime.now(UTC).isoformat(),
+                    "closed_reason": "github_sync",
+                    "closed_in_session_id": None,
+                    "closed_commit_sha": None,
+                }
+            elif issue_state == "open":
+                lifecycle_updates = {
+                    "closed_at": None,
+                    "closed_reason": None,
+                    "closed_in_session_id": None,
+                    "closed_commit_sha": None,
+                }
 
             # Dedup: check if task already exists for this repo + issue number
             existing = self._find_task_by_github_issue(repo, issue_number)
             if existing:
-                self.task_manager.update_task(
-                    existing.id,
-                    title=title,
-                    description=description,
-                    labels=issue_labels or None,
+                local_updated_value = getattr(existing, "updated_at", None)
+                local_updated = (
+                    parse_stored_datetime(local_updated_value)
+                    if isinstance(local_updated_value, (datetime, str))
+                    else None
                 )
+                remote_updated = parse_stored_datetime(issue.get("updated_at"))
+                is_stale = bool(local_updated and remote_updated and local_updated > remote_updated)
+
+                if not is_stale:
+                    metadata_updates: dict[str, Any] = {}
+                    if getattr(existing, "title", None) != title:
+                        metadata_updates["title"] = title
+                    if (getattr(existing, "description", None) or "") != description:
+                        metadata_updates["description"] = description
+
+                    existing_label_value = getattr(existing, "labels", None)
+                    existing_labels = (
+                        list(existing_label_value) if isinstance(existing_label_value, list) else []
+                    )
+                    if mapped_labels:
+                        merged_labels = list(dict.fromkeys([*existing_labels, *mapped_labels]))
+                        if merged_labels != existing_labels:
+                            metadata_updates["labels"] = merged_labels
+
+                    if metadata_updates:
+                        self.task_manager.update_task(existing.id, **metadata_updates)
+                    if lifecycle_updates:
+                        self.task_manager.reconcile_task_state(existing.id, **lifecycle_updates)
                 refreshed = self.task_manager.get_task(existing.id)
                 if refreshed:
                     updated.append(refreshed.to_dict())
@@ -178,8 +215,10 @@ class GitHubSyncService:
                     description=description,
                     github_issue_number=issue_number,
                     github_repo=repo,
-                    labels=issue_labels or None,
+                    labels=mapped_labels or None,
                 )
+                if lifecycle_updates:
+                    task = self.task_manager.reconcile_task_state(task.id, **lifecycle_updates)
                 imported.append(task.to_dict())
 
         all_tasks = imported + updated
@@ -239,15 +278,16 @@ class GitHubSyncService:
 
         owner, repo_name = parse_github_repo(repo)
 
-        result = await self.mcp_manager.call_tool(
-            server_name="github",
-            tool_name="update_issue",
-            arguments={
+        result = await self._call_github_mcp(
+            "update_issue",
+            {
                 "owner": owner,
                 "repo": repo_name,
                 "issue_number": task.github_issue_number,
                 "title": task.title,
                 "body": task.description or "",
+                "state": "closed" if is_task_closed(task) else "open",
+                "labels": self.map_gobby_labels_to_github(task.labels or []),
             },
         )
 
@@ -297,10 +337,9 @@ class GitHubSyncService:
         owner, repo_name = parse_github_repo(repo)
 
         # Create PR via GitHub MCP
-        result = await self.mcp_manager.call_tool(
-            server_name="github",
-            tool_name="create_pull_request",
-            arguments={
+        result = await self._call_github_mcp(
+            "create_pull_request",
+            {
                 "owner": owner,
                 "repo": repo_name,
                 "title": task.title,
@@ -310,6 +349,12 @@ class GitHubSyncService:
                 "draft": draft,
             },
         )
+
+        if not isinstance(result, dict):
+            raise GitHubSyncError(
+                "Invalid response from GitHub MCP when creating pull request: "
+                f"expected dict, got {type(result).__name__}"
+            )
 
         # Update task with PR number if available
         result_dict = cast(dict[str, Any], result)
@@ -381,10 +426,9 @@ class GitHubSyncService:
 
         owner, repo_name = parse_github_repo(repo)
 
-        result = await self.mcp_manager.call_tool(
-            server_name="github",
-            tool_name="push_files",
-            arguments={
+        result = await self._call_github_mcp(
+            "push_files",
+            {
                 "owner": owner,
                 "repo": repo_name,
                 "branch": branch,
@@ -392,6 +436,12 @@ class GitHubSyncService:
                 "message": message,
             },
         )
+
+        if not isinstance(result, dict):
+            raise GitHubSyncError(
+                "Invalid response from GitHub MCP when pushing files: "
+                f"expected dict, got {type(result).__name__}"
+            )
 
         result_dict = cast(dict[str, Any], result)
         logger.info(f"Pushed {len(files)} files to {repo}:{branch}")

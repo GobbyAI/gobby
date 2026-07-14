@@ -240,7 +240,8 @@ def test_postgres_migrations_limited_to_known_post_baseline() -> None:
         "314_memory_graph_retry_state.sql",
         "315_session_title_synthesis_digest_hash.sql",
         "316_memory_vector_reindex_state.sql",
-        "317_chat_messages_sequence_unique.sql",
+        "317_sync_tombstones.sql",
+        "318_chat_messages_sequence_unique.sql",
     ]
 
 
@@ -282,7 +283,7 @@ def test_postgres_baseline_version_is_flattened_to_305() -> None:
     # The 0.5.0 pre-release flatten folded 295-305 into the baseline. Hubs below
     # 305 take the corrupt_partial backup/recreate path; later migrations replay.
     assert module.BASELINE_VERSION == 305
-    assert module.latest_known_version() == 317
+    assert module.latest_known_version() == 318
 
 
 def test_postgres_baseline_uses_uuid_for_internal_identity_columns() -> None:
@@ -850,7 +851,7 @@ def test_memory_vector_reindex_state_is_consistent_across_schema_and_runtime() -
 def test_chat_message_sequence_constraint_is_consistent_across_schema_and_migration() -> None:
     baseline = _baseline_text()
     migration = (
-        SRC_ROOT / "storage" / "migrations" / "317_chat_messages_sequence_unique.sql"
+        SRC_ROOT / "storage" / "migrations" / "318_chat_messages_sequence_unique.sql"
     ).read_text(encoding="utf-8")
 
     for label, content in (("baseline", baseline), ("migration", migration)):
