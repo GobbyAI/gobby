@@ -287,6 +287,23 @@ class TestCanUseTool:
         assert isinstance(result, PermissionResultDeny)
         assert "Plan mode is active" in result.message
 
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "python -c \"open('x', 'w').write('changed')\"",
+            "printf changed | tee x",
+        ],
+    )
+    async def test_plan_mode_blocks_shell_commands_outside_read_only_allowlist(
+        self, session: ChatSession, command: str
+    ) -> None:
+        session.set_chat_mode("plan")
+
+        result = await session._can_use_tool("Bash", {"command": command}, ToolPermissionContext())
+
+        assert isinstance(result, PermissionResultDeny)
+        assert "Plan mode is active" in result.message
+
     @pytest.mark.asyncio
     @pytest.mark.parametrize("tool_name", ["exec_command", "run_shell_command"])
     async def test_plan_mode_allows_gcode_shell_aliases(
@@ -363,6 +380,32 @@ class TestCanUseTool:
         )
 
         assert isinstance(result, PermissionResultAllow)
+
+    async def test_plan_mode_allows_read_only_mcp_call(self, session: ChatSession) -> None:
+        session.set_chat_mode("plan")
+
+        result = await session._can_use_tool(
+            "mcp__gobby__call_tool",
+            {"server_name": "external", "tool_name": "read_file", "arguments": {}},
+            ToolPermissionContext(),
+        )
+
+        assert isinstance(result, PermissionResultAllow)
+
+    @pytest.mark.parametrize("tool_name", ["create_file", "run"])
+    async def test_plan_mode_blocks_mcp_calls_outside_read_only_allowlist(
+        self, session: ChatSession, tool_name: str
+    ) -> None:
+        session.set_chat_mode("plan")
+
+        result = await session._can_use_tool(
+            "mcp__gobby__call_tool",
+            {"server_name": "external", "tool_name": tool_name, "arguments": {}},
+            ToolPermissionContext(),
+        )
+
+        assert isinstance(result, PermissionResultDeny)
+        assert "Plan mode is active" in result.message
 
 
 class TestNeedsToolApproval:

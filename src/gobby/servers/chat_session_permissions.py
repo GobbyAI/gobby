@@ -248,14 +248,19 @@ class ChatSessionPermissionsMixin:
                         "Present your plan to the user for approval before making changes."
                     )
                 )
-            if (
-                is_shell_tool(tool_name)
-                and self._is_write_bash(input_data)
-                and not is_gcode_shell_command(input_data)
-            ):
+            if is_shell_tool(tool_name) and not is_gcode_shell_command(input_data):
                 return PermissionResultDeny(
                     message=(
-                        "Plan mode is active — write/destructive shell commands are blocked. "
+                        "Plan mode is active — shell commands outside the read-only allowlist "
+                        "are blocked. "
+                        "Present your plan to the user for approval before making changes."
+                    )
+                )
+            if tool_name == "mcp__gobby__call_tool" and self._is_write_mcp_call(input_data):
+                return PermissionResultDeny(
+                    message=(
+                        "Plan mode is active — MCP tools outside the read-only allowlist "
+                        "are blocked. "
                         "Present your plan to the user for approval before making changes."
                     )
                 )
