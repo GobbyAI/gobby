@@ -10,7 +10,8 @@
     "node": ">=18"
   },
   "files": [
-    "cli.mjs"
+    "cli.mjs",
+    "setup-firewall.sh"
   ],
   "keywords": [
     "gobby",
