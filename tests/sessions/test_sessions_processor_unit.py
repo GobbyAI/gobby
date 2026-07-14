@@ -780,6 +780,76 @@ class TestProcessSession:
         assert processor._message_indices["session-1"] == 1
 
     @pytest.mark.asyncio
+    async def test_process_session_resets_state_when_transcript_shrinks(
+        self, processor, tmp_path
+    ) -> None:
+        transcript = tmp_path / "shrinking.jsonl"
+        transcript.write_text(
+            _codex_response_message("user", "first message with extra text")
+            + _codex_response_message("assistant", "old assistant response with extra text"),
+            encoding="utf-8",
+        )
+        processor.register_session("session-1", str(transcript), source="codex")
+        await processor._process_session("session-1", str(transcript))
+        old_parser = processor._parsers["session-1"]
+        old_appender = processor._index_appenders["session-1"]
+
+        replacement = _codex_response_message("user", "new")
+        transcript.write_text(replacement, encoding="utf-8")
+        await processor._process_session("session-1", str(transcript))
+
+        assert processor._parsers["session-1"] is not old_parser
+        assert processor._index_appenders["session-1"] is not old_appender
+        assert processor._byte_offsets["session-1"] == len(replacement.encode())
+        st = transcript.stat()
+        index = load_index_sidecar(
+            str(transcript),
+            "codex",
+            "session-1",
+            seek_mode="byte",
+            mtime_ns=st.st_mtime_ns,
+            size=st.st_size,
+        )
+        assert index is not None
+        assert index.parsed_message_count == 1
+        assert index.boundaries[0].byte_start == 0
+
+    @pytest.mark.asyncio
+    async def test_process_session_resets_sidecar_when_transcript_is_replaced(
+        self, processor, tmp_path
+    ) -> None:
+        transcript = tmp_path / "replaced.jsonl"
+        transcript.write_text(_codex_response_message("user", "old"), encoding="utf-8")
+        processor.register_session("session-1", str(transcript), source="codex")
+        await processor._process_session("session-1", str(transcript))
+        old_parser = processor._parsers["session-1"]
+        old_appender = processor._index_appenders["session-1"]
+
+        replacement_content = _codex_response_message(
+            "user", "replacement content that is longer than old"
+        ) + _codex_response_message("assistant", "replacement assistant response")
+        replacement = tmp_path / "replacement.tmp"
+        replacement.write_text(replacement_content, encoding="utf-8")
+        replacement.replace(transcript)
+        await processor._process_session("session-1", str(transcript))
+
+        assert processor._parsers["session-1"] is not old_parser
+        assert processor._index_appenders["session-1"] is not old_appender
+        assert processor._byte_offsets["session-1"] == len(replacement_content.encode())
+        st = transcript.stat()
+        index = load_index_sidecar(
+            str(transcript),
+            "codex",
+            "session-1",
+            seek_mode="byte",
+            mtime_ns=st.st_mtime_ns,
+            size=st.st_size,
+        )
+        assert index is not None
+        assert index.parsed_message_count == 2
+        assert index.boundaries[0].byte_start == 0
+
+    @pytest.mark.asyncio
     async def test_process_session_records_plain_transcript_observations(
         self, processor, tmp_path
     ) -> None:

@@ -166,7 +166,39 @@ class ProcessorTranscriptMixin:
             await self._process_json_session(session_id, transcript_path)
             return
 
+        try:
+            transcript_stat = await asyncio.to_thread(os.stat, transcript_path)
+        except OSError as exc:
+            logger.error(
+                "Error stating transcript",
+                extra={
+                    "session_id": session_id,
+                    "transcript_path": transcript_path,
+                    "error": str(exc),
+                },
+            )
+            return
+
         last_offset = self._byte_offsets.get(session_id, 0)
+        previous_state = self._transcript_file_state.get(session_id)
+        current_state = (
+            transcript_stat.st_dev,
+            transcript_stat.st_ino,
+            transcript_stat.st_mtime_ns,
+        )
+        transcript_reset = transcript_stat.st_size < last_offset
+        if previous_state is not None:
+            transcript_reset = transcript_reset or current_state[:2] != previous_state[:2]
+            transcript_reset = transcript_reset or current_state[2] < previous_state[2]
+        if transcript_reset:
+            logger.info(
+                "Transcript changed non-incrementally; resetting processor state",
+                extra={"session_id": session_id, "transcript_path": transcript_path},
+            )
+            await self._reset_transcript_state(session_id, transcript_path)
+            last_offset = 0
+        self._transcript_file_state[session_id] = current_state
+
         last_index = self._message_indices.get(session_id, -1)
         new_lines: list[str] = []
         new_line_offsets: list[int] = []

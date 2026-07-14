@@ -74,6 +74,7 @@ SKILL_DISCOVERY_RULES = {
     "require-javascript-skill",
     "require-json-skill",
     "require-kotlin-skill",
+    "require-lua-skill",
     "require-php-skill",
     "require-python-skill",
     "require-ruby-skill",
@@ -2173,6 +2174,133 @@ class TestRequireScalaSkillCondition:
         assert (
             self._eval("/project/src/main/scala/Order.scala", canonical_tool_kind="read") is False
         )
+
+    def test_skips_empty_file_path(self) -> None:
+        assert self._eval("") is False
+
+
+# --- require-lua-skill structure ---
+
+
+class TestRequireLuaSkillStructure:
+    """Verify require-lua-skill rule structure."""
+
+    def test_is_before_tool_event(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-lua-skill")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert body.when is not None
+        assert "not skill_loaded('lua')" in body.when
+
+    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-lua-skill")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        assert len(body.effects) == 1
+        assert body.effects[0].type == "block"
+        assert body.effects[0].reason == skill_fetch_directive("lua")
+
+
+# --- require-lua-skill condition evaluation ---
+
+
+class TestRequireLuaSkillCondition:
+    """Test the require-lua-skill condition evaluates correctly."""
+
+    CONDITION = (
+        "not skill_loaded('lua') "
+        "and event.data.get('canonical_tool_kind') == 'write' "
+        "and ("
+        "event.data.get('canonical_file_path', '').endswith(('.lua', '.rockspec')) "
+        "or event.data.get('canonical_file_path', '').rpartition('/')[2] "
+        "in ('.busted', '.lua-format', '.luacheckrc', '.luacov', '.luarc.json', "
+        "'.luarc.jsonc', '.stylua.toml', 'stylua.toml', 'selene.toml') "
+        ")"
+    )
+
+    def _eval(
+        self,
+        file_path: str,
+        *,
+        canonical_tool_kind: str = "write",
+        loaded_skills: list[str] | None = None,
+        injected_skills: list[str] | None = None,
+    ) -> bool:
+        variables = {"loaded_skills": loaded_skills or []}
+        if injected_skills is not None:
+            variables["injected_skills"] = injected_skills
+        context = {
+            "variables": variables,
+            "event": SimpleNamespace(
+                data={
+                    "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_file_path": file_path,
+                }
+            ),
+            "tool_input": {},
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        return evaluator.evaluate(self.CONDITION)
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/src/policy.lua",
+            "/project/lua/acme/init.lua",
+            "/project/acme-1.0-1.rockspec",
+        ],
+    )
+    def test_matches_lua_source_and_rockspec_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/.busted",
+            "/project/.lua-format",
+            "/project/.luacheckrc",
+            "/project/.luacov",
+            "/project/.luarc.json",
+            "/project/config/.luarc.jsonc",
+            "/project/.stylua.toml",
+            "/project/stylua.toml",
+            "/project/selene.toml",
+        ],
+    )
+    def test_matches_lua_tooling_config_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/src/policy.c",
+            "/project/src/policy.py",
+            "/project/src/policy.luau",
+            "/project/src/policy.tl",
+            "/project/package.json",
+            "/project/src/policy.lua.bak",
+            "/project/config/stylua.toml.example",
+        ],
+    )
+    def test_skips_non_lua_targets(self, file_path: str) -> None:
+        assert self._eval(file_path) is False
+
+    def test_skips_when_already_loaded(self) -> None:
+        assert self._eval("/project/src/policy.lua", loaded_skills=["lua"]) is False
+
+    def test_javascript_skill_does_not_count_as_lua_loaded(self) -> None:
+        assert self._eval("/project/src/policy.lua", loaded_skills=["javascript"]) is True
+
+    def test_does_not_skip_when_legacy_injected(self) -> None:
+        assert self._eval("/project/src/policy.lua", injected_skills=["lua"]) is True
+
+    def test_skips_non_edit_write_tool(self) -> None:
+        assert self._eval("/project/src/policy.lua", canonical_tool_kind="read") is False
 
     def test_skips_empty_file_path(self) -> None:
         assert self._eval("") is False
