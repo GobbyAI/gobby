@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import re
+from collections.abc import Mapping
 from typing import Any, cast
+from uuid import UUID
 
 from gobby.mcp_proxy.tools.agent_live_activity import (
     overlay_live_activity,
@@ -15,13 +18,58 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.agents import AgentRunStatus
 
 
+def _clamp_limit(limit: int) -> int:
+    return max(1, min(limit, 100))
+
+
+_RUN_ID_PREFIX_PATTERN = re.compile(r"[0-9a-f]{8,32}")
+
+
+def _list_run_payload(run: Any) -> dict[str, Any]:
+    """Return identity and coordinator decision fields for agent run lists."""
+    metadata = getattr(run, "resume_metadata_json", None)
+    if not isinstance(metadata, Mapping):
+        metadata = {}
+    return {
+        "run_id": run.id,
+        "task_ref": metadata.get("task_ref") or getattr(run, "task_id", None),
+        "agent_name": getattr(run, "agent_name", None),
+        "status": run.status,
+        "started_at": getattr(run, "started_at", None),
+        "branch_name": metadata.get("branch_name"),
+        "tool_calls_count": getattr(run, "tool_calls_count", 0),
+        "turns_used": getattr(run, "turns_used", 0),
+    }
+
+
+def _validated_run_ref(run_id: str) -> tuple[str, bool] | None:
+    """Return normalized run reference and whether it is a full UUID."""
+    run_ref = run_id.strip().lower()
+    try:
+        full_id = str(UUID(run_ref))
+    except ValueError:
+        full_id = None
+    if full_id == run_ref:
+        return run_ref, True
+    if _RUN_ID_PREFIX_PATTERN.fullmatch(run_ref):
+        return run_ref, False
+    return None
+
+
+def _invalid_run_ref(error: str, **details: Any) -> dict[str, Any]:
+    return {
+        "success": False,
+        "status": "error",
+        "error": error,
+        "error_code": "INVALID_ARGUMENTS",
+        **details,
+    }
+
+
 def register_agent_query_tools(
     registry: InternalToolRegistry,
     ctx: AgentsRegistryContext,
 ) -> None:
-    def _clamp_limit(limit: int) -> int:
-        return max(1, min(limit, 100))
-
     @registry.tool(
         name="get_agent_result",
         description="Get the result of a completed agent run.",
@@ -105,19 +153,7 @@ def register_agent_query_tools(
 
         return {
             "success": True,
-            "runs": [
-                {
-                    "id": run.id,
-                    "status": run.status,
-                    "provider": run.provider,
-                    "model": run.model,
-                    "workflow_name": run.workflow_name,
-                    "prompt": run.prompt[:100] + "..." if len(run.prompt) > 100 else run.prompt,
-                    "started_at": run.started_at,
-                    "completed_at": run.completed_at,
-                }
-                for run in runs
-            ],
+            "runs": [_list_run_payload(run) for run in runs],
             "count": len(runs),
         }
 
@@ -209,7 +245,7 @@ def register_agent_query_tools(
 
         return {
             "success": True,
-            "agents": [run.to_brief() for run in runs],
+            "agents": [_list_run_payload(run) for run in runs],
             "count": len(runs),
             "scope": scope_key,
             "status": status_key,
@@ -220,13 +256,38 @@ def register_agent_query_tools(
         name="get_running_agent",
         description="Get process state for a running agent.",
     )
-    async def get_running_agent(run_id: str) -> dict[str, Any]:
-        run = ctx.agent_run_manager.get(run_id)
+    async def get_running_agent(
+        run_id: str,
+        include_resume_metadata: bool = False,
+    ) -> dict[str, Any]:
+        validated_ref = _validated_run_ref(run_id)
+        if validated_ref is None:
+            return _invalid_run_ref(
+                "run_id must be a UUID or a hexadecimal prefix of at least 8 characters",
+                run_id=run_id,
+            )
+
+        run_ref, is_full_id = validated_ref
+        if is_full_id:
+            run = ctx.agent_run_manager.get(run_ref)
+        else:
+            matches = ctx.agent_run_manager.find_by_id_prefix(run_ref, limit=2)
+            if len(matches) > 1:
+                return _invalid_run_ref(
+                    f"Ambiguous agent run ID prefix: {run_ref}",
+                    run_id=run_id,
+                    matches=[match.id for match in matches],
+                )
+            run = matches[0] if matches else None
+
         if not run or run.status not in ("running", "pending"):
             return {"success": False, "error": f"No running agent found with ID {run_id}"}
         run = await overlay_live_activity(run, ctx.transcript_reader)
 
-        return {"success": True, "agent": run.to_dict()}
+        agent = run.to_dict()
+        if not include_resume_metadata:
+            agent.pop("resume_metadata_json", None)
+        return {"success": True, "agent": agent}
 
     @registry.tool(
         name="unregister_agent",
