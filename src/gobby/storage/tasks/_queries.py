@@ -218,13 +218,13 @@ def list_tasks(
     order_clause = valid_sorts.get(sort_by, valid_sorts["hierarchy"])
     direction = "DESC" if sort_order.lower() == "desc" else "ASC"
     if sort_by == "hierarchy":
-        query += f" ORDER BY {order_clause} LIMIT %s OFFSET %s"
+        query += f" ORDER BY {order_clause}"
     else:
         query += (
             f" ORDER BY {order_clause} {direction}, priority ASC, created_at DESC, id ASC "
             "LIMIT %s OFFSET %s"
         )
-    params.extend([limit, offset])
+        params.extend([limit, offset])
 
     rows = db.fetchall(query, tuple(params))
     tasks = [Task.from_row(row) for row in rows]
@@ -232,7 +232,8 @@ def list_tasks(
     hydrate_task_blocking_state(db, tasks)
 
     if sort_by == "hierarchy":
-        return order_tasks_hierarchically(tasks)
+        ordered = order_tasks_hierarchically(tasks)
+        return ordered[offset : offset + limit] if limit else ordered[offset:]
     return tasks
 
 
@@ -364,10 +365,9 @@ def list_blocked_tasks(
         query += " AND t.parent_task_id = %s"
         params.append(parent_task_id)
 
-    # Fetch all matching tasks (no SQL limit) so we can order hierarchically first
-    internal_limit = 1000
-    query += " ORDER BY t.priority ASC, t.created_at ASC LIMIT %s"
-    params.append(internal_limit)
+    # Fetch every matching task so hierarchical ordering and caller pagination
+    # cannot silently discard rows beyond an internal cap.
+    query += " ORDER BY t.priority ASC, t.created_at ASC, t.id ASC"
 
     rows = db.fetchall(query, tuple(params))
     tasks = [Task.from_row(row) for row in rows]
