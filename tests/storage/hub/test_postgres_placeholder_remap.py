@@ -12,6 +12,9 @@ from typing import ClassVar
 
 import pytest
 
+from gobby.build import lifecycle as build_lifecycle
+from gobby.build.options import BuildOptions
+from gobby.build.results import BuildResult
 from gobby.config.postgres_pool import PostgresPoolConfig
 
 pytestmark = pytest.mark.unit
@@ -134,6 +137,35 @@ def test_postgres_after_commit_callback_failures_are_isolated(
     assert record.exc_info[0] is RuntimeError
 
 
+def test_nested_native_transaction_callbacks_run_on_their_own_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _postgres_module()
+
+    class Connection:
+        @contextmanager
+        def transaction(self) -> Iterator[None]:
+            yield
+
+    database = object.__new__(module.PostgresHubDatabase)
+    monkeypatch.setattr(database, "open", lambda: None)
+
+    @contextmanager
+    def pool_connection() -> Iterator[Connection]:
+        yield Connection()
+
+    monkeypatch.setattr(database, "_pool_connection", pool_connection)
+    callbacks_run: list[str] = []
+
+    with database._transaction_context(is_immediate=False) as outer:
+        outer.after_commit(lambda: callbacks_run.append("outer"))
+        with database._transaction_context(is_immediate=False) as inner:
+            inner.after_commit(lambda: callbacks_run.append("inner"))
+        assert callbacks_run == ["inner"]
+
+    assert callbacks_run == ["inner", "outer"]
+
+
 @pytest.mark.asyncio
 async def test_interleaved_transactions_own_callbacks_and_lock_order(
     monkeypatch: pytest.MonkeyPatch,
@@ -189,6 +221,64 @@ async def test_interleaved_transactions_own_callbacks_and_lock_order(
     await asyncio.gather(first_transaction(), second_transaction())
 
     assert callbacks_run == ["second", "first"]
+
+
+@pytest.mark.asyncio
+async def test_build_dry_run_interleaving_keeps_transaction_locks_task_local(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _postgres_module()
+
+    class Connection:
+        @contextmanager
+        def transaction(self) -> Iterator[None]:
+            yield
+
+        def execute(self, sql: str, params: object = ()) -> object:
+            return object()
+
+    database = object.__new__(module.PostgresHubDatabase)
+    monkeypatch.setattr(database, "open", lambda: None)
+
+    @contextmanager
+    def pool_connection() -> Iterator[Connection]:
+        yield Connection()
+
+    monkeypatch.setattr(database, "_pool_connection", pool_connection)
+    both_builds_entered = asyncio.Event()
+    entered_count = 0
+
+    async def build_impl(
+        input_ref: str,
+        opts: BuildOptions,
+        *,
+        db: object,
+        project_id: str,
+        services: object | None,
+    ) -> BuildResult:
+        nonlocal entered_count
+        entered_count += 1
+        if entered_count == 2:
+            both_builds_entered.set()
+        await both_builds_entered.wait()
+        return BuildResult(
+            task_id=input_ref,
+            created=False,
+            initial_lifecycle=project_id,
+            applied_stages_skipped=[],
+            tick_dispatched=0,
+        )
+
+    monkeypatch.setattr(build_lifecycle, "_build_impl", build_impl)
+    opts = BuildOptions(dry_run=True)
+
+    results = await asyncio.gather(
+        build_lifecycle._build_dry_run("#first", opts, db=database, project_id="first-project"),
+        build_lifecycle._build_dry_run("#second", opts, db=database, project_id="second-project"),
+    )
+
+    assert entered_count == 2
+    assert [result.dry_run for result in results] == [True, True]
 
 
 @pytest.mark.asyncio
