@@ -14,6 +14,7 @@ from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._models import Task, task_type_filter_values
 from gobby.storage.tasks._ordering import order_tasks_hierarchically
+from gobby.storage.tasks._read import _escape_like_pattern
 from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
 
 
@@ -206,8 +207,8 @@ def list_tasks(
         query += " AND parent_task_id = %s"
         params.append(parent_task_id)
     if title_like:
-        query += " AND title LIKE %s"
-        params.append(f"%{title_like}%")
+        query += " AND title LIKE %s ESCAPE '\\'"
+        params.append(f"%{_escape_like_pattern(title_like)}%")
 
     valid_sorts = {
         "hierarchy": "priority ASC, created_at ASC, id ASC",

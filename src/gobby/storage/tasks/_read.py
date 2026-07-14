@@ -8,9 +8,9 @@ from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
 from gobby.utils.uuid_validation import parse_uuid_reference
 
 
-def _escape_like_prefix(prefix: str) -> str:
-    """Escape SQL LIKE wildcard characters in an ID prefix."""
-    return prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+def _escape_like_pattern(value: str) -> str:
+    """Escape SQL LIKE wildcard characters in a literal value."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _is_task_uuid(value: str) -> bool:
@@ -69,7 +69,7 @@ def find_task_by_prefix(db: HubDatabase, prefix: str) -> Task | None:
 
     rows = db.fetchall(
         "SELECT * FROM tasks WHERE id::text LIKE %s ESCAPE '\\'",
-        (f"{_escape_like_prefix(prefix)}%",),
+        (f"{_escape_like_pattern(prefix)}%",),
     )
     if len(rows) == 1:
         task = Task.from_row(rows[0])
@@ -87,7 +87,7 @@ def find_tasks_by_prefix(db: HubDatabase, prefix: str) -> list[Task]:
 
     rows = db.fetchall(
         "SELECT * FROM tasks WHERE id::text LIKE %s ESCAPE '\\'",
-        (f"{_escape_like_prefix(prefix)}%",),
+        (f"{_escape_like_pattern(prefix)}%",),
     )
     tasks = [Task.from_row(row) for row in rows]
     hydrate_task_stage_state(db, tasks)

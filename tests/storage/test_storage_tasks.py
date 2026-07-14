@@ -1663,6 +1663,29 @@ class TestLocalTaskManager:
         for t in tasks:
             assert "Fix bug" in t.title
 
+    @pytest.mark.parametrize(
+        ("literal_title", "wildcard_match"),
+        [
+            ("100% complete", "100X complete"),
+            ("under_score", "underXscore"),
+            (r"path\segment", "pathXsegment"),
+        ],
+    )
+    def test_list_tasks_title_like_escapes_wildcards(
+        self,
+        task_manager,
+        project_id,
+        literal_title: str,
+        wildcard_match: str,
+    ) -> None:
+        """Treat SQL LIKE metacharacters in title filters as literals."""
+        task_manager.create_task(project_id, literal_title)
+        task_manager.create_task(project_id, wildcard_match)
+
+        tasks = task_manager.list_tasks(project_id=project_id, title_like=literal_title)
+
+        assert [task.title for task in tasks] == [literal_title]
+
     def test_list_tasks_with_label_filter(self, task_manager, project_id) -> None:
         """Test filtering tasks by label."""
         task_manager.create_task(project_id, "Task 1", labels=["urgent", "backend"])
