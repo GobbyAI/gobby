@@ -1,7 +1,7 @@
 ---
 name: php
 description: "Enforces default PHP coding standards for agents writing or refactoring PHP: Composer configuration, typed API contracts, error handling, testing, framework boundaries, security, and performance. Use before editing PHP unless the repo provides stricter local rules."
-version: "1.0.0"
+version: "1.1.0"
 category: development
 triggers: php, composer, composer.json, composer.lock, phpunit, pest, phpstan, psalm, rector, laravel, symfony, doctrine
 sources:
@@ -11,113 +11,71 @@ sources:
 
 # PHP
 
-Default coding standards for PHP. Repo conventions and configured tooling take
-precedence. If `composer.json`, `phpunit.xml`, PHPStan/Psalm config, Pint,
-PHP-CS-Fixer, PHPCS, Rector, framework rules, or project instructions are
-stricter, follow the repo.
+Apply repository runtime, Composer, static-analysis, framework, and generated-code rules first.
 
 ## Tooling
 
-Run the repo's configured format, lint/static analysis, type checks, and focused
-tests before finishing. If none are configured, use:
-
-- Format: the repo formatter, commonly Pint, PHP-CS-Fixer, PHPCS, or ECS
-- Syntax/static checks: `php -l` for touched files plus configured PHPStan,
-  Psalm, Rector dry run, or framework checks
-- Tests: targeted PHPUnit or Pest tests for changed behavior
-- Packages: Composer with the checked-in lockfile and scripts
-
-Do not change PHP version constraints, Composer platform config, dependency
-scopes, autoload rules, static-analysis levels, or framework config without a
-written reason tied to the change.
+- Use the lockfile's PHP/Composer environment and configured format, PHPStan or
+  Psalm, Rector, focused PHPUnit or Pest, and framework commands.
 
 ## Configuration
 
-- Match the repo's PHP version, extension requirements, Composer scripts,
-  autoload rules, and lockfile policy.
-- Keep `require`, `require-dev`, `autoload`, `autoload-dev`, and plugin config
-  intentional.
-- Preserve static-analysis baselines; do not hide new issues in a baseline.
-- Use PSR and repo-local naming/layout conventions for namespaces, files, and
-  service wiring.
+- Preserve PHP constraints, extensions, autoloading, package type, scripts, lockfile,
+  analysis level, framework cache, and generated files.
+- Diagnostic hook: treat PHPStan and Psalm findings as boundary evidence; avoid
+  baselines, ignores, `mixed`, and broad casts before modeling the actual type.
 
-For Composer, runtime, static-analysis, and style setup:
+For Composer, runtime, analysis, and generated-code setup:
 `get_skill_file(name="php", path="references/configuration.md")`
 
 ## Type And API Contracts
 
-- Use `declare(strict_types=1);` when the repo already standardizes on it or for
-  new strict packages.
-- Model request data, responses, IDs, money, dates, and domain states with
-  typed DTOs, value objects, enums, readonly classes, or framework-approved
-  form/request objects.
-- Avoid passing raw arrays, mixed values, dynamic properties, or unvalidated
-  `stdClass` objects across boundaries.
-- Use PHPDoc generics and array shapes where PHPStan/Psalm depends on them.
+- Use strict types, typed properties, enums, value objects, readonly state, and
+  explicit DTOs for domain contracts.
+- Validate request, CLI, environment, database, and deserialized values at entry.
 
-For strict types, PHPDoc, DTOs, enums, and collection contracts:
+For PHP types and package APIs:
 `get_skill_file(name="php", path="references/types.md")`
 
 ## Error Handling
 
-- Translate framework, database, HTTP, filesystem, and extension failures at the
-  boundary where the dependency is known.
-- Preserve previous exceptions when adding domain context.
-- Treat PHP warnings, false-return APIs, resource handles, and partial writes as
-  explicit error paths.
-- Keep user-facing messages safe and logs useful without exposing secrets.
+- Follow local exception or result conventions, preserve previous causes, and map
+  failures at HTTP, queue, CLI, transaction, or job boundaries.
+- Bind streams, locks, transactions, and temporary resources to cleanup.
 
-For exceptions, false-return APIs, resources, and boundary translation:
+For exception and cleanup patterns:
 `get_skill_file(name="php", path="references/error-handling.md")`
 
 ## Testing
 
-- Add focused PHPUnit or Pest tests for changed behavior, validation failures,
-  authorization checks, serialization, and framework wiring that matters.
-- Prefer narrow unit tests for domain code and slice/integration tests for HTTP,
-  queue, ORM, container, or event behavior.
-- Run static analysis on the touched namespaces when type contracts change.
+- Use repository PHPUnit/Pest data providers, fixtures, clocks, fakes, and framework
+  harnesses at the boundary being changed.
+- Keep database, serialization, HTTP, and queue coverage real when those are contracts.
 
-For PHPUnit, Pest, framework tests, fixtures, and command selection:
+For test selection:
 `get_skill_file(name="php", path="references/testing.md")`
 
 ## Framework Boundaries
 
-- Keep controllers, commands, jobs, listeners, middleware, repositories, and ORM
-  models at the edge when core behavior can remain plain PHP.
-- Validate framework-bound input before it reaches domain services.
-- Use constructor injection and explicit dependencies rather than service
-  locators, facades, or globals unless the repo's framework style requires them.
+- Keep Laravel/Symfony controllers, middleware, containers, ORM, queues, and
+  serializers as adapters around explicit domain behavior.
+- Preserve migrations, transactions, authorization, validation, and job idempotency.
 
-For Laravel, Symfony, Doctrine/Eloquent, PSR, DI, and serialization boundaries:
+For framework and persistence boundaries:
 `get_skill_file(name="php", path="references/framework-boundaries.md")`
 
 ## Security
 
-- Treat request data, headers, cookies, files, sessions, env vars, database rows,
-  queues, and webhooks as untrusted input.
-- Validate authorization, CSRF, SSRF, file upload, path traversal, SQL/query,
-  command execution, template escaping, and serialization boundaries where the
-  change touches them.
-- Keep secrets out of logs, exceptions, fixtures, and client responses.
+- Use framework escaping, parameterized queries, CSRF/auth controls, safe upload
+  handling, and the repository secret mechanism at the relevant trust boundary.
 
-For PHP web and framework security checks:
+For web and supply-chain risks:
 `get_skill_file(name="php", path="references/security.md")`
 
 ## Performance
 
-- Profile before optimizing and use application metrics, Blackfire, Xdebug,
-  Tideways, query plans, or focused benchmarks where appropriate.
-- Avoid hidden N+1 queries, excessive hydration, unbounded arrays, repeated
-  reflection/container work, and memory-heavy transforms.
-- Use generators, streaming responses, pagination, caching, and batch work only
-  with clear ownership and invalidation.
+- Inspect query count, hydration, serialization, autoloading, memory, cache keys,
+  and worker lifetime before applying caching, batching, or lower-level APIs.
 
-For memory, I/O, database, cache, and runtime performance:
+For PHP and framework analysis:
 `get_skill_file(name="php", path="references/performance.md")`
-
-## Before You Finish
-
-If you touched PHP: verify formatting/static analysis where configured,
-targeted PHPUnit/Pest tests, and focused framework or Composer checks relevant
-to the changed code.
