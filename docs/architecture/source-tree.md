@@ -142,7 +142,7 @@ src/gobby/
 │                                       #   (SessionMessageProcessor), mailbox.py,
 │                                       #   summarize.py, token_tracker.py
 │   └── transcripts/                    # Parsers: claude.py, gemini.py, codex.py,
-│                                       #   droid.py, grok.py, qwen.py, hook_assembler.py
+│                                       #   droid.py, grok.py, qwen.py
 ├── skills/                             # Skill management: loader.py (SkillLoader),
 │                                       #   parser.py, sync.py, search.py, formatting.py,
 │                                       #   hubs/

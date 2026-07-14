@@ -1149,46 +1149,27 @@ class TestClaudeExpandLine:
         assert msgs[0].tool_name == "Read"
         assert msgs[0].tool_use_id == "toolu_xyz"
 
-    def test_parse_lines_collapses_hook_blocking_error_and_tool_result(self, parser) -> None:
-        """Claude emits hook_blocking_error and tool_result for one denied tool call."""
-        lines = [
-            json.dumps(
-                {
-                    "type": "system",
-                    "subtype": "hook_blocking_error",
-                    "toolUseID": "toolu_blocked",
-                    "content": "Gobby blocked [require-uv]: Use uv instead.",
-                    "timestamp": "2024-01-01T12:00:00Z",
-                }
-            ),
-            json.dumps(
-                {
-                    "type": "user",
-                    "message": {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": "toolu_blocked",
-                                "content": "Gobby blocked [require-uv]: Use uv instead.",
-                                "is_error": True,
-                            }
-                        ],
-                    },
-                    "timestamp": "2024-01-01T12:00:01Z",
-                }
-            ),
-        ]
-
-        msgs = parser.parse_lines(lines)
+    def test_parse_lines_reads_hook_blocking_attachment_fixture(self, parser) -> None:
+        """A scrubbed Claude Code capture emits one hook-block tool result."""
+        fixture = (
+            Path(__file__).parents[1]
+            / "fixtures"
+            / "transcripts"
+            / "claude-hook-blocking-error.jsonl"
+        )
+        msgs = parser.parse_lines(fixture.read_text().splitlines())
 
         assert len(msgs) == 1
         msg = msgs[0]
         assert isinstance(msg, ParsedMessage)
         assert msg.role == "tool"
         assert msg.content_type == "tool_result"
-        assert msg.tool_use_id == "toolu_blocked"
-        assert msg.content == "Gobby blocked [require-uv]: Use uv instead."
+        assert msg.tool_name == "Stop"
+        assert msg.tool_use_id == "33333333-3333-3333-3333-333333333333"
+        assert msg.content == (
+            "Rule enforced by Gobby: [require-task-close]\nTask #16260 is still open."
+        )
+        assert msg.tool_result == {"content": msg.content, "is_error": True}
 
     def test_expand_unknown_record_type_emits_sentinel(self, parser) -> None:
         """An unrecognized record-level type becomes a non-rendering sentinel

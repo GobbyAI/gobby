@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import logging
-from collections import deque
 from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
 from typing import Any, ClassVar
@@ -113,91 +112,21 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
         super().__init__(cli_name="claude", session_id=session_id, logger_instance=logger_instance)
 
     @staticmethod
-    def _load_json_for_dedupe(line: str) -> dict[str, Any] | None:
-        try:
-            data = json.loads(line)
-        except json.JSONDecodeError:
+    def _hook_blocking_attachment(turn: dict[str, Any]) -> dict[str, Any] | None:
+        if turn.get("type") != "attachment":
             return None
-        return data if isinstance(data, dict) else None
+        attachment = turn.get("attachment")
+        if not isinstance(attachment, dict) or attachment.get("type") != "hook_blocking_error":
+            return None
+        return attachment
 
     @staticmethod
-    def _tool_use_id_from_turn(turn: dict[str, Any]) -> str | None:
-        for key in ("toolUseID", "toolUseId", "tool_use_id", "tool_useID"):
-            value = turn.get(key)
-            if isinstance(value, str) and value:
-                return value
-
-        message = turn.get("message")
-        if isinstance(message, dict):
-            content = message.get("content")
-            if isinstance(content, list):
-                for block in content:
-                    if not isinstance(block, dict):
-                        continue
-                    for key in ("tool_use_id", "toolUseID", "toolUseId"):
-                        value = block.get(key)
-                        if isinstance(value, str) and value:
-                            return value
-        return None
-
-    @staticmethod
-    def _is_hook_blocking_error(turn: dict[str, Any]) -> bool:
-        return (
-            turn.get("type") == "hook_blocking_error"
-            or turn.get("subtype") == "hook_blocking_error"
-            or turn.get("error_type") == "hook_blocking_error"
-        )
-
-    @classmethod
-    def _is_tool_result_for(cls, turn: dict[str, Any], tool_use_id: str) -> bool:
-        if turn.get("type") == "tool_result" and cls._tool_use_id_from_turn(turn) == tool_use_id:
-            return True
-
-        message = turn.get("message")
-        if not isinstance(message, dict):
-            return False
-        content = message.get("content")
-        if not isinstance(content, list):
-            return False
-
-        return any(
-            isinstance(block, dict)
-            and block.get("type") == "tool_result"
-            and block.get("tool_use_id") == tool_use_id
-            for block in content
-        )
-
-    @classmethod
-    def _collapse_hook_blocking_turns(cls, turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Drop Claude's duplicate model-facing tool_result after a hook block."""
-        collapsed: list[dict[str, Any]] = []
-        idx = 0
-        while idx < len(turns):
-            turn = turns[idx]
-            tool_use_id = cls._tool_use_id_from_turn(turn)
-            if (
-                tool_use_id
-                and cls._is_hook_blocking_error(turn)
-                and idx + 1 < len(turns)
-                and cls._is_tool_result_for(turns[idx + 1], tool_use_id)
-            ):
-                collapsed.append(turn)
-                idx += 2
-                continue
-            collapsed.append(turn)
-            idx += 1
-        return collapsed
-
-    @classmethod
-    def _extract_hook_blocking_content(cls, turn: dict[str, Any]) -> str:
-        for key in ("content", "message", "error", "reason"):
-            value = turn.get(key)
-            if isinstance(value, str) and value:
-                return value
-            if isinstance(value, dict):
-                content = value.get("content")
-                if isinstance(content, str) and content:
-                    return content
+    def _extract_hook_blocking_content(attachment: dict[str, Any]) -> str:
+        error = attachment.get("blockingError")
+        if isinstance(error, dict):
+            content = error.get("blockingError")
+            if isinstance(content, str) and content:
+                return content
         return "Claude Code hook blocked this tool call."
 
     def extract_last_messages(
@@ -220,10 +149,9 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             >>> len(last_msgs)
             6  # 3 pairs = 6 messages
         """
-        turns = self._collapse_hook_blocking_turns(turns)
         messages: list[dict[str, str]] = []
         for turn in reversed(turns):
-            if self._is_hook_blocking_error(turn):
+            if self._hook_blocking_attachment(turn) is not None:
                 continue
 
             prompt = self._queued_command_prompt(turn)
@@ -515,16 +443,19 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                 tool_use_id=uuid if isinstance(uuid, str) else None,
             )
 
-        if self._is_hook_blocking_error(data):
-            content = self._extract_hook_blocking_content(data)
+        hook_block = self._hook_blocking_attachment(data)
+        if hook_block is not None:
+            content = self._extract_hook_blocking_content(hook_block)
+            hook_name = hook_block.get("hookName")
+            tool_use_id = hook_block.get("toolUseID")
             results.append(
                 _make_msg(
                     role="tool",
                     content=content,
                     content_type="tool_result",
-                    tool_name=data.get("tool_name"),
+                    tool_name=hook_name if isinstance(hook_name, str) else None,
                     tool_result={"content": content, "is_error": True},
-                    tool_use_id=self._tool_use_id_from_turn(data),
+                    tool_use_id=tool_use_id if isinstance(tool_use_id, str) else None,
                 )
             )
 
@@ -722,12 +653,15 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
         tool_result = None
         tool_use_id = None
 
-        if self._is_hook_blocking_error(data):
+        hook_block = self._hook_blocking_attachment(data)
+        if hook_block is not None:
             role = "tool"
             content_type = "tool_result"
-            content = self._extract_hook_blocking_content(data)
-            tool_name = data.get("tool_name")
-            tool_use_id = self._tool_use_id_from_turn(data)
+            content = self._extract_hook_blocking_content(hook_block)
+            hook_name = hook_block.get("hookName")
+            raw_tool_use_id = hook_block.get("toolUseID")
+            tool_name = hook_name if isinstance(hook_name, str) else None
+            tool_use_id = raw_tool_use_id if isinstance(raw_tool_use_id, str) else None
             tool_result = {"content": content, "is_error": True}
 
         elif msg_type == "user":
@@ -912,46 +846,18 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             return f"{self.session_id}:claude:{index}"
         return f"claude:{index}"
 
-    #: Claude peeks 1 raw line ahead to drop a duplicate model-facing tool_result
-    #: emitted after a hook block (see ``_should_skip_pair``).
-    max_lookahead: int = 1
-
     def iter_parse_events(
         self, raw_lines: Iterable[RawLine], start_index: int = 0
     ) -> Iterator[ParseEvent]:
         """
-        Stream parse events, expanding multi-block lines and applying Claude's
-        1-line skip (a hook-blocking error followed by its duplicate tool_result).
+        Stream parse events, expanding multi-block lines.
 
         Each JSONL line may produce multiple ParsedMessages (e.g. an assistant
         message with text + two tool_use blocks becomes three messages); indices are
-        assigned **per parsed message** from ``start_index``. Event boundaries are
-        parser-safe only when the one-line lookahead buffer is empty.
+        assigned **per parsed message** from ``start_index``.
         """
         current_index = start_index
-        source = iter(raw_lines)
-        peek: deque[RawLine] = deque()
-
-        def _next() -> RawLine | None:
-            if peek:
-                return peek.popleft()
-            return next(source, None)
-
-        def _peek() -> RawLine | None:
-            if not peek:
-                nxt = next(source, None)
-                if nxt is None:
-                    return None
-                peek.append(nxt)
-            return peek[0]
-
-        while True:
-            cur = _next()
-            if cur is None:
-                break
-            nxt = _peek()
-            skip_next = self._should_skip_pair(cur.text, nxt.text if nxt else None)
-
+        for cur in raw_lines:
             start_idx = current_index
             expanded = self._expand_line(cur.text, current_index)
             for msg in expanded:
@@ -969,27 +875,8 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                     raw_line_no=cur.raw_line_no,
                     parsed_index=start_idx,
                     records=records,
-                    parser_safe=not peek,
+                    parser_safe=True,
                 )
-
-            if skip_next:
-                _next()  # consume and drop the duplicate tool_result line
-
-    def _should_skip_pair(self, cur_text: str, next_text: str | None) -> bool:
-        """Whether ``next_text`` is the duplicate tool_result for a hook block in
-        ``cur_text`` and should be dropped (streaming form of the old lookahead)."""
-        data = self._load_json_for_dedupe(cur_text)
-        if data is None:
-            return False
-        tool_use_id = self._tool_use_id_from_turn(data)
-        if tool_use_id is None or not self._is_hook_blocking_error(data):
-            return False
-        if next_text is None:
-            return False
-        next_data = self._load_json_for_dedupe(next_text)
-        if next_data is None:
-            return False
-        return self._is_tool_result_for(next_data, tool_use_id)
 
     # Backward-compatible alias
     is_clear_command = is_session_boundary

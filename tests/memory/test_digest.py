@@ -2392,10 +2392,18 @@ class TestReadUndigestedTurns:
         assert result[1] == ("Follow-up question", "Final answer")
 
     @pytest.mark.asyncio
-    async def test_hook_blocking_error_tool_result_counts_once(self, tmp_path) -> None:
-        """Claude hook block duplicate records do not create extra digest exchanges."""
+    async def test_hook_blocking_attachment_does_not_create_digest_exchange(self, tmp_path) -> None:
+        """A captured Claude hook-block attachment is excluded from digest exchanges."""
         transcript = tmp_path / "transcript.jsonl"
         import json
+
+        fixture = (
+            Path(__file__).parents[1]
+            / "fixtures"
+            / "transcripts"
+            / "claude-hook-blocking-error.jsonl"
+        )
+        hook_block = json.loads(fixture.read_text())
 
         with open(transcript, "w") as f:
             for turn in (
@@ -2417,26 +2425,7 @@ class TestReadUndigestedTurns:
                         ],
                     },
                 },
-                {
-                    "type": "system",
-                    "subtype": "hook_blocking_error",
-                    "toolUseID": "toolu_blocked",
-                    "content": "Gobby blocked [require-uv]: Use uv instead.",
-                },
-                {
-                    "type": "user",
-                    "message": {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": "toolu_blocked",
-                                "content": "Gobby blocked [require-uv]: Use uv instead.",
-                                "is_error": True,
-                            }
-                        ],
-                    },
-                },
+                hook_block,
                 {
                     "type": "assistant",
                     "message": {
