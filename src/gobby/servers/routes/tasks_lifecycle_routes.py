@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from gobby.servers.routes.tasks_assignment import TaskAssignmentNotifier
 from gobby.storage.tasks._models import TaskNotFoundError
@@ -36,7 +36,9 @@ class TaskCloseRequest(BaseModel):
     """Request body for closing a task."""
 
     reason: str | None = Field(default=None, description="Reason for closing")
-    commit_sha: str | None = Field(default=None, description="Git commit SHA to link")
+    commit_sha: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] | None = (
+        Field(default=None, description="Git commit SHA to link")
+    )
     force: bool = Field(default=False, description="Close even when child tasks remain open")
     validation_override_reason: str | None = Field(
         default=None,
