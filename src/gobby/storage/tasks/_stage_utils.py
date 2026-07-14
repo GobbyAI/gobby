@@ -211,6 +211,7 @@ def _cascade_close_descendants(
                claimed_by_session_id = NULL,
                updated_at = %s
          WHERE id IN (SELECT id FROM subtree)
+           AND closed_at IS NULL
         """,
         (task_id, closed_at, closed_in_session_id, commit_sha, closed_at),
     )

@@ -525,6 +525,23 @@ def test_success_close_uses_cascade_descendants_true(
         task_type="feature",
         parent_task_id=parent.id,
     )
+    closed_child = create_task(
+        temp_db,
+        sample_project,
+        title="Child closed before merge cascade",
+        task_type="feature",
+        parent_task_id=parent.id,
+    )
+    temp_db.execute(
+        """
+        UPDATE tasks
+           SET closed_at = %s,
+               closed_reason = %s,
+               closed_commit_sha = %s
+         WHERE id = %s
+        """,
+        ("2026-01-02T03:04:05+00:00", "completed", "original-sha", closed_child.id),
+    )
 
     _record_merge_result(_real_context(temp_db))(
         task_id=parent.id,
@@ -539,6 +556,10 @@ def test_success_close_uses_cascade_descendants_true(
     assert child_row["closed_at"] is not None
     assert child_row["closed_reason"] == "merged"
     assert child_row["closed_commit_sha"] == "mergecascade123"
+    closed_child_row = task_row(temp_db, closed_child.id)
+    assert closed_child_row["closed_at"].isoformat() == "2026-01-02T03:04:05+00:00"
+    assert closed_child_row["closed_reason"] == "completed"
+    assert closed_child_row["closed_commit_sha"] == "original-sha"
 
 
 def test_success_does_not_invoke_public_close_task(monkeypatch: pytest.MonkeyPatch) -> None:
