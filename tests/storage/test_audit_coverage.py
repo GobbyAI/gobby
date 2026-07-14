@@ -2,6 +2,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
+import psycopg
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
@@ -143,18 +144,14 @@ def test_cleanup_entries(audit_manager, test_db) -> None:
     assert entries[0].session_id == SESS_NEW
 
 
-def test_log_error_handling(audit_manager) -> None:
-    """Test error handling in log method."""
-    # Break the DB connection to force error
-    # By convention, if we close the connection inside HubDatabase, generic execute might check.
-    # But HubDatabase manages connections per execute usually? No, it holds conn.
-    # We can mock db.execute to raise Exception.
+def test_log_tolerates_missing_session_foreign_key_race(audit_manager) -> None:
+    audit_manager.db.execute = MagicMock(side_effect=psycopg.errors.ForeignKeyViolation())
 
-    original_execute = audit_manager.db.execute
-    audit_manager.db.execute = MagicMock(side_effect=Exception("DB Error"))
+    assert audit_manager.log("s1", "step", "event", "result") is None
 
-    row_id = audit_manager.log("s1", "step", "event", "result")
-    assert row_id is None
 
-    # Cleanup
-    audit_manager.db.execute = original_execute
+def test_log_propagates_unexpected_database_error(audit_manager) -> None:
+    audit_manager.db.execute = MagicMock(side_effect=RuntimeError("DB Error"))
+
+    with pytest.raises(RuntimeError, match="DB Error"):
+        audit_manager.log("s1", "step", "event", "result")

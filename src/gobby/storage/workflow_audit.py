@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+import psycopg
+
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import older_than_now_expr
 from gobby.utils.datetime import require_stored_datetime, utc_now
@@ -80,7 +82,7 @@ class WorkflowAuditManager:
             context: Additional JSON context
 
         Returns:
-            The inserted row ID, or None on failure.
+            The inserted row ID, or None if the session was removed before insertion.
         """
         try:
             timestamp = utc_now()
@@ -107,8 +109,7 @@ class WorkflowAuditManager:
                 ),
             ).fetchone()
             return int(row["id"]) if row is not None else None
-        except Exception as e:
-            logger.error(f"Failed to log audit entry: {e}")
+        except psycopg.errors.ForeignKeyViolation:
             return None
 
     def log_tool_call(
