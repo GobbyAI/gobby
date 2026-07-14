@@ -78,6 +78,7 @@ SKILL_DISCOVERY_RULES = {
     "require-python-skill",
     "require-ruby-skill",
     "require-rust-skill",
+    "require-scala-skill",
     "require-swift-skill",
     "require-typescript-skill",
     "require-yaml-skill",
@@ -2046,6 +2047,131 @@ class TestRequireKotlinSkillCondition:
     def test_skips_non_edit_write_tool(self) -> None:
         assert (
             self._eval("/project/src/main/kotlin/Profile.kt", canonical_tool_kind="read") is False
+        )
+
+    def test_skips_empty_file_path(self) -> None:
+        assert self._eval("") is False
+
+
+# --- require-scala-skill structure ---
+
+
+class TestRequireScalaSkillStructure:
+    """Verify require-scala-skill rule structure."""
+
+    def test_is_before_tool_event(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-scala-skill")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert body.when is not None
+        assert "not skill_loaded('scala')" in body.when
+
+    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-scala-skill")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        assert len(body.effects) == 1
+        assert body.effects[0].type == "block"
+        assert body.effects[0].reason == skill_fetch_directive("scala")
+
+
+# --- require-scala-skill condition evaluation ---
+
+
+class TestRequireScalaSkillCondition:
+    """Test the require-scala-skill condition evaluates correctly."""
+
+    CONDITION = (
+        "not skill_loaded('scala') "
+        "and event.data.get('canonical_tool_kind') == 'write' "
+        "and ("
+        "event.data.get('canonical_file_path', '').endswith(('.scala', '.sc', '.sbt')) "
+        "or event.data.get('canonical_file_path', '').rpartition('/')[2] "
+        "in ('.scala-version', '.scalafmt.conf', '.scalafix.conf', '.sbtopts') "
+        ")"
+    )
+
+    def _eval(
+        self,
+        file_path: str,
+        *,
+        canonical_tool_kind: str = "write",
+        loaded_skills: list[str] | None = None,
+        injected_skills: list[str] | None = None,
+    ) -> bool:
+        variables = {"loaded_skills": loaded_skills or []}
+        if injected_skills is not None:
+            variables["injected_skills"] = injected_skills
+        context = {
+            "variables": variables,
+            "event": SimpleNamespace(
+                data={
+                    "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_file_path": file_path,
+                }
+            ),
+            "tool_input": {},
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        return evaluator.evaluate(self.CONDITION)
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/src/main/scala/com/acme/orders/Order.scala",
+            "/project/scripts/migrate.sc",
+            "/project/build.sc",
+            "/project/build.sbt",
+            "/project/project/plugins.sbt",
+        ],
+    )
+    def test_matches_scala_source_script_and_build_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/.scala-version",
+            "/project/.scalafmt.conf",
+            "/project/config/.scalafix.conf",
+            "/project/.sbtopts",
+        ],
+    )
+    def test_matches_scala_tooling_config_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/src/main/java/com/acme/orders/Order.java",
+            "/project/src/main/kotlin/com/acme/orders/Order.kt",
+            "/project/build.gradle.kts",
+            "/project/pom.xml",
+            "/project/.jvmopts",
+            "/project/package.json",
+            "/project/src/main/scala/Order.scala.bak",
+        ],
+    )
+    def test_skips_non_scala_targets(self, file_path: str) -> None:
+        assert self._eval(file_path) is False
+
+    def test_skips_when_already_loaded(self) -> None:
+        assert self._eval("/project/src/main/scala/Order.scala", loaded_skills=["scala"]) is False
+
+    def test_kotlin_skill_does_not_count_as_scala_loaded(self) -> None:
+        assert self._eval("/project/src/main/scala/Order.scala", loaded_skills=["kotlin"]) is True
+
+    def test_does_not_skip_when_legacy_injected(self) -> None:
+        assert self._eval("/project/src/main/scala/Order.scala", injected_skills=["scala"]) is True
+
+    def test_skips_non_edit_write_tool(self) -> None:
+        assert (
+            self._eval("/project/src/main/scala/Order.scala", canonical_tool_kind="read") is False
         )
 
     def test_skips_empty_file_path(self) -> None:

@@ -1,0 +1,83 @@
+skill: scala
+agent: default
+description: Agent is asked to add a Scala 3 domain boundary and is tempted to preserve Scala 2 encodings, hide failures, and validate broadly.
+prompt: |
+  Add a Scala 3 order-import boundary with a domain-safe order ID, status model,
+  contextual decoder, typed failures, and focused tests in an sbt service.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: reuse_anyval_newtype
+        path: src/main/scala/com/acme/orders/OrderId.scala
+      - action: keep_implicit_decoder
+        path: src/main/scala/com/acme/orders/OrderDecoder.scala
+      - action: model_status_with_verbose_sealed_hierarchy
+        path: src/main/scala/com/acme/orders/OrderStatus.scala
+      - action: hide_import_failure
+        path: src/main/scala/com/acme/orders/OrderImporter.scala
+      - action: run_broad_sbt_test
+        command: sbt test
+      - action: respond
+        text: Scala changes are in place with AnyVal, implicit parameters, a verbose sealed hierarchy, and hidden import failures.
+  loaded:
+    loaded_skills:
+      - scala
+    actions:
+      - action: load_reference
+        path: references/configuration.md
+      - action: load_reference
+        path: references/types-and-contextual-abstractions.md
+      - action: load_reference
+        path: references/effects-errors-and-resources.md
+      - action: load_reference
+        path: references/framework-and-platform-boundaries.md
+      - action: select_scala_dialect
+        dialect: scala3
+      - action: model_opaque_identifier
+        path: src/main/scala/com/acme/orders/OrderId.scala
+      - action: choose_enum_for_closed_sum
+        path: src/main/scala/com/acme/orders/OrderStatus.scala
+      - action: define_given_decoder
+        path: src/main/scala/com/acme/orders/OrderDecoder.scala
+      - action: model_typed_import_failure
+        path: src/main/scala/com/acme/orders/OrderImporter.scala
+      - action: add_domain_boundary_tests
+        path: src/test/scala/com/acme/orders/OrderImportSpec.scala
+      - action: run_validation
+        command: sbt "testOnly com.acme.orders.OrderImportSpec" scalafmtCheckAll
+      - action: respond
+        text: "Verified the Scala 3 dialect, opaque order ID, enum status model, given decoder, typed failures, and focused boundary tests."
+assertions:
+  baseline_action_order:
+    - reuse_anyval_newtype
+    - keep_implicit_decoder
+    - model_status_with_verbose_sealed_hierarchy
+    - hide_import_failure
+    - run_broad_sbt_test
+    - respond
+  loaded_action_order:
+    - load_reference
+    - load_reference
+    - load_reference
+    - load_reference
+    - select_scala_dialect
+    - model_opaque_identifier
+    - choose_enum_for_closed_sum
+    - define_given_decoder
+    - model_typed_import_failure
+    - add_domain_boundary_tests
+    - run_validation
+    - respond
+  baseline_text_contains:
+    - AnyVal
+    - implicit parameters
+    - hidden import failures
+  loaded_text_contains:
+    - opaque order ID
+    - enum status model
+    - typed failures
+    - focused boundary tests
+  loaded_text_forbids:
+    - AnyVal
+    - hidden import failures
