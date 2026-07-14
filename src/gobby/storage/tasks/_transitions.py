@@ -272,21 +272,32 @@ def escalate_task(
     same write as the escalation so callers don't need a second update_task
     call that could fail after the escalation has already landed.
     """
-    task = get_task(db, task_id)
-    if task.is_escalated:
-        raise TaskAlreadyEscalatedError(task_id, task.escalation_reason)
-    if is_task_closed(task):
-        raise ValueError(f"Cannot escalate task {task_id}: task is closed.")
+    now = utc_now()
+    with db.transaction() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE tasks
+               SET claimed_by_session_id = NULL,
+                   escalated_at = %s,
+                   escalation_reason = %s,
+                   validation_override_reason = COALESCE(%s, validation_override_reason),
+                   updated_at = %s
+             WHERE id = %s
+               AND closed_at IS NULL
+               AND escalated_at IS NULL
+            """,
+            (now, reason, validation_override_reason, now, task_id),
+        )
 
-    return release_task_claim(
-        db,
-        task_id,
-        escalated_at=utc_now(),
-        escalation_reason=reason,
-        validation_override_reason=(
-            validation_override_reason if validation_override_reason is not None else UNSET
-        ),
-    )
+    if cursor.rowcount == 0:
+        task = get_task(db, task_id)
+        if task.is_escalated:
+            raise TaskAlreadyEscalatedError(task_id, task.escalation_reason)
+        if is_task_closed(task):
+            raise ValueError(f"Cannot escalate task {task_id}: task is closed.")
+        raise RuntimeError(f"Task {task_id} escalation failed without a conflicting transition")
+
+    return get_task(db, task_id)
 
 
 def de_escalate_task(
@@ -514,17 +525,25 @@ def submit_for_review(
     description: MaybeUnset[str | None] = UNSET
     if review_notes:
         description = (task.description or "") + f"\n\n[Review Notes]\n{review_notes}"
-    labels = [
-        label for label in (task.labels or []) if label != "planning-current-verdict:rejected"
-    ]
-
     update_task(
         db,
         task_id,
         description=description,
-        labels=labels,
         claimed_by_session_id=None,
     )
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            UPDATE tasks
+               SET labels = COALESCE(labels, '[]'::jsonb)
+                            - 'planning-current-verdict:rejected',
+                   updated_at = %s
+             WHERE id = %s
+               AND COALESCE(labels, '[]'::jsonb)
+                   @> '["planning-current-verdict:rejected"]'::jsonb
+            """,
+            (utc_now(), task_id),
+        )
     return get_task(db, task_id)
 
 
