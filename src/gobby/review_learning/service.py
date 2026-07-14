@@ -208,7 +208,7 @@ class ReviewLearningService:
                 "promotable": False,
             }
 
-        project_id, source_session_id = await self._resolve_scope(session_id)
+        project_id, source_session_id = await self._resolve_record_scope(session_id)
         finding_fingerprint = derive_finding_fingerprint(finding)
         occurrence_key = build_occurrence_key(source_review, finding_fingerprint)
         normalized = normalize_lesson(
@@ -341,6 +341,30 @@ class ReviewLearningService:
 
     async def _resolve_scope(self, session_id: str | None) -> tuple[str, str | None]:
         return await asyncio.to_thread(self._resolve_scope_sync, session_id)
+
+    async def _resolve_record_scope(self, session_id: str | None) -> tuple[str, str | None]:
+        if session_id is None:
+            return await self._resolve_scope(None)
+        return await asyncio.to_thread(self._resolve_explicit_scope_sync, session_id)
+
+    def _resolve_explicit_scope_sync(self, session_id: str) -> tuple[str, str]:
+        try:
+            resolved_session_id = resolve_session_reference(
+                self.memory_manager.db,
+                session_id,
+                _current_project_id(),
+            )
+            row = self.memory_manager.db.fetchone(
+                "SELECT project_id FROM sessions WHERE id = %s",
+                (resolved_session_id,),
+            )
+            if row and row.get("project_id"):
+                return str(row["project_id"]), resolved_session_id
+            raise RuntimeError(f"Session {resolved_session_id!r} has no project")
+        except (AttributeError, RuntimeError, ValueError, OSError) as exc:
+            raise RuntimeError(
+                f"Review-learning could not resolve explicit session {session_id!r}"
+            ) from exc
 
     def _resolve_scope_sync(self, session_id: str | None) -> tuple[str, str | None]:
         project_id = _current_project_id()

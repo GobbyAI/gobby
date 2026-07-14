@@ -44,6 +44,49 @@ async def test_resolve_scope_offloads_database_io(
     assert all(thread_id != event_loop_thread for thread_id in database_threads)
 
 
+@pytest.mark.asyncio
+async def test_record_rejects_unresolvable_explicit_session(
+    fake_task_manager: FakeTaskManager,
+) -> None:
+    memory_manager = FakeMemoryManager(db=FakeDB())
+    service = ReviewLearningService(memory_manager, fake_task_manager)
+
+    with pytest.raises(RuntimeError, match="could not resolve explicit session"):
+        await service.record(
+            source_kind="agent_review",
+            source="code-reviewer",
+            source_review="review-1",
+            decision="confirmed",
+            finding={
+                "title": "Durable writes missing",
+                "pattern_id": "durable-write-after-state-change",
+                "lesson_type": "durable-writes",
+                "principle": "Persist state after changing it",
+                "root_cause": "Mutation happened without a storage write",
+                "prevention": "Add regression coverage around persistence",
+                "path": "src/gobby/tasks/state.py",
+            },
+            evidence={"commit": "abc"},
+            session_id="missing-session",
+        )
+
+    assert memory_manager.memories == []
+
+
+@pytest.mark.asyncio
+async def test_recall_falls_back_to_project_for_unresolvable_explicit_session(
+    fake_task_manager: FakeTaskManager,
+) -> None:
+    service = ReviewLearningService(FakeMemoryManager(db=FakeDB()), fake_task_manager)
+
+    result = await service.recall_context(
+        findings=[{"title": "Durable writes missing"}],
+        session_id="missing-session",
+    )
+
+    assert result == {"findings": [{"finding_index": 0, "matches": []}], "matches": []}
+
+
 def test_query_construction_includes_diagnostic_and_fix_terms() -> None:
     queries = build_recall_queries(
         finding={
