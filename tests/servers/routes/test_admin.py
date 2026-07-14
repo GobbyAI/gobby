@@ -146,7 +146,17 @@ class TestAdminRoutes:
         mock_server.mcp_manager.server_configs = [mock_config]
         mock_server.mcp_manager.connections = ["test-server"]
 
-        response = client.get("/api/admin/status")
+        with patch(
+            "gobby.storage.pipelines.LocalPipelineExecutionManager"
+        ) as execution_manager_cls:
+            execution_manager_cls.return_value.count_by_status.return_value = {
+                "running": 2,
+                "waiting_approval": 3,
+                "completed": 5,
+                "failed": 7,
+            }
+            response = client.get("/api/admin/status")
+
         assert response.status_code == 200
         data = response.json()
 
@@ -155,6 +165,16 @@ class TestAdminRoutes:
         assert data["process"]["memory_rss_mb"] == 100.0
         assert "test-server" in data["mcp_servers"]
         assert data["mcp_servers"]["test-server"]["connected"] is True
+        assert data["pipelines"] == {
+            "running": 2,
+            "waiting_approval": 3,
+            "completed": 5,
+            "failed": 7,
+            "total": 17,
+        }
+        execution_manager_cls.assert_called_once_with(
+            db=mock_server.services.database, project_id=None
+        )
 
     @patch("gobby.servers.routes.admin._health.psutil")
     @patch("gobby.servers.routes.admin._health.asyncio.to_thread")

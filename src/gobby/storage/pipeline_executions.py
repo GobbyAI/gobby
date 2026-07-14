@@ -26,7 +26,7 @@ class PipelineExecutionStorageMixin:
     project_id: str | None
 
     def _project_predicate(self, column_name: str = "project_id") -> tuple[str, tuple[str, ...]]:
-        """Return the project predicate for internally selected columns."""
+        """Return a scoped predicate, or an always-true predicate for all projects."""
         if self.project_id is None:
             return "1 = 1", ()
         return f"{column_name} = %s", (self.project_id,)

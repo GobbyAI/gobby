@@ -103,6 +103,7 @@ class TestListExecutions:
             assert data["offset"] == 0
             assert data["status_summary"] == {}
             assert data["executions"] == []
+            MockEM.assert_called_once_with(db=mock_server.services.database, project_id=None)
 
     def test_list_executions_invalid_status(
         self, client: TestClient, mock_server: MagicMock
@@ -212,6 +213,7 @@ class TestSearchExecutions:
             assert data["limit"] == 5
             assert data["offset"] == 0
             assert data["query"] == "test"
+            MockEM.assert_called_once_with(db=mock_server.services.database, project_id=None)
 
     @pytest.mark.parametrize(
         "query_string",

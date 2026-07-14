@@ -69,6 +69,36 @@ def test_unscoped_manager_rejects_project_required_writes(
         manager.create_execution(pipeline_name="test-pipeline")
 
 
+@pytest.mark.parametrize("project_id", [None, ""])
+def test_unscoped_manager_reads_executions_across_projects(
+    db: HubDatabase, project_id: str | None
+) -> None:
+    db.execute(
+        "INSERT INTO projects (id, name, created_at, updated_at) "
+        "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        (OTHER_PROJECT_ID, "Other Project"),
+    )
+    first_manager = LocalPipelineExecutionManager(db, project_id=PROJECT_ID)
+    second_manager = LocalPipelineExecutionManager(db, project_id=OTHER_PROJECT_ID)
+    first_manager.create_execution(pipeline_name="shared-pipeline")
+    second = second_manager.create_execution(pipeline_name="shared-pipeline")
+    second_manager.update_execution_status(second.id, ExecutionStatus.WAITING_APPROVAL)
+
+    unscoped_manager = LocalPipelineExecutionManager(db, project_id=project_id)
+
+    assert {execution.project_id for execution in unscoped_manager.list_executions()} == {
+        PROJECT_ID,
+        OTHER_PROJECT_ID,
+    }
+    assert len(unscoped_manager.search_executions(query="shared")) == 2
+    assert unscoped_manager.count_search_executions(query="shared") == 2
+    assert unscoped_manager.count_by_status() == {"pending": 1, "waiting_approval": 1}
+    assert unscoped_manager.execution_metrics() == (
+        2,
+        {"pending": 1, "waiting_approval": 1},
+    )
+
+
 class TestCreateExecution:
     """Tests for create_execution method."""
 
