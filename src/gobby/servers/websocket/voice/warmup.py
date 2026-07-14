@@ -37,6 +37,12 @@ class VoiceWarmupMixin:
     _voice_warmup_task: asyncio.Task[None] | None
     _whisper_stt: Any
 
+    # Warmup-failure backoff (class-level defaults so hosts need no init changes).
+    _stt_warmup_failures = 0
+    _tts_warmup_failures = 0
+    _stt_warmup_next_retry_at = 0.0
+    _tts_warmup_next_retry_at = 0.0
+
     def _spawn_background_task(self, coro: Any, name: str | None = None) -> asyncio.Task[Any]:
         """Schedule a fire-and-forget task and retain a reference to it.
 
@@ -157,15 +163,25 @@ class VoiceWarmupMixin:
             want_stt=want_stt,
             want_tts=want_tts,
         )
+        # Failed warmups re-warm only after their backoff elapses; otherwise a
+        # client re-requesting voice on every message reloads a crashing model
+        # in a tight loop (incident #18196).
+        now = time.monotonic()
         should_warm = False
         if warm_stt and self._stt_warmup_status != _WARMUP_READY:
-            self._stt_warmup_status = _WARMUP_LOADING
-            self._stt_warmup_error = ""
-            should_warm = True
+            if self._stt_warmup_status == _WARMUP_ERROR and now < self._stt_warmup_next_retry_at:
+                logger.debug("STT warmup in failure backoff; skipping re-warm")
+            else:
+                self._stt_warmup_status = _WARMUP_LOADING
+                self._stt_warmup_error = ""
+                should_warm = True
         if warm_tts and self._tts_warmup_status != _WARMUP_READY:
-            self._tts_warmup_status = _WARMUP_LOADING
-            self._tts_warmup_error = ""
-            should_warm = True
+            if self._tts_warmup_status == _WARMUP_ERROR and now < self._tts_warmup_next_retry_at:
+                logger.debug("TTS warmup in failure backoff; skipping re-warm")
+            else:
+                self._tts_warmup_status = _WARMUP_LOADING
+                self._tts_warmup_error = ""
+                should_warm = True
 
         if not should_warm:
             return False
@@ -197,6 +213,10 @@ class VoiceWarmupMixin:
         self._tts_warmup_status = _WARMUP_IDLE
         self._stt_warmup_error = ""
         self._tts_warmup_error = ""
+        self._stt_warmup_failures = 0
+        self._tts_warmup_failures = 0
+        self._stt_warmup_next_retry_at = 0.0
+        self._tts_warmup_next_retry_at = 0.0
 
     def get_voice_status(
         self,
@@ -323,10 +343,16 @@ class VoiceWarmupMixin:
             await stt.warmup()
             self._stt_warmup_status = _WARMUP_READY
             self._stt_warmup_error = ""
+            self._stt_warmup_failures = 0
+            self._stt_warmup_next_retry_at = 0.0
             logger.info(f"Whisper STT warmup complete in {time.perf_counter() - started_at:.2f}s")
         except Exception as exc:
             self._stt_warmup_status = _WARMUP_ERROR
             self._stt_warmup_error = str(exc)
+            self._stt_warmup_failures += 1
+            self._stt_warmup_next_retry_at = time.monotonic() + min(
+                30.0 * 2**self._stt_warmup_failures, 600.0
+            )
             logger.error("Whisper STT warmup failed", exc_info=True)
 
     async def _warm_tts_model(self) -> None:
@@ -350,10 +376,16 @@ class VoiceWarmupMixin:
             await tts.warmup()
             self._tts_warmup_status = _WARMUP_READY
             self._tts_warmup_error = ""
+            self._tts_warmup_failures = 0
+            self._tts_warmup_next_retry_at = 0.0
             logger.info(f"TTS warmup complete in {time.perf_counter() - started_at:.2f}s")
         except Exception as exc:
             self._tts_warmup_status = _WARMUP_ERROR
             self._tts_warmup_error = str(exc)
+            self._tts_warmup_failures += 1
+            self._tts_warmup_next_retry_at = time.monotonic() + min(
+                30.0 * 2**self._tts_warmup_failures, 600.0
+            )
             logger.error("TTS warmup failed", exc_info=True)
 
     async def _ensure_stt_deps(self, voice_config: VoiceConfig) -> bool:
@@ -410,16 +442,11 @@ class VoiceWarmupMixin:
         if not unloaded:
             return
 
-        # Reclaim memory
+        # MPS cache release lives in the TTS provider's unload(): calling
+        # torch.mps.empty_cache() here initialized the MPS allocator from
+        # scratch in processes that never loaded a model — the native-crash
+        # surface from incident #18196.
         gc.collect()
-        try:
-            import torch
-
-            if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
-                torch.mps.empty_cache()
-        except (ImportError, OSError, RuntimeError):
-            logger.debug("Torch cache cleanup skipped", exc_info=True)
-
         logger.info(f"Voice models unloaded ({', '.join(unloaded)}) — memory reclaimed")
 
     async def _check_voice_idle(self) -> None:

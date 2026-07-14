@@ -261,6 +261,10 @@ def _raise_fd_limit(target: int = 10240) -> None:
 
 
 def main(config_path: Path | None = None, verbose: bool = False) -> None:
+    # Must precede any torch import (torch is lazy, voice-only): PyTorch's
+    # default MPS high watermark is 1.7x Metal's recommended working set,
+    # which lets unified-memory allocations balloon past physical RAM.
+    os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.8")
     _raise_fd_limit()
 
     # Fast guard: if a healthy daemon is already serving on our port, exit

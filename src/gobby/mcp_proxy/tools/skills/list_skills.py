@@ -111,12 +111,22 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
 
             skills = skills[:limit]
 
+            usage_by_name = (
+                await ctx.run_db(
+                    ctx.storage.get_skill_usage_stats,
+                    [skill.name for skill in skills],
+                )
+                if skills
+                else {}
+            )
+
             # Extract lightweight metadata only
             skill_list = []
             for skill in skills:
                 # Get category and tags from metadata
                 category_value = None
                 tags = []
+                usage = usage_by_name.get(skill.name)
                 if skill.metadata and isinstance(skill.metadata, dict):
                     skillport = skill.metadata.get("skillport", {})
                     if isinstance(skillport, dict):
@@ -132,6 +142,8 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                         "tags": tags,
                         "enabled": skill.enabled,
                         "source": skill.source,
+                        "loads": usage.loads if usage else 0,
+                        "last_used": usage.last_used.isoformat() if usage else None,
                     }
                 )
 
