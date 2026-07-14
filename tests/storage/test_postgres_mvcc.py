@@ -16,7 +16,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions import _field_update as session_field_update
 from gobby.storage.task_dependencies import DependencyCycleError, TaskDependencyManager
-from gobby.storage.tasks import LocalTaskManager, _creation
+from gobby.storage.tasks import LocalTaskManager, TaskArtifactManager, _creation
 
 _HEX40 = re.compile(r"^[0-9a-f]{40}$")
 
@@ -196,6 +196,75 @@ def test_read_modify_write_path_serializes_concurrent_writers(postgres_db: Any) 
         assert row["value"] == 2
     finally:
         _drop_table(postgres_db, table)
+
+
+def test_task_artifact_merge_serializes_concurrent_writers(postgres_db: Any) -> None:
+    project = LocalProjectManager(postgres_db).create(f"artifact-merge-race-{uuid.uuid4()}")
+    task = LocalTaskManager(postgres_db).create_task(project.id, "artifact merge race")
+    manager = TaskArtifactManager(postgres_db)
+    manager.set_artifacts_atomic(task.id)
+    errors: queue.Queue[BaseException] = queue.Queue()
+    started = threading.Barrier(3)
+
+    def set_field(field: str, value: str) -> None:
+        try:
+            started.wait(timeout=5)
+            manager.set_artifacts_atomic(task.id, **{field: value})
+        except BaseException as exc:  # pragma: no cover - re-raised in main thread
+            errors.put(exc)
+
+    threads = [
+        threading.Thread(target=set_field, args=("plan_file_path", "/tmp/plan.md")),
+        threading.Thread(target=set_field, args=("target_branch", "feature/race")),
+    ]
+    with postgres_db.transaction() as txn:
+        txn.execute("SELECT 1 FROM task_artifacts WHERE task_id = %s FOR UPDATE", (task.id,))
+        for thread in threads:
+            thread.start()
+        started.wait(timeout=5)
+
+    for thread in threads:
+        thread.join(timeout=10)
+    assert all(not thread.is_alive() for thread in threads)
+    if not errors.empty():
+        raise AssertionError("concurrent artifact merge failed") from errors.get()
+
+    artifacts = manager.get_artifacts(task.id)
+    assert artifacts.plan_file_path == "/tmp/plan.md"
+    assert artifacts.target_branch == "feature/race"
+
+
+def test_expansion_attempt_increment_is_atomic(postgres_db: Any) -> None:
+    project = LocalProjectManager(postgres_db).create(f"artifact-increment-race-{uuid.uuid4()}")
+    task = LocalTaskManager(postgres_db).create_task(project.id, "artifact increment race")
+    manager = TaskArtifactManager(postgres_db)
+    manager.set_artifacts_atomic(task.id)
+    errors: queue.Queue[BaseException] = queue.Queue()
+    results: queue.Queue[int] = queue.Queue()
+    started = threading.Barrier(3)
+
+    def increment() -> None:
+        try:
+            started.wait(timeout=5)
+            results.put(manager.increment_expansion_attempts(task.id))
+        except BaseException as exc:  # pragma: no cover - re-raised in main thread
+            errors.put(exc)
+
+    threads = [threading.Thread(target=increment) for _ in range(2)]
+    with postgres_db.transaction() as txn:
+        txn.execute("SELECT 1 FROM task_artifacts WHERE task_id = %s FOR UPDATE", (task.id,))
+        for thread in threads:
+            thread.start()
+        started.wait(timeout=5)
+
+    for thread in threads:
+        thread.join(timeout=10)
+    assert all(not thread.is_alive() for thread in threads)
+    if not errors.empty():
+        raise AssertionError("concurrent expansion attempt increment failed") from errors.get()
+
+    assert sorted(results.queue) == [1, 2]
+    assert manager.get_artifacts(task.id).expansion_attempts == 2
 
 
 def test_dependency_cycle_check_and_insert_are_serialized(postgres_db: Any) -> None:

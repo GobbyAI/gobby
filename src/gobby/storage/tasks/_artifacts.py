@@ -200,8 +200,18 @@ def _enforce_isolation_base(
         raise MissingIsolationBaseError()
 
 
-def _get_artifacts_in_transaction(conn: Transaction, task_id: str) -> TaskArtifacts:
-    row = conn.execute("SELECT * FROM task_artifacts WHERE task_id = %s", (task_id,)).fetchone()
+def _get_artifacts_in_transaction(
+    conn: Transaction,
+    task_id: str,
+    *,
+    for_update: bool = False,
+) -> TaskArtifacts:
+    sql = (
+        "SELECT * FROM task_artifacts WHERE task_id = %s FOR UPDATE"
+        if for_update
+        else "SELECT * FROM task_artifacts WHERE task_id = %s"
+    )
+    row = conn.execute(sql, (task_id,)).fetchone()
     if row is None:
         return TaskArtifacts(task_id=task_id)
     return TaskArtifacts.from_row(row)
@@ -213,7 +223,11 @@ def _set_artifacts_in_transaction(
     fields: dict[str, str | int | None],
 ) -> TaskArtifacts:
     _validate_field_names(set(fields))
-    current = asdict(_get_artifacts_in_transaction(conn, task_id))
+    conn.execute(
+        "INSERT INTO task_artifacts (task_id) VALUES (%s) ON CONFLICT(task_id) DO NOTHING",
+        (task_id,),
+    )
+    current = asdict(_get_artifacts_in_transaction(conn, task_id, for_update=True))
     next_values = {
         field: current[field]
         for field in _ARTIFACT_FIELDS
@@ -332,10 +346,21 @@ class TaskArtifactManager:
             return cleared
 
     def increment_expansion_attempts(self, task_id: str) -> int:
-        current = self.get_artifacts(task_id)
-        next_attempts = current.expansion_attempts + 1
-        self.set_artifacts_atomic(task_id, expansion_attempts=next_attempts)
-        return next_attempts
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                """
+                INSERT INTO task_artifacts (task_id, expansion_attempts)
+                VALUES (%s, 1)
+                ON CONFLICT(task_id) DO UPDATE SET
+                    expansion_attempts = task_artifacts.expansion_attempts + 1,
+                    updated_at = CURRENT_TIMESTAMP
+                RETURNING expansion_attempts
+                """,
+                (task_id,),
+            ).fetchone()
+        if row is None:  # pragma: no cover - PostgreSQL RETURNING always yields a row here.
+            raise RuntimeError("Expansion attempt increment did not return a row")
+        return int(row["expansion_attempts"])
 
 
 def get_artifacts(db: HubDatabase, task_id: str) -> TaskArtifacts:
