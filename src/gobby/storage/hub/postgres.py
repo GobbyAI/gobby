@@ -90,16 +90,93 @@ _BASELINE_BOOKKEEPING_TABLES: frozenset[str] = frozenset(
         "schema_migrations",
     }
 )
-_GCORE_CODE_INDEX_TABLES: frozenset[str] = frozenset(
-    {
-        "code_indexed_projects",
-        "code_indexed_files",
-        "code_symbols",
-        "code_imports",
-        "code_calls",
-        "code_content_chunks",
-    }
-)
+_GCORE_CODE_INDEX_COLUMNS: Mapping[str, frozenset[str]] = {
+    "code_indexed_projects": frozenset(
+        {
+            "id",
+            "root_path",
+            "total_files",
+            "total_symbols",
+            "last_indexed_at",
+            "index_duration_ms",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "code_indexed_files": frozenset(
+        {
+            "id",
+            "project_id",
+            "file_path",
+            "language",
+            "content_hash",
+            "symbol_count",
+            "byte_size",
+            "graph_synced",
+            "vectors_synced",
+            "graph_sync_attempted_at",
+            "vector_sync_attempted_at",
+            "indexed_at",
+        }
+    ),
+    "code_symbols": frozenset(
+        {
+            "id",
+            "project_id",
+            "file_path",
+            "name",
+            "qualified_name",
+            "kind",
+            "language",
+            "byte_start",
+            "byte_end",
+            "line_start",
+            "line_end",
+            "signature",
+            "docstring",
+            "parent_symbol_id",
+            "content_hash",
+            "summary",
+            "summary_attempted_at",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "code_imports": frozenset({"id", "project_id", "source_file", "target_module"}),
+    "code_calls": frozenset(
+        {
+            "id",
+            "project_id",
+            "caller_symbol_id",
+            "callee_symbol_id",
+            "callee_name",
+            "callee_target_kind",
+            "callee_external_module",
+            "file_path",
+            "line",
+        }
+    ),
+    "code_content_chunks": frozenset(
+        {
+            "id",
+            "project_id",
+            "file_path",
+            "chunk_index",
+            "line_start",
+            "line_end",
+            "content",
+            "language",
+            "created_at",
+        }
+    ),
+}
+_GWIKI_COLUMNS: Mapping[str, frozenset[str]] = {
+    "gwiki_documents": frozenset({"id"}),
+    "gwiki_chunks": frozenset({"id", "document_id"}),
+    "gwiki_sources": frozenset({"id"}),
+}
+_GCORE_CODE_INDEX_TABLES = frozenset(_GCORE_CODE_INDEX_COLUMNS)
+_GWIKI_TABLES = frozenset(_GWIKI_COLUMNS)
 _PG_SEARCH_MISSING_MESSAGE = (
     "pg_search extension is not present on this database. Rebuild the Docker PostgreSQL "
     "image with `gobby postgres install --mode docker`."
@@ -376,6 +453,7 @@ class PostgresHubDatabase:
                     f"require backup/export and recreation under Gobby baseline {BASELINE_VERSION}."
                 )
             _require_baseline_extensions(conn)
+            _verify_adopted_table_columns(conn, state)
 
             sql = (
                 importlib.resources.files("gobby.storage")
@@ -587,18 +665,11 @@ def _classify_baseline_state(conn: Any) -> _BaselineState:
         if tables & _PRE_BASELINE_INFRA_TABLES:
             return "fresh_with_install_infra"
         return "fresh"
-    if (
-        not has_bookkeeping
-        and _GCORE_CODE_INDEX_TABLES.issubset(application_tables)
-        and all(
-            table in _GCORE_CODE_INDEX_TABLES or _is_gwiki_table(table)
-            for table in application_tables
-        )
-    ):
+    if not has_bookkeeping and _GCORE_CODE_INDEX_TABLES.issubset(application_tables):
         return "gcore_code_index"
     if (
         not has_bookkeeping
-        and application_tables
+        and _GWIKI_TABLES.issubset(application_tables)
         and all(_is_gwiki_table(table) for table in application_tables)
     ):
         return "gwiki_standalone"
@@ -612,24 +683,62 @@ def _baseline_statements_for_state(sql: str, state: _BaselineState) -> Iterator[
         return
 
     for statement in statements:
-        if state == "gcore_code_index" and _is_code_index_create_statement(statement):
+        if state == "gcore_code_index" and _is_code_index_table_statement(statement):
             continue
-        if _is_gwiki_create_statement(statement):
+        if _is_gwiki_table_statement(statement):
             continue
+        if _is_adopted_index_statement(statement, state):
+            statement = _add_index_if_not_exists(statement)
         yield statement
 
 
-def _is_code_index_create_statement(statement: str) -> bool:
-    return _is_create_statement_for_table(
+def _verify_adopted_table_columns(conn: Any, state: _BaselineState) -> None:
+    contract: Mapping[str, frozenset[str]]
+    if state == "gcore_code_index":
+        contract = {**_GCORE_CODE_INDEX_COLUMNS, **_GWIKI_COLUMNS}
+        required_tables = _GCORE_CODE_INDEX_TABLES
+    elif state == "gwiki_standalone":
+        contract = _GWIKI_COLUMNS
+        required_tables = _GWIKI_TABLES
+    else:
+        return
+
+    rows = conn.execute(
+        """SELECT table_name, column_name
+        FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = ANY(%s)""",
+        (list(contract),),
+    ).fetchall()
+    actual: dict[str, set[str]] = {table: set() for table in contract}
+    for row in rows:
+        table = str(_row_value(row, "table_name"))
+        actual[table].add(str(_row_value(row, "column_name", 1)))
+
+    missing = {
+        table: sorted(expected - actual[table])
+        for table, expected in contract.items()
+        if (table in required_tables or actual[table]) and expected - actual[table]
+    }
+    if missing:
+        details = "; ".join(
+            f"{table}: {', '.join(columns)}" for table, columns in sorted(missing.items())
+        )
+        raise MigrationUnsupportedError(
+            f"Cannot adopt external PostgreSQL schema; missing required columns: {details}"
+        )
+
+
+def _is_code_index_table_statement(statement: str) -> bool:
+    return _is_create_table_statement_for(
         statement, lambda table: table in _GCORE_CODE_INDEX_TABLES
     )
 
 
-def _is_gwiki_create_statement(statement: str) -> bool:
-    return _is_create_statement_for_table(statement, _is_gwiki_table)
+def _is_gwiki_table_statement(statement: str) -> bool:
+    return _is_create_table_statement_for(statement, _is_gwiki_table)
 
 
-def _is_create_statement_for_table(
+def _is_create_table_statement_for(
     statement: str,
     table_matches: Callable[[str], bool],
 ) -> bool:
@@ -642,6 +751,11 @@ def _is_create_statement_for_table(
     if table_match:
         return table_matches(table_match.group(1))
 
+    return False
+
+
+def _is_adopted_index_statement(statement: str, state: _BaselineState) -> bool:
+    text = statement.strip()
     index_match = re.match(
         r"CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?"
         r"\"?[A-Za-z_][A-Za-z0-9_]*\"?"
@@ -650,9 +764,22 @@ def _is_create_statement_for_table(
         re.IGNORECASE,
     )
     if index_match:
-        return table_matches(index_match.group(1))
+        table = index_match.group(1)
+        return _is_gwiki_table(table) or (
+            state == "gcore_code_index" and table in _GCORE_CODE_INDEX_TABLES
+        )
 
     return False
+
+
+def _add_index_if_not_exists(statement: str) -> str:
+    return re.sub(
+        r"^(\s*CREATE\s+(?:UNIQUE\s+)?INDEX\s+)",
+        r"\1IF NOT EXISTS ",
+        statement,
+        count=1,
+        flags=re.IGNORECASE,
+    )
 
 
 def _is_gwiki_table(table: str) -> bool:
