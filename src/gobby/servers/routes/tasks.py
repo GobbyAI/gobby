@@ -203,43 +203,16 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 has_build_event=item["id"] in built,
             )
 
-    def _owner_session_ref(owner_id: str | None) -> dict[str, Any] | None:
-        """Resolve an owner session UUID to a friendly, human-readable ref.
-
-        The web detail pane must never render a raw 36-char session UUID. We
-        resolve the owning session to ``#<seq_num>`` plus its source (the CLI
-        that drives it). When the session cannot be resolved we still degrade
-        to a short ``id[:8]`` hash — the same convention task refs use — never
-        the full UUID.
-        """
-        if not owner_id:
-            return None
-        session = None
-        if server.session_manager is not None:
-            try:
-                session = server.session_manager.get(owner_id)
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.debug(f"Failed to resolve owner session {owner_id}: {exc}")
-                session = None
-        if session is not None and session.seq_num:
-            ref = f"#{session.seq_num}"
-        else:
-            ref = owner_id[:8]
-        return {
-            "session_id": owner_id,
-            "ref": ref,
-            "source": session.source if session is not None else None,
-        }
-
     def _apply_owner_ref(task_dicts: list[dict[str, Any]]) -> None:
         """Attach a friendly ``owner_session_ref`` to each serialized task.
 
         ``state.owner_session_id`` is authoritative because it mirrors the
         canonical task state. Serialized task rows also expose top-level
         ``claimed_by_session_id`` for compact consumers, so use it as a fallback.
-        The winning UUID is converted through ``_owner_session_ref``; unowned
-        tasks or non-string owner values receive ``None``.
+        Owner UUIDs are resolved in one query; unowned tasks or non-string
+        owner values receive ``None``.
         """
+        owners_by_task: dict[str, str] = {}
         for item in task_dicts:
             raw_state = item.get("state")
             owner_id: Any = None
@@ -247,9 +220,33 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 owner_id = raw_state.get("owner_session_id")
             if not owner_id:
                 owner_id = item.get("claimed_by_session_id")
-            item["owner_session_ref"] = _owner_session_ref(
-                owner_id if isinstance(owner_id, str) else None
-            )
+            if isinstance(owner_id, str):
+                owners_by_task[item["id"]] = owner_id
+
+        sessions_by_id: dict[str, Any] = {}
+        owner_ids = sorted(set(owners_by_task.values()))
+        if owner_ids and server.session_manager is not None:
+            try:
+                placeholders = ",".join("%s" for _ in owner_ids)
+                rows = server.session_manager.db.fetchall(
+                    f"SELECT id, seq_num, source FROM sessions WHERE id IN ({placeholders})",  # nosec B608
+                    tuple(owner_ids),
+                )
+                sessions_by_id = {row["id"]: row for row in rows}
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug(f"Failed to batch-resolve owner sessions: {exc}")
+
+        for item in task_dicts:
+            owner_id = owners_by_task.get(item["id"])
+            if owner_id is None:
+                item["owner_session_ref"] = None
+                continue
+            session = sessions_by_id.get(owner_id)
+            item["owner_session_ref"] = {
+                "session_id": owner_id,
+                "ref": f"#{session['seq_num']}" if session and session["seq_num"] else owner_id[:8],
+                "source": session["source"] if session else None,
+            }
 
     def _normalize_stage_filters(values: list[str] | None) -> list[str]:
         if not values:

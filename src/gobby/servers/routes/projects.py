@@ -62,39 +62,62 @@ def _get_project_manager(server: HTTPServer) -> LocalProjectManager:
     return LocalProjectManager(server.session_manager.db)
 
 
-def _get_project_stats(server: HTTPServer, project_id: str) -> dict[str, Any]:
-    """Get computed stats for a project."""
+def _get_project_stats_batch(
+    server: HTTPServer, project_ids: list[str]
+) -> dict[str, dict[str, Any]]:
+    """Get computed stats for projects in two bounded queries."""
+    stats = {
+        project_id: {"session_count": 0, "open_task_count": 0, "last_activity_at": None}
+        for project_id in project_ids
+    }
     if server.session_manager is None:
-        return {"session_count": 0, "open_task_count": 0, "last_activity_at": None}
+        return stats
+    if not project_ids:
+        return stats
 
     db = server.session_manager.db
-
-    session_count = db.fetchone(
-        "SELECT COUNT(*) as cnt FROM sessions WHERE project_id = %s AND status IN ('active', 'paused')",
-        (project_id,),
+    placeholders = ",".join("%s" for _ in project_ids)
+    session_rows = db.fetchall(
+        f"""
+        SELECT project_id,
+               COUNT(*) FILTER (WHERE status IN ('active', 'paused')) AS session_count,
+               MAX(updated_at) AS last_activity_at
+        FROM sessions
+        WHERE project_id IN ({placeholders})
+        GROUP BY project_id
+        """,  # nosec B608
+        tuple(project_ids),
+    )
+    task_rows = db.fetchall(
+        f"""
+        SELECT project_id, COUNT(*) AS open_task_count
+        FROM tasks
+        WHERE project_id IN ({placeholders}) AND closed_at IS NULL
+        GROUP BY project_id
+        """,  # nosec B608
+        tuple(project_ids),
     )
 
-    open_task_count = db.fetchone(
-        "SELECT COUNT(*) as cnt FROM tasks WHERE project_id = %s AND closed_at IS NULL",
-        (project_id,),
-    )
-
-    last_activity = db.fetchone(
-        "SELECT MAX(updated_at) as last_activity FROM sessions WHERE project_id = %s",
-        (project_id,),
-    )
-
-    return {
-        "session_count": session_count["cnt"] if session_count else 0,
-        "open_task_count": open_task_count["cnt"] if open_task_count else 0,
-        "last_activity_at": last_activity["last_activity"] if last_activity else None,
-    }
+    for row in session_rows:
+        stats[row["project_id"]].update(
+            session_count=row["session_count"], last_activity_at=row["last_activity_at"]
+        )
+    for row in task_rows:
+        stats[row["project_id"]]["open_task_count"] = row["open_task_count"]
+    return stats
 
 
-def _project_to_response(server: HTTPServer, project: Project) -> dict[str, Any]:
+def _get_project_stats(server: HTTPServer, project_id: str) -> dict[str, Any]:
+    """Get computed stats for one project."""
+    return _get_project_stats_batch(server, [project_id])[project_id]
+
+
+def _project_to_response(
+    server: HTTPServer, project: Project, stats: dict[str, Any] | None = None
+) -> dict[str, Any]:
     data = cast(dict[str, Any], jsonable_encoder(project.to_dict()))
     data["display_name"] = "Personal" if project.name == "_personal" else project.name
-    data.update(_get_project_stats(server, project.id))
+    data.update(stats if stats is not None else _get_project_stats(server, project.id))
     data["approval_rules"] = (
         load_project_approval_rules(project.repo_path) if project.repo_path else []
     )
@@ -114,12 +137,16 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
         pm = _get_project_manager(server)
         projects = await server.run_db(pm.list)
 
-        results = []
-        for project in projects:
-            if project.name in HIDDEN_PROJECT_NAMES:
-                continue
-
-            results.append(await server.run_db(_project_to_response, server, project))
+        visible_projects = [
+            project for project in projects if project.name not in HIDDEN_PROJECT_NAMES
+        ]
+        stats_by_project = await server.run_db(
+            _get_project_stats_batch, server, [project.id for project in visible_projects]
+        )
+        results = [
+            await server.run_db(_project_to_response, server, project, stats_by_project[project.id])
+            for project in visible_projects
+        ]
 
         return results
 

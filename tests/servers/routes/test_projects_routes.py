@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gobby.servers.routes import projects as projects_routes
+from gobby.storage.tasks import LocalTaskManager
 from tests.servers.conftest import create_http_server
 
 if TYPE_CHECKING:
@@ -142,6 +143,50 @@ class TestProjectRoutes:
         data = response.json()
         proj = next(p for p in data if p["id"] == real_project["id"])
         assert proj["session_count"] == 1
+
+    @pytest.mark.parametrize("project_count", [1, 3])
+    def test_list_projects_batches_stats_queries(
+        self,
+        client: TestClient,
+        project_manager: LocalProjectManager,
+        session_manager: SessionManager,
+        project_count: int,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        projects = [
+            project_manager.create(name=f"batch-project-{index}", repo_path=None)
+            for index in range(project_count)
+        ]
+        task_manager = LocalTaskManager(session_manager.db)
+        for index, project in enumerate(projects):
+            session_manager.register(
+                external_id=f"batch-session-{index}",
+                source="codex",
+                machine_id="test-machine",
+                project_id=project.id,
+            )
+            task_manager.create_task(project_id=project.id, title=f"Open task {index}")
+
+        original_fetchall = session_manager.db.fetchall
+        stats_queries = 0
+
+        def counting_fetchall(sql: str, params: tuple = ()):
+            nonlocal stats_queries
+            if "GROUP BY project_id" in sql and ("FROM sessions" in sql or "FROM tasks" in sql):
+                stats_queries += 1
+            return original_fetchall(sql, params)
+
+        monkeypatch.setattr(session_manager.db, "fetchall", counting_fetchall)
+
+        response = client.get("/api/projects")
+
+        assert response.status_code == 200
+        payloads = {item["id"]: item for item in response.json()}
+        assert stats_queries == 2
+        for project in projects:
+            assert payloads[project.id]["session_count"] == 1
+            assert payloads[project.id]["open_task_count"] == 1
+            assert payloads[project.id]["last_activity_at"] is not None
 
     # -----------------------------------------------------------------
     # GET /api/projects/{project_id}

@@ -151,6 +151,56 @@ class TestListTasks:
         task = next(t for t in data["tasks"] if t["id"] == sample_task["id"])
         assert "state" in task
 
+    @pytest.mark.parametrize("owner_count", [1, 3])
+    def test_list_batches_owner_session_refs(
+        self,
+        client: TestClient,
+        server,
+        task_manager: LocalTaskManager,
+        project_id: str,
+        owner_count: int,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        owners = [
+            server.session_manager.register(
+                external_id=f"owner-{index}",
+                machine_id="test-machine",
+                source="codex",
+                project_id=project_id,
+            )
+            for index in range(owner_count)
+        ]
+        tasks = [
+            task_manager.create_task(
+                project_id=project_id,
+                title=f"Owned task {index}",
+                claimed_by_session_id=owner.id,
+            )
+            for index, owner in enumerate(owners)
+        ]
+        original_fetchall = server.session_manager.db.fetchall
+        owner_queries = 0
+
+        def counting_fetchall(sql: str, params: tuple = ()):
+            nonlocal owner_queries
+            if "SELECT id, seq_num, source FROM sessions WHERE id IN" in sql:
+                owner_queries += 1
+            return original_fetchall(sql, params)
+
+        monkeypatch.setattr(server.session_manager.db, "fetchall", counting_fetchall)
+
+        response = client.get("/api/tasks")
+
+        assert response.status_code == 200
+        payloads = {item["id"]: item for item in response.json()["tasks"]}
+        assert owner_queries == 1
+        for task, owner in zip(tasks, owners, strict=True):
+            assert payloads[task.id]["owner_session_ref"] == {
+                "session_id": owner.id,
+                "ref": owner.ref,
+                "source": "codex",
+            }
+
     @pytest.mark.parametrize(
         ("legacy_type", "canonical_type"),
         [
