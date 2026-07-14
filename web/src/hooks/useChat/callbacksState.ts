@@ -21,6 +21,7 @@ export function usePlanArtifactCallbacks() {
   // Per-CLI plan-accept options carried in the plan_pending_approval payload.
   const [planApprovalOptions, setPlanApprovalOptions] = useState<ApprovalOption[]>([]);
   const planContentRef = useRef<string | null>(null);
+  const planToolCallIdRef = useRef<string | null>(null);
   const currentModeRef = useRef<ChatMode>("plan");
 
   const onModeChangedRef = useRef<ModeChangedCallback | null>(null);
@@ -68,6 +69,7 @@ export function usePlanArtifactCallbacks() {
     planApprovalOptions,
     planApproved,
     planContentRef,
+    planToolCallIdRef,
     planPendingApproval,
     setOnArtifactEvent,
     setOnChatCleared,

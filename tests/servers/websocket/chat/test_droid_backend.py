@@ -469,9 +469,9 @@ async def test_send_message_waits_for_user_permission_approval() -> None:
     session.chat_mode = "auto"
     approval_calls: list[tuple[str, dict[str, Any]]] = []
 
-    async def approve_tool(tool_name: str, arguments: dict[str, Any]) -> None:
+    async def approve_tool(tool_use_id: str, tool_name: str, arguments: dict[str, Any]) -> None:
         approval_calls.append((tool_name, arguments))
-        session.provide_approval("approve")
+        session.provide_approval(tool_use_id, "approve")
 
     session._tool_approval_callback = approve_tool
 
@@ -525,15 +525,17 @@ async def test_plan_mode_cancels_unapproved_tool_and_broadcasts_plan() -> None:
     # records it (and the assertion below fails) instead of hanging the test.
     approval_calls: list[tuple[str, dict[str, Any]]] = []
 
-    async def approve_tool(tool_name: str, arguments: dict[str, Any]) -> None:
+    async def approve_tool(tool_use_id: str, tool_name: str, arguments: dict[str, Any]) -> None:
         approval_calls.append((tool_name, arguments))
-        session.provide_approval("approve")
+        session.provide_approval(tool_use_id, "approve")
 
     session._tool_approval_callback = approve_tool
 
     broadcasts: list[str | None] = []
 
-    async def on_plan_ready(content: str | None, input_data: dict[str, Any]) -> None:
+    async def on_plan_ready(
+        content: str | None, input_data: dict[str, Any], tool_use_id: str | None
+    ) -> None:
         broadcasts.append(content)
 
     session._on_plan_ready = on_plan_ready
@@ -602,7 +604,9 @@ def _exit_spec_session(
     session.chat_mode = "plan"
     broadcasts: list[str | None] = []
 
-    async def on_plan_ready(content: str | None, input_data: dict[str, Any]) -> None:
+    async def on_plan_ready(
+        content: str | None, input_data: dict[str, Any], tool_use_id: str | None
+    ) -> None:
         broadcasts.append(content)
 
     session._on_plan_ready = on_plan_ready
@@ -642,7 +646,7 @@ async def test_exit_spec_mode_broadcasts_and_blocks_then_approve_proceeds() -> N
     assert session._plan_exit_blocked_this_turn is True
 
     # (c) approve releases with proceed_once.
-    session.provide_plan_decision("approve")
+    session.provide_plan_decision(None, "approve")
     result = await asyncio.wait_for(resolve, timeout=1.0)
     assert result == "proceed_once"
     assert session._plan_approved is True
@@ -663,7 +667,7 @@ async def test_exit_spec_mode_request_changes_cancels_and_queues_feedback() -> N
     await _park_on_plan_gate(session)
 
     session.set_plan_feedback("tighten step 1")
-    session.provide_plan_decision("request_changes")
+    session.provide_plan_decision(None, "request_changes")
     result = await asyncio.wait_for(resolve, timeout=1.0)
 
     assert result == "cancel"

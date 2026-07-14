@@ -68,6 +68,7 @@ export interface UseChatActionsParams {
   pendingProxyMessagesRef: MutableRefObject<Map<string, PendingProxyMessage>>;
   pendingProxySessionQueuesRef: MutableRefObject<Map<string, string[]>>;
   planContentRef: MutableRefObject<string | null>;
+  planToolCallIdRef: MutableRefObject<string | null>;
   projectIdRef: MutableRefObject<string | null>;
   proxyDeliveryNotice: string | null;
   resetMainChatState: () => void;

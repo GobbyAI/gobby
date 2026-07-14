@@ -284,7 +284,7 @@ async def handle_set_mode(mixin: SessionControlMixin, websocket: Any, data: dict
         # If user toggles away from plan while ExitPlanMode is blocking,
         # cancel the pending approval to unblock the streaming loop.
         if mode != "plan" and session.has_pending_plan:
-            session.provide_plan_decision("request_changes")
+            session.provide_plan_decision(None, "request_changes")
         # Sync mode_level to session variables
         db_sid = getattr(session, "db_session_id", None)
         if db_sid:

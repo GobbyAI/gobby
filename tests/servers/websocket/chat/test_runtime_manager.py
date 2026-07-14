@@ -520,7 +520,9 @@ class TestQwenBackend:
         )
         approval_ready = asyncio.Event()
 
-        async def mark_approval_ready(_tool_name: str, _input_data: dict[str, Any]) -> None:
+        async def mark_approval_ready(
+            _tool_use_id: str, _tool_name: str, _input_data: dict[str, Any]
+        ) -> None:
             approval_ready.set()
 
         session._tool_approval_callback = mark_approval_ready

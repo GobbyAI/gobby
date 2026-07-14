@@ -50,6 +50,7 @@ async def test_handle_plan_approval_request_changes_legacy_sends_mode_changed():
     data = {
         "type": "plan_approval_response",
         "conversation_id": conversation_id,
+        "tool_call_id": "plan-tool",
         "decision": "request_changes",
         "feedback": "Please fix the typo.",
     }
@@ -99,6 +100,7 @@ async def test_handle_plan_approval_approve_legacy_sends_mode_changed():
     data = {
         "type": "plan_approval_response",
         "conversation_id": conversation_id,
+        "tool_call_id": "plan-tool",
         "decision": "approve",
     }
 
@@ -144,6 +146,7 @@ async def test_handle_plan_approval_approve_pending_plan_unblocks_into_post_plan
     data = {
         "type": "plan_approval_response",
         "conversation_id": conversation_id,
+        "tool_call_id": "plan-tool",
         "decision": "approve",
     }
 
@@ -152,7 +155,7 @@ async def test_handle_plan_approval_approve_pending_plan_unblocks_into_post_plan
     session.set_chat_mode.assert_called_once_with("normal")
     assert session.set_chat_mode.call_count == 1
     assert session.set_chat_mode.call_args is not None
-    session.provide_plan_decision.assert_called_once_with("approve")
+    session.provide_plan_decision.assert_called_once_with("plan-tool", "approve")
     assert session.provide_plan_decision.call_count == 1
     assert session.provide_plan_decision.call_args is not None
     session.sync_sdk_permission_mode.assert_awaited_once()
@@ -197,13 +200,14 @@ async def test_handle_plan_approval_approve_managed_auto_continues_execution():
     data = {
         "type": "plan_approval_response",
         "conversation_id": conversation_id,
+        "tool_call_id": "plan-tool",
         "decision": "approve",
     }
 
     await SessionControlMixin._handle_plan_approval_response(host, websocket, data)
 
     session.set_chat_mode.assert_called_once_with("normal")
-    session.provide_plan_decision.assert_called_once_with("approve")
+    session.provide_plan_decision.assert_called_once_with(None, "approve")
     # Exactly one continuation turn through the chat ingress, on the same socket.
     host._handle_chat_message.assert_awaited_once()
     cont_ws, cont_data = host._handle_chat_message.await_args[0]
@@ -250,6 +254,7 @@ async def test_handle_plan_approval_approve_native_does_not_auto_continue():
     data = {
         "type": "plan_approval_response",
         "conversation_id": conversation_id,
+        "tool_call_id": "plan-tool",
         "decision": "approve",
     }
 
@@ -259,7 +264,7 @@ async def test_handle_plan_approval_approve_native_does_not_auto_continue():
     # inject a second turn (that would double-execute the approved plan).
     session.set_chat_mode.assert_called_once_with("normal")
     session.sync_sdk_permission_mode.assert_awaited_once()
-    session.provide_plan_decision.assert_called_once_with("approve")
+    session.provide_plan_decision.assert_called_once_with("plan-tool", "approve")
     host._handle_chat_message.assert_not_awaited()
     assert session._pending_post_plan_mode == "normal"
     assert session._pending_plan_content is None
@@ -315,12 +320,17 @@ async def test_option_yolo_native_drives_bypass_no_auto_continue() -> None:
     await SessionControlMixin._handle_plan_approval_response(
         host,
         websocket,
-        {"conversation_id": "c", "decision": "approve", "option_id": "approve_yolo"},
+        {
+            "conversation_id": "c",
+            "tool_call_id": "plan-tool",
+            "decision": "approve",
+            "option_id": "approve_yolo",
+        },
     )
 
     # The registry option drives the post-plan mode.
     session.set_chat_mode.assert_called_once_with("bypass")
-    session.provide_plan_decision.assert_called_once_with("approve")
+    session.provide_plan_decision.assert_called_once_with("plan-tool", "approve")
     host._handle_chat_message.assert_not_awaited()
     assert session._pending_post_plan_mode == "bypass"
     assert session._pending_plan_content is None
@@ -337,7 +347,12 @@ async def test_option_yolo_managed_drives_bypass_and_auto_continues() -> None:
     await SessionControlMixin._handle_plan_approval_response(
         host,
         websocket,
-        {"conversation_id": "c", "decision": "approve", "option_id": "approve_yolo"},
+        {
+            "conversation_id": "c",
+            "tool_call_id": "plan-tool",
+            "decision": "approve",
+            "option_id": "approve_yolo",
+        },
     )
 
     session.set_chat_mode.assert_called_once_with("bypass")
@@ -358,7 +373,12 @@ async def test_option_act_managed_drives_normal_mode_and_auto_continues() -> Non
     await SessionControlMixin._handle_plan_approval_response(
         host,
         AsyncMock(),
-        {"conversation_id": "c", "decision": "approve", "option_id": "approve_act"},
+        {
+            "conversation_id": "c",
+            "tool_call_id": "plan-tool",
+            "decision": "approve",
+            "option_id": "approve_act",
+        },
     )
 
     session.set_chat_mode.assert_called_once_with("normal")
@@ -396,7 +416,12 @@ async def test_option_act_droid_blocking_gate_still_auto_continues() -> None:
         SessionControlMixin._handle_plan_approval_response(
             host,
             AsyncMock(),
-            {"conversation_id": "c", "decision": "approve", "option_id": "approve_act"},
+            {
+                "conversation_id": "c",
+                "tool_call_id": "plan-tool",
+                "decision": "approve",
+                "option_id": "approve_act",
+            },
         )
     )
 
@@ -404,7 +429,7 @@ async def test_option_act_droid_blocking_gate_still_auto_continues() -> None:
         await approval_started.wait()
 
         session.set_chat_mode.assert_called_once_with("normal")
-        session.provide_plan_decision.assert_called_once_with("approve")
+        session.provide_plan_decision.assert_called_once_with(None, "approve")
         host._handle_chat_message.assert_not_awaited()
 
         active_turn_released.set()
@@ -428,11 +453,16 @@ async def test_option_act_droid_blocking_gate_continues_when_turn_already_draine
     await SessionControlMixin._handle_plan_approval_response(
         host,
         AsyncMock(),
-        {"conversation_id": "c", "decision": "approve", "option_id": "approve_act"},
+        {
+            "conversation_id": "c",
+            "tool_call_id": "plan-tool",
+            "decision": "approve",
+            "option_id": "approve_act",
+        },
     )
 
     session.set_chat_mode.assert_called_once_with("normal")
-    session.provide_plan_decision.assert_called_once_with("approve")
+    session.provide_plan_decision.assert_called_once_with(None, "approve")
     host._handle_chat_message.assert_awaited_once()
     _, cont = host._handle_chat_message.await_args[0]
     assert "Act mode" in cont["content"]
@@ -448,12 +478,12 @@ async def test_reject_with_empty_comment_denies_pending_plan() -> None:
     await SessionControlMixin._handle_plan_approval_response(
         host,
         AsyncMock(),
-        {"conversation_id": "c", "decision": "request_changes"},
+        {"conversation_id": "c", "tool_call_id": "plan-tool", "decision": "request_changes"},
     )
 
     # The comment is optional, so no feedback is recorded when empty.
     session.set_plan_feedback.assert_not_called()
-    session.provide_plan_decision.assert_called_once_with("request_changes")
+    session.provide_plan_decision.assert_called_once_with("plan-tool", "request_changes")
     session.set_chat_mode.assert_not_called()
     assert session._pending_plan_content is None
 
@@ -469,7 +499,7 @@ async def test_reject_with_empty_comment_managed_returns_to_plan() -> None:
     await SessionControlMixin._handle_plan_approval_response(
         host,
         websocket,
-        {"conversation_id": "c", "decision": "request_changes"},
+        {"conversation_id": "c", "tool_call_id": "plan-tool", "decision": "request_changes"},
     )
 
     session.set_plan_feedback.assert_not_called()
@@ -488,12 +518,17 @@ async def test_unknown_option_id_falls_back_to_generic_approve() -> None:
     await SessionControlMixin._handle_plan_approval_response(
         host,
         AsyncMock(),
-        {"conversation_id": "c", "decision": "approve", "option_id": "no_such_option"},
+        {
+            "conversation_id": "c",
+            "tool_call_id": "plan-tool",
+            "decision": "approve",
+            "option_id": "no_such_option",
+        },
     )
 
     # Falls back to the generic post-plan default (normal), not an option mode.
     session.set_chat_mode.assert_called_once_with("normal")
-    session.provide_plan_decision.assert_called_once_with("approve")
+    session.provide_plan_decision.assert_called_once_with("plan-tool", "approve")
     assert session._pending_post_plan_mode == "normal"
 
 

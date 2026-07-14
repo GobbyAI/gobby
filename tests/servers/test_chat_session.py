@@ -68,7 +68,7 @@ class TestCanUseTool:
         result = await session._can_use_tool(
             "mcp__gobby__create_task",
             {"title": "test"},
-            ToolPermissionContext(),
+            ToolPermissionContext(tool_use_id="tool-test"),
         )
 
         assert isinstance(result, PermissionResultAllow)
@@ -86,14 +86,14 @@ class TestCanUseTool:
             session._can_use_tool(
                 "AskUserQuestion",
                 input_data,
-                ToolPermissionContext(),
+                ToolPermissionContext(tool_use_id="tool-test"),
             )
         )
         await wait_for_async_condition(
             lambda: session.has_pending_question,
             description="pending user question",
         )
-        session.provide_answer(answers)
+        session.provide_answer("tool-test", answers)
         result = await answer_task
 
         assert isinstance(result, PermissionResultAllow)
@@ -111,14 +111,16 @@ class TestCanUseTool:
         input_data = {"questions": [{"question": "Pick one"}]}
 
         answer_task = asyncio.create_task(
-            session._can_use_tool("AskUserQuestion", input_data, ToolPermissionContext())
+            session._can_use_tool(
+                "AskUserQuestion", input_data, ToolPermissionContext(tool_use_id="tool-test")
+            )
         )
         await wait_for_async_condition(
             lambda: session.has_pending_question,
             description="pending user question",
         )
         assert session.has_pending_question is True
-        session.provide_answer({"Pick one": "A"})
+        session.provide_answer("tool-test", {"Pick one": "A"})
         await answer_task
 
         assert session.has_pending_question is False
@@ -197,13 +199,15 @@ class TestDefaultModelResolution:
         answers = {"Name?": "Alice"}
 
         task = asyncio.create_task(
-            session._can_use_tool("AskUserQuestion", input_data, ToolPermissionContext())
+            session._can_use_tool(
+                "AskUserQuestion", input_data, ToolPermissionContext(tool_use_id="tool-test")
+            )
         )
         await wait_for_async_condition(
             lambda: session.has_pending_question,
             description="pending user question",
         )
-        session.provide_answer(answers)
+        session.provide_answer("tool-test", answers)
         result = await task
 
         assert isinstance(result, PermissionResultAllow)
@@ -263,12 +267,12 @@ class TestToolApproval:
         session._tool_approval_config = config
 
         task = asyncio.create_task(
-            session._wait_for_tool_approval("Write", {"file_path": "/tmp/test"})
+            session._wait_for_tool_approval("tool-test", "Write", {"file_path": "/tmp/test"})
         )
         await wait_for_async_condition(
             lambda: session.has_pending_approval, description="pending approval"
         )
-        session.provide_approval("reject")
+        session.provide_approval("tool-test", "reject")
         result = await task
 
         assert isinstance(result, PermissionResultDeny)
@@ -280,12 +284,12 @@ class TestToolApproval:
         from claude_agent_sdk import PermissionResultAllow
 
         task = asyncio.create_task(
-            session._wait_for_tool_approval("Write", {"file_path": "/tmp/test"})
+            session._wait_for_tool_approval("tool-test", "Write", {"file_path": "/tmp/test"})
         )
         await wait_for_async_condition(
             lambda: session.has_pending_approval, description="pending approval"
         )
-        session.provide_approval("approve")
+        session.provide_approval("tool-test", "approve")
         result = await task
 
         assert isinstance(result, PermissionResultAllow)
@@ -298,7 +302,9 @@ class TestToolApproval:
 
         # Patch the timeout to be very short
         with patch("gobby.servers.chat_session.asyncio.wait_for", side_effect=TimeoutError):
-            result = await session._wait_for_tool_approval("Write", {"file_path": "/tmp/test"})
+            result = await session._wait_for_tool_approval(
+                "tool-test", "Write", {"file_path": "/tmp/test"}
+            )
 
         assert isinstance(result, PermissionResultDeny)
         assert "Write" in result.message

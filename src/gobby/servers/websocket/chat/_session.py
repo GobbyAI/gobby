@@ -454,7 +454,9 @@ class ChatSessionMixin:
         session._on_mode_changed = _notify_mode_changed
 
         # Wire plan-ready callback so ExitPlanMode sends plan content to frontend
-        async def _notify_plan_ready(content: str | None, input_data: dict[str, Any]) -> None:
+        async def _notify_plan_ready(
+            content: str | None, input_data: dict[str, Any], tool_use_id: str | None
+        ) -> None:
             session._pending_plan_content = content
             allowed_prompts = input_data.get("allowedPrompts")
             session._pending_plan_allowed_prompts = (
@@ -469,6 +471,7 @@ class ChatSessionMixin:
                 {
                     "type": "plan_pending_approval",
                     "conversation_id": session_key,
+                    "tool_call_id": tool_use_id,
                     "plan_content": content,
                     "allowed_prompts": session._pending_plan_allowed_prompts,
                     "source": plan_source,

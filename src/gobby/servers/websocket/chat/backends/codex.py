@@ -76,9 +76,9 @@ class CodexManagedChatSession(
         default=_CODEX_TRANSCRIPT_RETRY_DELAY_SECONDS,
         repr=False,
     )
-    _pending_approval: PendingApproval | None = field(default=None, repr=False)
-    _pending_approval_event: asyncio.Event | None = field(default=None, repr=False)
-    _pending_approval_decision: str | None = field(default=None, repr=False)
+    _pending_approvals: dict[str, PendingApproval] = field(default_factory=dict, repr=False)
+    _pending_approval_events: dict[str, asyncio.Event] = field(default_factory=dict, repr=False)
+    _pending_approval_decisions: dict[str, str] = field(default_factory=dict, repr=False)
     _plan_approved: bool = field(default=False, repr=False)
     _plan_feedback: str | None = field(default=None, repr=False)
     _before_tool_cached_responses: dict[str, dict[str, Any] | None] = field(

@@ -21,6 +21,7 @@ import logging
 import re
 from collections.abc import Awaitable, Callable
 from typing import Any
+from uuid import uuid4
 
 from gobby.servers.chat_session_helpers import PendingApproval
 from gobby.servers.tool_approvals import approval_key_for_tool
@@ -52,10 +53,10 @@ class ManagedWebChatPermissionsMixin:
     conversation_id: str
     chat_mode: str
     _on_mode_changed: Callable[[str, str], Awaitable[None]] | None
-    _on_plan_ready: Callable[[str | None, dict[str, Any]], Awaitable[None]] | None
+    _on_plan_ready: Callable[[str | None, dict[str, Any], str | None], Awaitable[None]] | None
     _on_pre_tool: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
     _pending_question: dict[str, Any] | None
-    _pending_answers: dict[str, str] | None
+    _pending_answers: dict[str, Any] | None
     _pending_answer_event: asyncio.Event | None
     _approved_tools: set[str]
     _on_approved_tools_persist: Callable[[set[str]], None] | None
@@ -73,9 +74,9 @@ class ManagedWebChatPermissionsMixin:
     _pending_plan_allowed_prompts: list[str] | None
     _pending_post_plan_mode: str | None
     _on_mode_persist: Callable[[str], None] | None
-    _pending_approval: PendingApproval | None
-    _pending_approval_decision: str | None
-    _pending_approval_event: asyncio.Event | None
+    _pending_approvals: dict[str, PendingApproval]
+    _pending_approval_decisions: dict[str, str]
+    _pending_approval_events: dict[str, asyncio.Event]
     # Blocking plan-decision gate for tool-plan CLIs (Droid ExitSpecMode). The
     # plan-exit tool parks on _pending_plan_event while the web UI shows
     # plan_pending_approval; provide_plan_decision() releases it. Text-plan CLIs
@@ -91,10 +92,12 @@ class ManagedWebChatPermissionsMixin:
         re.MULTILINE,
     )
 
-    def provide_answer(self, answers: dict[str, str]) -> None:
+    def provide_answer(self, tool_use_id: str, answers: dict[str, Any]) -> bool:
         self._pending_answers = answers
         if self._pending_answer_event is not None:
             self._pending_answer_event.set()
+            return True
+        return False
 
     @property
     def has_pending_question(self) -> bool:
@@ -132,7 +135,7 @@ class ManagedWebChatPermissionsMixin:
     def set_plan_feedback(self, feedback: str) -> None:
         self._plan_feedback = feedback
 
-    def provide_plan_decision(self, decision: str) -> None:
+    def provide_plan_decision(self, tool_use_id: str | None, decision: str) -> bool:
         if decision == "approve":
             self._plan_approved = True
         # Release a blocking plan-exit tool (Droid ExitSpecMode) if one is
@@ -140,6 +143,8 @@ class ManagedWebChatPermissionsMixin:
         self._pending_plan_decision = decision
         if self._pending_plan_event is not None:
             self._pending_plan_event.set()
+            return True
+        return False
 
     async def _wait_for_plan_decision(self, *, timeout: float | None = None) -> str:
         """Block a plan-exit tool until the user approves or requests changes.
@@ -179,6 +184,9 @@ class ManagedWebChatPermissionsMixin:
     @property
     def has_pending_plan(self) -> bool:
         return self._pending_plan_content is not None
+
+    def has_pending_plan_id(self, tool_use_id: str) -> bool:
+        return self._pending_plan_event is not None
 
     def _clear_pending_plan_prompt(self) -> None:
         """Clear the in-flight plan approval prompt shown in the UI."""
@@ -253,7 +261,7 @@ class ManagedWebChatPermissionsMixin:
         self._pending_plan_structured = structured
         self._last_plan_content = text
         if self._on_plan_ready is not None:
-            await self._on_plan_ready(text, {"plan": text})
+            await self._on_plan_ready(text, {"plan": text}, None)
 
     def _pop_plan_mode_context(self) -> str | None:
         if self.chat_mode != "plan":
@@ -295,26 +303,27 @@ class ManagedWebChatPermissionsMixin:
     async def _wait_for_tool_approval(
         self, tool_name: str, input_data: dict[str, Any]
     ) -> dict[str, Any]:
-        self._pending_approval = {
+        tool_use_id = f"approval-{uuid4().hex}"
+        self._pending_approvals[tool_use_id] = {
             "tool_name": tool_name,
             "arguments": input_data,
         }
-        self._pending_approval_decision = None
-        self._pending_approval_event = asyncio.Event()
+        pending_event = asyncio.Event()
+        self._pending_approval_events[tool_use_id] = pending_event
 
         if self._tool_approval_callback:
-            await self._tool_approval_callback(tool_name, input_data)
+            await self._tool_approval_callback(tool_use_id, tool_name, input_data)
 
         try:
-            await asyncio.wait_for(self._pending_approval_event.wait(), timeout=300.0)
+            await asyncio.wait_for(pending_event.wait(), timeout=300.0)
         except TimeoutError:
-            self._pending_approval_decision = "reject"
+            self._pending_approval_decisions[tool_use_id] = "reject"
 
-        decision = self._pending_approval_decision or "reject"
+        decision = self._pending_approval_decisions.get(tool_use_id, "reject")
 
-        self._pending_approval = None
-        self._pending_approval_event = None
-        self._pending_approval_decision = None
+        self._pending_approvals.pop(tool_use_id, None)
+        self._pending_approval_events.pop(tool_use_id, None)
+        self._pending_approval_decisions.pop(tool_use_id, None)
 
         if decision == "reject":
             return {"decision": "decline", "reason": f"User rejected tool call: {tool_name}"}
@@ -330,15 +339,18 @@ class ManagedWebChatPermissionsMixin:
 
         return {"decision": "decline", "reason": f"User rejected tool call: {tool_name}"}
 
-    def provide_approval(self, decision: str) -> None:
-        self._pending_approval_decision = decision
-        if self._pending_approval_event is not None:
-            self._pending_approval_event.set()
+    def provide_approval(self, tool_use_id: str, decision: str) -> bool:
+        event = self._pending_approval_events.get(tool_use_id)
+        if event is None:
+            return False
+        self._pending_approval_decisions[tool_use_id] = decision
+        event.set()
+        return True
 
     def cancel_pending_approval(self) -> None:
-        self._pending_approval_decision = "reject"
-        if self._pending_approval_event is not None:
-            self._pending_approval_event.set()
+        for tool_use_id, event in self._pending_approval_events.items():
+            self._pending_approval_decisions[tool_use_id] = "reject"
+            event.set()
 
     async def sync_sdk_permission_mode(self) -> None:
         """Apply the post-plan mode transition for managed CLIs.
@@ -360,7 +372,7 @@ class ManagedWebChatPermissionsMixin:
 
     @property
     def has_pending_approval(self) -> bool:
-        return self._pending_approval is not None
+        return bool(self._pending_approvals)
 
 
 __all__ = ["ManagedWebChatPermissionsMixin"]

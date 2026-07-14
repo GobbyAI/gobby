@@ -10,6 +10,7 @@ import logging
 import re
 from collections.abc import Awaitable, Callable
 from typing import Any
+from uuid import uuid4
 
 from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 
@@ -71,9 +72,9 @@ class ChatSessionPermissionsMixin:
     chat_mode: str
     _on_mode_changed: Callable[[str, str], Awaitable[None]] | None
     _on_pre_tool: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
-    _pending_question: dict[str, Any] | None
-    _pending_answers: dict[str, str] | None
-    _pending_answer_event: asyncio.Event | None
+    _pending_questions: dict[str, dict[str, Any]]
+    _pending_answers: dict[str, dict[str, str]]
+    _pending_answer_events: dict[str, asyncio.Event]
     _approved_tools: set[str]
     _on_approved_tools_persist: Callable[[set[str]], None] | None
     _tool_approval_config: Any | None
@@ -86,15 +87,15 @@ class ChatSessionPermissionsMixin:
     _pending_plan_content: str | None
     _pending_plan_allowed_prompts: list[str] | None
     _pending_post_plan_mode: str | None
-    _pending_plan_event: asyncio.Event | None
-    _pending_plan_decision: str | None
+    _pending_plan_events: dict[str, asyncio.Event]
+    _pending_plan_decisions: dict[str, str]
     _plan_broadcast_sent: bool
     _on_mode_persist: Callable[[str], None] | None
-    _on_plan_ready: Callable[[str | None, dict[str, Any]], Awaitable[None]] | None
+    _on_plan_ready: Callable[[str | None, dict[str, Any], str | None], Awaitable[None]] | None
     project_path: str | None
-    _pending_approval: PendingApproval | None
-    _pending_approval_decision: str | None
-    _pending_approval_event: asyncio.Event | None
+    _pending_approvals: dict[str, PendingApproval]
+    _pending_approval_decisions: dict[str, str]
+    _pending_approval_events: dict[str, asyncio.Event]
     _preapproved_tool_use_ids: set[str]
 
     # Patterns that indicate dangerous bash commands (used by accept_edits mode)
@@ -130,6 +131,8 @@ class ChatSessionPermissionsMixin:
         """
         tool_name = str(canonicalize_shell_tool_name(tool_name))
         tool_use_id = getattr(context, "tool_use_id", None)
+        if not isinstance(tool_use_id, str) or not tool_use_id:
+            tool_use_id = f"tool-{uuid4().hex}"
         if isinstance(tool_use_id, str) and tool_use_id in self._preapproved_tool_use_ids:
             self._preapproved_tool_use_ids.discard(tool_use_id)
             return PermissionResultAllow(updated_input=input_data)
@@ -169,29 +172,29 @@ class ChatSessionPermissionsMixin:
                     content=plan_content,
                     allowed_prompts=input_data.get("allowedPrompts"),
                 )
-                await self._on_plan_ready(plan_content, input_data)
+                await self._on_plan_ready(plan_content, input_data, tool_use_id)
                 self._plan_broadcast_sent = True
 
             # Block until the user approves or rejects the plan in the UI.
             # The plan_approval.py handler calls provide_plan_decision() to
             # unblock this event.
-            self._pending_plan_event = asyncio.Event()
-            self._pending_plan_decision = None
+            pending_event = asyncio.Event()
+            self._pending_plan_events[tool_use_id] = pending_event
 
             try:
-                await asyncio.wait_for(self._pending_plan_event.wait(), timeout=600.0)
+                await asyncio.wait_for(pending_event.wait(), timeout=600.0)
             except TimeoutError:
-                self._pending_plan_decision = "deny"
+                self._pending_plan_decisions[tool_use_id] = "deny"
                 logger.warning(
                     "Plan approval timed out, defaulting to deny",
                     extra={"conversation_id": self.conversation_id},
                 )
 
-            decision = self._pending_plan_decision or "deny"
+            decision = self._pending_plan_decisions.get(tool_use_id, "deny")
 
             # Clear pending state
-            self._pending_plan_event = None
-            self._pending_plan_decision = None
+            self._pending_plan_events.pop(tool_use_id, None)
+            self._pending_plan_decisions.pop(tool_use_id, None)
 
             if decision == "approve":
                 approved_mode = self._pending_post_plan_mode or self.chat_mode
@@ -221,6 +224,7 @@ class ChatSessionPermissionsMixin:
         return await self._resolve_tool_permission(
             tool_name,
             input_data,
+            tool_use_id=tool_use_id,
             invoke_pre_tool_callback=True,
         )
 
@@ -229,6 +233,7 @@ class ChatSessionPermissionsMixin:
         tool_name: str,
         input_data: dict[str, Any],
         *,
+        tool_use_id: str,
         invoke_pre_tool_callback: bool,
     ) -> PermissionResultAllow | PermissionResultDeny:
         """Apply standard tool rules, approvals, and question handling."""
@@ -311,44 +316,47 @@ class ChatSessionPermissionsMixin:
         # Check tool approval (before AskUserQuestion, which has its own flow)
         if tool_name != "AskUserQuestion":
             if self._needs_tool_approval(tool_name, input_data):
-                return await self._wait_for_tool_approval(tool_name, input_data)
+                return await self._wait_for_tool_approval(tool_use_id, tool_name, input_data)
             return PermissionResultAllow(updated_input=input_data)
 
         # Store the pending question and block until answered
-        self._pending_question = input_data
-        self._pending_answers = None
-        self._pending_answer_event = asyncio.Event()
+        pending_event = asyncio.Event()
+        self._pending_questions[tool_use_id] = input_data
+        self._pending_answer_events[tool_use_id] = pending_event
 
         try:
-            await asyncio.wait_for(self._pending_answer_event.wait(), timeout=600.0)
+            await asyncio.wait_for(pending_event.wait(), timeout=600.0)
         except TimeoutError:
-            self._pending_answers = {"error": "Timed out waiting for user response"}
+            self._pending_answers[tool_use_id] = {"error": "Timed out waiting for user response"}
             logger.warning(f"AskUserQuestion timed out for session {self.conversation_id}")
 
         result = PermissionResultAllow(
             updated_input={
                 "questions": input_data.get("questions", []),
-                "answers": self._pending_answers,
+                "answers": self._pending_answers.get(tool_use_id),
             }
         )
 
         # Clear pending state
-        self._pending_question = None
-        self._pending_answer_event = None
-        self._pending_answers = None
+        self._pending_questions.pop(tool_use_id, None)
+        self._pending_answer_events.pop(tool_use_id, None)
+        self._pending_answers.pop(tool_use_id, None)
 
         return result
 
-    def provide_answer(self, answers: dict[str, str]) -> None:
+    def provide_answer(self, tool_use_id: str, answers: dict[str, str]) -> bool:
         """Provide answers to a pending AskUserQuestion, unblocking the callback."""
-        self._pending_answers = answers
-        if self._pending_answer_event is not None:
-            self._pending_answer_event.set()
+        event = self._pending_answer_events.get(tool_use_id)
+        if event is None:
+            return False
+        self._pending_answers[tool_use_id] = answers
+        event.set()
+        return True
 
     @property
     def has_pending_question(self) -> bool:
         """Whether an AskUserQuestion is currently awaiting a response."""
-        return self._pending_question is not None
+        return bool(self._pending_questions)
 
     def _ensure_normalized_approved_tools(self) -> set[str]:
         normalized = normalize_approved_tool_keys(self._approved_tools)
@@ -469,20 +477,32 @@ class ChatSessionPermissionsMixin:
         """Store user feedback for plan revision."""
         self._plan_feedback = feedback
 
-    def provide_plan_decision(self, decision: str) -> None:
+    def provide_plan_decision(self, tool_use_id: str | None, decision: str) -> bool:
         """Provide plan approval decision, unblocking the ExitPlanMode callback.
 
         Args:
             decision: "approve" or "request_changes"
         """
-        self._pending_plan_decision = decision
-        if self._pending_plan_event is not None:
-            self._pending_plan_event.set()
+        if tool_use_id is None:
+            for pending_id, event in self._pending_plan_events.items():
+                self._pending_plan_decisions[pending_id] = decision
+                event.set()
+            return bool(self._pending_plan_events)
+        pending_event = self._pending_plan_events.get(tool_use_id)
+        if pending_event is None:
+            return False
+        self._pending_plan_decisions[tool_use_id] = decision
+        pending_event.set()
+        return True
 
     @property
     def has_pending_plan(self) -> bool:
         """Whether an ExitPlanMode is currently awaiting a response."""
-        return self._pending_plan_event is not None
+        return bool(self._pending_plan_events)
+
+    def has_pending_plan_id(self, tool_use_id: str) -> bool:
+        """Whether a specific ExitPlanMode is awaiting a response."""
+        return tool_use_id in self._pending_plan_events
 
     def _clear_pending_plan_prompt(self) -> None:
         """Clear the in-flight plan approval prompt shown in the UI."""
@@ -628,35 +648,35 @@ class ChatSessionPermissionsMixin:
         return "\n".join(parts)
 
     async def _wait_for_tool_approval(
-        self, tool_name: str, input_data: dict[str, Any]
+        self, tool_use_id: str, tool_name: str, input_data: dict[str, Any]
     ) -> PermissionResultAllow | PermissionResultDeny:
         """Block until the user approves or rejects a tool call."""
-        self._pending_approval = {
+        self._pending_approvals[tool_use_id] = {
             "tool_name": tool_name,
             "arguments": input_data,
         }
-        self._pending_approval_decision = None
-        self._pending_approval_event = asyncio.Event()
+        pending_event = asyncio.Event()
+        self._pending_approval_events[tool_use_id] = pending_event
 
         # Notify the frontend via callback (set by the websocket handler)
         if self._tool_approval_callback:
-            await self._tool_approval_callback(tool_name, input_data)
+            await self._tool_approval_callback(tool_use_id, tool_name, input_data)
 
         try:
-            await asyncio.wait_for(self._pending_approval_event.wait(), timeout=300.0)
+            await asyncio.wait_for(pending_event.wait(), timeout=300.0)
         except TimeoutError:
-            self._pending_approval_decision = "reject"
+            self._pending_approval_decisions[tool_use_id] = "reject"
             logger.warning(
                 "Tool approval timed out",
                 extra={"tool": tool_name, "conversation_id": self.conversation_id},
             )
 
-        decision = self._pending_approval_decision or "reject"
+        decision = self._pending_approval_decisions.get(tool_use_id, "reject")
 
         # Clear pending state
-        self._pending_approval = None
-        self._pending_approval_event = None
-        self._pending_approval_decision = None
+        self._pending_approvals.pop(tool_use_id, None)
+        self._pending_approval_events.pop(tool_use_id, None)
+        self._pending_approval_decisions.pop(tool_use_id, None)
 
         if decision == "reject":
             return PermissionResultDeny(message=f"User rejected tool call: {tool_name}")
@@ -674,19 +694,22 @@ class ChatSessionPermissionsMixin:
         # Unknown decision value — treat as rejection
         return PermissionResultDeny(message=f"User rejected tool call: {tool_name}")
 
-    def provide_approval(self, decision: str) -> None:
+    def provide_approval(self, tool_use_id: str, decision: str) -> bool:
         """Provide approval decision for a pending tool call."""
-        self._pending_approval_decision = decision
-        if self._pending_approval_event is not None:
-            self._pending_approval_event.set()
+        event = self._pending_approval_events.get(tool_use_id)
+        if event is None:
+            return False
+        self._pending_approval_decisions[tool_use_id] = decision
+        event.set()
+        return True
 
     def cancel_pending_approval(self) -> None:
         """Cancel an in-flight tool approval prompt, if one exists."""
-        self._pending_approval_decision = "reject"
-        if self._pending_approval_event is not None:
-            self._pending_approval_event.set()
+        for tool_use_id, event in self._pending_approval_events.items():
+            self._pending_approval_decisions[tool_use_id] = "reject"
+            event.set()
 
     @property
     def has_pending_approval(self) -> bool:
         """Whether a tool approval is currently awaiting a response."""
-        return self._pending_approval is not None
+        return bool(self._pending_approvals)

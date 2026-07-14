@@ -45,9 +45,10 @@ describe("useChat plan actions", () => {
 
     act(() => {
       ws.simulateMessage({
-        type: "plan_pending_approval",
-        conversation_id: result.current.conversationId,
-        plan_content: "# My Plan\n\nStep 1...",
+      type: "plan_pending_approval",
+      conversation_id: result.current.conversationId,
+      tool_call_id: "plan-tool",
+      plan_content: "# My Plan\n\nStep 1...",
       });
     });
     expect(result.current.planPendingApproval).toBe(true);
@@ -60,6 +61,7 @@ describe("useChat plan actions", () => {
     expect(responses).toHaveLength(1);
     expect(responses[0].decision).toBe("approve");
     expect(responses[0].conversation_id).toBe(result.current.conversationId);
+    expect(responses[0].tool_call_id).toBe("plan-tool");
     // Approve carries no feedback, and the backend mode_changed event is
     // authoritative for clearing — the UI stays pending until it arrives.
     expect(responses[0].feedback).toBeUndefined();

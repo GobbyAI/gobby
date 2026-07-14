@@ -30,7 +30,7 @@ class TestCanUseTool:
         session._on_mode_changed = mock_cb
 
         result = await session._can_use_tool(
-            "EnterPlanMode", {"foo": "bar"}, ToolPermissionContext()
+            "EnterPlanMode", {"foo": "bar"}, ToolPermissionContext(tool_use_id="tool-test")
         )
         assert isinstance(result, PermissionResultAllow)
         assert session.chat_mode == "plan"
@@ -41,7 +41,9 @@ class TestCanUseTool:
         """ExitPlanMode denies when neither tool input nor a plan file has content."""
         session.set_chat_mode("plan")
         with patch.object(session, "_read_plan_file", return_value=None):
-            result = await session._can_use_tool("ExitPlanMode", {}, ToolPermissionContext())
+            result = await session._can_use_tool(
+                "ExitPlanMode", {}, ToolPermissionContext(tool_use_id="tool-test")
+            )
             assert isinstance(result, PermissionResultDeny)
             assert "No plan content found" in result.message
 
@@ -60,7 +62,7 @@ class TestCanUseTool:
                 session._can_use_tool(
                     "ExitPlanMode",
                     {"plan": "# Plan\nDo the thing"},
-                    ToolPermissionContext(),
+                    ToolPermissionContext(tool_use_id="tool-test"),
                 )
             )
             await wait_for_async_condition(
@@ -70,7 +72,7 @@ class TestCanUseTool:
             assert on_plan_ready.await_args.args[0] == "# Plan\nDo the thing"
             assert session._plan_broadcast_sent is True
             session._pending_post_plan_mode = "bypass"
-            session.provide_plan_decision("approve")
+            session.provide_plan_decision("tool-test", "approve")
             result = await task
 
         assert isinstance(result, PermissionResultAllow)
@@ -91,12 +93,16 @@ class TestCanUseTool:
         session.set_plan_feedback("tighten scope")
         with patch.object(session, "_read_plan_file", return_value=None):
             task = asyncio.create_task(
-                session._can_use_tool("ExitPlanMode", {"plan": "draft"}, ToolPermissionContext())
+                session._can_use_tool(
+                    "ExitPlanMode",
+                    {"plan": "draft"},
+                    ToolPermissionContext(tool_use_id="tool-test"),
+                )
             )
             await wait_for_async_condition(
                 lambda: session.has_pending_plan, description="pending plan"
             )
-            session.provide_plan_decision("request_changes")
+            session.provide_plan_decision("tool-test", "request_changes")
             result = await task
 
         assert isinstance(result, PermissionResultDeny)
@@ -120,14 +126,16 @@ class TestCanUseTool:
         with patch.object(session, "_read_plan_file", return_value="file plan"):
             task = asyncio.create_task(
                 session._can_use_tool(
-                    "ExitPlanMode", {"plan": "input plan"}, ToolPermissionContext()
+                    "ExitPlanMode",
+                    {"plan": "input plan"},
+                    ToolPermissionContext(tool_use_id="tool-test"),
                 )
             )
             await wait_for_async_condition(
                 lambda: session.has_pending_plan, description="pending plan"
             )
             session._pending_post_plan_mode = "bypass"
-            session.provide_plan_decision("approve")
+            session.provide_plan_decision("tool-test", "approve")
             result = await task
 
         # No duplicate broadcast, but the gate still resolves normally.
@@ -148,14 +156,16 @@ class TestCanUseTool:
         with patch.object(session, "_read_plan_file", return_value=None):
             task = asyncio.create_task(
                 session._can_use_tool(
-                    "ExitPlanMode", {"plan": "revised plan"}, ToolPermissionContext()
+                    "ExitPlanMode",
+                    {"plan": "revised plan"},
+                    ToolPermissionContext(tool_use_id="tool-test"),
                 )
             )
             await wait_for_async_condition(
                 lambda: session.has_pending_plan, description="pending plan"
             )
             session._pending_post_plan_mode = "bypass"
-            session.provide_plan_decision("approve")
+            session.provide_plan_decision("tool-test", "approve")
             result = await task
 
         on_plan_ready.assert_awaited_once()
@@ -170,7 +180,9 @@ class TestCanUseTool:
         session._plan_approved = True
         session._plan_file_path = "some_file.md"
 
-        result = await session._can_use_tool("ExitPlanMode", {}, ToolPermissionContext())
+        result = await session._can_use_tool(
+            "ExitPlanMode", {}, ToolPermissionContext(tool_use_id="tool-test")
+        )
         assert isinstance(result, PermissionResultAllow)
 
     @pytest.mark.asyncio
@@ -182,11 +194,13 @@ class TestCanUseTool:
         session._on_mode_changed = AsyncMock()
 
         task = asyncio.create_task(
-            session._can_use_tool("ExitPlanMode", {}, ToolPermissionContext())
+            session._can_use_tool(
+                "ExitPlanMode", {}, ToolPermissionContext(tool_use_id="tool-test")
+            )
         )
         await wait_for_async_condition(lambda: session.has_pending_plan, description="pending plan")
         session._pending_post_plan_mode = "bypass"
-        session.provide_plan_decision("approve")
+        session.provide_plan_decision("tool-test", "approve")
         result = await task
 
         assert isinstance(result, PermissionResultAllow)
@@ -203,10 +217,12 @@ class TestCanUseTool:
         session.set_plan_feedback("too complex")
 
         task = asyncio.create_task(
-            session._can_use_tool("ExitPlanMode", {}, ToolPermissionContext())
+            session._can_use_tool(
+                "ExitPlanMode", {}, ToolPermissionContext(tool_use_id="tool-test")
+            )
         )
         await wait_for_async_condition(lambda: session.has_pending_plan, description="pending plan")
-        session.provide_plan_decision("request_changes")
+        session.provide_plan_decision("tool-test", "request_changes")
         result = await task
 
         assert isinstance(result, PermissionResultDeny)
@@ -261,7 +277,7 @@ class TestCanUseTool:
         result = await session._can_use_tool(
             tool_name,
             {"file_path": candidate},
-            ToolPermissionContext(),
+            ToolPermissionContext(tool_use_id="tool-test"),
         )
 
         assert isinstance(result, PermissionResultDeny)
@@ -313,7 +329,7 @@ class TestCanUseTool:
         result = await session._can_use_tool(
             tool_name,
             {"command": 'gcode search "ChatSessionPermissionsMixin"'},
-            ToolPermissionContext(),
+            ToolPermissionContext(tool_use_id="tool-test"),
         )
         assert isinstance(result, PermissionResultAllow)
 
@@ -323,7 +339,7 @@ class TestCanUseTool:
         result = await session._can_use_tool(
             "run_shell_command",
             {"command": 'gcode search "ChatSession" > notes.txt'},
-            ToolPermissionContext(),
+            ToolPermissionContext(tool_use_id="tool-test"),
         )
         assert isinstance(result, PermissionResultDeny)
         assert "Plan mode is active" in result.message
@@ -355,7 +371,7 @@ class TestCanUseTool:
         result = await session._can_use_tool(
             "mcp__gobby__list_mcp_servers",
             {},
-            ToolPermissionContext(),
+            ToolPermissionContext(tool_use_id="tool-test"),
         )
 
         assert isinstance(result, PermissionResultAllow)
@@ -376,7 +392,7 @@ class TestCanUseTool:
                 "server_name": "gobby-artifacts",
                 "tool_name": "show_file",
             },
-            ToolPermissionContext(),
+            ToolPermissionContext(tool_use_id="tool-test"),
         )
 
         assert isinstance(result, PermissionResultAllow)
@@ -387,7 +403,7 @@ class TestCanUseTool:
         result = await session._can_use_tool(
             "mcp__gobby__call_tool",
             {"server_name": "external", "tool_name": "read_file", "arguments": {}},
-            ToolPermissionContext(),
+            ToolPermissionContext(tool_use_id="tool-test"),
         )
 
         assert isinstance(result, PermissionResultAllow)
@@ -401,7 +417,7 @@ class TestCanUseTool:
         result = await session._can_use_tool(
             "mcp__gobby__call_tool",
             {"server_name": "external", "tool_name": tool_name, "arguments": {}},
-            ToolPermissionContext(),
+            ToolPermissionContext(tool_use_id="tool-test"),
         )
 
         assert isinstance(result, PermissionResultDeny)
@@ -501,25 +517,56 @@ class TestWaitForToolApproval:
     async def test_wait_for_tool_approval_approve(self, session: ChatSession) -> None:
         session._tool_approval_callback = AsyncMock()
 
-        task = asyncio.create_task(session._wait_for_tool_approval("Bash", {"command": "ls"}))
+        task = asyncio.create_task(
+            session._wait_for_tool_approval("tool-test", "Bash", {"command": "ls"})
+        )
         await wait_for_async_condition(
             lambda: session.has_pending_approval, description="pending approval"
         )
-        session.provide_approval("approve")
+        session.provide_approval("tool-test", "approve")
         result = await task
 
         assert isinstance(result, PermissionResultAllow)
         assert result.updated_input == {"command": "ls"}
 
     @pytest.mark.asyncio
+    async def test_concurrent_approvals_resolve_only_matching_tool_use_id(
+        self, session: ChatSession
+    ) -> None:
+        session._tool_approval_callback = AsyncMock()
+
+        first = asyncio.create_task(
+            session._wait_for_tool_approval("tool-a", "Bash", {"command": "first"})
+        )
+        second = asyncio.create_task(
+            session._wait_for_tool_approval("tool-b", "Bash", {"command": "second"})
+        )
+        await wait_for_async_condition(
+            lambda: len(session._pending_approvals) == 2,
+            description="two pending approvals",
+        )
+
+        assert session.provide_approval("tool-a", "approve") is True
+        first_result = await first
+        assert isinstance(first_result, PermissionResultAllow)
+        assert first_result.updated_input == {"command": "first"}
+        assert second.done() is False
+
+        assert session.provide_approval("tool-b", "reject") is True
+        second_result = await second
+        assert isinstance(second_result, PermissionResultDeny)
+
+    @pytest.mark.asyncio
     async def test_wait_for_tool_approval_reject(self, session: ChatSession) -> None:
         session._tool_approval_callback = AsyncMock()
 
-        task = asyncio.create_task(session._wait_for_tool_approval("Bash", {"command": "ls"}))
+        task = asyncio.create_task(
+            session._wait_for_tool_approval("tool-test", "Bash", {"command": "ls"})
+        )
         await wait_for_async_condition(
             lambda: session.has_pending_approval, description="pending approval"
         )
-        session.provide_approval("reject")
+        session.provide_approval("tool-test", "reject")
         result = await task
 
         assert isinstance(result, PermissionResultDeny)
@@ -529,11 +576,13 @@ class TestWaitForToolApproval:
         session._tool_approval_callback = AsyncMock()
         session._on_approved_tools_persist = MagicMock()
 
-        task = asyncio.create_task(session._wait_for_tool_approval("Bash", {"command": "ls"}))
+        task = asyncio.create_task(
+            session._wait_for_tool_approval("tool-test", "Bash", {"command": "ls"})
+        )
         await wait_for_async_condition(
             lambda: session.has_pending_approval, description="pending approval"
         )
-        session.provide_approval("approve_always")
+        session.provide_approval("tool-test", "approve_always")
         result = await task
 
         assert isinstance(result, PermissionResultAllow)

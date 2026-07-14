@@ -48,7 +48,9 @@ def _make_session(
 
     broadcasts: list[tuple[str | None, dict[str, Any]]] = []
 
-    async def _on_plan_ready(content: str | None, input_data: dict[str, Any]) -> None:
+    async def _on_plan_ready(
+        content: str | None, input_data: dict[str, Any], tool_use_id: str | None
+    ) -> None:
         broadcasts.append((content, input_data))
 
     session._on_plan_ready = _on_plan_ready
