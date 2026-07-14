@@ -723,3 +723,35 @@ class CronJobStorage(CronRunStorageMixin):
                 job.id,
             ),
         )
+
+    def claim_due_job(
+        self,
+        job_id: str,
+        *,
+        expected_next_run_at: datetime,
+        next_run_at: datetime | None,
+        disable: bool = False,
+    ) -> bool:
+        """Advance a due job only when its schedule still matches the selected row."""
+        now = utc_now()
+        cursor = self.db.execute(
+            """
+            UPDATE cron_jobs
+               SET enabled = %s,
+                   next_run_at = %s,
+                   updated_at = %s
+             WHERE id = %s
+               AND enabled = TRUE
+               AND next_run_at = %s
+               AND next_run_at <= %s
+            """,
+            (
+                not disable,
+                _db_timestamp(next_run_at),
+                now,
+                job_id,
+                _db_timestamp(expected_next_run_at),
+                now,
+            ),
+        )
+        return cursor.rowcount == 1

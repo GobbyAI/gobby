@@ -462,6 +462,38 @@ def test_get_due_jobs(cron_storage: CronJobStorage) -> None:
     assert due[0].id == job1.id
 
 
+def test_claim_due_job_compare_and_sets_next_run_at(
+    cron_storage: CronJobStorage,
+) -> None:
+    """Only the first claimant can advance a selected due schedule."""
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Claim due",
+        schedule_type="interval",
+        action_type="shell",
+        action_config={"command": "echo"},
+        interval_seconds=60,
+    )
+    due_at = datetime.now(UTC) - timedelta(minutes=1)
+    next_run_at = datetime.now(UTC) + timedelta(minutes=1)
+    cron_storage.update_job(job.id, next_run_at=due_at)
+
+    assert cron_storage.claim_due_job(
+        job.id,
+        expected_next_run_at=due_at,
+        next_run_at=next_run_at,
+    )
+    assert not cron_storage.claim_due_job(
+        job.id,
+        expected_next_run_at=due_at,
+        next_run_at=next_run_at + timedelta(minutes=1),
+    )
+
+    persisted = cron_storage.get_job(job.id)
+    assert persisted is not None
+    assert persisted.next_run_at == next_run_at
+
+
 # --- CronRun CRUD tests (#7621) ---
 
 
