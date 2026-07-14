@@ -79,6 +79,14 @@ class VoiceConfig(BaseModel):
         default="chatterbox",
         description="TTS provider id. Currently supported: 'chatterbox' (voice cloning).",
     )
+    tts_mps_memory_limit_gb: float = Field(
+        default=12.0,
+        gt=0,
+        description=(
+            "Absolute torch-MPS memory cap (GB) for TTS, converted to an allocator "
+            "fraction of Metal's recommended working set at model load."
+        ),
+    )
     tts_reference_audio: str = Field(
         default="~/.gobby/voice/reference.wav",
         description="Path to voice clone reference audio (10-20s WAV for supported providers).",

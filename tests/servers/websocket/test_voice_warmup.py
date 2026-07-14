@@ -739,3 +739,72 @@ class TestVoiceWarmup:
         assert payload["status"] == "error"
         assert payload["request_id"] == "req-no-stt"
         assert "Speech-to-text" in payload["error"]
+
+
+class TestWarmupFailureBackoff:
+    """Failed warmups must not reload a crashing model per request (#18196)."""
+
+    def _mixin(self) -> DummyVoiceMixin:
+        return DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=False))
+
+    async def test_error_status_respects_backoff_window(self) -> None:
+        import time
+
+        mixin = self._mixin()
+        mixin._tts_warmup_status = "error"
+        mixin._tts_warmup_next_retry_at = time.monotonic() + 300.0
+
+        assert mixin.start_voice_warmup(want_stt=False, want_tts=True) is False
+        assert mixin._tts_warmup_status == "error"
+        assert mixin._voice_warmup_task is None
+
+    async def test_error_status_rewarns_after_backoff_elapses(self) -> None:
+        import time
+
+        mixin = self._mixin()
+        mock_tts = MagicMock()
+        mock_tts.warmup = AsyncMock()
+        mixin._get_tts = MagicMock(return_value=mock_tts)
+        mixin._get_tts_availability = MagicMock(return_value=(True, ""))
+
+        mixin._tts_warmup_status = "error"
+        mixin._tts_warmup_next_retry_at = time.monotonic() - 1.0
+
+        assert mixin.start_voice_warmup(want_stt=False, want_tts=True) is True
+        task = mixin._voice_warmup_task
+        assert task is not None
+        await task
+        assert mixin._tts_warmup_status == "ready"
+        assert mixin._tts_warmup_failures == 0
+        assert mixin._tts_warmup_next_retry_at == 0.0
+
+    async def test_warmup_failure_sets_exponential_backoff(self) -> None:
+        import time
+
+        mixin = self._mixin()
+        mixin._get_tts = MagicMock(return_value=None)
+        mixin._get_tts_availability = MagicMock(return_value=(False, "TTS is broken"))
+
+        before = time.monotonic()
+        assert mixin.start_voice_warmup(want_stt=False, want_tts=True) is True
+        task = mixin._voice_warmup_task
+        assert task is not None
+        await task
+
+        assert mixin._tts_warmup_status == "error"
+        assert mixin._tts_warmup_failures == 1
+        first_retry_at = mixin._tts_warmup_next_retry_at
+        assert first_retry_at >= before + 60.0  # 30 * 2^1
+
+        # Immediate re-request during backoff is ignored.
+        assert mixin.start_voice_warmup(want_stt=False, want_tts=True) is False
+
+        # Force the backoff to elapse; the next failure doubles the delay.
+        mixin._tts_warmup_next_retry_at = time.monotonic() - 1.0
+        before = time.monotonic()
+        assert mixin.start_voice_warmup(want_stt=False, want_tts=True) is True
+        task = mixin._voice_warmup_task
+        assert task is not None
+        await task
+        assert mixin._tts_warmup_failures == 2
+        assert mixin._tts_warmup_next_retry_at >= before + 120.0  # 30 * 2^2
