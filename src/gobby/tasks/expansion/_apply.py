@@ -7,6 +7,7 @@ from typing import Any, cast
 
 from gobby.storage.expansion_runs import ExpansionRun
 from gobby.storage.hub.protocol import ExpansionApplyMutation, TaskSeqAllocation
+from gobby.storage.task_dependencies import DependencyCycleError
 from gobby.storage.tasks import Task
 from gobby.storage.tasks._creation import _create_task_in_transaction
 from gobby.storage.tasks._stage_manifest import derive_child_manifest_specs
@@ -328,5 +329,5 @@ def _add_dependency(self: Any, task_id: str, depends_on: str) -> None:
     """Best-effort dependency creation that ignores duplicates."""
     try:
         self.dep_manager.add_dependency(task_id=task_id, depends_on=depends_on, dep_type="blocks")
-    except ValueError:
+    except (ValueError, DependencyCycleError):
         pass

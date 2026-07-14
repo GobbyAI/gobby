@@ -316,6 +316,33 @@ def test_duplicate_title_handling(MockDepManager, builder, mock_task_manager):
 
 
 @patch("gobby.storage.task_dependencies.TaskDependencyManager")
+def test_ambiguous_dependency_title_is_not_wired(MockDepManager, builder, mock_task_manager):
+    tasks = [
+        _task(id="root", project_id="p1", title="Root", seq_num=1),
+        _task(id="a1", project_id="p1", title="A", seq_num=2),
+        _task(id="a2", project_id="p1", title="A", seq_num=3),
+        _task(id="b", project_id="p1", title="B", seq_num=4),
+    ]
+    mock_task_manager.create_task.side_effect = tasks
+    mock_task_manager.get_task.side_effect = lambda task_id: next(
+        task for task in tasks if task.id == task_id
+    )
+    tree = {
+        "title": "Root",
+        "children": [
+            {"title": "A"},
+            {"title": "A"},
+            {"title": "B", "depends_on": ["A"]},
+        ],
+    }
+
+    result = builder.build(tree)
+
+    MockDepManager.return_value.add_dependency.assert_not_called()
+    assert any("Ambiguous dependency title 'A'" in error for error in result.errors)
+
+
+@patch("gobby.storage.task_dependencies.TaskDependencyManager")
 def test_invalid_dependency_format(MockDepManager, builder, mock_task_manager):
     """Test error handling for invalid dependency types."""
     mock_task_manager.create_task.return_value = _task(

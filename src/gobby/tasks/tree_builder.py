@@ -68,6 +68,8 @@ class TaskTreeBuilder:
         self.project_id = project_id
         self.session_id = session_id
         self._title_to_id: dict[str, str] = {}  # Map title -> task_id for dependency resolution
+        self._ambiguous_titles: set[str] = set()
+        self._node_to_id: dict[int, str] = {}
         self._sibling_index_map: dict[
             str | None, dict[int, str]
         ] = {}  # parent_id -> {sibling_index -> task_id}
@@ -84,6 +86,8 @@ class TaskTreeBuilder:
             TreeBuildResult with created task refs
         """
         self._title_to_id = {}
+        self._ambiguous_titles = set()
+        self._node_to_id = {}
         self._sibling_index_map = {}
         self._created_tasks = []
         self._errors = []
@@ -210,10 +214,12 @@ class TaskTreeBuilder:
             # Check for duplicate titles (warn but continue for partial functionality)
             if title in self._title_to_id:
                 existing_id = self._title_to_id[title]
+                self._ambiguous_titles.add(title)
                 self._errors.append(
                     f"Duplicate task title '{title}': conflicts with existing task {existing_id}"
                 )
             self._title_to_id[title] = task.id
+            self._node_to_id[id(node)] = task.id
 
             # Track sibling index for numeric dependency references
             if parent_task_id not in self._sibling_index_map:
@@ -251,9 +257,8 @@ class TaskTreeBuilder:
             title = node.get("title")
             depends_on = node.get("depends_on", [])
 
-            if title and depends_on and title in self._title_to_id:
-                task_id = self._title_to_id[title]
-
+            task_id = self._node_to_id.get(id(node))
+            if title and depends_on and task_id:
                 for dep in depends_on:
                     blocker_id: str | None = None
                     dep_display: str = str(dep)  # For error messages
@@ -269,6 +274,14 @@ class TaskTreeBuilder:
                             continue
                     elif isinstance(dep, str):
                         # Title string - look up by title
+                        if dep in self._ambiguous_titles:
+                            message = (
+                                f"Ambiguous dependency title '{dep}' for task '{title}'; "
+                                "use a sibling index"
+                            )
+                            logger.warning(message)
+                            self._errors.append(message)
+                            continue
                         blocker_id = self._title_to_id.get(dep)
                         if blocker_id is None:
                             message = f"Dependency not found: '{dep}' for task '{title}'"
@@ -296,7 +309,7 @@ class TaskTreeBuilder:
                             self._errors.append(message)
 
             # Get this node's task_id to pass as parent for children
-            node_task_id = self._title_to_id.get(title) if title else None
+            node_task_id = self._node_to_id.get(id(node))
 
             # Process children
             for child in node.get("children", []):
