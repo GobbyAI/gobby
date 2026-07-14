@@ -290,7 +290,10 @@ class PostgresHubDatabase:
                     )
                     if initial_lock is not None:
                         txn._acquire_lock_target(initial_lock)
-                    yield txn
+                    try:
+                        yield txn
+                    finally:
+                        txn.closed = True
                 callbacks = _pop_after_commit_scope(self._state, committed=True)
             except Exception:
                 _pop_after_commit_scope(self._state, committed=False)
@@ -411,6 +414,7 @@ class _PostgresTransaction:
     ) -> None:
         self._conn = conn
         self.is_immediate = is_immediate
+        self.closed = False
         self._state = state if state is not None else threading.local()
 
     def execute(

@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import importlib
 import inspect
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta, timezone
 
 import pytest
@@ -14,6 +16,33 @@ pytestmark = pytest.mark.unit
 
 def _postgres_module():
     return importlib.import_module("gobby.storage.hub.postgres")
+
+
+def test_postgres_transaction_is_closed_when_context_exits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _postgres_module()
+
+    class Connection:
+        @contextmanager
+        def transaction(self) -> Iterator[None]:
+            yield
+
+    connection = Connection()
+    database = object.__new__(module.PostgresHubDatabase)
+    database._state = module.threading.local()
+    monkeypatch.setattr(database, "open", lambda: None)
+
+    @contextmanager
+    def pool_connection() -> Iterator[Connection]:
+        yield connection
+
+    monkeypatch.setattr(database, "_pool_connection", pool_connection)
+
+    with database._transaction_context(is_immediate=False) as transaction:
+        assert transaction.closed is False
+
+    assert transaction.closed is True
 
 
 @pytest.mark.asyncio
