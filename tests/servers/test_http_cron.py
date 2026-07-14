@@ -241,6 +241,22 @@ class TestCronCreateJob:
         assert resp.status_code == 422
         cron_storage.create_job.assert_not_called()
 
+    def test_create_job_surfaces_invalid_cron_expression(self, client, cron_storage) -> None:
+        cron_storage.create_job.side_effect = ValueError("Invalid cron expression: 'bad cron'")
+
+        resp = client.post(
+            "/api/cron/jobs",
+            json={
+                "name": "Invalid",
+                "action_type": "shell",
+                "action_config": {"command": "echo"},
+                "cron_expr": "bad cron",
+            },
+        )
+
+        assert resp.status_code == 400
+        assert resp.json() == {"detail": "Invalid cron expression: 'bad cron'"}
+
 
 class TestCronGetJob:
     def test_get_job(self, client, cron_storage) -> None:

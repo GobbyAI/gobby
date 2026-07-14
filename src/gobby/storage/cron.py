@@ -166,6 +166,9 @@ class CronJobStorage(CronRunStorageMixin):
         is_system: bool = False,
     ) -> CronJob:
         """Create a new cron job."""
+        if schedule_type == "cron" and (not cron_expr or not croniter.is_valid(cron_expr)):
+            raise ValueError(f"Invalid cron expression: {cron_expr!r}")
+
         job_id = str(uuid.uuid4())
         now = utc_now()
         run_at_value = parse_stored_datetime(run_at)
