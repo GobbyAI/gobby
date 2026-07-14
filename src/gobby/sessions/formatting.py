@@ -87,7 +87,10 @@ def format_handoff_as_markdown(
     if ctx.git_commits:
         lines = ["### Commits This Session"]
         for commit in ctx.git_commits:
-            lines.append(f"- `{commit.get('hash', '')[:7]}` {commit.get('message', '')}")
+            commit_hash = commit.get("hash", "")[:7]
+            message = commit.get("message", "")
+            prefix = f"`{commit_hash}` " if commit_hash else ""
+            lines.append(f"- {prefix}{message}")
         sections.append("\n".join(lines))
 
     # Git status section
@@ -127,7 +130,7 @@ def format_handoff_as_markdown(
     # Recent activity section
     if ctx.recent_activity:
         lines = ["### Recent Activity"]
-        for activity in ctx.recent_activity[-5:]:
+        for activity in ctx.recent_activity[:5]:
             lines.append(f"- {activity}")
         sections.append("\n".join(lines))
 

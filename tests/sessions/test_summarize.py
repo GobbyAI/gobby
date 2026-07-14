@@ -25,6 +25,16 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 
+VALID_SUMMARY = """## Current State
+
+The focused summary-generation behavior completed successfully with enough detail to provide a
+useful handoff to the next session.
+
+## Next Steps
+
+Continue from the captured session state and complete the active task.
+"""
+
 pytestmark = pytest.mark.unit
 
 
@@ -272,7 +282,7 @@ class TestGenerateSessionSummaries:
                 patch("gobby.sessions.summarize._enrich_git_context"),
                 patch(
                     "gobby.sessions.summarize._generate_full_summary",
-                    return_value=("# Summary", None),
+                    return_value=(VALID_SUMMARY, None),
                 ),
             ):
 
@@ -322,13 +332,13 @@ class TestGenerateSessionSummaries:
             ),
             patch(
                 "gobby.sessions.summarize._generate_full_summary",
-                return_value=("# Full Summary", None),
+                return_value=(VALID_SUMMARY, None),
             ) as mock_full,
         ):
             result = await generate_session_summaries(
                 session_id="sess-refresh",
                 session_manager=manager,
-                llm_service=_mock_llm("# Full Summary"),
+                llm_service=_mock_llm(VALID_SUMMARY),
                 session_summary_config=_summary_config(),
             )
 
@@ -338,7 +348,7 @@ class TestGenerateSessionSummaries:
         assert manager.persist_calls == [
             {
                 "session_id": "sess-refresh",
-                "summary_markdown": "# Full Summary",
+                "summary_markdown": VALID_SUMMARY,
                 "generation_mode": "full",
                 "source_context_hash": result["source_context_hash"],
                 "source_digest_turn_count": 1,
@@ -369,19 +379,19 @@ class TestGenerateSessionSummaries:
             ),
             patch(
                 "gobby.sessions.summarize._generate_full_summary",
-                return_value=("# Full Summary", None),
+                return_value=(VALID_SUMMARY, None),
             ) as mock_full,
         ):
             first = await generate_session_summaries(
                 session_id="sess-noop",
                 session_manager=manager,
-                llm_service=_mock_llm("# Full Summary"),
+                llm_service=_mock_llm(VALID_SUMMARY),
                 session_summary_config=_summary_config(),
             )
             second = await generate_session_summaries(
                 session_id="sess-noop",
                 session_manager=manager,
-                llm_service=_mock_llm("# Full Summary"),
+                llm_service=_mock_llm(VALID_SUMMARY),
                 session_summary_config=_summary_config(),
             )
 
@@ -395,7 +405,7 @@ class TestGenerateSessionSummaries:
     async def test_delta_merge_receives_only_digest_turns_since_watermark(self) -> None:
         session = _make_session(
             session_id="sess-delta",
-            summary_markdown="# Previous Summary",
+            summary_markdown=VALID_SUMMARY,
             digest_markdown=_digest_turns(3),
         )
         session.summary_source_context_hash = "old-hash"
@@ -412,14 +422,14 @@ class TestGenerateSessionSummaries:
             ),
             patch(
                 "gobby.sessions.summarize._generate_delta_summary",
-                new=AsyncMock(return_value=("# Merged Summary", None)),
+                new=AsyncMock(return_value=(VALID_SUMMARY, None)),
             ) as mock_delta,
             patch("gobby.sessions.summarize._generate_full_summary") as mock_full,
         ):
             result = await generate_session_summaries(
                 session_id="sess-delta",
                 session_manager=manager,
-                llm_service=_mock_llm("# Merged Summary"),
+                llm_service=_mock_llm(VALID_SUMMARY),
                 session_summary_config=_summary_config(),
             )
 
@@ -435,7 +445,7 @@ class TestGenerateSessionSummaries:
     async def test_digest_delta_threshold_uses_full_rebuild(self) -> None:
         session = _make_session(
             session_id="sess-threshold",
-            summary_markdown="# Previous Summary",
+            summary_markdown=VALID_SUMMARY,
             digest_markdown=_digest_turns(21),
         )
         session.summary_source_context_hash = "old-hash"
@@ -453,13 +463,13 @@ class TestGenerateSessionSummaries:
             patch("gobby.sessions.summarize._generate_delta_summary") as mock_delta,
             patch(
                 "gobby.sessions.summarize._generate_full_summary",
-                return_value=("# Rebuilt Summary", None),
+                return_value=(VALID_SUMMARY, None),
             ) as mock_full,
         ):
             result = await generate_session_summaries(
                 session_id="sess-threshold",
                 session_manager=manager,
-                llm_service=_mock_llm("# Rebuilt Summary"),
+                llm_service=_mock_llm(VALID_SUMMARY),
                 session_summary_config=_summary_config(),
             )
 
@@ -472,7 +482,7 @@ class TestGenerateSessionSummaries:
     async def test_invalid_delta_output_falls_back_to_full_generation(self) -> None:
         session = _make_session(
             session_id="sess-delta-invalid",
-            summary_markdown="# Previous Summary",
+            summary_markdown=VALID_SUMMARY,
             digest_markdown=_digest_turns(2),
         )
         session.summary_source_context_hash = "old-hash"
@@ -493,20 +503,20 @@ class TestGenerateSessionSummaries:
             ),
             patch(
                 "gobby.sessions.summarize._generate_full_summary",
-                return_value=("# Rebuilt Summary", None),
+                return_value=(VALID_SUMMARY, None),
             ) as mock_full,
         ):
             result = await generate_session_summaries(
                 session_id="sess-delta-invalid",
                 session_manager=manager,
-                llm_service=_mock_llm("# Rebuilt Summary"),
+                llm_service=_mock_llm(VALID_SUMMARY),
                 session_summary_config=_summary_config(),
             )
 
         assert result["generation_mode"] == "full"
         assert result["delta_error"] == "delta failed"
         assert mock_full.call_count == 1
-        assert manager.persist_calls[-1]["summary_markdown"] == "# Rebuilt Summary"
+        assert manager.persist_calls[-1]["summary_markdown"] == VALID_SUMMARY
 
     @pytest.mark.asyncio
     async def test_no_transcript_path(self) -> None:
@@ -555,7 +565,10 @@ class TestGenerateSessionSummaries:
 
         with (
             patch("gobby.sessions.summarize._enrich_git_context"),
-            patch("gobby.sessions.formatting.format_handoff_as_markdown", return_value="# Summary"),
+            patch(
+                "gobby.sessions.formatting.format_handoff_as_markdown",
+                return_value="### Recent Activity\n- Completed the requested implementation work.",
+            ),
         ):
             result = await generate_session_summaries(
                 session_id="sess-1",
@@ -575,7 +588,10 @@ class TestGenerateSessionSummaries:
 
         with (
             patch("gobby.sessions.summarize._enrich_git_context"),
-            patch("gobby.sessions.formatting.format_handoff_as_markdown", return_value="# Summary"),
+            patch(
+                "gobby.sessions.formatting.format_handoff_as_markdown",
+                return_value="### Recent Activity\n- Completed the requested implementation work.",
+            ),
         ):
             result = await generate_session_summaries(
                 session_id="sess-1",
@@ -593,14 +609,14 @@ class TestGenerateSessionSummaries:
         sm = MagicMock()
         sm.get.return_value = _make_session(transcript_path=transcript_path)
 
-        mock_llm = _mock_llm("# Full Summary\nDetails here.")
+        mock_llm = _mock_llm(VALID_SUMMARY)
 
         with (
             patch("gobby.sessions.summarize._enrich_git_context"),
             patch("gobby.sessions.formatting.format_handoff_as_markdown", return_value="# Compact"),
             patch(
                 "gobby.sessions.summarize._generate_full_summary",
-                return_value=("# Full Summary", None),
+                return_value=(VALID_SUMMARY, None),
             ),
         ):
             result = await generate_session_summaries(
@@ -626,7 +642,7 @@ class TestGenerateSessionSummaries:
             ),
             patch(
                 "gobby.sessions.formatting.format_handoff_as_markdown",
-                return_value="# Fallback Summary",
+                return_value="### Recent Activity\n- Preserved deterministic fallback context.",
             ),
         ):
             result = await generate_session_summaries(
@@ -650,7 +666,7 @@ class TestGenerateSessionSummaries:
         handoff_ctx.git_status = ""
         session_manager = MagicMock()
         session_manager.db = None
-        llm_service = _mock_llm("# Droid Summary")
+        llm_service = _mock_llm(VALID_SUMMARY)
 
         with (
             patch("gobby.prompts.loader.PromptLoader") as MockPromptLoader,
@@ -679,7 +695,7 @@ class TestGenerateSessionSummaries:
                 session_manager=session_manager,
             )
 
-        assert full_markdown == "# Droid Summary"
+        assert full_markdown == VALID_SUMMARY
         assert full_error is None
         MockParser.assert_called_once_with(
             session_id="sess-droid",
@@ -697,7 +713,7 @@ class TestGenerateSessionSummaries:
         handoff_ctx.git_status = ""
         session_manager = MagicMock()
         session_manager.db = None
-        llm_service = _mock_llm("# Qwen Summary")
+        llm_service = _mock_llm(VALID_SUMMARY)
 
         with (
             patch("gobby.prompts.loader.PromptLoader") as MockPromptLoader,
@@ -728,7 +744,7 @@ class TestGenerateSessionSummaries:
                 session_manager=session_manager,
             )
 
-        assert full_markdown == "# Qwen Summary"
+        assert full_markdown == VALID_SUMMARY
         assert full_error is None
         MockQwenParser.assert_called_once_with(session_id="sess-qwen")
 
@@ -743,7 +759,7 @@ class TestGenerateSessionSummaries:
         handoff_ctx.git_status = "clean"
         session_manager = MagicMock()
         session_manager.db = None
-        llm_service = _mock_llm("# Digest Summary")
+        llm_service = _mock_llm(VALID_SUMMARY)
 
         with (
             patch("gobby.prompts.loader.PromptLoader") as MockPromptLoader,
@@ -771,7 +787,7 @@ class TestGenerateSessionSummaries:
                 session_manager=session_manager,
             )
 
-        assert full_markdown == "# Digest Summary"
+        assert full_markdown == VALID_SUMMARY
         assert full_error is None
         mock_format.assert_not_called()
         prompt = llm_service.call_feature.await_args.args[1]
@@ -790,7 +806,7 @@ class TestGenerateSessionSummaries:
         handoff_ctx.git_status = "clean"
         session_manager = MagicMock()
         session_manager.db = None
-        llm_service = _mock_llm("# Digest Summary")
+        llm_service = _mock_llm(VALID_SUMMARY)
 
         with (
             patch("gobby.prompts.loader.PromptLoader") as MockPromptLoader,
@@ -818,7 +834,7 @@ class TestGenerateSessionSummaries:
                 session_manager=session_manager,
             )
 
-        assert full_markdown == "# Digest Summary"
+        assert full_markdown == VALID_SUMMARY
         assert full_error is None
         mock_format.assert_not_called()
         prompt = llm_service.call_feature.await_args.args[1]
@@ -839,7 +855,7 @@ class TestGenerateSessionSummaries:
         handoff_ctx.git_status = "clean"
         session_manager = MagicMock()
         session_manager.db = None
-        llm_service = _mock_llm("# Digest Summary")
+        llm_service = _mock_llm(VALID_SUMMARY)
 
         with (
             patch("gobby.prompts.loader.PromptLoader") as MockPromptLoader,
@@ -867,7 +883,7 @@ class TestGenerateSessionSummaries:
                 session_manager=session_manager,
             )
 
-        assert full_markdown == "# Digest Summary"
+        assert full_markdown == VALID_SUMMARY
         assert full_error is None
         mock_format.assert_not_called()
         prompt = llm_service.call_feature.await_args.args[1]
@@ -886,7 +902,7 @@ class TestGenerateSessionSummaries:
         handoff_ctx.git_status = ""
         session_manager = MagicMock()
         session_manager.db = MagicMock()
-        llm_service = _mock_llm("# Enriched Summary")
+        llm_service = _mock_llm(VALID_SUMMARY)
         run_db_calls = []
 
         async def run_db(func, *args, **kwargs):
@@ -927,7 +943,7 @@ class TestGenerateSessionSummaries:
                 run_db=run_db,
             )
 
-        assert full_markdown == "# Enriched Summary"
+        assert full_markdown == VALID_SUMMARY
         assert full_error is None
         assert claimed in run_db_calls
         assert memories in run_db_calls
@@ -956,13 +972,13 @@ class TestGenerateSessionSummaries:
             ),
             patch(
                 "gobby.sessions.summarize._generate_full_summary",
-                return_value=("# Workspace Summary", None),
+                return_value=(VALID_SUMMARY, None),
             ),
         ):
             result = await generate_session_summaries(
                 session_id="sess-cwd",
                 session_manager=manager,
-                llm_service=_mock_llm("# Workspace Summary"),
+                llm_service=_mock_llm(VALID_SUMMARY),
                 session_summary_config=_summary_config(),
             )
 
@@ -979,7 +995,7 @@ class TestGenerateSessionSummaries:
         handoff_ctx.git_status = ""
         session_manager = MagicMock()
         session_manager.db = None
-        llm_service = _mock_llm("# Transcript Summary")
+        llm_service = _mock_llm(VALID_SUMMARY)
         turns = [{"idx": i} for i in range(TRANSCRIPT_FALLBACK_MAX_TURNS + 20)]
         formatted = "fallback\n" + ("x" * (TRANSCRIPT_FALLBACK_MAX_CHARS + 100))
 
@@ -1013,7 +1029,7 @@ class TestGenerateSessionSummaries:
                 session_manager=session_manager,
             )
 
-        assert full_markdown == "# Transcript Summary"
+        assert full_markdown == VALID_SUMMARY
         assert full_error is None
         formatted_turns = mock_format.call_args.args[0]
         assert len(formatted_turns) == TRANSCRIPT_FALLBACK_MAX_TURNS
@@ -1075,7 +1091,7 @@ class TestGenerateSessionSummaries:
             ),
             patch(
                 "gobby.sessions.formatting.format_handoff_as_markdown",
-                return_value="# Fallback Summary",
+                return_value="### Recent Activity\n- Preserved deterministic fallback context.",
             ),
         ):
             result = await generate_session_summaries(
@@ -1087,10 +1103,40 @@ class TestGenerateSessionSummaries:
         assert result["success"] is True
         sm.update_summary.assert_called_once_with(
             "sess-1",
-            summary_markdown="# Fallback Summary",
+            summary_markdown=(
+                "## Current State\n\n"
+                "### Recent Activity\n- Preserved deterministic fallback context.\n\n"
+                "## Next Steps\n\nContinue from the captured session state."
+            ),
         )
         assert sm.update_summary.call_count == 1
         assert sm.update_summary.call_args is not None
+
+    @pytest.mark.asyncio
+    async def test_total_generation_failure_does_not_set_handoff_ready(self) -> None:
+        session = _make_session(
+            session_id="sess-total-failure",
+            digest_markdown="### Turn 1\nDigest source.",
+        )
+        sm = MagicMock()
+        sm.get.return_value = session
+
+        with (
+            patch("gobby.sessions.summarize._enrich_git_context"),
+            patch("gobby.sessions.summarize._generate_full_summary", return_value=(None, "down")),
+            patch("gobby.sessions.summarize._format_deterministic_summary", return_value=""),
+        ):
+            result = await generate_session_summaries(
+                session_id=session.id,
+                session_manager=sm,
+                set_handoff_ready=True,
+            )
+
+        assert result["success"] is False
+        assert result["full_length"] == 0
+        assert result["error"] == "Unable to generate a valid session summary"
+        sm.update_summary.assert_not_called()
+        sm.update_status.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_deterministic_fallback_persists_latest_turn_when_digest_lags(self) -> None:
@@ -1108,7 +1154,7 @@ class TestGenerateSessionSummaries:
             ),
             patch(
                 "gobby.sessions.formatting.format_handoff_as_markdown",
-                return_value="# Fallback Summary",
+                return_value="### Recent Activity\n- Preserved deterministic fallback context.",
             ),
         ):
             result = await generate_session_summaries(

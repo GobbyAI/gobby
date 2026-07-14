@@ -513,6 +513,7 @@ class TestMailboxBroadcast:
     async def test_all_target_reaches_every_deliverable_non_system_session(
         self,
         temp_db: HubDatabase,
+        project_manager: LocalProjectManager,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
     ) -> None:
@@ -522,6 +523,11 @@ class TestMailboxBroadcast:
         expired = _register_session(session_manager, sample_project["id"], "expired")
         session_manager.update_status(paused.id, "paused")
         session_manager.update_status(expired.id, "expired")
+        other_project_id = project_manager.create(
+            name="other-all-project",
+            repo_path="/tmp/other-all-project",
+        ).id
+        foreign = _register_session(session_manager, other_project_id, "foreign-active")
 
         result = await _mailbox(temp_db, session_manager).send(
             from_session_id=sender.id,
@@ -530,13 +536,53 @@ class TestMailboxBroadcast:
         )
 
         assert result.recipient_session_ids == [active.id, paused.id]
+        assert foreign.id not in result.recipient_session_ids
         assert result.broadcast_id
         assert result.selector_metadata == {
             "target": "all",
+            "project_id": sample_project["id"],
             "session_status": ["active", "paused"],
             "exclude_session_id": sender.id,
             "exclude_system_session": True,
         }
+
+    async def test_fanout_rolls_back_every_message_when_one_insert_fails(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        sender = _register_session(session_manager, sample_project["id"], "tx-sender")
+        first = _register_session(session_manager, sample_project["id"], "tx-first")
+        second = _register_session(session_manager, sample_project["id"], "tx-second")
+        manager = InterSessionMessageManager(temp_db)
+        mailbox = MailboxService(
+            db=temp_db,
+            message_manager=manager,
+            session_manager=session_manager,
+        )
+        original_create = manager.create_message
+        call_count = 0
+
+        def fail_on_second_insert(**kwargs: Any) -> Any:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                raise RuntimeError("fanout insert failed")
+            return original_create(**kwargs)
+
+        monkeypatch.setattr(manager, "create_message", fail_on_second_insert)
+
+        with pytest.raises(RuntimeError, match="fanout insert failed"):
+            await mailbox.send(
+                from_session_id=sender.id,
+                target="all",
+                content="transactional notice",
+            )
+
+        assert manager.get_messages(first.id) == []
+        assert manager.get_messages(second.id) == []
 
     @pytest.mark.asyncio
     async def test_agent_target_resolves_active_agent_run_recipient(

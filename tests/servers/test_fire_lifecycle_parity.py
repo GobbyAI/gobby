@@ -301,7 +301,7 @@ class TestFireLifecycleMessagePiggyback:
         assert result is not None
         assert "[Pending P2P messages from other sessions]:" in result["context"]
         assert "Agent A completed subtask #42" in result["context"]
-        mgr.mark_delivered.assert_called_once_with("msg-1")
+        mgr.mark_delivered.assert_called_once_with("msg-1", SESSION_ID)
 
     @pytest.mark.asyncio
     async def test_piggyback_on_after_tool(self, host: ChatMixinHost) -> None:
@@ -364,7 +364,7 @@ class TestFireLifecycleMessagePiggyback:
         assert result is not None
         assert "[Pending P2P messages from other sessions]:" in result["context"]
         assert "Urgent update from coordinator" in result["context"]
-        mgr.mark_delivered.assert_called_once_with("msg-agent-1")
+        mgr.mark_delivered.assert_called_once_with("msg-agent-1", SESSION_ID)
 
     @pytest.mark.asyncio
     async def test_no_pending_messages(self, host: ChatMixinHost) -> None:
@@ -515,7 +515,7 @@ class TestFireLifecycleFullParity:
         assert "workflow ctx" in result["context"]
         assert "From agent" in result["context"]
         broadcaster.broadcast_event.assert_awaited_once()
-        mgr.mark_delivered.assert_called_once_with("msg-99")
+        mgr.mark_delivered.assert_called_once_with("msg-99", SESSION_ID)
 
     @pytest.mark.asyncio
     async def test_webhook_block_stops_everything(self, host: ChatMixinHost) -> None:

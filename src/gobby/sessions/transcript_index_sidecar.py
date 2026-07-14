@@ -345,6 +345,20 @@ def clear_index_cache() -> None:
     _BUILD_LOCKS.clear()
 
 
+def discard_index_sidecar(path: str) -> None:
+    """Remove a transcript's persisted and in-memory index state."""
+    absolute_path = os.path.abspath(path)
+    try:
+        os.unlink(_sidecar_path(path))
+    except FileNotFoundError:
+        pass
+
+    for key in [key for key in _INDEX_CACHE if key[0] == absolute_path]:
+        _INDEX_CACHE.pop(key, None)
+    for key in [key for key in _BUILD_LOCKS if key[0] == absolute_path]:
+        _BUILD_LOCKS.pop(key, None)
+
+
 async def get_or_build_index(
     path: str,
     source: str,

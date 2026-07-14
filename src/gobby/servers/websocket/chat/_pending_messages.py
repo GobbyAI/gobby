@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from gobby.hooks.events import HookEventType
 
@@ -43,23 +42,26 @@ class ChatPendingMessagesMixin:
             if not undelivered:
                 return None
 
-            groups: dict[str, list[Any]] = {}
+            groups: dict[tuple[str, str], list[str]] = {}
             collected_message_ids: list[str] = []
             for msg in undelivered:
                 msg_type = getattr(msg, "message_type", "message") or "message"
-                groups.setdefault(msg_type, []).append(msg)
+                header = self._message_group_header(msg_type)
+                urgent = "[URGENT] " if getattr(msg, "priority", "normal") == "urgent" else ""
+                sender = self._resolve_chat_sender(getattr(msg, "from_session", None))
+                rendered = f"- {urgent}{sender}{msg.content}"
+                groups.setdefault((msg_type, header), []).append(rendered)
                 msg_id = getattr(msg, "id", None)
                 if isinstance(msg_id, str):
                     collected_message_ids.append(msg_id)
 
+            if not groups:
+                return None
+
             sections: list[str] = []
-            for msg_type, msgs in groups.items():
-                header = self._message_group_header(msg_type)
+            for (_msg_type, header), rendered_messages in groups.items():
                 lines = [header]
-                for msg in msgs:
-                    urgent = "[URGENT] " if getattr(msg, "priority", "normal") == "urgent" else ""
-                    sender = self._resolve_chat_sender(getattr(msg, "from_session", None))
-                    lines.append(f"- {urgent}{sender}{msg.content}")
+                lines.extend(rendered_messages)
                 sections.append("\n".join(lines))
 
             context = "\n\n".join(sections)
@@ -70,7 +72,7 @@ class ChatPendingMessagesMixin:
             logger.debug("Inter-session message piggyback failed: %s", exc, exc_info=True)
             return None
 
-    def _mark_pending_messages_delivered(self, message_ids: list[str]) -> None:
+    def _mark_pending_messages_delivered(self, message_ids: list[str], db_session_id: str) -> None:
         """Acknowledge messages after their context survives lifecycle processing."""
         inter_session_msg_manager = getattr(self, "inter_session_msg_manager", None)
         if not inter_session_msg_manager:
@@ -78,7 +80,7 @@ class ChatPendingMessagesMixin:
 
         for message_id in message_ids:
             try:
-                inter_session_msg_manager.mark_delivered(message_id)
+                inter_session_msg_manager.mark_delivered(message_id, db_session_id)
             except Exception:
                 logger.debug(
                     "Failed to mark inter-session message %s delivered",

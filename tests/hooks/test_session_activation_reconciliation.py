@@ -967,7 +967,6 @@ def test_hook_manager_reconciles_before_rules(
         "session_manager",
         "session_coordinator",
         "health_monitor",
-        "hook_assembler",
         "event_handlers",
     ):
         setattr(components, name, MagicMock())

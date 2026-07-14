@@ -216,7 +216,7 @@ class EventEnricher:
         # mark deliberately leaves the message retryable (at-least-once delivery).
         for msg in undelivered:
             try:
-                self._inter_session_msg_manager.mark_delivered(msg.id)
+                self._inter_session_msg_manager.mark_delivered(msg.id, platform_session_id)
             except Exception:
                 logger.warning(
                     "Failed to mark piggyback message %s delivered; it will be retried",

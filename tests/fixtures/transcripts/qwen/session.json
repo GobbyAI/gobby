@@ -30,11 +30,13 @@
           ]
         }
       ],
-      "usageMetadata": {
-        "promptTokenCount": 1000,
-        "cachedContentTokenCount": 250,
-        "candidatesTokenCount": 70,
-        "thoughtsTokenCount": 30
+      "tokens": {
+        "input": 1000,
+        "output": 70,
+        "cached": 250,
+        "thoughts": 30,
+        "tool": 12,
+        "total": 1100
       }
     }
   ]

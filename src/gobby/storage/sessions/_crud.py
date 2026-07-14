@@ -17,14 +17,14 @@ from gobby.storage.hub.protocol import (
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.session_models import Session
-from gobby.storage.session_resolution import is_session_uuid
 from gobby.utils.datetime import utc_now
 
 from ._constants import SYSTEM_SESSION_ID, ensure_system_session, get_logger
+from ._identity_crud import _SessionIdentityCRUDMixin
 from ._lineage_guard import repair_self_parent_session, sanitize_parent_session_id
 from ._title_defaults import PROVISIONAL_TITLE_SOURCE, format_provisional_session_title
+from ._update_sentinel import UNSET, UnsetType, is_set
 from ._upsert import is_session_unique_conflict, update_existing_session
-from ._web_chat_crud import _SessionWebChatCRUDMixin
 
 
 class _SessionCRUDHost(Protocol):
@@ -53,16 +53,18 @@ class _SessionCRUDHost(Protocol):
 
     def _notify_session_change(self, event: str, session_id: str) -> None: ...
 
+    def move_to_project(self, session_id: str, project_id: str) -> Session | None: ...
+
     def register(
         self,
         external_id: str,
         machine_id: str,
         source: str,
         project_id: str | None,
-        title: str | None = None,
-        transcript_path: str | None = None,
-        git_branch: str | None = None,
-        parent_session_id: str | None = None,
+        title: str | None | UnsetType = UNSET,
+        transcript_path: str | None | UnsetType = UNSET,
+        git_branch: str | None | UnsetType = UNSET,
+        parent_session_id: str | None | UnsetType = UNSET,
         agent_depth: int = 0,
         spawned_by_agent_id: str | None = None,
         terminal_context: dict[str, Any] | None = None,
@@ -71,21 +73,21 @@ class _SessionCRUDHost(Protocol):
         is_local: bool = False,
         sandbox_enabled: bool | None = None,
         sandbox_policy_hash: str | None = None,
-        title_source: str | None = None,
+        title_source: str | None | UnsetType = UNSET,
     ) -> Session: ...
 
 
-class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
+class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
     def register(
         self: _SessionCRUDHost,
         external_id: str,
         machine_id: str,
         source: str,
         project_id: str | None,
-        title: str | None = None,
-        transcript_path: str | None = None,
-        git_branch: str | None = None,
-        parent_session_id: str | None = None,
+        title: str | None | UnsetType = UNSET,
+        transcript_path: str | None | UnsetType = UNSET,
+        git_branch: str | None | UnsetType = UNSET,
+        parent_session_id: str | None | UnsetType = UNSET,
         agent_depth: int = 0,
         spawned_by_agent_id: str | None = None,
         terminal_context: dict[str, Any] | None = None,
@@ -94,7 +96,7 @@ class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
         is_local: bool = False,
         sandbox_enabled: bool | None = None,
         sandbox_policy_hash: str | None = None,
-        title_source: str | None = None,
+        title_source: str | None | UnsetType = UNSET,
     ) -> Session:
         """
         Register a new session or return existing one.
@@ -108,11 +110,11 @@ class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
             machine_id: Machine identifier
             source: CLI source (claude, qwen, codex, droid)
             project_id: Project ID (None if project context unavailable)
-            title: Optional session title
+            title: Session title; omit to preserve an existing value, or pass None to clear
             title_source: Optional provenance for an explicit session title
-            transcript_path: Path to transcript file
-            git_branch: Git branch name
-            parent_session_id: Parent session for handoff
+            transcript_path: Transcript path; omit to preserve, or pass None to clear
+            git_branch: Git branch; omit to preserve, or pass None to clear
+            parent_session_id: Parent session; omit to preserve, or pass None to clear
             agent_depth: Nesting depth (0 = human-initiated, 1+ = agent-spawned)
             spawned_by_agent_id: ID of the agent that spawned this session
 
@@ -131,11 +133,15 @@ class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
                 exc_info=True,
             )
 
-        if title_source is not None and title_source not in self._VALID_TITLE_SOURCES:
+        if (
+            is_set(title_source)
+            and title_source is not None
+            and title_source not in self._VALID_TITLE_SOURCES
+        ):
             sources = ", ".join(sorted(self._VALID_TITLE_SOURCES))
             raise ValueError(f"Invalid title_source {title_source!r}. Must be one of: {sources}")
 
-        if parent_session_id == SYSTEM_SESSION_ID:
+        if is_set(parent_session_id) and parent_session_id == SYSTEM_SESSION_ID:
             ensure_system_session(self.db)
 
         registration_lock = SessionRegistration(
@@ -164,24 +170,23 @@ class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
                         session_type=session_type,
                     )
                     if existing and existing.project_id != project_id:
-                        conn.execute(
-                            "UPDATE sessions SET project_id = %s, updated_at = %s WHERE id = %s",
-                            (project_id, now, existing.id),
-                        )
+                        previous_project_id = existing.project_id
+                        existing = self.move_to_project(existing.id, project_id)
+                        if existing is None:
+                            raise RuntimeError("Recovered session disappeared during project move")
                         get_logger().info(
                             "Recovered session %s: project_id %s -> %s",
                             existing.id,
-                            existing.project_id,
+                            previous_project_id,
                             project_id,
                         )
-                        existing = self.get(existing.id)
 
             if existing:
                 registration_title = title
-                registration_title_source = title_source if title is not None else None
+                registration_title_source = title_source
                 existing_seq_num = existing.seq_num
                 if (
-                    title is None
+                    not is_set(title)
                     and existing_seq_num is not None
                     and not str(existing.title or "").strip()
                 ):
@@ -192,15 +197,20 @@ class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
                     registration_title_source = PROVISIONAL_TITLE_SOURCE
                 if existing.parent_session_id == existing.id:
                     repair_self_parent_session(conn, session_id=existing.id, now=now)
-                registration_parent_session_id = (
-                    None if parent_session_id == existing.id else parent_session_id
-                )
-                sanitized_parent_session_id = sanitize_parent_session_id(
-                    conn,
-                    child_session_id=existing.id,
-                    parent_session_id=registration_parent_session_id,
-                    context="session registration",
-                )
+                registration_parent_session_id = parent_session_id
+                if is_set(parent_session_id) and parent_session_id == existing.id:
+                    registration_parent_session_id = None
+                if is_set(registration_parent_session_id):
+                    sanitized_parent_session_id: str | None | UnsetType = (
+                        sanitize_parent_session_id(
+                            conn,
+                            child_session_id=existing.id,
+                            parent_session_id=registration_parent_session_id,
+                            context="session registration",
+                        )
+                    )
+                else:
+                    sanitized_parent_session_id = UNSET
                 session = update_existing_session(
                     self,
                     conn,
@@ -226,7 +236,7 @@ class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
                 sanitized_parent_session_id = sanitize_parent_session_id(
                     conn,
                     child_session_id=session_id,
-                    parent_session_id=parent_session_id,
+                    parent_session_id=parent_session_id if is_set(parent_session_id) else None,
                     context="session registration",
                 )
                 conn.acquire_additional_lock(SessionSeqMutation(project_id=storage_project_id))
@@ -242,8 +252,8 @@ class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
                 )
 
                 try:
-                    insert_title = title
-                    insert_title_source = title_source if title is not None else None
+                    insert_title = title if is_set(title) else None
+                    insert_title_source = title_source if is_set(title_source) else None
                     if insert_title is None:
                         insert_title = format_provisional_session_title(next_seq_num, source)
                         insert_title_source = PROVISIONAL_TITLE_SOURCE
@@ -267,8 +277,8 @@ class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
                             storage_project_id,
                             insert_title,
                             insert_title_source,
-                            transcript_path,
-                            git_branch,
+                            transcript_path if is_set(transcript_path) else None,
+                            git_branch if is_set(git_branch) else None,
                             sanitized_parent_session_id,
                             agent_depth,
                             spawned_by_agent_id,
@@ -313,17 +323,20 @@ class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
                     )
                     if conflicting.parent_session_id == conflicting.id:
                         repair_self_parent_session(conn, session_id=conflicting.id, now=now)
-                    sanitized_parent_session_id = sanitize_parent_session_id(
-                        conn,
-                        child_session_id=conflicting.id,
-                        parent_session_id=parent_session_id,
-                        context="session registration",
-                    )
+                    if is_set(parent_session_id):
+                        sanitized_parent_session_id = sanitize_parent_session_id(
+                            conn,
+                            child_session_id=conflicting.id,
+                            parent_session_id=parent_session_id,
+                            context="session registration",
+                        )
+                    else:
+                        sanitized_parent_session_id = UNSET
                     registration_title = title
-                    registration_title_source = title_source if title is not None else None
+                    registration_title_source = title_source
                     conflicting_seq_num = conflicting.seq_num
                     if (
-                        title is None
+                        not is_set(title)
                         and conflicting_seq_num is not None
                         and not str(conflicting.title or "").strip()
                     ):
@@ -363,47 +376,3 @@ class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
 
         self._notify_session_change(change_event, session.id)
         return session
-
-    def get(self: _SessionCRUDHost, session_id: str) -> Session | None:
-        """Get session by ID."""
-        if not is_session_uuid(session_id):
-            return None
-        row = self.db.fetchone("SELECT * FROM sessions WHERE id = %s", (session_id,))
-        return Session.from_row(row) if row else None
-
-    def resolve_session_reference(
-        self: _SessionCRUDHost, ref: str, project_id: str | None = None
-    ) -> str:
-        """Resolve a session reference to a UUID.
-
-        Delegates to standalone resolve_session_reference() function.
-        See session_resolution.py for full documentation.
-        """
-        from gobby.storage.session_resolution import (
-            resolve_session_reference as _resolve,
-        )
-
-        return _resolve(self.db, ref, project_id)
-
-    def touch(self: _SessionCRUDHost, session_id: str) -> None:
-        """Refresh updated_at without changing any other fields.
-
-        Used by the liveness monitor to keep tmux-backed sessions warm
-        so the 30-minute pause timeout doesn't fire while the tmux pane
-        is still alive.
-        """
-        now = utc_now()
-        with self.db.transaction():
-            self.db.execute(
-                "UPDATE sessions SET updated_at = %s WHERE id = %s",
-                (now, session_id),
-            )
-
-    def delete(self: _SessionCRUDHost, session_id: str) -> bool:
-        """Delete session by ID."""
-        with self.db.transaction():
-            cursor = self.db.execute("DELETE FROM sessions WHERE id = %s", (session_id,))
-        deleted = cursor.rowcount > 0
-        if deleted:
-            self._notify_session_change("session_deleted", session_id)
-        return deleted

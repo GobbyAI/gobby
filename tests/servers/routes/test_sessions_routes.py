@@ -1012,6 +1012,43 @@ class TestGetMessages:
         assert "Transcript reader not available" in response.json()["detail"]
 
 
+class TestRestoreTranscript:
+    def test_offloads_restore_and_file_size_from_event_loop(self, client, mock_server) -> None:
+        session = _make_session(
+            external_id="external-123",
+            transcript_path="/tmp/session.jsonl",
+        )
+        mock_server.session_manager.get.return_value = session
+        event_loop_thread_ids: list[int] = []
+        worker_thread_ids: list[int] = []
+
+        async def run_db(func, *args, **kwargs):
+            event_loop_thread_ids.append(threading.get_ident())
+            return func(*args, **kwargs)
+
+        def restore(*args, **kwargs) -> bool:
+            worker_thread_ids.append(threading.get_ident())
+            return True
+
+        def getsize(path: str) -> int:
+            worker_thread_ids.append(threading.get_ident())
+            return 123
+
+        mock_server.run_db = AsyncMock(side_effect=run_db)
+
+        with (
+            patch("gobby.servers.routes.sessions.messages.restore_transcript", side_effect=restore),
+            patch("gobby.servers.routes.sessions.messages.os.path.getsize", side_effect=getsize),
+        ):
+            response = client.post("/api/sessions/sess-abc123/restore-transcript")
+
+        assert response.status_code == 200
+        assert response.json()["size"] == 123
+        mock_server.run_db.assert_awaited_once_with(mock_server.session_manager.get, "sess-abc123")
+        assert len(worker_thread_ids) == 2
+        assert all(thread_id != event_loop_thread_ids[0] for thread_id in worker_thread_ids)
+
+
 # =============================================================================
 # POST /sessions/find_current
 # =============================================================================

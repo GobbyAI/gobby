@@ -98,7 +98,9 @@ class ChatLifecycleMixin:
             pending_message_ids: list[str] | None = None,
         ) -> str | None: ...
 
-        def _mark_pending_messages_delivered(self, message_ids: list[str]) -> None: ...
+        def _mark_pending_messages_delivered(
+            self, message_ids: list[str], db_session_id: str
+        ) -> None: ...
 
         async def _cancel_active_chat(self, conversation_id: str) -> None: ...
 
@@ -320,7 +322,7 @@ class ChatLifecycleMixin:
             # --- Non-blocking webhook dispatch (parity with hook_manager.py:442-446) ---
             await self._dispatch_non_blocking_webhooks(event)
 
-            self._mark_pending_messages_delivered(pending_message_ids)
+            self._mark_pending_messages_delivered(pending_message_ids, db_session_id)
 
             return result
         except Exception as e:

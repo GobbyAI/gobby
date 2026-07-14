@@ -1,12 +1,14 @@
 """Focused tests for session storage behavior."""
 
 import inspect
+import json
 import logging
 import uuid
 from collections.abc import Sequence
 
 import pytest
 
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SYSTEM_SESSION_ID, SessionManager
 from gobby.storage.sessions import _crud as session_crud
@@ -174,8 +176,8 @@ def test_update_existing_session_binds_is_local_as_booleans_for_postgres() -> No
 
     params = conn.calls[0][1]
 
-    assert params[7:10] == (True, True, True)
-    assert all(type(value) is bool for value in params[7:10])
+    assert params[13:16] == (True, True, True)
+    assert all(type(value) is bool for value in params[13:16])
 
 
 def test_update_existing_session_preserve_is_local_uses_boolean_guard_param() -> None:
@@ -201,9 +203,9 @@ def test_update_existing_session_preserve_is_local_uses_boolean_guard_param() ->
 
     params = conn.calls[0][1]
 
-    assert params[7:10] == (False, False, None)
-    assert type(params[7]) is bool
-    assert type(params[8]) is bool
+    assert params[13:16] == (False, False, None)
+    assert type(params[13]) is bool
+    assert type(params[14]) is bool
 
 
 def test_update_existing_session_ignores_invalid_terminal_context_json() -> None:
@@ -230,7 +232,36 @@ def test_update_existing_session_ignores_invalid_terminal_context_json() -> None
 
     params = conn.calls[0][1]
 
-    assert params[5] is None
+    assert params[10:12] == (None, None)
+
+
+def test_update_existing_session_merges_terminal_context_in_sql() -> None:
+    session = _session_stub()
+    session.terminal_context = {"tmux_pane": "%1"}
+    conn = _CaptureConnection()
+
+    session_upsert.update_existing_session(
+        _StaticSessionGetter(session),
+        conn,
+        session,
+        title=None,
+        title_source=None,
+        transcript_path=None,
+        git_branch=None,
+        parent_session_id=None,
+        terminal_context_json='{"cwd": "/work/gobby", "parent_pid": null}',
+        workflow_name=None,
+        is_local=None,
+        sandbox_enabled=None,
+        sandbox_policy_hash=None,
+        now="2026-05-22T00:00:01+00:00",
+    )
+
+    sql, params = conn.calls[0]
+
+    assert "COALESCE(terminal_context, '{}'::jsonb) || %s::jsonb" in sql
+    assert json.loads(str(params[10])) == {"cwd": "/work/gobby"}
+    assert params[10] == params[11]
 
 
 class TestSessionManagerRegistration:
@@ -544,6 +575,60 @@ class TestSessionManagerRegistration:
         assert session2.id == session1.id
         assert session2.title == "Updated"
 
+    def test_register_revives_expired_terminal_session_and_resets_transcript(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        session = session_manager.register(
+            external_id="expired-registration",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+            transcript_path="/tmp/expired-registration.jsonl",
+        )
+        session_manager.update_status(session.id, "expired")
+        session_manager.mark_transcript_processed(session.id)
+
+        registered = session_manager.register(
+            external_id="expired-registration",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+
+        assert registered.id == session.id
+        assert registered.status == "active"
+        row = session_manager.db.fetchone(
+            "SELECT transcript_processed FROM sessions WHERE id = %s",
+            (session.id,),
+        )
+        assert row is not None
+        assert row["transcript_processed"] == 0
+
+    def test_register_does_not_revive_deleted_session(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        session = session_manager.register(
+            external_id="deleted-registration",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        session_manager.update_status(session.id, "deleted")
+
+        registered = session_manager.register(
+            external_id="deleted-registration",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+
+        assert registered.id == session.id
+        assert registered.status == "deleted"
+
     def test_register_existing_session_ignores_self_parent(
         self,
         caplog: pytest.LogCaptureFixture,
@@ -650,17 +735,24 @@ class TestSessionManagerRegistration:
         assert updated.id == child.id
         assert updated.parent_session_id == parent.id
 
-    def test_register_existing_session_ignores_parent_chain_cycle(
+    def test_register_existing_session_clears_parent_rejected_as_cycle(
         self,
         session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
-        """Re-registration must ignore a parent update that would create a cycle."""
+        """A rejected cyclic parent must clear stale parent attribution."""
+        ancestor = session_manager.register(
+            external_id="cycle-ancestor",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+        )
         root = session_manager.register(
             external_id="cycle-root",
             machine_id="machine-1",
             source="codex",
             project_id=sample_project["id"],
+            parent_session_id=ancestor.id,
         )
         child = session_manager.register(
             external_id="cycle-child",
@@ -718,6 +810,40 @@ class TestSessionManagerRegistration:
             assert recovered.title == "Recovered"
         finally:
             session_manager.db.execute("DROP INDEX IF EXISTS idx_sessions_unique_legacy_test")
+
+    def test_register_cross_project_recovery_allocates_destination_seq_num(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        destination = LocalProjectManager(session_manager.db).create(
+            name="registration-recovery-destination",
+            repo_path="/tmp/registration-recovery-destination",
+        )
+        original = session_manager.register(
+            external_id="cross-project-recovery",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        for index in range(2):
+            session_manager.register(
+                external_id=f"destination-session-{index}",
+                machine_id="machine-1",
+                source="codex",
+                project_id=destination.id,
+            )
+
+        recovered = session_manager.register(
+            external_id="cross-project-recovery",
+            machine_id="machine-1",
+            source="codex",
+            project_id=destination.id,
+        )
+
+        assert recovered.id == original.id
+        assert recovered.project_id == destination.id
+        assert recovered.seq_num == 3
 
     def test_get_session(
         self,
@@ -867,3 +993,29 @@ class TestSessionManagerRegistration:
         assert session2.git_branch == "feature/new"
         assert session2.parent_session_id == parent.id
         assert session2.status == "active"  # Status reset to active
+
+        preserved = session_manager.register(
+            external_id="update-meta",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        assert preserved.title == "Updated Title"
+        assert preserved.transcript_path == "/new/path.jsonl"
+        assert preserved.git_branch == "feature/new"
+        assert preserved.parent_session_id == parent.id
+
+        cleared = session_manager.register(
+            external_id="update-meta",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            title=None,
+            transcript_path=None,
+            git_branch=None,
+            parent_session_id=None,
+        )
+        assert cleared.title is None
+        assert cleared.transcript_path is None
+        assert cleared.git_branch is None
+        assert cleared.parent_session_id is None

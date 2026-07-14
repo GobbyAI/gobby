@@ -53,7 +53,7 @@ def _msg(
 
 def test_non_message_content_types_membership() -> None:
     assert NON_MESSAGE_CONTENT_TYPES == frozenset(
-        {"session_title", "hook_prompt", UNMODELED_RECORD_CONTENT_TYPE}
+        {"session_title", "hook_prompt", "usage", UNMODELED_RECORD_CONTENT_TYPE}
     )
 
 
@@ -64,7 +64,8 @@ class TestComputeMessageStatsExclusion:
             _msg(index=1, role="system", content_type="session_title", content="A title"),
             _msg(index=2, role="system", content_type="hook_prompt", content="hook"),
             _msg(index=3, role="system", content_type=UNMODELED_RECORD_CONTENT_TYPE, content="x"),
-            _msg(index=4, role="assistant", content_type="text", content="answer"),
+            _msg(index=4, role="assistant", content_type="usage"),
+            _msg(index=5, role="assistant", content_type="text", content="answer"),
         ]
         stats = compute_message_stats(messages)
         # Only the two real conversation messages count.
@@ -99,6 +100,7 @@ class TestActivityCountsExclusion:
             _msg(
                 index=2, role="assistant", content_type=UNMODELED_RECORD_CONTENT_TYPE, content="x"
             ),
+            _msg(index=3, role="assistant", content_type="usage"),
         ]
         counts = _activity_counts_from_messages(messages)
         assert counts["message_count"] == 1

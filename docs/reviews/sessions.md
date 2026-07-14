@@ -244,6 +244,19 @@
 ### [NIT] Mailbox/storage small items
 - **Where:** `inter_session_messages.py:264-286` (`mark_read`/`read_at` dead — `unread_only` filters are no-ops); `transcript_search.py:36-48` (casefold offset drift on non-ASCII); `transcript_renderer.py:37` (`ToolResult.truncated` never set — multi-MB results serialized whole), `:823-832` (bootstrap-heading heuristic can flip a real user message to system), `:361-364` (nested same-tag protocol regex mis-nests); `pending_tool_calls` never popped after pairing; `_detect_source_from_path` classifies any `.json` as gemini before the `.claude` check; zombie sweep stamps `delivered_at` on never-delivered messages; `restore_session_transcript` MCP tool writes to arbitrary `target_path`; `storage/sessions/_query.py:50-60` (`statuses=["deleted"]` can never match); `session_resolution.py:62-140` (LIKE metacharacters unescaped); `_bulk_update.py:120-134` (conflict redirect applies caller's values to a different session; dead NULL-project branch); `_discovery.py:101-114` (fetchone without ORDER BY across terminal/web_chat twins), `:254-263` (terminal-context scan capped at 250); `_registration_cache.py:108-150` (find_parent_session pins a worker thread with time.sleep up to 30s).
 
+### Task #16817 stale-review disposition (2026-07-14)
+
+This review targets `bad39fcba`; task #16817 was later narrowed to remaining dead
+session/storage examples. Dispositions apply to every item in each preceding `Where` list:
+
+- **Processor:** all items waived; the updated task retained no processor target.
+- **Parser:** all nit items waived for the same scope reason. The separately cited dead
+  `HookTranscriptAssembler` is resolved: source, tests, factory wiring, and field are absent.
+- **Analyzer/summarize:** all items waived; the updated task retained no target in this group.
+- **Index/window:** all items waived; the task update also records the size item as obsolete.
+- **Mailbox/storage:** `mark_read` / `read_at` / `unread_only` are fixed by `ce7cd704f`; every
+  other item is waived because the updated task retained none as a remaining example.
+
 ## Systemic patterns
 
 1. **Parsers built against assumed formats, not captured ones.** Every parser Blocker traces to fixture-vs-reality divergence: qwen's envelope, gemini's `tokens` shape, codex's reasoning-inclusive output, claude's attachment/queue/compaction/isMeta shapes, the invented hook_blocking_error fixture. There is no captured-transcript corpus test ("every line either parses or is intentionally classified"); hand-written fixtures assert the parser's own assumptions back at it.

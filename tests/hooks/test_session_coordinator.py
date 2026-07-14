@@ -492,6 +492,54 @@ class TestAgentRunCompletion:
         assert call_kwargs["run_id"] == "run-123"
         assert call_kwargs["result"] == "Summary"
 
+    def test_complete_agent_run_uses_latest_inter_session_message(
+        self, temp_db: HubDatabase
+    ) -> None:
+        session_id = str(uuid.uuid4())
+        recipient_id = str(uuid.uuid4())
+        _create_session_row(temp_db, session_id)
+        _create_session_row(temp_db, recipient_id)
+        temp_db.executemany(
+            """
+            INSERT INTO inter_session_messages
+                (id, from_session, to_session, content, priority, sent_at)
+            VALUES (%s, %s, %s, %s, 'normal', %s)
+            """,
+            [
+                (
+                    str(uuid.uuid4()),
+                    session_id,
+                    recipient_id,
+                    "newest result",
+                    "2026-01-02T00:00:00+00:00",
+                ),
+                (
+                    str(uuid.uuid4()),
+                    session_id,
+                    recipient_id,
+                    "older result",
+                    "2026-01-01T00:00:00+00:00",
+                ),
+            ],
+        )
+        mock_agent_run_manager = MagicMock(db=temp_db)
+        mock_agent_run_manager.get.return_value = MagicMock(
+            status="running", tmux_session_name=None
+        )
+        coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
+        session = SimpleNamespace(
+            id=session_id,
+            agent_run_id="run-123",
+            summary_markdown=None,
+            last_assistant_content=None,
+            tool_call_count=1,
+            turn_count=1,
+        )
+
+        coordinator.complete_agent_run(session)
+
+        assert mock_agent_run_manager.complete.call_args.kwargs["result"] == "newest result"
+
     def test_complete_agent_run_notifies_stored_status_when_complete_loses_race(self) -> None:
         mock_agent_run_manager = MagicMock()
         running_run = MagicMock(status="running", tmux_session_name=None)

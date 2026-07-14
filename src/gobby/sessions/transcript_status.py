@@ -16,6 +16,11 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.sessions.gzip_seek_index import (
+    GZIP_BLOCK_SEEK_MODE,
+    ensure_gzip_block_index,
+    iter_gzip_block_raw_lines,
+)
 from gobby.sessions.transcript_archive import get_archive_dir
 from gobby.sessions.transcript_index import SOURCE_SAMPLE_LINES, get_or_build_index
 from gobby.sessions.transcript_io import (
@@ -132,12 +137,19 @@ async def _archive_transcript_counts(
             lines=lines[:SOURCE_SAMPLE_LINES],
             session_id=session_id,
         )
+        gzip_index = await ensure_gzip_block_index(
+            str(archive_path),
+            mtime_ns=st.st_mtime_ns,
+            size=st.st_size,
+        )
+        st = await asyncio.to_thread(os.stat, str(archive_path))
         index = await get_or_build_index(
             str(archive_path),
             effective_source,
             session_id,
-            seek_mode="line",
-            lines=lines,
+            seek_mode=GZIP_BLOCK_SEEK_MODE,
+            raw_lines=iter_gzip_block_raw_lines(str(archive_path), gzip_index, 0, 0),
+            logical_size=gzip_index.uncompressed_size,
             mtime_ns=st.st_mtime_ns,
             size=st.st_size,
         )

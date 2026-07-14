@@ -56,8 +56,9 @@ def test_droid_sonnet_context_window_remains_provider_owned() -> None:
     assert provider_catalog_context_length_for_model("droid", "claude-sonnet-4-6") == 200_000
 
 
-def test_sonnet_static_window_drives_context_pressure_ratio() -> None:
-    context_window = static_context_length_for_model("claude", "claude-sonnet-4-6")
+def test_sonnet_static_window_drives_context_pressure_ratio_with_empty_registry() -> None:
+    with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
+        context_window = resolve_context_window("claude-sonnet-4-6", provider="claude")
 
     assert ContextUsageSnapshot.calculate_ratio(200_000, context_window) == 0.2
 

@@ -153,6 +153,16 @@ async def test_expired_isolation_loop_runs_git_in_parent_repo(
     unrelated_path = tmp_path / "unrelated"
     unrelated_path.mkdir()
     monkeypatch.chdir(unrelated_path)
+    from gobby import runner_maintenance
+
+    run_git = runner_maintenance._run_git_command
+    git_cwds: list[str] = []
+
+    def record_git_cwd(args: list[str], *, cwd: str) -> int:
+        git_cwds.append(cwd)
+        return run_git(args, cwd=cwd)
+
+    monkeypatch.setattr(runner_maintenance, "_run_git_command", record_git_cwd)
     shutdown_checks = 0
 
     def is_shutdown_requested() -> bool:
@@ -183,6 +193,7 @@ async def test_expired_isolation_loop_runs_git_in_parent_repo(
     assert str(worktree_path) not in worktree_list.stdout
     assert branch_list.stdout == ""
     assert worktrees.get(worktree.id) is None
+    assert git_cwds == [str(repo_path)] * 3
 
 
 @pytest.mark.asyncio
@@ -207,10 +218,10 @@ async def test_expired_isolation_loop_logs_git_cleanup_failures(
     )
     worktrees.mark_merged(worktree.id)
 
-    git_commands: list[list[str]] = []
+    git_commands: list[tuple[list[str], str]] = []
 
-    def run_git(args: list[str]) -> int:
-        git_commands.append(args)
+    def run_git(args: list[str], *, cwd: str) -> int:
+        git_commands.append((args, cwd))
         if args[-2:] == ["worktree", "prune"]:
             return 7
         if "branch" in args:
@@ -233,17 +244,12 @@ async def test_expired_isolation_loop_logs_git_cleanup_failures(
     )
 
     assert git_commands == [
-        [
-            "git",
-            "-C",
+        (
+            ["git", "worktree", "remove", "--force", str(tmp_path / "expired-worktree")],
             str(repo_path),
-            "worktree",
-            "remove",
-            "--force",
-            str(tmp_path / "expired-worktree"),
-        ],
-        ["git", "-C", str(repo_path), "worktree", "prune"],
-        ["git", "-C", str(repo_path), "branch", "-D", "task/expired"],
+        ),
+        (["git", "worktree", "prune"], str(repo_path)),
+        (["git", "branch", "-D", "task/expired"], str(repo_path)),
     ]
     assert f"git worktree prune failed in {repo_path} (exit code 7)" in caplog.messages
     assert (

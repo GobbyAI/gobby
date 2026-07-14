@@ -163,7 +163,6 @@ class HookManager:
         self._project_id_resolver.session_manager = self._session_manager
         self._session_coordinator = components.session_coordinator
         self._health_monitor = components.health_monitor
-        self._hook_assembler = components.hook_assembler
         self._event_handlers = components.event_handlers
 
         # Wire callback for session summary generation (method lives on HookManager,

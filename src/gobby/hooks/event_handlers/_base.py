@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from gobby.config.tasks import WorkflowConfig
     from gobby.hooks.session_coordinator import SessionCoordinator
     from gobby.hooks.skill_manager import HookSkillManager
+    from gobby.sessions.liveness_monitor import SessionLivenessMonitor
     from gobby.storage.session_tasks import SessionTaskManager
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
@@ -30,6 +31,7 @@ class EventHandlersBase:
     """Base class for EventHandlers mixins with type hints for shared state."""
 
     _session_manager: HookSessionManager | None
+    _liveness_monitor: SessionLivenessMonitor | None
     _workflow_handler: WorkflowHookHandler | None
     _workflow_config: WorkflowConfig | None
     _session_task_manager: SessionTaskManager | None

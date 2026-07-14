@@ -222,13 +222,13 @@ class TestFormatHandoffAsMarkdown:
         result = format_handoff_as_markdown(ctx)
 
         assert "### Recent Activity" in result
+        assert "- Activity 1" in result
+        assert "- Activity 2" in result
         assert "- Activity 3" in result
         assert "- Activity 4" in result
         assert "- Activity 5" in result
-        assert "- Activity 6" in result
-        assert "- Activity 7" in result
-        assert "- Activity 1" not in result
-        assert "- Activity 2" not in result
+        assert "- Activity 6" not in result
+        assert "- Activity 7" not in result
 
     def test_formats_multiple_sections(self) -> None:
         """Should format multiple sections separated by double newlines."""
@@ -267,7 +267,7 @@ class TestFormatHandoffAsMarkdown:
         result = format_handoff_as_markdown(ctx)
 
         assert "### Commits This Session" in result
-        assert "- `` test commit" in result
+        assert "- test commit" in result
 
     def test_active_skills_section_removed(self) -> None:
         """Active skills section was removed - redundant with _build_skill_injection_context()."""
