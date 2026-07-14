@@ -128,6 +128,8 @@ function supportsFieldSizing(): boolean {
 }
 
 const MAX_TEXTAREA_HEIGHT = 200
+const CHAT_COMMAND_LISTBOX_ID = 'chat-command-palette-listbox'
+const CHAT_COMMAND_OPTION_ID_PREFIX = 'chat-command-palette-option'
 
 export function ChatInput({
   onSend,
@@ -464,6 +466,8 @@ export function ChatInput({
             selectedIndex={selectedIndex}
             onSelect={handlePaletteSelect}
             paletteRef={paletteRef}
+            listboxId={CHAT_COMMAND_LISTBOX_ID}
+            optionIdPrefix={CHAT_COMMAND_OPTION_ID_PREFIX}
           />
         )}
 
@@ -535,6 +539,13 @@ export function ChatInput({
                     ? 'Message input — streaming'
                     : 'Message input'
               }
+              role={showPalette ? 'combobox' : undefined}
+              aria-expanded={showPalette || undefined}
+              aria-controls={showPalette ? CHAT_COMMAND_LISTBOX_ID : undefined}
+              aria-activedescendant={
+                showPalette ? `${CHAT_COMMAND_OPTION_ID_PREFIX}-${selectedIndex}` : undefined
+              }
+              aria-autocomplete={showPalette ? 'list' : undefined}
               disabled={disabled}
               rows={2}
               autoComplete="off"

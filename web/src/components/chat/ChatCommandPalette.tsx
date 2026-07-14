@@ -7,6 +7,8 @@ interface ChatCommandPaletteProps {
   selectedIndex: number
   onSelect: (item: PaletteItem) => void
   paletteRef: RefObject<HTMLDivElement>
+  listboxId: string
+  optionIdPrefix: string
 }
 
 export function ChatCommandPalette({
@@ -14,9 +16,17 @@ export function ChatCommandPalette({
   selectedIndex,
   onSelect,
   paletteRef,
+  listboxId,
+  optionIdPrefix,
 }: ChatCommandPaletteProps): ReactElement {
   return (
-    <div ref={paletteRef} className="command-palette font-sans">
+    <div
+      ref={paletteRef}
+      id={listboxId}
+      className="command-palette font-sans"
+      role="listbox"
+      aria-label="Chat commands"
+    >
       {items.map((item, index) => (
         <button
           key={
@@ -24,6 +34,7 @@ export function ChatCommandPalette({
               ? item.name
               : `${item.parentCommand}:${item.name}${item.serverName ? `:${item.serverName}` : ''}`
           }
+          id={`${optionIdPrefix}-${index}`}
           className={cn(
             'block w-full px-3 py-2 text-left text-sm cursor-pointer',
             index === selectedIndex
@@ -31,6 +42,9 @@ export function ChatCommandPalette({
               : 'text-muted-foreground hover:bg-muted',
           )}
           type="button"
+          role="option"
+          aria-selected={index === selectedIndex}
+          tabIndex={-1}
           onClick={() => onSelect(item)}
         >
           {item.kind === 'command' ? (

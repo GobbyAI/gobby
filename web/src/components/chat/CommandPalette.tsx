@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import { useState, useCallback, useEffect, useId, useRef, useMemo } from 'react'
 import type { GobbySession } from '../../types/sessions'
 import { useNow } from '../../hooks/useNow'
 import { formatRelativeTime } from '../../utils/formatTime'
@@ -38,15 +38,26 @@ export function CommandPalette({
   const [selectedIndex, setSelectedIndex] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  const invokerRef = useRef<HTMLElement | null>(null)
+  const listboxId = useId()
+  const optionIdPrefix = useId()
   const now = useNow()
 
   // Reset on open
   useEffect(() => {
     if (isOpen) {
+      invokerRef.current = document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null
       setQuery('')
       setSelectedIndex(0)
       // Focus input after animation frame
-      requestAnimationFrame(() => inputRef.current?.focus())
+      const frame = requestAnimationFrame(() => inputRef.current?.focus())
+      return () => {
+        cancelAnimationFrame(frame)
+        invokerRef.current?.focus()
+        invokerRef.current = null
+      }
     }
   }, [isOpen])
 
@@ -166,6 +177,9 @@ export function CommandPalette({
       } else if (e.key === 'Escape') {
         e.preventDefault()
         onClose()
+      } else if (e.key === 'Tab') {
+        e.preventDefault()
+        inputRef.current?.focus()
       } else if (e.key === 'Backspace' && query === '' && allItems[selectedIndex]?.type === 'session') {
         // Delete session with backspace when query is empty
         const session = allItems[selectedIndex].session
@@ -183,7 +197,12 @@ export function CommandPalette({
   return (
     <>
       <div className="command-palette-overlay" onClick={onClose} />
-      <div className="command-palette-container" role="dialog" aria-label="Command palette">
+      <div
+        className="command-palette-container"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Command palette"
+      >
         <div className="command-palette-input-wrap">
           <SearchIcon />
           <input
@@ -193,13 +212,26 @@ export function CommandPalette({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
+            role="combobox"
+            aria-expanded="true"
+            aria-controls={listboxId}
+            aria-activedescendant={
+              allItems.length > 0 ? `${optionIdPrefix}-${selectedIndex}` : undefined
+            }
+            aria-autocomplete="list"
             autoComplete="off"
             spellCheck={false}
           />
           <kbd className="command-palette-kbd">Esc</kbd>
         </div>
 
-        <div className="command-palette-list" ref={listRef}>
+        <div
+          className="command-palette-list"
+          ref={listRef}
+          id={listboxId}
+          role="listbox"
+          aria-label="Command palette results"
+        >
           {allItems.length === 0 && (
             <div className="command-palette-empty">No results</div>
           )}
@@ -213,6 +245,7 @@ export function CommandPalette({
                 return (
                   <SessionItem
                     key={s.id}
+                    id={`${optionIdPrefix}-${idx}`}
                     session={s}
                     isActive={s.id === activeSessionId}
                     isSelected={idx === selectedIndex}
@@ -231,6 +264,7 @@ export function CommandPalette({
                 return (
                   <SessionItem
                     key={s.id}
+                    id={`${optionIdPrefix}-${idx}`}
                     session={s}
                     isActive={s.id === activeSessionId}
                     isSelected={idx === selectedIndex}
@@ -249,6 +283,7 @@ export function CommandPalette({
                 return (
                   <SessionItem
                     key={s.id}
+                    id={`${optionIdPrefix}-${idx}`}
                     session={s}
                     isActive={s.id === activeSessionId}
                     isSelected={idx === selectedIndex}
@@ -271,6 +306,7 @@ export function CommandPalette({
                   return (
                     <ActionItem
                       key={a.id}
+                      id={`${optionIdPrefix}-${idx}`}
                       action={a}
                       isSelected={idx === selectedIndex}
                       onSelect={() => handleSelect(idx)}
@@ -292,6 +328,7 @@ export function CommandPalette({
                   return (
                     <ActionItem
                       key={a.id}
+                      id={`${optionIdPrefix}-${idx}`}
                       action={a}
                       isSelected={idx === selectedIndex}
                       onSelect={() => handleSelect(idx)}
@@ -315,12 +352,14 @@ export function CommandPalette({
 }
 
 function SessionItem({
+  id,
   session,
   isActive,
   isSelected,
   onSelect,
   onHover,
 }: {
+  id: string
   session: GobbySession
   isActive: boolean
   isSelected: boolean
@@ -332,6 +371,7 @@ function SessionItem({
 
   return (
     <div
+      id={id}
       className={`command-palette-item${isSelected ? ' selected' : ''}${isActive ? ' active' : ''}`}
       onClick={onSelect}
       onMouseEnter={onHover}
@@ -348,11 +388,13 @@ function SessionItem({
 }
 
 function ActionItem({
+  id,
   action,
   isSelected,
   onSelect,
   onHover,
 }: {
+  id: string
   action: CommandPaletteAction
   isSelected: boolean
   onSelect: () => void
@@ -360,6 +402,7 @@ function ActionItem({
 }) {
   return (
     <div
+      id={id}
       className={`command-palette-item${isSelected ? ' selected' : ''}`}
       onClick={onSelect}
       onMouseEnter={onHover}

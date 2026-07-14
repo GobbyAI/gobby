@@ -713,6 +713,10 @@ describe('ChatInput', () => {
   })
 
   it('shows command palette when input starts with /', async () => {
+    Object.defineProperty(Element.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: vi.fn(),
+    })
     const items = [
       { kind: 'command' as const, name: 'help', description: 'Show help', action: 'help' },
       { kind: 'command' as const, name: 'clear', description: 'Clear chat', action: 'clear' },
@@ -723,9 +727,22 @@ describe('ChatInput', () => {
     const textarea = screen.getByRole('textbox')
     await userEvent.type(textarea, '/')
 
+    const combobox = screen.getByRole('combobox')
+    const listbox = screen.getByRole('listbox', { name: 'Chat commands' })
+    const options = screen.getAllByRole('option')
+
+    expect(combobox).toHaveAttribute('aria-controls', listbox.id)
+    expect(combobox).toHaveAttribute('aria-activedescendant', options[0].id)
+    expect(options[0]).toHaveAttribute('aria-selected', 'true')
+    expect(options[1]).toHaveAttribute('aria-selected', 'false')
+
+    await userEvent.keyboard('{ArrowDown}')
+
+    expect(combobox).toHaveAttribute('aria-activedescendant', options[1].id)
+    expect(options[1]).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByText('/help')).toBeTruthy()
     expect(screen.getByText('/clear')).toBeTruthy()
-    expect(screen.getByRole('button', { name: /\/help/ })).toHaveAttribute('type', 'button')
+    expect(screen.getByRole('option', { name: /\/help/ })).toHaveAttribute('type', 'button')
   })
 
   it('on mobile, Shift+Enter sends', async () => {
