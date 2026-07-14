@@ -286,7 +286,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
                 return {"status": "success", "message": "Definition already matches template"}
 
             # Re-read the template file and update the definition
-            template_json = cache.get_template_json(row.name)
+            template_json = cache.get_template_json(row.workflow_type, row.name)
             if template_json is None:
                 raise HTTPException(
                     status_code=404,

@@ -29,12 +29,12 @@ class TemplateHashCache:
     """Cache of hashes for bundled template YAML files.
 
     Reads template directories once at startup and stores
-    name -> hash(definition_json) mappings for cheap drift checks.
+    (workflow_type, name) -> hash(definition_json) mappings for cheap drift checks.
     """
 
     def __init__(self) -> None:
-        self._hashes: dict[str, str] = {}
-        self._json_cache: dict[str, str] = {}  # name → definition_json (for restore)
+        self._hashes: dict[tuple[str, str], str] = {}
+        self._json_cache: dict[tuple[str, str], str] = {}
 
     def load(self) -> None:
         """Read all bundled template YAML files and compute their hashes."""
@@ -85,8 +85,9 @@ class TemplateHashCache:
                     definition_json = resolve_sync_placeholders(
                         json.dumps(body_dict, sort_keys=True)
                     )
-                    self._hashes[rule_name] = compute_definition_hash(definition_json)
-                    self._json_cache[rule_name] = definition_json
+                    key = ("rule", rule_name)
+                    self._hashes[key] = compute_definition_hash(definition_json)
+                    self._json_cache[key] = definition_json
             except Exception as e:
                 logger.warning(f"Failed to hash rule template {yaml_path}: {e}")
 
@@ -103,8 +104,9 @@ class TemplateHashCache:
                     continue
                 name = data.get("name", yaml_path.stem)
                 definition_json = json.dumps(data, sort_keys=True)
-                self._hashes[name] = compute_definition_hash(definition_json)
-                self._json_cache[name] = definition_json
+                key = ("pipeline", name)
+                self._hashes[key] = compute_definition_hash(definition_json)
+                self._json_cache[key] = definition_json
             except Exception as e:
                 logger.warning(f"Failed to hash pipeline template {yaml_path}: {e}")
 
@@ -132,8 +134,9 @@ class TemplateHashCache:
                     if var_data.get("description"):
                         body_dict["description"] = var_data["description"]
                     definition_json = json.dumps(body_dict, sort_keys=True)
-                    self._hashes[var_name] = compute_definition_hash(definition_json)
-                    self._json_cache[var_name] = definition_json
+                    key = ("variable", var_name)
+                    self._hashes[key] = compute_definition_hash(definition_json)
+                    self._json_cache[key] = definition_json
             except Exception as e:
                 logger.warning(f"Failed to hash variable template {yaml_path}: {e}")
 
@@ -153,8 +156,9 @@ class TemplateHashCache:
                 data["name"] = name
                 body = AgentDefinitionBody.model_validate(data)
                 body_json = body.model_dump_json()
-                self._hashes[name] = compute_definition_hash(body_json)
-                self._json_cache[name] = body_json
+                key = ("agent", name)
+                self._hashes[key] = compute_definition_hash(body_json)
+                self._json_cache[key] = body_json
             except Exception as e:
                 logger.warning(f"Failed to hash agent template {yaml_path}: {e}")
 
@@ -187,31 +191,32 @@ class TemplateHashCache:
                     "injection_format": parsed.injection_format,
                 }
                 definition_json = json.dumps(body, sort_keys=True)
-                self._hashes[parsed.name] = compute_definition_hash(definition_json)
-                self._json_cache[parsed.name] = definition_json
+                key = ("skill", parsed.name)
+                self._hashes[key] = compute_definition_hash(definition_json)
+                self._json_cache[key] = definition_json
             except Exception as e:
                 logger.warning(f"Failed to hash skill template {parsed.name}: {e}")
 
     # ── Drift detection ──
 
-    def get_hash(self, name: str) -> str | None:
-        """Get the cached hash for a template by name."""
-        return self._hashes.get(name)
+    def get_hash(self, workflow_type: str, name: str) -> str | None:
+        """Get the cached hash for a template by workflow type and name."""
+        return self._hashes.get((workflow_type, name))
 
-    def get_template_json(self, name: str) -> str | None:
-        """Get the definition_json for a template by name.
+    def get_template_json(self, workflow_type: str, name: str) -> str | None:
+        """Get the definition_json for a template by workflow type and name.
 
         Returns the cached serialized JSON from the template file.
         Returns None if no bundled template exists for this name.
         """
-        return self._json_cache.get(name)
+        return self._json_cache.get((workflow_type, name))
 
     def has_drift(self, row: WorkflowDefinitionRow) -> bool:
         """Check if an installed definition has drifted from its template.
 
         Returns False if no template exists for this name (user-created definition).
         """
-        template_hash = self._hashes.get(row.name)
+        template_hash = self.get_hash(row.workflow_type, row.name)
         if template_hash is None:
             return False
         installed_hash = compute_definition_hash(row.definition_json)
@@ -224,9 +229,10 @@ class TemplateHashCache:
         """
         for row_dict in rows:
             name = row_dict.get("name")
+            workflow_type = row_dict.get("workflow_type")
             definition_json = row_dict.get("definition_json")
-            if name and definition_json:
-                template_hash = self._hashes.get(name)
+            if workflow_type and name and definition_json:
+                template_hash = self.get_hash(workflow_type, name)
                 if template_hash is not None:
                     installed_hash = compute_definition_hash(definition_json)
                     row_dict["has_template_update"] = template_hash != installed_hash
