@@ -106,8 +106,9 @@ class _IncompleteReadResponse:
 
 
 class _JsonResponse:
-    def __init__(self, payload: object) -> None:
+    def __init__(self, payload: object, *, link: str | None = None) -> None:
         self.payload = payload
+        self.headers = {"Link": link} if link is not None else {}
 
     def __enter__(self) -> Self:
         return self
@@ -697,6 +698,78 @@ class TestGithubReleaseClient:
         assert asset.asset_url.startswith("https://github.com/GobbyAI/gobby/")
         assert calls == [
             "https://api.github.com/repos/GobbyAI/gobby/releases?per_page=100",
+        ]
+
+    def test_floor_recovery_download_finds_release_beyond_first_page(
+        self,
+        tmp_path: Path,
+        postgres_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        spec = _spec()
+        target = "aarch64-apple-darwin"
+        expected_asset = f"{spec.name}-{target}.tar.gz"
+        asset_url = (
+            "https://github.com/GobbyAI/gobby/releases/download/"
+            f"{spec.tag_prefix}{spec.floor_version}/{expected_asset}"
+        )
+        archive = _tar_with_binary(spec, payload=b"recovered")
+        checksum = hashlib.sha256(archive).hexdigest().encode("ascii")
+        page_two_url = "https://api.github.com/repos/GobbyAI/gobby/releases?per_page=100&page=2"
+        calls: list[str] = []
+
+        def fake_urlopen(req: Any, **_kwargs: Any) -> _JsonResponse | _BytesResponse:
+            calls.append(req.full_url)
+            if req.full_url.endswith("releases?per_page=100"):
+                return _JsonResponse(
+                    [{"tag_name": f"other-v{index}"} for index in range(100)],
+                    link=f'<{page_two_url}>; rel="next"',
+                )
+            if req.full_url == page_two_url:
+                return _JsonResponse(
+                    [
+                        {
+                            "tag_name": f"{spec.tag_prefix}{spec.floor_version}",
+                            "draft": False,
+                            "prerelease": False,
+                            "published_at": "2026-01-01T00:00:00Z",
+                            "assets": [
+                                {
+                                    "name": expected_asset,
+                                    "browser_download_url": asset_url,
+                                }
+                            ],
+                        }
+                    ]
+                )
+            if req.full_url == f"{asset_url}.sha256":
+                return _BytesResponse(checksum)
+            if req.full_url == asset_url:
+                return _BytesResponse(archive)
+            raise AssertionError(f"unexpected URL: {req.full_url}")
+
+        monkeypatch.setattr("gobby.install.bin_freshness_github._urlopen_https", fake_urlopen)
+        monkeypatch.setattr("gobby.install.bin_freshness_updater.platform_target", lambda: target)
+        bin_dir = tmp_path / "bin"
+        binary_path = _write_binary(bin_dir, spec)
+        _write_stamp(bin_dir, spec, "0.4.0")
+
+        record = update_managed_bin(
+            postgres_db,
+            spec,
+            BinFreshnessConfig(),
+            bin_dir=bin_dir,
+            client=GithubReleaseClient(timeout_seconds=1),
+        )
+
+        assert record is not None
+        assert record.last_status == "updated"
+        assert binary_path.read_bytes() == b"recovered"
+        assert calls == [
+            "https://api.github.com/repos/GobbyAI/gobby/releases?per_page=100",
+            page_two_url,
+            f"{asset_url}.sha256",
+            asset_url,
         ]
 
     def test_resolve_latest_asset_fails_closed_when_canonical_asset_missing(
