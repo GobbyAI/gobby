@@ -77,6 +77,22 @@ def test_extract_handoff_context_empty() -> None:
     assert not ctx.files_modified
 
 
+def test_initial_goal_skips_claude_meta_and_compaction_entries() -> None:
+    turns = [
+        {"type": "user", "isMeta": True, "message": {"content": "hook feedback"}},
+        {
+            "type": "user",
+            "isCompactSummary": True,
+            "message": {"content": "compacted transcript"},
+        },
+        {"type": "user", "message": {"content": "actual user goal"}},
+    ]
+
+    ctx = TranscriptAnalyzer().extract_handoff_context(turns)
+
+    assert ctx.initial_goal == "actual user goal"
+
+
 def test_extract_handoff_context_no_task(sample_turns) -> None:
     # Filter out mcp_call_tool lines
     # This requires deep filtering of the fixture structure

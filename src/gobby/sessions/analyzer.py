@@ -138,7 +138,11 @@ class TranscriptAnalyzer:
     @staticmethod
     def _is_user_turn(turn: dict[str, Any]) -> bool:
         """Return True if the turn is from the user (works for all CLI formats)."""
-        return turn.get("type") == "user"
+        return (
+            turn.get("type") == "user"
+            and turn.get("isMeta") is not True
+            and turn.get("isCompactSummary") is not True
+        )
 
     # ------------------------------------------------------------------
 

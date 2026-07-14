@@ -23,6 +23,7 @@ from gobby.sessions.transcripts.base import (
     _unknown_block_message,
     annotate_record_source,
 )
+from gobby.sessions.transcripts.claude_records import fallback_content, system_event_content
 
 logger = logging.getLogger(__name__)
 
@@ -423,6 +424,9 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             )
             return None
 
+        if data.get("isCompactSummary") is True or data.get("isMeta") is True:
+            return None
+
         msg_type = data.get("type", "unknown")
         timestamp_str = data.get("timestamp") or datetime.now(UTC).isoformat()
         try:
@@ -600,6 +604,8 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                         val = block.get("thinking") or ""
                         if val.strip():
                             thinking_parts.append(val)
+                    elif btype == "fallback":
+                        results.append(_make_msg(role="system", content=fallback_content(block)))
                     else:
                         if text_parts:
                             results.append(
@@ -646,11 +652,11 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                 )
             )
         elif msg_type == "system":
-            # Hook-blocking system records are handled above. The compaction
-            # boundary is first-classed as a divider; every other system record
-            # (e.g. stop_hook_summary) is session metadata and is not rendered.
-            if data.get("subtype") == "compact_boundary":
+            subtype = data.get("subtype")
+            if subtype == "compact_boundary":
                 results.append(_make_compaction_summary())
+            elif (event_content := system_event_content(data)) is not None:
+                results.append(_make_msg(role="system", content=event_content))
 
         elif msg_type == "ai-title":
             ai_title = data.get("aiTitle")
@@ -699,19 +705,7 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
         return tr_content
 
     def parse_line(self, line: str, index: int) -> ParsedMessage | None:
-        """
-        Parse a single line from the transcript JSONL.
-
-        Returns a single ParsedMessage for backward compatibility. For full
-        multi-block expansion, use parse_lines() which calls _expand_line().
-
-        Args:
-            line: Raw JSON line string
-            index: Line index (0-based)
-
-        Returns:
-            ParsedMessage object or None if line should be skipped
-        """
+        """Parse one line, returning its first normalized record."""
         parsed = self._parse_data(line, index)
         if parsed is None:
             return None
@@ -786,6 +780,9 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                         tool_name = block.get("name")
                         tool_input = block.get("input")
                         tool_use_id = block.get("id")
+                    elif block_type == "fallback":
+                        role = "system"
+                        text_parts.append(fallback_content(block))
                 content = " ".join(text_parts)
             else:
                 content = str(content_blocks)
@@ -799,17 +796,22 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             content = str(tool_result)
 
         elif msg_type == "system":
-            if data.get("subtype") != "compact_boundary":
-                return None  # known system metadata (e.g. stop_hook_summary)
-            role = "system"
-            content_type = "compaction_summary"
-            meta = data.get("compactMetadata")
-            trigger = meta.get("trigger") if isinstance(meta, dict) else None
-            content = str(data.get("content") or "Conversation compacted")
-            if trigger:
-                content = f"{content} ({trigger})"
-            uuid = data.get("uuid")
-            tool_use_id = uuid if isinstance(uuid, str) else None
+            subtype = data.get("subtype")
+            if subtype == "compact_boundary":
+                role = "system"
+                content_type = "compaction_summary"
+                meta = data.get("compactMetadata")
+                trigger = meta.get("trigger") if isinstance(meta, dict) else None
+                content = str(data.get("content") or "Conversation compacted")
+                if trigger:
+                    content = f"{content} ({trigger})"
+                uuid = data.get("uuid")
+                tool_use_id = uuid if isinstance(uuid, str) else None
+            elif (event_content := system_event_content(data)) is not None:
+                role = "system"
+                content = event_content
+            else:
+                return None
 
         elif msg_type == "ai-title":
             ai_title = data.get("aiTitle")
@@ -857,8 +859,8 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
         Returns:
             Tuple of (TokenUsage | None, model string | None)
         """
-        # Extract model from message object
-        model = data.get("message", {}).get("model")
+        message = data.get("message")
+        model = message.get("model") if isinstance(message, dict) else data.get("fallbackModel")
 
         # Check for top-level usage field (some formats)
         usage_data = data.get("usage")

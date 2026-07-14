@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from gobby.sessions.message_stats import compute_message_stats
 from gobby.sessions.transcript_normalization import normalize_transcript_records
 from gobby.sessions.transcript_renderer import render_transcript
 from gobby.sessions.transcripts import PARSER_REGISTRY, get_parser
@@ -672,12 +673,77 @@ class TestClaudeRecordEnvelopes:
         assert block.content_type == "compaction_summary"
         assert block.content == "Conversation compacted (manual)"
         assert block.tool_use_id == "u1"  # keyed for render dedup
+        assert block.raw_json["compactMetadata"]["preTokens"] == 266101
 
         single = parser.parse_line(line, 0)
         assert single is not None
         assert single.content_type == "compaction_summary"
         assert single.content == "Conversation compacted (manual)"
         assert single.tool_use_id == "u1"
+        assert single.raw_json["compactMetadata"]["preTokens"] == 266101
+
+    @pytest.mark.parametrize("flag", ["isCompactSummary", "isMeta"])
+    def test_synthetic_user_entries_are_dropped(self, parser, flag: str) -> None:
+        line = json.dumps(
+            {
+                "type": "user",
+                flag: True,
+                "message": {"role": "user", "content": "synthetic content"},
+                "timestamp": "2024-01-01T12:00:00Z",
+            }
+        )
+
+        assert parser._expand_line(line, 0) == []
+        assert parser.parse_line(line, 0) is None
+
+    @pytest.mark.parametrize(
+        ("record", "expected_content", "expected_model"),
+        [
+            (
+                {
+                    "type": "system",
+                    "subtype": "api_error",
+                    "error": {"formatted": "429 overloaded"},
+                },
+                "429 overloaded",
+                None,
+            ),
+            (
+                {
+                    "type": "system",
+                    "subtype": "model_refusal_fallback",
+                    "content": "Switching models",
+                    "originalModel": "claude-fable-5",
+                    "fallbackModel": "claude-opus-4-8",
+                },
+                "Switching models",
+                "claude-opus-4-8",
+            ),
+        ],
+    )
+    def test_system_error_and_fallback_records_are_emitted(
+        self,
+        parser,
+        record: dict[str, object],
+        expected_content: str,
+        expected_model: str | None,
+    ) -> None:
+        record["timestamp"] = "2024-01-01T12:00:00Z"
+        line = json.dumps(record)
+
+        expanded = parser._expand_line(line, 0)
+        assert len(expanded) == 1
+        assert expanded[0].role == "system"
+        assert expanded[0].content_type == "text"
+        assert expanded[0].content == expected_content
+        assert expanded[0].model == expected_model
+        assert expanded[0].raw_json["subtype"] == record["subtype"]
+        assert compute_message_stats(expanded)["message_count"] == 1
+
+        single = parser.parse_line(line, 0)
+        assert single is not None
+        assert single.role == "system"
+        assert single.content == expected_content
 
     def test_compact_boundary_without_metadata_uses_default_text(self, parser) -> None:
         line = json.dumps(
@@ -809,6 +875,37 @@ class TestClaudeExpandLine:
         assert msgs[0].role == "user"
         assert msgs[0].content == "Hello"
         assert msgs[0].content_type == "text"
+
+    def test_expand_assistant_fallback_block_as_system_record(self, parser) -> None:
+        line = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "model": "claude-opus-4-8",
+                    "content": [
+                        {
+                            "type": "fallback",
+                            "from": {"model": "claude-fable-5"},
+                            "to": {"model": "claude-opus-4-8"},
+                        }
+                    ],
+                },
+                "timestamp": "2024-01-01T12:00:00Z",
+            }
+        )
+
+        expanded = parser._expand_line(line, 0)
+        assert len(expanded) == 1
+        assert expanded[0].role == "system"
+        assert expanded[0].content_type == "text"
+        assert expanded[0].content == "Model fallback: claude-fable-5 -> claude-opus-4-8"
+        assert expanded[0].model == "claude-opus-4-8"
+        assert compute_message_stats(expanded)["message_count"] == 1
+
+        single = parser.parse_line(line, 0)
+        assert single is not None
+        assert single.role == "system"
+        assert single.content == expanded[0].content
 
     def test_expand_user_tool_result_blocks(self, parser) -> None:
         """User message with tool_result blocks produces tool_result messages."""
