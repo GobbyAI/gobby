@@ -365,6 +365,8 @@ class SessionLivenessMonitor:
                 )
             except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
                 return None
+            if result.returncode != 0:
+                return None
             for line in result.stdout.splitlines():
                 pane_id, _separator, pane_dead = line.strip().partition("\t")
                 if pane_id and pane_dead != "1":

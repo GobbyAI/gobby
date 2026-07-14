@@ -357,10 +357,11 @@ class TestCheckSessions:
 
         with (
             patch.object(SessionLivenessMonitor, "_is_pid_alive", return_value=True),
-            patch.object(
-                SessionLivenessMonitor,
-                "_get_live_tmux_panes_by_socket",
-                return_value={None: None},
+            patch(
+                "subprocess.run",
+                return_value=subprocess.CompletedProcess(
+                    args=[], returncode=1, stdout="", stderr="tmux error"
+                ),
             ),
         ):
             await monitor._check_sessions()
@@ -575,6 +576,7 @@ class TestIsTmuxPaneAlive:
     def test_alive_pane(self):
         """Pane ID in tmux output means pane is alive."""
         mock_result = MagicMock()
+        mock_result.returncode = 0
         mock_result.stdout = "%5\t0\n%6\t0\n%7\t1\n"
         with patch("subprocess.run", return_value=mock_result):
             assert SessionLivenessMonitor._is_tmux_pane_alive("%6") is True
@@ -582,6 +584,7 @@ class TestIsTmuxPaneAlive:
     def test_dead_pane(self):
         """Pane ID not in tmux output means pane is dead."""
         mock_result = MagicMock()
+        mock_result.returncode = 0
         mock_result.stdout = "%5\t0\n%7\t0\n"
         with patch("subprocess.run", return_value=mock_result):
             assert SessionLivenessMonitor._is_tmux_pane_alive("%6") is False
@@ -589,6 +592,7 @@ class TestIsTmuxPaneAlive:
     def test_pane_dead_marker_is_not_alive(self):
         """pane_dead=1 excludes panes that tmux still lists after process exit."""
         mock_result = MagicMock()
+        mock_result.returncode = 0
         mock_result.stdout = "%6\t1\n"
         with patch("subprocess.run", return_value=mock_result):
             assert SessionLivenessMonitor._is_tmux_pane_alive("%6") is False
@@ -596,6 +600,7 @@ class TestIsTmuxPaneAlive:
     def test_alive_pane_with_socket_path(self):
         """When a socket path is known, liveness checks that exact tmux server."""
         mock_result = MagicMock()
+        mock_result.returncode = 0
         mock_result.stdout = "%6\t0\n"
         with patch("subprocess.run", return_value=mock_result) as mock_run:
             assert SessionLivenessMonitor._is_tmux_pane_alive("%6", "/tmp/tmux-1000/gobby") is True
@@ -618,8 +623,10 @@ class TestIsTmuxPaneAlive:
     def test_dead_pane_checks_default_and_gobby_socket_when_path_unknown(self):
         """Legacy rows without a socket path check both the default server and Gobby's socket."""
         default_result = MagicMock()
+        default_result.returncode = 0
         default_result.stdout = ""
         gobby_result = MagicMock()
+        gobby_result.returncode = 0
         gobby_result.stdout = "%6\t0\n"
 
         with patch("subprocess.run", side_effect=[default_result, gobby_result]) as mock_run:
@@ -660,9 +667,16 @@ class TestIsTmuxPaneAlive:
     def test_empty_output(self):
         """Empty tmux output (no panes) returns False."""
         mock_result = MagicMock()
+        mock_result.returncode = 0
         mock_result.stdout = ""
         with patch("subprocess.run", return_value=mock_result):
             assert SessionLivenessMonitor._is_tmux_pane_alive("%6") is False
+
+    def test_nonzero_exit_returns_probe_failure(self):
+        """A non-zero tmux exit is a failed probe, not an empty pane list."""
+        result = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="tmux error")
+        with patch("subprocess.run", return_value=result):
+            assert SessionLivenessMonitor._list_tmux_panes() is None
 
 
 class TestGetActiveTerminalSessions:
