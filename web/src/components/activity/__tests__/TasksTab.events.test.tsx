@@ -118,6 +118,7 @@ describe("TasksTab — events and row actions", () => {
   afterEach(() => {
     mockFetch.restore();
     vi.restoreAllMocks();
+    vi.useRealTimers();
     wsHandler = null;
   });
 
@@ -210,6 +211,7 @@ describe("TasksTab — events and row actions", () => {
     const description = (await screen.findByLabelText(
       "Description",
     )) as HTMLTextAreaElement;
+    vi.useFakeTimers();
     fireEvent.change(description, { target: { value: "Unsaved draft" } });
     description.focus();
 
@@ -236,18 +238,31 @@ describe("TasksTab — events and row actions", () => {
         task_id: "task-1",
         task: { id: "task-1", title: "Updated during refetch" },
       });
+      vi.advanceTimersByTime(500);
     });
 
-    await waitFor(
-      () => expect(screen.getByTestId("task-tree")).toHaveAttribute("aria-busy", "true"),
-      { timeout: 1_000 },
-    );
+    expect(screen.getByTestId("task-tree")).toHaveAttribute("aria-busy", "true");
     expect(screen.getByLabelText("Description")).toBe(description);
     expect(description.value).toBe("Unsaved draft");
     expect(document.activeElement).toBe(description);
     expect(screen.queryByText("Loading tasks…")).toBeNull();
     expect(detailFetchCount()).toBe(1);
 
+    await act(async () => {
+      vi.advanceTimersByTime(100);
+      await Promise.resolve();
+    });
+    const descriptionPatches = mockFetch.fn.mock.calls.filter(
+      ([url, init]) =>
+        String(url).endsWith("/api/tasks/task-review") &&
+        init?.method === "PATCH",
+    );
+    expect(descriptionPatches).toHaveLength(1);
+    expect(descriptionPatches[0]?.[1]).toMatchObject({
+      body: JSON.stringify({ description: "Unsaved draft" }),
+    });
+
+    vi.useRealTimers();
     resolveListFetch(
       new Response(JSON.stringify({ tasks: taskList }), {
         status: 200,
