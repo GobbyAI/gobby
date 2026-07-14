@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { draftToDefinition, draftToYaml, type RuleDraft, yamlToDraft } from "../RulesTabData";
+import type { RuleDetail } from "../../../../hooks/useRules";
+import {
+  detailToDraft,
+  draftToDefinition,
+  draftToYaml,
+  type RuleDraft,
+  yamlToDraft,
+} from "../RulesTabData";
 
 const baseDraft: RuleDraft = {
   name: "alpha-rule",
@@ -22,6 +29,42 @@ const baseDraft: RuleDraft = {
 };
 
 describe("rules YAML conversion", () => {
+  it("round-trips the complete fetched rule definition", () => {
+    const detail = {
+      id: "rule-id",
+      name: "alpha-rule",
+      description: "Alpha description",
+      event: "session.started",
+      group: "sessions",
+      when: "session.state == 'ready'",
+      enabled: true,
+      priority: 20,
+      source: "project",
+      tags: ["alpha", "guard"],
+      audience: "agent",
+      agent_scope: ["codex"],
+      match: { project: "gobby" },
+      tools: ["gobby-tasks"],
+      effects: [
+        { type: "inject_context", content: "Read AGENTS.md" },
+        { type: "set_variable", name: "rules_checked", value: true },
+      ],
+      custom_flag: true,
+    } as RuleDetail & Record<string, unknown>;
+
+    const draft = detailToDraft(detail);
+
+    expect(draft.extra).toEqual({ tools: ["gobby-tasks"], custom_flag: true });
+    expect(draftToDefinition(draft)).toMatchObject({
+      match: detail.match,
+      tools: detail.tools,
+      effects: detail.effects,
+      custom_flag: true,
+    });
+    expect(draftToDefinition(draft)).not.toHaveProperty("id");
+    expect(draftToDefinition(draft)).not.toHaveProperty("source");
+  });
+
   it("serializes full draft definitions and preserves unknown fields", () => {
     const yamlText = draftToYaml(baseDraft);
 
