@@ -111,6 +111,7 @@ def create_base_patches(
 
     patches = [
         patch("gobby.runner_init.storage.init_telemetry"),
+        patch("gobby.runner_init.storage.setup_file_logging"),
         patch("gobby.runner_init.storage.get_machine_id", return_value="test-machine"),
         patch("gobby.storage.hub.postgres.PostgresHubDatabase"),
         patch(RUNNER_INIT_SESSION_MANAGER_PATCH),

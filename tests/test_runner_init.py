@@ -15,7 +15,11 @@ from gobby.config.tasks import GobbyTasksConfig, TaskExpansionConfig, TaskValida
 from gobby.runner import GobbyRunner
 from gobby.runner_init.orchestration import _send_tmux_pane_wake, _send_tmux_session_wake
 from gobby.telemetry.span_store import GobbySpanExporter
-from tests.runner_helpers import create_base_patches, set_mock_default
+from tests.runner_helpers import (
+    apply_safe_runner_config_defaults,
+    create_base_patches,
+    set_mock_default,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_window")]
 
@@ -64,6 +68,40 @@ class TestGobbyRunnerInit:
             assert runner._shutdown_requested is False
             mock_http_cls.assert_called_once()
             mock_ws_cls.assert_called_once()
+
+    def test_telemetry_uses_phase_two_config(self) -> None:
+        bootstrap_config = apply_safe_runner_config_defaults(MagicMock())
+        runtime_config = apply_safe_runner_config_defaults(MagicMock())
+        runtime_config.telemetry.exporter.otlp_endpoint = "https://collector.example/v1/traces"
+        runtime_config.telemetry.exporter.otlp_headers = {"Authorization": "resolved-runtime-token"}
+        patches = create_base_patches(mock_config=bootstrap_config)
+
+        with ExitStack() as stack:
+            mocks = [stack.enter_context(p) for p in patches]
+            mocks_by_attribute = {
+                patch_context.attribute: entered_mock
+                for patch_context, entered_mock in zip(patches, mocks, strict=True)
+            }
+            mock_load_config = mocks_by_attribute["load_config"]
+            mock_load_config.side_effect = [bootstrap_config, runtime_config]
+
+            runner = GobbyRunner()
+
+            mocks_by_attribute["setup_file_logging"].assert_called_once_with(
+                bootstrap_config.telemetry,
+                verbose=False,
+            )
+            mocks_by_attribute["init_telemetry"].assert_called_once_with(
+                runtime_config.telemetry,
+                verbose=False,
+            )
+            assert runner.config is runtime_config
+            assert runner.config.telemetry.exporter.otlp_headers == {
+                "Authorization": "resolved-runtime-token"
+            }
+            phase_two_call = mock_load_config.call_args_list[1]
+            assert phase_two_call.kwargs["config_store"] is runner.config_store
+            assert phase_two_call.kwargs["secret_resolver"] == runner.secret_store.get
 
     async def test_trace_export_broadcasts_from_worker_thread(
         self, mock_config_with_websocket

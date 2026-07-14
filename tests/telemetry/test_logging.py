@@ -14,6 +14,7 @@ from gobby.telemetry.config import TelemetrySettings
 from gobby.telemetry.logging import (
     JsonOTelFormatter,
     OTelTraceFormatter,
+    setup_file_logging,
     setup_otel_logging,
 )
 
@@ -205,6 +206,17 @@ def test_setup_otel_logging_attaches_otel_handler(telemetry_config):
 
     root_logger = logging.getLogger("gobby")
     assert any(isinstance(h, LoggingHandler) for h in root_logger.handlers)
+
+
+def test_setup_file_logging_does_not_create_otel_provider(telemetry_config):
+    from opentelemetry.sdk._logs import LoggingHandler
+
+    with patch("gobby.telemetry.logging.get_logger_provider") as get_logger_provider:
+        setup_file_logging(telemetry_config)
+
+    get_logger_provider.assert_not_called()
+    root_logger = logging.getLogger("gobby")
+    assert not any(isinstance(h, LoggingHandler) for h in root_logger.handlers)
 
 
 def test_init_telemetry_sets_providers(telemetry_config):

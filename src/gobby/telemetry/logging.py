@@ -137,9 +137,9 @@ class JsonOTelFormatter(logging.Formatter):
         return json.dumps(log_data, default=str)
 
 
-def setup_otel_logging(config: TelemetrySettings, verbose: bool = False) -> None:
+def setup_file_logging(config: TelemetrySettings, verbose: bool = False) -> None:
     """
-    Configure rotating file logging with OpenTelemetry bridge.
+    Configure rotating file logging without creating OpenTelemetry providers.
 
     Replaces legacy file logging and setup_mcp_logging.
 
@@ -228,7 +228,12 @@ def setup_otel_logging(config: TelemetrySettings, verbose: bool = False) -> None
         for key in log_keys:
             logger.addHandler(create_handler(log_paths[key], level))
 
-    # 5. Bridge Python logging to OpenTelemetry
+
+def setup_otel_logging(config: TelemetrySettings, verbose: bool = False) -> None:
+    """Configure rotating file logging with the OpenTelemetry bridge."""
+    setup_file_logging(config, verbose=verbose)
+
+    level = logging.DEBUG if verbose else getattr(logging, config.log_level.upper(), logging.INFO)
     logger_provider = get_logger_provider(config)
     otel_handler = LoggingHandler(level=level, logger_provider=logger_provider)
-    root_logger.addHandler(otel_handler)
+    logging.getLogger("gobby").addHandler(otel_handler)
