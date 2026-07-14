@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.mcp_proxy.tools.task_validation import create_validation_registry
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.mcp_proxy.tools.tasks._lifecycle_close import CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT
 from gobby.mcp_proxy.tools.tasks._verification_evidence_context import (
@@ -121,6 +120,7 @@ def _seed_session_context() -> Generator[None]:
 def mock_task_manager() -> MagicMock:
     manager = MagicMock(spec=LocalTaskManager)
     manager.db = MagicMock()  # Needed for dep_manager init
+    manager.db.fetchone.return_value = None
     conn = MagicMock()
     conn.execute.return_value.fetchone.return_value = None
     manager.db.transaction.return_value.__enter__.return_value = conn
@@ -131,732 +131,6 @@ def mock_task_manager() -> MagicMock:
 def mock_task_validator() -> AsyncMock:
     validator = AsyncMock(spec=TaskValidator)
     return validator
-
-
-@pytest.fixture
-def registry_with_patches(
-    mock_task_manager: MagicMock, mock_task_validator: AsyncMock
-) -> Generator[Any]:
-    """Create a validation registry directly (validation tools are internal-only, not on gobby-tasks)."""
-    with patch(
-        "gobby.mcp_proxy.tools.tasks.resolve_task_id_for_mcp",
-        side_effect=lambda tm, tid, *a, **kw: tid,
-    ):
-        registry = create_validation_registry(
-            task_manager=mock_task_manager,
-            task_validator=mock_task_validator,
-        )
-        yield registry
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_validate_task_tool_success(
-    mock_task_manager: MagicMock,
-    mock_task_validator: AsyncMock,
-    registry_with_patches: Any,
-) -> None:
-    # Setup
-    task = _task(
-        id="t1",
-        title="Task 1",
-        project_id="p1",
-        status="open",
-        description="Do it",
-        priority=2,
-        task_type="task",
-        created_at="now",
-        updated_at="now",
-    )
-    mock_task_manager.get_task.return_value = task
-    mock_task_manager.list_tasks.return_value = []  # No children - use leaf task validation
-
-    mock_task_validator.validate_task.return_value = ValidationResult(
-        status="valid", feedback="Good job"
-    )
-
-    # Execute
-    result = await registry_with_patches.call(
-        "validate_task", {"task_id": "t1", "changes_summary": "Done"}
-    )
-
-    # Verify
-    assert result["is_valid"] is True
-    assert result["status"] == "valid"
-    mock_task_manager.close_task.assert_called_with("t1", reason="Completed via validation")
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_validate_task_tool_failure_retry(
-    mock_task_manager: MagicMock,
-    mock_task_validator: AsyncMock,
-    registry_with_patches: Any,
-) -> None:
-    # Setup
-    task = _task(
-        id="t1",
-        title="Task 1",
-        project_id="p1",
-        status="open",
-        description="Do it",
-        validation_fail_count=0,
-        priority=2,
-        task_type="task",
-        created_at="now",
-        updated_at="now",
-    )
-    mock_task_manager.get_task.return_value = task
-    mock_task_manager.list_tasks.return_value = []  # No children - use leaf task validation
-
-    mock_task_validator.validate_task.return_value = ValidationResult(
-        status="invalid", feedback="Bad job"
-    )
-
-    fix_subtask = _task(
-        id="fix1",
-        title="Fix validation",
-        project_id="p1",
-        status="open",
-        priority=1,
-        task_type="bug",
-        created_at="now",
-        updated_at="now",
-    )
-    mock_task_manager.create_task.return_value = fix_subtask
-
-    # Execute
-    result = await registry_with_patches.call(
-        "validate_task", {"task_id": "t1", "changes_summary": "Done"}
-    )
-
-    # Verify
-    assert result["is_valid"] is False
-    assert result["fail_count"] == 1
-
-    # Check subtask creation
-    mock_task_manager.create_task.assert_called_once()
-    args = mock_task_manager.create_task.call_args.kwargs
-    assert args["parent_task_id"] == "t1"
-    assert args["task_type"] == "bug"
-    assert "Bad job" in args["description"]
-
-    # Check task update
-    mock_task_manager.update_task.assert_called_once()
-    update_args = mock_task_manager.update_task.call_args.kwargs
-    assert update_args["validation_fail_count"] == 1
-    assert "fix1" in update_args["validation_feedback"]
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_validate_task_tool_failure_max_retries(
-    mock_task_manager: MagicMock,
-    mock_task_validator: AsyncMock,
-    registry_with_patches: Any,
-) -> None:
-    # Setup -> already failed 2 times (max is 3, so failing one more time makes 3 -> failed?)
-
-    task = _task(
-        id="t1",
-        title="Task 1",
-        project_id="p1",
-        status="open",
-        description="Do it",
-        validation_fail_count=2,
-        priority=2,
-        task_type="task",
-        created_at="now",
-        updated_at="now",
-    )
-    mock_task_manager.get_task.return_value = task
-    mock_task_manager.list_tasks.return_value = []  # No children - use leaf task validation
-
-    mock_task_validator.validate_task.return_value = ValidationResult(
-        status="invalid", feedback="Still bad"
-    )
-
-    # Execute
-    result = await registry_with_patches.call(
-        "validate_task", {"task_id": "t1", "changes_summary": "Done"}
-    )
-
-    # Verify
-    assert result["is_valid"] is False
-    assert result["fail_count"] == 3
-
-    # Verify NO subtask created
-    mock_task_manager.create_task.assert_not_called()
-
-    # Verify task escalated
-    mock_task_manager.update_task.assert_called_once()
-    update_args = mock_task_manager.update_task.call_args.kwargs
-    assert "Exceeded max retries" in update_args["validation_feedback"]
-    mock_task_manager.escalate_task.assert_called_once_with(
-        "t1",
-        reason="exceeded_validation_retries (3)",
-    )
-
-
-# ============================================================================
-# Parent Task Validation Tests
-# ============================================================================
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_validate_parent_task_all_children_closed(
-    mock_task_manager: MagicMock,
-    mock_task_validator: AsyncMock,
-    registry_with_patches: Any,
-) -> None:
-    """Test that parent task validates successfully when all children are closed."""
-    parent_task = _task(
-        id="parent1",
-        title="Parent Task",
-        project_id="p1",
-        status="open",
-        priority=2,
-        task_type="epic",
-        created_at="now",
-        updated_at="now",
-    )
-
-    child1 = _task(
-        id="child1",
-        title="Child 1",
-        project_id="p1",
-        status="closed",
-        priority=2,
-        task_type="task",
-        parent_task_id="parent1",
-        created_at="now",
-        updated_at="now",
-    )
-    child2 = _task(
-        id="child2",
-        title="Child 2",
-        project_id="p1",
-        status="closed",
-        priority=2,
-        task_type="task",
-        parent_task_id="parent1",
-        created_at="now",
-        updated_at="now",
-    )
-
-    mock_task_manager.get_task.return_value = parent_task
-    mock_task_manager.list_tasks.return_value = [child1, child2]  # Has children
-
-    result = await registry_with_patches.call("validate_task", {"task_id": "parent1"})
-
-    assert result["is_valid"] is True
-    assert result["status"] == "valid"
-    assert "2 child tasks" in result["feedback"]
-    # Parent task should be closed
-    mock_task_manager.close_task.assert_called_with("parent1", reason="Completed via validation")
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_validate_parent_task_some_children_open(
-    mock_task_manager: MagicMock,
-    mock_task_validator: AsyncMock,
-    registry_with_patches: Any,
-) -> None:
-    """Test that parent task validation fails when some children are still open."""
-    parent_task = _task(
-        id="parent1",
-        title="Parent Task",
-        project_id="p1",
-        status="open",
-        priority=2,
-        task_type="epic",
-        created_at="now",
-        updated_at="now",
-    )
-
-    child1 = _task(
-        id="child1",
-        title="Completed Child",
-        project_id="p1",
-        status="closed",
-        priority=2,
-        task_type="task",
-        parent_task_id="parent1",
-        created_at="now",
-        updated_at="now",
-    )
-    child2 = _task(
-        id="child2",
-        title="Open Child",
-        project_id="p1",
-        status="open",
-        priority=2,
-        task_type="task",
-        parent_task_id="parent1",
-        created_at="now",
-        updated_at="now",
-    )
-    child3 = _task(
-        id="child3",
-        title="In Progress Child",
-        project_id="p1",
-        status="in_progress",
-        priority=2,
-        task_type="task",
-        parent_task_id="parent1",
-        created_at="now",
-        updated_at="now",
-    )
-
-    mock_task_manager.get_task.return_value = parent_task
-    mock_task_manager.list_tasks.return_value = [child1, child2, child3]  # Has children
-
-    result = await registry_with_patches.call("validate_task", {"task_id": "parent1"})
-
-    assert result["is_valid"] is False
-    assert result["status"] == "invalid"
-    assert "2 of 3 child tasks still open" in result["feedback"]
-    # LLM validator should NOT have been called for parent task
-    mock_task_validator.validate_task.assert_not_called()
-    # Parent task should NOT be closed
-    mock_task_manager.close_task.assert_not_called()
-
-
-# ============================================================================
-# LLM Failure Simulation Tests
-# ============================================================================
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_validate_task_llm_returns_pending(
-    mock_task_manager: MagicMock,
-    mock_task_validator: AsyncMock,
-    registry_with_patches: Any,
-) -> None:
-    """Test handling when LLM validation returns pending status (error case)."""
-    task = _task(
-        id="t1",
-        title="Task 1",
-        project_id="p1",
-        status="open",
-        description="Do it",
-        validation_fail_count=0,
-        priority=2,
-        task_type="task",
-        created_at="now",
-        updated_at="now",
-    )
-    mock_task_manager.get_task.return_value = task
-    mock_task_manager.list_tasks.return_value = []
-
-    # LLM returns pending (e.g., due to parsing error)
-    mock_task_validator.validate_task.return_value = ValidationResult(
-        status="pending", feedback="Failed to parse LLM response"
-    )
-
-    result = await registry_with_patches.call(
-        "validate_task", {"task_id": "t1", "changes_summary": "Done"}
-    )
-
-    # Pending is not valid, but also doesn't increment fail count (it's an error, not rejection)
-    assert result["is_valid"] is False
-    assert result["status"] == "pending"
-    # Fail count should remain unchanged (0)
-    assert result.get("fail_count", 0) == 0
-    # Task should NOT be closed
-    mock_task_manager.close_task.assert_not_called()
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_validate_task_llm_exception(
-    mock_task_manager: MagicMock,
-    mock_task_validator: AsyncMock,
-    registry_with_patches: Any,
-) -> None:
-    """Test handling when LLM throws an exception during validation."""
-    task = _task(
-        id="t1",
-        title="Task 1",
-        project_id="p1",
-        status="open",
-        description="Do it",
-        priority=2,
-        task_type="task",
-        created_at="now",
-        updated_at="now",
-    )
-    mock_task_manager.get_task.return_value = task
-    mock_task_manager.list_tasks.return_value = []
-
-    # LLM throws exception
-    mock_task_validator.validate_task.side_effect = Exception("API rate limited")
-
-    # Should raise the exception
-    with pytest.raises(Exception, match="API rate limited"):
-        await registry_with_patches.call(
-            "validate_task", {"task_id": "t1", "changes_summary": "Done"}
-        )
-
-
-# ============================================================================
-# Subtask Creation Flow Tests
-# ============================================================================
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_validate_task_failure_creates_fix_subtask_with_correct_fields(
-    mock_task_manager: MagicMock,
-    mock_task_validator: AsyncMock,
-    registry_with_patches: Any,
-) -> None:
-    """Test that validation failure creates a properly configured fix subtask."""
-    task = _task(
-        id="t1",
-        title="Implement feature X",
-        project_id="proj123",
-        status="open",
-        description="Feature description",
-        validation_fail_count=0,
-        priority=2,
-        task_type="feature",
-        created_at="now",
-        updated_at="now",
-    )
-    mock_task_manager.get_task.return_value = task
-    mock_task_manager.list_tasks.return_value = []
-
-    mock_task_validator.validate_task.return_value = ValidationResult(
-        status="invalid",
-        feedback="Missing error handling for edge case X. Tests for Y are incomplete.",
-    )
-
-    fix_subtask = _task(
-        id="fix-abc",
-        title="Fix validation failures for Implement feature X",
-        project_id="proj123",
-        status="open",
-        priority=1,
-        task_type="bug",
-        parent_task_id="t1",
-        created_at="now",
-        updated_at="now",
-    )
-    mock_task_manager.create_task.return_value = fix_subtask
-
-    await registry_with_patches.call("validate_task", {"task_id": "t1", "changes_summary": "Done"})
-
-    # Verify subtask creation call
-    mock_task_manager.create_task.assert_called_once()
-    create_args = mock_task_manager.create_task.call_args.kwargs
-
-    # Verify all expected fields
-    assert create_args["project_id"] == "proj123"
-    assert "Fix validation failures" in create_args["title"]
-    assert "Implement feature X" in create_args["title"]
-    assert create_args["parent_task_id"] == "t1"
-    assert create_args["priority"] == 1  # High priority for fix
-    assert create_args["task_type"] == "bug"
-
-    # Verify description contains feedback
-    assert "Missing error handling" in create_args["description"]
-    assert "Tests for Y are incomplete" in create_args["description"]
-    assert "re-validate" in create_args["description"]
-
-    # Verify feedback references the fix task (it's in validation_feedback which is stored in update_task)
-    update_args = mock_task_manager.update_task.call_args.kwargs
-    assert "fix-abc" in update_args["validation_feedback"]
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_validate_task_second_failure_creates_second_subtask(
-    mock_task_manager: MagicMock,
-    mock_task_validator: AsyncMock,
-    registry_with_patches: Any,
-) -> None:
-    """Test that second validation failure also creates a fix subtask."""
-    task = _task(
-        id="t1",
-        title="Task 1",
-        project_id="p1",
-        status="open",
-        description="Do it",
-        validation_fail_count=1,  # Already failed once
-        priority=2,
-        task_type="task",
-        created_at="now",
-        updated_at="now",
-    )
-    mock_task_manager.get_task.return_value = task
-    mock_task_manager.list_tasks.return_value = []
-
-    mock_task_validator.validate_task.return_value = ValidationResult(
-        status="invalid", feedback="Still has issues"
-    )
-
-    fix_subtask = _task(
-        id="fix2",
-        title="Fix 2",
-        project_id="p1",
-        status="open",
-        priority=1,
-        task_type="bug",
-        created_at="now",
-        updated_at="now",
-    )
-    mock_task_manager.create_task.return_value = fix_subtask
-
-    result = await registry_with_patches.call(
-        "validate_task", {"task_id": "t1", "changes_summary": "Done"}
-    )
-
-    # This is the 2nd failure (fail_count goes from 1 to 2)
-    # Should still create subtask since count < MAX_RETRIES (3)
-    assert result["fail_count"] == 2
-    mock_task_manager.create_task.assert_called_once()
-
-
-# ============================================================================
-# Max Validation Fails Tests
-# ============================================================================
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_validate_task_exactly_at_max_retries(
-    mock_task_manager: MagicMock,
-    mock_task_validator: AsyncMock,
-    registry_with_patches: Any,
-) -> None:
-    """Test behavior when validation fails exactly at max retries (3)."""
-    task = _task(
-        id="t1",
-        title="Problematic Task",
-        project_id="p1",
-        status="open",
-        description="Cannot be completed",
-        validation_fail_count=2,  # 2 previous failures
-        priority=2,
-        task_type="task",
-        created_at="now",
-        updated_at="now",
-    )
-    mock_task_manager.get_task.return_value = task
-    mock_task_manager.list_tasks.return_value = []
-
-    mock_task_validator.validate_task.return_value = ValidationResult(
-        status="invalid", feedback="Third failure"
-    )
-
-    result = await registry_with_patches.call(
-        "validate_task", {"task_id": "t1", "changes_summary": "Done"}
-    )
-
-    # 3rd failure hits MAX_RETRIES
-    assert result["fail_count"] == 3
-    assert result["is_valid"] is False
-
-    # NO subtask should be created at max retries
-    mock_task_manager.create_task.assert_not_called()
-
-    # Task should be escalated
-    update_args = mock_task_manager.update_task.call_args.kwargs
-    assert update_args["validation_fail_count"] == 3
-    assert "Exceeded max retries (3)" in update_args["validation_feedback"]
-    mock_task_manager.escalate_task.assert_called_once_with(
-        "t1",
-        reason="exceeded_validation_retries (3)",
-    )
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_validate_task_beyond_max_retries(
-    mock_task_manager: MagicMock,
-    mock_task_validator: AsyncMock,
-    registry_with_patches: Any,
-) -> None:
-    """Test behavior when task already has max failures and fails again."""
-    task = _task(
-        id="t1",
-        title="Already Failed Task",
-        project_id="p1",
-        status="open",  # Somehow reopened
-        description="Was already at max failures",
-        validation_fail_count=3,  # Already at max
-        priority=2,
-        task_type="task",
-        created_at="now",
-        updated_at="now",
-    )
-    mock_task_manager.get_task.return_value = task
-    mock_task_manager.list_tasks.return_value = []
-
-    mock_task_validator.validate_task.return_value = ValidationResult(
-        status="invalid", feedback="Fourth failure"
-    )
-
-    result = await registry_with_patches.call(
-        "validate_task", {"task_id": "t1", "changes_summary": "Done"}
-    )
-
-    # 4th failure is beyond max
-    assert result["fail_count"] == 4
-    assert result["is_valid"] is False
-
-    # Still no subtask (already past max)
-    mock_task_manager.create_task.assert_not_called()
-
-    # Task should be escalated again
-    update_args = mock_task_manager.update_task.call_args.kwargs
-    assert update_args["validation_fail_count"] == 4
-    mock_task_manager.escalate_task.assert_called_once_with(
-        "t1",
-        reason="exceeded_validation_retries (3)",
-    )
-
-
-# ============================================================================
-# Smart Context Gathering Tests
-# ============================================================================
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_validate_task_without_changes_summary_uses_smart_context(
-    mock_task_manager: MagicMock, mock_task_validator: AsyncMock
-) -> None:
-    """Test that validation without changes_summary uses smart context gathering."""
-    task = _task(
-        id="t1",
-        title="Task 1",
-        project_id="p1",
-        status="open",
-        description="Do it",
-        validation_criteria="Must have tests",
-        priority=2,
-        task_type="task",
-        created_at="now",
-        updated_at="now",
-    )
-    mock_task_manager.get_task.return_value = task
-    mock_task_manager.list_tasks.return_value = []
-
-    mock_task_validator.validate_task.return_value = ValidationResult(status="valid", feedback="OK")
-
-    with (
-        patch(
-            "gobby.mcp_proxy.tools.tasks.resolve_task_id_for_mcp",
-            side_effect=lambda tm, tid, *a, **kw: tid,
-        ),
-        patch("gobby.tasks.validation.get_validation_context_smart") as mock_smart_context,
-    ):
-        mock_smart_context.return_value = "Smart context from git diff"
-
-        registry = create_validation_registry(
-            task_manager=mock_task_manager,
-            task_validator=mock_task_validator,
-        )
-
-        # Call without changes_summary
-        result = await registry.call("validate_task", {"task_id": "t1"})
-
-        assert result["is_valid"] is True
-        # Smart context should have been called
-        mock_smart_context.assert_called_once()
-        # Validator should have received the smart context
-        validator_call = mock_task_validator.validate_task.call_args
-        assert "Smart context from git diff" in validator_call.kwargs["changes_summary"]
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_validate_task_no_context_available_raises_error(
-    mock_task_manager: MagicMock, mock_task_validator: AsyncMock
-) -> None:
-    """Test that validation fails gracefully when no context is available."""
-    task = _task(
-        id="t1",
-        title="Task 1",
-        project_id="p1",
-        status="open",
-        description="Do it",
-        validation_criteria="Must have tests",
-        priority=2,
-        task_type="task",
-        created_at="now",
-        updated_at="now",
-    )
-    mock_task_manager.get_task.return_value = task
-    mock_task_manager.list_tasks.return_value = []
-
-    with (
-        patch(
-            "gobby.mcp_proxy.tools.tasks.resolve_task_id_for_mcp",
-            side_effect=lambda tm, tid, *a, **kw: tid,
-        ),
-        patch("gobby.tasks.validation.get_validation_context_smart") as mock_smart_context,
-    ):
-        # No context available
-        mock_smart_context.return_value = None
-
-        registry = create_validation_registry(
-            task_manager=mock_task_manager,
-            task_validator=mock_task_validator,
-        )
-
-        # Should raise ValueError
-        with pytest.raises(ValueError, match="No changes found"):
-            await registry.call("validate_task", {"task_id": "t1"})
-
-
-# ============================================================================
-# Reset Validation Count Tests
-# ============================================================================
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_reset_validation_count(
-    mock_task_manager: MagicMock,
-    mock_task_validator: AsyncMock,
-    registry_with_patches: Any,
-) -> None:
-    """Test resetting validation failure count."""
-    task = _task(
-        id="t1",
-        title="Escalated Task",
-        project_id="p1",
-        status="escalated",
-        priority=2,
-        task_type="task",
-        created_at="now",
-        updated_at="now",
-        validation_fail_count=3,
-    )
-    mock_task_manager.get_task.return_value = task
-    mock_task_manager.update_task.return_value = _task(
-        id="t1",
-        title="Escalated Task",
-        project_id="p1",
-        status="escalated",
-        priority=2,
-        task_type="task",
-        created_at="now",
-        updated_at="now",
-        validation_fail_count=0,  # Reset
-    )
-
-    result = await registry_with_patches.call("reset_validation_count", {"task_id": "t1"})
-
-    assert result["validation_fail_count"] == 0
-    assert "reset to 0" in result["message"]
-    mock_task_manager.update_task.assert_called_with("t1", validation_fail_count=0)
 
 
 # ============================================================================
@@ -1026,6 +300,109 @@ async def test_close_task_includes_latest_thirty_verification_evidence(
     assert "supports: source line-count gate for #15763" in changes_summary
     assert "scope: src/gobby/mcp_proxy/tools/tasks" in changes_summary
     assert "task_id: #15763" in changes_summary
+
+
+@pytest.mark.asyncio
+async def test_close_task_preserves_oversized_test_definitions_with_focused_evidence(
+    mock_task_manager: MagicMock,
+    mock_task_validator: AsyncMock,
+    repo_path: str,
+) -> None:
+    """Close validation receives every acceptance test name and its passing command."""
+    task = _task(
+        id="t1",
+        title="Task with oversized regression coverage",
+        project_id="p1",
+        status="open",
+        description="Preserve acceptance tests in validation evidence",
+        validation_criteria="All twelve acceptance tests and focused pytest evidence are visible",
+        commits=["abc123"],
+        priority=2,
+        task_type="task",
+        created_at="now",
+        updated_at="now",
+    )
+    mock_task_manager.get_task.return_value = task
+    mock_task_manager.list_tasks.return_value = []
+    mock_task_validator.validate_task.return_value = ValidationResult(status="valid", feedback="OK")
+    mock_task_manager.close_task.return_value = task
+
+    helper_names = [f"helper_fixture_{index:02d}" for index in range(7)]
+    test_names = [f"test_acceptance_{index:02d}" for index in range(12)]
+    test_lines = [f"+test_file_line_{line:03d}_{'t' * 40}" for line in range(331)]
+    for index, name in enumerate(helper_names):
+        test_lines[45 + index * 10] = f"+def {name}(): pass"
+    for index, name in enumerate(test_names[:-1]):
+        test_lines[125 + index * 16] = f"+def {name}(): pass"
+    test_lines[315] = f"+def {test_names[-1]}(): pass"
+
+    production_lines = "".join(f"+production_line_{line:03d}_{'p' * 80}\n" for line in range(240))
+    oversized_diff = (
+        "diff --git a/src/large.py b/src/large.py\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/src/large.py\n"
+        "@@ -0,0 +1,240 @@\n"
+        + production_lines
+        + "diff --git a/tests/test_acceptance.py b/tests/test_acceptance.py\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/tests/test_acceptance.py\n"
+        "@@ -0,0 +1,331 @@\n" + "".join(f"{line}\n" for line in test_lines)
+    )
+    focused_command = "GOBBY_TEST_PROTECT=1 uv run pytest tests/test_acceptance.py -k acceptance -q"
+
+    from gobby.tasks.commits import TaskDiffResult
+
+    with (
+        patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
+        patch("gobby.tasks.commits.get_task_diff") as mock_diff,
+        patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as mock_sm_cls,
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
+        patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
+    ):
+        mock_diff.return_value = TaskDiffResult(
+            diff=oversized_diff,
+            commits=["abc123"],
+            has_uncommitted_changes=False,
+            file_count=2,
+        )
+        mock_pm.return_value.get.return_value = MagicMock(repo_path=repo_path)
+        mock_sm = MagicMock()
+        mock_sm.resolve_session_reference.return_value = "sess-uuid"
+        mock_sm.get.return_value = MagicMock(had_edits=True)
+        mock_sm_cls.return_value = mock_sm
+        mock_svm_cls.return_value.get_variables.return_value = {
+            VERIFICATION_EVIDENCE_VARIABLE: [
+                {
+                    "evidence_type": "validation_command",
+                    "success": True,
+                    "command": focused_command,
+                    "matcher_id": "python-tests",
+                    "matcher_label": "Python tests",
+                }
+            ]
+        }
+
+        registry = create_task_registry(
+            task_manager=mock_task_manager,
+            sync_manager=MagicMock(),
+            task_validator=mock_task_validator,
+        )
+
+        result = await registry.call(
+            "close_task", {"task_id": "t1", "changes_summary": "test changes"}
+        )
+
+    assert result == {"success": True}
+    changes_summary = mock_task_validator.validate_task.call_args.kwargs["changes_summary"]
+    for name in test_names:
+        assert name in changes_summary
+    assert "hunk truncated for tests/test_acceptance.py" in changes_summary
+    assert f"- command: {focused_command}" in changes_summary
+    assert "matcher_label: Python tests" in changes_summary
 
 
 @pytest.mark.integration

@@ -10,6 +10,7 @@ import pytest
 
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.tasks.expansion._qa import ExpansionQaResult
 from gobby.tasks.expansion_service import ExpansionService
 
 pytestmark = pytest.mark.unit
@@ -281,3 +282,28 @@ async def test_no_plan_file_uses_ad_hoc_llm_path(
     assert refreshed.compiled_spec is not None
     assert deterministic_compile.call_count == 0
     assert raw_spec.await_count == 1
+
+
+async def test_compile_run_rejects_failed_expansion_qa(
+    service: ExpansionService,
+    run_manager: LocalExpansionRunManager,
+    sample_project: dict[str, Any],
+) -> None:
+    parent = _parent(service, sample_project)
+    run = run_manager.create(
+        parent_task_id=parent.id,
+        project_id=sample_project["id"],
+        triggering_session_id=None,
+        input_source="task",
+    )
+    raw_spec = AsyncMock(return_value=_valid_spec(parent.id, None))
+    failed_qa = ExpansionQaResult(valid=False, errors=["QA rejected the compiled spec"])
+
+    with (
+        patch.object(service, "_generate_raw_spec", raw_spec),
+        patch("gobby.tasks.expansion._compile.run_expansion_qa", return_value=failed_qa),
+        pytest.raises(ValueError, match="failed QA: QA rejected the compiled spec"),
+    ):
+        await service.compile_run(run.id)
+
+    assert run_manager.get(run.id).compiled_spec is None
