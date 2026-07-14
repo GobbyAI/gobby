@@ -14,8 +14,10 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from gobby.skills.hubs._streaming import SkillContentError, read_limited_utf8
 from gobby.skills.hubs.base import DownloadResult, HubProvider, HubSkillDetails, HubSkillInfo
-from gobby.skills.loader import GitHubRef, clone_skill_repo
+from gobby.skills.limits import MAX_SKILL_MD_BYTES
+from gobby.skills.loader import GitHubRef, clone_skill_repo, resolve_github_skill_path
 
 if TYPE_CHECKING:
     from gobby.llm.service import LLMService
@@ -279,14 +281,23 @@ class GitHubCollectionProvider(HubProvider):
 
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.get(
+                async with client.stream(
+                    "GET",
                     url,
                     headers=headers,
                     params=params,
                     timeout=30.0,
-                )
-                response.raise_for_status()
-                return response.text
+                ) as response:
+                    response.raise_for_status()
+                    try:
+                        return await read_limited_utf8(
+                            response,
+                            max_bytes=MAX_SKILL_MD_BYTES,
+                            label="SKILL.md",
+                        )
+                    except SkillContentError as e:
+                        logger.debug(f"Could not fetch SKILL.md for {slug}: {e}")
+                        return None
         except httpx.HTTPStatusError as e:
             logger.debug(f"Could not fetch SKILL.md for {slug}: {e.response.status_code}")
             return None
@@ -372,7 +383,7 @@ Output ONLY the description text, no quotes, no explanation, no preamble."""
         repo_path = clone_skill_repo(ref)
 
         # Path to the skill within the repo
-        skill_path = repo_path / skill_subpath
+        skill_path = resolve_github_skill_path(repo_path, skill_subpath)
 
         # If target_dir specified, copy skill there
         if target_dir:

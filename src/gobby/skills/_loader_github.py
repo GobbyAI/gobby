@@ -114,6 +114,35 @@ def _validate_github_ref(ref: GitHubRef) -> None:
         ):
             raise SkillLoadError(f"Invalid branch name: {ref.branch}")
 
+    _validate_github_path(ref.path)
+
+
+def _validate_github_path(path: str | None) -> None:
+    """Validate a repository-relative GitHub skill path."""
+    if path is None:
+        return
+
+    segments = path.split("/")
+    if (
+        not path
+        or path.startswith("/")
+        or "\\" in path
+        or any(not segment or segment in {".", ".."} for segment in segments)
+    ):
+        raise SkillLoadError(f"Invalid GitHub skill path: {path}")
+
+
+def resolve_github_skill_path(repo_path: Path, path: str | None) -> Path:
+    """Resolve a skill path and require it to remain within its repository."""
+    _validate_github_path(path)
+    resolved_repo = repo_path.resolve()
+    resolved_skill = (resolved_repo / path).resolve() if path else resolved_repo
+    try:
+        resolved_skill.relative_to(resolved_repo)
+    except ValueError as exc:
+        raise SkillLoadError(f"GitHub skill path escapes repository: {path}") from exc
+    return resolved_skill
+
 
 def clone_skill_repo(
     ref: GitHubRef,

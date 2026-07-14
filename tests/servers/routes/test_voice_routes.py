@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 from collections import OrderedDict
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -351,6 +352,35 @@ class TestVoiceRoutes:
         assert data["tts_provider"] == "chatterbox"
         assert data["tts_available"] is False
         assert "reference audio not found" in data["tts_reason"]
+
+    def test_status_does_not_import_chatterbox_runtime(
+        self, client: TestClient, server_with_voice: MagicMock, tmp_path: Path
+    ) -> None:
+        reference_audio = tmp_path / "reference.wav"
+        reference_audio.write_bytes(b"RIFF" + b"\x00" * 100)
+        server_with_voice.config.voice = VoiceConfig(
+            enabled=True,
+            tts_enabled=True,
+            tts_provider="chatterbox",
+            tts_reference_audio=str(reference_audio),
+        )
+
+        with (
+            patch("gobby.voice.tts_chatterbox._module_is_available", return_value=True),
+            patch("gobby.voice.tts_chatterbox._auto_device") as auto_device,
+            patch.object(importlib, "import_module", wraps=importlib.import_module) as imports,
+        ):
+            response = client.get("/api/voice/status")
+
+        assert response.status_code == 200
+        assert response.json()["tts_available"] is True
+        auto_device.assert_not_called()
+        runtime_imports = [
+            call.args[0]
+            for call in imports.call_args_list
+            if call.args and call.args[0].startswith(("chatterbox", "torch"))
+        ]
+        assert runtime_imports == []
 
     # -----------------------------------------------------------------
     # POST /api/voice/transcribe

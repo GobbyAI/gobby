@@ -144,7 +144,7 @@ class TestClawdHubProviderSearch:
             "code-review  v2.1.0  Review code for issues\n"
         )
 
-        with patch.object(provider, "_run_cli_command", return_value=text_output):
+        with patch.object(provider, "_run_cli_command", return_value=text_output) as mock_command:
             results = await provider.search("commit", limit=10)
 
             assert len(results) == 2
@@ -152,6 +152,7 @@ class TestClawdHubProviderSearch:
             assert results[0].slug == "commit-message"
             assert results[0].version == "1.0.0"
             assert results[0].hub_name == "clawdhub"
+            mock_command.assert_called_once_with("search", ["--limit", "10", "--", "commit"])
 
     @pytest.mark.asyncio
     async def test_search_empty_results(self) -> None:
@@ -307,7 +308,7 @@ class TestClawdHubProviderGetDetails:
             assert result is not None
             assert result.slug == "commit-message"
             assert result.display_name == "Commit Message Generator"
-            mock_json.assert_called_once_with("inspect", ["commit-message"])
+            mock_json.assert_called_once_with("inspect", ["--", "commit-message"])
 
     @pytest.mark.asyncio
     async def test_get_skill_details_returns_none_on_error(self) -> None:
@@ -336,10 +337,30 @@ class TestClawdHubProviderDownload:
         provider._cli_available = True
         provider._cli_binary = "clawhub"
 
-        with patch.object(provider, "_run_cli_command", return_value="Installed commit-message"):
+        with patch.object(
+            provider, "_run_cli_command", return_value="Installed commit-message"
+        ) as mock_command:
             result = await provider.download_skill("commit-message")
             assert result.success is True
             assert result.slug == "commit-message"
+            args = mock_command.call_args.args[1]
+            assert args[-2:] == ["--", "commit-message"]
+            assert args.index("--force") < args.index("--")
+
+    @pytest.mark.asyncio
+    async def test_download_skill_rejects_option_like_slug(self) -> None:
+        provider = ClawdHubProvider(
+            hub_name="clawdhub",
+            base_url="https://clawdhub.com",
+        )
+        provider._cli_available = True
+
+        with (
+            patch.object(provider, "_run_cli_command") as mock_command,
+            pytest.raises(ValueError, match="slug must not start"),
+        ):
+            await provider.download_skill("--force")
+        mock_command.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_download_skill_cli_unavailable(self) -> None:

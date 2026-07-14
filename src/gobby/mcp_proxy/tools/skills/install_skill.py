@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +42,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
         Returns:
             Dict with success status, skill_id, skill_name, and source_type
         """
+        temporary_download_path: Path | None = None
         try:
             # Validate input
             if not source or not source.strip():
@@ -54,12 +57,12 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             parsed_skill: ParsedSkill | list[ParsedSkill] | None = None
             source_type: SkillSourceType | None = None
 
-            # Check for hub:slug syntax (e.g., "clawdhub:commit-message")
-            # Must have exactly one colon, not be a URL, and the hub part must be alphanumeric
-            hub_pattern = re.compile(r"^([A-Za-z0-9_-]+):([A-Za-z0-9_-]+)$")
+            # Check for hub:slug syntax (e.g., "github-collection:category/name")
+            # Slug path segments are limited to the same safe characters as hub names.
+            hub_pattern = re.compile(r"^([A-Za-z0-9_-]+):([A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*)$")
             hub_match = hub_pattern.match(source)
 
-            if hub_match and not source.startswith("http"):
+            if hub_match and not source.startswith(("http", "github:")):
                 # Hub reference: hub_name:skill_slug
                 hub_name, skill_slug = hub_match.groups()
 
@@ -79,6 +82,9 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                     # Get the provider and download the skill
                     provider = ctx.hub_manager.get_provider(hub_name)
                     download_result = await provider.download_skill(skill_slug)
+
+                    if download_result.is_temp and download_result.path:
+                        temporary_download_path = Path(download_result.path)
 
                     if not download_result.success or not download_result.path:
                         return {
@@ -269,3 +275,10 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             }
         except Exception as e:
             return {"success": False, "error": str(e)}
+        finally:
+            if temporary_download_path is not None:
+                await asyncio.to_thread(
+                    shutil.rmtree,
+                    temporary_download_path,
+                    ignore_errors=True,
+                )

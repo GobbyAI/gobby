@@ -17,11 +17,42 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from gobby.storage.skills import SkillScopeConflictError
+
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
+    from gobby.skills.parser import ParsedSkill
 
 logger = logging.getLogger(__name__)
 _GITHUB_OWNER_REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:#[A-Za-z0-9_./-]+)?$")
+
+
+def _scan_skill_install(parsed_skill: "ParsedSkill", source_type: str | None) -> None:
+    """Reject unsafe skill content before an HTTP install persists it."""
+    from gobby.skills.scanner import is_external_source, scan_parsed_skill
+
+    try:
+        scan_result = scan_parsed_skill(parsed_skill)
+    except ImportError as exc:
+        if is_external_source(source_type):
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Security scanner unavailable; refusing to install "
+                    f"external skill '{parsed_skill.name}'"
+                ),
+            ) from exc
+        logger.warning("Security scanner unavailable for local skill '%s'", parsed_skill.name)
+        return
+
+    if not scan_result["is_safe"]:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Skill '{parsed_skill.name}' failed security scan "
+                f"(max severity: {scan_result['max_severity']})"
+            ),
+        )
 
 
 # =============================================================================
@@ -282,7 +313,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
         try:
             from gobby.skills.sync import sync_bundled_skills
 
-            result = sync_bundled_skills(server.services.database)
+            result = await run_in_threadpool(partial(sync_bundled_skills, server.services.database))
             await _broadcast_skill("skills_bulk_changed", "bulk")
             return result
         except Exception as e:
@@ -311,16 +342,19 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             # Detect source type and load
             if _is_github_source(source, local_path_exists=local_import_path is not None):
                 parsed = await asyncio.to_thread(loader.load_from_github, source, validate=True)
+                scan_source_type = "github"
             elif source.endswith(".zip"):
                 zip_source = local_import_path or await _resolve_project_import_path(
                     source, request_data.project_id
                 )
                 parsed = await asyncio.to_thread(loader.load_from_zip, zip_source, validate=True)
+                scan_source_type = "zip"
             else:
                 skill_source = local_import_path or await _resolve_project_import_path(
                     source, request_data.project_id
                 )
                 parsed = await asyncio.to_thread(loader.load_skill, skill_source, validate=True)
+                scan_source_type = "local"
 
             # Handle single skill or list
             skills_list = parsed if isinstance(parsed, list) else [parsed]
@@ -328,6 +362,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
 
             for ps in skills_list:
                 try:
+                    _scan_skill_install(ps, scan_source_type)
                     skill = server.skill_manager.create_skill(
                         name=ps.name,
                         description=ps.description,
@@ -476,6 +511,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             loader = SkillLoader(default_source_type="hub")
             parsed = loader.load_skill(download.path, validate=True, check_dir_name=False)
 
+            _scan_skill_install(parsed, "hub")
             skill = server.skill_manager.create_skill(
                 name=parsed.name,
                 description=parsed.description,
@@ -565,9 +601,13 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
     ) -> dict[str, Any]:
         """Move a skill to project scope."""
         try:
-            skill = server.skill_manager.move_to_project(skill_id, project_id)
+            skill = await run_in_threadpool(
+                partial(server.skill_manager.move_to_project, skill_id, project_id)
+            )
             await _broadcast_skill("skill_updated", skill_id)
             return {"moved": True, "skill": skill.to_dict()}
+        except SkillScopeConflictError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
@@ -578,9 +618,13 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
     async def move_to_installed(skill_id: str) -> dict[str, Any]:
         """Move a project-scoped skill back to installed scope."""
         try:
-            skill = server.skill_manager.move_to_installed(skill_id)
+            skill = await run_in_threadpool(
+                partial(server.skill_manager.move_to_installed, skill_id)
+            )
             await _broadcast_skill("skill_updated", skill_id)
             return {"moved": True, "skill": skill.to_dict()}
+        except SkillScopeConflictError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:

@@ -265,6 +265,32 @@ class TestCloneSkillRepo:
         call_args = mock_run.call_args[0][0]
         assert "--depth" in call_args
 
+    def test_clone_rejects_traversal_url_before_git(self, tmp_path) -> None:
+        """A GitHub tree URL cannot escape the cloned repository."""
+        from gobby.skills.loader import SkillLoadError, clone_skill_repo, parse_github_url
+
+        ref = parse_github_url("https://github.com/owner/repo/tree/main/../../outside")
+
+        with patch("subprocess.run") as mock_run:
+            with pytest.raises(SkillLoadError, match="Invalid GitHub skill path"):
+                clone_skill_repo(ref, cache_dir=tmp_path / "cache")
+
+        mock_run.assert_not_called()
+        assert not (tmp_path / "cache").exists()
+
+    @pytest.mark.parametrize("path", ["/absolute", "skills//nested", ""])
+    def test_clone_rejects_invalid_path_segments(self, tmp_path, path: str) -> None:
+        """GitHub skill paths must contain safe, non-empty relative segments."""
+        from gobby.skills.loader import GitHubRef, SkillLoadError, clone_skill_repo
+
+        ref = GitHubRef(owner="owner", repo="repo", path=path)
+
+        with patch("subprocess.run") as mock_run:
+            with pytest.raises(SkillLoadError, match="Invalid GitHub skill path"):
+                clone_skill_repo(ref, cache_dir=tmp_path / "cache")
+
+        mock_run.assert_not_called()
+
 
 class TestSkillLoaderGitHubIntegration:
     """Tests for SkillLoader GitHub integration."""
@@ -396,3 +422,43 @@ Content
         assert len(skills) == 3
         names = {s.name for s in skills}
         assert names == {"skill-a", "skill-b", "skill-c"}
+
+    def test_load_from_github_rejects_symlink_escape(self, tmp_path) -> None:
+        """Resolved skill paths must remain inside the cloned repository."""
+        from gobby.skills.loader import SkillLoader, SkillLoadError
+
+        repo_path = tmp_path / "repo"
+        outside = tmp_path / "outside"
+        repo_path.mkdir()
+        outside.mkdir()
+        (repo_path / "linked-skill").symlink_to(outside, target_is_directory=True)
+        loader = SkillLoader()
+
+        with (
+            patch("gobby.skills.loader.clone_skill_repo", return_value=repo_path),
+            patch.object(loader, "load_skill") as mock_load,
+            pytest.raises(SkillLoadError, match="escapes repository"),
+        ):
+            loader.load_from_github("https://github.com/owner/repo/tree/main/linked-skill")
+
+        mock_load.assert_not_called()
+
+    def test_load_from_github_rejects_symlinked_root_skill_file(self, tmp_path) -> None:
+        """A repository root SKILL.md symlink is rejected before parsing."""
+        from gobby.skills.loader import SkillLoader, SkillLoadError
+
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        outside_skill = tmp_path / "outside-skill.md"
+        outside_skill.write_text("host file must not be read")
+        (repo_path / "SKILL.md").symlink_to(outside_skill)
+        loader = SkillLoader()
+
+        with (
+            patch("gobby.skills.loader.clone_skill_repo", return_value=repo_path),
+            patch("gobby.skills.loader.parse_skill_file") as mock_parse,
+            pytest.raises(SkillLoadError, match="must not be a symlink"),
+        ):
+            loader.load_from_github("owner/repo")
+
+        mock_parse.assert_not_called()

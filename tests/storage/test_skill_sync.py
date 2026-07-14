@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.skills import LocalSkillManager
+from gobby.storage.skills import LocalSkillManager, SkillScopeConflictError
 
 pytestmark = pytest.mark.unit
 
@@ -124,6 +124,100 @@ class TestSyncBundledSkills:
             orphaned = skill_manager.get_by_name(skill_name, include_deleted=True)
             assert orphaned is not None
             assert orphaned.deleted_at is not None
+
+    def test_unparseable_bundled_skill_is_reported_without_orphaning(
+        self,
+        db: HubDatabase,
+        skill_manager: LocalSkillManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.skills.sync import sync_bundled_skills
+
+        skill_manager.create_skill(
+            name="broken-skill",
+            description="Previously valid bundled skill",
+            content="# Broken skill\nPreviously valid content.",
+            metadata={"gobby": {"audience": "all"}},
+            source="installed",
+            source_type="filesystem",
+        )
+        skill_dir = tmp_path / "broken-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text("---\nname: [\n---\n")
+        monkeypatch.setattr("gobby.skills.sync.get_bundled_skills_path", lambda: tmp_path)
+
+        result = sync_bundled_skills(db)
+
+        assert result["success"] is False
+        assert result["orphaned"] == 0
+        assert any("broken-skill" in error for error in result["errors"])
+        retained = skill_manager.get_by_name("broken-skill")
+        assert retained is not None
+        assert retained.deleted_at is None
+
+    def test_unexpected_load_error_is_reported_without_aborting_sync(
+        self,
+        db: HubDatabase,
+        skill_manager: LocalSkillManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.skills.loader import SkillLoader
+        from gobby.skills.sync import sync_bundled_skills
+
+        broken_dir = tmp_path / "broken-skill"
+        broken_dir.mkdir()
+        (broken_dir / "SKILL.md").write_text("unreadable")
+        valid_dir = tmp_path / "valid-skill"
+        valid_dir.mkdir()
+        (valid_dir / "SKILL.md").write_text(
+            "---\nname: valid-skill\ndescription: Valid bundled skill\n---\n\n# Valid\n"
+        )
+        load_skill = SkillLoader.load_skill
+
+        def load_with_error(self, path, *, validate=True):
+            if path.name == "broken-skill":
+                raise OSError("cannot read skill")
+            return load_skill(self, path, validate=validate)
+
+        monkeypatch.setattr(SkillLoader, "load_skill", load_with_error)
+        monkeypatch.setattr("gobby.skills.sync.get_bundled_skills_path", lambda: tmp_path)
+
+        result = sync_bundled_skills(db)
+
+        assert result["success"] is False
+        assert result["synced"] == 1
+        assert any("broken-skill" in error for error in result["errors"])
+        assert skill_manager.get_by_name("valid-skill") is not None
+
+    def test_empty_bundled_skills_directory_does_not_orphan_existing_skills(
+        self,
+        db: HubDatabase,
+        skill_manager: LocalSkillManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.skills.sync import sync_bundled_skills
+
+        skill_manager.create_skill(
+            name="existing-skill",
+            description="Existing bundled skill",
+            content="# Existing skill\nExisting content.",
+            metadata={"gobby": {"audience": "all"}},
+            source="installed",
+            source_type="filesystem",
+        )
+        monkeypatch.setattr("gobby.skills.sync.get_bundled_skills_path", lambda: tmp_path)
+
+        result = sync_bundled_skills(db)
+
+        assert result["success"] is False
+        assert result["orphaned"] == 0
+        assert result["errors"]
+        retained = skill_manager.get_by_name("existing-skill")
+        assert retained is not None
+        assert retained.deleted_at is None
 
     def test_sync_bundled_skills_includes_triage_judgment(
         self, db: HubDatabase, skill_manager: LocalSkillManager
@@ -434,6 +528,18 @@ class TestSourceTaxonomy:
         assert moved.source == "project"
         assert moved.project_id == project_id
 
+    def test_move_to_project_rejects_soft_deleted_name_collision(
+        self, storage: LocalSkillManager, project_id: str
+    ) -> None:
+        target = storage.create_skill(
+            name="collision", description="Target", content="# Target", project_id=project_id
+        )
+        storage.delete_skill(target.id)
+        source = storage.create_skill(name="collision", description="Source", content="# Source")
+
+        with pytest.raises(SkillScopeConflictError, match="already exists in project"):
+            storage.move_to_project(source.id, project_id)
+
     def test_move_to_installed(self, storage: LocalSkillManager, project_id: str) -> None:
         """move_to_installed changes source back to 'installed'."""
         skill = storage.create_skill(
@@ -447,6 +553,18 @@ class TestSourceTaxonomy:
         moved = storage.move_to_installed(skill.id)
         assert moved.source == "installed"
         assert moved.project_id is None
+
+    def test_move_to_installed_rejects_soft_deleted_name_collision(
+        self, storage: LocalSkillManager, project_id: str
+    ) -> None:
+        target = storage.create_skill(name="collision", description="Target", content="# Target")
+        storage.delete_skill(target.id)
+        source = storage.create_skill(
+            name="collision", description="Source", content="# Source", project_id=project_id
+        )
+
+        with pytest.raises(SkillScopeConflictError, match="already exists globally"):
+            storage.move_to_installed(source.id)
 
     def test_list_skills_source_filter(self, storage: LocalSkillManager, project_id: str) -> None:
         """list_skills source param filters by exact source value."""

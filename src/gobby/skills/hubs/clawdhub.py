@@ -20,6 +20,12 @@ from gobby.skills.hubs.base import DownloadResult, HubProvider, HubSkillDetails,
 logger = logging.getLogger(__name__)
 
 
+def _validate_remote_positional(value: str, label: str) -> None:
+    """Reject remote values that a CLI could interpret as options."""
+    if value.startswith("-"):
+        raise ValueError(f"ClawHub {label} must not start with '-'")
+
+
 class ClawdHubProvider(HubProvider):
     """Provider for ClawHub skill registry using the CLI tool.
 
@@ -98,14 +104,14 @@ class ClawdHubProvider(HubProvider):
             raise RuntimeError("ClawHub CLI not found. Install with: npm i -g clawhub")
 
         cmd_args = [self._cli_binary, command]
-        if args:
-            cmd_args.extend(args)
         if json_output:
             cmd_args.append("--json")
 
         # Add auth token if available
         if self.auth_token:
             cmd_args.extend(["--token", self.auth_token])
+        if args:
+            cmd_args.extend(args)
 
         try:
             process = await asyncio.create_subprocess_exec(
@@ -219,12 +225,13 @@ class ClawdHubProvider(HubProvider):
         Note: The search command does not support --json output,
         so we parse the text output.
         """
+        _validate_remote_positional(query, "query")
         if self._cli_available is None:
             self._cli_available = await self._check_cli_available()
         if not self._cli_available:
             raise RuntimeError("ClawHub CLI not installed. Install with: npm i -g clawhub")
 
-        args = [query, "--limit", str(limit)]
+        args = ["--limit", str(limit), "--", query]
         output = await self._run_cli_command("search", args)
         skills = self._parse_search_text(output)
 
@@ -282,8 +289,9 @@ class ClawdHubProvider(HubProvider):
 
         Uses `inspect --json` which returns skill metadata and version info.
         """
+        _validate_remote_positional(slug, "slug")
         try:
-            result = await self._run_cli_json("inspect", [slug])
+            result = await self._run_cli_json("inspect", ["--", slug])
 
             if not result or not isinstance(result, dict):
                 return None
@@ -311,6 +319,7 @@ class ClawdHubProvider(HubProvider):
         Uses `clawhub install <slug>` which handles download, extraction,
         and lockfile updates.
         """
+        _validate_remote_positional(slug, "slug")
         if self._cli_available is None:
             self._cli_available = await self._check_cli_available()
         if not self._cli_available:
@@ -320,7 +329,7 @@ class ClawdHubProvider(HubProvider):
                 error="ClawHub CLI not installed. Install with: npm i -g clawhub",
             )
 
-        args = [slug]
+        args: list[str] = []
 
         if version:
             args.extend(["--version", version])
@@ -334,6 +343,7 @@ class ClawdHubProvider(HubProvider):
 
         # Use --force to overwrite existing without prompts
         args.append("--force")
+        args.extend(["--", slug])
 
         try:
             await self._run_cli_command("install", args)

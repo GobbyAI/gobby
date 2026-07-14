@@ -2,7 +2,30 @@
 
 import pytest
 
+from gobby.skills import limits
+from gobby.skills.loader import SkillLoader, SkillLoadError
+
 pytestmark = pytest.mark.integration
+
+
+def test_rejects_oversized_loaded_file(skill_dir, monkeypatch) -> None:
+    monkeypatch.setattr(limits, "MAX_LOADED_FILE_BYTES", 8)
+    references = skill_dir / "references"
+    references.mkdir()
+    (references / "large.md").write_text("x" * 9)
+
+    with pytest.raises(SkillLoadError, match="large.md.*byte limit"):
+        SkillLoader().load_skill(skill_dir)
+
+
+def test_rejects_loaded_files_over_total_limit(skill_dir, monkeypatch) -> None:
+    monkeypatch.setattr(limits, "MAX_SKILL_TOTAL_BYTES", 1)
+    references = skill_dir / "references"
+    references.mkdir()
+    (references / "small.md").write_text("x")
+
+    with pytest.raises(SkillLoadError, match="byte total limit"):
+        SkillLoader().load_skill(skill_dir)
 
 
 @pytest.fixture
@@ -173,6 +196,27 @@ class TestSkillLoaderDirectory:
         assert len(skills) == 2
         names = {s.name for s in skills}
         assert names == {"commit-message", "code-review"}
+
+    def test_load_directory_skips_unexpected_error(
+        self, skills_root, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An unexpected error in one skill does not prevent loading the rest."""
+        from gobby.skills.loader import SkillLoader
+
+        loader = SkillLoader()
+        load_skill = loader.load_skill
+
+        def load_with_error(path, *, validate=True):
+            if path.name == "commit-message":
+                raise OSError("cannot read skill")
+            return load_skill(path, validate=validate)
+
+        monkeypatch.setattr(loader, "load_skill", load_with_error)
+
+        skills = loader.load_directory(skills_root)
+
+        assert [skill.name for skill in skills] == ["code-review"]
+        assert "Skipping invalid skill: cannot read skill" in caplog.text
 
     def test_load_directory_empty(self, tmp_path) -> None:
         """Test loading from empty directory returns empty list."""

@@ -82,52 +82,16 @@ class TestChatterboxTurboProvider:
         assert provider._model is None
         assert provider._runtime_primed is False
 
-    def test_is_available_checks_import(self, voice_config: VoiceConfig) -> None:
+    def test_is_available_checks_package_spec(self, voice_config: VoiceConfig) -> None:
         from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
 
-        provider = ChatterboxTurboProvider(voice_config)
-        # Returns bool without crashing regardless of chatterbox being installed
-        assert isinstance(provider.is_available, bool)
+        with patch(
+            "gobby.voice.tts_chatterbox._module_is_available", return_value=True
+        ) as mock_available:
+            status = ChatterboxTurboProvider(voice_config).get_status()
 
-    def test_runtime_import_failure_makes_provider_unavailable(
-        self, voice_config: VoiceConfig
-    ) -> None:
-        from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
-
-        with patch.dict(sys.modules, {"chatterbox": ModuleType("chatterbox")}):
-            with patch(
-                "gobby.voice.tts_chatterbox.importlib.import_module",
-                side_effect=OSError("Could not load this library: libtorchaudio.so"),
-            ):
-                provider = ChatterboxTurboProvider(voice_config)
-                status = provider.get_status()
-
-        assert status.available is False
-        assert (
-            status.reason == "Chatterbox runtime import failed: "
-            "Could not load this library: libtorchaudio.so"
-        )
-
-    def test_runtime_import_suppresses_perth_pkg_resources_warning(
-        self, voice_config: VoiceConfig
-    ) -> None:
-        from gobby.voice.tts_chatterbox import _runtime_import_error
-
-        def import_with_warning(name: str) -> ModuleType:
-            warnings.warn(
-                "pkg_resources is deprecated as an API. upstream", UserWarning, stacklevel=2
-            )
-            return ModuleType(name)
-
-        with (
-            patch("gobby.voice.tts_chatterbox._module_is_available", return_value=True),
-            patch("gobby.voice.tts_chatterbox.importlib.import_module", import_with_warning),
-            warnings.catch_warnings(record=True) as caught,
-        ):
-            warnings.simplefilter("always")
-            assert _runtime_import_error() is None
-
-        assert caught == []
+        assert status.available is True
+        mock_available.assert_called_once_with("chatterbox")
 
     @pytest.mark.asyncio
     async def test_synthesize_stream_yields_pcm(self, voice_config: VoiceConfig) -> None:

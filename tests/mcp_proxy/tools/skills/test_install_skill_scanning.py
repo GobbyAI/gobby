@@ -1,6 +1,6 @@
-"""Install-time full-surface scan tests for install_skill (gobby-#17658).
+"""Install-time full-surface scan tests for install_skill.
 
-- A payload hidden only in references/ fails install (all files scanned).
+- A payload hidden in references/ or scripts/ fails install (all files scanned).
 - With clawcare absent, external-source installs fail closed while
   local/filesystem installs proceed with a warning.
 """
@@ -50,6 +50,26 @@ def _write_skill(root: Path, *, with_payload_reference: bool) -> Path:
 
 
 class TestInstallScansAllFiles:
+    @pytest.mark.asyncio
+    async def test_payload_in_script_blocks_install(
+        self, db: HubDatabase, storage: LocalSkillManager, tmp_path: Path
+    ) -> None:
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+
+        skill_dir = _write_skill(tmp_path, with_payload_reference=False)
+        scripts = skill_dir / "scripts"
+        scripts.mkdir()
+        (scripts / "payload.sh").write_text(f"#!/bin/sh\n{_PIPE}\n")
+        registry = create_skills_registry(db)
+        tool = registry.get_tool("install_skill")
+
+        result = await tool(source=str(skill_dir))
+
+        assert result["success"] is False
+        assert "security scan" in result["error"]
+        assert "scripts/payload.sh" in result["error"]
+        assert storage.get_by_name("packed-skill") is None
+
     @pytest.mark.asyncio
     async def test_payload_in_reference_blocks_install(
         self, db: HubDatabase, storage: LocalSkillManager, tmp_path: Path
@@ -130,3 +150,60 @@ class TestScannerUnavailableFailClosed:
         assert result["success"] is False
         assert "clawcare is not installed" in result["error"]
         assert "external source" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_zip_install_fails_closed(self, db: HubDatabase, tmp_path: Path) -> None:
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+        from gobby.skills.parser import ParsedSkill
+
+        zip_path = tmp_path / "ext-skill.zip"
+        zip_path.touch()
+        parsed = ParsedSkill(
+            name="ext-skill",
+            description="external",
+            content="# Ext\n\nprose\n",
+            version="1.0.0",
+        )
+        registry = create_skills_registry(db)
+        tool = registry.get_tool("install_skill")
+
+        with (
+            patch("gobby.skills.loader.SkillLoader.load_from_zip", return_value=parsed),
+            patch(
+                "gobby.skills.scanner.scan_parsed_skill",
+                side_effect=ImportError("no clawcare"),
+            ),
+        ):
+            result = await tool(source=str(zip_path))
+
+        assert result["success"] is False
+        assert "clawcare is not installed" in result["error"]
+        assert "external source (zip)" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_hub_install_fails_closed(self, db: HubDatabase, tmp_path: Path) -> None:
+        from unittest.mock import AsyncMock, MagicMock
+
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+        from gobby.skills.hubs.base import DownloadResult
+
+        skill_dir = _write_skill(tmp_path, with_payload_reference=False)
+        provider = MagicMock()
+        provider.download_skill = AsyncMock(
+            return_value=DownloadResult(success=True, path=str(skill_dir), slug="ext-skill")
+        )
+        hub_manager = MagicMock()
+        hub_manager.has_hub.return_value = True
+        hub_manager.get_provider.return_value = provider
+        registry = create_skills_registry(db, hub_manager=hub_manager)
+        tool = registry.get_tool("install_skill")
+
+        with patch(
+            "gobby.skills.scanner.scan_parsed_skill",
+            side_effect=ImportError("no clawcare"),
+        ):
+            result = await tool(source="clawdhub:ext-skill")
+
+        assert result["success"] is False
+        assert "clawcare is not installed" in result["error"]
+        assert "external source (hub)" in result["error"]
