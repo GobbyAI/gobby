@@ -340,6 +340,44 @@ class TestSaveConfigValues:
         assert response.status_code == 400
         assert "detail" in response.json()
 
+    def test_resolved_config_validation_failure_does_not_persist(
+        self,
+        client: TestClient,
+        temp_db: Any,
+        server: Any,
+    ) -> None:
+        """Resolved runtime validation must finish before storage is mutated."""
+        original_config = server.services.config.model_dump(mode="json")
+        real_daemon_config = DaemonConfig
+
+        def validate_config(**values: Any) -> DaemonConfig:
+            api_key = values.get("embeddings", {}).get("api_key")
+            if api_key == "invalid-resolved-secret":
+                raise ValueError("resolved secret is invalid")
+            return real_daemon_config(**values)
+
+        with patch(
+            "gobby.servers.routes.configuration_values.DaemonConfig",
+            side_effect=validate_config,
+        ):
+            response = client.put(
+                "/api/config/values",
+                json={
+                    "values": {
+                        "daemon_port": 9999,
+                        "embeddings": {"api_key": "invalid-resolved-secret"},
+                    }
+                },
+            )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Invalid configuration values"
+        store = ConfigStore(temp_db)
+        assert store.get("daemon_port") is None
+        assert store.get(AI_EMBEDDING_API_KEY_KEY) is None
+        assert SecretStore(temp_db).get(EMBEDDING_API_KEY_SECRET_NAME) is None
+        assert server.services.config.model_dump(mode="json") == original_config
+
     def test_save_falkordb_password_encrypts_and_masks(
         self, postgres_client: TestClient, postgres_db: Any, mock_machine_id: Any
     ) -> None:
