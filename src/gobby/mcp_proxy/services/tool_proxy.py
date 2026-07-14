@@ -248,6 +248,7 @@ class ToolProxyService:
         session_id: str | None = None,
         strip_unknown: bool = False,
         enforce_workflow: bool = True,
+        timeout: float | None = None,
     ) -> Any:
         """Execute a tool with optional pre-validation."""
         return await call_tool_impl(
@@ -258,6 +259,7 @@ class ToolProxyService:
             session_id,
             strip_unknown,
             enforce_workflow,
+            timeout,
         )
 
     async def read_resource(self, server_name: str, uri: str) -> Any:

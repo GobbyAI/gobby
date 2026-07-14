@@ -21,15 +21,12 @@ from gobby.servers.routes.dependencies import get_internal_manager, get_mcp_mana
 from gobby.servers.routes.mcp.endpoints.discovery import _mcp_call_timeout
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.telemetry.instruments import inc_counter, observe_histogram
-from gobby.utils import project_context as project_context_utils
 from gobby.utils.datetime import to_json_safe
 from gobby.utils.session_context import (
     SeededContextTokens,
     get_current_session_id,
-    get_session_context,
     reset_seeded_contexts,
     resolve_and_seed_contexts,
-    set_session_context,
 )
 
 if TYPE_CHECKING:
@@ -172,22 +169,6 @@ def _derive_project_from_unique_session_seq(
     return None
 
 
-def _resolve_context_values(**kwargs: Any) -> tuple[str | None, str | None, Any, Any]:
-    """Resolve DB-backed context in a worker and capture the seeded values."""
-    worker_tokens = resolve_and_seed_contexts(**kwargs)
-    try:
-        session_context = get_session_context()
-        project_context = project_context_utils.get_project_context()
-        return (
-            worker_tokens.resolved_session_id,
-            worker_tokens.resolved_project_id,
-            session_context,
-            dict(project_context) if project_context is not None else None,
-        )
-    finally:
-        reset_seeded_contexts(worker_tokens)
-
-
 async def _set_context_for_request(
     server: "HTTPServer", arguments: Any, request: Request | None = None
 ) -> SeededContextTokens:
@@ -252,13 +233,7 @@ async def _set_context_for_request(
             )
 
     db = server.session_manager.db if server.session_manager else None
-    (
-        resolved_session_id,
-        resolved_project_id,
-        session_context,
-        project_context,
-    ) = await server.run_db(
-        _resolve_context_values,
+    return await resolve_and_seed_contexts(
         session_ref=session_id,
         session_manager=server.session_manager if server.session_manager else None,
         project_ref=canonical_project_ref,
@@ -267,15 +242,6 @@ async def _set_context_for_request(
         project_ref_is_fallback=project_ref_is_fallback,
         db=db,
     )
-    tokens = SeededContextTokens(
-        resolved_session_id=resolved_session_id,
-        resolved_project_id=resolved_project_id,
-    )
-    if session_context is not None:
-        tokens.session_token = set_session_context(session_context)
-    if project_context is not None:
-        tokens.project_token = project_context_utils.set_project_context(project_context)
-    return tokens
 
 
 def _reset_context(tokens: SeededContextTokens) -> None:
