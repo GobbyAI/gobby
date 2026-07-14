@@ -113,6 +113,11 @@ class ChatStreamingMixin:
                 if session is None:
                     return
 
+            client_info = self.clients.get(websocket)
+            if client_info is not None:
+                client_info["conversation_id"] = conversation_id
+                client_info["project_id"] = getattr(session, "project_id", None)
+
             if reasoning_effort is not None:
                 session.reasoning_effort = reasoning_effort
 

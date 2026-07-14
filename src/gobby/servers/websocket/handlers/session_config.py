@@ -338,6 +338,10 @@ async def handle_set_project(
 
     session = mixin._chat_sessions.get(conversation_id)
     old_project_id = getattr(session, "project_id", None) if session else None
+    client_info = mixin.clients.get(websocket)
+    if client_info is not None:
+        client_info["conversation_id"] = conversation_id
+        client_info["project_id"] = new_project_id
 
     if session and old_project_id == new_project_id:
         logger.debug("Project unchanged for conversation %s", conversation_id[:8])

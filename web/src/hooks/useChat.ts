@@ -611,7 +611,6 @@ export function useChat() {
     pendingProxySessionQueuesRef,
     pendingSessionInteractionModeRef,
     preAttachContextUsageRef,
-    projectIdRef,
     resolveAgentName,
     sessionInteractionModeRef,
     setAttachedSessionId,

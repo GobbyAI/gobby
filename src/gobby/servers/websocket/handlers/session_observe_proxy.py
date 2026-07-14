@@ -108,8 +108,7 @@ async def handle_attach_to_session(
     Message format:
     {
         "type": "attach_to_session",
-        "session_id": "db-uuid-of-session",
-        "project_id": "project-uuid"
+        "session_id": "db-uuid-of-session"
     }
     """
     session_id = data.get("session_id")
@@ -150,12 +149,12 @@ async def handle_attach_to_session(
         return
 
     client_user_id = _as_str(client_metadata.get("user_id"))
-    requested_project_id = _as_str(data.get("project_id"))
+    client_project_id = _as_str(client_metadata.get("project_id"))
     session_project_id = _as_str(getattr(session, "project_id", None))
     if (
         client_user_id is None
-        or requested_project_id is None
-        or requested_project_id != session_project_id
+        or client_project_id is None
+        or client_project_id != session_project_id
     ):
         await mixin._send_error(
             websocket,

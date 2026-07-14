@@ -466,7 +466,6 @@ describe("useChat viewed session state", () => {
     const sendCountBeforeAttach = ws.send.mock.calls.length;
     localStorage.setItem("gobby-fresh-chat-draft", "1");
     act(() => {
-      result.current.setProjectIdRef("project-1");
       result.current.attachToViewed?.();
     });
     expect(localStorage.getItem("gobby-fresh-chat-draft")).toBeNull();
@@ -475,7 +474,6 @@ describe("useChat viewed session state", () => {
     expect(attachMsg).toMatchObject({
       type: "attach_to_session",
       session_id: "sess-view",
-      project_id: "project-1",
     });
 
     act(() => {

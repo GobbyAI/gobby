@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 class ChatInteractionResponsesMixin:
     """Handle user responses to pending chat interactions."""
 
+    clients: dict[Any, dict[str, Any]]
     _chat_sessions: dict[str, Any]
 
     async def _handle_ask_user_response(self, websocket: Any, data: dict[str, Any]) -> None:
@@ -69,6 +70,10 @@ class ChatInteractionResponsesMixin:
         conversation_id = data.get("conversation_id")
         session = self._chat_sessions.get(conversation_id) if conversation_id else None
         if session:
+            client_info = self.clients.get(websocket)
+            if client_info is not None:
+                client_info["conversation_id"] = conversation_id
+                client_info["project_id"] = getattr(session, "project_id", None)
             session.last_activity = datetime.now(UTC)
             logger.debug(
                 f"Heartbeat received for conversation {conversation_id[:8] if conversation_id else '?'}"

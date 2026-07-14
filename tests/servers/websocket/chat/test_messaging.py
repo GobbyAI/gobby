@@ -397,6 +397,23 @@ class TestFireLifecycle:
         assert captured_event.source is SessionSource.UNKNOWN
 
 
+class TestHeartbeatScope:
+    async def test_rebinds_connection_to_server_owned_project(
+        self,
+        mixin: DummyMessagingMixin,
+        ws: AsyncMock,
+    ) -> None:
+        mixin.clients[ws] = {"conversation_id": "stale", "project_id": "stale-project"}
+        session = MagicMock()
+        session.project_id = "project-1"
+        mixin._chat_sessions["c1"] = session
+
+        await mixin._handle_heartbeat(ws, {"conversation_id": "c1"})
+
+        assert mixin.clients[ws]["conversation_id"] == "c1"
+        assert mixin.clients[ws]["project_id"] == "project-1"
+
+
 class TestStreamChatResponse:
     @pytest.mark.asyncio
     async def test_startup_error_exposes_debug_detail(
@@ -568,6 +585,7 @@ class TestStreamChatResponse:
 
         mock_create.assert_not_awaited()
         assert session.project_id == "project-original"
+        assert mixin.clients[ws]["project_id"] == "project-original"
 
     @pytest.mark.asyncio
     async def test_stream_cancellation_safely(self, mixin: DummyMessagingMixin, ws: AsyncMock):
