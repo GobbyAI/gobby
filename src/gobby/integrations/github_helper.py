@@ -10,12 +10,12 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
-import json
 import logging
 import subprocess  # nosec B404 # subprocess needed for git fallback
 from typing import TYPE_CHECKING, Any
 
 from gobby.integrations.github import GitHubIntegration
+from gobby.integrations.mcp_result import MCPToolResultError, parse_mcp_tool_result
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.manager import MCPClientManager
@@ -41,6 +41,14 @@ class GitHubMCPToolError(RuntimeError):
 
 class GitHubMCPResponseError(RuntimeError):
     """The GitHub MCP server returned an unexpected successful result shape."""
+
+
+def parse_github_mcp_result(result: Any, tool_name: str) -> Any:
+    """Parse a GitHub MCP SDK result into its domain payload."""
+    try:
+        return parse_mcp_tool_result(result)
+    except MCPToolResultError as exc:
+        raise GitHubMCPToolError(tool_name, exc.detail) from exc
 
 
 def parse_github_repo(github_repo: str) -> tuple[str, str]:
@@ -129,23 +137,7 @@ class GitHubMCPHelper:
         """
         session = await self.mcp_manager.get_client_session("github")
         result = await session.call_tool(tool_name, arguments)
-
-        if getattr(result, "isError", False):
-            details = [
-                item.text
-                for item in getattr(result, "content", [])
-                if isinstance(getattr(item, "text", None), str)
-            ]
-            raise GitHubMCPToolError(tool_name, "\n".join(details) or "unknown error")
-
-        if hasattr(result, "content") and result.content:
-            for item in result.content:
-                if hasattr(item, "text"):
-                    try:
-                        return json.loads(item.text)
-                    except (json.JSONDecodeError, TypeError):
-                        return item.text
-        return result
+        return parse_github_mcp_result(result, tool_name)
 
     async def _paginate_github_mcp(
         self,

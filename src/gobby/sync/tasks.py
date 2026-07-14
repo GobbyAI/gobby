@@ -7,8 +7,19 @@ from pathlib import Path
 from typing import Any
 
 from gobby.storage.tasks import LocalTaskManager
+from gobby.sync.jsonl_io import atomic_write_text, export_file_lock
+from gobby.sync.tombstones import (
+    apply_tombstone,
+    is_tombstone,
+    load_tombstones,
+    merge_jsonl_records,
+    newer_record,
+    record_timestamp,
+)
 from gobby.tasks.state_semantics import serialize_task_state
 from gobby.utils.json_helpers import json_dumps
+
+TASK_EXPORT_PAGE_SIZE = 100_000
 
 logger = logging.getLogger(__name__)
 
@@ -236,19 +247,18 @@ class TaskSyncManager:
             project_id: Optional project to export. If matches context, uses project path.
         """
         try:
-            # Determine target path
             target_path = self._get_export_path(project_id)
 
-            # Filter tasks by project_id if provided
-            # This ensures we only export tasks for the specific project
+            tasks = []
+            offset = 0
+            while page := self.task_manager.list_tasks(
+                limit=TASK_EXPORT_PAGE_SIZE, offset=offset, project_id=project_id
+            ):
+                tasks.extend(page)
+                offset += len(page)
 
-            tasks = self.task_manager.list_tasks(limit=100000, project_id=project_id)
-
-            # Fetch all dependencies
-            # We'll use a raw query for efficiency here instead of calling get_blockers for every task
             deps_rows = self.db.fetchall("SELECT task_id, depends_on FROM task_dependencies")
 
-            # Build dependency map: task_id -> list[depends_on]
             deps_map: dict[str, list[str]] = {}
             for row in deps_rows:
                 task_id = row["task_id"]
@@ -256,10 +266,9 @@ class TaskSyncManager:
                     deps_map[task_id] = []
                 deps_map[task_id].append(row["depends_on"])
 
-            # Sort tasks by ID for deterministic output
             tasks.sort(key=lambda t: t.id)
 
-            export_data = []
+            export_data: list[dict[str, Any]] = []
             for task in tasks:
                 state = serialize_task_state(task)
                 state["closed_at"] = _normalize_timestamp(task.closed_at)
@@ -271,7 +280,6 @@ class TaskSyncManager:
                     "state": state,
                     "priority": task.priority,
                     "task_type": task.task_type,
-                    # Normalize timestamps to ensure RFC 3339 compliance (with timezone)
                     "created_at": _normalize_timestamp(task.created_at),
                     "updated_at": _normalize_timestamp(task.updated_at),
                     "project_id": task.project_id,
@@ -279,16 +287,12 @@ class TaskSyncManager:
                     "created_in_session_id": task.created_in_session_id,
                     "claimed_by_session_id": task.claimed_by_session_id,
                     "deps_on": sorted(deps_map.get(task.id, [])),  # Sort deps for stability
-                    # Commit SHAs are already normalized at write time by link_commit()
                     "commits": sorted(set(task.commits)) if task.commits else [],
-                    # Closed state fields
                     "closed_at": _normalize_timestamp(task.closed_at),
                     "closed_reason": task.closed_reason,
                     "closed_in_session_id": task.closed_in_session_id,
                     "closed_commit_sha": task.closed_commit_sha,
-                    # Labels (already a list on Task model)
                     "labels": task.labels if task.labels else None,
-                    # Validation history (for tracking validation state across syncs)
                     "validation": (
                         {
                             "state": task.validation_status,
@@ -320,14 +324,19 @@ class TaskSyncManager:
                 }
                 export_data.append(task_dict)
 
-            # Write JSONL file
-            target_path.parent.mkdir(parents=True, exist_ok=True)
+            with export_file_lock(target_path):
+                current_records = [
+                    *export_data,
+                    *load_tombstones(self.db, "task", project_id),
+                ]
+                merged_records = sorted(
+                    merge_jsonl_records(target_path, current_records, logger),
+                    key=lambda item: item["id"],
+                )
+                content = "".join(json_dumps(item) + "\n" for item in merged_records)
+                atomic_write_text(target_path, content)
 
-            with open(target_path, "w", encoding="utf-8") as f:
-                for item in export_data:
-                    f.write(json_dumps(item) + "\n")
-
-            logger.info(f"Exported {len(tasks)} tasks to {target_path}")
+            logger.info(f"Exported {len(merged_records)} tasks to {target_path}")
 
         except Exception as e:
             logger.error(f"Failed to export tasks: {e}", exc_info=True)
@@ -351,54 +360,77 @@ class TaskSyncManager:
             with open(target_path, encoding="utf-8") as f:
                 lines = f.readlines()
 
+            tombstones: dict[str, dict[str, Any]] = {}
+            for line in lines:
+                if not line.strip():
+                    continue
+                candidate = json.loads(line)
+                if not isinstance(candidate, dict) or not is_tombstone(candidate):
+                    continue
+                task_id = candidate.get("id")
+                if not isinstance(task_id, str):
+                    continue
+                current = tombstones.get(task_id)
+                tombstones[task_id] = (
+                    candidate if current is None else newer_record(current, candidate)
+                )
+
             imported_count = 0
             updated_count = 0
+            deleted_count = 0
             skipped_count = 0
 
             # Phase 1: Import Tasks (Upsert)
-            pending_deps: list[tuple[str, str]] = []
-
-            # Bulk-load existing task metadata in one query to avoid per-task SELECTs
-            existing_tasks: dict[str, dict[str, Any]] = {}
-            for row in self.db.fetchall(
-                "SELECT id, updated_at, seq_num, path_cache, project_id, parent_task_id, "
-                "claimed_by_session_id, created_in_session_id, closed_in_session_id "
-                "FROM tasks"
-            ):
-                existing_tasks[row["id"]] = {
-                    "updated_at": row["updated_at"],
-                    "seq_num": row["seq_num"],
-                    "path_cache": row["path_cache"],
-                    "project_id": row["project_id"],
-                    "parent_task_id": row["parent_task_id"],
-                    "claimed_by_session_id": row["claimed_by_session_id"],
-                    "created_in_session_id": row["created_in_session_id"],
-                    "closed_in_session_id": row["closed_in_session_id"],
-                }
-
-            # Track occupied seq_nums per project to preserve JSONL values
-            # and only assign fresh ones on collision
-            occupied_seq_nums: dict[str | None, set[int]] = {}
-            max_seq_tracker: dict[str | None, int] = {}
-            for task_meta in existing_tasks.values():
-                pid = task_meta["project_id"]
-                sn = task_meta["seq_num"]
-                if sn is not None:
-                    occupied_seq_nums.setdefault(pid, set()).add(sn)
-                    max_seq_tracker[pid] = max(max_seq_tracker.get(pid, 0), sn)
-            batch_claimed: dict[str | None, set[int]] = {}
-            existing_session_ids = {
-                row["id"] for row in self.db.fetchall("SELECT id FROM sessions")
-            }
+            pending_deps: dict[str, list[str]] = {}
+            pending_path_rebuilds: list[str] = []
 
             with self.db.transaction() as conn:
                 conn.execute("SET CONSTRAINTS ALL DEFERRED")
+                # Use the write transaction's snapshot for LWW and sequence decisions.
+                existing_tasks: dict[str, dict[str, Any]] = {}
+                for row in self.db.fetchall(
+                    "SELECT id, updated_at, seq_num, path_cache, project_id, parent_task_id, "
+                    "claimed_by_session_id, created_in_session_id, closed_in_session_id "
+                    "FROM tasks"
+                ):
+                    existing_tasks[row["id"]] = {
+                        "updated_at": row["updated_at"],
+                        "seq_num": row["seq_num"],
+                        "path_cache": row["path_cache"],
+                        "project_id": row["project_id"],
+                        "parent_task_id": row["parent_task_id"],
+                        "claimed_by_session_id": row["claimed_by_session_id"],
+                        "created_in_session_id": row["created_in_session_id"],
+                        "closed_in_session_id": row["closed_in_session_id"],
+                    }
+
+                occupied_seq_nums: dict[str | None, set[int]] = {}
+                max_seq_tracker: dict[str | None, int] = {}
+                for task_meta in existing_tasks.values():
+                    pid = task_meta["project_id"]
+                    sn = task_meta["seq_num"]
+                    if sn is not None:
+                        occupied_seq_nums.setdefault(pid, set()).add(sn)
+                        max_seq_tracker[pid] = max(max_seq_tracker.get(pid, 0), sn)
+                batch_claimed: dict[str | None, set[int]] = {}
+                existing_session_ids = {
+                    row["id"] for row in self.db.fetchall("SELECT id FROM sessions")
+                }
+                for task_id, deletion_record in tombstones.items():
+                    deleted_at = record_timestamp(deletion_record)
+                    if deleted_at is not None and apply_tombstone(
+                        conn, "task", task_id, deleted_at
+                    ):
+                        existing_tasks.pop(task_id, None)
+                        deleted_count += 1
                 for line in lines:
                     if not line.strip():
                         continue
 
                     data = json.loads(line)
                     task_id = data["id"]
+                    if is_tombstone(data):
+                        continue
                     # Guard against None/missing updated_at in JSONL
                     raw_updated_at = data.get("updated_at")
                     if raw_updated_at is None:
@@ -412,6 +444,14 @@ class TaskSyncManager:
                         logger.warning(
                             f"Task {task_id}: malformed timestamp '{raw_updated_at}': {e}, skipping"
                         )
+                        skipped_count += 1
+                        continue
+
+                    task_tombstone = tombstones.get(task_id)
+                    tombstone_at = (
+                        record_timestamp(task_tombstone) if task_tombstone is not None else None
+                    )
+                    if tombstone_at is not None and tombstone_at >= updated_at_file:
                         skipped_count += 1
                         continue
 
@@ -531,6 +571,17 @@ class TaskSyncManager:
                             "validation_criteria": validation_criteria,
                             "validation_override_reason": validation_override_reason,
                             "category": data.get("category"),
+                            # Preserve automation and routing policy packed into state on export.
+                            "allow_automation": state.get("allow_automation", False),
+                            "unattended": state.get("unattended", False),
+                            "isolation": state.get("isolation", "worktree"),
+                            "assigned_agent": state.get("assigned_agent"),
+                            "implementation_domain": state.get("implementation_domain"),
+                            "additional_skills": (
+                                json.dumps(state["additional_skills"])
+                                if state.get("additional_skills") is not None
+                                else None
+                            ),
                             "github_issue_number": data.get("github_issue_number"),
                             "github_pr_number": data.get("github_pr_number"),
                             "github_repo": data.get("github_repo"),
@@ -542,9 +593,9 @@ class TaskSyncManager:
                             "escalation_reason": data.get(
                                 "escalation_reason", state.get("escalation_reason")
                             ),
-                            "seq_num": data["seq_num"] if "seq_num" in data else existing_seq_num,
+                            "seq_num": existing_seq_num if existing_row else data.get("seq_num"),
                             "path_cache": (
-                                data["path_cache"] if "path_cache" in data else existing_path_cache
+                                existing_path_cache if existing_row else data.get("path_cache")
                             ),
                         }
 
@@ -568,22 +619,22 @@ class TaskSyncManager:
                                 max_seq_tracker.get(task_project_id, 0), final_seq
                             )
 
-                            # Rebuild path_cache from the final seq_num.
-                            synced_values["path_cache"] = _compute_path_cache(
-                                conn,
-                                task_project_id,
-                                final_seq,
-                                synced_values.get("parent_task_id"),
-                                existing_tasks,
-                            )
+                            # Rebuild after every task is present so file order cannot
+                            # truncate a child's hierarchy.
+                            synced_values["path_cache"] = str(final_seq)
 
                             # INSERT with all synced fields
                             columns = ", ".join(["id"] + list(synced_values.keys()))
                             placeholders = ", ".join(["%s"] * (1 + len(synced_values)))
-                            conn.execute(
-                                f"INSERT INTO {'tasks'} ({columns}) VALUES ({placeholders})",
+                            cursor = conn.execute(
+                                f"INSERT INTO {'tasks'} ({columns}) VALUES ({placeholders}) "
+                                "ON CONFLICT (id) DO NOTHING",
                                 (task_id, *synced_values.values()),
                             )
+                            if cursor.rowcount == 0:
+                                skipped_count += 1
+                                continue
+                            pending_path_rebuilds.append(task_id)
                             existing_tasks[task_id] = {
                                 "updated_at": synced_values["updated_at"],
                                 "seq_num": synced_values["seq_num"],
@@ -598,10 +649,14 @@ class TaskSyncManager:
                         else:
                             # Existing task: update synced fields while preserving local state.
                             set_clause = ", ".join(f"{col} = %s" for col in synced_values)
-                            conn.execute(
-                                f"UPDATE tasks SET {set_clause} WHERE id = %s",
-                                (*synced_values.values(), task_id),
+                            cursor = conn.execute(
+                                f"UPDATE tasks SET {set_clause} WHERE id = %s "
+                                "AND (updated_at IS NULL OR updated_at < %s)",
+                                (*synced_values.values(), task_id, updated_at_file),
                             )
+                            if cursor.rowcount == 0:
+                                skipped_count += 1
+                                continue
                             existing_tasks[task_id] = {
                                 **existing_row,
                                 "updated_at": synced_values["updated_at"],
@@ -616,29 +671,55 @@ class TaskSyncManager:
                             updated_count += 1
 
                     # Collect dependencies for Phase 2
-                    if "deps_on" in data:
-                        for dep_id in data["deps_on"]:
-                            pending_deps.append((task_id, dep_id))
+                    if should_update and "deps_on" in data:
+                        pending_deps[task_id] = data["deps_on"]
 
-                # Phase 2: Import Dependencies
-                for task_id, depends_on in pending_deps:
-                    conn.execute(
-                        """
-                        INSERT INTO task_dependencies (
-                            task_id, depends_on, dep_type, created_at
-                        ) VALUES (%s, %s, 'blocks', %s)
-                        ON CONFLICT (task_id, depends_on, dep_type) DO NOTHING
-                        """,
-                        (task_id, depends_on, datetime.now(UTC)),
+                # Phase 2: Rebuild paths after all parents are available.
+                for task_id in pending_path_rebuilds:
+                    task_meta = existing_tasks[task_id]
+                    path_cache = _compute_path_cache(
+                        conn,
+                        task_meta["project_id"],
+                        task_meta["seq_num"],
+                        task_meta["parent_task_id"],
+                        existing_tasks,
                     )
+                    conn.execute(
+                        "UPDATE tasks SET path_cache = %s WHERE id = %s",
+                        (path_cache, task_id),
+                    )
+                    task_meta["path_cache"] = path_cache
+
+                # Phase 3: Import Dependencies
+                for task_id, dependencies in pending_deps.items():
+                    conn.execute(
+                        "DELETE FROM task_dependencies WHERE task_id = %s AND dep_type = 'blocks'",
+                        (task_id,),
+                    )
+                    for depends_on in dependencies:
+                        if task_id not in existing_tasks or depends_on not in existing_tasks:
+                            logger.warning(
+                                f"Skipping dependency {task_id} -> {depends_on}: "
+                                "endpoint missing after import"
+                            )
+                            continue
+                        conn.execute(
+                            """
+                            INSERT INTO task_dependencies (
+                                task_id, depends_on, dep_type, created_at
+                            ) VALUES (%s, %s, 'blocks', %s)
+                            ON CONFLICT (task_id, depends_on, dep_type) DO NOTHING
+                            """,
+                            (task_id, depends_on, datetime.now(UTC)),
+                        )
 
             logger.info(
-                f"Import complete: {imported_count} imported, "
+                f"Import complete: {imported_count} imported, {deleted_count} deleted, "
                 f"{updated_count} updated, {skipped_count} skipped"
             )
 
             # Rebuild search index to include imported tasks
-            if imported_count > 0 or updated_count > 0:
+            if imported_count > 0 or updated_count > 0 or deleted_count > 0:
                 try:
                     stats = self.task_manager.reindex_search(project_id)
                     logger.debug(f"Search index rebuilt with {stats.get('item_count', 0)} tasks")

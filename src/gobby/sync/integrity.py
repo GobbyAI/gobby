@@ -124,7 +124,6 @@ def verify_bundled_integrity(install_dir: Path) -> IntegrityResult:
 
     rel_shared_str = str(rel_shared)
 
-    result.checked = True
     result.source = "git"
 
     content_dirs = [f"{rel_shared_str}/{path}" for path in _GIT_PROTECTED_PATHS]
@@ -147,6 +146,27 @@ def verify_bundled_integrity(install_dir: Path) -> IntegrityResult:
         cwd=repo_root,
     )
 
+    # 4. Tracked files, used to build the clean file list
+    all_tracked = run_git_command(
+        ["git", "ls-files", "--"] + content_dirs,
+        cwd=repo_root,
+    )
+
+    git_results = {
+        "unstaged changes": unstaged,
+        "staged changes": staged,
+        "untracked files": untracked,
+        "tracked files": all_tracked,
+    }
+    failed_checks = [name for name, output in git_results.items() if output is None]
+    if failed_checks:
+        result.errors.extend(
+            f"Git integrity check failed while checking {name}" for name in failed_checks
+        )
+        return result
+
+    result.checked = True
+
     dirty: set[str] = set()
     if unstaged:
         dirty.update(f.strip() for f in unstaged.splitlines() if f.strip())
@@ -159,10 +179,6 @@ def verify_bundled_integrity(install_dir: Path) -> IntegrityResult:
         result.untracked_files = sorted(f.strip() for f in untracked.splitlines() if f.strip())
 
     # Build clean file list from tracked files minus dirty ones
-    all_tracked = run_git_command(
-        ["git", "ls-files", "--"] + content_dirs,
-        cwd=repo_root,
-    )
     if all_tracked:
         all_set = {f.strip() for f in all_tracked.splitlines() if f.strip()}
         result.clean_files = sorted(all_set - dirty)

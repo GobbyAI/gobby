@@ -192,6 +192,27 @@ class TestLocalTaskManager:
         assert updated.claimed_by_session_id == session.id
         assert updated.claimed_by_session_id == session.id
 
+    def test_reconcile_task_state_noop_preserves_updated_at(self, task_manager, project_id) -> None:
+        task = task_manager.create_task(
+            project_id=project_id,
+            title="Unchanged",
+            description="Same description",
+            priority=2,
+        )
+
+        reconciled = task_manager.reconcile_task_state(
+            task.id,
+            title="Unchanged",
+            description="Same description",
+            priority=2,
+            closed_at=None,
+            closed_reason=None,
+            escalated_at=None,
+            escalation_reason=None,
+        )
+
+        assert reconciled.updated_at == task.updated_at
+
     def test_state_projects_from_current_stage_rows(self, task_manager, project_id) -> None:
         """Stage rows drive task projection after legacy state columns are dropped."""
         task = task_manager.create_task(project_id=project_id, title="Projected")
