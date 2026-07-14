@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, ValidationError
 
 from gobby.config.validation_detection import (
+    ValidationDetectionConfig,
     clear_project_validation_detection,
     load_project_validation_detection,
     save_project_validation_detection,
@@ -145,6 +146,22 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
         original_repo_path = project.repo_path
         requested_repo_path = fields.get("repo_path", original_repo_path)
         repo_path_changed = requested_repo_path != original_repo_path
+
+        if approval_rules is not None and not requested_repo_path:
+            raise HTTPException(400, "Project has no repo_path for project-scoped approval rules")
+
+        if validation_detection is not None:
+            if not requested_repo_path:
+                raise HTTPException(
+                    400, "Project has no repo_path for project-scoped validation detection"
+                )
+            try:
+                validation_detection = ValidationDetectionConfig.model_validate(
+                    validation_detection
+                ).model_dump()
+            except ValidationError as exc:
+                raise HTTPException(400, str(exc)) from exc
+
         migrated_rules = (
             load_project_approval_rules(original_repo_path)
             if repo_path_changed and original_repo_path
@@ -162,51 +179,57 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
                     await server.run_db(_project_to_response, server, project),
                 )
 
-        if fields:
-            updated = await server.run_db(pm.update, project_id, **fields)
-            if not updated:
-                raise HTTPException(500, "Failed to update project")
-        else:
-            updated = project
+        def apply_update() -> Project:
+            with pm.db.transaction():
+                if fields:
+                    updated = pm.update(project_id, **fields)
+                    if not updated:
+                        raise HTTPException(500, "Failed to update project")
+                else:
+                    updated = project
 
-        if approval_rules is not None:
-            if not updated.repo_path:
-                raise HTTPException(
-                    400, "Project has no repo_path for project-scoped approval rules"
-                )
-            if repo_path_changed and original_repo_path:
-                migrate_project_approval_rules(
-                    original_repo_path, updated.repo_path, approval_rules
-                )
-            else:
-                save_project_approval_rules(updated.repo_path, approval_rules)
-        elif repo_path_changed and updated.repo_path and migrated_rules:
-            migrate_project_approval_rules(original_repo_path, updated.repo_path)
+                if approval_rules is not None:
+                    assert updated.repo_path is not None
+                    if repo_path_changed and original_repo_path:
+                        migrate_project_approval_rules(
+                            original_repo_path, updated.repo_path, approval_rules
+                        )
+                    else:
+                        save_project_approval_rules(updated.repo_path, approval_rules)
+                elif repo_path_changed and updated.repo_path and migrated_rules:
+                    migrate_project_approval_rules(original_repo_path, updated.repo_path)
 
-        if validation_detection is not None:
-            if not updated.repo_path:
-                raise HTTPException(
-                    400, "Project has no repo_path for project-scoped validation detection"
-                )
-            try:
-                save_project_validation_detection(updated.repo_path, validation_detection)
-            except ValidationError as exc:
-                raise HTTPException(400, str(exc)) from exc
-        elif repo_path_changed and updated.repo_path and migrated_validation_detection is not None:
-            save_project_validation_detection(updated.repo_path, migrated_validation_detection)
+                if validation_detection is not None:
+                    assert updated.repo_path is not None
+                    save_project_validation_detection(updated.repo_path, validation_detection)
+                elif (
+                    repo_path_changed
+                    and updated.repo_path
+                    and migrated_validation_detection is not None
+                ):
+                    save_project_validation_detection(
+                        updated.repo_path, migrated_validation_detection
+                    )
 
-        if (
-            repo_path_changed
-            and original_repo_path
-            and (approval_rules is not None or migrated_rules)
-        ):
-            clear_project_approval_rules(original_repo_path)
-        if (
-            repo_path_changed
-            and original_repo_path
-            and (validation_detection is not None or migrated_validation_detection is not None)
-        ):
-            clear_project_validation_detection(original_repo_path)
+                if (
+                    repo_path_changed
+                    and original_repo_path
+                    and (approval_rules is not None or migrated_rules)
+                ):
+                    clear_project_approval_rules(original_repo_path)
+                if (
+                    repo_path_changed
+                    and original_repo_path
+                    and (
+                        validation_detection is not None
+                        or migrated_validation_detection is not None
+                    )
+                ):
+                    clear_project_validation_detection(original_repo_path)
+
+                return updated
+
+        updated = await server.run_db(apply_update)
 
         return cast(dict[str, Any], await server.run_db(_project_to_response, server, updated))
 

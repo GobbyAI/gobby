@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 from fastapi.testclient import TestClient
 
+from gobby.servers.routes import projects as projects_routes
 from tests.servers.conftest import create_http_server
 
 if TYPE_CHECKING:
@@ -329,6 +330,81 @@ class TestProjectRoutes:
         project_file = repo_path / ".gobby" / "project.json"
         saved = json.loads(project_file.read_text())
         assert saved["validation_detection"]["custom_matchers"][0]["id"] == "project-ci"
+
+    def test_update_project_invalid_validation_detection_does_not_mutate(
+        self,
+        client: TestClient,
+        project_manager: LocalProjectManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        old_repo = tmp_path / "old-repo"
+        new_repo = tmp_path / "new-repo"
+        old_repo.mkdir()
+        new_repo.mkdir()
+        project = project_manager.create(name="unchanged", repo_path=str(old_repo))
+        project_file = old_repo / ".gobby" / "project.json"
+        project_file.parent.mkdir(parents=True)
+        original_payload = {"verification": {"lint": "uv run ruff check src/"}}
+        project_file.write_text(json.dumps(original_payload))
+
+        def fail_mutation(*args: object, **kwargs: object) -> None:
+            raise AssertionError("invalid request attempted a project-file mutation")
+
+        for function_name in (
+            "save_project_approval_rules",
+            "migrate_project_approval_rules",
+            "clear_project_approval_rules",
+            "save_project_validation_detection",
+            "clear_project_validation_detection",
+        ):
+            monkeypatch.setattr(projects_routes, function_name, fail_mutation)
+
+        response = client.put(
+            f"/api/projects/{project.id}",
+            json={
+                "name": "changed",
+                "repo_path": str(new_repo),
+                "approval_rules": ["tool:Write"],
+                "validation_detection": {
+                    "custom_matchers": [{"id": " ", "label": "Invalid", "prefixes": ["test"]}]
+                },
+            },
+        )
+
+        assert response.status_code == 400
+        persisted = project_manager.get(project.id)
+        assert persisted is not None
+        assert persisted.name == "unchanged"
+        assert persisted.repo_path == str(old_repo)
+        assert json.loads(project_file.read_text()) == original_payload
+        assert not (new_repo / ".gobby" / "project.json").exists()
+
+    def test_update_project_file_failure_rolls_back_database_update(
+        self,
+        client: TestClient,
+        project_manager: LocalProjectManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        project = project_manager.create(name="unchanged", repo_path=str(repo_path))
+
+        def fail_save(*args: object, **kwargs: object) -> None:
+            raise OSError("project file write failed")
+
+        monkeypatch.setattr(projects_routes, "save_project_validation_detection", fail_save)
+
+        with pytest.raises(OSError, match="project file write failed"):
+            client.put(
+                f"/api/projects/{project.id}",
+                json={"name": "changed", "validation_detection": {}},
+            )
+
+        persisted = project_manager.get(project.id)
+        assert persisted is not None
+        assert persisted.name == "unchanged"
 
     def test_update_project_repo_path_migrates_approval_rules_and_preserves_metadata(
         self,
