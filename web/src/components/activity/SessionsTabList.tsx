@@ -128,6 +128,11 @@ export function SessionsEntryList({
       className={`overflow-y-auto ${selectedSessionId ? "border-b border-border" : "flex-1"}`}
       style={selectedSessionId ? { height: `${topHeight}%` } : undefined}
     >
+      {fetchError && entries.length > 0 ? (
+        <div className="border-b border-border px-3 py-1.5 text-xs text-destructive-foreground" role="alert">
+          {fetchError}
+        </div>
+      ) : null}
       {isLoading && entries.length === 0 ? (
         <ActivityPanelEmpty body="Loading sessions…" />
       ) : fetchError && entries.length === 0 ? (

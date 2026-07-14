@@ -358,8 +358,73 @@ describe("SessionsTab", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     mockFetch.restore();
     vi.restoreAllMocks();
+  });
+
+  it("preserves running agents and surfaces polling errors until recovery", async () => {
+    vi.useFakeTimers();
+    mockFetch.resetRoutes();
+    mockFetch.mockJsonResponse("/api/agents/running", {
+      agents: [
+        {
+          run_id: "run-running-1",
+          provider: "codex",
+          session_id: "agent-running-1",
+        },
+      ],
+    });
+
+    render(<SessionsTab sessions={[RUNNING_AGENT_SESSION]} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(getSessionEntry("#206: Running Agent Terminal")).toBeInTheDocument();
+
+    mockFetch.resetRoutes();
+    mockFetch.mockErrorResponse("/api/agents/running", 500);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent("Failed to load running agents");
+    expect(getSessionEntry("#206: Running Agent Terminal")).toBeInTheDocument();
+
+    mockFetch.resetRoutes();
+    mockFetch.mockJsonResponse("/api/agents/running", { agents: [] });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    vi.useRealTimers();
+  });
+
+  it("rejects a non-array running-agents payload without replacing prior agents", async () => {
+    vi.useFakeTimers();
+    mockFetch.resetRoutes();
+    mockFetch.mockJsonResponse("/api/agents/running", {
+      agents: [
+        {
+          run_id: "run-running-1",
+          provider: "codex",
+          session_id: "agent-running-1",
+        },
+      ],
+    });
+
+    render(<SessionsTab sessions={[RUNNING_AGENT_SESSION]} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    mockFetch.resetRoutes();
+    mockFetch.mockJsonResponse("/api/agents/running", { agents: {} });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent("Failed to load running agents");
+    expect(getSessionEntry("#206: Running Agent Terminal")).toBeInTheDocument();
+    vi.useRealTimers();
   });
 
   it("auto-selects a detail row without persisting a watched session", async () => {
