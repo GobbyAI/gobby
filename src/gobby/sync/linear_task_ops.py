@@ -218,6 +218,21 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
             local_title = _local_title_from_linear(title)
             description = issue.get("description", "")
             priority_val = issue.get("priority", 2)
+            state_name = _linear_issue_state_name(issue)
+            gobby_state = (
+                self.map_linear_state_to_gobby(state_name) if state_name is not None else None
+            )
+            linear_updated = _parse_linear_timestamp(issue.get("updatedAt"))
+            changed_at = (
+                linear_updated.isoformat()
+                if linear_updated is not None
+                else datetime.now(UTC).isoformat()
+            )
+            lifecycle_updates = _linear_lifecycle_fields(
+                gobby_state,
+                state_name=state_name,
+                changed_at=changed_at,
+            )
 
             with self.task_manager.db.transaction():
                 existing = self.task_manager.db.fetchone(
@@ -245,6 +260,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
                         title=local_title,
                         description=description,
                         priority=priority_val,
+                        **lifecycle_updates,
                     )
                     task = self.task_manager.get_task(existing["id"])
                     result_tasks.append(task.to_dict())
@@ -257,6 +273,11 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
                         linear_team_id=effective_team_id,
                         priority=priority_val,
                     )
+                    if any(value is not None for value in lifecycle_updates.values()):
+                        task = self.task_manager.reconcile_task_state(
+                            task.id,
+                            **lifecycle_updates,
+                        )
                     result_tasks.append(task.to_dict())
 
         logger.info("Imported %d issues from Linear team %s", len(result_tasks), effective_team_id)

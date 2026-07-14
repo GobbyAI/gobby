@@ -387,6 +387,76 @@ class TestLinearSyncServiceImport:
         assert all_args.get("linear_issue_id") == "lin-42" or "linear_issue_id" in str(create_call)
 
     @pytest.mark.asyncio
+    async def test_import_done_issue_creates_closed_task(
+        self, sync_service, mock_mcp_manager, mock_task_manager
+    ) -> None:
+        mock_mcp_manager.call_tool.return_value = {
+            "issues": [
+                {
+                    "id": "lin-done",
+                    "title": "Finished feature",
+                    "state": {"name": "Done"},
+                    "updatedAt": "2026-02-11T12:34:56Z",
+                }
+            ]
+        }
+        created = MagicMock()
+        created.id = "task-done"
+        created.to_dict.return_value = {"id": "task-done"}
+        closed = MagicMock()
+        closed.to_dict.return_value = {"id": "task-done", "closed_reason": "linear_sync"}
+        mock_task_manager.create_task.return_value = created
+        mock_task_manager.reconcile_task_state.return_value = closed
+
+        imported = await sync_service.import_linear_issues()
+
+        mock_task_manager.reconcile_task_state.assert_called_once_with(
+            "task-done",
+            closed_at="2026-02-11T12:34:56+00:00",
+            closed_reason="linear_sync",
+            closed_in_session_id=None,
+            closed_commit_sha=None,
+            escalated_at=None,
+            escalation_reason=None,
+        )
+        assert imported == [{"id": "task-done", "closed_reason": "linear_sync"}]
+
+    @pytest.mark.asyncio
+    async def test_import_canceled_issue_reconciles_existing_task(
+        self, sync_service, mock_mcp_manager, mock_task_manager
+    ) -> None:
+        mock_mcp_manager.call_tool.return_value = {
+            "issues": [
+                {
+                    "id": "lin-canceled",
+                    "title": "Canceled feature",
+                    "state": {"name": "Canceled"},
+                    "updatedAt": "2026-02-12T09:30:00Z",
+                }
+            ]
+        }
+        existing = MagicMock()
+        existing.to_dict.return_value = {"id": "task-canceled"}
+        mock_task_manager.db.fetchone.return_value = {"id": "task-canceled"}
+        mock_task_manager.get_task.return_value = existing
+
+        imported = await sync_service.import_linear_issues()
+
+        mock_task_manager.reconcile_task_state.assert_called_once_with(
+            "task-canceled",
+            title="Canceled feature",
+            description="",
+            priority=2,
+            closed_at=None,
+            closed_reason=None,
+            closed_in_session_id=None,
+            closed_commit_sha=None,
+            escalated_at="2026-02-12T09:30:00+00:00",
+            escalation_reason="Linear state: Canceled",
+        )
+        assert imported == [{"id": "task-canceled"}]
+
+    @pytest.mark.asyncio
     async def test_import_links_existing_task_by_gobby_ref_title(
         self, sync_service, mock_mcp_manager, mock_task_manager
     ):
