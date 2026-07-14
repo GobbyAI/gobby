@@ -11,8 +11,10 @@ from typing import Any, ClassVar
 
 import pytest
 
-from gobby.storage.hub.protocol import TaskSeqAllocation
-from gobby.storage.tasks import _creation
+from gobby.storage.hub.protocol import TaskSeqAllocation, Transaction
+from gobby.storage.projects import LocalProjectManager
+from gobby.storage.task_dependencies import DependencyCycleError, TaskDependencyManager
+from gobby.storage.tasks import LocalTaskManager, _creation
 
 _HEX40 = re.compile(r"^[0-9a-f]{40}$")
 
@@ -192,6 +194,63 @@ def test_read_modify_write_path_serializes_concurrent_writers(postgres_db: Any) 
         assert row["value"] == 2
     finally:
         _drop_table(postgres_db, table)
+
+
+def test_dependency_cycle_check_and_insert_are_serialized(postgres_db: Any) -> None:
+    project = LocalProjectManager(postgres_db).create(f"dependency-race-{uuid.uuid4()}")
+    task_manager = LocalTaskManager(postgres_db)
+    first_task = task_manager.create_task(project.id, "first")
+    second_task = task_manager.create_task(project.id, "second")
+    first_check_started = threading.Event()
+    release_first_check = threading.Event()
+    second_finished = threading.Event()
+    errors: queue.Queue[BaseException] = queue.Queue()
+
+    class PausingDependencyManager(TaskDependencyManager):
+        def _would_create_cycle(self, task_id: str, depends_on: str, conn: Transaction) -> bool:
+            first_check_started.set()
+            assert release_first_check.wait(timeout=5)
+            return super()._would_create_cycle(task_id, depends_on, conn)
+
+    def add_first_edge() -> None:
+        try:
+            PausingDependencyManager(postgres_db).add_dependency(first_task.id, second_task.id)
+        except BaseException as exc:  # pragma: no cover - re-raised in main thread
+            errors.put(exc)
+
+    def add_opposite_edge() -> None:
+        try:
+            TaskDependencyManager(postgres_db).add_dependency(second_task.id, first_task.id)
+        except DependencyCycleError:
+            pass
+        except BaseException as exc:  # pragma: no cover - re-raised in main thread
+            errors.put(exc)
+        finally:
+            second_finished.set()
+
+    first_thread = threading.Thread(target=add_first_edge)
+    second_thread = threading.Thread(target=add_opposite_edge)
+    first_thread.start()
+    assert first_check_started.wait(timeout=5)
+    second_thread.start()
+
+    second_was_blocked = not second_finished.wait(timeout=0.5)
+    release_first_check.set()
+    first_thread.join(timeout=10)
+    second_thread.join(timeout=10)
+
+    assert all(not thread.is_alive() for thread in (first_thread, second_thread))
+    if not errors.empty():
+        raise AssertionError("concurrent dependency addition failed") from errors.get()
+
+    assert second_was_blocked
+    rows = postgres_db.fetchall(
+        "SELECT task_id, depends_on FROM task_dependencies WHERE task_id IN (%s, %s)",
+        (first_task.id, second_task.id),
+    )
+    assert [(row["task_id"], row["depends_on"]) for row in rows] == [
+        (first_task.id, second_task.id)
+    ]
 
 
 def test_task_seq_allocation_serializes_across_project_visibility(postgres_db: Any) -> None:

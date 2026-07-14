@@ -28,6 +28,7 @@ __all__ = [
     "SessionSeqMutation",
     "SessionVariableMutation",
     "SystemSessionBootstrap",
+    "TaskDependencyMutation",
     "TaskLifecycleMutation",
     "TaskSeqAllocation",
     "TaskSubtreeCascade",
@@ -104,6 +105,13 @@ class TaskSeqAllocation:
 
     PRIORITY: ClassVar[int] = 200
     project_id: str
+
+
+@dataclass(frozen=True)
+class TaskDependencyMutation:
+    """Serializes dependency cycle checks and inserts."""
+
+    PRIORITY: ClassVar[int] = 200
 
 
 @dataclass(frozen=True)
