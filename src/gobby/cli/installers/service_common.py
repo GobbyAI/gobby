@@ -106,7 +106,7 @@ def _resolve_install_context(*, verbose: bool = False) -> dict[str, str | bool]:
     """Resolve the execution context for service file generation.
 
     Returns dict with: python_executable, working_directory, mode,
-    home_dir, path_env, log_file, error_log_file, gobby_home, verbose.
+    home_dir, path_env, log_file, stderr_log_file, gobby_home, verbose.
     """
     from gobby.config.app import load_config
 
@@ -115,7 +115,7 @@ def _resolve_install_context(*, verbose: bool = False) -> dict[str, str | bool]:
     exe = Path(sys.executable).resolve()
     home_dir = str(Path.home())
     log_file = str(Path(config.telemetry.log_file).expanduser())
-    error_log_file = str(Path(config.telemetry.log_file_error).expanduser())
+    stderr_log_file = str(Path(config.telemetry.log_file_stderr).expanduser())
 
     gobby_home = str(get_gobby_home())
 
@@ -140,7 +140,7 @@ def _resolve_install_context(*, verbose: bool = False) -> dict[str, str | bool]:
             "home_dir": home_dir,
             "path_env": _build_path(dev_exe),
             "log_file": log_file,
-            "error_log_file": error_log_file,
+            "stderr_log_file": stderr_log_file,
             "gobby_home": gobby_home,
             "verbose": verbose,
         }
@@ -153,7 +153,7 @@ def _resolve_install_context(*, verbose: bool = False) -> dict[str, str | bool]:
         "home_dir": home_dir,
         "path_env": _build_path(exe),
         "log_file": log_file,
-        "error_log_file": error_log_file,
+        "stderr_log_file": stderr_log_file,
         "gobby_home": gobby_home,
         "verbose": verbose,
     }
