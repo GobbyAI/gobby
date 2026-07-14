@@ -14,8 +14,9 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from gobby.skills.hubs._streaming import SkillContentError, read_limited_utf8
 from gobby.skills.hubs.base import DownloadResult, HubProvider, HubSkillDetails, HubSkillInfo
-from gobby.skills.limits import HUB_STREAM_CHUNK_BYTES, MAX_SKILL_MD_BYTES
+from gobby.skills.limits import MAX_SKILL_MD_BYTES
 from gobby.skills.loader import GitHubRef, clone_skill_repo, resolve_github_skill_path
 
 if TYPE_CHECKING:
@@ -288,27 +289,14 @@ class GitHubCollectionProvider(HubProvider):
                     timeout=30.0,
                 ) as response:
                     response.raise_for_status()
-                    content_length = response.headers.get("content-length")
-                    if content_length is not None:
-                        try:
-                            declared_size = int(content_length)
-                        except ValueError:
-                            logger.debug(f"SKILL.md for {slug} has invalid content length")
-                            return None
-                        if declared_size > MAX_SKILL_MD_BYTES:
-                            logger.debug(f"SKILL.md for {slug} exceeds size limit")
-                            return None
-
-                    content = bytearray()
-                    async for chunk in response.aiter_bytes(chunk_size=HUB_STREAM_CHUNK_BYTES):
-                        content.extend(chunk)
-                        if len(content) > MAX_SKILL_MD_BYTES:
-                            logger.debug(f"SKILL.md for {slug} exceeds size limit")
-                            return None
                     try:
-                        return content.decode("utf-8")
-                    except UnicodeDecodeError:
-                        logger.debug(f"SKILL.md for {slug} is not valid UTF-8")
+                        return await read_limited_utf8(
+                            response,
+                            max_bytes=MAX_SKILL_MD_BYTES,
+                            label="SKILL.md",
+                        )
+                    except SkillContentError as e:
+                        logger.debug(f"Could not fetch SKILL.md for {slug}: {e}")
                         return None
         except httpx.HTTPStatusError as e:
             logger.debug(f"Could not fetch SKILL.md for {slug}: {e.response.status_code}")

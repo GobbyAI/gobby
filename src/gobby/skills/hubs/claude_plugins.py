@@ -14,8 +14,9 @@ from typing import Any
 
 import httpx
 
+from gobby.skills.hubs._streaming import read_limited_utf8
 from gobby.skills.hubs.base import DownloadResult, HubProvider, HubSkillDetails, HubSkillInfo
-from gobby.skills.limits import HUB_STREAM_CHUNK_BYTES, MAX_SKILL_MD_BYTES
+from gobby.skills.limits import MAX_SKILL_MD_BYTES
 
 logger = logging.getLogger(__name__)
 
@@ -137,24 +138,11 @@ class ClaudePluginsProvider(HubProvider):
                         continue
 
                     response.raise_for_status()
-                    content_length = response.headers.get("content-length")
-                    if content_length is not None:
-                        try:
-                            declared_size = int(content_length)
-                        except ValueError as e:
-                            raise RuntimeError("Invalid skill download content length") from e
-                        if declared_size > _MAX_RAW_FILE_BYTES:
-                            raise RuntimeError("Skill download exceeds size limit")
-
-                    content = bytearray()
-                    async for chunk in response.aiter_bytes(chunk_size=HUB_STREAM_CHUNK_BYTES):
-                        content.extend(chunk)
-                        if len(content) > _MAX_RAW_FILE_BYTES:
-                            raise RuntimeError("Skill download exceeds size limit")
-                    try:
-                        return content.decode("utf-8")
-                    except UnicodeDecodeError as e:
-                        raise RuntimeError("Skill download is not valid UTF-8") from e
+                    return await read_limited_utf8(
+                        response,
+                        max_bytes=_MAX_RAW_FILE_BYTES,
+                        label="Skill download",
+                    )
 
         raise RuntimeError("Skill download failed")
 

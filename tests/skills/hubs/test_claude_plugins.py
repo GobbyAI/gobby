@@ -10,14 +10,16 @@ import pytest
 
 from gobby.skills.hubs import claude_plugins
 from gobby.skills.hubs.claude_plugins import ClaudePluginsProvider
+from gobby.skills.limits import HUB_STREAM_CHUNK_BYTES
 
 pytestmark = pytest.mark.unit
 
 
 class _OversizedStream(httpx.AsyncByteStream):
     async def __aiter__(self) -> AsyncIterator[bytes]:
-        yield b"x" * claude_plugins._MAX_RAW_FILE_BYTES
-        yield b"x"
+        chunk_count = claude_plugins._MAX_RAW_FILE_BYTES // HUB_STREAM_CHUNK_BYTES + 1
+        for _ in range(chunk_count):
+            yield b"x" * HUB_STREAM_CHUNK_BYTES
 
 
 def _provider(raw_url: object) -> ClaudePluginsProvider:
