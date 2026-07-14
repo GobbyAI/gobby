@@ -230,7 +230,8 @@ class SkillMetadataMixin:
             return []
         placeholders = ",".join("%s" for _ in skill_ids)
         rows = self._fetchall(
-            f"SELECT * FROM skills WHERE id IN ({placeholders}) AND deleted_at IS NULL",
+            # Placeholders are generated; values remain bound.
+            f"SELECT * FROM skills WHERE id IN ({placeholders}) AND deleted_at IS NULL",  # nosec B608
             tuple(skill_ids),
         )
         return [Skill.from_row(row) for row in rows]
@@ -489,6 +490,25 @@ class SkillMetadataMixin:
 
         self._host()._notify_change("delete", skill_id, skill_name)
         return True
+
+    def purge_soft_deleted_before(self, cutoff: datetime, *, limit: int = 500) -> int:
+        """Permanently delete a bounded batch of skills deleted before ``cutoff``."""
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                WITH expired AS (
+                    SELECT id
+                    FROM skills
+                    WHERE deleted_at IS NOT NULL AND deleted_at < %s
+                    ORDER BY deleted_at
+                    LIMIT %s
+                )
+                DELETE FROM skills
+                WHERE id IN (SELECT id FROM expired)
+                """,
+                (cutoff, limit),
+            )
+            return cursor.rowcount
 
     def restore(self, skill_id: str) -> Skill:
         """Restore a soft-deleted skill.
