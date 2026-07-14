@@ -111,6 +111,9 @@ def test_hub_database_exposes_regular_and_immediate_transactions() -> None:
     assert list(advisory_lock.parameters) == ["self", "lock"]
     assert advisory_lock.parameters["lock"].default is inspect.Parameter.empty
 
+    after_commit = inspect.signature(module.HubDatabase.after_commit)
+    assert list(after_commit.parameters) == ["self", "callback"]
+
     for method in (
         "execute",
         "executemany",
@@ -120,6 +123,7 @@ def test_hub_database_exposes_regular_and_immediate_transactions() -> None:
         "apply_migrations",
         "close",
         "advisory_lock",
+        "after_commit",
     ):
         assert hasattr(module.HubDatabase, method), method
 

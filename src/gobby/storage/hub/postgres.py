@@ -322,6 +322,9 @@ class PostgresHubDatabase:
         with self.transaction() as txn:
             return txn.executemany(sql, rows)
 
+    def after_commit(self, callback: Callable[[], None]) -> None:
+        _after_commit(self._state, callback)
+
     def fetchone(
         self,
         sql: str,

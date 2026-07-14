@@ -151,6 +151,9 @@ def test_postgres_hub_database_exposes_backend_neutral_surface() -> None:
     assert list(advisory_lock.parameters) == ["self", "lock"]
     assert advisory_lock.parameters["lock"].default is inspect.Parameter.empty
 
+    after_commit = inspect.signature(module.PostgresHubDatabase.after_commit)
+    assert list(after_commit.parameters) == ["self", "callback"]
+
     for method in (
         "execute",
         "executemany",
@@ -160,6 +163,7 @@ def test_postgres_hub_database_exposes_backend_neutral_surface() -> None:
         "apply_migrations",
         "close",
         "advisory_lock",
+        "after_commit",
     ):
         assert hasattr(module.PostgresHubDatabase, method), method
 
