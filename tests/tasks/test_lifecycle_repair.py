@@ -309,6 +309,40 @@ def test_repair_force_reseeds_active_task_scope(temp_db, sample_project) -> None
     assert _stage_names(manager, child.id) == ["development"]
 
 
+@pytest.mark.parametrize("terminal_state", ["closed", "escalated"])
+def test_repair_force_preserves_terminal_task_manifest(
+    temp_db, sample_project, terminal_state: str
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    parent = manager.create_task(
+        project_id=sample_project["id"],
+        title="Expansion parent",
+        task_type="epic",
+    )
+    manager.initialize_task_manifest(parent.id, stage_names=["development"])
+    child = manager.create_task(
+        project_id=sample_project["id"],
+        title=f"{terminal_state.title()} expansion child",
+        parent_task_id=parent.id,
+        task_type="task",
+        labels=["expansion-run:active"],
+    )
+    manager.initialize_task_manifest(child.id, stage_names=["holistic_qa"])
+    manager.stage_states.start_stage(child.id, "holistic_qa", by_session_id=None)
+    if terminal_state == "closed":
+        manager.close_task(child.id, reason="completed", force=True)
+    else:
+        manager.escalate_task(child.id, reason="needs human review")
+    original_rows = manager.stage_states.list_for_task(child.id)
+    original_manifest = [(row.stage_name, row.state) for row in original_rows]
+
+    result = LifecycleRepair(manager).run(task_id=child.id, apply=True, force=True)
+
+    repaired_rows = manager.stage_states.list_for_task(child.id)
+    assert result.candidates == []
+    assert [(row.stage_name, row.state) for row in repaired_rows] == original_manifest
+
+
 def test_repair_force_reseed_rolls_back_delete_when_initialize_fails(
     temp_db, sample_project, monkeypatch: pytest.MonkeyPatch
 ) -> None:
