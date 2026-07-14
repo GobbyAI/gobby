@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from gobby.mcp_proxy.metrics_events import MetricsEventStore
     from gobby.memory.manager import MemoryManager
     from gobby.memory.vectorstore import VectorStore
+    from gobby.runner_pid_file import PidFileClaim
     from gobby.scheduler.scheduler import CronScheduler
     from gobby.servers.http import HTTPServer
     from gobby.servers.websocket.server import WebSocketServer
@@ -193,10 +194,10 @@ class GobbyRunner:
         init_orchestration(self)
         init_servers(self)
 
-    async def run(self) -> None:
+    async def run(self, pid_claim: PidFileClaim | None = None) -> None:
         from gobby.runner_lifecycle import run_daemon
 
-        await run_daemon(self)
+        await run_daemon(self, pid_claim=pid_claim)
 
     def request_shutdown(self, intent: ShutdownIntent | None = None) -> None:
         """Request daemon shutdown and optionally set the semantic intent."""
@@ -208,9 +209,13 @@ class GobbyRunner:
         self._shutdown_requested = True
 
 
-async def run_gobby(config_path: Path | None = None, verbose: bool = False) -> None:
+async def run_gobby(
+    config_path: Path | None = None,
+    verbose: bool = False,
+    pid_claim: PidFileClaim | None = None,
+) -> None:
     runner = GobbyRunner(config_path=config_path, verbose=verbose)
-    await runner.run()
+    await runner.run(pid_claim=pid_claim)
 
 
 def _healthy_daemon_running(port: int, host: str = "localhost") -> bool:
@@ -283,13 +288,41 @@ def main(config_path: Path | None = None, verbose: bool = False) -> None:
         )
         sys.exit(0)
 
+    # Claim the singleton lock before any subsystem init: a launchd respawn
+    # racing a live daemon must lose here and exit 0 so
+    # KeepAlive.SuccessfulExit=false never hot-loops it.
+    from gobby.cli.utils import get_gobby_home
+    from gobby.runner_pid_file import claim_pid_file, probe_daemon_lock
+
+    pid_file = get_gobby_home() / "gobby.pid"
+    pid_claim: PidFileClaim | None = None
+    contended = False
     try:
-        asyncio.run(run_gobby(config_path=config_path, verbose=verbose))
+        pid_claim = claim_pid_file(pid_file)
+        contended = pid_claim is None
+    except OSError as e:
+        # Advisory locking unavailable — run_daemon retries and fails open.
+        logger.warning(f"Could not claim PID file {pid_file} at startup: {e}")
+    if contended:
+        owner = probe_daemon_lock(pid_file)
+        print(
+            f"Gobby daemon lock {pid_file} is held by PID {owner or 'unknown'}, exiting.",
+            file=sys.stderr,
+        )
+        sys.exit(0)
+
+    try:
+        asyncio.run(run_gobby(config_path=config_path, verbose=verbose, pid_claim=pid_claim))
     except KeyboardInterrupt:
         sys.exit(0)
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
         sys.exit(1)
+    finally:
+        # run_daemon releases the claim during shutdown; release() is
+        # idempotent, so this only matters when asyncio.run never ran it.
+        if pid_claim is not None:
+            pid_claim.release()
 
 
 if __name__ == "__main__":

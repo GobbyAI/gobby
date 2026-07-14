@@ -115,6 +115,13 @@ def claim_pid_file(pid_file: Path) -> PidFileClaim | None:
             os.close(lock_fd)
             return None
 
+        # Record the owner inside the lock file itself: the pid file can be
+        # clobbered by racing starters, but only the lock holder writes here.
+        os.lseek(lock_fd, 0, os.SEEK_SET)
+        os.ftruncate(lock_fd, 0)
+        os.write(lock_fd, str(os.getpid()).encode())
+        os.fsync(lock_fd)
+
         pid_fd = os.open(pid_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
             os.write(pid_fd, str(os.getpid()).encode())
@@ -131,4 +138,29 @@ def claim_pid_file(pid_file: Path) -> PidFileClaim | None:
     return PidFileClaim(lock_path, lock_fd)
 
 
-__all__ = ["PidFileClaim", "claim_pid_file"]
+def probe_daemon_lock(pid_file: Path) -> int | None:
+    """Probe the daemon lock without disturbing a live owner.
+
+    Returns ``None`` when the lock is free (no live daemon), the owner's PID
+    when it is held, or ``0`` when it is held but the owner is unreadable.
+    """
+    lock_path = pid_file.with_name(f"{pid_file.name}.lock")
+    try:
+        lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError:
+        return None
+    try:
+        try:
+            _lock_file(lock_fd)
+        except OSError as exc:
+            if exc.errno in {errno.EACCES, errno.EAGAIN}:
+                owner = _read_pid(lock_path) or _read_pid(pid_file)
+                return owner if owner is not None else 0
+            raise
+        _unlock_file(lock_fd)
+        return None
+    finally:
+        os.close(lock_fd)
+
+
+__all__ = ["PidFileClaim", "claim_pid_file", "probe_daemon_lock"]
