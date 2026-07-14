@@ -242,6 +242,7 @@ def test_postgres_migrations_limited_to_known_post_baseline() -> None:
         "316_memory_vector_reindex_state.sql",
         "317_sync_tombstones.sql",
         "318_chat_messages_sequence_unique.sql",
+        "319_projects_active_name_unique.sql",
     ]
 
 
@@ -283,7 +284,7 @@ def test_postgres_baseline_version_is_flattened_to_305() -> None:
     # The 0.5.0 pre-release flatten folded 295-305 into the baseline. Hubs below
     # 305 take the corrupt_partial backup/recreate path; later migrations replay.
     assert module.BASELINE_VERSION == 305
-    assert module.latest_known_version() == 318
+    assert module.latest_known_version() == 319
 
 
 def test_postgres_baseline_uses_uuid_for_internal_identity_columns() -> None:
@@ -868,3 +869,22 @@ def test_chat_message_sequence_constraint_is_consistent_across_schema_and_migrat
         migration,
         ("duplicate_rank > 1", "replacement_seq", "DROP INDEX IF EXISTS"),
     )
+
+
+def test_project_name_constraint_is_partial_in_baseline_and_migration() -> None:
+    baseline = _baseline_text()
+    migration = (
+        SRC_ROOT / "storage" / "migrations" / "319_projects_active_name_unique.sql"
+    ).read_text(encoding="utf-8")
+
+    for label, content in (("baseline", baseline), ("migration", migration)):
+        _assert_contains_all(
+            f"project active name {label}",
+            content,
+            (
+                "idx_projects_active_name",
+                "UNIQUE",
+                "projects(name)",
+                "WHERE deleted_at IS NULL",
+            ),
+        )

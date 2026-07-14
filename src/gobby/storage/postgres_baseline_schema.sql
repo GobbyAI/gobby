@@ -5,7 +5,7 @@ CREATE TABLE schema_migrations (
 
 CREATE TABLE projects (
     id UUID PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
     repo_path TEXT,
     github_url TEXT,
     github_repo TEXT,
@@ -18,6 +18,9 @@ CREATE TABLE projects (
 );
 
 CREATE INDEX idx_projects_name ON projects(name);
+
+CREATE UNIQUE INDEX idx_projects_active_name ON projects(name)
+WHERE deleted_at IS NULL;
 
 CREATE TABLE mcp_servers (
     id UUID PRIMARY KEY,
