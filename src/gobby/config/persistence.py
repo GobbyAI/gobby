@@ -544,6 +544,15 @@ class MemoryConfig(BaseModel):
             "~/.gobby/logs/recall_signal.jsonl. '~' is expanded."
         ),
     )
+    recall_signal_log_max_mb: int = Field(
+        default=50,
+        ge=1,
+        description=(
+            "Rotate the recall-signal JSONL when the live file reaches this many "
+            "megabytes: '.1' shifts to '.2' and the live file becomes '.1', "
+            "bounding retained size to roughly three times the cap (#18196)."
+        ),
+    )
     recall_signal_hub: bool = Field(
         default=False,
         description=(

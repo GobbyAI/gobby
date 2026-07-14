@@ -61,6 +61,7 @@ def _default_loops() -> dict[str, Any]:
         unmodeled_observation_cleanup_loop,
     )
     from gobby.runner_maintenance_audit import workflow_audit_cleanup_loop
+    from gobby.runner_maintenance_resources import resource_monitor_loop
 
     return {
         "metrics_cleanup_loop": metrics_cleanup_loop,
@@ -80,6 +81,7 @@ def _default_loops() -> dict[str, Any]:
         "drain_hook_inbox_loop": drain_hook_inbox_loop,
         "expire_approval_timeouts_loop": expire_approval_timeouts_loop,
         "tmux_window_name_repair_loop": tmux_window_name_repair_loop,
+        "resource_monitor_loop": resource_monitor_loop,
     }
 
 
@@ -297,6 +299,13 @@ def start_periodic_tasks(
         ),
         name="metric-snapshot",
     )
+    runner._resource_monitor_task = asyncio.create_task(
+        loops["resource_monitor_loop"](
+            getattr(runner.config, "telemetry", None),
+            lambda: runner._shutdown_requested,
+        ),
+        name="resource-monitor",
+    )
     runner._hook_inbox_task = asyncio.create_task(
         loops["drain_hook_inbox_loop"](runner.http_server.app, lambda: runner._shutdown_requested),
         name="hook-inbox-drain",
@@ -376,6 +385,7 @@ def start_periodic_tasks(
             runner._chat_attachments_cleanup_task,
             runner._expired_isolation_task,
             runner._metric_snapshot_task,
+            runner._resource_monitor_task,
             runner._hook_inbox_task,
             runner._bin_freshness_task,
             runner._approval_timeout_task,

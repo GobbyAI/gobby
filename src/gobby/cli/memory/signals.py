@@ -7,7 +7,10 @@ from pathlib import Path
 
 import click
 
-from gobby.memory.recall_signal_log import resolve_recall_signal_path
+from gobby.memory.recall_signal_log import (
+    resolve_recall_signal_path,
+    rotated_recall_signal_paths,
+)
 from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.recall_signals import RecallSignalStore
 
@@ -28,15 +31,24 @@ def recall_signals() -> None:
 def backfill_events(path_: Path | None) -> None:
     """Load recall_signal.jsonl events into the hub signal tables.
 
-    Idempotent: rows keyed by (session_id, recall_request_id) that already
-    exist are skipped.
+    Without --path, rotated backups ('.2', '.1') load oldest-first before the
+    live file. Idempotent: rows keyed by (session_id, recall_request_id) that
+    already exist are skipped.
     """
-    resolved = path_ or resolve_recall_signal_path(None)
-    if not resolved.exists():
-        raise click.ClickException(f"No recall-signal log at {resolved}")
+    if path_ is not None:
+        if not path_.exists():
+            raise click.ClickException(f"No recall-signal log at {path_}")
+        sources = [path_]
+    else:
+        resolved = resolve_recall_signal_path(None)
+        sources = rotated_recall_signal_paths(resolved)
+        if not sources:
+            raise click.ClickException(f"No recall-signal log at {resolved}")
     db = open_runtime_hub_database(apply_migrations=False)
-    inserted = RecallSignalStore(db).load_signal_events_jsonl(resolved)
-    click.echo(f"Inserted {inserted} recall-signal request rows from {resolved}")
+    store = RecallSignalStore(db)
+    for source in sources:
+        inserted = store.load_signal_events_jsonl(source)
+        click.echo(f"Inserted {inserted} recall-signal request rows from {source}")
 
 
 @recall_signals.command("backfill-labels")
