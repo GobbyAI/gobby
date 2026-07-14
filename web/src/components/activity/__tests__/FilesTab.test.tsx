@@ -25,7 +25,19 @@ vi.mock('../../chat/artifacts/ResizeHandle', () => ({
 }))
 
 vi.mock('../../shared/CodeMirrorEditor', () => ({
-  CodeMirrorEditor: () => null,
+  CodeMirrorEditor: ({
+    content,
+    onChange,
+  }: {
+    content: string
+    onChange: (content: string) => void
+  }) => (
+    <textarea
+      aria-label="File contents"
+      value={content}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  ),
 }))
 
 vi.mock('react-syntax-highlighter', () => ({
@@ -170,5 +182,105 @@ describe('FilesTab', () => {
       expect(screen.getByTestId('resize-handle')).toHaveAttribute('data-direction', 'horizontal')
     })
     expect(screen.getByTestId('resize-handle')).toHaveAttribute('data-horizontal-anchor', 'left')
+  })
+
+  it('isolates project state and aborts project-scoped reads on project switch', async () => {
+    vi.mocked(useIsMobile).mockReturnValue(false)
+    const requestSignals = new Map<string, AbortSignal>()
+    let resolveChildTree: ((response: Response) => void) | undefined
+    let resolveFileRead: ((response: Response) => void) | undefined
+
+    fetchMock.mockImplementation(async (input?: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (init?.signal) requestSignals.set(url, init.signal)
+
+      if (url.includes('project_id=alpha') && url.endsWith('path=src')) {
+        return new Promise<Response>((resolve) => { resolveChildTree = resolve })
+      }
+      if (url.includes('/api/files/read') && url.includes('project_id=alpha')) {
+        return new Promise<Response>((resolve) => { resolveFileRead = resolve })
+      }
+      if (url.includes('/api/files/git-status')) {
+        return Response.json({ files: {} })
+      }
+      if (url.includes('project_id=alpha') && url.endsWith('path=')) {
+        return Response.json([
+          { name: 'src', path: 'src', is_dir: true },
+          { name: 'alpha.ts', path: 'alpha.ts', is_dir: false, extension: 'ts' },
+        ])
+      }
+      if (url.includes('project_id=beta') && url.endsWith('path=')) {
+        return Response.json([
+          { name: 'beta.ts', path: 'beta.ts', is_dir: false, extension: 'ts' },
+        ])
+      }
+      return Response.json([])
+    })
+
+    const { rerender } = render(<FilesTab projectId="alpha" />)
+    await screen.findByText('alpha.ts')
+
+    fireEvent.click(screen.getByText('src'))
+    fireEvent.click(screen.getByText('alpha.ts'))
+    await waitFor(() => {
+      expect(resolveChildTree).toBeTypeOf('function')
+      expect(resolveFileRead).toBeTypeOf('function')
+    })
+
+    rerender(<FilesTab projectId="beta" />)
+    await screen.findByText('beta.ts')
+
+    const alphaSignals = [...requestSignals]
+      .filter(([url]) => url.includes('project_id=alpha'))
+      .map(([, signal]) => signal)
+    expect(alphaSignals).toHaveLength(4)
+    alphaSignals.forEach((signal) => expect(signal.aborted).toBe(true))
+
+    resolveChildTree?.(Response.json([
+      { name: 'stale.ts', path: 'src/stale.ts', is_dir: false, extension: 'ts' },
+    ]))
+    resolveFileRead?.(Response.json({ content: 'stale alpha content' }))
+
+    await waitFor(() => {
+      expect(screen.queryByText('alpha.ts')).not.toBeInTheDocument()
+      expect(screen.queryByText('stale.ts')).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument()
+    })
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/files/write'))).toBe(false)
+  })
+
+  it('does not carry an edited file into the next project', async () => {
+    vi.mocked(useIsMobile).mockReturnValue(false)
+    fetchMock.mockImplementation(async (input?: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/files/git-status')) return Response.json({ files: {} })
+      if (url.includes('/api/files/read')) return Response.json({ content: 'alpha content' })
+      if (url.includes('project_id=alpha') && url.endsWith('path=')) {
+        return Response.json([
+          { name: 'alpha.ts', path: 'alpha.ts', is_dir: false, extension: 'ts' },
+        ])
+      }
+      if (url.includes('project_id=beta') && url.endsWith('path=')) {
+        return Response.json([
+          { name: 'beta.ts', path: 'beta.ts', is_dir: false, extension: 'ts' },
+        ])
+      }
+      return Response.json([])
+    })
+
+    const { rerender } = render(<FilesTab projectId="alpha" />)
+    fireEvent.click(await screen.findByText('alpha.ts'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'File contents' }), {
+      target: { value: 'edited alpha content' },
+    })
+    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument()
+
+    rerender(<FilesTab projectId="beta" />)
+    await screen.findByText('beta.ts')
+
+    expect(screen.queryByText('alpha.ts')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/files/write'))).toBe(false)
   })
 })

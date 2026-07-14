@@ -118,7 +118,7 @@ function XIcon() {
   )
 }
 
-export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout = 'stack' }: FilesTabProps) {
+const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, layout = 'stack' }: FilesTabProps) {
   const isMobile = useIsMobile()
   const useHorizontal = layout === 'responsive-split' && !isMobile
   const [rootEntries, setRootEntries] = useState<FileEntry[]>([])
@@ -148,16 +148,32 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
   const [renaming, setRenaming] = useState<{ path: string; name: string } | null>(null)
   const [gitStatus, setGitStatus] = useState<Record<string, string>>({})
   const renameInputRef = useRef<HTMLInputElement>(null)
+  const childRequestControllers = useRef(new Set<AbortController>())
+  const openFileController = useRef<AbortController | null>(null)
   const { confirm, ConfirmDialogElement } = useConfirmDialog()
+
+  useEffect(() => () => {
+    childRequestControllers.current.forEach((controller) => controller.abort())
+    childRequestControllers.current.clear()
+    openFileController.current?.abort()
+  }, [])
 
   // Fetch git status
   useEffect(() => {
     if (!projectId) return
     const baseUrl = getBaseUrl()
-    fetch(`${baseUrl}/api/files/git-status?project_id=${encodeURIComponent(projectId)}`)
+    const controller = new AbortController()
+    fetch(`${baseUrl}/api/files/git-status?project_id=${encodeURIComponent(projectId)}`, {
+      signal: controller.signal,
+    })
       .then((res) => (res.ok ? res.json() : { files: {} }))
-      .then((data) => setGitStatus(data.files ?? {}))
-      .catch(() => setGitStatus({}))
+      .then((data) => {
+        if (!controller.signal.aborted) setGitStatus(data.files ?? {})
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setGitStatus({})
+      })
+    return () => controller.abort()
   }, [projectId])
 
   // Fetch root directory
@@ -165,19 +181,34 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
     if (!projectId) { setRootEntries([]); setLoading(false); return }
     setLoading(true)
     const baseUrl = getBaseUrl()
-    fetch(`${baseUrl}/api/files/tree?project_id=${encodeURIComponent(projectId)}&path=`)
+    const controller = new AbortController()
+    fetch(`${baseUrl}/api/files/tree?project_id=${encodeURIComponent(projectId)}&path=`, {
+      signal: controller.signal,
+    })
       .then((res) => (res.ok ? res.json() : []))
-      .then((data) => setRootEntries(Array.isArray(data) ? data : []))
-      .catch(() => setRootEntries([]))
-      .finally(() => setLoading(false))
+      .then((data) => {
+        if (!controller.signal.aborted) setRootEntries(Array.isArray(data) ? data : [])
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setRootEntries([])
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false)
+      })
+    return () => controller.abort()
   }, [projectId])
 
   const loadChildren = useCallback((dirPath: string) => {
     if (!projectId || childrenMap.has(dirPath)) return
     const baseUrl = getBaseUrl()
-    fetch(`${baseUrl}/api/files/tree?project_id=${encodeURIComponent(projectId)}&path=${encodeURIComponent(dirPath)}`)
+    const controller = new AbortController()
+    childRequestControllers.current.add(controller)
+    fetch(`${baseUrl}/api/files/tree?project_id=${encodeURIComponent(projectId)}&path=${encodeURIComponent(dirPath)}`, {
+      signal: controller.signal,
+    })
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => {
+        if (controller.signal.aborted) return
         setChildrenMap((prev) => {
           const next = new Map(prev)
           next.set(dirPath, Array.isArray(data) ? data : [])
@@ -185,8 +216,10 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
         })
       })
       .catch(() => {
+        if (controller.signal.aborted) return
         setChildrenMap((prev) => { const next = new Map(prev); next.set(dirPath, []); return next })
       })
+      .finally(() => childRequestControllers.current.delete(controller))
   }, [projectId, childrenMap])
 
   const toggleDir = useCallback((path: string) => {
@@ -204,15 +237,26 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
     setFileContent(null)
     setIsEditing(false)
     const baseUrl = getBaseUrl()
-    fetch(`${baseUrl}/api/files/read?project_id=${encodeURIComponent(projectId)}&path=${encodeURIComponent(path)}`)
+    openFileController.current?.abort()
+    const controller = new AbortController()
+    openFileController.current = controller
+    fetch(`${baseUrl}/api/files/read?project_id=${encodeURIComponent(projectId)}&path=${encodeURIComponent(path)}`, {
+      signal: controller.signal,
+    })
       .then((res) => (res.ok ? res.json() : { content: 'Failed to load file' }))
       .then((data) => {
+        if (controller.signal.aborted) return
         const content = data.content ?? data.error ?? 'No content'
         setFileContent(content)
         setEditContent(content)
       })
-      .catch(() => setFileContent('Error loading file'))
-      .finally(() => setFileLoading(false))
+      .catch(() => {
+        if (!controller.signal.aborted) setFileContent('Error loading file')
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setFileLoading(false)
+        if (openFileController.current === controller) openFileController.current = null
+      })
   }, [projectId])
 
   // Context menu actions
@@ -576,6 +620,10 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
       {ConfirmDialogElement}
     </div>
   )
+})
+
+export const FilesTab = memo(function FilesTab(props: FilesTabProps) {
+  return <FilesTabProject key={props.projectId ?? 'no-project'} {...props} />
 })
 
 function GitStatusBadge({ status }: { status: string }) {
