@@ -1,3 +1,4 @@
+import logging
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -207,6 +208,93 @@ class TestAdminRoutes:
         assert response.json()["last_shutdown"] == (
             "source=cli_restart, intent=restart, sender_pid=123"
         )
+
+    def test_status_endpoint_logs_file_descriptor_collection_failure(
+        self,
+        client: TestClient,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with (
+            caplog.at_level(logging.DEBUG, logger="gobby.servers.routes.admin._health"),
+            patch("resource.getrlimit", side_effect=RuntimeError("fd failure")),
+        ):
+            response = client.get("/api/admin/status")
+
+        assert response.status_code == 200
+        record = next(
+            record
+            for record in caplog.records
+            if record.message == "Could not collect file descriptor usage"
+        )
+        assert record.exc_info is not None
+
+    def test_status_endpoint_logs_last_shutdown_failure(
+        self,
+        client: TestClient,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with (
+            caplog.at_level(logging.DEBUG, logger="gobby.servers.routes.admin._health"),
+            patch("gobby.cli.utils.get_gobby_home", side_effect=RuntimeError("home failure")),
+        ):
+            response = client.get("/api/admin/status")
+
+        assert response.status_code == 200
+        record = next(
+            record
+            for record in caplog.records
+            if record.message == "Could not read the last shutdown source"
+        )
+        assert record.exc_info is not None
+
+    def test_status_endpoint_logs_agent_stats_failure(
+        self,
+        client: TestClient,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with (
+            caplog.at_level(logging.DEBUG, logger="gobby.servers.routes.admin._health"),
+            patch(
+                "gobby.storage.agents.LocalAgentRunManager.list_running",
+                side_effect=RuntimeError("agent failure"),
+            ),
+        ):
+            response = client.get("/api/admin/status")
+
+        assert response.status_code == 200
+        assert response.json()["agents"]["running"] == 0
+        record = next(
+            record
+            for record in caplog.records
+            if record.message == "Could not collect running agent count"
+        )
+        assert record.exc_info is not None
+
+    def test_status_endpoint_logs_database_size_failure(
+        self,
+        client: TestClient,
+        mock_server: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mock_server.services.database.db_path = "/tmp/gobby.db"
+        resolved_path = MagicMock()
+        resolved_path.expanduser.return_value = resolved_path
+        resolved_path.exists.return_value = True
+        resolved_path.stat.side_effect = RuntimeError("stat failure")
+
+        with (
+            caplog.at_level(logging.DEBUG, logger="gobby.servers.routes.admin._health"),
+            patch("gobby.servers.routes.admin._health.Path", return_value=resolved_path),
+        ):
+            response = client.get("/api/admin/status")
+
+        assert response.status_code == 200
+        record = next(
+            record
+            for record in caplog.records
+            if record.message == "Could not read database file size"
+        )
+        assert record.exc_info is not None
 
     @patch("gobby.servers.routes.admin._health.is_qdrant_healthy", new_callable=AsyncMock)
     @patch("gobby.servers.routes.admin._health.psutil")

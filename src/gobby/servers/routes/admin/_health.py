@@ -432,8 +432,8 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                 fd_dir = pathlib.Path(f"/proc/{os.getpid()}/fd")
             current = len(list(fd_dir.iterdir())) if fd_dir.exists() else None
             fd_usage = {"current": current, "soft_limit": soft, "hard_limit": hard}
-        except Exception as exc:
-            logger.debug("Could not collect file descriptor usage: %s", exc, exc_info=True)
+        except Exception:
+            logger.debug("Could not collect file descriptor usage", exc_info=True)
 
         # Last shutdown source
         last_shutdown: str | None = None
@@ -451,8 +451,8 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                 shutdown_record = read_active_shutdown_intent(home=home, max_age_seconds=120)
             if shutdown_record is not None:
                 last_shutdown = format_shutdown_source(shutdown_record)
-        except Exception as exc:
-            logger.debug("Could not read the last shutdown source: %s", exc, exc_info=True)
+        except Exception:
+            logger.debug("Could not read the last shutdown source", exc_info=True)
 
         # Agent run statistics
         agent_stats: dict[str, int] = {"running": 0}
@@ -465,8 +465,8 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
 
             runs = await server.run_db(_list_running_agents)
             agent_stats["running"] = len(runs)
-        except Exception as exc:
-            logger.debug("Could not collect running agent count: %s", exc, exc_info=True)
+        except Exception:
+            logger.debug("Could not collect running agent count", exc_info=True)
 
         # Calculate response time
         response_time_ms = (time.perf_counter() - start_time) * 1000
@@ -494,8 +494,8 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                     resolved_db_path = Path(db_path).expanduser()
                     if resolved_db_path.exists():
                         db_size_bytes = resolved_db_path.stat().st_size
-            except Exception as exc:
-                logger.debug("Could not read database file size: %s", exc, exc_info=True)
+            except Exception:
+                logger.debug("Could not read database file size", exc_info=True)
         executor_stats = server.services.db_executor_stats()
         if executor_stats is not None:
             database_status["executor"] = executor_stats
