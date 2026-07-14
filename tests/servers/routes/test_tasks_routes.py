@@ -806,6 +806,36 @@ class TestCloseTask:
         )
         assert response.status_code == 400
 
+    @pytest.mark.parametrize("commit_sha", ["", " \t\n"])
+    def test_close_rejects_empty_commit_sha(
+        self, client: TestClient, sample_task: dict, commit_sha: str
+    ) -> None:
+        response = client.post(
+            f"/api/tasks/{sample_task['id']}/close",
+            json={"commit_sha": commit_sha},
+        )
+
+        assert response.status_code == 422
+
+    def test_close_with_valid_commit_sha_uses_commit_path(
+        self,
+        client: TestClient,
+        sample_task: dict,
+        task_manager: LocalTaskManager,
+    ) -> None:
+        commit_sha = "a" * 40
+        task = task_manager.get_task(sample_task["id"])
+
+        with patch.object(task_manager, "close_task_with_commit", return_value=task) as close:
+            response = client.post(
+                f"/api/tasks/{sample_task['id']}/close",
+                json={"commit_sha": commit_sha},
+            )
+
+        assert response.status_code == 200
+        close.assert_called_once()
+        assert close.call_args.args[:2] == (sample_task["id"], commit_sha)
+
     def test_close_not_found(self, client: TestClient) -> None:
         # get_task raises ValueError for unknown UUID; close catches it as 400
         response = client.post("/api/tasks/nonexistent-id-000/close")
