@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.dispatch.context import reload_candidate
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
@@ -1690,10 +1691,10 @@ class TestImportSeqNumPreservation:
         assert task.path_cache is not None
 
     @pytest.mark.integration
-    def test_path_cache_reflects_preserved_seq(
+    def test_path_cache_is_order_independent(
         self, sync_manager, task_manager, sample_project
     ) -> None:
-        """Parent+child both preserve seq_nums, path_cache is correct."""
+        """Child imported before its parent still gets the complete path_cache."""
         now = "2023-01-02T00:00:00+00:00"
 
         parent = {
@@ -1723,11 +1724,11 @@ class TestImportSeqNumPreservation:
             "path_cache": "50.51",
         }
 
-        # Write parent first so it exists when child's path_cache is built
+        # UUID-sorted exports can place a child before its parent.
         sync_manager.export_path.parent.mkdir(parents=True, exist_ok=True)
         with open(sync_manager.export_path, "w") as f:
-            f.write(json.dumps(parent) + "\n")
             f.write(json.dumps(child) + "\n")
+            f.write(json.dumps(parent) + "\n")
 
         sync_manager.import_from_jsonl()
 
@@ -1739,6 +1740,14 @@ class TestImportSeqNumPreservation:
         assert c.seq_num == 51
         assert p.path_cache == "50"
         assert c.path_cache == "50.51"
+
+        resolved = reload_candidate(
+            "50.51",
+            db=sync_manager.db,
+            project_id=sample_project["id"],
+        )
+        assert resolved is not None
+        assert resolved.id == c.id
 
     @pytest.mark.integration
     def test_import_path_cache_ignores_parent_from_other_project(

@@ -403,6 +403,7 @@ class TaskSyncManager:
 
             # Phase 1: Import Tasks (Upsert)
             pending_deps: list[tuple[str, str]] = []
+            pending_path_rebuilds: list[str] = []
 
             # Bulk-load existing task metadata in one query to avoid per-task SELECTs
             existing_tasks: dict[str, dict[str, Any]] = {}
@@ -614,14 +615,10 @@ class TaskSyncManager:
                                 max_seq_tracker.get(task_project_id, 0), final_seq
                             )
 
-                            # Rebuild path_cache from the final seq_num.
-                            synced_values["path_cache"] = _compute_path_cache(
-                                conn,
-                                task_project_id,
-                                final_seq,
-                                synced_values.get("parent_task_id"),
-                                existing_tasks,
-                            )
+                            # Rebuild after every task is present so file order cannot
+                            # truncate a child's hierarchy.
+                            synced_values["path_cache"] = str(final_seq)
+                            pending_path_rebuilds.append(task_id)
 
                             # INSERT with all synced fields
                             columns = ", ".join(["id"] + list(synced_values.keys()))
@@ -666,7 +663,23 @@ class TaskSyncManager:
                         for dep_id in data["deps_on"]:
                             pending_deps.append((task_id, dep_id))
 
-                # Phase 2: Import Dependencies
+                # Phase 2: Rebuild paths after all parents are available.
+                for task_id in pending_path_rebuilds:
+                    task_meta = existing_tasks[task_id]
+                    path_cache = _compute_path_cache(
+                        conn,
+                        task_meta["project_id"],
+                        task_meta["seq_num"],
+                        task_meta["parent_task_id"],
+                        existing_tasks,
+                    )
+                    conn.execute(
+                        "UPDATE tasks SET path_cache = %s WHERE id = %s",
+                        (path_cache, task_id),
+                    )
+                    task_meta["path_cache"] = path_cache
+
+                # Phase 3: Import Dependencies
                 for task_id, depends_on in pending_deps:
                     conn.execute(
                         """
