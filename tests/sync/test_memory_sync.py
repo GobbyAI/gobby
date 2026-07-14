@@ -636,6 +636,26 @@ class TestExportMerge:
         # C added from DB
         assert "memory C" in results
 
+    def test_export_merge_compares_updated_at_as_utc_datetimes(self, manager_with_memories) -> None:
+        newer_record = {
+            "id": "newer",
+            "content": "shared memory",
+            "type": "fact",
+            "tags": [],
+            "updated_at": "2026-01-01T11:30:00+00:00",
+        }
+        older_record = {
+            "id": "older",
+            "content": "shared memory",
+            "type": "fact",
+            "tags": [],
+            "updated_at": "2026-01-01T12:00:00+02:00",
+        }
+
+        deduped = manager_with_memories._deduplicate_records_by_id([newer_record, older_record])
+
+        assert deduped[0]["id"] == "newer"
+
     def test_export_deduplicates_near_duplicate_memory_records(self, manager_with_memories) -> None:
         """Near-identical cross-machine records collapse into one canonical memory."""
         old_record = {
