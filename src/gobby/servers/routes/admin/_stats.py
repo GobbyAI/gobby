@@ -40,22 +40,22 @@ def _build_filters(
     *,
     created_col: str = "created_at",
     project_col: str = "project_id",
-) -> tuple[str, list[str]]:
+) -> tuple[str, list[str | int]]:
     """Build SQL WHERE fragments and params for time + project filtering."""
     clauses: list[str] = []
-    params: list[str] = []
+    params: list[str | int] = []
 
     # Time filter: hours takes precedence over days
     if hours is not None and hours > 0:
-        clauses.append(f"AND {created_col} >= strftime('%Y-%m-%dT%H:%M:%S', 'now', ?)")
-        params.append(f"-{hours} hours")
+        clauses.append(f"AND {created_col} >= NOW() - (%s * INTERVAL '1 hour')")
+        params.append(hours)
     elif hours is None and days > 0:
-        clauses.append(f"AND {created_col} >= strftime('%Y-%m-%dT%H:%M:%S', 'now', ?)")
-        params.append(f"-{days} days")
+        clauses.append(f"AND {created_col} >= NOW() - (%s * INTERVAL '1 day')")
+        params.append(days)
     # hours=0 or days=0 means all time — no filter
 
     if project_id:
-        clauses.append(f"AND {project_col} = ?")
+        clauses.append(f"AND {project_col} = %s")
         params.append(project_id)
 
     return " ".join(clauses), params
@@ -150,6 +150,7 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             task_stats["closed_24h"] = closed_24h_rows[0]["cnt"] if closed_24h_rows else 0
         except Exception as e:
             logger.warning(f"Failed to get time-filtered task stats: {e}")
+            raise
 
         # --- Sessions ---
         session_stats: dict[str, Any] = {
@@ -190,6 +191,7 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             session_stats["by_source"] = by_source
         except Exception as e:
             logger.warning(f"Failed to get time-filtered session stats: {e}")
+            raise
 
         # --- Memory ---
         memory_stats: dict[str, Any] = {"count": 0, "by_type": {}, "recent_count": 0}
@@ -218,6 +220,7 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             memory_stats["recent_count"] = recent_rows[0]["cnt"] if recent_rows else 0
         except Exception as e:
             logger.warning(f"Failed to get time-filtered memory stats: {e}")
+            raise
 
         # --- Metrics Events ---
         metrics_stats: dict[str, Any] = {
@@ -304,6 +307,7 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             }
         except Exception as e:
             logger.warning(f"Failed to get metrics event stats: {e}")
+            raise
 
         return {
             "days": days,
