@@ -29,6 +29,7 @@ from gobby.tasks.expansion._common import (
     _strip_frontmatter,
     list_agent_definitions,
 )
+from gobby.tasks.expansion._qa import run_expansion_qa
 from gobby.utils.project_context import get_project_context
 
 logger = logging.getLogger(__name__)
@@ -115,11 +116,15 @@ async def compile_run(
     if not validation["valid"]:
         errors = "; ".join(validation["errors"])
         raise ValueError(f"Compiled expansion spec failed validation: {errors}")
+    qa_result = run_expansion_qa(compiled_spec=compiled_spec)
+    if not qa_result.valid:
+        errors = "; ".join(qa_result.errors)
+        raise ValueError(f"Compiled expansion spec failed QA: {errors}")
 
     self.run_manager.save_compiled_spec(
         run_id,
         compiled_spec,
-        checkpoints={"compile_validation": validation},
+        checkpoints={"compile_validation": validation, "expansion_qa": qa_result.to_dict()},
     )
     self.run_manager.append_log(
         run_id,
