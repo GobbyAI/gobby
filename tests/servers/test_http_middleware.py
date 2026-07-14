@@ -4,6 +4,7 @@ import hashlib
 import hmac
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,6 +14,7 @@ from starlette.responses import JSONResponse, Response
 
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
+from gobby.mcp_proxy.tools import artifacts as artifacts_tools
 from gobby.servers.auth_service import AuthService
 from gobby.servers.http import HTTPServer
 from gobby.servers.middleware.auth import AuthMiddleware
@@ -29,12 +31,16 @@ def _required_auth_middleware_app(
     bind_host: str = "localhost",
     auth_enabled: bool = True,
 ) -> FastAPI:
-    server = SimpleNamespace(
-        auth_service=MagicMock(enabled=auth_enabled),
-        services=SimpleNamespace(config=SimpleNamespace(bind_host=bind_host)),
-    )
-    server.auth_service.is_request_authenticated.side_effect = (
+    auth_service = MagicMock(enabled=auth_enabled)
+    auth_service.is_request_authenticated.side_effect = (
         lambda request: request.headers.get("Authorization") == "Bearer shared-token"
+    )
+    server = cast(
+        HTTPServer,
+        SimpleNamespace(
+            auth_service=auth_service,
+            services=SimpleNamespace(config=SimpleNamespace(bind_host=bind_host)),
+        ),
     )
     app = FastAPI()
     app.add_middleware(AuthMiddleware, server=server)
@@ -91,20 +97,21 @@ def test_loopback_hooks_remain_open_when_auth_mode_is_disabled() -> None:
 
 
 def test_required_by_default(temp_db: HubDatabase) -> None:
-    common = {
-        "database": temp_db,
-        "session_manager": MagicMock(),
-        "task_manager": MagicMock(),
-        "text_generation_service": MagicMock(),
-        "tool_chat_service": MagicMock(),
-        "llm_service": MagicMock(),
-    }
-    fallback_server = HTTPServer(ServiceContainer(config=None, **common))
-    configured_server = HTTPServer(
-        ServiceContainer(config=DaemonConfig(auth_mode="disabled"), **common)
-    )
+    def build_services(config: DaemonConfig | None) -> ServiceContainer:
+        return ServiceContainer(
+            config=config,
+            database=temp_db,
+            session_manager=MagicMock(),
+            task_manager=MagicMock(),
+            text_generation_service=MagicMock(),
+            tool_chat_service=MagicMock(),
+            llm_service=MagicMock(),
+        )
+
+    fallback_server = HTTPServer(build_services(None))
+    configured_server = HTTPServer(build_services(DaemonConfig(auth_mode="disabled")))
     explicit_server = HTTPServer(
-        ServiceContainer(config=DaemonConfig(auth_mode="required"), **common),
+        build_services(DaemonConfig(auth_mode="required")),
         auth_mode="disabled",
     )
 
@@ -221,8 +228,11 @@ def test_bearer_and_alias_accepted(temp_db: HubDatabase, tmp_path: Path) -> None
     token = "local-cli-token"
     ConfigStore(temp_db).set(LOCAL_API_TOKEN_HASH_KEY, hash_token(token), source="system")
     session_token, _ = AuthStore(temp_db).create_session()
-    server = SimpleNamespace(
-        auth_service=AuthService(lambda: temp_db, "required", token_file=tmp_path / "missing")
+    server = cast(
+        HTTPServer,
+        SimpleNamespace(
+            auth_service=AuthService(lambda: temp_db, "required", token_file=tmp_path / "missing")
+        ),
     )
     app = FastAPI()
     app.add_middleware(AuthMiddleware, server=server)
@@ -264,6 +274,36 @@ class TestLifespan:
 
         with TestClient(server.app):
             assert server._running is True
+
+    def test_lifespan_clears_artifact_broadcaster(
+        self,
+        session_storage: SessionManager,
+    ) -> None:
+        """Each lifespan owns its artifact broadcaster only while running."""
+
+        def build_server() -> HTTPServer:
+            services = ServiceContainer(
+                config=None,
+                database=session_storage.db,
+                session_manager=session_storage,
+                task_manager=MagicMock(),
+            )
+            return HTTPServer(services=services, port=60887, test_mode=True)
+
+        first_server = build_server()
+        second_server = build_server()
+
+        with TestClient(first_server.app):
+            first_broadcaster = artifacts_tools._artifact_broadcaster
+            assert first_broadcaster is not None
+
+        assert artifacts_tools._artifact_broadcaster is None
+
+        with TestClient(second_server.app):
+            assert artifacts_tools._artifact_broadcaster is not None
+            assert artifacts_tools._artifact_broadcaster is not first_broadcaster
+
+        assert artifacts_tools._artifact_broadcaster is None
 
     def test_lifespan_initializes_hook_manager(self, session_storage: SessionManager) -> None:
         """Test that lifespan initializes HookManager."""
