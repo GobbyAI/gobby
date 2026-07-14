@@ -82,7 +82,9 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
             storage = _get_storage()
             jobs = [
                 job
-                for job in storage.list_jobs(project_id=project_id, enabled=enabled)
+                for job in await server.run_db(
+                    storage.list_jobs, project_id=project_id, enabled=enabled
+                )
                 if not is_removed_automation_job(job)
             ]
             return {
@@ -106,7 +108,8 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
             # cron_jobs.project_id is a NOT NULL uuid column; fall back to the
             # personal project (same as the MCP create_cron_job tool) instead of
             # binding "" from the request default.
-            job = storage.create_job(
+            job = await server.run_db(
+                storage.create_job,
                 project_id=request.project_id or PERSONAL_PROJECT_ID,
                 name=request.name,
                 schedule_type=request.schedule_type,
@@ -130,7 +133,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
         """Get a cron job by ID."""
         try:
             storage = _get_storage()
-            job = storage.get_job(job_id)
+            job = await server.run_db(storage.get_job, job_id)
             if not job:
                 raise HTTPException(status_code=404, detail=f"Cron job not found: {job_id}")
             return {"status": "success", "job": job.to_dict()}
@@ -165,7 +168,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
             if not kwargs:
                 raise HTTPException(status_code=400, detail="No fields to update")
 
-            updated = storage.update_job(job_id, **kwargs)
+            updated = await server.run_db(storage.update_job, job_id, **kwargs)
             if not updated:
                 raise HTTPException(status_code=404, detail=f"Cron job not found: {job_id}")
             return {"status": "success", "job": updated.to_dict()}
@@ -180,7 +183,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
         """Delete a cron job."""
         try:
             storage = _get_storage()
-            success = storage.delete_job(job_id)
+            success = await server.run_db(storage.delete_job, job_id)
             if not success:
                 raise HTTPException(status_code=404, detail=f"Cron job not found: {job_id}")
             return {"status": "success"}
@@ -195,7 +198,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
         """Toggle a cron job enabled/disabled."""
         try:
             storage = _get_storage()
-            job = storage.toggle_job(job_id)
+            job = await server.run_db(storage.toggle_job, job_id)
             if not job:
                 raise HTTPException(status_code=404, detail=f"Cron job not found: {job_id}")
             return {"status": "success", "job": job.to_dict()}
@@ -221,7 +224,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
                     ) from exc
                 if not run:
                     storage = _get_storage()
-                    if storage.get_job(job_id):
+                    if await server.run_db(storage.get_job, job_id):
                         raise HTTPException(
                             status_code=409,
                             detail={
@@ -253,7 +256,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
         """List run history for a cron job."""
         try:
             storage = _get_storage()
-            runs = storage.list_runs(job_id, limit=limit)
+            runs = await server.run_db(storage.list_runs, job_id, limit=limit)
             return {
                 "status": "success",
                 "runs": [r.to_dict() for r in runs],
@@ -270,7 +273,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
         """Get a specific cron run by ID."""
         try:
             storage = _get_storage()
-            run = storage.get_run(run_id)
+            run = await server.run_db(storage.get_run, run_id)
             if not run:
                 raise HTTPException(status_code=404, detail=f"Cron run not found: {run_id}")
             return {"status": "success", "run": run.to_dict()}

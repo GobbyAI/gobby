@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -85,6 +85,11 @@ class TestFilesRoutes:
             return None
 
         db.fetchone.side_effect = mock_fetchone
+
+        async def run_db(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        server.run_db = AsyncMock(side_effect=run_db)
         return server
 
     @pytest.fixture

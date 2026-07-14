@@ -156,7 +156,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
     @router.get("/status")
     async def get_status(project_id: str | None = None) -> dict[str, Any]:
         """Get source control status overview."""
-        repo_path, github_repo = _resolve_project(server, project_id)
+        repo_path, github_repo = await server.run_db(_resolve_project, server, project_id)
         gh = _get_github(server)
         github_available = gh.is_available() if gh else False
 
@@ -178,10 +178,14 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         worktree_count = 0
         clone_count = 0
         if server.services.worktree_storage:
-            wts = server.services.worktree_storage.list_worktrees(project_id=project_id)
+            wts = await server.run_db(
+                server.services.worktree_storage.list_worktrees, project_id=project_id
+            )
             worktree_count = len(wts)
         if server.services.clone_storage:
-            cls = server.services.clone_storage.list_clones(project_id=project_id)
+            cls = await server.run_db(
+                server.services.clone_storage.list_clones, project_id=project_id
+            )
             clone_count = len(cls)
 
         return {
@@ -197,7 +201,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
     @router.get("/branches")
     async def list_branches(project_id: str | None = None) -> dict[str, Any]:
         """List git branches with ahead/behind info."""
-        repo_path, _ = _resolve_project(server, project_id)
+        repo_path, _ = await server.run_db(_resolve_project, server, project_id)
         if not repo_path:
             return {"branches": [], "current_branch": None}
 
@@ -249,7 +253,9 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
                     # Check if branch has a worktree
                     worktree_id = None
                     if server.services.worktree_storage and project_id:
-                        wt = server.services.worktree_storage.get_by_branch(project_id, name)
+                        wt = await server.run_db(
+                            server.services.worktree_storage.get_by_branch, project_id, name
+                        )
                         if wt:
                             worktree_id = wt.id
 
@@ -316,7 +322,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         branch_name = payload.get("branch_name", "")
         _validate_git_ref(branch_name, "branch_name")
 
-        repo_path, _ = _resolve_project(server, project_id)
+        repo_path, _ = await server.run_db(_resolve_project, server, project_id)
         if not repo_path:
             raise HTTPException(400, "No repository path for project")
 
@@ -366,7 +372,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         falls back to git log.
         """
         _validate_git_ref(branch_name, "branch_name")
-        repo_path, github_repo = _resolve_project(server, project_id)
+        repo_path, github_repo = await server.run_db(_resolve_project, server, project_id)
         if not repo_path:
             return {"commits": []}
 
@@ -428,7 +434,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         """Get diff between two refs."""
         _validate_git_ref(base, "base")
         _validate_git_ref(head, "head")
-        repo_path, _ = _resolve_project(server, project_id)
+        repo_path, _ = await server.run_db(_resolve_project, server, project_id)
         if not repo_path:
             raise HTTPException(400, "No repository path for project")
 
@@ -478,7 +484,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         project_id: str | None = None,
     ) -> dict[str, Any]:
         """List pull requests from GitHub."""
-        _, github_repo = _resolve_project(server, project_id)
+        _, github_repo = await server.run_db(_resolve_project, server, project_id)
         gh = _get_github(server)
         if not gh or not gh.is_available():
             return {"prs": [], "github_available": False}
@@ -536,7 +542,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         project_id: str | None = None,
     ) -> dict[str, Any]:
         """Get pull request details."""
-        _, github_repo = _resolve_project(server, project_id)
+        _, github_repo = await server.run_db(_resolve_project, server, project_id)
         parsed = _parse_github_repo(github_repo)
         if not parsed:
             raise HTTPException(400, "No GitHub repo configured")
@@ -555,7 +561,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         project_id: str | None = None,
     ) -> dict[str, Any]:
         """Get CI check runs for a PR."""
-        _, github_repo = _resolve_project(server, project_id)
+        _, github_repo = await server.run_db(_resolve_project, server, project_id)
         parsed = _parse_github_repo(github_repo)
         if not parsed:
             raise HTTPException(400, "No GitHub repo configured")
@@ -593,7 +599,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         project_id: str | None = None,
     ) -> dict[str, Any]:
         """List GitHub issues."""
-        _, github_repo = _resolve_project(server, project_id)
+        _, github_repo = await server.run_db(_resolve_project, server, project_id)
         gh = _get_github(server)
         if not gh or not gh.is_available():
             return {"issues": [], "github_available": False}
@@ -657,7 +663,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         project_id: str | None = None,
     ) -> dict[str, Any]:
         """Get issue details."""
-        _, github_repo = _resolve_project(server, project_id)
+        _, github_repo = await server.run_db(_resolve_project, server, project_id)
         parsed = _parse_github_repo(github_repo)
         if not parsed:
             raise HTTPException(400, "No GitHub repo configured")
@@ -682,7 +688,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         limit: int = 20,
     ) -> dict[str, Any]:
         """List CI/CD workflow runs."""
-        _, github_repo = _resolve_project(server, project_id)
+        _, github_repo = await server.run_db(_resolve_project, server, project_id)
         gh = _get_github(server)
         if not gh or not gh.is_available():
             return {"runs": [], "github_available": False}
@@ -744,7 +750,11 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         if not server.services.worktree_storage:
             return {"worktrees": []}
 
-        wts = server.services.worktree_storage.list_worktrees(project_id=project_id, status=status)
+        wts = await server.run_db(
+            server.services.worktree_storage.list_worktrees,
+            project_id=project_id,
+            status=status,
+        )
         return {"worktrees": [wt.to_dict() for wt in wts]}
 
     @router.get("/worktrees/stats")
@@ -755,7 +765,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         if not server.services.worktree_storage or not project_id:
             return {"stats": {}}
 
-        stats = server.services.worktree_storage.count_by_status(project_id)
+        stats = await server.run_db(server.services.worktree_storage.count_by_status, project_id)
         return {"stats": stats}
 
     @router.delete("/worktrees/{worktree_id}")
@@ -764,7 +774,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         if not server.services.worktree_storage:
             raise HTTPException(503, "Worktree storage not available")
 
-        wt = server.services.worktree_storage.get(worktree_id)
+        wt = await server.run_db(server.services.worktree_storage.get, worktree_id)
         if not wt:
             raise HTTPException(404, "Worktree not found")
 
@@ -777,7 +787,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
             # Determine the best git manager: project-scoped or fallback
             git_mgr = None
             try:
-                repo_path, _ = _resolve_project(server, wt.project_id)
+                repo_path, _ = await server.run_db(_resolve_project, server, wt.project_id)
                 if repo_path:
                     git_mgr = WorktreeGitManager(repo_path)
             except (ValueError, OSError):
@@ -795,7 +805,11 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
                 git_error = str(exc)
                 logger.warning("Git worktree deletion raised an exception", exc_info=True)
 
-        deleted = server.services.worktree_storage.delete(worktree_id) if git_deleted else False
+        deleted = (
+            await server.run_db(server.services.worktree_storage.delete, worktree_id)
+            if git_deleted
+            else False
+        )
         response: dict[str, Any] = {
             "success": deleted,
             "id": worktree_id,
@@ -816,8 +830,11 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         if not server.services.worktree_storage or not project_id:
             return {"candidates": [], "cleaned": 0}
 
-        stale = server.services.worktree_storage.cleanup_stale(
-            project_id, hours=hours, dry_run=dry_run
+        stale = await server.run_db(
+            server.services.worktree_storage.cleanup_stale,
+            project_id,
+            hours=hours,
+            dry_run=dry_run,
         )
         return {
             "candidates": [wt.to_dict() for wt in stale],
@@ -834,12 +851,13 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         if not server.services.worktree_storage:
             raise HTTPException(503, "Worktree storage not available")
 
-        wt = server.services.worktree_storage.get(worktree_id)
+        wt = await server.run_db(server.services.worktree_storage.get, worktree_id)
         if not wt:
             raise HTTPException(404, "Worktree not found")
 
         if server.services.git_manager:
-            result = server.services.git_manager.sync_from_main(
+            result = await server.run_db(
+                server.services.git_manager.sync_from_main,
                 wt.worktree_path,
                 base_branch=wt.base_branch,
                 source_branch=source_branch,
@@ -851,7 +869,10 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
                 "source_branch": source_branch or wt.base_branch,
             }
 
-        return server.services.worktree_storage.sync(worktree_id)
+        return cast(
+            dict[str, Any],
+            await server.run_db(server.services.worktree_storage.sync, worktree_id),
+        )
 
     # --- Clones ---
 
@@ -863,7 +884,9 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         if not server.services.clone_storage:
             return {"clones": []}
 
-        clones = server.services.clone_storage.list_clones(project_id=project_id)
+        clones = await server.run_db(
+            server.services.clone_storage.list_clones, project_id=project_id
+        )
         return {"clones": [c.to_dict() for c in clones]}
 
     @router.delete("/clones/{clone_id}")
@@ -872,11 +895,11 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         if not server.services.clone_storage:
             raise HTTPException(503, "Clone storage not available")
 
-        clone = server.services.clone_storage.get(clone_id)
+        clone = await server.run_db(server.services.clone_storage.get, clone_id)
         if not clone:
             raise HTTPException(404, "Clone not found")
 
-        deleted = server.services.clone_storage.delete(clone_id)
+        deleted = await server.run_db(server.services.clone_storage.delete, clone_id)
         return {"success": deleted, "id": clone_id}
 
     @router.post("/clones/{clone_id}/sync")
@@ -885,11 +908,11 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         if not server.services.clone_storage:
             raise HTTPException(503, "Clone storage not available")
 
-        clone = server.services.clone_storage.get(clone_id)
+        clone = await server.run_db(server.services.clone_storage.get, clone_id)
         if not clone:
             raise HTTPException(404, "Clone not found")
 
-        server.services.clone_storage.record_sync(clone_id)
+        await server.run_db(server.services.clone_storage.record_sync, clone_id)
         return {"success": True, "id": clone_id}
 
     return router

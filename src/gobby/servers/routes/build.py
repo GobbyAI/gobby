@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Coroutine
 from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
@@ -365,7 +365,7 @@ def create_build_router(server: HTTPServer) -> APIRouter:
     async def post_build(request_data: BuildRequest) -> dict[str, Any]:
         """Start lifecycle automation for a plan, epic, or automated leaf task."""
         try:
-            project_id = _resolve_request_project_id(server, request_data)
+            project_id = await server.run_db(_resolve_request_project_id, server, request_data)
             result = await _run_blocking_build_call(
                 build(
                     request_data.input_ref,
@@ -389,9 +389,11 @@ def create_build_router(server: HTTPServer) -> APIRouter:
     async def post_build_stop(request_data: BuildControlRequest) -> dict[str, Any] | JSONResponse:
         """Stop project-wide dispatcher ticks or task-scoped automation."""
         try:
-            project_id = _resolve_request_project_id(server, request_data)
+            project_id = await server.run_db(_resolve_request_project_id, server, request_data)
             if request_data.input_ref is None:
-                result = build_stop(db=server.services.database, project_id=project_id)
+                result = await server.run_db(
+                    build_stop, db=server.services.database, project_id=project_id
+                )
                 return _success_envelope(_result_json(result))
             target_result = await build_stop_target(
                 request_data.input_ref,
@@ -410,9 +412,11 @@ def create_build_router(server: HTTPServer) -> APIRouter:
     async def post_build_resume(request_data: BuildControlRequest) -> dict[str, Any] | JSONResponse:
         """Resume project-wide dispatcher ticks or task-scoped automation."""
         try:
-            project_id = _resolve_request_project_id(server, request_data)
+            project_id = await server.run_db(_resolve_request_project_id, server, request_data)
             if request_data.input_ref is None:
-                result = build_resume(db=server.services.database, project_id=project_id)
+                result = await server.run_db(
+                    build_resume, db=server.services.database, project_id=project_id
+                )
                 tick = await _kick_dispatcher_tick(
                     server.services.database,
                     project_id,
@@ -441,7 +445,7 @@ def create_build_router(server: HTTPServer) -> APIRouter:
                 content=_error_envelope("input_ref is required", "BUILD_CLEAN_ERROR"),
             )
         try:
-            project_id = _resolve_request_project_id(server, request_data)
+            project_id = await server.run_db(_resolve_request_project_id, server, request_data)
             result = await _run_blocking_build_call(
                 build_clean_target(
                     request_data.input_ref,
@@ -472,7 +476,7 @@ def create_build_router(server: HTTPServer) -> APIRouter:
                 content=_error_envelope("input_ref is required", "BUILD_RESTART_ERROR"),
             )
         try:
-            project_id = _resolve_request_project_id(server, request_data)
+            project_id = await server.run_db(_resolve_request_project_id, server, request_data)
             result = await _run_blocking_build_call(
                 build_restart_target(
                     request_data.input_ref,
@@ -509,13 +513,16 @@ def create_build_router(server: HTTPServer) -> APIRouter:
     ) -> dict[str, Any]:
         """Return compact build status for a task tree or build input."""
         try:
-            project_id = server.resolve_project_id(project_id=None, cwd=None)
-            return await asyncio.to_thread(
-                get_build_status,
-                input_ref,
-                db=server.services.database,
-                project_id=project_id,
-                history_limit=history_limit,
+            project_id = await server.run_db(server.resolve_project_id, project_id=None, cwd=None)
+            return cast(
+                dict[str, Any],
+                await server.run_db(
+                    get_build_status,
+                    input_ref,
+                    db=server.services.database,
+                    project_id=project_id,
+                    history_limit=history_limit,
+                ),
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -527,14 +534,17 @@ def create_build_router(server: HTTPServer) -> APIRouter:
     ) -> dict[str, Any]:
         """Explain dispatcher eligibility and proposed action without mutation."""
         try:
-            project_id = server.resolve_project_id(project_id=None, cwd=None)
-            return await asyncio.to_thread(
-                explain_dispatch,
-                task_id,
-                db=server.services.database,
-                project_id=project_id,
-                max_active_agents=max_active_agents,
-                services=server.services,
+            project_id = await server.run_db(server.resolve_project_id, project_id=None, cwd=None)
+            return cast(
+                dict[str, Any],
+                await server.run_db(
+                    explain_dispatch,
+                    task_id,
+                    db=server.services.database,
+                    project_id=project_id,
+                    max_active_agents=max_active_agents,
+                    services=server.services,
+                ),
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -546,13 +556,16 @@ def create_build_router(server: HTTPServer) -> APIRouter:
     ) -> dict[str, Any]:
         """List recent build run and event rows."""
         try:
-            project_id = server.resolve_project_id(project_id=None, cwd=None)
-            return await asyncio.to_thread(
-                list_build_history,
-                input_ref,
-                db=server.services.database,
-                project_id=project_id,
-                limit=limit,
+            project_id = await server.run_db(server.resolve_project_id, project_id=None, cwd=None)
+            return cast(
+                dict[str, Any],
+                await server.run_db(
+                    list_build_history,
+                    input_ref,
+                    db=server.services.database,
+                    project_id=project_id,
+                    limit=limit,
+                ),
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e

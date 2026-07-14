@@ -115,7 +115,7 @@ def create_auth_router(server: "HTTPServer") -> APIRouter:
                 headers={"Retry-After": str(retry_after)},
             )
 
-        if not server.auth_service.verify_password(req.username, req.password):
+        if not await server.run_db(server.auth_service.verify_password, req.username, req.password):
             login_rate_limiter.record_failure(client_id)
             logger.warning(f"Failed login attempt for user: {req.username}")
             return JSONResponse(
@@ -127,7 +127,9 @@ def create_auth_router(server: "HTTPServer") -> APIRouter:
 
         # Create session
         auth_store = _get_auth_store(server)
-        token, expires_at = auth_store.create_session(remember_me=req.remember_me)
+        token, expires_at = await server.run_db(
+            auth_store.create_session, remember_me=req.remember_me
+        )
 
         response = JSONResponse(content={"ok": True})
         cookie_kwargs: dict[str, Any] = {
@@ -151,7 +153,7 @@ def create_auth_router(server: "HTTPServer") -> APIRouter:
         token = request.cookies.get(COOKIE_NAME)
         if token:
             auth_store = _get_auth_store(server)
-            auth_store.delete_session(token)
+            await server.run_db(auth_store.delete_session, token)
 
         response = JSONResponse(content={"ok": True})
         response.delete_cookie(key=COOKIE_NAME, path="/")
@@ -165,7 +167,9 @@ def create_auth_router(server: "HTTPServer") -> APIRouter:
         """
         auth_required = server.auth_service.enabled
         authenticated = (
-            server.auth_service.is_request_authenticated(request) if auth_required else True
+            await server.run_db(server.auth_service.is_request_authenticated, request)
+            if auth_required
+            else True
         )
 
         return JSONResponse(

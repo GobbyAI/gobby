@@ -110,7 +110,7 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
         """List distinct rule groups."""
         try:
             manager = _get_manager()
-            rows = manager.list_all(workflow_type="rule")
+            rows = await server.run_db(manager.list_all, workflow_type="rule")
             groups: set[str] = set()
             for row in rows:
                 body = json.loads(row.definition_json)
@@ -130,7 +130,7 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
         """List distinct rule tags."""
         try:
             manager = _get_manager()
-            rows = manager.list_all(workflow_type="rule")
+            rows = await server.run_db(manager.list_all, workflow_type="rule")
             tags: set[str] = set()
             for row in rows:
                 for tag in row.tags or []:
@@ -157,7 +157,8 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
         """List rules with optional filters."""
         try:
             manager = _get_manager()
-            result = list_rules(
+            result = await server.run_db(
+                list_rules,
                 manager,
                 event=event,
                 group=group,
@@ -165,8 +166,8 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
                 project_id=project_id,
             )
             config_store = ConfigStore(server.services.database)
-            enforcement = config_store.get("rules.enforcement_enabled")
-            aggregate_blocks = config_store.get("rules.aggregate_blocks")
+            enforcement = await server.run_db(config_store.get, "rules.enforcement_enabled")
+            aggregate_blocks = await server.run_db(config_store.get, "rules.aggregate_blocks")
             return {
                 "status": "success",
                 "rules": result["rules"],
@@ -186,7 +187,9 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
     async def create_rule_endpoint(request: RuleCreateRequest) -> dict[str, Any]:
         """Create a new rule."""
         manager = _get_manager()
-        result = create_rule(manager, name=request.name, definition=request.definition)
+        result = await server.run_db(
+            create_rule, manager, name=request.name, definition=request.definition
+        )
 
         if not result["success"]:
             error = result["error"]
@@ -208,11 +211,15 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
         """Update rules collection settings (e.g. global enforcement toggle)."""
         config_store = ConfigStore(server.services.database)
         if request.enforcement_enabled is not None:
-            config_store.set("rules.enforcement_enabled", request.enforcement_enabled)
+            await server.run_db(
+                config_store.set, "rules.enforcement_enabled", request.enforcement_enabled
+            )
         if request.aggregate_blocks is not None:
-            config_store.set("rules.aggregate_blocks", request.aggregate_blocks)
-        enforcement = config_store.get("rules.enforcement_enabled")
-        aggregate_blocks = config_store.get("rules.aggregate_blocks")
+            await server.run_db(
+                config_store.set, "rules.aggregate_blocks", request.aggregate_blocks
+            )
+        enforcement = await server.run_db(config_store.get, "rules.enforcement_enabled")
+        aggregate_blocks = await server.run_db(config_store.get, "rules.aggregate_blocks")
         return {
             "status": "success",
             "enforcement_enabled": enforcement is not False,
@@ -230,13 +237,15 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=400, detail="source must be 'installed' or 'project'")
         try:
             manager = _get_manager()
-            rows = manager.list_all(workflow_type="rule", include_deleted=False)
+            rows = await server.run_db(
+                manager.list_all, workflow_type="rule", include_deleted=False
+            )
             count = 0
             failures: list[dict[str, str]] = []
             for row in rows:
                 if row.source == request.source:
                     try:
-                        manager.update(row.id, enabled=request.enabled)
+                        await server.run_db(manager.update, row.id, enabled=request.enabled)
                     except Exception as e:
                         logger.warning(
                             "Failed to bulk-toggle rule",
@@ -275,7 +284,7 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
     async def get_rule_endpoint(name: str) -> dict[str, Any]:
         """Get a rule by name."""
         manager = _get_manager()
-        result = get_rule(manager, name=name)
+        result = await server.run_db(get_rule, manager, name=name)
 
         if not result["success"]:
             raise HTTPException(status_code=404, detail=result["error"])
@@ -291,7 +300,7 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
         """Update rule fields."""
         manager = _get_manager()
 
-        row = manager.get_by_name(name)
+        row = await server.run_db(manager.get_by_name, name)
         if row is None or row.workflow_type != "rule":
             raise HTTPException(status_code=404, detail=f"Rule '{name}' not found")
 
@@ -326,7 +335,7 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
             existing_rule = next(
                 (
                     candidate
-                    for candidate in manager.list_all(workflow_type="rule")
+                    for candidate in await server.run_db(manager.list_all, workflow_type="rule")
                     if candidate.name == new_name and candidate.id != row.id
                 ),
                 None,
@@ -341,7 +350,7 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=400, detail="No fields to update")
 
         try:
-            updated = manager.update(row.id, **fields)
+            updated = await server.run_db(manager.update, row.id, **fields)
         except Exception as e:
             logger.error(
                 "Failed to update rule %s (%s): %s",
@@ -383,7 +392,7 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
     ) -> dict[str, Any]:
         """Soft-delete a rule. Bundled rules are protected unless force=True."""
         manager = _get_manager()
-        result = delete_rule(manager, name=name, force=force)
+        result = await server.run_db(delete_rule, manager, name=name, force=force)
 
         if not result["success"]:
             error = result["error"]
@@ -403,7 +412,7 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
     async def toggle_rule_endpoint(name: str, request: RuleToggleRequest) -> dict[str, Any]:
         """Toggle a rule's enabled state."""
         manager = _get_manager()
-        result = toggle_rule(manager, name=name, enabled=request.enabled)
+        result = await server.run_db(toggle_rule, manager, name=name, enabled=request.enabled)
 
         if not result["success"]:
             raise HTTPException(status_code=404, detail=result["error"])

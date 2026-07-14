@@ -101,6 +101,11 @@ def mock_server():
     server.transcript_reader = AsyncMock()
     server.llm_service = MagicMock()
     server.resolve_project_id = MagicMock(return_value="proj-123")
+
+    async def run_db(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    server.run_db = AsyncMock(side_effect=run_db)
     return server
 
 
@@ -276,7 +281,7 @@ def test_app_cancels_session_broadcast_tasks_on_shutdown(session_storage, sample
 class TestGetSessionStats:
     """Test _get_session_stats helper function."""
 
-    def test_returns_all_stats(self) -> None:
+    async def test_returns_all_stats(self) -> None:
         """All four stat keys are returned with correct values."""
         db = MagicMock()
         session = _make_session()
@@ -286,36 +291,60 @@ class TestGetSessionStats:
         # skills_used = 2
         db.fetchone.side_effect = [{"count": 3}, {"count": 5}, {"count": 2}]
 
-        with patch("gobby.servers.routes.sessions.core._get_commit_count", return_value=7):
-            stats = _get_session_stats(db, session)
+        server = MagicMock()
+
+        async def run_db(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        server.run_db = run_db
+        with patch(
+            "gobby.servers.routes.sessions.core._get_commit_count", new=AsyncMock(return_value=7)
+        ):
+            stats = await _get_session_stats(server, db, session)
 
         assert stats["tasks_closed"] == 3
         assert stats["memories_created"] == 5
         assert stats["commit_count"] == 7
         assert stats["skills_used"] == 2
 
-    def test_handles_none_rows(self) -> None:
+    async def test_handles_none_rows(self) -> None:
         """Returns 0 when db.fetchone returns None for each query."""
         db = MagicMock()
         session = _make_session()
         db.fetchone.return_value = None
 
-        with patch("gobby.servers.routes.sessions.core._get_commit_count", return_value=0):
-            stats = _get_session_stats(db, session)
+        server = MagicMock()
+
+        async def run_db(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        server.run_db = run_db
+        with patch(
+            "gobby.servers.routes.sessions.core._get_commit_count", new=AsyncMock(return_value=0)
+        ):
+            stats = await _get_session_stats(server, db, session)
 
         assert stats["tasks_closed"] == 0
         assert stats["memories_created"] == 0
         assert stats["commit_count"] == 0
         assert stats["skills_used"] == 0
 
-    def test_handles_db_exceptions(self) -> None:
+    async def test_handles_db_exceptions(self) -> None:
         """Returns 0 for stats when db queries raise exceptions."""
         db = MagicMock()
         session = _make_session()
         db.fetchone.side_effect = Exception("DB error")
 
-        with patch("gobby.servers.routes.sessions.core._get_commit_count", return_value=0):
-            stats = _get_session_stats(db, session)
+        server = MagicMock()
+
+        async def run_db(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        server.run_db = run_db
+        with patch(
+            "gobby.servers.routes.sessions.core._get_commit_count", new=AsyncMock(return_value=0)
+        ):
+            stats = await _get_session_stats(server, db, session)
 
         assert stats["tasks_closed"] == 0
         assert stats["memories_created"] == 0
@@ -330,7 +359,7 @@ class TestGetSessionStats:
 class TestGetCommitCount:
     """Test _get_commit_count helper function."""
 
-    def test_returns_count_with_valid_cwd(self) -> None:
+    async def test_returns_count_with_valid_cwd(self) -> None:
         """Returns commit count when project has repo_path."""
         db = MagicMock()
         session = _make_session(
@@ -346,43 +375,43 @@ class TestGetCommitCount:
             mock_result.stdout = "5\n"
             mock_sp.run.return_value = mock_result
 
-            count = _get_commit_count(db, session)
+            count = await _get_commit_count(db, session)
 
         assert count == 5
         mock_sp.run.assert_called_once()
         call_kwargs = mock_sp.run.call_args
         assert call_kwargs.kwargs["cwd"] == "/tmp/repo"
 
-    def test_returns_zero_without_project_id(self) -> None:
+    async def test_returns_zero_without_project_id(self) -> None:
         """Returns 0 when session has no project_id."""
         db = MagicMock()
         session = _make_session(project_id=None)
 
-        count = _get_commit_count(db, session)
+        count = await _get_commit_count(db, session)
 
         assert count == 0
 
-    def test_returns_zero_without_repo_path(self) -> None:
+    async def test_returns_zero_without_repo_path(self) -> None:
         """Returns 0 when project has no repo_path in DB."""
         db = MagicMock()
         session = _make_session(project_id="proj-1")
         db.fetchone.return_value = None
 
-        count = _get_commit_count(db, session)
+        count = await _get_commit_count(db, session)
 
         assert count == 0
 
-    def test_returns_zero_when_repo_path_empty(self) -> None:
+    async def test_returns_zero_when_repo_path_empty(self) -> None:
         """Returns 0 when repo_path row exists but value is empty."""
         db = MagicMock()
         session = _make_session(project_id="proj-1")
         db.fetchone.return_value = ("",)
 
-        count = _get_commit_count(db, session)
+        count = await _get_commit_count(db, session)
 
         assert count == 0
 
-    def test_returns_zero_on_subprocess_error(self) -> None:
+    async def test_returns_zero_on_subprocess_error(self) -> None:
         """Returns 0 when git command fails (nonzero exit)."""
         db = MagicMock()
         session = _make_session(
@@ -397,11 +426,11 @@ class TestGetCommitCount:
             mock_result.returncode = 1
             mock_sp.run.return_value = mock_result
 
-            count = _get_commit_count(db, session)
+            count = await _get_commit_count(db, session)
 
         assert count == 0
 
-    def test_returns_zero_on_timeout(self) -> None:
+    async def test_returns_zero_on_timeout(self) -> None:
         """Returns 0 when git command times out."""
         import subprocess
 
@@ -417,11 +446,11 @@ class TestGetCommitCount:
             "gobby.servers.routes.sessions.core.subprocess.run",
             side_effect=subprocess.TimeoutExpired(cmd="git", timeout=5),
         ):
-            count = _get_commit_count(db, session)
+            count = await _get_commit_count(db, session)
 
         assert count == 0
 
-    def test_handles_datetime_objects(self) -> None:
+    async def test_handles_datetime_objects(self) -> None:
         """Handles created_at/updated_at as datetime objects instead of strings."""
         db = MagicMock()
         session = _make_session(
@@ -437,11 +466,11 @@ class TestGetCommitCount:
             mock_result.stdout = "3\n"
             mock_sp.run.return_value = mock_result
 
-            count = _get_commit_count(db, session)
+            count = await _get_commit_count(db, session)
 
         assert count == 3
 
-    def test_handles_none_updated_at(self) -> None:
+    async def test_handles_none_updated_at(self) -> None:
         """Uses current time when updated_at is None."""
         db = MagicMock()
         session = _make_session(
@@ -457,21 +486,21 @@ class TestGetCommitCount:
             mock_result.stdout = "1\n"
             mock_sp.run.return_value = mock_result
 
-            count = _get_commit_count(db, session)
+            count = await _get_commit_count(db, session)
 
         assert count == 1
 
-    def test_handles_db_exception_for_repo_path(self) -> None:
+    async def test_handles_db_exception_for_repo_path(self) -> None:
         """Returns 0 when DB query for repo_path throws."""
         db = MagicMock()
         session = _make_session(project_id="proj-1")
         db.fetchone.side_effect = Exception("DB error")
 
-        count = _get_commit_count(db, session)
+        count = await _get_commit_count(db, session)
 
         assert count == 0
 
-    def test_handles_naive_datetimes(self) -> None:
+    async def test_handles_naive_datetimes(self) -> None:
         """Handles timezone-naive datetime objects correctly."""
         db = MagicMock()
         session = _make_session(
@@ -487,7 +516,7 @@ class TestGetCommitCount:
             mock_result.stdout = "2\n"
             mock_sp.run.return_value = mock_result
 
-            count = _get_commit_count(db, session)
+            count = await _get_commit_count(db, session)
 
         assert count == 2
 

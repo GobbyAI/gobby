@@ -25,6 +25,11 @@ def mock_server() -> MagicMock:
     server.services.database = MagicMock()
     server.services.workflow_loader = MagicMock()
     server.services.get_pipeline_executor.return_value = MagicMock()
+
+    async def run_db(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    server.run_db = AsyncMock(side_effect=run_db)
     return server
 
 

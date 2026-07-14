@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, ValidationError
@@ -110,14 +110,14 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
     async def list_projects() -> list[dict[str, Any]]:
         """List all projects with computed stats."""
         pm = _get_project_manager(server)
-        projects = pm.list()
+        projects = await server.run_db(pm.list)
 
         results = []
         for project in projects:
             if project.name in HIDDEN_PROJECT_NAMES:
                 continue
 
-            results.append(_project_to_response(server, project))
+            results.append(await server.run_db(_project_to_response, server, project))
 
         return results
 
@@ -125,17 +125,17 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
     async def get_project(project_id: str) -> dict[str, Any]:
         """Get a single project with stats."""
         pm = _get_project_manager(server)
-        project = pm.get(project_id)
+        project = await server.run_db(pm.get, project_id)
         if not project or project.deleted_at:
             raise HTTPException(404, "Project not found")
 
-        return _project_to_response(server, project)
+        return cast(dict[str, Any], await server.run_db(_project_to_response, server, project))
 
     @router.put("/{project_id}")
     async def update_project(project_id: str, body: ProjectUpdate) -> dict[str, Any]:
         """Update project fields."""
         pm = _get_project_manager(server)
-        project = pm.get(project_id)
+        project = await server.run_db(pm.get, project_id)
         if not project or project.deleted_at:
             raise HTTPException(404, "Project not found")
 
@@ -157,10 +157,13 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
         )
         if not fields:
             if approval_rules is None and validation_detection is None:
-                return _project_to_response(server, project)
+                return cast(
+                    dict[str, Any],
+                    await server.run_db(_project_to_response, server, project),
+                )
 
         if fields:
-            updated = pm.update(project_id, **fields)
+            updated = await server.run_db(pm.update, project_id, **fields)
             if not updated:
                 raise HTTPException(500, "Failed to update project")
         else:
@@ -205,20 +208,22 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
         ):
             clear_project_validation_detection(original_repo_path)
 
-        return _project_to_response(server, updated)
+        return cast(dict[str, Any], await server.run_db(_project_to_response, server, updated))
 
     @router.get("/{project_id}/github-triage")
     async def get_github_triage_config(project_id: str) -> dict[str, Any]:
         """Get GitHub issue triage configuration for a project."""
         pm = _get_project_manager(server)
-        project = pm.get(project_id)
+        project = await server.run_db(pm.get, project_id)
         if not project or project.deleted_at:
             raise HTTPException(404, "Project not found")
-        config = GitHubTriageStore(server.services.database).get_config(
+        store = GitHubTriageStore(server.services.database)
+        config = await server.run_db(
+            store.get_config,
             project_id,
             fallback_repo=project.github_repo,
         )
-        return config.to_dict()
+        return cast(dict[str, Any], config.to_dict())
 
     @router.put("/{project_id}/github-triage")
     async def update_github_triage_config(
@@ -227,12 +232,14 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
     ) -> dict[str, Any]:
         """Update GitHub issue triage configuration for a project."""
         pm = _get_project_manager(server)
-        project = pm.get(project_id)
+        project = await server.run_db(pm.get, project_id)
         if not project or project.deleted_at:
             raise HTTPException(404, "Project not found")
 
         store = GitHubTriageStore(server.services.database)
-        current = store.get_config(project_id, fallback_repo=project.github_repo)
+        current = await server.run_db(
+            store.get_config, project_id, fallback_repo=project.github_repo
+        )
         values = body.model_dump(exclude_unset=True)
         interval = values.get(
             "reconcile_interval_seconds",
@@ -241,7 +248,8 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
         if interval is not None and interval <= 0:
             raise HTTPException(400, "reconcile_interval_seconds must be greater than 0")
 
-        updated = store.upsert_config(
+        updated = await server.run_db(
+            store.upsert_config,
             GitHubTriageConfig(
                 project_id=project_id,
                 enabled=values.get("enabled", current.enabled),
@@ -249,22 +257,22 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
                 repositories=tuple(values.get("repositories", current.repositories)),
                 reconcile_interval_seconds=interval,
                 webhook_secret_ref=values.get("webhook_secret_ref", current.webhook_secret_ref),
-            )
+            ),
         )
-        return updated.to_dict()
+        return cast(dict[str, Any], updated.to_dict())
 
     @router.delete("/{project_id}")
     async def delete_project(project_id: str) -> dict[str, str]:
         """Soft-delete a project. Protected projects cannot be deleted."""
         pm = _get_project_manager(server)
-        project = pm.get(project_id)
+        project = await server.run_db(pm.get, project_id)
         if not project or project.deleted_at:
             raise HTTPException(404, "Project not found")
 
         if project.name in SYSTEM_PROJECT_NAMES:
             raise HTTPException(403, f"Cannot delete protected project '{project.name}'")
 
-        if not pm.soft_delete(project_id):
+        if not await server.run_db(pm.soft_delete, project_id):
             raise HTTPException(500, "Failed to delete project")
 
         return {"status": "deleted", "id": project_id}

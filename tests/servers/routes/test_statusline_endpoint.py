@@ -60,6 +60,7 @@ def mock_server():
     server.message_manager = AsyncMock()
     server.llm_service = MagicMock()
     server.resolve_project_id = MagicMock(return_value="proj-123")
+    server.run_db = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
     return server
 
 

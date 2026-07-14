@@ -7,7 +7,7 @@ import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -181,8 +181,9 @@ async def test_session_end_cleanup_unblocks_session_targeted_read_only_calls(
 
     server = MagicMock()
     server.session_manager = session_manager
+    server.run_db = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
     request = _make_request(header_session_id=parent_session_id)
-    tokens = _set_context_for_request(server, {"session_id": child_session_id}, request)
+    tokens = await _set_context_for_request(server, {"session_id": child_session_id}, request)
     assert tokens.resolved_session_id == parent_session_id
 
     try:

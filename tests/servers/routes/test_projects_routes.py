@@ -348,7 +348,7 @@ class TestProjectRoutes:
                 {
                     "id": project.id,
                     "name": project.name,
-                    "created_at": project.created_at,
+                    "created_at": project.created_at.isoformat(),
                     "verification": {"lint": "uv run ruff check src/"},
                     "tool_approvals": {"allow": ["tool:Write"]},
                 }
@@ -392,7 +392,7 @@ class TestProjectRoutes:
                 {
                     "id": project.id,
                     "name": project.name,
-                    "created_at": project.created_at,
+                    "created_at": project.created_at.isoformat(),
                     "verification": {"unit_tests": "uv run pytest tests/ -v"},
                     "tool_approvals": {"allow": ["tool:Write"]},
                 }

@@ -21,12 +21,15 @@ from gobby.servers.routes.dependencies import get_internal_manager, get_mcp_mana
 from gobby.servers.routes.mcp.endpoints.discovery import _mcp_call_timeout
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.telemetry.instruments import inc_counter, observe_histogram
+from gobby.utils import project_context as project_context_utils
 from gobby.utils.datetime import to_json_safe
 from gobby.utils.session_context import (
     SeededContextTokens,
     get_current_session_id,
+    get_session_context,
     reset_seeded_contexts,
     resolve_and_seed_contexts,
+    set_session_context,
 )
 
 if TYPE_CHECKING:
@@ -169,7 +172,23 @@ def _derive_project_from_unique_session_seq(
     return None
 
 
-def _set_context_for_request(
+def _resolve_context_values(**kwargs: Any) -> tuple[str | None, str | None, Any, Any]:
+    """Resolve DB-backed context in a worker and capture the seeded values."""
+    worker_tokens = resolve_and_seed_contexts(**kwargs)
+    try:
+        session_context = get_session_context()
+        project_context = project_context_utils.get_project_context()
+        return (
+            worker_tokens.resolved_session_id,
+            worker_tokens.resolved_project_id,
+            session_context,
+            dict(project_context) if project_context is not None else None,
+        )
+    finally:
+        reset_seeded_contexts(worker_tokens)
+
+
+async def _set_context_for_request(
     server: "HTTPServer", arguments: Any, request: Request | None = None
 ) -> SeededContextTokens:
     """Set project and session context vars from the best available source.
@@ -210,7 +229,9 @@ def _set_context_for_request(
         and caller_project_id_header != project_id_header
     )
     if not canonical_project_ref and header_session_id:
-        canonical_project_ref = _derive_project_from_unique_session_seq(server, header_session_id)
+        canonical_project_ref = await server.run_db(
+            _derive_project_from_unique_session_seq, server, header_session_id
+        )
     if (
         not canonical_project_ref
         and header_session_id
@@ -219,8 +240,10 @@ def _set_context_for_request(
         and argument_session_id.lstrip("#").isdigit()
     ):
         try:
-            bootstrap_id = resolve_session_reference(server.session_manager.db, header_session_id)
-            bootstrap_session = server.session_manager.get(bootstrap_id)
+            bootstrap_id = await server.run_db(
+                resolve_session_reference, server.session_manager.db, header_session_id
+            )
+            bootstrap_session = await server.run_db(server.session_manager.get, bootstrap_id)
             if bootstrap_session:
                 canonical_project_ref = bootstrap_session.project_id
         except Exception as e:
@@ -229,7 +252,13 @@ def _set_context_for_request(
             )
 
     db = server.session_manager.db if server.session_manager else None
-    return resolve_and_seed_contexts(
+    (
+        resolved_session_id,
+        resolved_project_id,
+        session_context,
+        project_context,
+    ) = await server.run_db(
+        _resolve_context_values,
         session_ref=session_id,
         session_manager=server.session_manager if server.session_manager else None,
         project_ref=canonical_project_ref,
@@ -238,6 +267,15 @@ def _set_context_for_request(
         project_ref_is_fallback=project_ref_is_fallback,
         db=db,
     )
+    tokens = SeededContextTokens(
+        resolved_session_id=resolved_session_id,
+        resolved_project_id=resolved_project_id,
+    )
+    if session_context is not None:
+        tokens.session_token = set_session_context(session_context)
+    if project_context is not None:
+        tokens.project_token = project_context_utils.set_project_context(project_context)
+    return tokens
 
 
 def _reset_context(tokens: SeededContextTokens) -> None:
@@ -372,7 +410,7 @@ async def list_mcp_tools(
     """
     start_time = time.perf_counter()
     requested_session_id = _get_discovery_session_id({}, request)
-    ctx_token = _set_context_for_request(server, {}, request)
+    ctx_token = await _set_context_for_request(server, {}, request)
 
     try:
         # Check internal registries first (gobby-tasks, gobby-memory, etc.)
@@ -541,7 +579,7 @@ async def get_tool_schema(
                 detail={"success": False, "error": "Required fields: server_name, tool_name"},
             )
 
-        ctx_token = _set_context_for_request(server, body, request)
+        ctx_token = await _set_context_for_request(server, body, request)
 
         try:
             # Check internal first
@@ -671,7 +709,7 @@ async def call_mcp_tool(
             return stale_wrapper_result
 
         # Set project context from session_id or stdio proxy headers
-        ctx_token = _set_context_for_request(server, arguments, request)
+        ctx_token = await _set_context_for_request(server, arguments, request)
         # Note: session_id is NOT stripped from arguments — tools like
         # get_session and get_handoff_context use it as their own parameter.
         # _set_context_for_request reads it non-destructively via .get().
@@ -777,7 +815,7 @@ async def mcp_proxy(
             return stale_wrapper_result
 
         # Set project context from session_id or stdio proxy headers
-        ctx_token = _set_context_for_request(server, arguments, request)
+        ctx_token = await _set_context_for_request(server, arguments, request)
         try:
             timeout = _mcp_call_timeout(server)
             # Route through ToolProxyService for consistent error enrichment

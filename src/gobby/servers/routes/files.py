@@ -188,7 +188,7 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
         from gobby.storage.projects import PERSONAL_PROJECT_ID
 
         pm = _get_project_manager(server)
-        projects = pm.list()
+        projects = await server.run_db(pm.list)
         result: list[dict[str, Any]] = [
             {
                 "id": p.id,
@@ -214,7 +214,7 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
         Respects .gitignore via git ls-files.
         """
         pm = _get_project_manager(server)
-        project = pm.get(project_id)
+        project = await server.run_db(pm.get, project_id)
         if not project or not project.repo_path:
             raise HTTPException(404, f"Project not found: {project_id}")
 
@@ -273,7 +273,7 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
         Binary files return metadata only.
         """
         pm = _get_project_manager(server)
-        project = pm.get(project_id)
+        project = await server.run_db(pm.get, project_id)
         if not project or not project.repo_path:
             raise HTTPException(404, "Project not found")
 
@@ -328,7 +328,7 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
     ) -> FileResponse:
         """Serve an image file directly for <img> tags."""
         pm = _get_project_manager(server)
-        project = pm.get(project_id)
+        project = await server.run_db(pm.get, project_id)
         if not project or not project.repo_path:
             raise HTTPException(404, "Project not found")
 
@@ -355,7 +355,7 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
         Refuses writes to .git/ directory.
         """
         pm = _get_project_manager(server)
-        project = pm.get(request.project_id)
+        project = await server.run_db(pm.get, request.project_id)
         if not project or not project.repo_path:
             raise HTTPException(404, "Project not found")
 
@@ -392,7 +392,7 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
         Status codes: M=modified, A=added, D=deleted, ?=untracked, R=renamed.
         """
         pm = _get_project_manager(server)
-        project = pm.get(project_id)
+        project = await server.run_db(pm.get, project_id)
         if not project or not project.repo_path:
             raise HTTPException(404, "Project not found")
 
@@ -438,7 +438,7 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
     ) -> dict[str, str]:
         """Get git diff for a specific file."""
         pm = _get_project_manager(server)
-        project = pm.get(project_id)
+        project = await server.run_db(pm.get, project_id)
         if not project or not project.repo_path:
             raise HTTPException(404, "Project not found")
 

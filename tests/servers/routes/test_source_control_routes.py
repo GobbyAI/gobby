@@ -50,6 +50,7 @@ def mock_server():
     server.services.worktree_storage = None
     server.services.clone_storage = None
     server.services.git_manager = None
+    server.run_db = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
     return server
 
 

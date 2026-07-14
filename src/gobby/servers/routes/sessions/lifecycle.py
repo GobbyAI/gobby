@@ -34,7 +34,9 @@ def _legacy_missing_machine_id() -> str:
     return machine_id
 
 
-def _get_session_stats(db: "HubDatabase", session: Any) -> dict[str, int]:
+async def _get_session_stats(
+    server: "HTTPServer", db: "HubDatabase", session: Any
+) -> dict[str, int]:
     """Get activity stats for a session (tasks closed, memories, commits).
 
     Args:
@@ -48,7 +50,8 @@ def _get_session_stats(db: "HubDatabase", session: Any) -> dict[str, int]:
 
     # Tasks closed in this session
     try:
-        row = db.fetchone(
+        row = await server.run_db(
+            db.fetchone,
             """
             SELECT COUNT(*) AS count
               FROM session_tasks
@@ -62,7 +65,8 @@ def _get_session_stats(db: "HubDatabase", session: Any) -> dict[str, int]:
 
     # Memories created by this session
     try:
-        row = db.fetchone(
+        row = await server.run_db(
+            db.fetchone,
             "SELECT COUNT(*) AS count FROM memories WHERE source_session_id = %s",
             (session.id,),
         )
@@ -73,11 +77,12 @@ def _get_session_stats(db: "HubDatabase", session: Any) -> dict[str, int]:
     # Commits made during session timeframe
     from gobby.servers.routes.sessions.core import _get_commit_count
 
-    stats["commit_count"] = _get_commit_count(db, session)
+    stats["commit_count"] = await _get_commit_count(db, session)
 
     # Skills injected in this session
     try:
-        row = db.fetchone(
+        row = await server.run_db(
+            db.fetchone,
             """
             SELECT COUNT(DISTINCT skill_name) AS count
               FROM session_skills
@@ -90,6 +95,38 @@ def _get_session_stats(db: "HubDatabase", session: Any) -> dict[str, int]:
         stats["skills_used"] = 0
 
     return stats
+
+
+def _bulk_move_session_rows(
+    db: "HubDatabase",
+    session_manager: Any,
+    session_ids: list[str],
+    target_project_id: str,
+) -> tuple[list[str], list[str]]:
+    """Move session rows in one worker-thread transaction."""
+    moved_ids: list[str] = []
+    errors: list[str] = []
+    with db.transaction() as transaction:
+        for index, session_id in enumerate(session_ids):
+            savepoint = transaction.savepoint(f"bulk_move_session_{index}")
+            try:
+                session = session_manager.get(session_id)
+                if session is None:
+                    errors.append(f"Session {session_id} not found")
+                    savepoint.release()
+                    continue
+                transaction.execute(
+                    "UPDATE sessions SET project_id = %s, updated_at = CURRENT_TIMESTAMP "
+                    "WHERE id = %s",
+                    (target_project_id, session_id),
+                )
+                savepoint.release()
+                moved_ids.append(session_id)
+            except Exception as exc:
+                savepoint.rollback()
+                savepoint.release()
+                errors.append(f"Failed to move {session_id}: {exc}")
+    return moved_ids, errors
 
 
 def register_lifecycle_routes(
@@ -118,30 +155,17 @@ def register_lifecycle_routes(
                 )
 
             db = server.session_manager.db
-            if LocalProjectManager(db).get(target_project_id) is None:
+            project_manager = LocalProjectManager(db)
+            if await server.run_db(project_manager.get, target_project_id) is None:
                 raise HTTPException(status_code=400, detail="Target project not found")
 
-            moved_ids: list[str] = []
-            errors: list[str] = []
-            with db.transaction() as transaction:
-                for index, sid in enumerate(session_ids):
-                    savepoint = transaction.savepoint(f"bulk_move_session_{index}")
-                    try:
-                        session = server.session_manager.get(sid)
-                        if session is None:
-                            errors.append(f"Session {sid} not found")
-                            savepoint.release()
-                            continue
-                        transaction.execute(
-                            "UPDATE sessions SET project_id = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
-                            (target_project_id, sid),
-                        )
-                        savepoint.release()
-                        moved_ids.append(sid)
-                    except Exception as e:
-                        savepoint.rollback()
-                        savepoint.release()
-                        errors.append(f"Failed to move {sid}: {e}")
+            moved_ids, errors = await server.run_db(
+                _bulk_move_session_rows,
+                db,
+                server.session_manager,
+                session_ids,
+                target_project_id,
+            )
 
             for sid in moved_ids:
                 await broadcast_session("session_updated", sid)
@@ -176,7 +200,7 @@ def register_lifecycle_routes(
             if server.session_manager is None:
                 raise HTTPException(status_code=503, detail="Session manager not available")
 
-            session = server.session_manager.get(session_id)
+            session = await server.run_db(server.session_manager.get, session_id)
 
             if session is None:
                 raise HTTPException(status_code=404, detail="Session not found")
@@ -186,9 +210,8 @@ def register_lifecycle_routes(
             try:
                 from gobby.workflows.state_manager import SessionVariableManager
 
-                loaded_variables = SessionVariableManager(server.session_manager.db).get_variables(
-                    session_id
-                )
+                variable_manager = SessionVariableManager(server.session_manager.db)
+                loaded_variables = await server.run_db(variable_manager.get_variables, session_id)
                 if isinstance(loaded_variables, dict):
                     variables = loaded_variables
             except (psycopg.Error, ValueError, KeyError) as e:
@@ -200,7 +223,8 @@ def register_lifecycle_routes(
                     exc_info=True,
                 )
                 raise
-            session_data["context_window"] = effective_context_window_for_session(
+            session_data["context_window"] = await server.run_db(
+                effective_context_window_for_session,
                 session,
                 variables=variables,
                 db=server.session_manager.db,
@@ -208,7 +232,7 @@ def register_lifecycle_routes(
 
             # Enrich with activity stats
             try:
-                stats = _get_session_stats(server.session_manager.db, session)
+                stats = await _get_session_stats(server, server.session_manager.db, session)
                 session_data.update(stats)
             except Exception as e:
                 logger.warning(f"Failed to fetch session stats: {e}")
@@ -254,7 +278,7 @@ def register_lifecycle_routes(
 
             # Resolve project_id from cwd if not provided
             if not project_id and cwd:
-                project_id = server.resolve_project_id(None, cwd)
+                project_id = await server.run_db(server.resolve_project_id, None, cwd)
 
             if not project_id:
                 raise HTTPException(
@@ -262,8 +286,12 @@ def register_lifecycle_routes(
                     detail="Required: project_id or cwd (to resolve project)",
                 )
 
-            session = server.session_manager.find_by_external_id(
-                external_id, machine_id, project_id, source
+            session = await server.run_db(
+                server.session_manager.find_by_external_id,
+                external_id,
+                machine_id,
+                project_id,
+                source,
             )
 
             if session is None:
@@ -309,9 +337,10 @@ def register_lifecycle_routes(
                         status_code=400,
                         detail="Required field: project_id or cwd",
                     )
-                project_id = server.resolve_project_id(None, cwd)
+                project_id = await server.run_db(server.resolve_project_id, None, cwd)
 
-            session = server.session_manager.find_parent(
+            session = await server.run_db(
+                server.session_manager.find_parent,
                 machine_id=machine_id,
                 source=source,
                 project_id=project_id,
@@ -350,7 +379,8 @@ def register_lifecycle_routes(
                     detail="parent_pid must be a positive integer",
                 )
 
-            session = server.session_manager.find_active_by_terminal_context(
+            session = await server.run_db(
+                server.session_manager.find_active_by_terminal_context,
                 project_id=project_id,
                 parent_pid=parent_pid,
                 terminal_context=terminal_context if isinstance(terminal_context, dict) else None,
@@ -383,7 +413,7 @@ def register_lifecycle_routes(
             if not session_id or not status:
                 raise HTTPException(status_code=400, detail="Required fields: session_id, status")
 
-            session = server.session_manager.update_status(session_id, status)
+            session = await server.run_db(server.session_manager.update_status, session_id, status)
 
             if session is None:
                 raise HTTPException(status_code=404, detail="Session not found")
@@ -403,7 +433,7 @@ def register_lifecycle_routes(
             if server.session_manager is None:
                 raise HTTPException(status_code=503, detail="Session manager not available")
 
-            session = server.session_manager.get(session_id)
+            session = await server.run_db(server.session_manager.get, session_id)
             if session is None:
                 raise HTTPException(status_code=404, detail="Session not found")
 
@@ -415,7 +445,7 @@ def register_lifecycle_routes(
             if session.terminal_context:
                 terminal_killed = await kill_terminal_session(session.terminal_context, session_id)
 
-            server.session_manager.update_status(session_id, "expired")
+            await server.run_db(server.session_manager.update_status, session_id, "expired")
             from gobby.servers.routes.sessions.statusline_activity import clear_trackers
 
             clear_trackers(session_id)
@@ -456,11 +486,12 @@ def register_lifecycle_routes(
             if len(title) > 200:
                 raise HTTPException(status_code=400, detail="Title must be 200 characters or fewer")
 
-            session = server.session_manager.get(session_id)
+            session = await server.run_db(server.session_manager.get, session_id)
             if session is None:
                 raise HTTPException(status_code=404, detail="Session not found")
 
-            result = server.session_manager.update_title(
+            result = await server.run_db(
+                server.session_manager.update_title,
                 session_id,
                 title,
                 title_source="manual",

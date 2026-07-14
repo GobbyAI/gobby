@@ -16,6 +16,10 @@ from starlette.testclient import TestClient
 pytestmark = pytest.mark.unit
 
 
+async def _run_db(func, *args, **kwargs):
+    return func(*args, **kwargs)
+
+
 def _client() -> TestClient:
     from gobby.servers.routes.build import create_build_router
 
@@ -26,6 +30,7 @@ def _client() -> TestClient:
             config=MagicMock(),
         ),
         resolve_project_id=MagicMock(return_value="project-1"),
+        run_db=_run_db,
     )
     app = FastAPI()
     app.include_router(create_build_router(server))
@@ -158,6 +163,7 @@ def test_post_api_build_resolves_project_from_request_context(tmp_path: Path) ->
             config=MagicMock(),
         ),
         resolve_project_id=MagicMock(return_value="project-2"),
+        run_db=_run_db,
     )
     app = FastAPI()
     app.include_router(create_build_router(server))
@@ -481,6 +487,7 @@ async def test_post_api_build_status_responds_while_clean_is_blocked() -> None:
             config=MagicMock(),
         ),
         resolve_project_id=MagicMock(return_value="project-1"),
+        run_db=_run_db,
     )
     app = FastAPI()
     app.include_router(create_build_router(server))
@@ -681,6 +688,7 @@ def test_post_api_build_resolves_relative_hidden_plan_from_request_cwd(
             config=MagicMock(),
         ),
         resolve_project_id=MagicMock(return_value=project.id),
+        run_db=_run_db,
     )
     app = FastAPI()
     app.include_router(create_build_router(server))

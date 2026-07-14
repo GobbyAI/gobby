@@ -10,7 +10,7 @@ workflow/session context when body arguments target another session.
 from __future__ import annotations
 
 import uuid
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -26,6 +26,7 @@ PROJECT_ID = str(uuid.uuid4())
 def _make_server(db: MagicMock | None = None) -> MagicMock:
     server = MagicMock()
     server.session_manager = MagicMock()
+    server.run_db = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
     if db is not None:
         server.session_manager.db = db
     return server
@@ -51,7 +52,7 @@ def _make_request(
 class TestSetContextForRequest:
     """Tests for _set_context_for_request after helper extraction."""
 
-    def test_hash_n_ref_forwarded_to_helper_with_header_project_scope(self) -> None:
+    async def test_hash_n_ref_forwarded_to_helper_with_header_project_scope(self) -> None:
         """#N reference is forwarded to resolve_and_seed_contexts with the header project scope."""
         server = _make_server()
         request = _make_request(project_id=PROJECT_ID)
@@ -60,7 +61,7 @@ class TestSetContextForRequest:
             "gobby.servers.routes.mcp.endpoints.execution.resolve_and_seed_contexts",
             return_value=SeededContextTokens(resolved_session_id=SESSION_UUID),
         ) as mock_helper:
-            _set_context_for_request(server, {"session_id": "#5"}, request)
+            await _set_context_for_request(server, {"session_id": "#5"}, request)
 
         mock_helper.assert_called_once()
         kwargs = mock_helper.call_args.kwargs
@@ -69,7 +70,7 @@ class TestSetContextForRequest:
         assert kwargs["session_ref_origin"] == "ambient"
         assert kwargs["project_ref_is_fallback"] is True
 
-    def test_uuid_session_id_forwarded_verbatim_to_helper(self) -> None:
+    async def test_uuid_session_id_forwarded_verbatim_to_helper(self) -> None:
         """UUID-shaped refs are handed to the helper; the resolver resolves external_id → id."""
         server = _make_server()
         request = _make_request(project_id=PROJECT_ID)
@@ -79,13 +80,13 @@ class TestSetContextForRequest:
             return_value=SeededContextTokens(resolved_session_id=SESSION_UUID),
         ) as mock_helper:
             external_uuid = str(uuid.uuid4())
-            _set_context_for_request(server, {"session_id": external_uuid}, request)
+            await _set_context_for_request(server, {"session_id": external_uuid}, request)
 
         # Flip of the old lock-in: UUID-shaped refs no longer bypass resolution.
         assert mock_helper.call_args.kwargs["session_ref"] == external_uuid
         assert mock_helper.call_args.kwargs["session_ref_origin"] == "ambient"
 
-    def test_hash_n_no_project_header_bootstraps_from_header_session(self) -> None:
+    async def test_hash_n_no_project_header_bootstraps_from_header_session(self) -> None:
         """#N ref without x-gobby-project-id derives project from x-gobby-session-id."""
         server = _make_server()
         header_session_uuid = str(uuid.uuid4())
@@ -105,7 +106,7 @@ class TestSetContextForRequest:
                 return_value=SeededContextTokens(),
             ) as mock_helper,
         ):
-            _set_context_for_request(server, {"session_id": "#5"}, request)
+            await _set_context_for_request(server, {"session_id": "#5"}, request)
 
         mock_resolve.assert_called_once_with(server.session_manager.db, header_session_uuid)
         # The derived project_id is fed back into the helper
@@ -113,7 +114,7 @@ class TestSetContextForRequest:
         assert mock_helper.call_args.kwargs["project_ref"] == PROJECT_ID
         assert mock_helper.call_args.kwargs["session_ref_origin"] == "explicit"
 
-    def test_hash_n_no_project_header_bootstraps_from_unique_header_hash_ref(self) -> None:
+    async def test_hash_n_no_project_header_bootstraps_from_unique_header_hash_ref(self) -> None:
         """A stdio wrapper #N can provide scope when it is unique across projects."""
         db = MagicMock()
         db.fetchall.return_value = [{"project_id": PROJECT_ID}]
@@ -124,7 +125,7 @@ class TestSetContextForRequest:
             "gobby.servers.routes.mcp.endpoints.execution.resolve_and_seed_contexts",
             return_value=SeededContextTokens(),
         ) as mock_helper:
-            _set_context_for_request(server, {"session_id": "#5"}, request)
+            await _set_context_for_request(server, {"session_id": "#5"}, request)
 
         db.fetchall.assert_called_once()
         assert db.fetchall.call_args.args[1] == (7,)
@@ -132,7 +133,7 @@ class TestSetContextForRequest:
         assert mock_helper.call_args.kwargs["project_ref"] == PROJECT_ID
         assert mock_helper.call_args.kwargs["session_ref_origin"] == "explicit"
 
-    def test_hash_n_header_ref_without_unique_project_stays_unscoped(self) -> None:
+    async def test_hash_n_header_ref_without_unique_project_stays_unscoped(self) -> None:
         """Ambiguous #N refs still require an explicit project header."""
         db = MagicMock()
         db.fetchall.return_value = [
@@ -146,12 +147,12 @@ class TestSetContextForRequest:
             "gobby.servers.routes.mcp.endpoints.execution.resolve_and_seed_contexts",
             return_value=SeededContextTokens(),
         ) as mock_helper:
-            _set_context_for_request(server, {"session_id": "#5"}, request)
+            await _set_context_for_request(server, {"session_id": "#5"}, request)
 
         assert mock_helper.call_args.kwargs["project_ref"] is None
         assert mock_helper.call_args.kwargs["session_ref_origin"] == "explicit"
 
-    def test_no_session_id_forwards_header_project_ref(self) -> None:
+    async def test_no_session_id_forwards_header_project_ref(self) -> None:
         """No session ref → helper receives only the x-gobby-project-id header."""
         server = _make_server()
         request = _make_request(project_id=PROJECT_ID)
@@ -160,14 +161,14 @@ class TestSetContextForRequest:
             "gobby.servers.routes.mcp.endpoints.execution.resolve_and_seed_contexts",
             return_value=SeededContextTokens(),
         ) as mock_helper:
-            _set_context_for_request(server, {}, request)
+            await _set_context_for_request(server, {}, request)
 
         kwargs = mock_helper.call_args.kwargs
         assert kwargs["session_ref"] is None
         assert kwargs["project_ref"] == PROJECT_ID
         assert kwargs["project_ref_is_fallback"] is True
 
-    def test_header_session_id_also_forwarded(self) -> None:
+    async def test_header_session_id_also_forwarded(self) -> None:
         """#N from X-Gobby-Session-Id header is forwarded when no arg session_id."""
         server = _make_server()
         request = _make_request(project_id=PROJECT_ID, session_id="#7")
@@ -176,12 +177,14 @@ class TestSetContextForRequest:
             "gobby.servers.routes.mcp.endpoints.execution.resolve_and_seed_contexts",
             return_value=SeededContextTokens(),
         ) as mock_helper:
-            _set_context_for_request(server, {}, request)
+            await _set_context_for_request(server, {}, request)
 
         assert mock_helper.call_args.kwargs["session_ref"] == "#7"
         assert mock_helper.call_args.kwargs["session_ref_origin"] == "explicit"
 
-    def test_caller_project_header_scopes_wrapper_session_separately_from_target(self) -> None:
+    async def test_caller_project_header_scopes_wrapper_session_separately_from_target(
+        self,
+    ) -> None:
         """Cross-project calls keep caller session scope distinct from target project context."""
         server = _make_server()
         caller_project_id = str(uuid.uuid4())
@@ -195,7 +198,7 @@ class TestSetContextForRequest:
             "gobby.servers.routes.mcp.endpoints.execution.resolve_and_seed_contexts",
             return_value=SeededContextTokens(),
         ) as mock_helper:
-            _set_context_for_request(server, {}, request)
+            await _set_context_for_request(server, {}, request)
 
         kwargs = mock_helper.call_args.kwargs
         assert kwargs["session_ref"] == "#7"
@@ -204,7 +207,7 @@ class TestSetContextForRequest:
         assert kwargs["session_ref_origin"] == "explicit"
         assert kwargs["project_ref_is_fallback"] is False
 
-    def test_header_session_wins_over_target_argument_session(self) -> None:
+    async def test_header_session_wins_over_target_argument_session(self) -> None:
         """Body session_id remains the tool target; header is workflow context."""
         server = _make_server()
         request = _make_request(project_id=PROJECT_ID, session_id="caller-session")
@@ -213,12 +216,12 @@ class TestSetContextForRequest:
             "gobby.servers.routes.mcp.endpoints.execution.resolve_and_seed_contexts",
             return_value=SeededContextTokens(),
         ) as mock_helper:
-            _set_context_for_request(server, {"session_id": "target-session"}, request)
+            await _set_context_for_request(server, {"session_id": "target-session"}, request)
 
         assert mock_helper.call_args.kwargs["session_ref"] == "caller-session"
         assert mock_helper.call_args.kwargs["session_ref_origin"] == "explicit"
 
-    def test_set_contexts_unresolvable_uuid_does_not_plant_session_context(self) -> None:
+    async def test_set_contexts_unresolvable_uuid_does_not_plant_session_context(self) -> None:
         """Helper returns empty tokens → no session ContextVar planted."""
         server = _make_server()
         request = _make_request(project_id=PROJECT_ID)
@@ -227,7 +230,7 @@ class TestSetContextForRequest:
             "gobby.servers.routes.mcp.endpoints.execution.resolve_and_seed_contexts",
             return_value=SeededContextTokens(),  # resolved_session_id is None
         ) as mock_helper:
-            tokens = _set_context_for_request(server, {"session_id": "bogus"}, request)
+            tokens = await _set_context_for_request(server, {"session_id": "bogus"}, request)
 
         assert mock_helper.called
         assert mock_helper.call_args.kwargs["session_ref_origin"] == "ambient"

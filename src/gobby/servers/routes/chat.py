@@ -24,7 +24,9 @@ def create_chat_router(server: "HTTPServer") -> APIRouter:
         db: Any,
         conversation_ids: list[str],
     ) -> None:
-        records = chat_attachments.delete_attachments_for_conversations(db, conversation_ids)
+        records = await server.run_db(
+            chat_attachments.delete_attachments_for_conversations, db, conversation_ids
+        )
         for record in records:
             await unlink_stored_attachment_file(record.local_path, record_id=record.id)
 
@@ -36,13 +38,14 @@ def create_chat_router(server: "HTTPServer") -> APIRouter:
     ) -> dict[str, Any]:
         """Load chat messages for a conversation."""
         db = _get_db()
-        messages = chat_messages.get_messages(
+        messages = await server.run_db(
+            chat_messages.get_messages,
             db,
             conversation_id,
             after_seq=after_seq,
             limit=limit,
         )
-        max_seq = chat_messages.get_max_seq(db, conversation_id)
+        max_seq = await server.run_db(chat_messages.get_max_seq, db, conversation_id)
         return {"messages": messages, "max_seq": max_seq}
 
     @router.delete("/{conversation_id}/messages")
@@ -50,7 +53,7 @@ def create_chat_router(server: "HTTPServer") -> APIRouter:
         """Delete all chat messages for a conversation."""
         db = _get_db()
         await _delete_attachment_files_for_conversations(db, [conversation_id])
-        count = chat_messages.delete_messages(db, conversation_id)
+        count = await server.run_db(chat_messages.delete_messages, db, conversation_id)
         return {"deleted": count}
 
     return router
