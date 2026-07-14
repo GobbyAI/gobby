@@ -28,7 +28,6 @@ from gobby.cli.install_setup import (
     _install_gwiki_from_cargo_git,
     _install_gwiki_from_cargo_install,
     _install_gwiki_from_github,
-    _parse_sha256_digest,
     _resolve_latest_release_tag,
     _run_npm_install,
     _verify_release_artifact,
@@ -38,6 +37,7 @@ from gobby.cli.install_setup import (
     run_daemon_setup,
 )
 from gobby.cli.installers.hook_commands import build_hook_command
+from gobby.install.checksums import parse_sha256_digest
 from gobby.install.distribution import HomebrewHelperStatus
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 
@@ -1002,19 +1002,19 @@ def _archive_resp(data: bytes) -> MagicMock:
 class TestParseSha256Digest:
     def test_bare_digest(self):
         digest = "a" * 64
-        assert _parse_sha256_digest(f"{digest}\n") == digest
+        assert parse_sha256_digest(f"{digest}\n") == digest
 
     def test_sha256sum_line_format(self):
         digest = "b" * 64
-        assert _parse_sha256_digest(f"{digest}  gcode-aarch64-apple-darwin.tar.gz\n") == digest
+        assert parse_sha256_digest(f"{digest}  gcode-aarch64-apple-darwin.tar.gz\n") == digest
 
     def test_uppercase_is_normalized(self):
-        assert _parse_sha256_digest("C" * 64) == "c" * 64
+        assert parse_sha256_digest("C" * 64) == "c" * 64
 
     def test_no_valid_digest_returns_none(self):
-        assert _parse_sha256_digest("not-a-checksum\n") is None
-        assert _parse_sha256_digest("") is None
-        assert _parse_sha256_digest("abc123\n") is None
+        assert parse_sha256_digest("not-a-checksum\n") is None
+        assert parse_sha256_digest("") is None
+        assert parse_sha256_digest("abc123\n") is None
 
 
 class TestFetchReleaseChecksum:

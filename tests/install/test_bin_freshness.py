@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -100,7 +101,7 @@ class _IncompleteReadResponse:
     ) -> None:
         return None
 
-    def read(self) -> bytes:
+    def read(self, _size: int = -1) -> bytes:
         raise IncompleteRead(b"partial", 1)
 
 
@@ -119,8 +120,30 @@ class _JsonResponse:
     ) -> None:
         return None
 
-    def read(self) -> bytes:
-        return json.dumps(self.payload).encode("utf-8")
+    def read(self, size: int = -1) -> bytes:
+        payload = json.dumps(self.payload).encode("utf-8")
+        return payload if size < 0 else payload[:size]
+
+
+class _BytesResponse:
+    def __init__(self, payload: bytes) -> None:
+        self.payload = payload
+        self.read_sizes: list[int] = []
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        return None
+
+    def read(self, size: int = -1) -> bytes:
+        self.read_sizes.append(size)
+        return self.payload if size < 0 else self.payload[:size]
 
 
 def _asset(spec: ManagedBinSpec, version: str = "0.4.1") -> ReleaseAsset:
@@ -340,6 +363,31 @@ class TestBinUpdater:
         assert record.last_status == "failed"
         assert (bin_dir / spec.binary_name).read_bytes() == b"old"
 
+    def test_checksum_failure_records_failed_and_keeps_binary(
+        self, tmp_path: Path, postgres_db: HubDatabase
+    ) -> None:
+        bin_dir = tmp_path / "bin"
+        spec = _spec()
+        _write_binary(bin_dir, spec, b"old")
+        _write_stamp(bin_dir, spec, "0.4.0")
+        client = FakeClient(
+            asset=_asset(spec, "0.4.1"),
+            download_error=GithubAPIError("checksum mismatch"),
+        )
+
+        record = update_managed_bin(
+            postgres_db,
+            spec,
+            BinFreshnessConfig(),
+            bin_dir=bin_dir,
+            client=client,
+        )
+
+        assert record is not None
+        assert record.last_status == "failed"
+        assert record.last_error == "checksum mismatch"
+        assert (bin_dir / spec.binary_name).read_bytes() == b"old"
+
     def test_missing_release_tag_is_ignored_when_installed_at_floor(
         self, tmp_path: Path, postgres_db: HubDatabase
     ) -> None:
@@ -521,6 +569,74 @@ class TestGithubReleaseClient:
             client.download_asset(_asset(_spec()))
 
         assert isinstance(exc_info.value.__cause__, IncompleteRead)
+
+    def test_download_asset_verifies_checksum_and_caps_reads(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        payload = b"release archive"
+        digest = hashlib.sha256(payload).hexdigest()
+        checksum_response = _BytesResponse(f"{digest}  archive.tar.gz\n".encode())
+        asset_response = _BytesResponse(payload)
+        responses = iter([checksum_response, asset_response])
+        calls: list[str] = []
+
+        def fake_urlopen(req: Any, **_kwargs: Any) -> _BytesResponse:
+            calls.append(req.full_url)
+            return next(responses)
+
+        monkeypatch.setattr("gobby.install.bin_freshness_github._urlopen_https", fake_urlopen)
+        client = GithubReleaseClient(timeout_seconds=1)
+        asset = _asset(_spec())
+
+        assert client.download_asset(asset) == payload
+        assert calls == [f"{asset.asset_url}.sha256", asset.asset_url]
+        assert checksum_response.read_sizes == [16 * 1024 + 1]
+        assert asset_response.read_sizes == [128 * 1024 * 1024 + 1]
+
+    def test_download_asset_rejects_checksum_mismatch(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        responses = iter([_BytesResponse(("0" * 64).encode()), _BytesResponse(b"tampered")])
+        monkeypatch.setattr(
+            "gobby.install.bin_freshness_github._urlopen_https",
+            lambda _req, **_kwargs: next(responses),
+        )
+        client = GithubReleaseClient(timeout_seconds=1)
+
+        with pytest.raises(GithubAPIError, match="checksum mismatch"):
+            client.download_asset(_asset(_spec()))
+
+    def test_download_asset_rejects_invalid_checksum_without_fetching_asset(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[str] = []
+
+        def fake_urlopen(req: Any, **_kwargs: Any) -> _BytesResponse:
+            calls.append(req.full_url)
+            return _BytesResponse(b"invalid")
+
+        monkeypatch.setattr("gobby.install.bin_freshness_github._urlopen_https", fake_urlopen)
+        client = GithubReleaseClient(timeout_seconds=1)
+        asset = _asset(_spec())
+
+        with pytest.raises(GithubAPIError, match="invalid SHA-256 checksum"):
+            client.download_asset(asset)
+
+        assert calls == [f"{asset.asset_url}.sha256"]
+
+    def test_download_asset_rejects_oversized_asset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        payload = b"12345"
+        digest = hashlib.sha256(payload).hexdigest()
+        responses = iter([_BytesResponse(digest.encode()), _BytesResponse(payload)])
+        monkeypatch.setattr(
+            "gobby.install.bin_freshness_github._urlopen_https",
+            lambda _req, **_kwargs: next(responses),
+        )
+        monkeypatch.setattr("gobby.install.bin_freshness_github._MAX_RELEASE_ASSET_BYTES", 4)
+        client = GithubReleaseClient(timeout_seconds=1)
+
+        with pytest.raises(GithubAPIError, match="4-byte download limit"):
+            client.download_asset(_asset(_spec()))
 
     def test_resolve_latest_asset_resolves_from_canonical_repo(
         self, monkeypatch: pytest.MonkeyPatch
