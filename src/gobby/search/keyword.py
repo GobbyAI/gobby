@@ -2,15 +2,26 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
-import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
 SearchMode = Literal["keyword", "semantic"]
 
 logger = logging.getLogger(__name__)
+
+
+class SearchQuerySyntaxError(ValueError):
+    """Raised when pg_search cannot parse a user search query."""
+
+    def __init__(self, query: str) -> None:
+        self.query = query
+        super().__init__(
+            f"Search query could not be parsed: {query!r}. "
+            "Simplify the query to plain words and retry."
+        )
 
 
 @dataclass(frozen=True)
@@ -31,6 +42,7 @@ class KeywordSearchBackend(Protocol):
         limit: int,
         *,
         filters: Mapping[str, Any] | None = None,
+        allowed_ids: Collection[str] | None = None,
     ) -> list[SearchHit]:
         """Return keyword hits ranked best first."""
         ...
@@ -84,6 +96,7 @@ _TABLE_CONFIGS: dict[str, _TableConfig] = {
         table="skills",
         aliases=("skills_fts",),
         postgres_columns=("name", "description", "content"),
+        filters={"project_id": "project_id", "enabled": "enabled"},
     ),
     "code_symbols": _TableConfig(
         table="code_symbols",
@@ -139,9 +152,12 @@ class BM25SearchBackend:
         limit: int,
         *,
         filters: Mapping[str, Any] | None = None,
+        allowed_ids: Collection[str] | None = None,
     ) -> list[SearchHit]:
         bm25_query = sanitize_pg_search_query(query)
         if not bm25_query:
+            return []
+        if allowed_ids is not None and not allowed_ids:
             return []
 
         params: list[Any] = []
@@ -155,6 +171,9 @@ class BM25SearchBackend:
             where.extend(
                 _filter_clauses(self._hub, params, self._config.table, self._config, filters)
             )
+        if allowed_ids is not None:
+            id_placeholders = [_add_param(self._hub, params, item_id) for item_id in allowed_ids]
+            where.append(f"{self._config.table}.id IN ({', '.join(id_placeholders)})")
         if self._config.active_clause:
             where.append(self._config.active_clause)
 
@@ -174,8 +193,7 @@ class BM25SearchBackend:
             rows = fetch_all(self._hub, sql, params)
         except Exception as exc:
             if is_pg_search_parse_error(exc):
-                logger.debug("pg_search keyword query parse failed: %s", exc)
-                return []
+                raise SearchQuerySyntaxError(query) from exc
             raise
 
         raw_scores = [float(row_value(row, "score")) for row in rows]
@@ -210,32 +228,42 @@ class KeywordAsyncSearchBackend:
         self._table = table
         self._backend = pick_search_backend(hub, table)
         self._fitted_items: list[tuple[str, str]] | None = None
+        self._fitted_ids: tuple[str, ...] | None = None
         self._needs_refit = False
 
     async def fit_async(self, items: list[tuple[str, str]]) -> None:
         fit = getattr(self._backend, "fit", None)
         if callable(fit):
             fit(items)
-            self._fitted_items = None
-        else:
-            self._fitted_items = items.copy()
+        self._fitted_items = items.copy()
+        self._fitted_ids = tuple(item_id for item_id, _content in items)
         self._needs_refit = False
         return None
 
     async def search_async(self, query: str, top_k: int = 10) -> list[tuple[str, float]]:
-        return self.search(query, top_k)
+        return await asyncio.to_thread(self.search, query, top_k)
 
     def search(self, query: str, top_k: int = 10) -> list[tuple[str, float]]:
+        fitted_items = self._fitted_items
+        fitted_id_values = self._fitted_ids
+        if fitted_items is None or fitted_id_values is None:
+            return []
+        if not fitted_id_values:
+            return []
+        fitted_ids = set(fitted_id_values)
         try:
-            hits = [(hit.id, hit.score) for hit in self._backend.search(query, top_k)]
+            return [
+                (hit.id, hit.score)
+                for hit in self._backend.search(
+                    query,
+                    top_k,
+                    allowed_ids=fitted_id_values,
+                )
+                if hit.id in fitted_ids
+            ]
         except Exception:
-            if self._fitted_items is None:
-                raise
             logger.debug("Keyword backend search failed; using fitted item fallback", exc_info=True)
-            hits = []
-        if hits or self._fitted_items is None:
-            return hits
-        return _search_fitted_items(query, self._fitted_items, top_k)
+            return _search_fitted_items(query, fitted_items, top_k)
 
     def needs_refit(self) -> bool:
         return self._needs_refit
@@ -244,16 +272,19 @@ class KeywordAsyncSearchBackend:
         self._needs_refit = True
 
     def get_stats(self) -> dict[str, Any]:
-        get_stats = getattr(self._backend, "get_stats", None)
-        if callable(get_stats):
-            return dict(get_stats())
-        return {"backend_type": "keyword", "table": self._table, "fitted": True}
+        return {
+            "backend_type": "pg_search_bm25",
+            "table": self._table,
+            "document_count": len(self._fitted_ids or ()),
+            "fitted": self._fitted_ids is not None,
+        }
 
     def clear(self) -> None:
         clear = getattr(self._backend, "clear", None)
         if callable(clear):
             clear()
         self._fitted_items = None
+        self._fitted_ids = None
         self._needs_refit = False
 
 
@@ -281,7 +312,7 @@ def _search_fitted_items(
 
 
 def _tokenize(value: str) -> list[str]:
-    return re.findall(r"[a-z0-9]+", value.lower())
+    return sanitize_pg_search_query(value.casefold()).split()
 
 
 def fetch_all(hub: Any, sql: str, params: Sequence[Any]) -> list[Any]:
@@ -329,7 +360,11 @@ def _filter_clauses(
     for filter_name, value in filters.items():
         if config.table == "memories" and filter_name == "include_global":
             continue
-        if value is None or filter_name not in columns:
+        if filter_name not in columns:
+            raise ValueError(
+                f"unsupported filter {filter_name!r} for keyword search table {config.table!r}"
+            )
+        if value is None:
             continue
         placeholder_token = _add_param(hub, params, value)
         column = columns[filter_name]
@@ -356,7 +391,10 @@ def _table_config(table: str) -> _TableConfig:
 def sanitize_pg_search_query(query: str) -> str:
     """Sanitize user input for pg_search's BM25 query DSL."""
     cleaned = "".join(ch if ch.isalnum() or ch in (" ", "_") else " " for ch in query)
-    return " ".join(token for token in cleaned.split() if token.strip("_"))
+    tokens = (token for token in cleaned.split() if token.strip("_"))
+    return " ".join(
+        token.lower() if token.upper() in {"AND", "OR", "NOT"} else token for token in tokens
+    )
 
 
 def is_pg_search_parse_error(error: BaseException) -> bool:

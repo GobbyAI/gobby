@@ -155,7 +155,7 @@ pub fn sanitize_pg_search_query(query: &str) -> String {
         backslash_run = if ch == '\\' { backslash_run + 1 } else { 0 };
     }
 
-    escaped_literals
+    neutralize_boolean_operators(&escaped_literals)
         .split_whitespace()
         .map(|token| {
             if token.starts_with('-') {
@@ -166,6 +166,47 @@ pub fn sanitize_pg_search_query(query: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn neutralize_boolean_operators(query: &str) -> String {
+    let mut sanitized = String::with_capacity(query.len());
+    let mut token = String::new();
+    let mut in_quotes = false;
+    let mut backslash_run = 0;
+
+    let flush_token = |sanitized: &mut String, token: &mut String| {
+        if ["AND", "OR", "NOT"]
+            .iter()
+            .any(|operator| token.eq_ignore_ascii_case(operator))
+        {
+            sanitized.push_str(&token.to_ascii_lowercase());
+        } else {
+            sanitized.push_str(token);
+        }
+        token.clear();
+    };
+
+    for ch in query.chars() {
+        let unescaped_quote = ch == '"' && backslash_run % 2 == 0;
+        if in_quotes {
+            sanitized.push(ch);
+            if unescaped_quote {
+                in_quotes = false;
+            }
+        } else if unescaped_quote {
+            flush_token(&mut sanitized, &mut token);
+            sanitized.push(ch);
+            in_quotes = true;
+        } else if ch.is_ascii_alphanumeric() || ch == '_' {
+            token.push(ch);
+        } else {
+            flush_token(&mut sanitized, &mut token);
+            sanitized.push(ch);
+        }
+        backslash_run = if ch == '\\' { backslash_run + 1 } else { 0 };
+    }
+    flush_token(&mut sanitized, &mut token);
+    sanitized
 }
 
 fn literal_parenthesis_mask(chars: &[char]) -> Vec<bool> {
@@ -282,6 +323,23 @@ mod tests {
         assert_eq!(
             sanitize_pg_search_query(r"claude-opus-4-8\[1m\]"),
             r"claude-opus-4-8\[1m\]"
+        );
+    }
+
+    #[test]
+    fn sanitize_pg_search_query_neutralizes_boolean_operators_outside_quotes() {
+        assert_eq!(sanitize_pg_search_query("AND OR NOT"), "and or not");
+        assert_eq!(
+            sanitize_pg_search_query("salt AND pepper Or paprika nOt sugar"),
+            "salt and pepper or paprika not sugar"
+        );
+        assert_eq!(
+            sanitize_pg_search_query("(AND) OR-based _NOT_ CANDY ORACLE NOTICE"),
+            "(and) or-based _NOT_ CANDY ORACLE NOTICE"
+        );
+        assert_eq!(
+            sanitize_pg_search_query(r#""salt AND pepper" OR "NOT""#),
+            r#""salt AND pepper" or "NOT""#
         );
     }
 

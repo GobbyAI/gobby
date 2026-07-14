@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from gobby.search import SearchConfig
 from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -108,6 +109,56 @@ class TestSearchSkillsTool:
         assert result["success"] is True
         assert result["count"] > 0
         assert len(result["results"]) > 0
+
+    @pytest.mark.parametrize("mode", ["keyword", "auto"])
+    @pytest.mark.asyncio
+    async def test_search_skills_excludes_other_projects_and_disabled_skills(
+        self,
+        db: HubDatabase,
+        storage: LocalSkillManager,
+        mode: str,
+    ) -> None:
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+
+        projects = LocalProjectManager(db)
+        current = projects.create(f"current-{mode}")
+        other = projects.create(f"other-{mode}")
+        storage.create_skill(
+            name=f"visible-{mode}",
+            description="security boundary marker",
+            content="# Visible\nsecurity boundary marker",
+            enabled=True,
+            project_id=current.id,
+        )
+        storage.create_skill(
+            name=f"other-project-{mode}",
+            description="security boundary marker",
+            content="# Other project\nsecurity boundary marker",
+            enabled=True,
+            project_id=other.id,
+        )
+        storage.create_skill(
+            name=f"disabled-{mode}",
+            description="security boundary marker",
+            content="# Disabled\nsecurity boundary marker",
+            enabled=False,
+            project_id=current.id,
+        )
+        registry = create_skills_registry(
+            db,
+            project_id=current.id,
+            search_config=SearchConfig(mode=mode),
+        )
+
+        with patch(
+            "gobby.search.unified.EmbeddingService.is_reachable",
+            new_callable=AsyncMock,
+            return_value=False,
+        ):
+            result = await registry.get_tool("search_skills")(query="security boundary marker")
+
+        assert result["success"] is True
+        assert [item["skill_name"] for item in result["results"]] == [f"visible-{mode}"]
 
     @pytest.mark.asyncio
     async def test_repeated_search_skills_keeps_postgres_connections_bounded(self, populated_db):

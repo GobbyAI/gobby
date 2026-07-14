@@ -86,6 +86,23 @@ fn sanitize_pg_search_query_preserves_dsl_punctuation() {
 }
 
 #[test]
+fn sanitize_pg_search_query_neutralizes_boolean_operators_without_breaking_phrases() {
+    assert_eq!(sanitize_pg_search_query("AND OR NOT"), "and or not");
+    assert_eq!(
+        sanitize_pg_search_query("salt AND pepper Or paprika nOt sugar"),
+        "salt and pepper or paprika not sugar"
+    );
+    assert_eq!(
+        sanitize_pg_search_query("(AND) OR-based _NOT_ CANDY ORACLE NOTICE"),
+        "(and) or-based _NOT_ CANDY ORACLE NOTICE"
+    );
+    assert_eq!(
+        sanitize_pg_search_query(r#""salt AND pepper" OR "NOT""#),
+        r#""salt AND pepper" or "NOT""#
+    );
+}
+
+#[test]
 fn glob_to_like_prefix_escapes_like_wildcards() {
     assert_eq!(
         glob_to_like_prefix("src/foo_bar/*.rs").as_deref(),
