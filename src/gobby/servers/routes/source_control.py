@@ -9,7 +9,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any, cast
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from gobby.integrations.github import GitHubIntegration
 from gobby.storage.projects import LocalProjectManager
@@ -364,7 +364,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
     async def list_branch_commits(
         branch_name: str,
         project_id: str | None = None,
-        limit: int = 20,
+        limit: int = Query(20, ge=1, le=100),
     ) -> dict[str, Any]:
         """List recent commits on a branch.
 
@@ -685,7 +685,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
     @router.get("/cicd/runs")
     async def list_cicd_runs(
         project_id: str | None = None,
-        limit: int = 20,
+        limit: int = Query(20, ge=1, le=100),
     ) -> dict[str, Any]:
         """List CI/CD workflow runs."""
         _, github_repo = await server.run_db(_resolve_project, server, project_id)

@@ -619,6 +619,27 @@ class TestMemoryGraph:
             project_id="proj-1", limit=200
         )
 
+    @pytest.mark.parametrize("memory_limit", [-1, 1001])
+    def test_graph_rejects_out_of_range_limit(self, client, memory_limit: int) -> None:
+        response = client.get("/api/memories/graph", params={"memory_limit": memory_limit})
+
+        assert response.status_code == 422
+
+    @pytest.mark.parametrize("memory_limit", [1, 1000])
+    def test_graph_accepts_boundary_limit(self, client, mock_server, memory_limit: int) -> None:
+        mock_server.memory_manager.list_memories.return_value = []
+        mock_server.memory_manager.storage.get_all_crossrefs.return_value = []
+
+        response = client.get("/api/memories/graph", params={"memory_limit": memory_limit})
+
+        assert response.status_code == 200
+        mock_server.memory_manager.list_memories.assert_called_once_with(
+            project_id=None, limit=memory_limit
+        )
+        mock_server.memory_manager.storage.get_all_crossrefs.assert_called_once_with(
+            project_id=None, limit=memory_limit * 10
+        )
+
     def test_graph_server_error(self, client, mock_server) -> None:
         """GET /memories/graph returns 500 on error."""
         mock_server.memory_manager.list_memories.side_effect = RuntimeError("DB error")

@@ -924,6 +924,32 @@ class TestListBranchCommits:
         call_args = mock_git.call_args[0][0]
         assert "--max-count=5" in call_args
 
+    @pytest.mark.parametrize("limit", [-1, 101])
+    def test_commits_rejects_out_of_range_limit(self, client, limit: int) -> None:
+        response = client.get(f"/api/source-control/branches/main/commits?limit={limit}")
+
+        assert response.status_code == 422
+
+    @pytest.mark.parametrize("limit", [1, 100])
+    def test_commits_accepts_boundary_limit(self, client, mock_server, limit: int) -> None:
+        git_result = MagicMock(returncode=0, stdout="")
+
+        with (
+            patch(
+                "gobby.servers.routes.source_control._resolve_project",
+                return_value=("/tmp/repo", None),
+            ),
+            patch(
+                "gobby.servers.routes.source_control._run_git",
+                new_callable=AsyncMock,
+                return_value=git_result,
+            ) as mock_git,
+        ):
+            response = client.get(f"/api/source-control/branches/main/commits?limit={limit}")
+
+        assert response.status_code == 200
+        assert f"--max-count={limit}" in mock_git.call_args.args[0]
+
 
 # ---------------------------------------------------------------------------
 # GET /api/source-control/diff
@@ -1306,7 +1332,8 @@ class TestListCICDRuns:
         assert data["runs"] == []
         assert data["github_available"] is False
 
-    def test_cicd_with_runs(self, client, mock_server) -> None:
+    @pytest.mark.parametrize("limit", [1, 100])
+    def test_cicd_with_runs(self, client, mock_server, limit: int) -> None:
         mock_gh = MagicMock()
         mock_gh.is_available.return_value = True
 
@@ -1338,9 +1365,9 @@ class TestListCICDRuns:
                 "gobby.servers.routes.source_control._call_github_mcp",
                 new_callable=AsyncMock,
                 return_value=workflow_data,
-            ),
+            ) as mock_call_github,
         ):
-            response = client.get("/api/source-control/cicd/runs")
+            response = client.get(f"/api/source-control/cicd/runs?limit={limit}")
 
         assert response.status_code == 200
         data = response.json()
@@ -1348,6 +1375,13 @@ class TestListCICDRuns:
         assert len(data["runs"]) == 1
         assert data["runs"][0]["name"] == "CI"
         assert data["runs"][0]["conclusion"] == "success"
+        assert mock_call_github.call_args.args[2]["per_page"] == limit
+
+    @pytest.mark.parametrize("limit", [-1, 101])
+    def test_cicd_rejects_out_of_range_limit(self, client, limit: int) -> None:
+        response = client.get(f"/api/source-control/cicd/runs?limit={limit}")
+
+        assert response.status_code == 422
 
     def test_cicd_no_repo_configured(self, client, mock_server) -> None:
         mock_gh = MagicMock()

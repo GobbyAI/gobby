@@ -386,7 +386,9 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
     @router.get("/graph")
     def memory_graph(
         project_id: str | None = Query(None, description="Filter by project ID"),
-        memory_limit: int = Query(200, description="Max memories (most recent first)"),
+        memory_limit: int = Query(
+            200, ge=1, le=1000, description="Max memories (most recent first)"
+        ),
     ) -> dict[str, Any]:
         """Get memory graph data (memories + crossrefs) for visualization."""
         try:
