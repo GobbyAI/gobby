@@ -709,6 +709,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
     async def sync_all(self, team_id: str | None = None) -> dict[str, Any]:
         """Full bidirectional sync: pull first, then push."""
         effective_team_id = team_id or self.linear_team_id
+        sync_started_at = datetime.now(UTC).isoformat()
 
         pull_stats = await self.pull_linear_updates(team_id=effective_team_id)
         pull_errors = int(pull_stats.get("errors", 0))
@@ -723,7 +724,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
         cursor_updated = not (pull_errors or pull_deferred or push_errors or push_deferred)
         synced_at: str | None
         if cursor_updated:
-            synced_at = datetime.now(UTC).isoformat()
+            synced_at = sync_started_at
             self._update_synced_at(synced_at)
         else:
             synced_at = self._get_project_synced_at()

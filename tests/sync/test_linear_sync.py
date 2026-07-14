@@ -1080,6 +1080,47 @@ class TestLinearSyncServiceSync:
         assert isinstance(result["synced_at"], str)
         sync_service._update_synced_at.assert_called_once_with(result["synced_at"])
 
+    async def test_sync_all_next_run_sees_edit_created_during_sync(
+        self, sync_service: LinearSyncService
+    ) -> None:
+        """The cursor precedes edits created inside the sync window."""
+        sync_started_at = datetime(2026, 7, 14, 12, 0, tzinfo=UTC)
+        edit_created_at = datetime(2026, 7, 14, 12, 1, tzinfo=UTC)
+        clock = {"now": sync_started_at}
+        state: dict[str, datetime | str | None] = {"cursor": None, "edit": None}
+
+        async def pull_updates(*, team_id: str | None = None) -> dict[str, int]:
+            del team_id
+            cursor = state["cursor"]
+            edit = state["edit"]
+            updated = int(
+                isinstance(cursor, str)
+                and isinstance(edit, datetime)
+                and edit > datetime.fromisoformat(cursor)
+            )
+            return {"updated": updated, "skipped": 1 - updated, "errors": 0, "deferred": 0}
+
+        async def push_tasks() -> dict[str, int]:
+            if state["edit"] is None:
+                clock["now"] = edit_created_at
+                state["edit"] = edit_created_at
+            return {"pushed": 0, "skipped": 1, "errors": 0, "deferred": 0}
+
+        sync_service.pull_linear_updates = AsyncMock(side_effect=pull_updates)
+        sync_service.push_dirty_tasks = AsyncMock(side_effect=push_tasks)
+        sync_service._get_project_synced_at = MagicMock(side_effect=lambda: state["cursor"])
+        sync_service._update_synced_at = MagicMock(
+            side_effect=lambda synced_at: state.update(cursor=synced_at)
+        )
+
+        with patch("gobby.sync.linear_task_ops.datetime") as mock_datetime:
+            mock_datetime.now.side_effect = lambda timezone: clock["now"]
+            first = await sync_service.sync_all(team_id="team-123")
+            second = await sync_service.sync_all(team_id="team-123")
+
+        assert first["synced_at"] == sync_started_at.isoformat()
+        assert second["pull"]["updated"] == 1
+
 
 class TestLinearSyncServiceCreate:
     """Test create_issue_for_task method."""
