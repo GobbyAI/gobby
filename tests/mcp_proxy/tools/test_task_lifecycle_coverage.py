@@ -618,6 +618,34 @@ class TestCloseTask:
         mock_task_manager.link_commit.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_close_code_leaf_without_criteria_validates_against_description(
+        self, mock_task_manager, mock_sync_manager
+    ) -> None:
+        task = _make_task(description="Implement the required behavior")
+        task.category = "code"
+        mock_task_manager.get_task.return_value = task
+        mock_task_manager.list_tasks.return_value = []
+        task_validator = AsyncMock()
+        task_validator.validate_task.return_value = MagicMock(
+            status="invalid",
+            feedback="The implementation does not satisfy the task description.",
+            blocking_reasons=["Required behavior is missing"],
+        )
+
+        registry = _create_registry(mock_task_manager, mock_sync_manager, task_validator)
+
+        result = await registry.call(
+            "close_task",
+            {"task_id": task.id, "changes_summary": "Implementation attempted"},
+        )
+
+        assert result["error"] == "validation_failed"
+        task_validator.validate_task.assert_awaited_once()
+        validation_kwargs = task_validator.validate_task.await_args.kwargs
+        assert validation_kwargs["description"] == "Implement the required behavior"
+        assert validation_kwargs["validation_criteria"] is None
+        mock_task_manager.close_task.assert_not_called()
+
     async def test_close_task_valid_llm_result_closes_when_feedback_satisfies_criteria(
         self, mock_task_manager, mock_sync_manager
     ) -> None:
