@@ -17,8 +17,6 @@ class ChatPendingMessagesMixin:
         self,
         db_session_id: str,
         event_type: HookEventType,
-        *,
-        pending_message_ids: list[str] | None = None,
     ) -> str | None:
         """Check for and inject undelivered inter-session messages.
 
@@ -39,18 +37,14 @@ class ChatPendingMessagesMixin:
             return None
 
         try:
-            undelivered = inter_session_msg_manager.get_undelivered_messages(db_session_id)
+            undelivered = inter_session_msg_manager.claim_undelivered_messages(db_session_id)
             if not undelivered:
                 return None
 
             groups: dict[str, list[Any]] = {}
-            collected_message_ids: list[str] = []
             for msg in undelivered:
                 msg_type = getattr(msg, "message_type", "message") or "message"
                 groups.setdefault(msg_type, []).append(msg)
-                msg_id = getattr(msg, "id", None)
-                if isinstance(msg_id, str):
-                    collected_message_ids.append(msg_id)
 
             sections: list[str] = []
             for msg_type, msgs in groups.items():
@@ -63,28 +57,10 @@ class ChatPendingMessagesMixin:
                 sections.append("\n".join(lines))
 
             context = "\n\n".join(sections)
-            if pending_message_ids is not None:
-                pending_message_ids.extend(collected_message_ids)
             return context
         except Exception as exc:
             logger.debug("Inter-session message piggyback failed: %s", exc, exc_info=True)
             return None
-
-    def _mark_pending_messages_delivered(self, message_ids: list[str]) -> None:
-        """Acknowledge messages after their context survives lifecycle processing."""
-        inter_session_msg_manager = getattr(self, "inter_session_msg_manager", None)
-        if not inter_session_msg_manager:
-            return
-
-        for message_id in message_ids:
-            try:
-                inter_session_msg_manager.mark_delivered(message_id)
-            except Exception:
-                logger.debug(
-                    "Failed to mark inter-session message %s delivered",
-                    message_id,
-                    exc_info=True,
-                )
 
     @staticmethod
     def _message_group_header(message_type: str) -> str:

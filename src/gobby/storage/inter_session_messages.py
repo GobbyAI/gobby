@@ -311,6 +311,23 @@ class InterSessionMessageManager:
         )
         return [InterSessionMessage.from_row(row) for row in rows]
 
+    def claim_undelivered_messages(self, to_session: str) -> list[InterSessionMessage]:
+        """Atomically claim all undelivered messages for a session."""
+        delivered_at = utc_now()
+        rows = self.db.fetchall(
+            """
+            WITH claimed AS (
+                UPDATE inter_session_messages
+                SET delivered_at = %s
+                WHERE to_session = %s AND delivered_at IS NULL
+                RETURNING *
+            )
+            SELECT * FROM claimed ORDER BY sent_at
+            """,
+            (delivered_at, to_session),
+        )
+        return [InterSessionMessage.from_row(row) for row in rows]
+
     def list_messages(
         self,
         session_id: str,
@@ -384,10 +401,14 @@ class InterSessionMessageManager:
         """
         delivered_at = utc_now()
 
-        self.db.execute(
-            "UPDATE inter_session_messages SET delivered_at = %s WHERE id = %s",
+        row = self.db.fetchone(
+            """UPDATE inter_session_messages SET delivered_at = %s
+               WHERE id = %s AND delivered_at IS NULL
+               RETURNING *""",
             (delivered_at, message_id),
         )
+        if row:
+            return InterSessionMessage.from_row(row)
 
         message = self.get_message(message_id)
         if not message:

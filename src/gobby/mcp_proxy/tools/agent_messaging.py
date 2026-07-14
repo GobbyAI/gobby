@@ -259,12 +259,9 @@ def add_messaging_tools(
     ) -> dict[str, Any]:
         try:
             resolved_id = _resolve(target_session_id)
-            undelivered = message_manager.get_undelivered_messages(resolved_id)
+            undelivered = message_manager.claim_undelivered_messages(resolved_id)
 
-            messages = []
-            for msg in undelivered:
-                message_manager.mark_delivered(msg.id)
-                messages.append(_message_delivery_payload(msg))
+            messages = [_message_delivery_payload(msg) for msg in undelivered]
 
             return {
                 "success": True,

@@ -9,6 +9,7 @@ Covers:
 from __future__ import annotations
 
 import ast
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -81,6 +82,17 @@ class FakeWakeDispatcher:
     async def dispatch_live_wake(self, session_id: str) -> dict[str, Any]:
         self.calls.append(session_id)
         return {"session_id": session_id, "delivered": True, "method": "fake"}
+
+
+@pytest.fixture(autouse=True)
+def isolate_project_context() -> Iterator[None]:
+    from gobby.utils.project_context import reset_project_context, set_project_context
+
+    token = set_project_context({})
+    try:
+        yield
+    finally:
+        reset_project_context(token)
 
 
 @pytest.fixture
@@ -712,7 +724,7 @@ class TestSendMessage:
         assert result["wake_results"][0]["error_code"] == "no_tmux_pane"
         mock_message_manager.mark_delivered.assert_not_called()
 
-        mock_message_manager.get_undelivered_messages.return_value = [created]
+        mock_message_manager.claim_undelivered_messages.return_value = [created]
         delivered = await registry.call(
             "deliver_pending_messages",
             {"target_session_id": "s-to"},
@@ -720,7 +732,8 @@ class TestSendMessage:
 
         assert delivered["success"] is True
         assert delivered["count"] == 1
-        mock_message_manager.mark_delivered.assert_called_once_with("msg-direct")
+        mock_message_manager.claim_undelivered_messages.assert_called_once_with("s-to")
+        mock_message_manager.mark_delivered.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_send_message_different_project_rejected(
@@ -812,10 +825,10 @@ class TestDeliverPendingMessages:
     async def test_deliver_returns_undelivered(
         self, messaging_registry, mock_message_manager
     ) -> None:
-        """Returns undelivered messages and marks them delivered."""
+        """Returns messages reserved through the atomic claim API."""
         msg1 = MockMessage(id="msg-1", content="first")
         msg2 = MockMessage(id="msg-2", content="second")
-        mock_message_manager.get_undelivered_messages.return_value = [msg1, msg2]
+        mock_message_manager.claim_undelivered_messages.return_value = [msg1, msg2]
 
         result = await messaging_registry.call(
             "deliver_pending_messages",
@@ -824,13 +837,13 @@ class TestDeliverPendingMessages:
 
         assert result["success"] is True
         assert len(result["messages"]) == 2
-        # Verify both messages marked delivered
-        assert mock_message_manager.mark_delivered.call_count == 2
+        mock_message_manager.claim_undelivered_messages.assert_called_once_with("s-child")
+        mock_message_manager.mark_delivered.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_deliver_empty(self, messaging_registry, mock_message_manager) -> None:
         """Returns empty list when no undelivered messages."""
-        mock_message_manager.get_undelivered_messages.return_value = []
+        mock_message_manager.claim_undelivered_messages.return_value = []
 
         result = await messaging_registry.call(
             "deliver_pending_messages",
@@ -854,7 +867,7 @@ class TestDeliverPendingMessages:
                 '"completion_id": "run-1", "signoff_message": "Approved"}'
             ),
         )
-        mock_message_manager.get_undelivered_messages.return_value = [msg]
+        mock_message_manager.claim_undelivered_messages.return_value = [msg]
 
         result = await messaging_registry.call(
             "deliver_pending_messages",

@@ -103,12 +103,7 @@ class DummyLifecycleMixin(ChatLifecycleMixin):
         self,
         db_session_id: str,
         event_type: HookEventType,
-        *,
-        pending_message_ids: list[str] | None = None,
     ) -> None:
-        return None
-
-    def _mark_pending_messages_delivered(self, message_ids: list[str]) -> None:
         return None
 
 
@@ -168,14 +163,9 @@ class TestInjectPendingMessages:
         msg2.from_session = None
         msg2.content = "help me"
 
-        mixin.inter_session_msg_manager.get_undelivered_messages.return_value = [msg1, msg2]
+        mixin.inter_session_msg_manager.claim_undelivered_messages.return_value = [msg1, msg2]
 
-        pending_message_ids: list[str] = []
-        res = mixin._inject_pending_messages(
-            "sid",
-            HookEventType.BEFORE_AGENT,
-            pending_message_ids=pending_message_ids,
-        )
+        res = mixin._inject_pending_messages("sid", HookEventType.BEFORE_AGENT)
 
         assert res is not None
         assert "Pending messages from web chat user" in res
@@ -183,13 +173,8 @@ class TestInjectPendingMessages:
         assert "Pending P2P messages from other sessions" in res
         assert "- [URGENT] help me" in res
 
-        assert pending_message_ids == ["1", "2"]
+        mixin.inter_session_msg_manager.claim_undelivered_messages.assert_called_once_with("sid")
         mixin.inter_session_msg_manager.mark_delivered.assert_not_called()
-
-        mixin._mark_pending_messages_delivered(pending_message_ids)
-
-        mixin.inter_session_msg_manager.mark_delivered.assert_any_call("1")
-        mixin.inter_session_msg_manager.mark_delivered.assert_any_call("2")
 
 
 class TestHandleChatMessage:

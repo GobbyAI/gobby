@@ -7,11 +7,14 @@ Tests cover:
 """
 
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from threading import Barrier
 
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.inter_session_messages import InterSessionMessageManager
 
 pytestmark = pytest.mark.unit
 
@@ -537,6 +540,77 @@ class TestInterSessionMessageManagerGetMessage:
         manager = InterSessionMessageManager(temp_db)
         result = manager.get_message(str(uuid.uuid4()))
         assert result is None
+
+
+class TestInterSessionMessageManagerClaimMessages:
+    """Real-database coverage for atomic inter-session message claims."""
+
+    @staticmethod
+    def _manager_and_recipient(
+        temp_db: HubDatabase, prefix: str
+    ) -> tuple[InterSessionMessageManager, str, str]:
+        from gobby.storage.projects import LocalProjectManager
+        from gobby.storage.sessions import SessionManager
+
+        project = LocalProjectManager(temp_db).create(
+            name=f"{prefix}-project", repo_path=f"/tmp/{prefix}-project"
+        )
+        sessions = SessionManager(temp_db)
+        sender = sessions.register(
+            external_id=f"{prefix}-sender",
+            machine_id="m1",
+            source="claude",
+            project_id=project.id,
+        )
+        recipient = sessions.register(
+            external_id=f"{prefix}-recipient",
+            machine_id="m1",
+            source="claude",
+            project_id=project.id,
+        )
+        return InterSessionMessageManager(temp_db), sender.id, recipient.id
+
+    def test_concurrent_claims_are_disjoint(self, temp_db: HubDatabase) -> None:
+        manager, sender_id, recipient_id = self._manager_and_recipient(temp_db, "claim")
+        expected_ids = {
+            manager.create_message(
+                from_session=sender_id,
+                to_session=recipient_id,
+                content=f"message-{index}",
+            ).id
+            for index in range(4)
+        }
+        start = Barrier(2)
+
+        def claim() -> set[str]:
+            start.wait(timeout=5)
+            return {
+                message.id
+                for message in InterSessionMessageManager(temp_db).claim_undelivered_messages(
+                    recipient_id
+                )
+            }
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            claimed = list(executor.map(lambda _index: claim(), range(2)))
+
+        assert claimed[0].isdisjoint(claimed[1])
+        assert claimed[0] | claimed[1] == expected_ids
+        assert manager.claim_undelivered_messages(recipient_id) == []
+
+    def test_mark_delivered_does_not_replace_existing_timestamp(self, temp_db: HubDatabase) -> None:
+        manager, sender_id, recipient_id = self._manager_and_recipient(temp_db, "mark")
+        message = manager.create_message(
+            from_session=sender_id,
+            to_session=recipient_id,
+            content="deliver once",
+        )
+
+        first = manager.mark_delivered(message.id)
+        second = manager.mark_delivered(message.id)
+
+        assert first.delivered_at is not None
+        assert second.delivered_at == first.delivered_at
 
 
 class TestInterSessionMessageManagerListMessages:

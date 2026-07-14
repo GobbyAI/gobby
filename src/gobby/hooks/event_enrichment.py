@@ -184,7 +184,9 @@ class EventEnricher:
         if not self._inter_session_msg_manager:
             return
 
-        undelivered = self._inter_session_msg_manager.get_undelivered_messages(platform_session_id)
+        undelivered = self._inter_session_msg_manager.claim_undelivered_messages(
+            platform_session_id
+        )
         if not undelivered:
             return
 
@@ -211,18 +213,6 @@ class EventEnricher:
             response.context = f"{response.context}\n\n{pending_context}"
         else:
             response.context = pending_context
-
-        # Mark only after every message has been formatted and attached. A failed
-        # mark deliberately leaves the message retryable (at-least-once delivery).
-        for msg in undelivered:
-            try:
-                self._inter_session_msg_manager.mark_delivered(msg.id)
-            except Exception:
-                logger.warning(
-                    "Failed to mark piggyback message %s delivered; it will be retried",
-                    msg.id,
-                    exc_info=True,
-                )
 
     @staticmethod
     def _group_header(message_type: str) -> str:
