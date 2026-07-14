@@ -105,6 +105,7 @@ class GobbyRunner:
     _unmodeled_observations_cleanup_task: asyncio.Task[None] | None
     _metrics_archive_task: asyncio.Task[None] | None
     _metric_snapshot_task: asyncio.Task[None] | None
+    _resource_monitor_task: asyncio.Task[None] | None
     _hook_inbox_task: asyncio.Task[None] | None
     _bin_freshness_task: asyncio.Task[None] | None
     _code_index_task: asyncio.Task[None] | None

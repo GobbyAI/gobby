@@ -357,6 +357,10 @@ def mock_daemon_config() -> "MagicMock":
         "GOBBY_LOGGING_CLIENT_ERROR",
         str(temp_root / "gobby_test_client_error.log"),
     )
+    config.telemetry.log_file_stderr = os.environ.get(
+        "GOBBY_LOGGING_CLIENT_STDERR",
+        str(temp_root / "gobby_test_client_stderr.log"),
+    )
     config.ui.enabled = False
     config.databases.falkordb.password = None
     return config
@@ -389,6 +393,7 @@ def protect_production_resources(
 
     safe_log_client = safe_logs_dir / "gobby.log"
     safe_log_error = safe_logs_dir / "gobby-error.log"
+    safe_log_stderr = safe_logs_dir / "gobby-stderr.log"
     safe_log_mcp_server = safe_logs_dir / "mcp-server.log"
     safe_log_mcp_client = safe_logs_dir / "mcp-client.log"
     safe_hooks_dir = temp_dir / "hooks"
@@ -402,6 +407,7 @@ def protect_production_resources(
         "GOBBY_CONFIG_FILE": str(safe_config_file),  # Redirect config reads/writes
         "GOBBY_LOGGING_CLIENT": str(safe_log_client),
         "GOBBY_LOGGING_CLIENT_ERROR": str(safe_log_error),
+        "GOBBY_LOGGING_CLIENT_STDERR": str(safe_log_stderr),
         "GOBBY_LOGGING_MCP_SERVER": str(safe_log_mcp_server),
         "GOBBY_LOGGING_MCP_CLIENT": str(safe_log_mcp_client),
         "GOBBY_HOOKS_DIR": str(safe_hooks_dir),
