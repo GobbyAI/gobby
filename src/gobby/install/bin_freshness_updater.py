@@ -281,8 +281,7 @@ def _extract_binary_to_staging(
                         or member_name == spec.binary_name
                     ):
                         with archive.open(member_name) as fileobj:
-                            dest.write_bytes(fileobj.read())
-                        dest.chmod(0o755)
+                            _write_staged_binary(dest, fileobj.read())
                         return dest
         else:
             with tarfile.open(fileobj=BytesIO(archive_bytes), mode="r:gz") as archive:
@@ -294,12 +293,19 @@ def _extract_binary_to_staging(
                         extracted_file = archive.extractfile(member)
                         if extracted_file is None:
                             continue
-                        dest.write_bytes(extracted_file.read())
-                        dest.chmod(0o755)
+                        _write_staged_binary(dest, extracted_file.read())
                         return dest
     except (OSError, tarfile.TarError, zipfile.BadZipFile) as exc:
         raise SourceUnavailableError(f"{asset.asset_name}: extraction failed: {exc}") from exc
     raise SourceUnavailableError(f"{asset.asset_name}: binary {spec.binary_name} not found")
+
+
+def _write_staged_binary(path: Path, value: bytes) -> None:
+    with path.open("wb") as fileobj:
+        fileobj.write(value)
+        fileobj.flush()
+        os.fsync(fileobj.fileno())
+        os.fchmod(fileobj.fileno(), 0o755)
 
 
 def _write_install_sidecar(spec: ManagedBinSpec, asset: ReleaseAsset, bin_dir: Path) -> None:

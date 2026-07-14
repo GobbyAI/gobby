@@ -315,7 +315,10 @@ class TestBinUpdater:
         assert client.downloads == 0
 
     def test_staged_github_upgrade_promotes_binary_stamp_and_sidecar(
-        self, tmp_path: Path, postgres_db: HubDatabase
+        self,
+        tmp_path: Path,
+        postgres_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         db = postgres_db
         bin_dir = tmp_path / "bin"
@@ -324,6 +327,20 @@ class TestBinUpdater:
         _write_stamp(bin_dir, spec, "0.4.0")
         asset = _asset(spec, "0.4.1")
         client = FakeClient(asset=asset, archive=_tar_with_binary(spec, b"new"))
+        events: list[str] = []
+        real_fsync = os.fsync
+        real_replace = os.replace
+
+        def tracked_fsync(fd: int) -> None:
+            events.append("fsync")
+            real_fsync(fd)
+
+        def tracked_replace(src: str | Path, dst: str | Path) -> None:
+            events.append(f"replace:{Path(dst).name}")
+            real_replace(src, dst)
+
+        monkeypatch.setattr("gobby.install.bin_freshness_updater.os.fsync", tracked_fsync)
+        monkeypatch.setattr("gobby.install.bin_freshness_updater.os.replace", tracked_replace)
 
         record = update_managed_bin(
             db,
@@ -336,6 +353,7 @@ class TestBinUpdater:
         assert record is not None
         assert record.last_status == "updated"
         assert (bin_dir / spec.binary_name).read_bytes() == b"new"
+        assert events.index("fsync") < events.index(f"replace:{spec.binary_name}")
         assert (bin_dir / spec.stamp_name).read_text(encoding="utf-8").strip() == "0.4.1"
         sidecar = json.loads((bin_dir / spec.sidecar_name).read_text(encoding="utf-8"))
         assert sidecar["install_method"] == "github-release"
