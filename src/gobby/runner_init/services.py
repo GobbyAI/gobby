@@ -177,7 +177,7 @@ def _init_code_indexer(runner: GobbyRunner) -> None:
     if hasattr(runner.config, "code_index") and runner.config.code_index.enabled:
         try:
             from gobby.code_index.context import CodeIndexContext
-            from gobby.code_index.gcode_gateway import GcodeGateway, GcodeGatewayError
+            from gobby.code_index.gcode_gateway import GcodeGateway
             from gobby.code_index.storage import CodeIndexStorage
 
             ci_config = runner.config.code_index
@@ -192,7 +192,7 @@ def _init_code_indexer(runner: GobbyRunner) -> None:
             )
 
             logger.info("Code indexer initialized")
-        except GcodeGatewayError:
+        except Exception:
             mark_service_degraded(runner, "code_indexer")
             logger.warning("Failed to initialize code indexer", exc_info=True)
 

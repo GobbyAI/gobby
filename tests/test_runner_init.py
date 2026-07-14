@@ -468,6 +468,33 @@ class TestGobbyRunnerInitialization:
             )
             assert memory_error.exc_info is not None
 
+    def test_init_code_indexer_exception(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Test that code indexer initialization exceptions are handled."""
+        mock_config = MagicMock()
+        mock_config.code_index.enabled = True
+
+        patches = create_base_patches(mock_config=mock_config)
+        patches.append(
+            patch(
+                "gobby.code_index.storage.CodeIndexStorage",
+                side_effect=ImportError("Code index storage unavailable"),
+            )
+        )
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+
+            runner = GobbyRunner()
+
+            assert runner.code_indexer is None
+            assert "code_indexer" in runner.degraded_services
+            code_index_error = next(
+                record
+                for record in caplog.records
+                if record.message == "Failed to initialize code indexer"
+            )
+            assert code_index_error.exc_info is not None
+
     def test_init_with_memory_backup_manager_does_not_import_jsonl(self) -> None:
         """Test MemoryBackupManager initializes without automatic JSONL import."""
         mock_config = MagicMock()
