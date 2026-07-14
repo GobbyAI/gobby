@@ -167,11 +167,12 @@ def initialize_project(
     project_context = get_project_context(cwd)
     if project_context and project_context.get("id"):
         logger.debug(f"Project already initialized: {project_context.get('name')}")
+        project_root = Path(project_context.get("project_path") or cwd).resolve()
 
         # Re-detect and merge verification commands on re-init
         from gobby.project_verification.refresh import refresh_project_verification_deterministic
 
-        refresh_result = refresh_project_verification_deterministic(cwd, fix=True)
+        refresh_result = refresh_project_verification_deterministic(project_root, fix=True)
         verification = VerificationCommands.from_dict(refresh_result.after)
         if refresh_result.written:
             logger.info("Updated verification commands in project.json")

@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from psycopg.errors import UniqueViolation
 
+from gobby.utils.project_context import get_project_context
 from gobby.utils.project_init import (
     InitResult,
     VerificationCommands,
@@ -775,6 +776,44 @@ class TestInitializeProject:
             assert result.project_id == "existing-id"
             assert result.project_name == "existing-name"
             assert result.already_existed is True
+
+    def test_reinit_from_subdirectory_refreshes_project_root(self, tmp_path: Path) -> None:
+        """Re-init refreshes the discovered project root instead of the requested cwd."""
+        project_id = "existing-id"
+        project_file = tmp_path / ".gobby" / "project.json"
+        project_file.parent.mkdir()
+        project_file.write_text(
+            json.dumps(
+                {
+                    "id": project_id,
+                    "name": "existing-name",
+                    "created_at": "2024-01-01",
+                    "verification": {"unit_tests": "old command"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (tmp_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\n", encoding="utf-8")
+        (tmp_path / "tests").mkdir()
+
+        subdir = tmp_path / "packages" / "api"
+        subdir.mkdir(parents=True)
+        (subdir / "pyproject.toml").write_text("[tool.pytest.ini_options]\n", encoding="utf-8")
+        (subdir / "tests").mkdir()
+
+        result = initialize_project(subdir)
+
+        root_data = json.loads(project_file.read_text(encoding="utf-8"))
+        assert result.project_id == project_id
+        assert not (subdir / ".gobby" / "project.json").exists()
+        assert root_data["id"] == project_id
+        assert root_data["verification"] != {"unit_tests": "old command"}
+        assert result.verification is not None
+        assert result.verification.to_dict() == root_data["verification"]
+        assert get_project_context(subdir) == {
+            **root_data,
+            "project_path": str(tmp_path),
+        }
 
     def test_already_initialized_with_empty_id(self, tmp_path: Path) -> None:
         """Test that project with empty id is treated as uninitialized."""
