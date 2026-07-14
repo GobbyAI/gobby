@@ -8,7 +8,12 @@ from gobby.storage.session_models import Session
 from gobby.utils.datetime import utc_now
 
 from ._bootstrap import TitleChangeCallback
-from ._constants import SYSTEM_SESSION_ID, ensure_system_session, get_logger
+from ._constants import (
+    SYSTEM_SESSION_ID,
+    ensure_system_session,
+    get_logger,
+    validate_session_status_transition,
+)
 from ._lineage_guard import repair_self_parent_session, sanitize_parent_session_id
 from ._summary_update import _SummaryUpdateMixin
 
@@ -37,6 +42,8 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
         Service-style callers that only need a success flag should use
         SessionManager.update_session_status().
         """
+        current = self.get(session_id)
+        validate_session_status_transition(current.status if current else None, status)
         now = utc_now()
         with self.db.transaction():
             self.db.execute(

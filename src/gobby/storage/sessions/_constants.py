@@ -10,6 +10,31 @@ from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger("gobby.storage.sessions")
 
+ALLOWED_SESSION_STATUSES = frozenset(
+    {
+        "active",
+        "paused",
+        "handoff_ready",
+        "completed",
+        "cancelled",
+        "closed",
+        "expired",
+        "deleted",
+    }
+)
+TERMINAL_SESSION_STATUSES = frozenset({"expired", "deleted"})
+
+
+def validate_session_status_transition(current_status: str | None, new_status: str) -> None:
+    """Validate a session status value and prevent direct terminal-state revival."""
+    if new_status not in ALLOWED_SESSION_STATUSES:
+        allowed = ", ".join(sorted(ALLOWED_SESSION_STATUSES))
+        raise ValueError(f"Invalid session status {new_status!r}. Must be one of: {allowed}")
+    if current_status in TERMINAL_SESSION_STATUSES and new_status != current_status:
+        raise ValueError(
+            f"Cannot transition terminal session status from {current_status!r} to {new_status!r}"
+        )
+
 
 def get_logger() -> logging.Logger:
     """Resolve package logger through the public import path for patch compatibility."""

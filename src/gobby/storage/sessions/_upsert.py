@@ -76,7 +76,15 @@ def update_existing_session(
             END,
             sandbox_enabled = COALESCE(%s, sandbox_enabled),
             sandbox_policy_hash = COALESCE(%s, sandbox_policy_hash),
-            status = 'active',
+            transcript_processed = CASE
+                WHEN status = 'expired' AND session_type = 'terminal' THEN FALSE
+                ELSE transcript_processed
+            END,
+            status = CASE
+                WHEN status = 'deleted' THEN status
+                WHEN status = 'expired' AND session_type = 'terminal' THEN 'active'
+                ELSE 'active'
+            END,
             updated_at = %s
         WHERE id = %s
         """,

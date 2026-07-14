@@ -575,6 +575,60 @@ class TestSessionManagerRegistration:
         assert session2.id == session1.id
         assert session2.title == "Updated"
 
+    def test_register_revives_expired_terminal_session_and_resets_transcript(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        session = session_manager.register(
+            external_id="expired-registration",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+            transcript_path="/tmp/expired-registration.jsonl",
+        )
+        session_manager.update_status(session.id, "expired")
+        session_manager.mark_transcript_processed(session.id)
+
+        registered = session_manager.register(
+            external_id="expired-registration",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+
+        assert registered.id == session.id
+        assert registered.status == "active"
+        row = session_manager.db.fetchone(
+            "SELECT transcript_processed FROM sessions WHERE id = %s",
+            (session.id,),
+        )
+        assert row is not None
+        assert row["transcript_processed"] == 0
+
+    def test_register_does_not_revive_deleted_session(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        session = session_manager.register(
+            external_id="deleted-registration",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        session_manager.update_status(session.id, "deleted")
+
+        registered = session_manager.register(
+            external_id="deleted-registration",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+
+        assert registered.id == session.id
+        assert registered.status == "deleted"
+
     def test_register_existing_session_ignores_self_parent(
         self,
         caplog: pytest.LogCaptureFixture,

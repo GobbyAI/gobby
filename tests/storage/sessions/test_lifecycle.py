@@ -32,6 +32,51 @@ class TestSessionManagerLifecycle:
         assert updated is not None
         assert updated.status == "paused"
 
+    @pytest.mark.parametrize("bulk", [False, True])
+    def test_status_updates_reject_unknown_values(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+        *,
+        bulk: bool,
+    ) -> None:
+        session = session_manager.register(
+            external_id=f"invalid-status-{bulk}",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        with pytest.raises(ValueError, match="Invalid session status 'immortal'"):
+            if bulk:
+                session_manager.update(session.id, status="immortal")
+            else:
+                session_manager.update_status(session.id, "immortal")
+
+    @pytest.mark.parametrize("terminal_status", ["expired", "deleted"])
+    @pytest.mark.parametrize("bulk", [False, True])
+    def test_status_updates_reject_transitions_out_of_terminal_states(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+        terminal_status: str,
+        *,
+        bulk: bool,
+    ) -> None:
+        session = session_manager.register(
+            external_id=f"terminal-transition-{terminal_status}-{bulk}",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        session_manager.update_status(session.id, terminal_status)
+
+        with pytest.raises(ValueError, match="Cannot transition terminal session status"):
+            if bulk:
+                session_manager.update(session.id, status="active")
+            else:
+                session_manager.update_status(session.id, "active")
+
     def test_list_sessions(
         self,
         session_manager: SessionManager,

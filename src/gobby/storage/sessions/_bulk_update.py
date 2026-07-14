@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 from gobby.storage.session_models import Session
 from gobby.utils.datetime import utc_now
 
+from ._constants import validate_session_status_transition
 from ._upsert import is_session_unique_conflict
 
 if TYPE_CHECKING:
@@ -92,6 +93,7 @@ class _BulkUpdateMixin:
         if transcript_path is not None:
             values["transcript_path"] = transcript_path
         if status is not None:
+            validate_session_status_transition(current.status if current else None, status)
             values["status"] = status
         if title is not None:
             values["title"] = title
