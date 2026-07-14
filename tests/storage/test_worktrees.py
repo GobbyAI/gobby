@@ -1,5 +1,6 @@
 """Tests for local worktree storage manager."""
 
+import threading
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -804,6 +805,7 @@ class TestLocalWorktreeManagerStatusTransitions:
     ) -> None:
         """claim sets agent_session_id."""
         mock_row["agent_session_id"] = "sess-new"
+        mock_db.execute.return_value.rowcount = 1
         mock_db.fetchone.return_value = mock_row
 
         worktree = manager.claim("wt-123456", "sess-new")
@@ -813,6 +815,70 @@ class TestLocalWorktreeManagerStatusTransitions:
         call_args = mock_db.execute.call_args
         query = call_args[0][0]
         assert "agent_session_id = %s" in query
+
+    def test_claim_returns_none_when_conditional_update_loses(
+        self,
+        manager: LocalWorktreeManager,
+        mock_db: MagicMock,
+    ) -> None:
+        """claim reports failure when another session already owns the worktree."""
+        mock_db.execute.return_value.rowcount = 0
+
+        worktree = manager.claim("wt-123456", "sess-new")
+
+        assert worktree is None
+        mock_db.fetchone.assert_not_called()
+
+    def test_concurrent_claims_have_exactly_one_winning_session(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, object],
+    ) -> None:
+        """A conditional update prevents competing owners from both winning."""
+        session_manager = SessionManager(temp_db)
+        manager = LocalWorktreeManager(temp_db)
+        worktree = manager.create(
+            project_id=str(sample_project["id"]),
+            branch_name="feature/atomic-worktree-claim",
+            worktree_path="/tmp/worktrees/atomic-worktree-claim",
+        )
+        sessions = [
+            session_manager.register(
+                external_id=f"atomic-worktree-claim-{index}",
+                machine_id="atomic-worktree-claim-machine",
+                source="codex",
+                project_id=str(sample_project["id"]),
+            )
+            for index in range(2)
+        ]
+        barrier = threading.Barrier(2)
+        winners: list[str] = []
+        errors: list[BaseException] = []
+        result_lock = threading.Lock()
+
+        def claim(session_id: str) -> None:
+            try:
+                barrier.wait(timeout=5)
+                claimed = LocalWorktreeManager(temp_db).claim(worktree.id, session_id)
+                if claimed is not None:
+                    with result_lock:
+                        winners.append(session_id)
+            except BaseException as exc:  # pragma: no cover - asserted below
+                with result_lock:
+                    errors.append(exc)
+
+        threads = [threading.Thread(target=claim, args=(session.id,)) for session in sessions]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+        assert not any(thread.is_alive() for thread in threads)
+        assert errors == []
+        assert len(winners) == 1
+        stored = manager.get(worktree.id)
+        assert stored is not None
+        assert stored.agent_session_id == winners[0]
 
     def test_release_clears_session_id(
         self,

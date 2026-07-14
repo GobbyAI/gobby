@@ -354,9 +354,13 @@ class LocalWorktreeManager:
             session_id: Session ID claiming ownership
 
         Returns:
-            Updated Worktree or None if not found
+            Updated Worktree, or None if the worktree is missing or owned by another session
         """
-        return self.update(worktree_id, agent_session_id=session_id)
+        return self.claim_if_available(
+            worktree_id,
+            session_id,
+            allowed_existing_session_ids=(None, session_id),
+        )
 
     def is_claimed_by_live_session(self, worktree_id: str) -> bool:
         """Return True when the worktree owner is an active session."""
