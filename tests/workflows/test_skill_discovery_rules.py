@@ -2306,6 +2306,107 @@ class TestRequireLuaSkillCondition:
         assert self._eval("") is False
 
 
+class TestRequireObjcSkillStructure:
+    """Verify require-objc-skill rule structure."""
+
+    def test_is_before_tool_event(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-objc-skill")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert body.when is not None
+        assert "not skill_loaded('objc')" in body.when
+
+    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-objc-skill")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        assert len(body.effects) == 1
+        assert body.effects[0].type == "block"
+        assert body.effects[0].reason == skill_fetch_directive("objc")
+
+
+class TestRequireObjcSkillCondition:
+    """Test the require-objc-skill condition evaluates correctly."""
+
+    CONDITION = (
+        "not skill_loaded('objc') "
+        "and event.data.get('canonical_tool_kind') == 'write' "
+        "and event.data.get('canonical_file_path', '').endswith(('.m', '.mm', '.h', '.pch'))"
+    )
+
+    def _eval(
+        self,
+        file_path: str,
+        *,
+        canonical_tool_kind: str = "write",
+        loaded_skills: list[str] | None = None,
+        injected_skills: list[str] | None = None,
+    ) -> bool:
+        variables = {"loaded_skills": loaded_skills or []}
+        if injected_skills is not None:
+            variables["injected_skills"] = injected_skills
+        context = {
+            "variables": variables,
+            "event": SimpleNamespace(
+                data={
+                    "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_file_path": file_path,
+                }
+            ),
+            "tool_input": {},
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        return evaluator.evaluate(self.CONDITION)
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/Sources/ProfileKit/ProfileClient.m",
+            "/project/Sources/ProfileKit/EngineBridge.mm",
+            "/project/Sources/ProfileKit/ProfileClient.h",
+            "/project/Sources/ProfileKit/ProfileKit.pch",
+        ],
+    )
+    def test_matches_objc_source_header_and_prefix_header_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/Sources/ProfileKit/ProfileClient.c",
+            "/project/Sources/ProfileKit/ProfileClient.cc",
+            "/project/Sources/ProfileKit/ProfileClient.cpp",
+            "/project/Sources/ProfileKit/ProfileClient.hpp",
+            "/project/Sources/ProfileKit/ProfileClient.swift",
+            "/project/Sources/ProfileKit/module.modulemap",
+            "/project/Sources/ProfileKit/ProfileClient.m.bak",
+            "/project/ProfileKit.xcodeproj/project.pbxproj",
+        ],
+    )
+    def test_skips_non_objc_targets(self, file_path: str) -> None:
+        assert self._eval(file_path) is False
+
+    def test_skips_when_already_loaded(self) -> None:
+        assert self._eval("/project/ProfileClient.m", loaded_skills=["objc"]) is False
+
+    def test_swift_skill_does_not_count_as_objc_loaded(self) -> None:
+        assert self._eval("/project/ProfileClient.m", loaded_skills=["swift"]) is True
+
+    def test_does_not_skip_when_legacy_injected(self) -> None:
+        assert self._eval("/project/ProfileClient.m", injected_skills=["objc"]) is True
+
+    def test_skips_non_edit_write_tool(self) -> None:
+        assert self._eval("/project/ProfileClient.m", canonical_tool_kind="read") is False
+
+    def test_skips_empty_file_path(self) -> None:
+        assert self._eval("") is False
+
+
 # --- require-swift-skill structure ---
 
 
