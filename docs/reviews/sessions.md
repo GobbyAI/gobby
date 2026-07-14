@@ -246,31 +246,16 @@
 
 ### Task #16817 stale-review disposition (2026-07-14)
 
-The review above describes commit `bad39fcba`; subsequent changes moved or resolved many
-references. Task #16817 was narrowed to remaining dead session/storage examples. The
-following records the disposition of every item in the five nit groups:
+This review targets `bad39fcba`; task #16817 was later narrowed to remaining dead
+session/storage examples. Dispositions apply to every item in each preceding `Where` list:
 
-- **Processor:** dead `_hook_manager` / `_build_codex_hook_event`, the same-tick JSON mtime
-  gate, and Gemini history-shrink handling are waived from this narrowed stale-review leaf.
-  None was retained as a remaining example in the updated task description.
-- **Parser:** multi-tool assistant handling, thinking-block order, the boundary-recheck loop,
-  non-text tool-result rendering, duplicate dispatch, unknown-block logging, timestamp
-  tolerance, Gemini function-call IDs, and Codex web-search pairing are waived from this
-  narrowed leaf. The separately cited dead `HookTranscriptAssembler` example is resolved:
-  its source, tests, factory wiring, and manager field are absent from the current tree.
-- **Analyzer/summarize:** initial-goal wrapper handling, `found_active_task`, uncapped
-  `files_modified`, whole-file summary loading, and token-tracker fallback drift are waived
-  because the updated task identified no remaining target in this group.
-- **Index/window:** size-snapshot overrun, `boundaries_used`, lookback abort, scan complexity,
-  duplicate exception handling, and sidecar fsync are waived from the narrowed leaf. The
-  `transcript_index.py` size observation is obsolete; the task update explicitly records
-  that the file is no longer over the cited size.
-- **Mailbox/storage:** dead `mark_read` / `read_at` state and no-op `unread_only` filters are
-  fixed by `ce7cd704f`. Casefold offsets, renderer truncation/heading/regex handling,
-  `pending_tool_calls`, source detection, zombie delivery stamping, transcript restore path,
-  deleted-status querying, LIKE escaping, bulk-update redirect/NULL handling, discovery
-  ordering/cap, and registration-cache sleeping are waived from this narrowed stale-review
-  leaf because none was retained as a remaining example in the updated task description.
+- **Processor:** all items waived; the updated task retained no processor target.
+- **Parser:** all nit items waived for the same scope reason. The separately cited dead
+  `HookTranscriptAssembler` is resolved: source, tests, factory wiring, and field are absent.
+- **Analyzer/summarize:** all items waived; the updated task retained no target in this group.
+- **Index/window:** all items waived; the task update also records the size item as obsolete.
+- **Mailbox/storage:** `mark_read` / `read_at` / `unread_only` are fixed by `ce7cd704f`; every
+  other item is waived because the updated task retained none as a remaining example.
 
 ## Systemic patterns
 
