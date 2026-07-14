@@ -99,7 +99,10 @@ export class AppErrorBoundary extends Component<
               Try Again
             </button>
             <button
-              onClick={this.props.onReturnToChat}
+              onClick={() => {
+                this.setState({ hasError: false, error: null });
+                this.props.onReturnToChat();
+              }}
               style={{
                 padding: "0.4rem 1rem",
                 borderRadius: 4,
