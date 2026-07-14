@@ -6,6 +6,7 @@ import hashlib
 import logging
 from pathlib import Path
 
+from gobby.skills import limits
 from gobby.skills._loader_models import LoadedSkillFile
 
 logger = logging.getLogger(__name__)
@@ -137,13 +138,17 @@ def scan_subdirectory(skill_dir: Path, subdir_name: str) -> list[str] | None:
     return sorted(files) if files else None
 
 
-def load_skill_files(skill_dir: Path) -> list[LoadedSkillFile]:
+def load_skill_files(
+    skill_dir: Path,
+    initial_size_bytes: int = 0,
+) -> list[LoadedSkillFile]:
     """Recursively load all non-binary files from a skill directory."""
     try:
         skill_dir_resolved = skill_dir.resolve()
     except (OSError, RuntimeError, ValueError):
         return []
     files: list[LoadedSkillFile] = []
+    total_size_bytes = initial_size_bytes
 
     for file_path in skill_dir.rglob("*"):
         if not file_path.is_file():
@@ -173,12 +178,27 @@ def load_skill_files(skill_dir: Path) -> list[LoadedSkillFile]:
 
         rel_path = str(file_path.relative_to(skill_dir))
         try:
-            content = file_path.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError):
+            with file_path.open("rb") as file:
+                raw = file.read(limits.MAX_LOADED_FILE_BYTES + 1)
+        except OSError:
             logger.debug(f"Skipping unreadable file: {rel_path}")
             continue
 
-        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        size_bytes = len(raw)
+        if size_bytes > limits.MAX_LOADED_FILE_BYTES:
+            raise ValueError(
+                f"Loaded skill file '{rel_path}' exceeds {limits.MAX_LOADED_FILE_BYTES} byte limit"
+            )
+        if total_size_bytes + size_bytes > limits.MAX_SKILL_TOTAL_BYTES:
+            raise ValueError(f"Skill files exceed {limits.MAX_SKILL_TOTAL_BYTES} byte total limit")
+        try:
+            content = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            logger.debug(f"Skipping unreadable file: {rel_path}")
+            continue
+        total_size_bytes += size_bytes
+
+        content_hash = hashlib.sha256(raw).hexdigest()
         file_type = _classify_file(rel_path, file_path.name)
 
         files.append(
@@ -187,7 +207,7 @@ def load_skill_files(skill_dir: Path) -> list[LoadedSkillFile]:
                 file_type=file_type,
                 content=content,
                 content_hash=content_hash,
-                size_bytes=len(content.encode("utf-8")),
+                size_bytes=size_bytes,
             )
         )
 

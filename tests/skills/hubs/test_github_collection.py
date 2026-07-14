@@ -1,14 +1,47 @@
 """Tests for GitHubCollectionProvider."""
 
+from collections.abc import AsyncIterator
+from functools import partial
 from unittest.mock import patch
 
+import httpx
 import pytest
 
 from gobby.config.features import SkillDescriptionConfig
 from gobby.skills.hubs.base import HubSkillInfo
 from gobby.skills.hubs.github_collection import GitHubCollectionProvider
+from gobby.skills.limits import MAX_SKILL_MD_BYTES
 
 pytestmark = pytest.mark.unit
+
+
+class _OversizedStream(httpx.AsyncByteStream):
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield b"x" * MAX_SKILL_MD_BYTES
+        yield b"x"
+
+
+async def test_fetch_skill_content_rejects_oversized_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, stream=_OversizedStream(), request=request)
+    )
+    client_type = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        partial(client_type, transport=transport),
+    )
+    provider = GitHubCollectionProvider(
+        hub_name="my-collection",
+        base_url="",
+        repo="anthropics/skills",
+    )
+
+    result = await provider._fetch_skill_content("oversized")
+
+    assert result is None
 
 
 class TestGitHubCollectionProvider:
@@ -562,8 +595,6 @@ class TestGitHubCollectionProviderFetchSkillContent:
     @pytest.mark.asyncio
     async def test_fetch_skill_content_success(self) -> None:
         """Test _fetch_skill_content returns SKILL.md content."""
-        from unittest.mock import AsyncMock, MagicMock
-
         provider = GitHubCollectionProvider(
             hub_name="my-collection",
             base_url="",
@@ -571,29 +602,26 @@ class TestGitHubCollectionProviderFetchSkillContent:
             branch="main",
         )
 
-        mock_response = MagicMock()
-        mock_response.text = "# My Skill\n\nThis skill does something useful."
-        mock_response.raise_for_status = MagicMock()
+        requests: list[httpx.Request] = []
 
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_client.get = AsyncMock(return_value=mock_response)
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=None)
-            mock_client_class.return_value = mock_client
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(
+                200,
+                content=b"# My Skill\n\nThis skill does something useful.",
+                request=request,
+            )
 
+        transport = httpx.MockTransport(handler)
+        with patch("httpx.AsyncClient", partial(httpx.AsyncClient, transport=transport)):
             result = await provider._fetch_skill_content("commit-message")
 
-            assert result == "# My Skill\n\nThis skill does something useful."
-            # Verify correct URL was called
-            call_url = mock_client.get.call_args[0][0]
-            assert "anthropics/skills/contents/commit-message/SKILL.md" in call_url
+        assert result == "# My Skill\n\nThis skill does something useful."
+        assert "anthropics/skills/contents/commit-message/SKILL.md" in str(requests[0].url)
 
     @pytest.mark.asyncio
     async def test_fetch_skill_content_with_path(self) -> None:
         """Test _fetch_skill_content includes subdirectory path."""
-        from unittest.mock import AsyncMock, MagicMock
-
         provider = GitHubCollectionProvider(
             hub_name="my-collection",
             base_url="",
@@ -602,54 +630,42 @@ class TestGitHubCollectionProviderFetchSkillContent:
             path="skills",
         )
 
-        mock_response = MagicMock()
-        mock_response.text = "# Skill content"
-        mock_response.raise_for_status = MagicMock()
+        requests: list[httpx.Request] = []
 
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_client.get = AsyncMock(return_value=mock_response)
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=None)
-            mock_client_class.return_value = mock_client
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(200, content=b"# Skill content", request=request)
 
+        transport = httpx.MockTransport(handler)
+        with patch("httpx.AsyncClient", partial(httpx.AsyncClient, transport=transport)):
             await provider._fetch_skill_content("my-skill")
 
-            call_url = mock_client.get.call_args[0][0]
-            assert "skills/my-skill/SKILL.md" in call_url
-            assert mock_client.get.await_args.kwargs["params"] == {"ref": "main"}
+        assert "skills/my-skill/SKILL.md" in str(requests[0].url)
+        assert requests[0].url.params["ref"] == "main"
 
     @pytest.mark.asyncio
     async def test_fetch_skill_content_not_found(self) -> None:
         """Test _fetch_skill_content returns None on 404."""
-        from unittest.mock import AsyncMock, MagicMock
-
-        import httpx
-
         provider = GitHubCollectionProvider(
             hub_name="my-collection",
             base_url="",
             repo="anthropics/skills",
         )
 
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_client.get = AsyncMock(
-                side_effect=httpx.HTTPStatusError(
-                    "Not Found",
-                    request=MagicMock(),
-                    response=MagicMock(status_code=404),
-                )
-            )
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=None)
-            mock_client_class.return_value = mock_client
+        requests: list[httpx.Request] = []
 
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(404, request=request)
+
+        transport = httpx.MockTransport(handler)
+        with patch("httpx.AsyncClient", partial(httpx.AsyncClient, transport=transport)):
             result = await provider._fetch_skill_content("nonexistent-skill")
-            assert result is None
-            assert mock_client.get.await_args.args[0].endswith(
-                "/anthropics/skills/contents/nonexistent-skill/SKILL.md"
-            )
+
+        assert result is None
+        assert requests[0].url.path.endswith(
+            "/anthropics/skills/contents/nonexistent-skill/SKILL.md"
+        )
 
     @pytest.mark.asyncio
     async def test_fetch_skill_content_invalid_repo(self) -> None:

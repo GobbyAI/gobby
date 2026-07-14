@@ -15,11 +15,12 @@ from typing import Any
 import httpx
 
 from gobby.skills.hubs.base import DownloadResult, HubProvider, HubSkillDetails, HubSkillInfo
+from gobby.skills.limits import HUB_STREAM_CHUNK_BYTES, MAX_SKILL_MD_BYTES
 
 logger = logging.getLogger(__name__)
 
 _ALLOWED_RAW_FILE_HOSTS = frozenset({"raw.githubusercontent.com"})
-_MAX_RAW_FILE_BYTES = 1024 * 1024
+_MAX_RAW_FILE_BYTES = MAX_SKILL_MD_BYTES
 _MAX_REDIRECTS = 5
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 
@@ -146,7 +147,7 @@ class ClaudePluginsProvider(HubProvider):
                             raise RuntimeError("Skill download exceeds size limit")
 
                     content = bytearray()
-                    async for chunk in response.aiter_bytes():
+                    async for chunk in response.aiter_bytes(chunk_size=HUB_STREAM_CHUNK_BYTES):
                         content.extend(chunk)
                         if len(content) > _MAX_RAW_FILE_BYTES:
                             raise RuntimeError("Skill download exceeds size limit")

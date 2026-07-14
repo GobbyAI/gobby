@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from gobby.skills.hubs.base import DownloadResult, HubProvider, HubSkillDetails, HubSkillInfo
+from gobby.skills.limits import HUB_STREAM_CHUNK_BYTES, MAX_SKILL_MD_BYTES
 from gobby.skills.loader import GitHubRef, clone_skill_repo, resolve_github_skill_path
 
 if TYPE_CHECKING:
@@ -279,14 +280,36 @@ class GitHubCollectionProvider(HubProvider):
 
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.get(
+                async with client.stream(
+                    "GET",
                     url,
                     headers=headers,
                     params=params,
                     timeout=30.0,
-                )
-                response.raise_for_status()
-                return response.text
+                ) as response:
+                    response.raise_for_status()
+                    content_length = response.headers.get("content-length")
+                    if content_length is not None:
+                        try:
+                            declared_size = int(content_length)
+                        except ValueError:
+                            logger.debug(f"SKILL.md for {slug} has invalid content length")
+                            return None
+                        if declared_size > MAX_SKILL_MD_BYTES:
+                            logger.debug(f"SKILL.md for {slug} exceeds size limit")
+                            return None
+
+                    content = bytearray()
+                    async for chunk in response.aiter_bytes(chunk_size=HUB_STREAM_CHUNK_BYTES):
+                        content.extend(chunk)
+                        if len(content) > MAX_SKILL_MD_BYTES:
+                            logger.debug(f"SKILL.md for {slug} exceeds size limit")
+                            return None
+                    try:
+                        return content.decode("utf-8")
+                    except UnicodeDecodeError:
+                        logger.debug(f"SKILL.md for {slug} is not valid UTF-8")
+                        return None
         except httpx.HTTPStatusError as e:
             logger.debug(f"Could not fetch SKILL.md for {slug}: {e.response.status_code}")
             return None

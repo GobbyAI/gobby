@@ -146,7 +146,10 @@ class SkillLoader:
             skill.assets = self._scan_subdirectory(path, "assets")
 
             # Load all files with content for multi-file support
-            skill.loaded_files = self._load_skill_files(path)
+            skill.loaded_files = self._load_skill_files(
+                path,
+                initial_size_bytes=len(skill.content.encode("utf-8")),
+            )
 
         # Set source tracking
         skill.source_path = str(skill_file)
@@ -166,7 +169,11 @@ class SkillLoader:
         """
         return scan_subdirectory(skill_dir, subdir_name)
 
-    def _load_skill_files(self, skill_dir: Path) -> list[LoadedSkillFile]:
+    def _load_skill_files(
+        self,
+        skill_dir: Path,
+        initial_size_bytes: int = 0,
+    ) -> list[LoadedSkillFile]:
         """Recursively scan a skill directory and load all non-binary files.
 
         Classifies files by location:
@@ -185,7 +192,10 @@ class SkillLoader:
         Returns:
             List of LoadedSkillFile with content and hashes
         """
-        return load_skill_files(skill_dir)
+        try:
+            return load_skill_files(skill_dir, initial_size_bytes=initial_size_bytes)
+        except ValueError as e:
+            raise SkillLoadError(str(e), skill_dir) from e
 
     def load_directory(
         self,

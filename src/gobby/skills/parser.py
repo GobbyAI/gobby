@@ -40,6 +40,9 @@ if TYPE_CHECKING:
     from gobby.skills._loader_models import LoadedSkillFile
 
 import yaml
+from yaml.events import AliasEvent
+
+from gobby.skills import limits
 
 # Pattern to extract YAML frontmatter (content between --- delimiters)
 # Allows empty frontmatter (---\n---) or content between delimiters
@@ -238,16 +241,33 @@ def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     Raises:
         SkillParseError: If frontmatter is missing or invalid
     """
-    match = FRONTMATTER_PATTERN.match(text)
+    frontmatter_window = text[: limits.MAX_FRONTMATTER_BYTES + 9]
+    match = FRONTMATTER_PATTERN.match(frontmatter_window)
     if not match:
+        if text.startswith("---") and len(text) > len(frontmatter_window):
+            raise SkillParseError(
+                f"YAML frontmatter exceeds {limits.MAX_FRONTMATTER_BYTES} byte limit"
+            )
         raise SkillParseError("Missing or invalid YAML frontmatter (must start with ---)")
 
     frontmatter_yaml = match.group(1)
     content = text[match.end() :].strip()
 
+    if (
+        len(frontmatter_yaml) > limits.MAX_FRONTMATTER_BYTES
+        or len(frontmatter_yaml.encode("utf-8")) > limits.MAX_FRONTMATTER_BYTES
+    ):
+        raise SkillParseError(f"YAML frontmatter exceeds {limits.MAX_FRONTMATTER_BYTES} byte limit")
+
     try:
+        aliases = sum(
+            isinstance(event, AliasEvent)
+            for event in yaml.parse(frontmatter_yaml, Loader=yaml.SafeLoader)
+        )
+        if aliases > limits.MAX_YAML_ALIASES:
+            raise SkillParseError(f"YAML frontmatter exceeds {limits.MAX_YAML_ALIASES} alias limit")
         frontmatter = yaml.safe_load(frontmatter_yaml)
-    except yaml.YAMLError as e:
+    except (RecursionError, yaml.YAMLError) as e:
         raise SkillParseError(f"Invalid YAML in frontmatter: {e}") from e
 
     if frontmatter is None:
@@ -345,6 +365,14 @@ def parse_skill_text(text: str, source_path: str | None = None) -> ParsedSkill:
     Raises:
         SkillParseError: If parsing fails or required fields missing
     """
+    if (
+        len(text) > limits.MAX_SKILL_MD_BYTES
+        or len(text.encode("utf-8")) > limits.MAX_SKILL_MD_BYTES
+    ):
+        raise SkillParseError(
+            f"SKILL.md exceeds {limits.MAX_SKILL_MD_BYTES} byte limit", source_path
+        )
+
     try:
         frontmatter, content = parse_frontmatter(text)
     except SkillParseError as e:
@@ -478,5 +506,12 @@ def parse_skill_file(path: str | Path) -> ParsedSkill:
     if not path.exists():
         raise FileNotFoundError(f"Skill file not found: {path}")
 
-    text = path.read_text(encoding="utf-8")
+    with path.open("rb") as file:
+        raw = file.read(limits.MAX_SKILL_MD_BYTES + 1)
+    if len(raw) > limits.MAX_SKILL_MD_BYTES:
+        raise SkillParseError(f"SKILL.md exceeds {limits.MAX_SKILL_MD_BYTES} byte limit", str(path))
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise SkillParseError("SKILL.md is not valid UTF-8", str(path)) from e
     return parse_skill_text(text, source_path=str(path))

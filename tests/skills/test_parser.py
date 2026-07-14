@@ -2,6 +2,7 @@
 
 import pytest
 
+from gobby.skills import limits
 from gobby.skills.parser import (
     ParsedSkill,
     SkillParseError,
@@ -11,6 +12,36 @@ from gobby.skills.parser import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+def test_rejects_oversized_frontmatter() -> None:
+    text = f"---\ndescription: {'x' * limits.MAX_FRONTMATTER_BYTES}\n---\nbody"
+
+    with pytest.raises(SkillParseError, match="frontmatter exceeds"):
+        parse_frontmatter(text)
+
+
+def test_rejects_anchor_heavy_frontmatter() -> None:
+    aliases = ", ".join("*value" for _ in range(limits.MAX_YAML_ALIASES + 1))
+    text = f"---\nvalue: &value x\nitems: [{aliases}]\n---\nbody"
+
+    with pytest.raises(SkillParseError, match="alias limit"):
+        parse_frontmatter(text)
+
+
+def test_rejects_oversized_skill_text() -> None:
+    text = "x" * (limits.MAX_SKILL_MD_BYTES + 1)
+
+    with pytest.raises(SkillParseError, match="SKILL.md exceeds"):
+        parse_skill_text(text)
+
+
+def test_rejects_oversized_skill_file(tmp_path) -> None:
+    skill_file = tmp_path / "SKILL.md"
+    skill_file.write_bytes(b"x" * (limits.MAX_SKILL_MD_BYTES + 1))
+
+    with pytest.raises(SkillParseError, match="SKILL.md exceeds"):
+        parse_skill_file(skill_file)
 
 
 class TestParseFrontmatter:

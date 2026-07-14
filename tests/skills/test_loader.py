@@ -2,7 +2,30 @@
 
 import pytest
 
+from gobby.skills import limits
+from gobby.skills.loader import SkillLoader, SkillLoadError
+
 pytestmark = pytest.mark.integration
+
+
+def test_rejects_oversized_loaded_file(skill_dir, monkeypatch) -> None:
+    monkeypatch.setattr(limits, "MAX_LOADED_FILE_BYTES", 8)
+    references = skill_dir / "references"
+    references.mkdir()
+    (references / "large.md").write_text("x" * 9)
+
+    with pytest.raises(SkillLoadError, match="large.md.*byte limit"):
+        SkillLoader().load_skill(skill_dir)
+
+
+def test_rejects_loaded_files_over_total_limit(skill_dir, monkeypatch) -> None:
+    monkeypatch.setattr(limits, "MAX_SKILL_TOTAL_BYTES", 1)
+    references = skill_dir / "references"
+    references.mkdir()
+    (references / "small.md").write_text("x")
+
+    with pytest.raises(SkillLoadError, match="byte total limit"):
+        SkillLoader().load_skill(skill_dir)
 
 
 @pytest.fixture
