@@ -202,10 +202,14 @@ def _resolve_project_id(_project_id: str | None, cwd: str | None) -> str:
 
 
 def _server(sm: _SM, rm: _RM | None) -> SimpleNamespace:
+    async def run_db(func: Any, *args: Any, **kwargs: Any) -> Any:
+        return func(*args, **kwargs)
+
     return SimpleNamespace(
         session_manager=sm,
         services=SimpleNamespace(web_chat_runtime_manager=rm),
         resolve_project_id=_resolve_project_id,
+        run_db=run_db,
     )
 
 

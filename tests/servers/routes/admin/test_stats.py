@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import APIRouter, FastAPI
@@ -15,6 +15,7 @@ def test_app():
     router = APIRouter()
     server_mock = MagicMock()
     server_mock.services.database = MagicMock()
+    server_mock.run_db = AsyncMock(side_effect=lambda func, *args: func(*args))
 
     register_stats_routes(router, server_mock)
     app.include_router(router)
@@ -139,6 +140,7 @@ def test_stats_with_filters_returns_postgres_counts(temp_db):
     router = APIRouter()
     server_mock = MagicMock()
     server_mock.services.database = temp_db
+    server_mock.run_db = AsyncMock(side_effect=lambda func, *args: func(*args))
     register_stats_routes(router, server_mock)
     app.include_router(router)
 

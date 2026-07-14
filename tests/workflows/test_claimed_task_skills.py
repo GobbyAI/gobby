@@ -85,7 +85,7 @@ def test_task_files_continues_when_extract_mentioned_files_raises() -> None:
                 "task_id": "task-1",
                 "file_path": "src/from-db.py",
                 "annotation_source": "manual",
-                "created_at": "",
+                "created_at": "2026-01-01T00:00:00+00:00",
             }
         ]
     )

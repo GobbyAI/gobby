@@ -123,7 +123,8 @@ def test_delete_worktree_success(mock_url, mock_worktree_manager, mock_httpx) ->
     # Mock resolve logic if needed, but resolve_worktree_id uses manager.list_worktrees
     # Default mock implementation should work if we mock manager methods correctly.
 
-    result = runner.invoke(worktrees, ["delete", "wt-123", "--yes"])
+    with patch("gobby.cli.worktrees.daemon_auth_headers", return_value={}):
+        result = runner.invoke(worktrees, ["delete", "wt-123", "--yes"])
 
     assert result.exit_code == 0
     assert "Deleted worktree: wt-123" in result.output
