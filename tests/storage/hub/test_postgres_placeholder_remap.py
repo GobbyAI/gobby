@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import inspect
+import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta, timezone
@@ -43,6 +44,50 @@ def test_postgres_transaction_is_closed_when_context_exits(
         assert transaction.closed is False
 
     assert transaction.closed is True
+
+
+def test_postgres_after_commit_callback_failures_are_isolated(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    module = _postgres_module()
+
+    class Connection:
+        @contextmanager
+        def transaction(self) -> Iterator[None]:
+            yield
+
+    database = object.__new__(module.PostgresHubDatabase)
+    database._state = module.threading.local()
+    monkeypatch.setattr(database, "open", lambda: None)
+
+    @contextmanager
+    def pool_connection() -> Iterator[Connection]:
+        yield Connection()
+
+    monkeypatch.setattr(database, "_pool_connection", pool_connection)
+    callbacks_run: list[str] = []
+
+    def failing_callback() -> None:
+        callbacks_run.append("failing")
+        raise RuntimeError("callback failed")
+
+    def succeeding_callback() -> None:
+        callbacks_run.append("succeeding")
+
+    with caplog.at_level(logging.ERROR, logger=module.__name__):
+        with database._transaction_context(is_immediate=False) as transaction:
+            transaction.after_commit(failing_callback)
+            transaction.after_commit(succeeding_callback)
+
+    assert callbacks_run == ["failing", "succeeding"]
+    record = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "PostgreSQL after-commit callback failed"
+    )
+    assert record.exc_info is not None
+    assert record.exc_info[0] is RuntimeError
 
 
 @pytest.mark.asyncio

@@ -300,7 +300,10 @@ class PostgresHubDatabase:
                 raise
 
             for callback in callbacks:
-                callback()
+                try:
+                    callback()
+                except Exception:
+                    logger.exception("PostgreSQL after-commit callback failed")
         finally:
             _truncate_lock_stack(self._state, start_len)
 
