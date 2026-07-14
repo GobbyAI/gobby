@@ -48,7 +48,7 @@ export const PipelineEditor = forwardRef<PipelineEditorHandle, PipelineEditorPro
     const [name, setName] = useState(pipeline.name)
     const [description, setDescription] = useState(pipeline.description ?? '')
     const [steps, setSteps] = useState<PipelineStep[]>(initSteps)
-    const [expandedId, setExpandedId] = useState<string | null>(null)
+    const [expandedIndex, setExpandedIndex] = useState<number | null>(null)
     const [saving, setSaving] = useState(false)
     const [isDirty, setDirty] = useState(false)
     const [loadedPipelineId, setLoadedPipelineId] = useState(pipeline.id)
@@ -62,7 +62,7 @@ export const PipelineEditor = forwardRef<PipelineEditorHandle, PipelineEditorPro
       setName(pipeline.name)
       setDescription(pipeline.description ?? '')
       setSteps(initSteps)
-      setExpandedId(null)
+      setExpandedIndex(null)
       setDirty(false)
       setSaveError(null)
     }
@@ -104,7 +104,7 @@ export const PipelineEditor = forwardRef<PipelineEditorHandle, PipelineEditorPro
           return
         }
         setSteps((prev) => prev.filter((_, i) => i !== index))
-        setExpandedId(null)
+        setExpandedIndex(null)
         markDirty()
       },
       [markDirty, confirm],
@@ -245,9 +245,9 @@ export const PipelineEditor = forwardRef<PipelineEditorHandle, PipelineEditorPro
 
         <PipelineStepList
           steps={steps}
-          expandedId={expandedId}
+          expandedIndex={expandedIndex}
           inSidebar={inSidebar}
-          onExpandedIdChange={setExpandedId}
+          onExpandedIndexChange={setExpandedIndex}
           onUpdateStep={updateStep}
           onDeleteStep={deleteStep}
           onMoveStep={moveStep}
