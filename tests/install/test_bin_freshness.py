@@ -340,8 +340,8 @@ class TestBinUpdater:
             events.append(f"replace:{Path(dst).name}")
             real_replace(src, dst)
 
-        monkeypatch.setattr("gobby.install.bin_freshness_updater.os.fsync", tracked_fsync)
-        monkeypatch.setattr("gobby.install.bin_freshness_updater.os.replace", tracked_replace)
+        monkeypatch.setattr("gobby.install.bin_freshness_promotion.os.fsync", tracked_fsync)
+        monkeypatch.setattr("gobby.install.bin_freshness_promotion.os.replace", tracked_replace)
 
         record = update_managed_bin(
             db,
@@ -472,7 +472,7 @@ class TestBinUpdater:
 
         with pytest.MonkeyPatch.context() as monkeypatch:
             monkeypatch.setattr(
-                "gobby.install.bin_freshness_updater.os.replace", fail_final_replace
+                "gobby.install.bin_freshness_promotion.os.replace", fail_final_replace
             )
             record = update_managed_bin(
                 db,

@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 import tarfile
 from io import BytesIO
 from pathlib import Path
@@ -14,6 +15,7 @@ import yaml
 from gobby.cli.install_setup import (
     _download_release_binary,
     _ensure_gobby_bin_on_path,
+    _extract_binary_from_release_archive,
     _fetch_release_checksum,
     _get_installed_gcode_version,
     _get_installed_gwiki_version,
@@ -23,6 +25,7 @@ from gobby.cli.install_setup import (
     _install_gcode_from_cargo_binstall,
     _install_gcode_from_cargo_install,
     _install_gcode_from_github,
+    _install_gcode_from_submodule,
     _install_gwiki,
     _install_gwiki_from_cargo_binstall,
     _install_gwiki_from_cargo_git,
@@ -478,6 +481,39 @@ class TestGcodeHelpers:
             res = _install_gcode()
             assert res["installed"] is True
             assert res["method"] == "workspace"
+
+    def test_install_gcode_from_submodule_stages_under_lock(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        (workspace / "crates" / "gcode").mkdir(parents=True)
+        (workspace / "src" / "gobby" / "cli").mkdir(parents=True)
+        (workspace / "Cargo.toml").touch()
+        (workspace / "crates" / "gcode" / "Cargo.toml").touch()
+        source = workspace / "target" / "release" / "gcode"
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"new-binary")
+        destination_dir = tmp_path / "bin"
+        lock = MagicMock()
+
+        with (
+            patch("gobby.cli.install_setup.shutil.which", return_value="/usr/bin/cargo"),
+            patch("gobby.cli.install_setup.subprocess.run", return_value=MagicMock(returncode=0)),
+            patch(
+                "gobby.cli.install_setup_gcode.__file__",
+                str(workspace / "src" / "gobby" / "cli" / "install_setup_gcode.py"),
+            ),
+            patch(
+                "gobby.cli.install_setup_gcode.try_acquire_native_bin_lock",
+                return_value=lock,
+            ) as acquire_lock,
+            patch("gobby.install.bin_freshness_promotion.os.replace", wraps=os.replace) as replace,
+        ):
+            result = _install_gcode_from_submodule(destination_dir)
+
+        assert result is True
+        assert (destination_dir / "gcode").read_bytes() == b"new-binary"
+        acquire_lock.assert_called_once_with("gcode", bin_dir=destination_dir)
+        lock.__enter__.assert_called_once_with()
+        assert replace.call_args.args[1] == destination_dir / "gcode"
 
     @patch("gobby.cli.install_setup.sys.platform", "darwin")
     @patch("gobby.cli.install_setup.platform.machine", return_value="arm64")
@@ -1090,6 +1126,46 @@ class TestDownloadReleaseBinaryChecksum:
         assert result is True
         assert (tmp_path / "gcode").exists()
         assert (tmp_path / "gcode").read_bytes() == b"fake-binary"
+
+    def test_archive_promotion_stages_under_native_lock(self, tmp_path):
+        archive = _release_tarball("gcode", b"new-binary")
+        lock = MagicMock()
+
+        with (
+            patch(
+                "gobby.cli.install_setup.try_acquire_native_bin_lock", return_value=lock
+            ) as acquire_lock,
+            patch("gobby.install.bin_freshness_promotion.os.replace", wraps=os.replace) as replace,
+        ):
+            result = _extract_binary_from_release_archive(
+                archive,
+                archive_ext="tar.gz",
+                binary_name="gcode",
+                bin_dir=tmp_path,
+                label="gcode",
+            )
+
+        assert result is True
+        assert (tmp_path / "gcode").read_bytes() == b"new-binary"
+        acquire_lock.assert_called_once_with("gcode", bin_dir=tmp_path)
+        lock.__enter__.assert_called_once_with()
+        assert replace.call_args.args[1] == tmp_path / "gcode"
+
+    def test_archive_promotion_preserves_binary_when_lock_is_held(self, tmp_path):
+        destination = tmp_path / "gcode"
+        destination.write_bytes(b"old-binary")
+
+        with patch("gobby.cli.install_setup.try_acquire_native_bin_lock", return_value=None):
+            result = _extract_binary_from_release_archive(
+                _release_tarball("gcode", b"new-binary"),
+                archive_ext="tar.gz",
+                binary_name="gcode",
+                bin_dir=tmp_path,
+                label="gcode",
+            )
+
+        assert result is False
+        assert destination.read_bytes() == b"old-binary"
 
     def test_rejects_and_skips_placement_on_mismatch(self, tmp_path):
         archive = _release_tarball("gcode")
