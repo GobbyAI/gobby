@@ -6,10 +6,14 @@ and GitHub via the official GitHub MCP server.
 TDD Red Phase: Tests should fail initially since GitHubSyncService class does not exist.
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from mcp.types import CallToolResult, TextContent
 
+from gobby.mcp_proxy.manager import MCPClientManager
+from gobby.mcp_proxy.models import MCPServerConfig
 from gobby.sync.github import GitHubSyncService
 
 pytestmark = pytest.mark.unit
@@ -118,6 +122,37 @@ class TestGitHubSyncServiceAvailability:
             project_id="test-project",
         )
         assert service.is_available() == service.github.is_available()
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_import_uses_lazy_real_manager_with_empty_health(self, mock_task_manager) -> None:
+        manager = MCPClientManager(
+            server_configs=[
+                MCPServerConfig(
+                    name="github",
+                    project_id="test-project",
+                    transport="stdio",
+                    command="unused",
+                )
+            ]
+        )
+        session = MagicMock()
+        session.call_tool = AsyncMock(
+            return_value=CallToolResult(
+                content=[TextContent(type="text", text="[]")],
+                isError=False,
+            )
+        )
+        manager._connections["github"] = SimpleNamespace(is_connected=True, session=session)
+
+        service = GitHubSyncService(manager, mock_task_manager, "test-project")
+
+        assert manager.health == {}
+        assert await service.import_github_issues("owner/repo") == []
+        session.call_tool.assert_awaited_once_with(
+            "list_issues",
+            {"owner": "owner", "repo": "repo", "state": "open"},
+        )
 
 
 class TestGitHubSyncServiceImport:

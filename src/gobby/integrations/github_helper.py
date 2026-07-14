@@ -43,6 +43,26 @@ class GitHubMCPResponseError(RuntimeError):
     """The GitHub MCP server returned an unexpected successful result shape."""
 
 
+def parse_github_mcp_result(result: Any, tool_name: str) -> Any:
+    """Parse a GitHub MCP SDK result into its domain payload."""
+    if getattr(result, "isError", False):
+        details = [
+            item.text
+            for item in getattr(result, "content", [])
+            if isinstance(getattr(item, "text", None), str)
+        ]
+        raise GitHubMCPToolError(tool_name, "\n".join(details) or "unknown error")
+
+    for item in getattr(result, "content", []):
+        text = getattr(item, "text", None)
+        if isinstance(text, str):
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                return text
+    return result
+
+
 def parse_github_repo(github_repo: str) -> tuple[str, str]:
     """Parse 'owner/repo' string into (owner, repo) tuple.
 
@@ -129,23 +149,7 @@ class GitHubMCPHelper:
         """
         session = await self.mcp_manager.get_client_session("github")
         result = await session.call_tool(tool_name, arguments)
-
-        if getattr(result, "isError", False):
-            details = [
-                item.text
-                for item in getattr(result, "content", [])
-                if isinstance(getattr(item, "text", None), str)
-            ]
-            raise GitHubMCPToolError(tool_name, "\n".join(details) or "unknown error")
-
-        if hasattr(result, "content") and result.content:
-            for item in result.content:
-                if hasattr(item, "text"):
-                    try:
-                        return json.loads(item.text)
-                    except (json.JSONDecodeError, TypeError):
-                        return item.text
-        return result
+        return parse_github_mcp_result(result, tool_name)
 
     async def _paginate_github_mcp(
         self,

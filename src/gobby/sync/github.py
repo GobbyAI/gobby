@@ -10,7 +10,7 @@ import logging
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.integrations.github import GitHubIntegration
-from gobby.integrations.github_helper import parse_github_repo
+from gobby.integrations.github_helper import parse_github_mcp_result, parse_github_repo
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.manager import MCPClientManager
@@ -110,6 +110,19 @@ class GitHubSyncService:
         """
         return self.github.is_available()
 
+    async def _call_github_mcp(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> Any:
+        """Call GitHub through the manager and unwrap its MCP SDK result."""
+        result = await self.mcp_manager.call_tool(
+            server_name="github",
+            tool_name=tool_name,
+            arguments=arguments,
+        )
+        return parse_github_mcp_result(result, tool_name)
+
     async def import_github_issues(
         self,
         repo: str,
@@ -141,13 +154,16 @@ class GitHubSyncService:
         if state:
             args["state"] = state
 
-        result = await self.mcp_manager.call_tool(
-            server_name="github",
-            tool_name="list_issues",
-            arguments=args,
-        )
-
-        issues = result.get("issues", [])
+        result = await self._call_github_mcp("list_issues", args)
+        if isinstance(result, list):
+            issues = result
+        elif isinstance(result, dict):
+            issues = result.get("issues", [])
+        else:
+            raise GitHubSyncError(
+                "Invalid response from GitHub MCP when listing issues: "
+                f"expected list or dict, got {type(result).__name__}"
+            )
         imported = []
         updated = []
 
@@ -239,10 +255,9 @@ class GitHubSyncService:
 
         owner, repo_name = parse_github_repo(repo)
 
-        result = await self.mcp_manager.call_tool(
-            server_name="github",
-            tool_name="update_issue",
-            arguments={
+        result = await self._call_github_mcp(
+            "update_issue",
+            {
                 "owner": owner,
                 "repo": repo_name,
                 "issue_number": task.github_issue_number,
@@ -297,10 +312,9 @@ class GitHubSyncService:
         owner, repo_name = parse_github_repo(repo)
 
         # Create PR via GitHub MCP
-        result = await self.mcp_manager.call_tool(
-            server_name="github",
-            tool_name="create_pull_request",
-            arguments={
+        result = await self._call_github_mcp(
+            "create_pull_request",
+            {
                 "owner": owner,
                 "repo": repo_name,
                 "title": task.title,
@@ -310,6 +324,12 @@ class GitHubSyncService:
                 "draft": draft,
             },
         )
+
+        if not isinstance(result, dict):
+            raise GitHubSyncError(
+                "Invalid response from GitHub MCP when creating pull request: "
+                f"expected dict, got {type(result).__name__}"
+            )
 
         # Update task with PR number if available
         result_dict = cast(dict[str, Any], result)
@@ -381,10 +401,9 @@ class GitHubSyncService:
 
         owner, repo_name = parse_github_repo(repo)
 
-        result = await self.mcp_manager.call_tool(
-            server_name="github",
-            tool_name="push_files",
-            arguments={
+        result = await self._call_github_mcp(
+            "push_files",
+            {
                 "owner": owner,
                 "repo": repo_name,
                 "branch": branch,
@@ -392,6 +411,12 @@ class GitHubSyncService:
                 "message": message,
             },
         )
+
+        if not isinstance(result, dict):
+            raise GitHubSyncError(
+                "Invalid response from GitHub MCP when pushing files: "
+                f"expected dict, got {type(result).__name__}"
+            )
 
         result_dict = cast(dict[str, Any], result)
         logger.info(f"Pushed {len(files)} files to {repo}:{branch}")
