@@ -103,6 +103,8 @@ class GrokTranscriptParser(BaseTranscriptParser):
                 usage=usage,
             )
         if update_type == "tool_call_update":
+            if update.get("status") not in {"completed", "failed"}:
+                return None
             call_id = str(update.get("toolCallId") or _tool_use_id(index, "tool"))
             result = _extract_tool_result(update)
             return _message(
