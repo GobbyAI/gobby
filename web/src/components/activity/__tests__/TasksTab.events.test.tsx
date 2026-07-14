@@ -213,6 +213,12 @@ describe("TasksTab — events and row actions", () => {
     fireEvent.change(description, { target: { value: "Unsaved draft" } });
     description.focus();
 
+    const detailFetchCount = () =>
+      mockFetch.fn.mock.calls.filter(([url]) =>
+        String(url).endsWith("/api/tasks/task-review"),
+      ).length;
+    expect(detailFetchCount()).toBe(1);
+
     const originalFetch = mockFetch.fn.getMockImplementation();
     let resolveListFetch!: (response: Response) => void;
     const pendingListFetch = new Promise<Response>((resolve) => {
@@ -240,6 +246,7 @@ describe("TasksTab — events and row actions", () => {
     expect(description.value).toBe("Unsaved draft");
     expect(document.activeElement).toBe(description);
     expect(screen.queryByText("Loading tasks…")).toBeNull();
+    expect(detailFetchCount()).toBe(1);
 
     resolveListFetch(
       new Response(JSON.stringify({ tasks: taskList }), {
@@ -250,6 +257,60 @@ describe("TasksTab — events and row actions", () => {
     await waitFor(() =>
       expect(screen.getByTestId("task-tree")).toHaveAttribute("aria-busy", "false"),
     );
+  });
+
+  it("keeps the detail editor mounted while refreshing the selected task", async () => {
+    render(<TasksTab projectId="proj-1" />);
+
+    fireEvent.click(await screen.findByText("Review approved task"));
+    const description = (await screen.findByLabelText(
+      "Description",
+    )) as HTMLTextAreaElement;
+    fireEvent.change(description, { target: { value: "Unsaved draft" } });
+    description.focus();
+
+    const originalFetch = mockFetch.fn.getMockImplementation();
+    let resolveDetailFetch!: (response: Response) => void;
+    const pendingDetailFetch = new Promise<Response>((resolve) => {
+      resolveDetailFetch = resolve;
+    });
+    mockFetch.fn.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/api/tasks/task-review")) {
+        return pendingDetailFetch;
+      }
+      return originalFetch?.(input, init);
+    });
+
+    act(() => {
+      wsHandler?.({
+        type: "task_event",
+        event: "task_updated",
+        task_id: "task-review",
+        task: { id: "task-review", title: "Updated selected task" },
+      });
+    });
+
+    expect(screen.getByLabelText("Description")).toBe(description);
+    expect(description.value).toBe("Unsaved draft");
+    expect(document.activeElement).toBe(description);
+    expect(screen.queryByText("Loading...")).toBeNull();
+
+    resolveDetailFetch(
+      new Response(
+        JSON.stringify({
+          task: {
+            ...taskList[0],
+            title: "Updated selected task",
+            description: "Server description",
+          },
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+    await screen.findByDisplayValue("Server description");
   });
 
   it("ignores WebSocket events for other projects", async () => {

@@ -661,7 +661,7 @@ export const TasksTab = memo(function TasksTab({
               Task {headerRef ?? "—"}
             </span>
           </div>
-          {detailLoading ? (
+          {detailLoading && taskDetail === null ? (
             <p className="activity-task-detail-loading">
               Loading...
             </p>
