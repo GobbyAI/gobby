@@ -48,6 +48,7 @@ from gobby.sessions.transcript_index_sidecar import (
 from gobby.sessions.transcript_index_sidecar import (
     INDEX_CACHE_MAX_ENTRIES,
     clear_index_cache,
+    discard_index_sidecar,
     get_or_build_index,
     load_index_sidecar,
     persist_index_sidecar,
@@ -95,6 +96,7 @@ __all__ = [
     "build_index_from_lines",
     "build_index_from_raw_lines",
     "clear_index_cache",
+    "discard_index_sidecar",
     "detect_source_bounded",
     "get_or_build_index",
     "load_index_sidecar",

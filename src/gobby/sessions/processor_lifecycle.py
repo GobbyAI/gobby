@@ -9,7 +9,11 @@ import os
 from gobby.sessions.message_stats import MessageStats
 from gobby.sessions.observation_tracker import ObservationTracker
 from gobby.sessions.processor_types import ProcessorHost
-from gobby.sessions.transcript_index import TranscriptIndexAppender, load_index_sidecar
+from gobby.sessions.transcript_index import (
+    TranscriptIndexAppender,
+    discard_index_sidecar,
+    load_index_sidecar,
+)
 from gobby.sessions.transcript_index_resume import hydrate_appender_from_index
 from gobby.sessions.transcripts import get_parser
 
@@ -62,12 +66,18 @@ class ProcessorLifecycleMixin:
             return
 
         self._active_sessions[session_id] = transcript_path
+        self._session_sources[session_id] = source
         self._parsers[session_id] = get_parser(
             source,
             session_id=session_id,
             transcript_path=transcript_path,
         )
-        transcript_exists = os.path.exists(transcript_path)
+        try:
+            st = os.stat(transcript_path)
+            transcript_exists = True
+            self._transcript_file_state[session_id] = (st.st_dev, st.st_ino, st.st_mtime_ns)
+        except OSError:
+            transcript_exists = False
         if not transcript_path.endswith(".json"):
             appender = TranscriptIndexAppender(
                 source,
@@ -107,6 +117,8 @@ class ProcessorLifecycleMixin:
             del self._active_sessions[session_id]
             if session_id in self._parsers:
                 del self._parsers[session_id]
+            self._session_sources.pop(session_id, None)
+            self._transcript_file_state.pop(session_id, None)
             self._last_mtime.pop(session_id, None)
             self._stats.pop(session_id, None)
             self._stats_hydration_skipped.discard(session_id)
@@ -115,6 +127,38 @@ class ProcessorLifecycleMixin:
             self._index_appenders.pop(session_id, None)
             logger.debug("Unregistered session %s", session_id)
         self._render_states.pop(session_id, None)
+
+    async def _reset_transcript_state(
+        self: ProcessorHost, session_id: str, transcript_path: str
+    ) -> None:
+        """Reset incremental state after transcript truncation or replacement."""
+        source = self._session_sources[session_id]
+        self._parsers[session_id] = get_parser(
+            source,
+            session_id=session_id,
+            transcript_path=transcript_path,
+        )
+        self._index_appenders[session_id] = TranscriptIndexAppender(
+            source,
+            session_id,
+            transcript_path,
+            observation_tracker=ObservationTracker(self._observation_store),
+        )
+        self._byte_offsets.pop(session_id, None)
+        self._message_indices.pop(session_id, None)
+        self._render_states.pop(session_id, None)
+        self._stats.pop(session_id, None)
+        self._stats_hydration_skipped.discard(session_id)
+        await asyncio.to_thread(discard_index_sidecar, transcript_path)
+
+        if self.session_manager:
+            self.session_manager.update_stats(
+                session_id,
+                message_count=0,
+                turn_count=0,
+                tool_call_count=0,
+                last_assistant_content=None,
+            )
 
     def _revive_expired_terminal_session(self: ProcessorHost, session_id: str) -> None:
         """Repair false-expired terminal rows when transcript activity resumes."""

@@ -72,6 +72,10 @@ class SessionMessageProcessor(
 
         # Track parsers: session_id -> TranscriptParser
         self._parsers: dict[str, TranscriptParser] = {}
+        self._session_sources: dict[str, str] = {}
+
+        # Track transcript identity and mtime to detect replacement or rollback.
+        self._transcript_file_state: dict[str, tuple[int, int, int]] = {}
 
         # Track last mtime for JSON file sessions (mtime-based change detection)
         self._last_mtime: dict[str, float] = {}

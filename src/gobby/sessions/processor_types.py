@@ -46,6 +46,8 @@ class ProcessorHost(Protocol):
     _hook_manager: HookManager | None
     _active_sessions: dict[str, str]
     _parsers: dict[str, TranscriptParser]
+    _session_sources: dict[str, str]
+    _transcript_file_state: dict[str, tuple[int, int, int]]
     _last_mtime: dict[str, float]
     _byte_offsets: dict[str, int]
     _message_indices: dict[str, int]
@@ -93,6 +95,8 @@ class ProcessorHost(Protocol):
         source: str,
         appender: TranscriptIndexAppender,
     ) -> None: ...
+
+    async def _reset_transcript_state(self, session_id: str, transcript_path: str) -> None: ...
 
     def _persist_appender_snapshot(
         self,
