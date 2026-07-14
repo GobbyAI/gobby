@@ -568,6 +568,54 @@ class TestClaudeRecordEnvelopes:
         assert parser._expand_line(line, 0) == []
         assert parser.parse_line(line, 0) is None
 
+    def test_queued_command_attachment_emits_user_message(self, parser) -> None:
+        data = {
+            "type": "attachment",
+            "attachment": {
+                "type": "queued_command",
+                "prompt": "I'm going to bed. Just keep the work in Fable please.",
+            },
+            "timestamp": "2024-01-01T12:00:00Z",
+        }
+        line = json.dumps(data)
+
+        messages = parser._expand_line(line, 4)
+        assert len(messages) == 1
+        assert messages[0].role == "user"
+        assert messages[0].content == data["attachment"]["prompt"]
+        assert messages[0].raw_json == data
+
+        message = parser.parse_line(line, 4)
+        assert message is not None
+        assert message.role == "user"
+        assert message.content == data["attachment"]["prompt"]
+
+    def test_queued_command_attachment_is_in_last_messages(self, parser) -> None:
+        turns = [
+            {
+                "type": "attachment",
+                "attachment": {"type": "queued_command", "prompt": "queued instruction"},
+            },
+            {"type": "assistant", "message": {"role": "assistant", "content": "done"}},
+        ]
+
+        assert parser.extract_last_messages(turns, num_pairs=1) == [
+            {"role": "user", "content": "queued instruction"},
+            {"role": "assistant", "content": "done"},
+        ]
+
+    @pytest.mark.parametrize("prompt", [None, "", "   "])
+    def test_empty_queued_command_attachment_is_dropped(self, parser, prompt) -> None:
+        line = json.dumps(
+            {
+                "type": "attachment",
+                "attachment": {"type": "queued_command", "prompt": prompt},
+            }
+        )
+
+        assert parser._expand_line(line, 0) == []
+        assert parser.parse_line(line, 0) is None
+
     def test_ai_title_emits_session_title(self, parser) -> None:
         """ai-title records emit a ParsedMessage with content_type=session_title."""
         line = json.dumps(

@@ -225,6 +225,13 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             if self._is_hook_blocking_error(turn):
                 continue
 
+            prompt = self._queued_command_prompt(turn)
+            if prompt is not None:
+                messages.insert(0, {"role": "user", "content": prompt.strip()})
+                if len(messages) >= num_pairs * 2:
+                    break
+                continue
+
             # Claude Code transcript structure has message nested
             message = turn.get("message", {})
             role = message.get("role")
@@ -424,6 +431,14 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             timestamp = datetime.now(UTC)
 
         return data, msg_type, timestamp
+
+    @staticmethod
+    def _queued_command_prompt(data: dict[str, Any]) -> str | None:
+        attachment = data.get("attachment")
+        if not isinstance(attachment, dict) or attachment.get("type") != "queued_command":
+            return None
+        prompt = attachment.get("prompt")
+        return prompt if isinstance(prompt, str) and prompt.strip() else None
 
     def _expand_line(self, line: str, index: int) -> list[ParsedMessage]:
         """
@@ -648,6 +663,11 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                     )
                 )
 
+        elif msg_type == "attachment":
+            prompt = self._queued_command_prompt(data)
+            if prompt is not None:
+                results.append(_make_msg(role="user", content=prompt))
+
         elif msg_type in self._SKIPPED_RECORD_TYPES:
             # Known session-metadata envelope record — recognized, not rendered.
             pass
@@ -800,6 +820,13 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             role = "system"
             content = ai_title
             content_type = "session_title"
+
+        elif msg_type == "attachment":
+            prompt = self._queued_command_prompt(data)
+            if prompt is None:
+                return None
+            role = "user"
+            content = prompt
 
         elif msg_type in self._SKIPPED_RECORD_TYPES:
             return None  # known session-metadata envelope record — not rendered
