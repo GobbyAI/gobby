@@ -5,6 +5,7 @@ and Linear via the official Linear MCP server.
 """
 
 import logging
+import threading
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1364,7 +1365,8 @@ class TestLinearSyncServiceCreate:
     async def test_push_active_tasks_filters_closed_tasks(self, sync_service, mock_task_manager):
         """push_active_tasks only pushes linked non-closed tasks."""
         mock_task_manager.db.fetchall.return_value = [{"id": "task-1"}, {"id": "task-2"}]
-        sync_service.sync_task_to_linear = AsyncMock()
+        sync_service._get_graphql_client = AsyncMock(return_value=None)
+        sync_service._sync_task_to_linear = AsyncMock()
 
         result = await sync_service.push_active_tasks()
 
@@ -1372,7 +1374,60 @@ class TestLinearSyncServiceCreate:
         assert "linear_issue_id IS NOT NULL" in sql
         assert "closed_at IS NULL" in sql
         assert result == {"pushed": 2, "skipped": 0, "errors": 0, "deferred": 0}
-        assert sync_service.sync_task_to_linear.await_count == 2
+        assert sync_service._sync_task_to_linear.await_count == 2
+
+    async def test_push_active_tasks_reuses_graphql_client_and_team_states(
+        self, sync_service, mock_task_manager
+    ) -> None:
+        """One push run shares GraphQL setup and state metadata across task updates."""
+        loop_thread = threading.get_ident()
+        storage_threads: list[int] = []
+
+        tasks = {}
+        for task_id, state in (("task-1", "ready"), ("task-2", "in_progress")):
+            task = MagicMock()
+            task.id = task_id
+            task.seq_num = 1 if task_id == "task-1" else 2
+            task.linear_issue_id = f"lin-{task_id}"
+            task.linear_team_id = "team-123"
+            task.title = f"Title {task_id}"
+            task.description = f"Description {task_id}"
+            task.priority = 2
+            _set_task_state(task, state)
+            tasks[task_id] = task
+
+        def fetch_rows(*_args):
+            storage_threads.append(threading.get_ident())
+            return [{"id": "task-1"}, {"id": "task-2"}]
+
+        def get_task(task_id):
+            storage_threads.append(threading.get_ident())
+            return tasks[task_id]
+
+        mock_task_manager.db.fetchall.side_effect = fetch_rows
+        mock_task_manager.get_task.side_effect = get_task
+
+        client = MagicMock()
+        client.list_team_states = AsyncMock(
+            return_value=[
+                {"id": "state-todo", "name": "Todo"},
+                {"id": "state-progress", "name": "In Progress"},
+            ]
+        )
+        client.update_issue = AsyncMock(side_effect=[{"id": "lin-task-1"}, {"id": "lin-task-2"}])
+        sync_service._get_graphql_client = AsyncMock(return_value=client)
+
+        result = await sync_service.push_active_tasks()
+
+        assert result == {"pushed": 2, "skipped": 0, "errors": 0, "deferred": 0}
+        sync_service._get_graphql_client.assert_awaited_once_with()
+        client.list_team_states.assert_awaited_once_with("team-123")
+        assert [call.kwargs["state_id"] for call in client.update_issue.await_args_list] == [
+            "state-todo",
+            "state-progress",
+        ]
+        assert len(storage_threads) == 3
+        assert all(thread_id != loop_thread for thread_id in storage_threads)
 
 
 class TestLinearProjectBinding:

@@ -114,15 +114,23 @@ class LinearProjectOpsMixin:
         client: LinearGraphQLClient,
         team_id: str | None,
         state_name: str | None,
+        state_ids_by_team: dict[str, dict[str, str]] | None = None,
     ) -> str | None:
         if not team_id or not state_name:
             return None
-        states = await client.list_team_states(team_id)
-        for state in states:
-            if state.get("name") == state_name:
-                state_id = state.get("id")
-                return state_id if isinstance(state_id, str) else None
-        return None
+
+        state_ids = state_ids_by_team.get(team_id) if state_ids_by_team is not None else None
+        if state_ids is None:
+            states = await client.list_team_states(team_id)
+            state_ids = {
+                name: state_id
+                for state in states
+                if isinstance((name := state.get("name")), str)
+                and isinstance((state_id := state.get("id")), str)
+            }
+            if state_ids_by_team is not None:
+                state_ids_by_team[team_id] = state_ids
+        return state_ids.get(state_name)
 
     def _update_synced_at(self, timestamp: str | None = None) -> None:
         """Update the project's linear_synced_at cursor."""

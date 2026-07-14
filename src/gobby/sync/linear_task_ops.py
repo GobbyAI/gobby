@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, cast
 
 import httpx
 
-from gobby.integrations.linear_graphql import LinearGraphQLError
+from gobby.integrations.linear_graphql import LinearGraphQLClient, LinearGraphQLError
 from gobby.sync.linear_project_ops import LinearProjectOpsMixin
 from gobby.sync.linear_support import (
     LinearSyncError,
@@ -314,7 +315,21 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
         """Sync a gobby task to its linked Linear issue."""
         self.linear.require_available()
 
-        task = self.task_manager.get_task(task_id)
+        client = await self._get_graphql_client()
+        return await self._sync_task_to_linear(
+            task_id,
+            client=client,
+            state_ids_by_team={},
+        )
+
+    async def _sync_task_to_linear(
+        self,
+        task_id: str,
+        *,
+        client: LinearGraphQLClient | None,
+        state_ids_by_team: dict[str, dict[str, str]],
+    ) -> dict[str, Any]:
+        task = await asyncio.to_thread(self.task_manager.get_task, task_id)
         if not task.linear_issue_id:
             raise ValueError(
                 f"Task {task_id} has no linked Linear issue. Set linear_issue_id to sync."
@@ -322,13 +337,13 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
 
         linear_state = self.map_gobby_state_to_linear(self._project_gobby_state_for_linear(task))
         issue_title = self._linear_issue_title(task)
-        client = await self._get_graphql_client()
         if client:
             effective_team_id = task.linear_team_id or self.linear_team_id
             state_id = await self._linear_state_id_for_name(
                 client,
                 effective_team_id,
                 linear_state,
+                state_ids_by_team,
             )
             result = await client.update_issue(
                 issue_id=task.linear_issue_id,
@@ -516,9 +531,15 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
 
     async def _push_task_rows(self, rows: list[Any]) -> dict[str, int]:
         stats = {"pushed": 0, "skipped": 0, "errors": 0, "deferred": 0}
+        client = await self._get_graphql_client()
+        state_ids_by_team: dict[str, dict[str, str]] = {}
         for row in rows:
             try:
-                await self.sync_task_to_linear(row["id"])
+                await self._sync_task_to_linear(
+                    row["id"],
+                    client=client,
+                    state_ids_by_team=state_ids_by_team,
+                )
                 stats["pushed"] += 1
             except Exception as e:
                 logger.warning("Failed to push task %s to Linear: %s", row["id"], e)
@@ -528,7 +549,8 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
     async def push_active_tasks(self) -> dict[str, int]:
         """Push all linked active non-closed Gobby tasks to Linear."""
         self.linear.require_available()
-        rows = self.task_manager.db.fetchall(
+        rows = await asyncio.to_thread(
+            self.task_manager.db.fetchall,
             "SELECT id FROM tasks "
             "WHERE project_id = %s AND linear_issue_id IS NOT NULL AND closed_at IS NULL",
             (self.project_id,),
@@ -666,16 +688,18 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
         """Push gobby tasks that changed since last sync to Linear."""
         self.linear.require_available()
 
-        synced_at = self._get_project_synced_at()
+        synced_at = await asyncio.to_thread(self._get_project_synced_at)
         if synced_at:
-            rows = self.task_manager.db.fetchall(
+            rows = await asyncio.to_thread(
+                self.task_manager.db.fetchall,
                 "SELECT id FROM tasks "
                 "WHERE project_id = %s AND linear_issue_id IS NOT NULL "
                 "AND updated_at > %s",
                 (self.project_id, synced_at),
             )
         else:
-            rows = self.task_manager.db.fetchall(
+            rows = await asyncio.to_thread(
+                self.task_manager.db.fetchall,
                 "SELECT id FROM tasks WHERE project_id = %s AND linear_issue_id IS NOT NULL",
                 (self.project_id,),
             )
