@@ -513,6 +513,60 @@ Content here.
         assert mock_provider.download_skill.call_args is not None
 
     @pytest.mark.asyncio
+    async def test_install_skill_hub_accepts_nested_slug(
+        self,
+        db: HubDatabase,
+        mock_hub_manager: MagicMock,
+        skill_dir: Path,
+    ) -> None:
+        from unittest.mock import AsyncMock
+
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+
+        mock_provider = mock_hub_manager.get_provider.return_value
+        mock_provider.download_skill = AsyncMock(
+            return_value=DownloadResult(
+                success=True,
+                path=str(skill_dir),
+                slug="category/example-skill",
+            )
+        )
+        mock_hub_manager.has_hub.side_effect = None
+        mock_hub_manager.has_hub.return_value = True
+        tool = create_skills_registry(db, hub_manager=mock_hub_manager).get_tool("install_skill")
+
+        result = await tool(source="github-collection:category/example-skill")
+
+        assert result["success"] is True, result
+        mock_provider.download_skill.assert_awaited_once_with("category/example-skill")
+
+    @pytest.mark.asyncio
+    async def test_install_skill_hub_removes_temporary_download(
+        self,
+        db: HubDatabase,
+        mock_hub_manager: MagicMock,
+        skill_dir: Path,
+    ) -> None:
+        from unittest.mock import AsyncMock
+
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+
+        mock_hub_manager.get_provider.return_value.download_skill = AsyncMock(
+            return_value=DownloadResult(
+                success=True,
+                path=str(skill_dir),
+                slug="example-skill",
+                is_temp=True,
+            )
+        )
+        tool = create_skills_registry(db, hub_manager=mock_hub_manager).get_tool("install_skill")
+
+        result = await tool(source="clawdhub:example-skill")
+
+        assert result["success"] is True
+        assert not skill_dir.exists()
+
+    @pytest.mark.asyncio
     async def test_install_skill_hub_unknown_hub(
         self,
         db: HubDatabase,

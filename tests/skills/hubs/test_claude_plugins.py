@@ -132,10 +132,17 @@ async def test_download_skill_streams_allowed_body(
         "AsyncClient",
         partial(client_type, transport=transport),
     )
+    download_dir = tmp_path / "download"
+    monkeypatch.setattr(
+        claude_plugins.tempfile,
+        "mkdtemp",
+        lambda prefix: str(download_dir),
+    )
 
     result = await _provider(
         "https://raw.githubusercontent.com/acme/repo/main/SKILL.md"
-    ).download_skill("example-skill", target_dir=str(tmp_path))
+    ).download_skill("example-skill")
 
     assert result.success is True
-    assert (tmp_path / "SKILL.md").read_text() == "# Example\n"
+    assert result.is_temp is True
+    assert (download_dir / "SKILL.md").read_text() == "# Example\n"

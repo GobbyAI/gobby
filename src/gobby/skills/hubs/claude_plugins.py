@@ -359,6 +359,7 @@ class ClaudePluginsProvider(HubProvider):
             content = await self._download_raw_file(raw_url)
 
             # Determine target directory
+            is_temp = target_dir is None
             if target_dir:
                 extract_path = Path(target_dir)
             else:
@@ -375,6 +376,7 @@ class ClaudePluginsProvider(HubProvider):
                 slug=slug,
                 path=str(extract_path),
                 version=None,
+                is_temp=is_temp,
             )
 
         except httpx.HTTPStatusError as e:
