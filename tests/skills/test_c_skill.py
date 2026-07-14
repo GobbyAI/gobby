@@ -24,7 +24,7 @@ def test_c_skill_parses_with_references() -> None:
     parsed = SkillLoader().load_skill(SKILL_DIR, validate=False)
 
     assert parsed.name == "c"
-    assert parsed.version == "1.0.0"
+    assert parsed.version == "1.1.0"
     assert parsed.get_category() == "development"
     assert parsed.triggers is not None
     assert {"c", "cmake", "make", "autotools", "pkg-config", "sanitizer"}.issubset(parsed.triggers)

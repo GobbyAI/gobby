@@ -172,6 +172,21 @@ class CodeIndexConfig(BaseModel):
         ge=1,
         description="Max files to sync per poll iteration",
     )
+    sync_worker_breaker_failure_threshold: int = Field(
+        default=5,
+        ge=1,
+        description="Consecutive vector-sync transport failures before the breaker opens",
+    )
+    sync_worker_breaker_backoff_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        description="Initial vector-sync pause when the breaker opens (doubles per failed probe)",
+    )
+    sync_worker_breaker_max_backoff_seconds: float = Field(
+        default=900.0,
+        gt=0,
+        description="Maximum vector-sync breaker backoff",
+    )
     content_extensions: list[str] = Field(
         default=[
             ".html",
