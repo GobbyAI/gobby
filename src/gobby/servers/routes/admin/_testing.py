@@ -66,26 +66,31 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
 
             project_manager = LocalProjectManager(db)
 
-            # Check if project exists
-            existing = project_manager.get(request.project_id)
-            if existing:
+            # Create the project with the specific ID
+            from datetime import UTC, datetime
+
+            now = datetime.now(UTC).isoformat()
+            inserted = db.execute(
+                """
+                INSERT INTO projects (id, name, repo_path, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO NOTHING
+                RETURNING id
+                """,
+                (request.project_id, request.name, request.repo_path, now, now),
+            ).fetchone()
+
+            if inserted is None:
+                existing = project_manager.get(request.project_id)
+                if existing is None:
+                    raise RuntimeError(
+                        f"Project {request.project_id} not found after conflicting insert"
+                    )
                 return {
                     "status": "already_exists",
                     "project_id": existing.id,
                     "name": existing.name,
                 }
-
-            # Create the project with the specific ID
-            from datetime import UTC, datetime
-
-            now = datetime.now(UTC).isoformat()
-            db.execute(
-                """
-                INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s)
-                """,
-                (request.project_id, request.name, request.repo_path, now, now),
-            )
 
             response_time_ms = (time.perf_counter() - start_time) * 1000
 

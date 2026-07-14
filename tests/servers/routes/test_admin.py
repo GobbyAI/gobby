@@ -1007,9 +1007,7 @@ class TestTestEndpoints:
 
     @patch("gobby.storage.projects.LocalProjectManager")
     def test_register_project_success(self, mock_pm_cls, client, mock_server) -> None:
-        mock_pm = MagicMock()
-        mock_pm.get.return_value = None  # project does not exist yet
-        mock_pm_cls.return_value = mock_pm
+        mock_server.session_manager.db.execute.return_value.fetchone.return_value = {"id": "proj-1"}
 
         response = client.post(
             "/api/admin/test/register-project",
@@ -1022,13 +1020,18 @@ class TestTestEndpoints:
         assert data["project_id"] == "proj-1"
         assert data["name"] == "Test Project"
         assert "response_time_ms" in data
+        sql = mock_server.session_manager.db.execute.call_args.args[0]
+        assert "ON CONFLICT (id) DO NOTHING" in sql
+        assert "RETURNING id" in sql
+        mock_pm_cls.return_value.get.assert_not_called()
 
     @patch("gobby.storage.projects.LocalProjectManager")
-    def test_register_project_already_exists(self, mock_pm_cls, client) -> None:
+    def test_register_project_already_exists(self, mock_pm_cls, client, mock_server) -> None:
         existing = MagicMock()
         existing.id = "proj-1"
         existing.name = "Existing"
 
+        mock_server.session_manager.db.execute.return_value.fetchone.return_value = None
         mock_pm = MagicMock()
         mock_pm.get.return_value = existing
         mock_pm_cls.return_value = mock_pm
@@ -1042,6 +1045,8 @@ class TestTestEndpoints:
 
         assert data["status"] == "already_exists"
         assert data["project_id"] == "proj-1"
+        assert data["name"] == "Existing"
+        mock_pm.get.assert_called_once_with("proj-1")
 
     def test_register_project_forbidden_when_not_test_mode(self, mock_server) -> None:
         mock_server.test_mode = False
