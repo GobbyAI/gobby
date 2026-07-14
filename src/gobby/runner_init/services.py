@@ -32,6 +32,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def mark_service_degraded(runner: GobbyRunner, service_name: str) -> None:
+    """Record a failed or dependency-skipped runner service."""
+    degraded_services = getattr(runner, "degraded_services", None)
+    if degraded_services is None:
+        degraded_services = set()
+        runner.degraded_services = degraded_services
+    degraded_services.add(service_name)
+
+
 def init_services(runner: GobbyRunner) -> None:
     """Initialize LLM, memory, code indexer, MCP proxy, sync, and messaging."""
     _init_llm_service(runner)
@@ -59,8 +68,9 @@ def _init_llm_service(runner: GobbyRunner) -> None:
         )
         runner.tool_chat_service = build_daemon_tool_chat_service(runner.config)
         logger.debug(f"LLM service initialized: {runner.llm_service.enabled_providers}")
-    except Exception as e:
-        logger.error(f"Failed to initialize LLM service: {e}")
+    except Exception:
+        mark_service_degraded(runner, "llm_service")
+        logger.exception("Failed to initialize LLM service")
 
 
 def _validate_memory_embedding_config(
@@ -116,7 +126,8 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
                 try:
                     _validate_memory_embedding_config(emb_cfg, api_key=embedding_api_key)
                 except ValueError as e:
-                    logger.warning("Memory embeddings disabled: %s", e)
+                    mark_service_degraded(runner, "memory_embeddings")
+                    logger.warning("Memory embeddings disabled: %s", e, exc_info=True)
                 else:
                     embeddings_enabled = True
             runner.vector_store = VectorStore(
@@ -156,8 +167,9 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
                     runner.config.knowledge_graph_queue.max_deterministic_attempts
                 ),
             )
-        except Exception as e:
-            logger.error(f"Failed to initialize MemoryManager: {e}")
+        except Exception:
+            mark_service_degraded(runner, "memory_manager")
+            logger.exception("Failed to initialize MemoryManager")
 
 
 def _init_code_indexer(runner: GobbyRunner) -> None:
@@ -180,8 +192,9 @@ def _init_code_indexer(runner: GobbyRunner) -> None:
             )
 
             logger.info("Code indexer initialized")
-        except GcodeGatewayError as e:
-            logger.warning(f"Failed to initialize code indexer: {e}")
+        except GcodeGatewayError:
+            mark_service_degraded(runner, "code_indexer")
+            logger.warning("Failed to initialize code indexer", exc_info=True)
 
 
 def _init_mcp_stack(runner: GobbyRunner) -> None:
@@ -231,8 +244,14 @@ def _init_sync_managers(runner: GobbyRunner) -> None:
                 )
                 logger.debug("MemoryBackupManager initialized (backup/export only)")
 
-            except Exception as e:
-                logger.error(f"Failed to initialize MemoryBackupManager: {e}")
+            except Exception:
+                mark_service_degraded(runner, "memory_sync_manager")
+                logger.exception("Failed to initialize MemoryBackupManager")
+        else:
+            mark_service_degraded(runner, "memory_sync_manager")
+            logger.warning(
+                "Skipping MemoryBackupManager initialization; MemoryManager is unavailable"
+            )
 
 
 def _init_message_processor(runner: GobbyRunner) -> None:
@@ -248,17 +267,22 @@ def _init_message_processor(runner: GobbyRunner) -> None:
 def _init_task_validator(runner: GobbyRunner) -> None:
     runner.task_validator = None
 
-    if runner.llm_service:
-        gobby_tasks_config = runner.config.gobby_tasks
-        if gobby_tasks_config.validation.enabled:
-            try:
-                runner.task_validator = TaskValidator(
-                    llm_service=runner.llm_service,
-                    config=gobby_tasks_config.validation,
-                    db=runner.database,
-                )
-            except Exception as e:
-                logger.error(f"Failed to initialize TaskValidator: {e}")
+    gobby_tasks_config = runner.config.gobby_tasks
+    if not gobby_tasks_config.validation.enabled:
+        return
+    if runner.llm_service is None:
+        mark_service_degraded(runner, "task_validator")
+        logger.warning("Skipping TaskValidator initialization; LLM service is unavailable")
+        return
+    try:
+        runner.task_validator = TaskValidator(
+            llm_service=runner.llm_service,
+            config=gobby_tasks_config.validation,
+            db=runner.database,
+        )
+    except Exception:
+        mark_service_degraded(runner, "task_validator")
+        logger.exception("Failed to initialize TaskValidator")
 
 
 def _init_project_context(runner: GobbyRunner) -> None:
@@ -279,5 +303,6 @@ def _init_project_context(runner: GobbyRunner) -> None:
             if project_path:
                 runner.git_manager = _WGM(str(project_path))
                 logger.debug(f"Daemon project context: id={runner.project_id}, path={project_path}")
-    except Exception as e:
-        logger.debug(f"Could not detect project context from cwd: {e}")
+    except Exception:
+        mark_service_degraded(runner, "project_context")
+        logger.warning("Could not detect project context from cwd", exc_info=True)

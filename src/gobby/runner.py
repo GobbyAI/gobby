@@ -114,6 +114,7 @@ class GobbyRunner:
     _subsystem_init_task: asyncio.Task[None] | None
     _provider_model_refresh_task: asyncio.Task[dict[str, dict[str, Any]]] | None
     _pending_tasks: set[asyncio.Task[Any]]
+    degraded_services: set[str]
 
     _memory_reconcile_task: asyncio.Task[None] | None
     _recall_drift_task: asyncio.Task[None] | None
@@ -184,6 +185,7 @@ class GobbyRunner:
             init_storage_and_config,
         )
 
+        self.degraded_services = set()
         init_storage_and_config(self, config_path, verbose)
         init_services(self)
         init_orchestration(self)

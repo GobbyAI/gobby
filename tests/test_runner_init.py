@@ -433,7 +433,7 @@ class TestGobbyRunnerInitialization:
             assert runner.memory_manager == mock_memory_manager
             assert runner.memory_sync_manager is None
 
-    def test_init_memory_manager_exception(self) -> None:
+    def test_init_memory_manager_exception(self, caplog: pytest.LogCaptureFixture) -> None:
         """Test that MemoryManager initialization exception is handled."""
         mock_config = MagicMock()
         mock_config.daemon_port = 60887
@@ -441,7 +441,7 @@ class TestGobbyRunnerInitialization:
         mock_config.session_lifecycle = MagicMock()
         mock_config.message_tracking = None
         mock_config.memory_sync = MagicMock()
-        mock_config.memory_sync.enabled = False
+        mock_config.memory_sync.enabled = True
         mock_config.memory = MagicMock()
 
         patches = create_base_patches(mock_config=mock_config)
@@ -459,6 +459,14 @@ class TestGobbyRunnerInitialization:
             runner = GobbyRunner()
             assert runner.memory_manager is None
             assert runner.memory_sync_manager is None
+            assert {"memory_manager", "memory_sync_manager"} <= runner.degraded_services
+            assert "Skipping MemoryBackupManager initialization" in caplog.text
+            memory_error = next(
+                record
+                for record in caplog.records
+                if record.message == "Failed to initialize MemoryManager"
+            )
+            assert memory_error.exc_info is not None
 
     def test_init_with_memory_backup_manager_does_not_import_jsonl(self) -> None:
         """Test MemoryBackupManager initializes without automatic JSONL import."""
@@ -669,6 +677,7 @@ class TestGobbyRunnerInitialization:
             assert runner.task_validator is None
             assert runner.llm_service == mock_llm_service
             assert runner.text_generation_service == mock_text_generation
+            assert "task_validator" in runner.degraded_services
 
     def test_init_agent_runner_exception(self) -> None:
         """Test AgentRunner initialization exception is handled."""
@@ -695,7 +704,7 @@ class TestGobbyRunnerInitialization:
             assert runner.agent_runner is None
             assert runner.task_sync_manager is not None
 
-    def test_init_llm_service_exception(self) -> None:
+    def test_init_llm_service_exception(self, caplog: pytest.LogCaptureFixture) -> None:
         """Test LLM service initialization exception is handled."""
         mock_config = MagicMock()
         mock_config.daemon_port = 60887
@@ -720,6 +729,14 @@ class TestGobbyRunnerInitialization:
             runner = GobbyRunner()
             assert runner.llm_service is None
             assert runner.task_validator is None
+            assert {"llm_service", "task_validator"} <= runner.degraded_services
+            assert "Skipping TaskValidator initialization" in caplog.text
+            llm_error = next(
+                record
+                for record in caplog.records
+                if record.message == "Failed to initialize LLM service"
+            )
+            assert llm_error.exc_info is not None
 
 
 class TestGobbyRunnerInitEdgeCases:
