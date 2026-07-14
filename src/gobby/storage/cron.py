@@ -192,8 +192,9 @@ class CronJobStorage(CronRunStorageMixin):
 
         # Compute initial next_run_at
         next_run = compute_next_run(job)
-        if next_run:
-            job.next_run_at = next_run
+        if enabled and next_run is None:
+            raise ValueError("enabled cron job requires a valid future schedule")
+        job.next_run_at = next_run
 
         self.db.execute(
             """
@@ -413,10 +414,24 @@ class CronJobStorage(CronRunStorageMixin):
                 )
 
         self._normalize_update_fields(job, fields)
-        resulting_enabled = fields.get("enabled", job.enabled)
-        resulting_next_run_at = fields.get("next_run_at", job.next_run_at)
-        if resulting_enabled and resulting_next_run_at is None:
-            raise ValueError("enabled=True requires next_run_at")
+        schedule_fields = {
+            "schedule_type",
+            "cron_expr",
+            "interval_seconds",
+            "run_at",
+            "timezone",
+            "enabled",
+        }
+        if schedule_fields.intersection(fields):
+            candidate_fields = {key: fields[key] for key in schedule_fields if key in fields}
+            if "run_at" in candidate_fields:
+                candidate_fields["run_at"] = parse_stored_datetime(candidate_fields["run_at"])
+                fields["run_at"] = candidate_fields["run_at"]
+            candidate = replace(job, **candidate_fields)
+            next_run = compute_next_run(candidate)
+            if candidate.enabled and next_run is None:
+                raise ValueError("enabled cron job requires a valid future schedule")
+            fields["next_run_at"] = next_run
         fields["updated_at"] = utc_now()
 
         return self._update_job_fields(job_id, **fields)

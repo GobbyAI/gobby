@@ -104,6 +104,20 @@ def test_create_job(cron_storage: CronJobStorage) -> None:
     assert job.enabled is True
 
 
+def test_create_job_rejects_invalid_enabled_schedule(cron_storage: CronJobStorage) -> None:
+    with pytest.raises(ValueError, match="valid future schedule"):
+        cron_storage.create_job(
+            project_id=PROJECT_ID,
+            name="Invalid Cron",
+            schedule_type="cron",
+            action_type="shell",
+            action_config={"command": "echo"},
+            cron_expr="invalid",
+        )
+
+    assert cron_storage.list_jobs(project_id=PROJECT_ID) == []
+
+
 def test_create_interval_job_clamps_to_minimum_interval(
     cron_storage: CronJobStorage,
 ) -> None:
@@ -136,6 +150,24 @@ def test_update_interval_job_clamps_to_minimum_interval(
 
     assert updated is not None
     assert updated.interval_seconds == 60
+
+
+def test_update_interval_job_recomputes_next_run(cron_storage: CronJobStorage) -> None:
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Reschedule Interval",
+        schedule_type="interval",
+        action_type="shell",
+        action_config={"command": "echo"},
+        interval_seconds=300,
+    )
+
+    updated = cron_storage.update_job(job.id, interval_seconds=600)
+
+    assert updated is not None
+    assert updated.next_run_at is not None
+    assert job.next_run_at is not None
+    assert updated.next_run_at > job.next_run_at
 
 
 def test_get_job(cron_storage: CronJobStorage) -> None:

@@ -72,13 +72,15 @@ def test_enabled_update_allowed_on_system_row(cron_storage: CronJobStorage) -> N
     assert updated.enabled is False
 
 
-def test_enabled_update_requires_effective_next_run_at(cron_storage: CronJobStorage) -> None:
+def test_enabled_update_recomputes_next_run_at(cron_storage: CronJobStorage) -> None:
     job = _job(cron_storage, is_system=True)
     cron_storage.update_job(job.id, enabled=False)
-    cron_storage.update_system_job_bookkeeping(job.id, next_run_at=None)
 
-    with pytest.raises(ValueError, match="enabled=True requires next_run_at"):
-        cron_storage.update_job(job.id, enabled=True)
+    updated = cron_storage.update_job(job.id, enabled=True)
+
+    assert updated is not None
+    assert updated.enabled is True
+    assert updated.next_run_at is not None
 
 
 def test_schedule_field_updates_allowed_on_system_row(cron_storage: CronJobStorage) -> None:
@@ -97,6 +99,8 @@ def test_schedule_field_updates_allowed_on_system_row(cron_storage: CronJobStora
     assert updated.schedule_type == "cron"
     assert updated.cron_expr == "*/5 * * * *"
     assert updated.timezone == "America/Chicago"
+    assert updated.next_run_at is not None
+    assert updated.next_run_at != job.next_run_at
 
 
 @pytest.mark.parametrize(
