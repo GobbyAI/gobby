@@ -122,6 +122,7 @@ def _stub_project_manager() -> Iterator[None]:
 def mock_task_manager() -> MagicMock:
     mgr = MagicMock(spec=LocalTaskManager)
     mgr.db = MagicMock()
+    mgr.db.fetchone.return_value = None
     # Validation backoff lookups must read as "no active backoff" (fetchone -> None),
     # otherwise TaskValidationBackoffStore builds a state from MagicMock rows.
     _backoff_conn = MagicMock()
