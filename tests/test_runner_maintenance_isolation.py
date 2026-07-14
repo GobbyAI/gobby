@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -114,6 +115,51 @@ async def test_expired_isolation_loop_uses_bounded_db_runner(
         assert stats.threads <= executor.max_workers
     finally:
         executor.shutdown(wait=True)
+
+
+@pytest.mark.asyncio
+async def test_expired_isolation_loop_deletes_only_safe_clones(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    project = LocalProjectManager(temp_db).create(
+        name="proj-1",
+        repo_path=str(tmp_path / "repo"),
+    )
+    clones = LocalCloneManager(temp_db)
+    active_path = tmp_path / "expired-active-clone"
+    active_path.mkdir()
+    active = clones.create(
+        project_id=project.id,
+        branch_name="task/expired-active-clone",
+        clone_path=str(active_path),
+        cleanup_after=datetime(2020, 1, 1, tzinfo=UTC),
+    )
+    merged_path = tmp_path / "expired-merged-clone"
+    merged_path.mkdir()
+    merged = clones.create(
+        project_id=project.id,
+        branch_name="task/expired-merged-clone",
+        clone_path=str(merged_path),
+    )
+    clones.mark_merged(merged.id, cleanup_after=datetime(2020, 1, 1, tzinfo=UTC))
+    shutdown_checks = 0
+
+    def is_shutdown_requested() -> bool:
+        nonlocal shutdown_checks
+        shutdown_checks += 1
+        return shutdown_checks > 1
+
+    await cleanup_expired_isolation_loop(
+        temp_db,
+        is_shutdown_requested,
+        interval_hours=0,
+    )
+
+    assert active_path.exists()
+    assert clones.get(active.id) is not None
+    assert not merged_path.exists()
+    assert clones.get(merged.id) is None
 
 
 @pytest.mark.asyncio

@@ -756,6 +756,110 @@ class TestLocalCloneManagerClaimAtomicity:
         assert stored.agent_session_id == winners[0]
 
 
+class TestLocalCloneManagerCleanupSafety:
+    """Real-database coverage for clone cleanup eligibility and stale TTL clearing."""
+
+    def test_find_expired_returns_only_merged_unclaimed_clones(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, object],
+        session_manager: SessionManager,
+    ) -> None:
+        manager = LocalCloneManager(temp_db)
+        project_id = str(sample_project["id"])
+        expired_at = datetime(2020, 1, 1, tzinfo=UTC)
+
+        active = manager.create(
+            project_id=project_id,
+            branch_name="feature/expired-active",
+            clone_path="/tmp/clones/expired-active",
+            cleanup_after=expired_at,
+        )
+        syncing = manager.create(
+            project_id=project_id,
+            branch_name="feature/expired-syncing",
+            clone_path="/tmp/clones/expired-syncing",
+            cleanup_after=expired_at,
+        )
+        manager.mark_syncing(syncing.id)
+
+        session = session_manager.register(
+            external_id="expired-claimed-clone",
+            machine_id="expired-claimed-clone-machine",
+            source="codex",
+            project_id=project_id,
+        )
+        claimed = manager.create(
+            project_id=project_id,
+            branch_name="feature/expired-claimed",
+            clone_path="/tmp/clones/expired-claimed",
+        )
+        manager.claim(claimed.id, session.id)
+        manager.update(
+            claimed.id,
+            status=CloneStatus.MERGED.value,
+            cleanup_after=expired_at,
+        )
+
+        merged = manager.create(
+            project_id=project_id,
+            branch_name="feature/expired-merged",
+            clone_path="/tmp/clones/expired-merged",
+        )
+        manager.mark_merged(merged.id, cleanup_after=expired_at)
+
+        expired = manager.find_expired(project_id=project_id)
+
+        assert [clone.id for clone in expired] == [merged.id]
+        assert active.id not in {clone.id for clone in expired}
+
+    def test_record_sync_clears_cleanup_after(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, object],
+    ) -> None:
+        manager = LocalCloneManager(temp_db)
+        clone = manager.create(
+            project_id=str(sample_project["id"]),
+            branch_name="feature/resynced",
+            clone_path="/tmp/clones/resynced",
+            cleanup_after=datetime(2020, 1, 1, tzinfo=UTC),
+        )
+
+        synced = manager.record_sync(clone.id)
+
+        assert synced is not None
+        assert synced.status == CloneStatus.ACTIVE.value
+        assert synced.cleanup_after is None
+
+    def test_claim_clears_cleanup_after(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, object],
+        session_manager: SessionManager,
+    ) -> None:
+        project_id = str(sample_project["id"])
+        session = session_manager.register(
+            external_id="claim-clears-cleanup",
+            machine_id="claim-clears-cleanup-machine",
+            source="codex",
+            project_id=project_id,
+        )
+        manager = LocalCloneManager(temp_db)
+        clone = manager.create(
+            project_id=project_id,
+            branch_name="feature/reclaimed",
+            clone_path="/tmp/clones/reclaimed",
+            cleanup_after=datetime(2020, 1, 1, tzinfo=UTC),
+        )
+
+        claimed = manager.claim(clone.id, session.id)
+
+        assert claimed is not None
+        assert claimed.agent_session_id == session.id
+        assert claimed.cleanup_after is None
+
+
 class TestLocalCloneManagerCountByStatus:
     """Tests for LocalCloneManager.count_by_status method."""
 

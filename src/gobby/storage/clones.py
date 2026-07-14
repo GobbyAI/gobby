@@ -425,6 +425,7 @@ class LocalCloneManager:
             clone_id,
             status=CloneStatus.ACTIVE.value,
             last_sync_at=now,
+            cleanup_after=None,
         )
 
     def claim(self, clone_id: str, session_id: str) -> Clone | None:
@@ -441,7 +442,7 @@ class LocalCloneManager:
         cursor = self.db.execute(
             """
             UPDATE clones
-            SET agent_session_id = %s, updated_at = %s
+            SET agent_session_id = %s, cleanup_after = NULL, updated_at = %s
             WHERE id = %s
               AND (agent_session_id IS NULL OR agent_session_id = %s)
               AND status != %s
@@ -545,23 +546,27 @@ class LocalCloneManager:
                 """
                 SELECT * FROM clones
                 WHERE project_id = %s
+                  AND status = %s
+                  AND agent_session_id IS NULL
                   AND cleanup_after IS NOT NULL
                   AND cleanup_after < %s
                 ORDER BY cleanup_after ASC
                 LIMIT %s
                 """,
-                (project_id, now, limit),
+                (project_id, CloneStatus.MERGED.value, now, limit),
             )
         else:
             rows = self.db.fetchall(
                 """
                 SELECT * FROM clones
-                WHERE cleanup_after IS NOT NULL
+                WHERE status = %s
+                  AND agent_session_id IS NULL
+                  AND cleanup_after IS NOT NULL
                   AND cleanup_after < %s
                 ORDER BY cleanup_after ASC
                 LIMIT %s
                 """,
-                (now, limit),
+                (CloneStatus.MERGED.value, now, limit),
             )
         return [Clone.from_row(row) for row in rows]
 
