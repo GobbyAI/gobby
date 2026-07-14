@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { getAgentEditorCaughtError, getAgentEditorResponseError } from './agent-editor-errors'
 import {
   AGENT_BTN_CLS,
+  AGENT_EDITOR_ERROR_CLS,
   AGENT_EDIT_INPUT_CLS,
   AGENT_RULE_SELECTOR_GROUP_CLS,
   AGENT_RULE_SELECTOR_HEADING_CLS,
@@ -50,6 +52,7 @@ export function AgentRulesEditor({
 }: AgentRulesEditorProps) {
   const [availableRules, setAvailableRules] = useState<RuleInfo[]>([])
   const [adding, setAdding] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
 
   // Autocomplete data for selectors
   const [knownTags, setKnownTags] = useState<string[]>([])
@@ -91,6 +94,7 @@ export function AgentRulesEditor({
   const globalRules = addableRules.filter(r => !r.project_id)
 
   const handleAdd = useCallback(async (ruleName: string) => {
+    setActionError(null)
     if (!definitionId) {
       onRulesChange([...rules, ruleName])
       setAdding(false)
@@ -102,17 +106,17 @@ export function AgentRulesEditor({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ add: [ruleName] }),
       })
-      if (res.ok) {
-        const data = await res.json()
-        onRulesChange(data.rules || [...rules, ruleName])
-      }
+      if (!res.ok) throw new Error(await getAgentEditorResponseError(res, 'Failed to add rule'))
+      const data = await res.json()
+      onRulesChange(data.rules || [...rules, ruleName])
     } catch (e) {
-      console.error('Failed to add rule:', e)
+      setActionError(getAgentEditorCaughtError(e, 'Failed to add rule'))
     }
     setAdding(false)
   }, [definitionId, rules, onRulesChange])
 
   const handleRemove = useCallback(async (ruleName: string) => {
+    setActionError(null)
     if (!definitionId) {
       onRulesChange(rules.filter(r => r !== ruleName))
       return
@@ -123,12 +127,11 @@ export function AgentRulesEditor({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ remove: [ruleName] }),
       })
-      if (res.ok) {
-        const data = await res.json()
-        onRulesChange(data.rules || rules.filter(r => r !== ruleName))
-      }
+      if (!res.ok) throw new Error(await getAgentEditorResponseError(res, 'Failed to remove rule'))
+      const data = await res.json()
+      onRulesChange(data.rules || rules.filter(r => r !== ruleName))
     } catch (e) {
-      console.error('Failed to remove rule:', e)
+      setActionError(getAgentEditorCaughtError(e, 'Failed to remove rule'))
     }
   }, [definitionId, rules, onRulesChange])
 
@@ -139,6 +142,7 @@ export function AgentRulesEditor({
   )
 
   const handleAddSelector = useCallback(async (type: 'include' | 'exclude', selector: string) => {
+    setActionError(null)
     const updated: RuleSelectors = {
       include: [...selectors.include],
       exclude: [...selectors.exclude],
@@ -149,54 +153,55 @@ export function AgentRulesEditor({
       updated.exclude.push(selector)
     }
 
-    if (definitionId) {
-      try {
-        const body = type === 'include'
-          ? { add_include: [selector] }
-          : { add_exclude: [selector] }
-        const res = await fetch(`/api/agents/definitions/${definitionId}/rule-selectors`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        })
-        if (res.ok) {
-          const data = await res.json()
-          onRuleSelectorsChange?.(data.rule_selectors)
-          return
-        }
-      } catch (e) {
-        console.error('Failed to add selector:', e)
-      }
+    if (!definitionId) {
+      onRuleSelectorsChange?.(updated)
+      return
     }
-    onRuleSelectorsChange?.(updated)
+
+    try {
+      const body = type === 'include'
+        ? { add_include: [selector] }
+        : { add_exclude: [selector] }
+      const res = await fetch(`/api/agents/definitions/${definitionId}/rule-selectors`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) throw new Error(await getAgentEditorResponseError(res, 'Failed to add selector'))
+      const data = await res.json()
+      onRuleSelectorsChange?.(data.rule_selectors)
+    } catch (e) {
+      setActionError(getAgentEditorCaughtError(e, 'Failed to add selector'))
+    }
   }, [definitionId, selectors, onRuleSelectorsChange])
 
   const handleRemoveSelector = useCallback(async (type: 'include' | 'exclude', selector: string) => {
+    setActionError(null)
     const updated: RuleSelectors = {
       include: selectors.include.filter(s => s !== selector),
       exclude: selectors.exclude.filter(s => s !== selector),
     }
 
-    if (definitionId) {
-      try {
-        const body = type === 'include'
-          ? { remove_include: [selector] }
-          : { remove_exclude: [selector] }
-        const res = await fetch(`/api/agents/definitions/${definitionId}/rule-selectors`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        })
-        if (res.ok) {
-          const data = await res.json()
-          onRuleSelectorsChange?.(data.rule_selectors)
-          return
-        }
-      } catch (e) {
-        console.error('Failed to remove selector:', e)
-      }
+    if (!definitionId) {
+      onRuleSelectorsChange?.(updated)
+      return
     }
-    onRuleSelectorsChange?.(updated)
+
+    try {
+      const body = type === 'include'
+        ? { remove_include: [selector] }
+        : { remove_exclude: [selector] }
+      const res = await fetch(`/api/agents/definitions/${definitionId}/rule-selectors`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) throw new Error(await getAgentEditorResponseError(res, 'Failed to remove selector'))
+      const data = await res.json()
+      onRuleSelectorsChange?.(data.rule_selectors)
+    } catch (e) {
+      setActionError(getAgentEditorCaughtError(e, 'Failed to remove selector'))
+    }
   }, [definitionId, selectors, onRuleSelectorsChange])
 
   const commitSelector = () => {
@@ -223,6 +228,16 @@ export function AgentRulesEditor({
 
   return (
     <div className={AGENT_RULES_EDITOR_CLS}>
+      {actionError && (
+        <button
+          type="button"
+          className={AGENT_EDITOR_ERROR_CLS}
+          onClick={() => setActionError(null)}
+          aria-label={`Dismiss error: ${actionError}`}
+        >
+          {actionError}
+        </button>
+      )}
       {/* Explicit rules */}
       <div className={AGENT_RULES_CHIPS_CLS}>
         {rules.map(name => (
