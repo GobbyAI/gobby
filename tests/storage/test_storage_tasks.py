@@ -132,6 +132,21 @@ class TestLocalTaskManager:
         _assert_stage_state(updated, "ready")
         assert updated.updated_at > task.updated_at
 
+    def test_update_task_persists_schedule_fields(self, task_manager, project_id) -> None:
+        task = task_manager.create_task(project_id=project_id, title="Scheduled Task")
+
+        updated = task_manager.update_task(
+            task.id,
+            start_date="2026-07-14",
+            due_date="2026-07-21",
+        )
+
+        assert updated.start_date == "2026-07-14"
+        assert updated.due_date == "2026-07-21"
+        persisted = task_manager.get_task(task.id)
+        assert persisted.start_date == "2026-07-14"
+        assert persisted.due_date == "2026-07-21"
+
     def test_update_task_rejects_self_parent(self, task_manager, project_id) -> None:
         task = task_manager.create_task(project_id=project_id, title="Original Title")
 
@@ -155,6 +170,15 @@ class TestLocalTaskManager:
 
         with pytest.raises(ValueError, match="does not allow legacy state fields"):
             task_manager.update_task(task.id, status="in_progress")
+
+    @pytest.mark.parametrize("field_name", ["verification", "sequence_order"])
+    def test_update_task_rejects_unsupported_fields(
+        self, task_manager, project_id, field_name
+    ) -> None:
+        task = task_manager.create_task(project_id=project_id, title="Original Title")
+
+        with pytest.raises(ValueError, match=f"unsupported fields: {field_name}"):
+            task_manager.update_task(task.id, **{field_name: "unsupported"})
 
     def test_update_task_rejects_mixed_metadata_and_lifecycle_fields(
         self, task_manager, project_id

@@ -337,6 +337,8 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         assigned_agent: MaybeUnset[str | None] = UNSET,
         implementation_domain: MaybeUnset[str | None] = UNSET,
         additional_skills: MaybeUnset[list[str] | None] = UNSET,
+        start_date: MaybeUnset[str | None] = UNSET,
+        due_date: MaybeUnset[str | None] = UNSET,
         **kwargs: Any,
     ) -> Task:
         """Update metadata fields only.
@@ -381,6 +383,8 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
             assigned_agent=assigned_agent,
             implementation_domain=implementation_domain,
             additional_skills=additional_skills,
+            start_date=start_date,
+            due_date=due_date,
             **kwargs,
         )
 

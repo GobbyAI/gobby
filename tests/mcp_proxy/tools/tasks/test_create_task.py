@@ -128,6 +128,62 @@ async def test_create_task_does_not_accept_or_seed_stage_caps(temp_db, sample_pr
 
 
 @pytest.mark.asyncio
+async def test_create_and_update_task_round_trip_schedule_fields(temp_db, sample_project) -> None:
+    session = SessionManager(temp_db).register(
+        external_id="schedule-fields-mcp",
+        machine_id="test-machine",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    manager = LocalTaskManager(temp_db)
+    registry = create_task_registry(manager, MagicMock())
+
+    with session_context_for_test(session.id):
+        created = await registry.call(
+            "create_task",
+            {
+                "title": "Scheduled task",
+                "category": "research",
+                "start_date": "2026-07-14",
+                "due_date": "2026-07-21",
+            },
+        )
+        update_result = await registry.call(
+            "update_task",
+            {
+                "task_id": created["id"],
+                "start_date": "2026-07-15",
+                "due_date": "2026-07-22",
+            },
+        )
+
+    assert "error" not in created
+    assert update_result == {}
+    updated = manager.get_task(created["id"])
+    assert updated.start_date == "2026-07-15"
+    assert updated.due_date == "2026-07-22"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field_name,value", [("verification", "Run tests"), ("sequence_order", 1)])
+async def test_update_task_reports_unsupported_fields(
+    temp_db, sample_project, field_name, value
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(sample_project["id"], "Unsupported update")
+    registry = create_task_registry(manager, MagicMock())
+
+    result = await registry.call(
+        "update_task",
+        {"task_id": task.id, field_name: value},
+    )
+
+    assert result == {
+        "error": f"LocalTaskManager.update_task received unsupported fields: {field_name}"
+    }
+
+
+@pytest.mark.asyncio
 async def test_initialize_task_manifest_persists_review_anchor_cap(temp_db, sample_project) -> None:
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(

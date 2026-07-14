@@ -10,7 +10,7 @@ This module contains:
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -18,6 +18,15 @@ from gobby.tasks import task_types as _task_types
 from gobby.tasks.categories import IMPLEMENTATION_DOMAINS
 from gobby.tasks.state_semantics import serialize_task_state
 from gobby.utils.datetime import normalize_datetime_model
+
+
+def _normalize_date(value: str | date | datetime | None) -> str | None:
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    return value
+
 
 # Priority name to numeric value mapping
 PRIORITY_MAP = {"backlog": 4, "low": 3, "medium": 2, "high": 1, "critical": 0}
@@ -313,8 +322,8 @@ class Task:
             linear_team_id=row["linear_team_id"] if "linear_team_id" in keys else None,
             seq_num=row["seq_num"] if "seq_num" in keys else None,
             path_cache=row["path_cache"] if "path_cache" in keys else None,
-            start_date=row["start_date"] if "start_date" in keys else None,
-            due_date=row["due_date"] if "due_date" in keys else None,
+            start_date=_normalize_date(row["start_date"] if "start_date" in keys else None),
+            due_date=_normalize_date(row["due_date"] if "due_date" in keys else None),
             allow_automation=bool(row["allow_automation"]) if "allow_automation" in keys else False,
             unattended=bool(row["unattended"]) if "unattended" in keys else False,
             isolation=(
