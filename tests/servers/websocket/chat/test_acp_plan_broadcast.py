@@ -55,6 +55,19 @@ def _make_session(
     return session, broadcasts
 
 
+async def test_managed_session_propagates_programming_errors() -> None:
+    session, _ = _make_session("default", [])
+
+    async def failing_send_message(_session: Any, _prompt: Any) -> AsyncIterator[StreamEvent]:
+        raise RuntimeError("boom")
+        yield
+
+    session._backend.send_message = failing_send_message
+
+    with pytest.raises(RuntimeError, match="boom"):
+        _ = [event async for event in session.send_message("hello")]
+
+
 @pytest.mark.asyncio
 async def test_plan_turn_broadcasts_pending_plan() -> None:
     session, broadcasts = _make_session(

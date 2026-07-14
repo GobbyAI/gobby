@@ -250,7 +250,7 @@ class ACPManagedChatSession(
                     sdk_session_id=self.sdk_session_id,
                     context_window=self._resolve_context_window(),
                 )
-            except Exception as exc:
+            except OSError as exc:
                 logger.error(
                     "%s managed session %s error: %s",
                     self._provider_label(),

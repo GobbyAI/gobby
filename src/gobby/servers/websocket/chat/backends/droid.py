@@ -271,7 +271,7 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
                     sdk_session_id=self.sdk_session_id,
                     context_window=self._resolve_context_window(),
                 )
-            except (RuntimeError, OSError, ConnectionError, asyncio.CancelledError) as exc:
+            except OSError as exc:
                 logger.error("Droid managed session %s error: %s", self.conversation_id, exc)
                 yield TextChunk(content=f"Generation failed: {exc}")
                 yield DoneEvent(

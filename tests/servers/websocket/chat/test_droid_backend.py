@@ -276,6 +276,28 @@ async def test_managed_session_translates_text_thinking_and_done() -> None:
     assert events[-1].context_window == 200_000
 
 
+@pytest.mark.parametrize(
+    "error_type",
+    [asyncio.CancelledError, RuntimeError],
+    ids=["cancelled", "programming-error"],
+)
+async def test_managed_session_propagates_stream_errors(
+    error_type: type[BaseException],
+) -> None:
+    backend = DroidWebChatBackend()
+    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session._connected = True
+
+    async def failing_send_message(_session: Any, _prompt: str):
+        raise error_type("boom")
+        yield
+
+    backend.send_message = failing_send_message
+
+    with pytest.raises(error_type):
+        _ = [event async for event in session.send_message("hello")]
+
+
 @pytest.mark.asyncio
 async def test_managed_session_translates_structured_tool_events() -> None:
     backend = DroidWebChatBackend()
