@@ -39,6 +39,7 @@ from gobby.tasks.validation import (
 )
 from gobby.tasks.validation_evidence import (
     ChangedFileEvidence,
+    _added_signature_names,
     _excerpt_file_diff,
     build_diff_validation_evidence,
 )
@@ -195,6 +196,64 @@ class TestValidationPromptBudget:
         assert "middle lines omitted" in evidence.text
         assert "omitted definitions: test_case_40" in evidence.text
         assert "Omitted Evidence:" in evidence.text
+
+    def test_added_signature_names_stably_prioritize_and_deduplicate_tests(self) -> None:
+        lines = [
+            "+def helper_first(): pass",
+            "+def TestUppercase(): pass",
+            "+def helper_second(): pass",
+            "+def test_lowercase(): pass",
+            "+def helper_first(): pass",
+            "+def test_lowercase(): pass",
+        ]
+
+        assert _added_signature_names(lines, limit=4, test_first=True) == [
+            "TestUppercase",
+            "test_lowercase",
+            "helper_first",
+            "helper_second",
+        ]
+
+    def test_diff_evidence_prioritizes_omitted_test_definitions(self) -> None:
+        """Helper definitions cannot displace acceptance tests from a bounded marker."""
+        helper_names = [f"helper_fixture_{index:02d}" for index in range(7)]
+        test_names = [f"test_acceptance_{index:02d}" for index in range(12)]
+        test_lines = [f"+test_file_line_{line:03d}_{'t' * 40}" for line in range(331)]
+        for index, name in enumerate(helper_names):
+            test_lines[45 + index * 10] = f"+def {name}(): pass"
+        for index, name in enumerate(test_names[:-1]):
+            test_lines[125 + index * 16] = f"+def {name}(): pass"
+        test_lines[315] = f"+def {test_names[-1]}(): pass"
+
+        production_lines = "".join(
+            f"+production_line_{line:03d}_{'p' * 80}\n" for line in range(240)
+        )
+        diff = (
+            "diff --git a/src/large.py b/src/large.py\n"
+            "new file mode 100644\n"
+            "--- /dev/null\n"
+            "+++ b/src/large.py\n"
+            "@@ -0,0 +1,240 @@\n"
+            + production_lines
+            + "diff --git a/tests/test_acceptance.py b/tests/test_acceptance.py\n"
+            "new file mode 100644\n"
+            "--- /dev/null\n"
+            "+++ b/tests/test_acceptance.py\n"
+            "@@ -0,0 +1,331 @@\n" + "".join(f"{line}\n" for line in test_lines)
+        )
+
+        evidence = build_diff_validation_evidence(
+            diff,
+            max_chars=VALIDATION_PROMPT_BUDGET_CHARS,
+            max_hunk_lines=400,
+        )
+
+        for name in test_names:
+            assert name in evidence.text
+        assert "diff excerpt truncated for tests/test_acceptance.py" in evidence.text
+        assert "omitted definitions:" in evidence.text
+        assert "Omitted Evidence:" in evidence.text
+        assert len(evidence.text) <= VALIDATION_PROMPT_BUDGET_CHARS
 
     def test_diff_excerpt_budgets_actual_signature_marker(self) -> None:
         """Signature-rich truncation markers must stay inside the caller budget."""

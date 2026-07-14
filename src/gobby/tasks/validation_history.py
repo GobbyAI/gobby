@@ -120,7 +120,7 @@ class ValidationHistoryManager:
         rows = self.db.fetchall(
             """SELECT * FROM task_validation_history
                WHERE task_id = %s
-               ORDER BY iteration ASC""",
+               ORDER BY iteration ASC, id ASC""",
             (task_id,),
         )
 
@@ -138,7 +138,7 @@ class ValidationHistoryManager:
         row = self.db.fetchone(
             """SELECT * FROM task_validation_history
                WHERE task_id = %s
-               ORDER BY iteration DESC
+               ORDER BY iteration DESC, id DESC
                LIMIT 1""",
             (task_id,),
         )
