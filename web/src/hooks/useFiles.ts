@@ -23,6 +23,7 @@ export interface OpenFile {
   editing: boolean
   image: boolean
   binary: boolean
+  truncated: boolean
   mime_type: string
   size: number
 }
@@ -261,6 +262,7 @@ export function useFiles() {
       editing: false,
       image: false,
       binary: false,
+      truncated: false,
       mime_type: '',
       size: 0,
     }
@@ -289,6 +291,7 @@ export function useFiles() {
                 loading: false,
                 image: data.image,
                 binary: data.binary,
+                truncated: data.truncated === true,
                 mime_type: data.mime_type,
                 size: data.size,
               }
@@ -331,6 +334,7 @@ export function useFiles() {
     setOpenFiles(prev =>
       prev.map((f, i) => {
         if (i !== index) return f
+        if (f.truncated) return f
         if (f.editing && f.dirty) return f
         return { ...f, editing: !f.editing, editContent: f.originalContent, dirty: false }
       })
@@ -359,7 +363,7 @@ export function useFiles() {
 
   const saveFile = useCallback(async (index: number) => {
     const file = openFilesRef.current[index]
-    if (!file || !file.dirty || file.editContent === null) return
+    if (!file || file.truncated || !file.dirty || file.editContent === null) return
 
     setOpenFiles(prev =>
       prev.map((f, i) => (i === index ? { ...f, saving: true } : f))

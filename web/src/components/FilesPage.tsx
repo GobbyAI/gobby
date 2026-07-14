@@ -46,6 +46,7 @@ const TOOLBAR_CLS =
   'flex min-h-8 items-center justify-between border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1 text-[length:var(--text-sm)] [container-type:inline-size] [container-name:files-viewer]'
 const TOOLBAR_PATH_CLS = 'overflow-hidden text-ellipsis whitespace-nowrap text-[var(--text-muted)]'
 const TOOLBAR_ACTIONS_CLS = 'flex shrink-0 items-center gap-1.5'
+const TOO_LARGE_NOTICE_CLS = 'text-[var(--color-warning-foreground)]'
 
 const TOOLBAR_BTN_BASE_CLS = 'btn btn-accent btn-sm file-viewer-btn'
 const ICON_BTN_CLS = 'btn btn-accent btn-sm btn-icon file-viewer-btn'
@@ -271,6 +272,11 @@ export function FilesPage({
           <div className={TOOLBAR_CLS}>
             <span className={TOOLBAR_PATH_CLS}>{activeFile.path}</span>
             <div className={TOOLBAR_ACTIONS_CLS}>
+              {activeFile.truncated && (
+                <span className={TOO_LARGE_NOTICE_CLS} role="status">
+                  File is too large to edit safely.
+                </span>
+              )}
               {activeFileGitStatus && (
                 <button
                   className={cn(TOOLBAR_BTN_BASE_CLS, showDiff && DIFF_BTN_ACTIVE_CLS)}
@@ -303,7 +309,7 @@ export function FilesPage({
                   <button
                     className={SAVE_BTN_CLS}
                     onClick={() => onSaveFile(activeFileIndex)}
-                    disabled={activeFile.saving || !activeFile.dirty}
+                    disabled={activeFile.truncated || activeFile.saving || !activeFile.dirty}
                     aria-label={activeFile.saving ? 'Saving' : 'Save'}
                     title={activeFile.saving ? 'Saving...' : 'Save'}
                   >
@@ -318,8 +324,9 @@ export function FilesPage({
                     onToggleEditing(activeFileIndex)
                     setShowDiff(false)
                   }}
+                  disabled={activeFile.truncated}
                   aria-label="Edit"
-                  title="Edit"
+                  title={activeFile.truncated ? 'File is too large to edit safely' : 'Edit'}
                 >
                   <EditIcon />
                   <span className="file-viewer-btn__label">Edit</span>
