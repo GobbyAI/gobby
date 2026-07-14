@@ -1013,12 +1013,7 @@ class TestComments:
         author_type: str = "session",
         parent_comment_id: str | None = None,
     ) -> str:
-        """Insert a comment directly into the DB, bypassing the route.
-
-        The create_comment route has a known bug: it references task.ref which
-        doesn't exist on the Task dataclass. We insert directly to test the
-        list/delete endpoints.
-        """
+        """Insert a comment directly into the DB, bypassing the route."""
         import uuid as _uuid
 
         comment_id = str(_uuid.uuid4())
@@ -1030,22 +1025,40 @@ class TestComments:
         return comment_id
 
     def test_create_comment_endpoint(self, client: TestClient, sample_task: dict) -> None:
-        """Exercise the create_comment endpoint.
-
-        The route has a known bug (task.ref doesn't exist on Task dataclass)
-        in the _broadcast_task call. Use non-raising client so we can verify
-        the comment was inserted despite the broadcast failure.
-        """
-        from starlette.testclient import TestClient as TC
-
-        non_raising = TC(client.app, raise_server_exceptions=False)
-        non_raising.post(
+        response = client.post(
             f"/api/tasks/{sample_task['id']}/comments",
             json={"body": "Test comment", "author": "sess-1", "author_type": "session"},
         )
-        # Verify the comment was inserted (the DB write happens before the crash)
+        assert response.status_code == 200
         list_resp = client.get(f"/api/tasks/{sample_task['id']}/comments")
         assert list_resp.json()["total"] >= 1
+
+    def test_create_comment_rejects_missing_parent(
+        self, client: TestClient, sample_task: dict
+    ) -> None:
+        response = client.post(
+            f"/api/tasks/{sample_task['id']}/comments",
+            json={
+                "body": "Reply",
+                "author": "sess-1",
+                "parent_comment_id": "00000000-0000-0000-0000-000000000000",
+            },
+        )
+
+        assert response.status_code == 400
+
+    def test_create_comment_rejects_parent_from_another_task(
+        self, client: TestClient, two_tasks: tuple, temp_db
+    ) -> None:
+        task, other_task = two_tasks
+        parent_id = self._insert_comment(temp_db, other_task["id"], "Parent", "a1")
+
+        response = client.post(
+            f"/api/tasks/{task['id']}/comments",
+            json={"body": "Reply", "author": "sess-1", "parent_comment_id": parent_id},
+        )
+
+        assert response.status_code == 400
 
     def test_list_comments(self, client: TestClient, sample_task: dict, temp_db) -> None:
         self._insert_comment(temp_db, sample_task["id"], "First", "a1")
@@ -1077,6 +1090,26 @@ class TestComments:
         assert response.json()["deleted"] is True
         list_resp = client.get(f"/api/tasks/{sample_task['id']}/comments")
         assert list_resp.json()["count"] == 0
+
+    def test_delete_missing_comment_returns_not_found(
+        self, client: TestClient, sample_task: dict
+    ) -> None:
+        response = client.delete(
+            f"/api/tasks/{sample_task['id']}/comments/00000000-0000-0000-0000-000000000000"
+        )
+
+        assert response.status_code == 404
+
+    def test_delete_comment_from_another_task_returns_not_found(
+        self, client: TestClient, two_tasks: tuple, temp_db
+    ) -> None:
+        task, other_task = two_tasks
+        comment_id = self._insert_comment(temp_db, other_task["id"], "Keep", "a1")
+
+        response = client.delete(f"/api/tasks/{task['id']}/comments/{comment_id}")
+
+        assert response.status_code == 404
+        assert temp_db.fetchone("SELECT id FROM task_comments WHERE id = %s", (comment_id,))
 
     def test_comments_for_nonexistent_task(self, client: TestClient) -> None:
         response = client.get("/api/tasks/nonexistent-id-000/comments")
