@@ -268,7 +268,7 @@ class TestTaskSyncManager:
         self, sync_manager, task_manager, sample_project
     ) -> None:
         """Test that export always writes correct content, even if file was externally modified."""
-        task_manager.create_task(sample_project["id"], "Task 1")
+        task = task_manager.create_task(sample_project["id"], "Task 1")
         sync_manager.export_to_jsonl()
 
         # Read correct content
@@ -276,12 +276,52 @@ class TestTaskSyncManager:
         assert "Task 1" in correct_content
 
         # Externally overwrite the file (simulates git checkout/merge)
-        sync_manager.export_path.write_text('{"id": "stale", "title": "Stale data"}\n')
+        sync_manager.export_path.write_text(
+            json.dumps(
+                {
+                    "id": task.id,
+                    "title": "Stale data",
+                    "updated_at": "2000-01-01T00:00:00Z",
+                }
+            )
+            + "\n"
+        )
 
         # Export again — should restore correct content
         sync_manager.export_to_jsonl()
         restored_content = sync_manager.export_path.read_text()
         assert restored_content == correct_content
+
+    def test_export_merges_existing_records_by_updated_at(
+        self, sync_manager, task_manager, sample_project
+    ) -> None:
+        local_task = task_manager.create_task(sample_project["id"], "Local task")
+        remote_task_id = _task_id("remote-only")
+        newer_file_record = {
+            "id": local_task.id,
+            "title": "Updated on another machine",
+            "updated_at": "2099-01-01T00:00:00Z",
+        }
+        file_only_record = {
+            "id": remote_task_id,
+            "title": "Remote-only task",
+            "updated_at": "2099-01-02T00:00:00Z",
+        }
+        sync_manager.export_path.parent.mkdir(parents=True, exist_ok=True)
+        sync_manager.export_path.write_text(
+            json.dumps(file_only_record) + "\n" + json.dumps(newer_file_record) + "\n"
+        )
+
+        sync_manager.export_to_jsonl()
+
+        records = [json.loads(line) for line in sync_manager.export_path.read_text().splitlines()]
+        assert [record["id"] for record in records] == sorted([local_task.id, remote_task_id])
+        assert next(record for record in records if record["id"] == local_task.id) == (
+            newer_file_record
+        )
+        assert next(record for record in records if record["id"] == remote_task_id) == (
+            file_only_record
+        )
 
     @pytest.mark.integration
     def test_export_replace_failure_preserves_existing_file(

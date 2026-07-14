@@ -260,7 +260,7 @@ class TaskSyncManager:
             # Sort tasks by ID for deterministic output
             tasks.sort(key=lambda t: t.id)
 
-            export_data = []
+            export_data: list[dict[str, Any]] = []
             for task in tasks:
                 state = serialize_task_state(task)
                 state["closed_at"] = _normalize_timestamp(task.closed_at)
@@ -321,11 +321,59 @@ class TaskSyncManager:
                 }
                 export_data.append(task_dict)
 
-            content = "".join(json_dumps(item) + "\n" for item in export_data)
             with export_file_lock(target_path):
+                merged_data = {item["id"]: item for item in export_data}
+                if target_path.exists():
+                    for line_number, line in enumerate(
+                        target_path.read_text(encoding="utf-8").splitlines(), start=1
+                    ):
+                        if not line.strip():
+                            continue
+                        try:
+                            file_record = json.loads(line)
+                            if not isinstance(file_record, dict) or not isinstance(
+                                file_record.get("id"), str
+                            ):
+                                raise TypeError
+                            file_id = file_record["id"]
+                        except (json.JSONDecodeError, KeyError, TypeError):
+                            logger.warning(
+                                "Skipping malformed task export record at %s:%d",
+                                target_path,
+                                line_number,
+                            )
+                            continue
+
+                        current_record = merged_data.get(file_id)
+                        if current_record is None:
+                            merged_data[file_id] = file_record
+                            continue
+
+                        try:
+                            file_updated_at = _parse_optional_timestamp(
+                                file_record.get("updated_at")
+                            )
+                            current_updated_at = _parse_optional_timestamp(
+                                current_record.get("updated_at")
+                            )
+                        except (TypeError, ValueError):
+                            logger.warning(
+                                "Skipping task export record with malformed updated_at at %s:%d",
+                                target_path,
+                                line_number,
+                            )
+                            continue
+
+                        if file_updated_at is not None and (
+                            current_updated_at is None or file_updated_at > current_updated_at
+                        ):
+                            merged_data[file_id] = file_record
+
+                merged_records = sorted(merged_data.values(), key=lambda item: item["id"])
+                content = "".join(json_dumps(item) + "\n" for item in merged_records)
                 atomic_write_text(target_path, content)
 
-            logger.info(f"Exported {len(tasks)} tasks to {target_path}")
+            logger.info(f"Exported {len(merged_records)} tasks to {target_path}")
 
         except Exception as e:
             logger.error(f"Failed to export tasks: {e}", exc_info=True)
