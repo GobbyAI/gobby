@@ -10,6 +10,7 @@ Mirrors the pattern in project_context.py.
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import logging
 from contextlib import contextmanager
@@ -175,7 +176,7 @@ def _ref_requires_project_scope(session_ref: str) -> bool:
     return stripped.isdigit()
 
 
-def resolve_and_seed_contexts(
+def _resolve_and_seed_contexts_sync(
     session_ref: str | None,
     session_manager: SessionManager | None,
     *,
@@ -363,6 +364,79 @@ def resolve_and_seed_contexts(
             project_token = _minimal_project_token()
 
     tokens.project_token = project_token
+    return tokens
+
+
+def _resolve_context_values(
+    session_ref: str | None,
+    session_manager: SessionManager | None,
+    *,
+    project_ref: str | None = None,
+    session_scope_ref: str | None = None,
+    session_ref_origin: Literal["explicit", "ambient"] = "explicit",
+    project_ref_is_fallback: bool = False,
+    db: HubDatabase | None = None,
+) -> tuple[str | None, str | None, SessionContext | None, dict[str, Any] | None]:
+    """Resolve DB-backed values in a worker and capture its seeded contexts."""
+    from gobby.utils.project_context import get_project_context
+
+    worker_tokens = _resolve_and_seed_contexts_sync(
+        session_ref=session_ref,
+        session_manager=session_manager,
+        project_ref=project_ref,
+        session_scope_ref=session_scope_ref,
+        session_ref_origin=session_ref_origin,
+        project_ref_is_fallback=project_ref_is_fallback,
+        db=db,
+    )
+    try:
+        project_context = get_project_context()
+        return (
+            worker_tokens.resolved_session_id,
+            worker_tokens.resolved_project_id,
+            get_session_context(),
+            dict(project_context) if project_context is not None else None,
+        )
+    finally:
+        reset_seeded_contexts(worker_tokens)
+
+
+async def resolve_and_seed_contexts(
+    session_ref: str | None,
+    session_manager: SessionManager | None,
+    *,
+    project_ref: str | None = None,
+    session_scope_ref: str | None = None,
+    session_ref_origin: Literal["explicit", "ambient"] = "explicit",
+    project_ref_is_fallback: bool = False,
+    db: HubDatabase | None = None,
+) -> SeededContextTokens:
+    """Resolve blocking context data off-loop and seed the calling async task."""
+    from gobby.utils.project_context import set_project_context
+
+    (
+        resolved_session_id,
+        resolved_project_id,
+        session_context,
+        project_context,
+    ) = await asyncio.to_thread(
+        _resolve_context_values,
+        session_ref,
+        session_manager,
+        project_ref=project_ref,
+        session_scope_ref=session_scope_ref,
+        session_ref_origin=session_ref_origin,
+        project_ref_is_fallback=project_ref_is_fallback,
+        db=db,
+    )
+    tokens = SeededContextTokens(
+        resolved_session_id=resolved_session_id,
+        resolved_project_id=resolved_project_id,
+    )
+    if session_context is not None:
+        tokens.session_token = set_session_context(session_context)
+    if project_context is not None:
+        tokens.project_token = set_project_context(project_context)
     return tokens
 
 

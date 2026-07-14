@@ -22,8 +22,10 @@ from gobby.utils.session_context import (
     SeededContextTokens,
     get_session_context,
     reset_seeded_contexts,
-    resolve_and_seed_contexts,
     session_context_for_test,
+)
+from gobby.utils.session_context import (
+    _resolve_and_seed_contexts_sync as resolve_and_seed_contexts,
 )
 from gobby.workflows.state_manager import SessionVariableManager
 
