@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from gobby.sessions.context_usage import effective_context_window_for_session
 from gobby.sessions.terminal_kill import kill_terminal_session
+from gobby.storage.projects import LocalProjectManager
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -116,21 +117,30 @@ def register_lifecycle_routes(
                     detail="Required: session_ids (list) and target_project_id",
                 )
 
+            db = server.session_manager.db
+            if LocalProjectManager(db).get(target_project_id) is None:
+                raise HTTPException(status_code=400, detail="Target project not found")
+
             moved_ids: list[str] = []
-            errors = []
-            with server.session_manager.db.transaction():
-                for sid in session_ids:
+            errors: list[str] = []
+            with db.transaction() as transaction:
+                for index, sid in enumerate(session_ids):
+                    savepoint = transaction.savepoint(f"bulk_move_session_{index}")
                     try:
                         session = server.session_manager.get(sid)
                         if session is None:
                             errors.append(f"Session {sid} not found")
+                            savepoint.release()
                             continue
-                        server.session_manager.db.execute(
+                        transaction.execute(
                             "UPDATE sessions SET project_id = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
                             (target_project_id, sid),
                         )
+                        savepoint.release()
                         moved_ids.append(sid)
                     except Exception as e:
+                        savepoint.rollback()
+                        savepoint.release()
                         errors.append(f"Failed to move {sid}: {e}")
 
             for sid in moved_ids:
