@@ -1,5 +1,6 @@
 """Tests for src/utils/daemon_client.py - Daemon HTTP Client."""
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -15,11 +16,19 @@ pytestmark = pytest.mark.unit
 class TestDaemonClientInit:
     """Tests for DaemonClient initialization."""
 
-    def test_default_values(self) -> None:
-        """Test default initialization values."""
+    def test_default_values(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test default initialization resolves the configured daemon port."""
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+        monkeypatch.delenv("GOBBY_DAEMON_URL", raising=False)
+        monkeypatch.delenv("GOBBY_PORT", raising=False)
+        monkeypatch.delenv("GOBBY_DAEMON_PORT", raising=False)
+        bootstrap_path = tmp_path / "bootstrap.yaml"
+        bootstrap_path.write_text("daemon_port: 61999\n", encoding="utf-8")
+        bootstrap_path.chmod(0o600)
+
         client = DaemonClient()
 
-        assert client.url == "http://localhost:60887"
+        assert client.url == "http://localhost:61999"
         assert client.timeout == 5.0
         assert client._cached_is_ready is None
         assert client._cached_status is None
@@ -81,7 +90,7 @@ class TestDaemonClientCheckHealth:
         logger.debug.assert_called_once_with(
             "Daemon health check passed",
             extra={
-                "url": "http://localhost:60887",
+                "url": "http://127.0.0.1:60887",
                 "health_failed_since_last_success": False,
             },
         )
@@ -131,21 +140,21 @@ class TestDaemonClientCheckHealth:
         logger.info.assert_called_once_with(
             "Daemon health recovered",
             extra={
-                "url": "http://localhost:60887",
+                "url": "http://127.0.0.1:60887",
                 "health_failed_since_last_success": True,
             },
         )
         logger.debug.assert_called_once_with(
             "Daemon health check passed",
             extra={
-                "url": "http://localhost:60887",
+                "url": "http://127.0.0.1:60887",
                 "health_failed_since_last_success": False,
             },
         )
 
     def test_health_check_connection_refused_during_planned_restart_does_not_warn(
         self,
-        tmp_path,
+        tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Planned restarts make transient daemon gaps expected."""
@@ -220,6 +229,7 @@ class TestDaemonClientCheckStatus:
             is_ready, message, status, error = client.check_status()
 
         assert is_ready is False
+        assert message is not None
         assert "Cannot access daemon" in message
         assert status == "cannot_access"
         assert error == "HTTP 503"

@@ -31,7 +31,7 @@ from typing import Any, ClassVar, cast
 import httpx
 
 from gobby.shutdown_intent import ShutdownIntent, read_active_shutdown_intent
-from gobby.utils.daemon_url import validate_daemon_url
+from gobby.utils.daemon_url import daemon_url, validate_daemon_url
 from gobby.utils.local_token import daemon_auth_headers
 
 PLANNED_RESTART_MARKER_MAX_AGE_SECONDS = 120.0
@@ -78,7 +78,7 @@ class DaemonClient:
     def __init__(
         self,
         host: str = "localhost",
-        port: int = 60887,
+        port: int | None = None,
         timeout: float = 5.0,
         logger: logging.Logger | None = None,
         *,
@@ -89,16 +89,17 @@ class DaemonClient:
 
         Args:
             host: Daemon host address
-            port: Daemon port number
+            port: Daemon port number. Defaults to the resolved daemon configuration.
             timeout: HTTP request timeout in seconds
             logger: Optional logger instance (creates one if not provided)
             url: Fully resolved daemon base URL. Overrides host/port when provided.
         """
-        self.url = (
-            validate_daemon_url(url, source="daemon client URL")
-            if url is not None
-            else f"http://{host}:{port}"
-        )
+        if url is not None:
+            self.url = validate_daemon_url(url, source="daemon client URL")
+        elif port is None:
+            self.url = daemon_url()
+        else:
+            self.url = f"http://{host}:{port}"
         self.timeout = timeout
         self.logger = logger or logging.getLogger(__name__)
         self._auth_headers = daemon_auth_headers()
