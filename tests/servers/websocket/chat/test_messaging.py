@@ -19,6 +19,9 @@ from gobby.llm.claude_models import (
 from gobby.servers.websocket.chat._lifecycle import ChatLifecycleMixin
 from gobby.servers.websocket.chat._messaging import ChatMessagingMixin
 from gobby.skills.formatting import skill_fetch_directive
+from gobby.storage import chat_messages
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
@@ -585,6 +588,48 @@ class TestStreamChatResponse:
         done_msg = [m for m in msgs if m.get("done") is True]
         assert len(done_msg) == 1
         assert done_msg[0]["interrupted"] is True
+
+    @pytest.mark.parametrize("exit_mode", ["cancel", "error", "disconnect"])
+    async def test_abnormal_stream_exit_persists_partial_message_and_pauses_session(
+        self,
+        mixin: DummyMessagingMixin,
+        ws: AsyncMock,
+        temp_db: HubDatabase,
+        exit_mode: str,
+    ) -> None:
+        mixin.clients[ws] = {"conversation_id": "c1"}
+        session_manager = SessionManager(temp_db)
+        stored_session = session_manager.register(
+            external_id="stream-cancellation",
+            machine_id="test-machine",
+            source=SessionSource.CLAUDE.value,
+            project_id=None,
+        )
+        mixin.session_manager = session_manager
+
+        session = AsyncMock()
+        session.db_session_id = stored_session.id
+        mixin._chat_sessions["c1"] = session
+
+        async def interrupted_stream(content):
+            yield TextChunk(content="partial response")
+            if exit_mode == "cancel":
+                raise asyncio.CancelledError()
+            if exit_mode == "error":
+                raise RuntimeError("stream failed")
+
+        session.send_message = lambda content: interrupted_stream(content)
+        if exit_mode == "disconnect":
+            ws.send.side_effect = ConnectionClosed(None, None)
+
+        await mixin._stream_chat_response(ws, "c1", "hi", None)
+
+        messages = chat_messages.get_messages(temp_db, stored_session.id)
+        assert [(message["role"], message["content"]) for message in messages] == [
+            ("user", "hi"),
+            ("assistant", "partial response"),
+        ]
+        assert session_manager.get(stored_session.id).status == "paused"
 
     @pytest.mark.asyncio
     async def test_stream_client_disconnect(self, mixin: DummyMessagingMixin, ws: AsyncMock):

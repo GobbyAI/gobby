@@ -36,6 +36,7 @@ class ChatStreamEventState:
     accumulated_text: str = ""
     after_tool_call: bool = False
     has_sent_text: bool = False
+    completed: bool = False
     pending_approval_id: str | None = None
     pending_tool_calls: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Tool results whose ToolCallEvent has not arrived yet (out-of-order ACP
@@ -443,6 +444,7 @@ class ChatStreamEventHandler:
         await self.persistence.persist_sdk_session_id(session, sdk_sid)
         await self.transport.safe_send(done_msg)
         await self.persistence.persist_done_metadata(session, event)
+        self.state.completed = True
         return True
 
 

@@ -96,6 +96,7 @@ class ChatStreamingMixin:
         )
 
         gen: AsyncIterator[Any] | None = None
+        session: ChatSessionProtocol | None = None
         try:
             session = self._chat_sessions.get(conversation_id)
             if session is None:
@@ -169,6 +170,9 @@ class ChatStreamingMixin:
                 pass
 
         finally:
+            if session is not None and not state.completed:
+                await persistence.persist_current_assistant(session)
+                await persistence.set_status(session, "paused")
             await self._close_generator(gen)
             self._clear_active_task(conversation_id)
 
