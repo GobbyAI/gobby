@@ -16,7 +16,7 @@ from gobby.test_quality._analyzer_discovery import _discover_files
 from gobby.test_quality._analyzer_python import _analyze_python_file
 from gobby.test_quality._analyzer_rust import _analyze_rust_file
 from gobby.test_quality._analyzer_script import _analyze_script_file
-from gobby.test_quality.models import AuditIssue, AuditReport
+from gobby.test_quality.models import AuditIssue, AuditReport, AuditWarning
 
 
 def audit_paths(paths: Sequence[str | Path], *, root: str | Path | None = None) -> AuditReport:
@@ -28,9 +28,21 @@ def audit_paths(paths: Sequence[str | Path], *, root: str | Path | None = None) 
     discovery = _discover_files(paths, root=root_path)
 
     issues: list[AuditIssue] = []
+    warnings = list(discovery.warnings)
     tests_scanned = 0
     for file_path in discovery.files:
-        file_issues, file_test_count = analyze_file(file_path, root=root_path)
+        try:
+            file_issues, file_test_count = analyze_file(file_path, root=root_path)
+        except (SyntaxError, UnicodeDecodeError, OSError) as error:
+            relative_path = _relative_path(file_path, root_path)
+            warnings.append(
+                AuditWarning(
+                    code="PARSE_ERROR",
+                    path=relative_path,
+                    message=f"Failed to analyze {relative_path}: {error}",
+                )
+            )
+            continue
         issues.extend(file_issues)
         tests_scanned += file_test_count
 
@@ -40,7 +52,7 @@ def audit_paths(paths: Sequence[str | Path], *, root: str | Path | None = None) 
         issues=tuple(_deduplicate_issues(issues)),
         files_scanned=len(discovery.files),
         tests_scanned=tests_scanned,
-        warnings=discovery.warnings,
+        warnings=tuple(warnings),
     )
 
 

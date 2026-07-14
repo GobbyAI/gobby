@@ -588,3 +588,65 @@ func TestUser(t *testing.T) {
     assert report.issues == ()
     assert [warning.code for warning in report.warnings] == ["UNSUPPORTED_LANGUAGE"]
     assert "audit attempted but unsupported" in report.warnings[0].message
+
+
+@pytest.mark.parametrize(
+    ("bad_name", "bad_contents"),
+    [
+        ("test_bad_syntax.py", "def test_broken(:\n"),
+        ("test_bad_encoding.py", b"def test_broken():\n    # \xff\n"),
+    ],
+)
+def test_parse_error_warns_and_audit_continues(
+    tmp_path: Path, bad_name: str, bad_contents: str | bytes
+) -> None:
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    valid_path = tests_dir / "test_valid.py"
+    valid_path.write_text("def test_valid():\n    pass\n", encoding="utf-8")
+    bad_path = tests_dir / bad_name
+    if isinstance(bad_contents, bytes):
+        bad_path.write_bytes(bad_contents)
+    else:
+        bad_path.write_text(bad_contents, encoding="utf-8")
+
+    report = audit_paths([tests_dir], root=tmp_path)
+
+    assert report.files_scanned == 2
+    assert report.tests_scanned == 1
+    assert [issue.issue_code for issue in report.issues] == ["NO_ASSERTION"]
+    assert [(warning.code, warning.path) for warning in report.warnings] == [
+        ("PARSE_ERROR", f"tests/{bad_name}")
+    ]
+
+
+def test_read_error_warns_and_audit_continues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    valid_path = tests_dir / "test_valid.py"
+    valid_path.write_text("def test_valid():\n    assert True\n", encoding="utf-8")
+    unreadable_path = tests_dir / "test_unreadable.py"
+    unreadable_path.write_text("def test_unreadable():\n    assert True\n", encoding="utf-8")
+    original_read_text = Path.read_text
+
+    def read_text(
+        path: Path,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ) -> str:
+        if path == unreadable_path:
+            raise OSError("permission denied")
+        return original_read_text(path, encoding=encoding, errors=errors, newline=newline)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+
+    report = audit_paths([tests_dir], root=tmp_path)
+
+    assert report.files_scanned == 2
+    assert report.tests_scanned == 1
+    assert [(warning.code, warning.path) for warning in report.warnings] == [
+        ("PARSE_ERROR", "tests/test_unreadable.py")
+    ]
