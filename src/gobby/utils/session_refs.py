@@ -26,7 +26,7 @@ def try_resolve_session_field(
     if not isinstance(value, str):
         return False
 
-    ref = value.lstrip("#") if value.startswith("#") else value
+    ref = value[1:] if value.startswith("#") else value
     if not ref.isdigit():
         return False
 

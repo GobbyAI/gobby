@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
+from starlette.responses import Response
 
 from gobby.servers.middleware.project_context import ProjectContextMiddleware
 from gobby.utils.project_context import get_project_context, reset_project_context
@@ -81,3 +82,38 @@ async def test_project_context_lookup_uses_thread_fallback_without_server() -> N
         to_thread.assert_awaited_once_with(project_manager.get, "project-1")
     finally:
         reset_project_context(token)
+
+
+async def test_dispatch_exposes_seeded_context_to_request_handler() -> None:
+    session_manager = MagicMock()
+    session_manager.db = MagicMock()
+    project = SimpleNamespace(id="project-1", name="Test", repo_path="/repo")
+    request = _request(
+        {"x-gobby-project-id": "project-1"},
+        SimpleNamespace(session_manager=session_manager),
+    )
+    middleware = ProjectContextMiddleware(AsyncMock())
+    initial_context = get_project_context()
+    observed_context: dict[str, str] | None = None
+
+    async def call_next(_request: MagicMock) -> Response:
+        nonlocal observed_context
+        observed_context = get_project_context()
+        return Response()
+
+    with (
+        patch("gobby.storage.projects.LocalProjectManager"),
+        patch(
+            "gobby.servers.middleware.project_context.asyncio.to_thread",
+            new_callable=AsyncMock,
+            return_value=project,
+        ),
+    ):
+        await middleware.dispatch(request, call_next)
+
+    assert observed_context == {
+        "id": "project-1",
+        "name": "Test",
+        "project_path": "/repo",
+    }
+    assert get_project_context() == initial_context

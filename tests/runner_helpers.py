@@ -27,6 +27,9 @@ def apply_safe_runner_config_defaults(config: MagicMock) -> MagicMock:
     if getattr(config, "websocket", None) is None:
         config.websocket = None
 
+    config.telemetry = getattr(config, "telemetry", MagicMock())
+    config.telemetry.traces_enabled = False
+
     config.session_lifecycle = getattr(config, "session_lifecycle", MagicMock())
     config.message_tracking = getattr(config, "message_tracking", None)
     config.memory_sync = getattr(config, "memory_sync", MagicMock())
@@ -108,6 +111,7 @@ def create_base_patches(
 
     patches = [
         patch("gobby.runner_init.storage.init_telemetry"),
+        patch("gobby.runner_init.storage.setup_file_logging"),
         patch("gobby.runner_init.storage.get_machine_id", return_value="test-machine"),
         patch("gobby.storage.hub.postgres.PostgresHubDatabase"),
         patch(RUNNER_INIT_SESSION_MANAGER_PATCH),

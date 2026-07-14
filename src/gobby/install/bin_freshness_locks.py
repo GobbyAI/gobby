@@ -62,16 +62,20 @@ class NativeBinFileLock:
                 _msvcrt.locking(self._fd, _msvcrt.LK_UNLCK, 1)
         except OSError as exc:
             if exc.errno != errno.EBADF:
+                try:
+                    os.close(self._fd)
+                except OSError:
+                    logger.debug("Failed to close lock fd for %s", self.path, exc_info=True)
                 self._closed = True
                 raise
             logger.debug("Lock fd already closed for %s; treating release as a no-op", self.path)
-        finally:
+        else:
             try:
                 os.close(self._fd)
             except OSError as exc:
                 if exc.errno != errno.EBADF:
-                    self._closed = True
                     raise
+        finally:
             self._closed = True
 
     def __enter__(self) -> NativeBinFileLock:

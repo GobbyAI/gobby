@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -82,3 +84,36 @@ async def test_rest_call_resolves_arguments_session_id_before_dispatch() -> None
     )
     assert mcp_manager.call_tool.await_count == 1
     assert mcp_manager.call_tool.await_args is not None
+
+
+@pytest.mark.asyncio
+async def test_rest_call_slow_session_lookup_does_not_block_concurrent_request() -> None:
+    server, _ = _make_server()
+    lookup_started = threading.Event()
+    release_lookup = threading.Event()
+
+    def slow_resolve(ref: str, project_id: str | None = None) -> str:
+        if ref == "#3":
+            lookup_started.set()
+            release_lookup.wait(timeout=1)
+        return SESSION_UUID_3
+
+    server.session_manager.resolve_session_reference.side_effect = slow_resolve
+    blocked_call = asyncio.create_task(call_mcp_tool(_make_request(), server))
+    responsive_request = _make_request()
+    responsive_request.headers = {}
+    responsive_request.json = AsyncMock(
+        return_value={
+            "server_name": "test-server",
+            "tool_name": "responsive-tool",
+            "arguments": {},
+        }
+    )
+
+    try:
+        assert await asyncio.to_thread(lookup_started.wait, 0.5)
+        await asyncio.wait_for(call_mcp_tool(responsive_request, server), timeout=0.2)
+        assert not blocked_call.done()
+    finally:
+        release_lookup.set()
+        await blocked_call

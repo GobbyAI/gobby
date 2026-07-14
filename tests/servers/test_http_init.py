@@ -178,40 +178,8 @@ class TestHTTPServerInit:
         assert server.llm_service is mock_llm
         assert server.services.llm_service is mock_llm
 
-    def test_init_creates_llm_service_from_config(self) -> None:
-        """Test HTTPServer creates LLM service from config."""
-        mock_config = MagicMock()
-        mock_config.llm = MagicMock()
-        mock_text_generation = MagicMock()
-
-        services = ServiceContainer(
-            config=mock_config,
-            database=MagicMock(),
-            session_manager=MagicMock(),
-            task_manager=MagicMock(),
-            text_generation_service=mock_text_generation,
-        )
-
-        with patch("gobby.servers.http.create_llm_service") as mock_create:
-            mock_llm = MagicMock()
-            mock_llm.enabled_providers = ["anthropic"]
-            mock_create.return_value = mock_llm
-
-            server = HTTPServer(
-                services=services,
-                port=8000,
-                test_mode=True,
-            )
-
-            mock_create.assert_called_once_with(
-                mock_config,
-                text_generation=mock_text_generation,
-            )
-            assert server.llm_service is mock_llm
-            assert server.services.llm_service is mock_llm
-
-    def test_init_llm_service_creation_failure(self) -> None:
-        """Test HTTPServer handles LLM service creation failure."""
+    def test_init_preserves_missing_llm_service(self) -> None:
+        """HTTPServer leaves runner-owned LLM and text-generation services missing."""
         mock_config = MagicMock()
 
         services = ServiceContainer(
@@ -221,17 +189,14 @@ class TestHTTPServerInit:
             task_manager=MagicMock(),
         )
 
-        with patch("gobby.servers.http.create_llm_service") as mock_create:
-            mock_create.side_effect = RuntimeError("LLM initialization failed")
+        server = HTTPServer(
+            services=services,
+            port=8000,
+            test_mode=True,
+        )
 
-            server = HTTPServer(
-                services=services,
-                port=8000,
-                test_mode=True,
-            )
-
-            assert server.llm_service is None
-            assert server.services.llm_service is None
+        assert server.llm_service is services.llm_service is None
+        assert server.services.text_generation_service is None
 
 
 class TestResolveProjectId:

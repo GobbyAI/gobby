@@ -10,14 +10,20 @@ from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.runner import AgentRunner
 from gobby.autonomous.progress_tracker import ProgressTracker
 from gobby.autonomous.stuck_detector import StuckDetector
+from gobby.runner_init.services import mark_service_degraded
 from gobby.sessions.lifecycle import SessionLifecycleManager
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
+    from gobby.system_automation import PipelineHeartbeatService
 
 logger = logging.getLogger(__name__)
 
 RETIRED_SYSTEM_CRON_JOBS = ("gobby:conductor-tick",)
+
+
+class _CronDependencyUnavailable(Exception):
+    """Stop cron setup after a required dependency already logged its failure."""
 
 
 async def _send_tmux_session_wake(
@@ -78,6 +84,34 @@ async def _send_tmux_pane_wake(
         await send_literal_text_to_tmux_target(pane_id, message, tmux_cmd=tmux_cmd)
 
 
+def _init_pipeline_heartbeat(runner: GobbyRunner) -> PipelineHeartbeatService | None:
+    """Create a cross-project pipeline heartbeat for the daemon."""
+    try:
+        from gobby.storage.agents import LocalAgentRunManager
+        from gobby.storage.pipelines import LocalPipelineExecutionManager
+        from gobby.workflows.pipeline_heartbeat import PipelineHeartbeat
+
+        execution_manager = LocalPipelineExecutionManager(db=runner.database, project_id=None)
+        heartbeat = PipelineHeartbeat(
+            execution_manager=execution_manager,
+            task_manager=runner.task_manager,
+            agent_run_manager=LocalAgentRunManager(runner.database),
+            session_manager=runner.session_manager,
+            run_db=runner.db_executor.run,
+        )
+        if runner.project_id is None:
+            logger.info(
+                "Daemon has no startup project; pipeline heartbeat will monitor all projects"
+            )
+        else:
+            logger.debug("Cross-project PipelineHeartbeat maintenance registered")
+        return heartbeat
+    except Exception:
+        mark_service_degraded(runner, "pipeline_heartbeat")
+        logger.exception("Failed to initialize pipeline heartbeat maintenance")
+        return None
+
+
 def init_orchestration(runner: GobbyRunner) -> None:
     """Initialize workflows, pipelines, agents, cron, and communications."""
     runner.workflow_loader = None
@@ -87,8 +121,9 @@ def init_orchestration(runner: GobbyRunner) -> None:
         from gobby.workflows.loader import WorkflowLoader
 
         runner.workflow_loader = WorkflowLoader(db=runner.database)
-    except Exception as e:
-        logger.warning(f"Failed to initialize workflow loader: {e}")
+    except Exception:
+        mark_service_degraded(runner, "workflow_loader")
+        logger.warning("Failed to initialize workflow loader", exc_info=True)
 
     from gobby.agents.tmux import configure_tmux
     from gobby.events.completion_registry import CompletionEventRegistry
@@ -121,8 +156,12 @@ def init_orchestration(runner: GobbyRunner) -> None:
                 runner.project_id,
             )
             logger.info("Pipeline executor initialized at startup")
-        except Exception as e:
-            logger.warning(f"Failed to initialize pipeline executor at startup: {e}")
+        except Exception:
+            mark_service_degraded(runner, "pipeline_executor")
+            logger.warning("Failed to initialize pipeline executor at startup", exc_info=True)
+    elif runner.project_id and runner.workflow_loader is None:
+        mark_service_degraded(runner, "pipeline_executor")
+        logger.warning("Skipping pipeline executor initialization; WorkflowLoader is unavailable")
 
     runner.agent_runner = None
     try:
@@ -132,8 +171,9 @@ def init_orchestration(runner: GobbyRunner) -> None:
             max_agent_depth=5,
         )
         logger.debug("AgentRunner initialized")
-    except Exception as e:
-        logger.error(f"Failed to initialize AgentRunner: {e}")
+    except Exception:
+        mark_service_degraded(runner, "agent_runner")
+        logger.exception("Failed to initialize AgentRunner")
 
     from gobby.storage.checkpoints import LocalCheckpointManager
 
@@ -154,8 +194,9 @@ def init_orchestration(runner: GobbyRunner) -> None:
             ),
             run_db=runner.db_executor.run,
         )
-    except Exception as e:
-        logger.warning(f"Failed to initialize AgentLifecycleMonitor: {e}")
+    except Exception:
+        mark_service_degraded(runner, "agent_lifecycle_monitor")
+        logger.warning("Failed to initialize AgentLifecycleMonitor", exc_info=True)
         runner.agent_lifecycle_monitor = None
     if runner.agent_runner is not None and runner.agent_lifecycle_monitor is not None:
         runner.agent_runner.agent_lifecycle_monitor = runner.agent_lifecycle_monitor
@@ -175,46 +216,47 @@ def init_orchestration(runner: GobbyRunner) -> None:
     runner.cron_scheduler = None
     runner.system_automation_loop = None
     try:
-        from gobby.scheduler.executor import CronExecutor
-        from gobby.scheduler.scheduler import CronScheduler
-        from gobby.storage.cron import CronJobStorage
-        from gobby.system_automation import SystemAutomationLoop
-
-        runner.cron_storage = CronJobStorage(runner.database)
-        cron_executor = CronExecutor(
-            storage=runner.cron_storage,
-            agent_runner=runner.agent_runner,
-            pipeline_executor=runner.pipeline_executor,
-            services=runner,
-            config=runner.config.cron,
-            run_db=runner.db_executor.run,
-        )
-        pipeline_heartbeat = None
         try:
-            from gobby.workflows.pipeline_heartbeat import PipelineHeartbeat
+            from gobby.storage.cron import CronJobStorage
 
-            if runner.pipeline_execution_manager is None:
-                raise RuntimeError("pipeline_execution_manager required for heartbeat")
+            runner.cron_storage = CronJobStorage(runner.database)
+        except Exception:
+            mark_service_degraded(runner, "cron_storage")
+            logger.exception("Failed to initialize CronJobStorage")
+            raise _CronDependencyUnavailable from None
 
-            pipeline_heartbeat = PipelineHeartbeat(
-                execution_manager=runner.pipeline_execution_manager,
-                task_manager=runner.task_manager,
-                agent_run_manager=LocalAgentRunManager(runner.database),
-                session_manager=runner.session_manager,
+        try:
+            from gobby.scheduler.executor import CronExecutor
+
+            cron_executor = CronExecutor(
+                storage=runner.cron_storage,
+                agent_runner=runner.agent_runner,
+                pipeline_executor=runner.pipeline_executor,
+                services=runner,
+                config=runner.config.cron,
                 run_db=runner.db_executor.run,
             )
-            logger.debug("PipelineHeartbeat maintenance registered")
-        except Exception as e:
-            logger.error(f"Failed to initialize pipeline heartbeat maintenance: {e}")
+        except Exception:
+            mark_service_degraded(runner, "cron_executor")
+            logger.exception("Failed to initialize CronExecutor")
+            raise _CronDependencyUnavailable from None
 
-        runner.system_automation_loop = SystemAutomationLoop(
-            db=runner.database,
-            config=runner.config,
-            services=runner,
-            config_store=runner.config_store,
-            pipeline_heartbeat=pipeline_heartbeat,
-            run_db=runner.db_executor.run,
-        )
+        pipeline_heartbeat = _init_pipeline_heartbeat(runner)
+
+        try:
+            from gobby.system_automation import SystemAutomationLoop
+
+            runner.system_automation_loop = SystemAutomationLoop(
+                db=runner.database,
+                config=runner.config,
+                services=runner,
+                config_store=runner.config_store,
+                pipeline_heartbeat=pipeline_heartbeat,
+                run_db=runner.db_executor.run,
+            )
+        except Exception:
+            mark_service_degraded(runner, "system_automation_loop")
+            logger.exception("Failed to initialize SystemAutomationLoop")
 
         for job_name in RETIRED_SYSTEM_CRON_JOBS:
             try:
@@ -227,7 +269,12 @@ def init_orchestration(runner: GobbyRunner) -> None:
                     )
                     logger.info("Disabled retired system cron job: %s", job_name)
             except Exception as e:
-                logger.warning("Failed to disable retired system cron job %s: %s", job_name, e)
+                logger.warning(
+                    "Failed to disable retired system cron job %s: %s",
+                    job_name,
+                    e,
+                    exc_info=True,
+                )
 
         from gobby.storage.projects import LocalProjectManager
 
@@ -263,8 +310,9 @@ def init_orchestration(runner: GobbyRunner) -> None:
                         )
                         logger.info(f"Created system cron job: {job_name}")
             logger.debug("Linear sync handlers registered")
-        except Exception as e:
-            logger.error(f"Failed to register Linear sync handlers: {e}")
+        except Exception:
+            mark_service_degraded(runner, "linear_sync")
+            logger.exception("Failed to register Linear sync handlers")
 
         try:
             from gobby.github_triage.cron import register_github_triage_cron
@@ -280,12 +328,17 @@ def init_orchestration(runner: GobbyRunner) -> None:
                 secret_store=runner.secret_store,
             )
             logger.debug("GitHub issue triage cron handlers registered: %s", registered)
-        except Exception as e:
-            logger.error(f"Failed to register GitHub issue triage cron handlers: {e}")
+        except Exception:
+            mark_service_degraded(runner, "github_triage_cron")
+            logger.exception("Failed to register GitHub issue triage cron handlers")
 
-        if runner.memory_manager is None:
-            logger.debug("Skipping memory dream cron registration; memory manager unavailable")
-        elif hasattr(runner.config, "memory") and hasattr(runner.config.memory, "dream"):
+        memory_dream_config = getattr(getattr(runner.config, "memory", None), "dream", None)
+        if memory_dream_config is None:
+            logger.debug("Skipping memory dream cron registration; memory.dream config missing")
+        elif runner.memory_manager is None:
+            mark_service_degraded(runner, "memory_dream_cron")
+            logger.warning("Skipping memory dream cron registration; MemoryManager is unavailable")
+        else:
             try:
                 from gobby.memory.dream.cron import register_memory_dream_cron
 
@@ -293,16 +346,15 @@ def init_orchestration(runner: GobbyRunner) -> None:
                     cron_storage=runner.cron_storage,
                     cron_executor=cron_executor,
                     memory_manager=runner.memory_manager,
-                    dream_config=runner.config.memory.dream,
+                    dream_config=memory_dream_config,
                     llm_service=runner.llm_service,
                     project_id=runner.project_id,
                     daemon_config=runner.config,
                 )
                 logger.debug("Memory dream cron handlers registered: %s", registered)
-            except Exception as e:
-                logger.error(f"Failed to register memory dream cron handler: {e}")
-        else:
-            logger.debug("Skipping memory dream cron registration; memory.dream config missing")
+            except Exception:
+                mark_service_degraded(runner, "memory_dream_cron")
+                logger.exception("Failed to register memory dream cron handler")
 
         runner.code_index_pruner = None
         runner.code_index_nightly_reindexer = None
@@ -323,7 +375,10 @@ def init_orchestration(runner: GobbyRunner) -> None:
                 logger.debug("Code index prune cron handler registered")
             except Exception as e:
                 runner.code_index_pruner = None
-                logger.error("Failed to register code index prune cron handler: %s", e)
+                mark_service_degraded(runner, "code_index_pruner")
+                logger.error(
+                    "Failed to register code index prune cron handler: %s", e, exc_info=True
+                )
 
             try:
                 from gobby.code_index.nightly_reindex import (
@@ -344,9 +399,11 @@ def init_orchestration(runner: GobbyRunner) -> None:
                 logger.debug("Code index nightly full reindex cron handler registered")
             except Exception as e:
                 runner.code_index_nightly_reindexer = None
+                mark_service_degraded(runner, "code_index_nightly_reindexer")
                 logger.error(
                     "Failed to register code index nightly full reindex cron handler: %s",
                     e,
+                    exc_info=True,
                 )
 
             try:
@@ -382,6 +439,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
                         logger.warning(
                             "Failed to enumerate memory-bearing projects for codewiki: %s",
                             enum_err,
+                            exc_info=True,
                         )
                         memory_project_ids = []
                     for memory_project_id in memory_project_ids:
@@ -413,17 +471,36 @@ def init_orchestration(runner: GobbyRunner) -> None:
                         registered_count,
                     )
             except Exception as e:
-                logger.error("Failed to register codewiki nightly cron handler: %s", e)
+                mark_service_degraded(runner, "codewiki_nightly_cron")
+                logger.error(
+                    "Failed to register codewiki nightly cron handler: %s", e, exc_info=True
+                )
+        elif getattr(runner.config.code_index, "enabled", False):
+            mark_service_degraded(runner, "code_index_maintenance")
+            logger.warning(
+                "Skipping code index maintenance registration; code indexer is unavailable"
+            )
 
-        runner.cron_scheduler = CronScheduler(
-            storage=runner.cron_storage,
-            executor=cron_executor,
-            config=runner.config.cron,
-            run_db=runner.db_executor.run,
-        )
-        logger.debug("CronScheduler initialized")
-    except Exception as e:
-        logger.error(f"Failed to initialize CronScheduler: {e}")
+        try:
+            from gobby.scheduler.scheduler import CronScheduler
+
+            runner.cron_scheduler = CronScheduler(
+                storage=runner.cron_storage,
+                executor=cron_executor,
+                config=runner.config.cron,
+                run_db=runner.db_executor.run,
+            )
+            logger.debug("CronScheduler initialized")
+        except Exception:
+            runner.system_automation_loop = None
+            mark_service_degraded(runner, "cron_scheduler")
+            logger.exception("Failed to initialize CronScheduler")
+    except _CronDependencyUnavailable:
+        pass
+    except Exception:
+        runner.system_automation_loop = None
+        mark_service_degraded(runner, "cron_scheduler")
+        logger.exception("Failed to register cron handlers")
 
     if runner.memory_manager is not None:
         try:
@@ -436,8 +513,9 @@ def init_orchestration(runner: GobbyRunner) -> None:
                     len(interrupted_runs),
                     ", ".join(interrupted_runs),
                 )
-        except Exception as e:
-            logger.error(f"Failed to reconcile orphaned memory dream runs: {e}")
+        except Exception:
+            mark_service_degraded(runner, "memory_dream_reconciliation")
+            logger.exception("Failed to reconcile orphaned memory dream runs")
 
     runner.communications_manager = None
     if hasattr(runner.config, "communications") and runner.config.communications.enabled:
@@ -453,5 +531,6 @@ def init_orchestration(runner: GobbyRunner) -> None:
                 session_store=runner.session_manager,
             )
             logger.debug("CommunicationsManager initialized")
-        except Exception as e:
-            logger.error(f"Failed to initialize CommunicationsManager: {e}")
+        except Exception:
+            mark_service_degraded(runner, "communications_manager")
+            logger.exception("Failed to initialize CommunicationsManager")

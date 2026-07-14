@@ -1,12 +1,15 @@
 import json
+import logging
 import subprocess
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import psycopg
 import pytest
 
+from gobby.config.bootstrap import BootstrapConfigError
 from gobby.config.embedding_keys import (
     AI_EMBEDDING_API_BASE_KEY,
     AI_EMBEDDING_API_KEY_KEY,
@@ -15,6 +18,7 @@ from gobby.config.embedding_keys import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils import deps
+from gobby.utils.status import format_status_message
 
 
 def _patch_runtime_hub_database(db: Any):
@@ -261,20 +265,51 @@ def test_lmstudio_info() -> None:
         assert deps.get_lmstudio_info() == {"running": True}
     with (
         patch("shutil.which", return_value=True),
+        patch("gobby.utils.deps._run_cmd", return_value="The server is not running"),
+    ):
+        assert deps.get_lmstudio_info() == {"running": False}
+    with (
+        patch("shutil.which", return_value=True),
         patch("gobby.utils.deps._run_cmd", return_value=None),
     ):
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="server RUNNING")
             assert deps.get_lmstudio_info() == {"running": True}
+            mock_run.return_value = MagicMock(
+                returncode=0,
+                stdout="",
+                stderr="The server is NOT RUNNING",
+            )
+            assert deps.get_lmstudio_info() == {"running": False}
 
 
-def test_lmstudio_info_exception() -> None:
+@pytest.mark.parametrize(
+    "error",
+    [subprocess.TimeoutExpired(cmd=["lms"], timeout=5), OSError("lms failed")],
+)
+def test_lmstudio_info_expected_exception(
+    error: Exception,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with (
+        caplog.at_level(logging.DEBUG, logger="gobby.utils.deps"),
+        patch("shutil.which", return_value=True),
+        patch("gobby.utils.deps._run_cmd", return_value=None),
+        patch("subprocess.run", side_effect=error),
+    ):
+        assert deps.get_lmstudio_info() == {"running": False}
+    assert caplog.messages == ["Failed to determine LM Studio server status"]
+    assert caplog.records[0].exc_info is not None
+
+
+def test_lmstudio_info_unexpected_exception_propagates() -> None:
     with (
         patch("shutil.which", return_value=True),
         patch("gobby.utils.deps._run_cmd", return_value=None),
+        patch("subprocess.run", side_effect=RuntimeError("programming error")),
+        pytest.raises(RuntimeError, match="programming error"),
     ):
-        with patch("subprocess.run", side_effect=Exception):
-            assert deps.get_lmstudio_info() == {"running": False}
+        deps.get_lmstudio_info()
 
 
 @pytest.mark.unit
@@ -324,6 +359,45 @@ def test_get_configured_embedding_provider_detects_embedding_api_key(
         {
             AI_EMBEDDING_MODEL_KEY: "text-embedding-3-small",
             AI_EMBEDDING_API_BASE_KEY: None,
+            AI_EMBEDDING_DIM_KEY: 1536,
+        }
+    )
+
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    with _patch_runtime_hub_database(temp_db):
+        store.set_secret(
+            AI_EMBEDDING_API_KEY_KEY,
+            "sk-test",
+            SecretStore(temp_db),
+            source="test",
+        )
+        assert deps.get_configured_embedding_provider() == "openai"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "api_base",
+    [
+        "https://api.openai.com/v1",
+        "https://example.openai.azure.com/openai/deployments/embedding",
+        "https://example.services.ai.azure.com/models",
+    ],
+)
+def test_get_configured_embedding_provider_detects_explicit_cloud_api_base(
+    api_base: str,
+    temp_db: HubDatabase,
+    mock_machine_id: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.storage.config_store import ConfigStore
+    from gobby.storage.secrets import SecretStore
+
+    store = ConfigStore(temp_db)
+    store.set_many(
+        {
+            AI_EMBEDDING_MODEL_KEY: "text-embedding-3-small",
+            AI_EMBEDDING_API_BASE_KEY: api_base,
             AI_EMBEDDING_DIM_KEY: 1536,
         }
     )
@@ -464,14 +538,21 @@ def test_get_configured_embedding_provider_ignores_invalid_dim_string(
 
 
 @pytest.mark.unit
-def test_get_configured_embedding_provider_returns_none_when_db_missing(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize(
+    "error",
+    [
+        psycopg.OperationalError("hub database unavailable"),
+        BootstrapConfigError("hub backend is invalid"),
+        RuntimeError("runtime hub unavailable"),
+        OSError("config storage unavailable"),
+    ],
+)
+def test_get_configured_embedding_provider_returns_none_for_storage_errors(
+    error: Exception,
 ) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
-
     with patch(
         "gobby.storage.hub.runtime.runtime_hub_database",
-        side_effect=RuntimeError(f"missing runtime hub at {tmp_path / 'missing.db'}"),
+        side_effect=error,
     ):
         assert deps.get_configured_embedding_provider() is None
 
@@ -481,9 +562,9 @@ def test_get_configured_embedding_provider_reraises_unexpected_errors() -> None:
     with (
         patch(
             "gobby.storage.hub.runtime.runtime_hub_database",
-            side_effect=AssertionError("non-db bug"),
+            side_effect=AssertionError("database invariant bug"),
         ),
-        pytest.raises(AssertionError, match="non-db bug"),
+        pytest.raises(AssertionError, match="database invariant bug"),
     ):
         deps.get_configured_embedding_provider()
 
@@ -546,6 +627,31 @@ def test_collect_all_deps() -> None:
         assert res["coding_clis"]["qwen"] == "6.7"
         assert res["dependencies"]["docker_running"] is True
         assert res["dependencies"]["embeddings_provider"] == "lmstudio"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        psycopg.OperationalError("hub database unavailable"),
+        BootstrapConfigError("hub backend is invalid"),
+    ],
+)
+def test_collect_all_deps_degrades_when_embeddings_probe_fails(error: Exception) -> None:
+    with patch(
+        "gobby.storage.hub.runtime.runtime_hub_database",
+        side_effect=error,
+    ):
+        res = deps.collect_all_deps()
+
+    error_name = type(error).__name__
+    assert res["dependencies"]["embeddings_provider"] == {
+        "status": "degraded",
+        "error": error_name,
+    }
+    assert f"Embeddings:       degraded ({error_name})" in format_status_message(
+        running=True,
+        deps_info=res,
+    )
 
 
 def test_file_read_exceptions(tmp_path: Path) -> None:

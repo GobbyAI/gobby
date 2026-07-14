@@ -8,6 +8,7 @@ import contextvars
 import json
 import logging
 import os
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -258,6 +259,10 @@ def get_workflow_project_path(cwd: Path | None = None) -> Path | None:
     return Path(project_path) if project_path else None
 
 
+class IsolationProjectJsonError(RuntimeError):
+    """Raised when isolated project metadata cannot be created safely."""
+
+
 def ensure_project_json_for_isolation(
     source_repo_path: str | Path,
     isolated_path: str | Path,
@@ -301,19 +306,34 @@ def ensure_project_json_for_isolation(
                 target_data = json.loads(target_bytes)
                 if target_bytes == source_bytes and target_data == data:
                     return
-            except (OSError, UnicodeError, json.JSONDecodeError):
+            except (OSError, json.JSONDecodeError):
                 pass
 
-        if source_data == data:
-            target_project_json.write_bytes(source_bytes)
-        else:
-            with open(target_project_json, "w") as f:
-                json.dump(data, f, indent=2)
-                f.write("\n")
+        output_bytes = (
+            source_bytes if source_data == data else (json.dumps(data, indent=2) + "\n").encode()
+        )
+        temp_fd, temp_name = tempfile.mkstemp(
+            dir=target_gobby_dir,
+            prefix=f".{target_project_json.name}.",
+        )
+        temp_path = Path(temp_name)
+        try:
+            with os.fdopen(temp_fd, "wb") as temp_file:
+                temp_file.write(output_bytes)
+                temp_file.flush()
+                os.fsync(temp_file.fileno())
+            os.replace(temp_path, target_project_json)
+        finally:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                logger.warning("Failed to remove temporary project metadata file %s", temp_path)
 
         logger.info(f"Wrote project.json with parent reference in {isolated_path}")
-    except Exception as e:
-        logger.warning(f"Failed to write project.json in {isolated_path}: {e}")
+    except (OSError, json.JSONDecodeError, KeyError) as exc:
+        raise IsolationProjectJsonError(
+            f"Failed to write project.json in isolated environment {isolated_path}"
+        ) from exc
 
 
 def get_project_mcp_dir(project_name: str) -> Path:

@@ -13,7 +13,11 @@ from unittest.mock import patch
 import pytest
 
 from gobby.mcp_proxy.tools.worktrees import _copy_project_json_to_worktree
-from gobby.utils.project_context import get_project_context, get_workflow_project_path
+from gobby.utils.project_context import (
+    IsolationProjectJsonError,
+    get_project_context,
+    get_workflow_project_path,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -345,8 +349,8 @@ class TestEdgeCases:
         assert result is not None
         assert result.resolve() == worktree.resolve()
 
-    def test_copy_handles_json_write_error(self, tmp_path: Path) -> None:
-        """Verify _copy_project_json_to_worktree handles write errors gracefully."""
+    def test_copy_propagates_json_write_error(self, tmp_path: Path) -> None:
+        """Worktree setup propagates project metadata write failures."""
         # Setup main repo
         main_repo = tmp_path / "main_repo"
         main_repo.mkdir()
@@ -359,16 +363,17 @@ class TestEdgeCases:
         worktree = tmp_path / "worktree"
         worktree.mkdir()
 
-        # Mock json.dump to raise an exception
-        with patch("json.dump", side_effect=OSError("Write failed")):
-            # Should not raise - function handles errors gracefully with warning
+        with (
+            patch("gobby.utils.project_context.os.replace", side_effect=OSError("Write failed")),
+            pytest.raises(IsolationProjectJsonError),
+        ):
             _copy_project_json_to_worktree(main_repo, worktree)
 
         # Verify .gobby dir was created (function gets that far before error)
         assert (worktree / ".gobby").is_dir()
 
-    def test_copy_handles_invalid_json_in_source(self, tmp_path: Path) -> None:
-        """Verify _copy_project_json_to_worktree handles invalid JSON in source."""
+    def test_copy_propagates_invalid_json_in_source(self, tmp_path: Path) -> None:
+        """Worktree setup propagates invalid source metadata failures."""
         # Setup main repo with invalid JSON
         main_repo = tmp_path / "main_repo"
         main_repo.mkdir()
@@ -381,9 +386,9 @@ class TestEdgeCases:
         worktree = tmp_path / "worktree"
         worktree.mkdir()
 
-        # Should not raise - function handles errors gracefully
-        _copy_project_json_to_worktree(main_repo, worktree)
+        with pytest.raises(IsolationProjectJsonError) as exc_info:
+            _copy_project_json_to_worktree(main_repo, worktree)
 
-        # Verify no project.json was created (due to parse error)
+        assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
         worktree_project_json = worktree / ".gobby" / "project.json"
         assert not worktree_project_json.exists()

@@ -8,10 +8,12 @@ import logging
 import sys
 import zipfile
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from typing import NamedTuple
 
 import pytest
+
+from gobby.install.manifest import build_bundled_content_manifest
 
 pytestmark = pytest.mark.unit
 
@@ -25,7 +27,7 @@ class SubprocessCall(NamedTuple):
     timeout: int
 
 
-def _load_backend(repo_root: Path) -> object:
+def _load_backend(repo_root: Path) -> ModuleType:
     """Import build_backend rooted at ``repo_root``."""
     sys.path.insert(0, str(repo_root))
     try:
@@ -385,6 +387,16 @@ def test_stage_bundled_content_manifest_writes_manifest(tmp_path: Path) -> None:
     assert manifest["hash_algorithm"] == "sha256"
     assert manifest["root"] == "shared"
     assert list(manifest["files"]) == ["skills/demo/SKILL.md"]
+
+
+def test_committed_bundled_content_manifest_matches_shared_tree() -> None:
+    """Committed manifest should stay synchronized with bundled shared content."""
+    install_dir = Path(__file__).resolve().parent.parent / "src" / "gobby" / "install"
+    committed = json.loads(
+        (install_dir / "bundled_content_manifest.json").read_text(encoding="utf-8")
+    )
+
+    assert committed == build_bundled_content_manifest(install_dir / "shared")
 
 
 def test_stage_bundled_content_manifest_rejects_invalid_helper(

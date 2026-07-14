@@ -29,9 +29,52 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from gobby.adapters.claude_contract import CLAUDE_PASCAL_HOOK_NAMES
-from gobby.adapters.droid_contract import DROID_PASCAL_HOOK_NAMES
-from gobby.cli.installers.hook_commands import is_gobby_hook_command
+# This file is copied to ~/.gobby/hooks and invoked by the system Python, where
+# the gobby package may not be importable. Keep its small runtime contracts local.
+CLAUDE_PASCAL_HOOK_NAMES: tuple[str, ...] = (
+    "SessionStart",
+    "InstructionsLoaded",
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PermissionRequest",
+    "PostToolUse",
+    "PostToolUseFailure",
+    "PermissionDenied",
+    "Notification",
+    "SubagentStart",
+    "SubagentStop",
+    "TaskCreated",
+    "TaskCompleted",
+    "Stop",
+    "StopFailure",
+    "TeammateIdle",
+    "ConfigChange",
+    "CwdChanged",
+    "FileChanged",
+    "WorktreeCreate",
+    "WorktreeRemove",
+    "PreCompact",
+    "PostCompact",
+    "SessionEnd",
+    "Elicitation",
+    "ElicitationResult",
+)
+DROID_PASCAL_HOOK_NAMES: tuple[str, ...] = (
+    "PreToolUse",
+    "PostToolUse",
+    "UserPromptSubmit",
+    "Notification",
+    "Stop",
+    "SubagentStop",
+    "PreCompact",
+    "SessionStart",
+    "SessionEnd",
+)
+
+
+def is_gobby_hook_command(command: str) -> bool:
+    """Return whether a command string belongs to Gobby-managed hooks."""
+    return "--gobby-owned" in command
 
 
 @dataclass(frozen=True)

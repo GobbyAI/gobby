@@ -5,6 +5,7 @@ Extracted from tools.py as part of Phase 2 Strangler Fig decomposition.
 These endpoints handle tool listing, schema retrieval, and tool execution.
 """
 
+import asyncio
 import json
 import logging
 import time
@@ -160,7 +161,16 @@ def _derive_project_from_unique_session_seq(
     return None
 
 
-def _set_context_for_request(
+def _derive_project_from_header_session(server: "HTTPServer", session_ref: str) -> str | None:
+    """Resolve a header session and return its project for HTTP bootstrap."""
+    if not server.session_manager:
+        return None
+    bootstrap_id = resolve_session_reference(server.session_manager.db, session_ref)
+    bootstrap_session = server.session_manager.get(bootstrap_id)
+    return bootstrap_session.project_id if bootstrap_session else None
+
+
+async def _set_context_for_request(
     server: "HTTPServer", arguments: Any, request: Request | None = None
 ) -> SeededContextTokens:
     """Set project and session context vars from the best available source.
@@ -201,7 +211,9 @@ def _set_context_for_request(
         and caller_project_id_header != project_id_header
     )
     if not canonical_project_ref and header_session_id:
-        canonical_project_ref = _derive_project_from_unique_session_seq(server, header_session_id)
+        canonical_project_ref = await asyncio.to_thread(
+            _derive_project_from_unique_session_seq, server, header_session_id
+        )
     if (
         not canonical_project_ref
         and header_session_id
@@ -210,17 +222,16 @@ def _set_context_for_request(
         and argument_session_id.lstrip("#").isdigit()
     ):
         try:
-            bootstrap_id = resolve_session_reference(server.session_manager.db, header_session_id)
-            bootstrap_session = server.session_manager.get(bootstrap_id)
-            if bootstrap_session:
-                canonical_project_ref = bootstrap_session.project_id
+            canonical_project_ref = await asyncio.to_thread(
+                _derive_project_from_header_session, server, header_session_id
+            )
         except Exception as e:
             logger.debug(
                 f"HTTP project bootstrap from header session {header_session_id!r} failed: {e}"
             )
 
     db = server.session_manager.db if server.session_manager else None
-    return resolve_and_seed_contexts(
+    return await resolve_and_seed_contexts(
         session_ref=session_id,
         session_manager=server.session_manager if server.session_manager else None,
         project_ref=canonical_project_ref,
@@ -362,7 +373,7 @@ async def list_mcp_tools(
     """
     start_time = time.perf_counter()
     requested_session_id = _get_discovery_session_id({}, request)
-    ctx_token = _set_context_for_request(server, {}, request)
+    ctx_token = await _set_context_for_request(server, {}, request)
 
     try:
         # Check internal registries first (gobby-tasks, gobby-memory, etc.)
@@ -531,7 +542,7 @@ async def get_tool_schema(
                 detail={"success": False, "error": "Required fields: server_name, tool_name"},
             )
 
-        ctx_token = _set_context_for_request(server, body, request)
+        ctx_token = await _set_context_for_request(server, body, request)
 
         try:
             # Check internal first
@@ -661,7 +672,7 @@ async def call_mcp_tool(
             return stale_wrapper_result
 
         # Set project context from session_id or stdio proxy headers
-        ctx_token = _set_context_for_request(server, arguments, request)
+        ctx_token = await _set_context_for_request(server, arguments, request)
         # Note: session_id is NOT stripped from arguments — tools like
         # get_session and get_handoff_context use it as their own parameter.
         # _set_context_for_request reads it non-destructively via .get().
@@ -758,7 +769,7 @@ async def mcp_proxy(
             return stale_wrapper_result
 
         # Set project context from session_id or stdio proxy headers
-        ctx_token = _set_context_for_request(server, arguments, request)
+        ctx_token = await _set_context_for_request(server, arguments, request)
         try:
             # Route through ToolProxyService for consistent error enrichment
             if server.tool_proxy:

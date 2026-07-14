@@ -102,6 +102,24 @@ That's all!"""
         result = extract_json_from_text(text)
         assert result == '{"status": "done"}'
 
+    def test_scans_past_invalid_brace_positions(self) -> None:
+        text = 'Based on {context} and {more context}: {"status": "done"}'
+
+        assert extract_json_from_text(text) == '{"status": "done"}'
+
+    def test_extracts_plain_array(self) -> None:
+        assert extract_json_from_text('Results: [1, {"status": "done"}]') == (
+            '[1, {"status": "done"}]'
+        )
+
+    def test_extracts_array_from_markdown_json_block(self) -> None:
+        text = """Response:
+```json
+[{"status": "done"}, {"status": "pending"}]
+```"""
+
+        assert extract_json_from_text(text) == ('[{"status": "done"}, {"status": "pending"}]')
+
 
 class TestExtractJsonObject:
     """Tests for extract_json_object()."""
