@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Protocol
 
 from gobby.storage.session_models import Session
-from gobby.terminal_context import merge_terminal_context, parse_terminal_context_value
+from gobby.terminal_context import parse_terminal_context_value
 
 
 class _SessionGetter(Protocol):
@@ -48,14 +48,14 @@ def update_existing_session(
     sandbox_policy_hash: str | None,
     now: datetime,
 ) -> Session:
-    terminal_context_update_json = None
     incoming_terminal_context = parse_terminal_context_value(terminal_context_json)
-    if incoming_terminal_context is not None:
-        merged_terminal_context = merge_terminal_context(
-            existing.terminal_context,
-            incoming_terminal_context,
+    terminal_context_update_json = (
+        json.dumps(
+            {key: value for key, value in incoming_terminal_context.items() if value is not None}
         )
-        terminal_context_update_json = json.dumps(merged_terminal_context)
+        if incoming_terminal_context is not None
+        else None
+    )
 
     conn.execute(
         """
@@ -65,7 +65,10 @@ def update_existing_session(
             transcript_path = COALESCE(%s, transcript_path),
             git_branch = COALESCE(%s, git_branch),
             parent_session_id = COALESCE(%s, parent_session_id),
-            terminal_context = COALESCE(%s, terminal_context),
+            terminal_context = CASE
+                WHEN %s::jsonb IS NULL THEN terminal_context
+                ELSE COALESCE(terminal_context, '{}'::jsonb) || %s::jsonb
+            END,
             workflow_name = COALESCE(%s, workflow_name),
             is_local = CASE
                 WHEN %s THEN %s
@@ -83,6 +86,7 @@ def update_existing_session(
             transcript_path,
             git_branch,
             parent_session_id,
+            terminal_context_update_json,
             terminal_context_update_json,
             workflow_name,
             is_local is not None,

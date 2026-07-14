@@ -221,6 +221,31 @@ def test_register_existing_session_merges_cwd_without_losing_tmux_context(
     }
 
 
+def test_backfill_terminal_context_merges_without_losing_tmux_context(
+    session_mgr: SessionManager,
+    project_id: str,
+) -> None:
+    created = session_mgr.register(
+        external_id="backfill-terminal-session",
+        machine_id="machine-1",
+        source="codex",
+        project_id=project_id,
+        terminal_context={"tmux_pane": "%7"},
+    )
+
+    updated, tmux_target_added = session_mgr.backfill_terminal_context(
+        created.id,
+        {"cwd": "/work/repos/gobby"},
+    )
+
+    assert updated is not None
+    assert updated.terminal_context == {
+        "tmux_pane": "%7",
+        "cwd": "/work/repos/gobby",
+    }
+    assert tmux_target_added is False
+
+
 def test_recover_session_prefers_tmux_context_over_cwd_only_candidate(
     session_mgr: SessionManager,
     project_id: str,
@@ -250,6 +275,34 @@ def test_recover_session_prefers_tmux_context_over_cwd_only_candidate(
     assert recovered is not None
     assert recovered.id == tmux_capable.id
     assert recovered.id != weak.id
+
+
+def test_recover_session_refuses_equal_score_cross_source_candidates(
+    session_mgr: SessionManager,
+    project_id: str,
+) -> None:
+    first = session_mgr.register(
+        external_id="ambiguous-recovery-session",
+        machine_id="machine-1",
+        source="codex",
+        project_id=project_id,
+    )
+    second = session_mgr.register(
+        external_id="ambiguous-recovery-session",
+        machine_id="machine-1",
+        source="claude",
+        project_id=project_id,
+    )
+
+    recovered = session_mgr.recover_session(
+        external_id="ambiguous-recovery-session",
+        source="agy",
+        machine_id="machine-1",
+        project_id=project_id,
+    )
+
+    assert first.id != second.id
+    assert recovered is None
 
 
 def test_register_raises_on_storage_failure(

@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.storage.session_models import Session
-from gobby.terminal_context import merge_terminal_context, terminal_context_has_tmux_target
+from gobby.terminal_context import terminal_context_has_tmux_target
+from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -75,12 +77,7 @@ class _ManagerState(_SessionMappingState, Protocol):
 
     def update_status(self, session_id: str, status: str) -> Session | None: ...
 
-    def update(
-        self,
-        session_id: str,
-        *,
-        terminal_context: dict[str, Any] | None = ...,
-    ) -> Session | None: ...
+    def _notify_session_change(self, event: str, session_id: str) -> None: ...
 
     def cache_session_mapping(
         self,
@@ -453,18 +450,30 @@ class _RegistrationCacheMixin:
             return None, False
 
         current_ctx = current.terminal_context or {}
-        merged = merge_terminal_context(current_ctx, terminal_context)
-        if merged == current_ctx:
+        incoming = {key: value for key, value in terminal_context.items() if value is not None}
+        if not incoming or all(current_ctx.get(key) == value for key, value in incoming.items()):
             return current, False
 
         had_tmux_target = terminal_context_has_tmux_target(current_ctx)
-        updated = self.update(session_id=session_id, terminal_context=merged)
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE sessions
+                SET terminal_context = COALESCE(terminal_context, '{}'::jsonb) || %s::jsonb,
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (json.dumps(incoming), utc_now(), session_id),
+            )
+        updated = self.get(session_id)
         if updated is None:
             return current, False
 
+        self._notify_session_change("session_updated", session_id)
+
         with self._session_metadata_lock:
             metadata = self._session_metadata.setdefault(session_id, {})
-            metadata["terminal_context"] = merged
+            metadata["terminal_context"] = updated.terminal_context
 
         has_tmux_target = terminal_context_has_tmux_target(updated.terminal_context)
         return updated, has_tmux_target and not had_tmux_target

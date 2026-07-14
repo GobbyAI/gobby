@@ -1,6 +1,7 @@
 """Focused tests for session storage behavior."""
 
 import inspect
+import json
 import logging
 import uuid
 from collections.abc import Sequence
@@ -175,8 +176,8 @@ def test_update_existing_session_binds_is_local_as_booleans_for_postgres() -> No
 
     params = conn.calls[0][1]
 
-    assert params[7:10] == (True, True, True)
-    assert all(type(value) is bool for value in params[7:10])
+    assert params[8:11] == (True, True, True)
+    assert all(type(value) is bool for value in params[8:11])
 
 
 def test_update_existing_session_preserve_is_local_uses_boolean_guard_param() -> None:
@@ -202,9 +203,9 @@ def test_update_existing_session_preserve_is_local_uses_boolean_guard_param() ->
 
     params = conn.calls[0][1]
 
-    assert params[7:10] == (False, False, None)
-    assert type(params[7]) is bool
+    assert params[8:11] == (False, False, None)
     assert type(params[8]) is bool
+    assert type(params[9]) is bool
 
 
 def test_update_existing_session_ignores_invalid_terminal_context_json() -> None:
@@ -231,7 +232,36 @@ def test_update_existing_session_ignores_invalid_terminal_context_json() -> None
 
     params = conn.calls[0][1]
 
-    assert params[5] is None
+    assert params[5:7] == (None, None)
+
+
+def test_update_existing_session_merges_terminal_context_in_sql() -> None:
+    session = _session_stub()
+    session.terminal_context = {"tmux_pane": "%1"}
+    conn = _CaptureConnection()
+
+    session_upsert.update_existing_session(
+        _StaticSessionGetter(session),
+        conn,
+        session,
+        title=None,
+        title_source=None,
+        transcript_path=None,
+        git_branch=None,
+        parent_session_id=None,
+        terminal_context_json='{"cwd": "/work/gobby", "parent_pid": null}',
+        workflow_name=None,
+        is_local=None,
+        sandbox_enabled=None,
+        sandbox_policy_hash=None,
+        now="2026-05-22T00:00:01+00:00",
+    )
+
+    sql, params = conn.calls[0]
+
+    assert "COALESCE(terminal_context, '{}'::jsonb) || %s::jsonb" in sql
+    assert json.loads(str(params[5])) == {"cwd": "/work/gobby"}
+    assert params[5] == params[6]
 
 
 class TestSessionManagerRegistration:
