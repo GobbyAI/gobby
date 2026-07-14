@@ -7,8 +7,7 @@ internal: true
 triggers: tdd, test-driven development, red green refactor
 metadata:
   gobby:
-    audience: agent
-    depth: 1
+    audience: all
 ---
 
 # Test-Driven Development

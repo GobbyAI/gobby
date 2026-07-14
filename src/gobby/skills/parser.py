@@ -52,6 +52,8 @@ FRONTMATTER_PATTERN = re.compile(
     re.DOTALL | re.MULTILINE,
 )
 
+VALID_SKILL_AUDIENCES = frozenset({"all", "interactive", "autonomous", "orchestrator", "worker"})
+
 
 @dataclass
 class SkillAudienceConfig:
@@ -313,7 +315,11 @@ def extract_audience_config(metadata: dict[str, Any] | None) -> SkillAudienceCon
 
     ac_kwargs: dict[str, Any] = {}
     if "audience" in gobby_meta:
-        ac_kwargs["audience"] = str(gobby_meta["audience"])
+        raw_audience = gobby_meta["audience"]
+        if not isinstance(raw_audience, str) or raw_audience not in VALID_SKILL_AUDIENCES:
+            valid_audiences = ", ".join(sorted(VALID_SKILL_AUDIENCES))
+            raise SkillParseError(f"metadata.gobby.audience must be one of: {valid_audiences}")
+        ac_kwargs["audience"] = raw_audience
     if "depth" in gobby_meta:
         raw_depth = gobby_meta["depth"]
         # Support int, list[int], or str range like "0-2"

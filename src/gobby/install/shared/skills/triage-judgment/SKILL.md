@@ -7,8 +7,7 @@ internal: true
 triggers: github issue triage, triage judgment, duplicate issue detection
 metadata:
   gobby:
-    audience: agent
-    depth: 0
+    audience: all
 ---
 
 # GitHub Issue Triage Judgment
