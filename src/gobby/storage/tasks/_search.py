@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import psycopg
+
 from gobby.search.keyword import (
     BM25SearchBackend,
     KeywordSearchBackend,
@@ -204,7 +206,7 @@ class TaskSearchBackend:
         """
         try:
             rows = fetch_all(self._db, sql, params)
-        except Exception as exc:
+        except psycopg.Error as exc:
             if is_pg_search_parse_error(exc):
                 raise SearchQuerySyntaxError(query) from exc
             raise
