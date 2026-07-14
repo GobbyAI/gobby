@@ -22,6 +22,7 @@ from gobby.agents.idle_check_handler import IdleCheckHandler
 from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.kill import kill_agent as kill_agent  # Re-imported for tests
 from gobby.agents.loop_tracker import LoopTracker
+from gobby.agents.memory_watchdog import MemoryWatchdogHandler
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.stall_classifier import StallClassifier
 from gobby.agents.task_recovery import TaskRecoveryHandler
@@ -176,6 +177,14 @@ class AgentLifecycleMonitor:
             run_db=run_db,
             checkpoint_agent_work=lambda run: self._checkpoint_agent_work(run),
         )
+        self._memory_watchdog = MemoryWatchdogHandler(
+            agent_run_manager=agent_run_manager,
+            db=db,
+            tmux=self._tmux,
+            cleanup_handler=self._cleanup_handler,
+            tmux_config=self._tmux_config,
+            run_db=run_db,
+        )
         self._idle_check_handler = IdleCheckHandler(
             agent_run_manager=agent_run_manager,
             db=db,
@@ -294,6 +303,7 @@ class AgentLifecycleMonitor:
                 await self.check_queued_continuation_prompts()
                 await self.check_periodic_enters()
                 await self.check_unhealthy_agents()
+                await self.check_agent_memory()
                 await self.expire_terminal_run_sessions()
                 await self.check_initialization_timeout()
                 await self.check_idle_agents()
@@ -355,6 +365,9 @@ class AgentLifecycleMonitor:
     async def check_unhealthy_agents(self) -> int:
         """Detect and clean up dead or expired agents."""
         return await self._health_monitor.check_unhealthy_agents()
+
+    async def check_agent_memory(self) -> int:
+        return await self._memory_watchdog.check_agent_memory()
 
     async def check_idle_agents(self) -> int:
         """Check for idle agents and reprompt or fail them."""

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -112,4 +114,50 @@ class TmuxConfig(BaseModel):
         default=30,
         ge=1,
         description="Minimum seconds between periodic Enter keypresses per agent terminal.",
+    )
+    memory_watchdog_enabled: bool = Field(
+        default=True,
+        description="Enable memory enforcement for agent tmux process trees.",
+    )
+    agent_memory_limit_gb: float = Field(
+        default=16.0,
+        gt=0,
+        description="Max resident memory (GB) for a single agent's pane process tree.",
+    )
+    agent_memory_total_limit_gb: float = Field(
+        default=0.0,
+        ge=0,
+        description=(
+            "Aggregate resident-memory budget (GB) across all agent trees. "
+            "0 = auto (50% of physical RAM)."
+        ),
+    )
+    memory_watchdog_action: Literal["kill", "warn"] = Field(
+        default="kill",
+        description="On confirmed breach: kill the agent session, or warn-only.",
+    )
+    memory_watchdog_consecutive_breaches: int = Field(
+        default=2,
+        ge=1,
+        description="Consecutive over-limit checks required before enforcement.",
+    )
+    memory_watchdog_grace_seconds: float = Field(
+        default=120.0,
+        ge=0,
+        description="Age below which a run is never killed for memory (spawn spikes).",
+    )
+    system_memory_warn_available_percent: float = Field(
+        default=8.0,
+        gt=0,
+        le=100,
+        description="Warn with system-wide top consumers when available memory drops below this %.",
+    )
+    system_memory_critical_available_percent: float = Field(
+        default=4.0,
+        gt=0,
+        le=100,
+        description=(
+            "Kill the largest agent tree when available memory drops below this %. "
+            "Must be at or below the warn threshold."
+        ),
     )
