@@ -13,6 +13,8 @@ import os
 import signal
 from typing import Any
 
+import psutil
+
 from gobby.sessions.tmux_context import get_tmux_prefix_for_context
 
 logger = logging.getLogger(__name__)
@@ -70,12 +72,19 @@ async def kill_terminal_session(terminal_ctx: dict[str, Any], session_id: str) -
             logger.debug("tmux not available, skipping pane kill")
         except Exception as e:
             logger.warning(f"tmux kill-pane error for {tmux_pane}: {e}")
+        return False
 
     # 2. Fallback: PID-based kill
     parent_pid = terminal_ctx.get("parent_pid")
     if parent_pid:
         try:
             pid = int(parent_pid)
+            if not _process_identity_matches(pid, terminal_ctx):
+                logger.warning(
+                    "Refusing PID fallback for session %s: process identity changed or missing",
+                    session_id[:8],
+                )
+                return False
             os.kill(pid, signal.SIGTERM)
             logger.info(
                 f"Killed terminal session {session_id[:8]} via SIGTERM to PID {pid}",
@@ -90,3 +99,30 @@ async def kill_terminal_session(terminal_ctx: dict[str, Any], session_id: str) -
         f"No kill method available for session {session_id[:8]} (no tmux_pane or parent_pid)",
     )
     return False
+
+
+def _process_identity_matches(pid: int, terminal_ctx: dict[str, Any]) -> bool:
+    recorded_create_time = terminal_ctx.get("parent_create_time")
+    recorded_name = terminal_ctx.get("parent_name")
+    if (
+        isinstance(recorded_create_time, bool)
+        or not isinstance(recorded_create_time, (int, float, str))
+        or not isinstance(recorded_name, str)
+    ):
+        return False
+    try:
+        expected_create_time = float(recorded_create_time)
+        process = psutil.Process(pid)
+        return bool(
+            abs(process.create_time() - expected_create_time) < 1.0
+            and process.name() == recorded_name
+        )
+    except (
+        TypeError,
+        ValueError,
+        psutil.NoSuchProcess,
+        psutil.AccessDenied,
+        psutil.ZombieProcess,
+        OSError,
+    ):
+        return False

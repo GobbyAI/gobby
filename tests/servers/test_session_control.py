@@ -11,6 +11,7 @@ import signal
 from pathlib import Path
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
+import psutil
 import pytest
 
 from gobby.llm.context_windows import resolve_context_window
@@ -98,31 +99,47 @@ class TestKillTerminalSession:
         )
 
     @pytest.mark.asyncio
-    async def test_falls_back_to_pid_when_tmux_fails(self) -> None:
-        """Should try PID kill when tmux kill-pane fails."""
-        ctx = {"tmux_pane": "%49", "parent_pid": "12345"}
+    async def test_refuses_pid_fallback_when_tmux_fails(self) -> None:
+        """A recorded pane with an unresolved tmux failure must block PID fallback."""
+        ctx = {
+            "tmux_pane": "%49",
+            "parent_pid": "12345",
+            "parent_create_time": 100.0,
+            "parent_name": "codex",
+        }
 
         mock_proc = AsyncMock()
         mock_proc.returncode = 1
         mock_proc.communicate = AsyncMock(return_value=(b"", b"pane not found"))
 
         with (
-            patch("asyncio.create_subprocess_exec", return_value=mock_proc),
+            patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec,
             patch("os.kill") as mock_kill,
         ):
             result = await kill_terminal_session(ctx, "test-session-id")
 
-        assert result is True
-        mock_kill.assert_called_once_with(12345, signal.SIGTERM)
-        assert mock_kill.call_count == 1
-        assert mock_kill.call_args is not None
+        assert result is False
+        mock_exec.assert_called_once()
+        assert mock_exec.call_args.args[-3:] == ("kill-pane", "-t", "%49")
+        mock_proc.communicate.assert_awaited_once()
+        mock_kill.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_pid_kill_only_when_no_tmux(self) -> None:
         """Should use PID kill directly when no tmux_pane available."""
-        ctx = {"parent_pid": "9999"}
+        ctx = {
+            "parent_pid": "9999",
+            "parent_create_time": 100.0,
+            "parent_name": "codex",
+        }
+        process = MagicMock()
+        process.create_time.return_value = 100.0
+        process.name.return_value = "codex"
 
-        with patch("os.kill") as mock_kill:
+        with (
+            patch("gobby.sessions.terminal_kill.psutil.Process", return_value=process),
+            patch("os.kill") as mock_kill,
+        ):
             result = await kill_terminal_session(ctx, "test-session-id")
 
         assert result is True
@@ -140,16 +157,23 @@ class TestKillTerminalSession:
     @pytest.mark.asyncio
     async def test_handles_dead_pid_gracefully(self) -> None:
         """Should return False when PID is already dead and no tmux."""
-        ctx = {"parent_pid": "12345"}
+        ctx = {
+            "parent_pid": "12345",
+            "parent_create_time": 100.0,
+            "parent_name": "codex",
+        }
 
-        with patch("os.kill", side_effect=ProcessLookupError):
+        with patch(
+            "gobby.sessions.terminal_kill.psutil.Process",
+            side_effect=psutil.NoSuchProcess(12345),
+        ):
             result = await kill_terminal_session(ctx, "test-session-id")
 
         assert result is False
 
     @pytest.mark.asyncio
     async def test_handles_tmux_not_installed(self) -> None:
-        """Should fall back to PID when tmux is not installed."""
+        """A recorded pane must block PID fallback when tmux is unavailable."""
         ctx = {"tmux_pane": "%10", "parent_pid": "5678"}
 
         with (
@@ -158,12 +182,12 @@ class TestKillTerminalSession:
         ):
             result = await kill_terminal_session(ctx, "test-session-id")
 
-        assert result is True
-        mock_kill.assert_called_once_with(5678, signal.SIGTERM)
+        assert result is False
+        mock_kill.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_handles_tmux_timeout(self) -> None:
-        """Should fall back to PID when tmux command times out."""
+        """A recorded pane must block PID fallback when tmux times out."""
         ctx = {"tmux_pane": "%10", "parent_pid": "5678"}
 
         with (
@@ -175,13 +199,18 @@ class TestKillTerminalSession:
         ):
             result = await kill_terminal_session(ctx, "test-session-id")
 
-        assert result is True
-        mock_kill.assert_called_once_with(5678, signal.SIGTERM)
+        assert result is False
+        mock_kill.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_treats_missing_tmux_pane_as_already_cleaned_up(self) -> None:
         """Missing panes should count as success during resume cleanup."""
-        ctx = {"tmux_pane": "%10", "parent_pid": "5678"}
+        ctx = {
+            "tmux_pane": "%10",
+            "parent_pid": "5678",
+            "parent_create_time": 100.0,
+            "parent_name": "codex",
+        }
 
         mock_proc = AsyncMock()
         mock_proc.returncode = 1
@@ -199,8 +228,8 @@ class TestKillTerminalSession:
         assert not mock_kill.called
 
     @pytest.mark.asyncio
-    async def test_both_methods_fail(self) -> None:
-        """Should return False when both tmux and PID kill fail."""
+    async def test_tmux_failure_does_not_fall_back(self) -> None:
+        """An unresolved tmux failure must return False without signaling the PID."""
         ctx = {"tmux_pane": "%10", "parent_pid": "5678"}
 
         mock_proc = AsyncMock()
@@ -208,14 +237,54 @@ class TestKillTerminalSession:
         mock_proc.communicate = AsyncMock(return_value=(b"", b"error"))
 
         with (
-            patch("asyncio.create_subprocess_exec", return_value=mock_proc),
-            patch("os.kill", side_effect=ProcessLookupError) as mock_kill,
+            patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec,
+            patch("os.kill") as mock_kill,
         ):
             result = await kill_terminal_session(ctx, "test-session-id")
 
         assert result is False
-        mock_kill.assert_called_once_with(5678, signal.SIGTERM)
-        assert mock_kill.call_args.args == (5678, signal.SIGTERM)
+        mock_exec.assert_called_once()
+        assert mock_exec.call_args.args[-3:] == ("kill-pane", "-t", "%10")
+        mock_proc.communicate.assert_awaited_once()
+        mock_kill.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("create_time", "name"),
+        [(101.0, "codex"), (100.0, "python")],
+    )
+    async def test_refuses_pid_fallback_when_process_identity_changed(
+        self,
+        create_time: float,
+        name: str,
+    ) -> None:
+        ctx = {
+            "parent_pid": "9999",
+            "parent_create_time": 100.0,
+            "parent_name": "codex",
+        }
+        process = MagicMock()
+        process.create_time.return_value = create_time
+        process.name.return_value = name
+
+        with (
+            patch("gobby.sessions.terminal_kill.psutil.Process", return_value=process),
+            patch("os.kill") as mock_kill,
+        ):
+            result = await kill_terminal_session(ctx, "test-session-id")
+
+        assert result is False
+        mock_kill.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_refuses_pid_fallback_without_recorded_identity(self) -> None:
+        ctx = {"parent_pid": "9999"}
+
+        with patch("os.kill") as mock_kill:
+            result = await kill_terminal_session(ctx, "test-session-id")
+
+        assert result is False
+        mock_kill.assert_not_called()
 
 
 class TestContinueInChatTerminalKill:
