@@ -23,6 +23,8 @@ runs:
         path: references/types.md
       - action: load_reference
         path: references/error-handling.md
+      - action: follow_compiler_diagnostic
+        path: packages/client/src/api.ts
       - action: write_strict_tsconfig
         path: packages/client/tsconfig.json
       - action: model_domain_types
@@ -34,7 +36,7 @@ runs:
       - action: run_validation
         command: pnpm test --filter @app/client && pnpm tsc -p packages/client/tsconfig.json --noEmit
       - action: respond
-        text: "Verified strict config, branded domain types, runtime boundary validation, type assertions, and focused TypeScript checks."
+        text: "Verified strict config, followed the compiler diagnostic, added runtime boundary validation and type assertions, and ran focused TypeScript checks."
 assertions:
   baseline_action_order:
     - write_loose_tsconfig
@@ -44,6 +46,7 @@ assertions:
     - load_reference
     - load_reference
     - load_reference
+    - follow_compiler_diagnostic
     - write_strict_tsconfig
     - model_domain_types
     - validate_external_response
@@ -54,6 +57,7 @@ assertions:
     - casts where the API response needed help
   loaded_text_contains:
     - strict config
+    - compiler diagnostic
     - runtime boundary validation
     - focused TypeScript checks
   loaded_text_forbids:

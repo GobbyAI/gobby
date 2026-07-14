@@ -1,7 +1,7 @@
 ---
 name: swift
 description: "Enforces default Swift coding standards for agents writing or refactoring Swift: SwiftPM/Xcode configuration, API design, optionals and protocols, structured concurrency, platform boundaries, testing, performance, and memory. Use before editing Swift unless the repo provides stricter local rules."
-version: "1.0.0"
+version: "1.1.0"
 category: development
 triggers: swift, swiftpm, xcode, swiftui, uikit, appkit, actors, sendable, async-await, swift-testing, xctest, swiftlint, swift-format
 sources:
@@ -11,111 +11,70 @@ sources:
 
 # Swift
 
-Default coding standards for Swift. Repo conventions and configured tooling take
-precedence. If `Package.swift`, Xcode build settings, SwiftPM plugins, SwiftLint,
-swift-format, platform SDK rules, or project instructions are stricter, follow
-the repo.
+Apply repository SwiftPM/Xcode, platform, compiler, lint, and generated-code rules first.
 
 ## Tooling
 
-Run the repo's configured format, lint/static analysis, compile, and focused
-tests before finishing. If none are configured, use the local Swift project:
-
-- Format/lint: swift-format, SwiftLint, Xcode scripts, or repo wrappers
-- Compile/type checks: targeted `swift build`, `xcodebuild build`, or package
-  target build for changed modules
-- Tests: focused Swift Testing, XCTest, package, simulator, or framework tests
-- Packages: preserve `Package.swift`, `Package.resolved`, Xcode project settings,
-  lockfiles, generated files, and toolchain pins
-- Runtime checks: simulator, device, server smoke, or platform-specific checks
-  where the changed boundary depends on them
-
-Do not relax compiler settings, strict concurrency diagnostics, actor isolation,
-Sendable checks, SwiftLint/swift-format rules, dependency pins, or platform
-deployment targets to make a quick change pass.
+- Use configured swift-format or SwiftLint, targeted `swift build` or `xcodebuild`,
+  focused Swift Testing or XCTest, and relevant simulator/device checks.
 
 ## Configuration
 
-- Match the repo's Swift tools version, package graph, Xcode project, deployment
-  targets, compiler flags, language mode, and CI matrix.
-- Keep dependency declarations, target membership, resource processing, build
-  settings, plugins, and generated code deterministic.
-- Prefer the standard library, Foundation, platform SDKs, Swift package APIs, and
-  local helpers already in use before adding dependencies.
+- Preserve tools version, package graph, target membership, deployment targets,
+  build settings, resources, availability, and generated files.
+- Diagnostic hook: treat optional, isolation, and Sendable findings as ownership
+  evidence; avoid `!`, `@unchecked Sendable`, and unsafe isolation escapes.
 
-For SwiftPM, Xcode, compiler flags, SwiftLint, swift-format, packages, and CI:
+For SwiftPM, Xcode, flags, lint, and CI:
 `get_skill_file(name="swift", path="references/configuration.md")`
 
 ## Types And API Design
 
-- Model states with optionals, enums with associated values, structs, protocols,
-  generics, and explicit result types instead of loosely typed dictionaries or
-  sentinel strings.
-- Treat Objective-C, C, JSON, persistence, environment, network, user input, and
-  platform callbacks as untrusted boundaries.
-- Preserve public API source/binary compatibility, protocol requirements,
-  ownership semantics, Sendable contracts, and naming conventions unless the
-  change is intentional.
+- Model states with optionals, enums, structs, protocols, and constrained generics.
+- Preserve public source/binary compatibility and Objective-C exposure where promised.
+- Normalize C, Objective-C, JSON, persistence, environment, and network values at entry.
 
-For optionals, value/reference semantics, protocols, generics, API naming, and
-boundary modeling:
+For Swift types and API naming:
 `get_skill_file(name="swift", path="references/types-and-api-design.md")`
 
-## Concurrency And Error Handling
+## Error Handling
 
-- Use structured concurrency. Avoid detached tasks, hidden unstructured work,
-  swallowed cancellation, blocking calls in async code, and unclear actor
-  isolation.
-- Preserve error causes and domain context when translating framework, network,
-  persistence, process, or platform failures.
-- Make actor isolation, MainActor boundaries, Sendable safety, TaskGroup fan-out,
-  timeouts, retries, and cancellation behavior explicit and testable.
+- Translate framework, network, persistence, and platform failures at owned adapters,
+  preserving causes and cleanup.
+- Keep cancellation distinct from domain failure.
 
-For async/await, actors, Sendable, cancellation, errors, retries, and cleanup:
+## Concurrency
+
+- Use structured tasks, actors, explicit `MainActor` boundaries, bounded task groups,
+  and lifecycle-owned work.
+- Make Sendable requirements, cancellation, retry, and actor hops visible in contracts.
+
+For concurrency and error boundaries:
 `get_skill_file(name="swift", path="references/concurrency-and-error-handling.md")`
 
 ## Framework And Platform Boundaries
 
-- Keep SwiftUI, UIKit, AppKit, watchOS/tvOS/visionOS, Vapor, Codable,
-  persistence, DI, and Objective-C/C interop boundaries separate from domain
-  logic.
-- Validate request, persistence, JSON, Keychain, file, environment, C pointer,
-  Objective-C, and platform callback data before it reaches core code.
-- Preserve target, module, package, app-extension, and platform availability
-  boundaries.
+- Keep SwiftUI/UIKit/AppKit, persistence, Codable, Keychain, C pointers, Vapor, and
+  app extensions behind platform-aware adapters.
+- Preserve target, module, package, availability, and lifecycle constraints.
 
-For Apple frameworks, server Swift, persistence, Codable, availability, and
-interop:
+For Apple and server framework edges:
 `get_skill_file(name="swift", path="references/framework-and-platform-boundaries.md")`
 
 ## Testing
 
-- Add focused tests for changed behavior, error paths, concurrency timing,
-  actor isolation, platform boundaries, Codable/persistence, and target behavior.
-- Use the repo's stack: Swift Testing, XCTest, swift test, xcodebuild,
-  ViewInspector, snapshot tests, simulator/device tests, or server test harnesses.
-- Prefer deterministic unit and boundary tests before broad package or scheme
-  invocations.
+- Use repository Swift Testing, XCTest, package, scheme, simulator, or device targets
+  at the boundary being changed.
+- Control clocks, executors, actors, persistence, and platform fixtures.
 
-For Swift Testing, XCTest, package tests, simulator tests, and command selection:
+For Swift test selection:
 `get_skill_file(name="swift", path="references/testing.md")`
 
 ## Performance And Memory
 
-- Measure hot paths before optimizing. Check ARC churn, retain cycles,
-  copy-on-write behavior, collection shape, task creation, actor hops, main-thread
-  work, and bridging costs.
-- Keep ownership, mutability, isolation, caching, buffering, and lifetime
-  decisions explicit.
-- Use lazy sequences, batching, streaming, value types, actors, or unsafe APIs
-  only with evidence and tests.
+- Inspect ARC churn, retain cycles, copies, actor hops, rendering, allocation, and
+  I/O for affected workloads.
+- Keep ownership and lifetime explicit around unsafe or framework-managed resources.
 
-For ARC, value/reference semantics, collections, actor hops, instruments, and
-platform runtime behavior:
+For Instruments, ARC, and runtime analysis:
 `get_skill_file(name="swift", path="references/performance-and-memory.md")`
-
-## Before You Finish
-
-If you touched Swift: verify formatting/lint, compile/static analysis, focused
-tests, and any relevant simulator, device, package, server, or concurrency checks
-pass before closing your work.

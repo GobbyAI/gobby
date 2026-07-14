@@ -1,7 +1,7 @@
 ---
 name: c
 description: "Enforces default C coding standards for agents writing or refactoring C: compiler/build configuration, headers and ABI contracts, ownership, resource cleanup, error paths, tests, portability, and measured performance. Use before editing C unless the repo provides stricter local rules."
-version: "1.0.0"
+version: "1.1.0"
 category: development
 triggers: c, c11, c17, c23, header, make, cmake, meson, autotools, pkg-config, sanitizer
 sources:
@@ -11,97 +11,65 @@ sources:
 
 # C
 
-Default coding standards for C. Repo conventions and configured tooling take
-precedence. If compiler flags, build files, style docs, generated headers, ABI
-notes, or platform support rules are stricter, follow the repo.
+Apply repository compiler, ABI, platform, and generated-code rules first.
 
 ## Tooling
 
-Run the repo's configured format, static analysis, build, sanitizer, and focused
-test commands before finishing. If none are configured, use the local build
-system:
-
-- Format: repo wrapper, `clang-format`, or existing style tool scoped to touched files
-- Analyze: configured `clang-tidy`, `cppcheck`, compiler warnings, or CI wrapper
-- Build: touched Make, CMake, Meson, Autotools, or package target
-- Tests: focused native test target, fixture binary, or project-specific script
-- Sanitizers: ASan, UBSan, TSan, MSan, or Valgrind where the repo already uses them
-
-Do not quiet warnings, disable sanitizers, lower language standards, or hide
-undefined behavior to make a change pass.
+- Use the configured formatter, compiler warnings, static analysis, focused build,
+  tests, and existing sanitizer or Valgrind targets.
+- Scope Make, CMake, Meson, or Autotools commands to the affected target when possible.
 
 ## Configuration
 
-- Match existing compiler, linker, include-path, generated-header, pkg-config,
-  sanitizer, warning, and cross-compilation conventions before adding files.
-- Keep build outputs, generated config headers, feature macros, and platform
-  defines intentional.
-- Prefer standard C and existing project helpers before adding new dependencies
-  or build-system layers.
+- Preserve compiler, linker, feature-macro, include-path, generated-header, and
+  platform decisions already encoded by the build.
+- Prefer standard C and existing helpers before adding a dependency or extension.
+- Diagnostic hook: investigate each new warning at the operation it names; avoid
+  casts or warning suppression until the ownership, conversion, or ABI claim is proven.
 
-For Make, CMake, Meson, Autotools, compiler flags, and static analysis:
+For build systems, flags, and analysis:
 `get_skill_file(name="c", path="references/configuration.md")`
 
 ## Headers And ABI
 
-- Treat headers as contracts. Keep ownership, lifetime, nullability, thread
-  safety, feature macros, visibility, and error semantics explicit.
-- Use fixed-width, size-aware, and opaque types where ABI or serialization
-  stability matters.
-- Keep public structs, enum values, symbol names, calling conventions, and
-  exported layout stable unless the change is an intentional ABI break.
+- Treat headers as contracts for ownership, lifetime, nullability, thread safety,
+  struct layout, symbols, calling conventions, and serialized values.
+- Use opaque and fixed-width types where ABI or wire compatibility requires them.
 
-For headers, type choices, struct layout, visibility, and ABI stability:
+For public types and ABI:
 `get_skill_file(name="c", path="references/types-and-abi.md")`
 
 ## Memory And Lifetime
 
-- Define one owner for every allocation, buffer, handle, file descriptor, lock,
-  and borrowed pointer.
-- Check sizes, bounds, integer conversions, allocation failures, and string
-  termination before writing memory.
-- Prefer cleanup labels, scoped helper APIs, or project cleanup macros over
-  duplicated partial-cleanup paths.
+- Assign one owner to each allocation, buffer, handle, descriptor, lock, and mapping.
+- Check sizes, bounds, conversions, allocation failures, and string termination at
+  the boundary where the risky value enters.
 
-For ownership, cleanup, bounds, allocation, and undefined-behavior traps:
+For cleanup and undefined-behavior traps:
 `get_skill_file(name="c", path="references/memory-and-lifetime.md")`
 
 ## Errors And Resources
 
-- Preserve errno or platform error context before calling code that may clobber
-  it.
-- Return typed status, negative errno, bool-plus-output, or project result types
-  consistently with the surrounding code.
-- Close resources on every path and make retry, cancellation, timeout, and
-  partial-write behavior explicit.
+- Preserve `errno` or platform error state before another call can overwrite it.
+- Follow the local status convention and release every acquired resource on retry,
+  cancellation, timeout, and partial initialization.
 
-For error conventions, cleanup paths, file/socket/process resources, and logging:
+For result conventions and cleanup:
 `get_skill_file(name="c", path="references/errors-and-resources.md")`
 
 ## Testing
 
-- Add focused tests for changed behavior, bounds, failure paths, parser fixtures,
-  allocator failures, errno/resource cleanup, and ABI-visible contracts.
-- Use the repo's test stack: Check, CMocka, Unity, Criterion, CTest, Meson test,
-  custom fixtures, shell harnesses, or fuzz targets already present.
-- Prefer small deterministic fixtures before broad integration binaries.
+- Exercise changed bounds, parser inputs, allocation failures, cleanup, and ABI
+  fixtures with the repository's native harness.
+- Select sanitizers or fuzzers that can observe the changed lifetime or input boundary.
 
-For native test harnesses, sanitizer/fuzzer selection, fixtures, and commands:
+For harness and fixture selection:
 `get_skill_file(name="c", path="references/testing.md")`
 
 ## Portability And Performance
 
-- Guard platform-specific APIs, feature-test macros, alignment assumptions,
-  endian behavior, and compiler extensions.
-- Measure hot paths before optimizing. Check allocations, copies, parsing loops,
-  cache locality, syscalls, locking, and vectorization claims.
-- Keep readable, correct code first; use intrinsics, branch hints, custom
-  allocators, or packed layouts only when the project has evidence and tests.
+- Guard platform APIs, feature-test macros, alignment, byte order, and width assumptions.
+- Keep measured hot-path changes compatible with supported compilers and architectures.
 
-For portability, compiler/platform differences, profiling, and hot-path work:
+For portability and profiling:
 `get_skill_file(name="c", path="references/portability-and-performance.md")`
-
-## Before You Finish
-
-If you touched C: verify format/static analysis, a focused build, relevant tests,
-and any configured sanitizer/fuzzer target pass before closing your work.

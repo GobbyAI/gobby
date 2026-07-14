@@ -120,7 +120,7 @@ def test_code_index_uses_gcode_navigation_before_line_readers() -> None:
 
 
 def test_typescript_skill_loads_strict_reference_pattern() -> None:
-    """Verify TypeScript work loads references before strict code and config changes."""
+    """Verify TypeScript work follows diagnostics before strict code and config changes."""
     result = run_recorded_skill_scenario(
         SCENARIOS / "typescript/strict-reference-implementation.yaml"
     )
@@ -134,6 +134,7 @@ def test_typescript_skill_loads_strict_reference_pattern() -> None:
         "load_reference",
         "load_reference",
         "load_reference",
+        "follow_compiler_diagnostic",
         "write_strict_tsconfig",
         "model_domain_types",
         "validate_external_response",
@@ -144,6 +145,7 @@ def test_typescript_skill_loads_strict_reference_pattern() -> None:
     assert result.loaded.actions[0]["path"] == "references/configuration.md"
     assert result.loaded.actions[1]["path"] == "references/types.md"
     assert result.loaded.actions[2]["path"] == "references/error-handling.md"
+    assert result.loaded.actions[3]["path"] == "packages/client/src/api.ts"
     assert result.has_behavioral_delta
 
 
