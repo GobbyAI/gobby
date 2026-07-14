@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { FilesTab } from '../FilesTab'
@@ -309,5 +310,51 @@ describe('FilesTab', () => {
     expect(screen.queryByRole('textbox', { name: 'File contents' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/files/write'))).toBe(false)
+  })
+
+  it('operates tree rows and reaches file actions with the keyboard', async () => {
+    const user = userEvent.setup()
+    vi.mocked(useIsMobile).mockReturnValue(false)
+    fetchMock.mockImplementation(async (input?: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/files/git-status')) return Response.json({ files: {} })
+      if (url.includes('/api/files/read')) return Response.json({ content: 'export {}' })
+      if (url.endsWith('path=src')) {
+        return Response.json([
+          { name: 'index.ts', path: 'src/index.ts', is_dir: false, extension: 'ts' },
+        ])
+      }
+      if (url.includes('/api/files/tree')) {
+        return Response.json([{ name: 'src', path: 'src', is_dir: true }])
+      }
+      return Response.json([])
+    })
+
+    render(<FilesTab projectId="test-project" />)
+
+    const folder = await screen.findByRole('treeitem', { name: /src/ })
+    expect(folder).toHaveAttribute('aria-expanded', 'false')
+    folder.focus()
+    await user.keyboard('{Enter}')
+
+    expect(folder).toHaveAttribute('aria-expanded', 'true')
+    const file = await screen.findByRole('treeitem', { name: /index\.ts/ })
+    file.focus()
+    await user.keyboard(' ')
+    expect(await screen.findByRole('button', { name: 'Edit' })).toBeInTheDocument()
+
+    const actions = screen.getByRole('button', { name: 'Actions for index.ts' })
+    actions.focus()
+    await user.keyboard('{Enter}')
+
+    expect(screen.getByRole('menu', { name: 'Actions for index.ts' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Rename' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeInTheDocument()
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Duplicate' }))
+    await user.tab()
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Rename' }))
+    await user.tab()
+    await user.tab()
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Delete' }))
   })
 })

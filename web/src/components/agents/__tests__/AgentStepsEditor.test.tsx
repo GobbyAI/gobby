@@ -1,9 +1,34 @@
 import { fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 import { AgentStepsEditor, type WorkflowStep } from '../AgentStepsEditor'
 
 describe('AgentStepsEditor advanced JSON fields', () => {
+  it('expands and collapses a step card from the keyboard', async () => {
+    const user = userEvent.setup()
+    const steps: WorkflowStep[] = [{
+      name: 'step-one',
+      allowed_tools: [],
+      blocked_tools: [],
+      allowed_mcp_tools: [],
+      blocked_mcp_tools: [],
+      transitions: [],
+    }]
+
+    render(<AgentStepsEditor steps={steps} onChange={vi.fn()} />)
+
+    const disclosure = screen.getByRole('button', { name: /step-one/ })
+    expect(disclosure).toHaveAttribute('aria-expanded', 'false')
+    disclosure.focus()
+    await user.keyboard('{Enter}')
+    expect(disclosure).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument()
+
+    await user.keyboard(' ')
+    expect(disclosure).toHaveAttribute('aria-expanded', 'false')
+  })
+
   it('preserves draft text across rerenders and commits valid arrays on blur', () => {
     const steps: WorkflowStep[] = [{
       name: 'step-one',

@@ -146,6 +146,7 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
   const [isEditing, setIsEditing] = useState(false)
   const [editContent, setEditContent] = useState<string>('')
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null)
+  const ctxMenuRef = useRef<HTMLDivElement>(null)
   const [renaming, setRenaming] = useState<{ path: string; name: string } | null>(null)
   const [gitStatus, setGitStatus] = useState<Record<string, string>>({})
   const renameInputRef = useRef<HTMLInputElement>(null)
@@ -276,6 +277,12 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
     setCtxMenu({ x: e.clientX, y: e.clientY, entry })
   }, [])
 
+  const handleActionsMenu = useCallback((e: React.MouseEvent<HTMLButtonElement>, entry: FileEntry) => {
+    e.stopPropagation()
+    const rect = e.currentTarget.getBoundingClientRect()
+    setCtxMenu({ x: rect.left, y: rect.bottom, entry })
+  }, [])
+
   const closeCtxMenu = useCallback(() => setCtxMenu(null), [])
 
   const handleDelete = useCallback(async (entry: FileEntry) => {
@@ -401,6 +408,10 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
     return () => window.removeEventListener('click', handler)
   }, [ctxMenu])
 
+  useEffect(() => {
+    ctxMenuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus()
+  }, [ctxMenu])
+
   // Hooks must be declared before any early returns (rules-of-hooks).
   const treePaneStyle = useMemo<CSSProperties | undefined>(() => {
     if (!selectedFile) {
@@ -428,7 +439,16 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
           <div
             className={`files-tree-item${isSelected ? ' file-tree-entry--active' : ''}`}
             style={{ paddingLeft: `calc(0.75rem + ${depth} * 1rem)` }}
+            role="treeitem"
+            tabIndex={0}
+            aria-level={depth + 1}
+            aria-expanded={isExpanded}
             onClick={() => toggleDir(entry.path)}
+            onKeyDown={(e) => {
+              if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return
+              e.preventDefault()
+              toggleDir(entry.path)
+            }}
             onContextMenu={(e) => handleContextMenu(e, entry)}
           >
             <FolderIcon open={isExpanded} />
@@ -447,6 +467,18 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
             ) : (
               <span className={`files-tree-name${getDirStatus(entry.path) ? ' files-tree-name--modified' : ''}`}>{entry.name}</span>
             )}
+            {!isRenaming && (
+              <button
+                type="button"
+                className="files-tree-actions"
+                aria-label={`Actions for ${entry.name}`}
+                aria-haspopup="menu"
+                aria-expanded={ctxMenu?.entry.path === entry.path}
+                onClick={(e) => handleActionsMenu(e, entry)}
+              >
+                <span aria-hidden="true">⋯</span>
+              </button>
+            )}
           </div>
           {isExpanded && children?.map((c) => renderEntry(c, depth + 1))}
           {isExpanded && !children && (
@@ -461,7 +493,16 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
         <div
           className={`files-tree-item files-tree-file${isSelected ? ' file-tree-entry--active' : ''}`}
           style={{ paddingLeft: `calc(0.75rem + ${depth} * 1rem)` }}
+          role="treeitem"
+          tabIndex={0}
+          aria-level={depth + 1}
+          aria-selected={isSelected}
           onClick={() => openFile(entry.path)}
+          onKeyDown={(e) => {
+            if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return
+            e.preventDefault()
+            openFile(entry.path)
+          }}
           onContextMenu={(e) => handleContextMenu(e, entry)}
           draggable
           onDragStart={(e) => {
@@ -490,6 +531,18 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
             if (status) return <GitStatusBadge status={status} />
             return null
           })()}
+          {!isRenaming && (
+            <button
+              type="button"
+              className="files-tree-actions"
+              aria-label={`Actions for ${entry.name}`}
+              aria-haspopup="menu"
+              aria-expanded={ctxMenu?.entry.path === entry.path}
+              onClick={(e) => handleActionsMenu(e, entry)}
+            >
+              <span aria-hidden="true">⋯</span>
+            </button>
+          )}
         </div>
       </div>
     )
@@ -522,7 +575,9 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
             body="Project files appear here once a project is loaded"
           />
         ) : (
-          rootEntries.map((e) => renderEntry(e, 0))
+          <div role="tree" aria-label="Project files">
+            {rootEntries.map((e) => renderEntry(e, 0))}
+          </div>
         )}
       </div>
 
@@ -616,18 +671,27 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
       {ctxMenu && (
         <>
           <div className="file-ctx-backdrop" onClick={closeCtxMenu} />
-          <div className="file-ctx-menu" style={{ position: 'fixed', left: ctxMenu.x, top: ctxMenu.y }}>
+          <div
+            ref={ctxMenuRef}
+            className="file-ctx-menu"
+            role="menu"
+            aria-label={`Actions for ${ctxMenu.entry.name}`}
+            style={{ position: 'fixed', left: ctxMenu.x, top: ctxMenu.y }}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') closeCtxMenu()
+            }}
+          >
             {onAddToChat && !ctxMenu.entry.is_dir && (
-              <button className="file-ctx-item" onClick={() => { onAddToChat(ctxMenu.entry.path); closeCtxMenu() }}>
+              <button role="menuitem" className="file-ctx-item" onClick={() => { onAddToChat(ctxMenu.entry.path); closeCtxMenu() }}>
                 Add to chat
               </button>
             )}
             {!ctxMenu.entry.is_dir && (
-              <button className="file-ctx-item" onClick={() => handleDuplicate(ctxMenu.entry)}>Duplicate</button>
+              <button role="menuitem" className="file-ctx-item" onClick={() => handleDuplicate(ctxMenu.entry)}>Duplicate</button>
             )}
-            <button className="file-ctx-item" onClick={() => handleRename(ctxMenu.entry)}>Rename</button>
-            <button className="file-ctx-item" onClick={() => handleMove(ctxMenu.entry)}>Move</button>
-            <button className="file-ctx-item file-ctx-item--danger" onClick={() => handleDelete(ctxMenu.entry)}>Delete</button>
+            <button role="menuitem" className="file-ctx-item" onClick={() => handleRename(ctxMenu.entry)}>Rename</button>
+            <button role="menuitem" className="file-ctx-item" onClick={() => handleMove(ctxMenu.entry)}>Move</button>
+            <button role="menuitem" className="file-ctx-item file-ctx-item--danger" onClick={() => handleDelete(ctxMenu.entry)}>Delete</button>
           </div>
         </>
       )}

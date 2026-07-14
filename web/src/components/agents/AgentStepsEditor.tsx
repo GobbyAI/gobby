@@ -410,14 +410,16 @@ export function AgentStepsEditor({ steps, onChange }: AgentStepsEditorProps) {
         return (
           <div className={`${STEP_CARD_CLS}${isExpanded ? ' ' + STEP_CARD_EXPANDED_CLS : ''}`} key={`${step.name}-${idx}`}>
             {/* Header */}
-            <div
+            <button
+              type="button"
               className={STEP_CARD_HEADER_CLS}
+              aria-expanded={isExpanded}
               onClick={() => setExpandedName(isExpanded ? null : step.name)}
             >
               <span className={STEP_NAME_BADGE_CLS}>{step.name}</span>
               <span className={STEP_PREVIEW_CLS}>{getStepPreview(step)}</span>
               <span className={STEP_CHEVRON_CLS}>{isExpanded ? '\u25BE' : '\u25B8'}</span>
-            </div>
+            </button>
 
             {/* Expanded body */}
             {isExpanded && (

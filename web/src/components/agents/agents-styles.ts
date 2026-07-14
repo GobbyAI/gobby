@@ -200,7 +200,7 @@ export const STEP_CARD_CLS =
   "border border-border rounded-md bg-[var(--bg-primary)] overflow-hidden";
 export const STEP_CARD_EXPANDED_CLS = "border-[var(--accent)]";
 export const STEP_CARD_HEADER_CLS =
-  "flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11";
+  "flex w-full items-center gap-2 border-0 bg-transparent px-3 py-2 text-left font-[inherit] text-[inherit] cursor-pointer transition-colors hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11";
 export const STEP_CARD_BODY_CLS =
   "px-3 pt-2 pb-3 border-t border-border flex flex-col gap-2.5";
 
