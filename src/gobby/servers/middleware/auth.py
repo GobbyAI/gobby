@@ -26,11 +26,6 @@ _PUBLIC_PREFIXES = (
     "/api/auth",
     "/api/comms/webhooks",
     "/api/github/webhooks",
-    "/api/hooks",
-    "/api/llm",
-    "/api/mcp/tools",
-    "/api/sessions",
-    "/api/workflows/variables",
     "/assets",
 )
 
