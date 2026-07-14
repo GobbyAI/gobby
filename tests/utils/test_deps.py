@@ -5,8 +5,10 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import psycopg
 import pytest
 
+from gobby.config.bootstrap import BootstrapConfigError
 from gobby.config.embedding_keys import (
     AI_EMBEDDING_API_BASE_KEY,
     AI_EMBEDDING_API_KEY_KEY,
@@ -15,6 +17,7 @@ from gobby.config.embedding_keys import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils import deps
+from gobby.utils.status import format_status_message
 
 
 def _patch_runtime_hub_database(db: Any):
@@ -514,14 +517,21 @@ def test_get_configured_embedding_provider_ignores_invalid_dim_string(
 
 
 @pytest.mark.unit
-def test_get_configured_embedding_provider_returns_none_when_db_missing(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize(
+    "error",
+    [
+        psycopg.OperationalError("hub database unavailable"),
+        BootstrapConfigError("hub backend is invalid"),
+        RuntimeError("runtime hub unavailable"),
+        OSError("config storage unavailable"),
+    ],
+)
+def test_get_configured_embedding_provider_returns_none_for_storage_errors(
+    error: Exception,
 ) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
-
     with patch(
         "gobby.storage.hub.runtime.runtime_hub_database",
-        side_effect=RuntimeError(f"missing runtime hub at {tmp_path / 'missing.db'}"),
+        side_effect=error,
     ):
         assert deps.get_configured_embedding_provider() is None
 
@@ -531,9 +541,9 @@ def test_get_configured_embedding_provider_reraises_unexpected_errors() -> None:
     with (
         patch(
             "gobby.storage.hub.runtime.runtime_hub_database",
-            side_effect=AssertionError("non-db bug"),
+            side_effect=AssertionError("database invariant bug"),
         ),
-        pytest.raises(AssertionError, match="non-db bug"),
+        pytest.raises(AssertionError, match="database invariant bug"),
     ):
         deps.get_configured_embedding_provider()
 
@@ -596,6 +606,31 @@ def test_collect_all_deps() -> None:
         assert res["coding_clis"]["qwen"] == "6.7"
         assert res["dependencies"]["docker_running"] is True
         assert res["dependencies"]["embeddings_provider"] == "lmstudio"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        psycopg.OperationalError("hub database unavailable"),
+        BootstrapConfigError("hub backend is invalid"),
+    ],
+)
+def test_collect_all_deps_degrades_when_embeddings_probe_fails(error: Exception) -> None:
+    with patch(
+        "gobby.storage.hub.runtime.runtime_hub_database",
+        side_effect=error,
+    ):
+        res = deps.collect_all_deps()
+
+    error_name = type(error).__name__
+    assert res["dependencies"]["embeddings_provider"] == {
+        "status": "degraded",
+        "error": error_name,
+    }
+    assert f"Embeddings:       degraded ({error_name})" in format_status_message(
+        running=True,
+        deps_info=res,
+    )
 
 
 def test_file_read_exceptions(tmp_path: Path) -> None:

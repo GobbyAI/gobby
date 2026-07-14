@@ -326,7 +326,14 @@ def format_status_message(
         configured_embeddings_provider = dep.get("embeddings_provider")
         ollama = dep.get("ollama")
         lmstudio = dep.get("lmstudio")
-        if configured_embeddings_provider == "ollama":
+        if (
+            isinstance(configured_embeddings_provider, dict)
+            and configured_embeddings_provider.get("status") == "degraded"
+        ):
+            error = _safe_status_text(configured_embeddings_provider.get("error"))
+            detail = f" ({error})" if error else ""
+            lines.append(f"  {'Embeddings:':<{_LW}}degraded{detail}")
+        elif configured_embeddings_provider == "ollama":
             if isinstance(ollama, dict) and ollama.get("running"):
                 ver_str = f" (v{ollama['version']})" if ollama.get("version") else ""
                 lines.append(f"  {'Embeddings:':<{_LW}}Ollama{ver_str}")

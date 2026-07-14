@@ -215,6 +215,21 @@ class TestStatusUtils:
         )
         assert "LM Studio (running)" in msg
 
+    def test_format_status_message_shows_degraded_embeddings_probe(self) -> None:
+        msg = format_status_message(
+            running=True,
+            deps_info={
+                "dependencies": {
+                    "embeddings_provider": {
+                        "status": "degraded",
+                        "error": "BootstrapConfigError",
+                    },
+                },
+            },
+        )
+
+        assert "Embeddings:       degraded (BootstrapConfigError)" in msg
+
     def test_format_status_message_shows_configured_openai_over_local_fallback(self) -> None:
         msg = format_status_message(
             running=True,
