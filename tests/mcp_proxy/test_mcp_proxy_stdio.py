@@ -45,6 +45,7 @@ def test_extended_timeout_tools_excludes_stale_apply_tdd() -> None:
         "sync_worktree",
         "wiki_ask",
         "wiki_compile",
+        "spawn_agent",
     )
 
 
@@ -1143,6 +1144,33 @@ class TestDaemonProxy:
                     "POST",
                     "/api/mcp/gobby-merge/tools/merge_resolve",
                     json={"conflict_id": "mc-one", "use_ai": True},
+                    timeout=300.0,
+                    preflight=True,
+                )
+
+    @pytest.mark.asyncio
+    async def test_call_tool_uses_extended_timeout_for_spawn_agent(self) -> None:
+        """spawn_agent's daemon-side setup exceeds 30s under concurrent fleet load."""
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        proxy = DaemonProxy(60887)
+        with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
+            mock_config.return_value = MagicMock(mcp_client_proxy=MagicMock(tool_timeouts={}))
+            with patch.object(proxy, "_request", new_callable=AsyncMock) as mock_request:
+                mock_request.return_value = {"success": True}
+
+                result = await proxy.call_tool(
+                    "gobby-agents",
+                    "spawn_agent",
+                    {"agent": "backend-developer", "task_id": "#123"},
+                )
+
+                assert result == {"success": True}
+                assert result["success"] is True
+                mock_request.assert_called_once_with(
+                    "POST",
+                    "/api/mcp/gobby-agents/tools/spawn_agent",
+                    json={"agent": "backend-developer", "task_id": "#123"},
                     timeout=300.0,
                     preflight=True,
                 )

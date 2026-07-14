@@ -654,6 +654,39 @@ def test_bash_skill_loads_strict_script_boundary_pattern() -> None:
     assert result.has_behavioral_delta
 
 
+def test_scala_skill_loads_strict_scala3_domain_boundary_pattern() -> None:
+    """Verify Scala work loads references before changing Scala 3 domain boundaries."""
+    result = run_recorded_skill_scenario(SCENARIOS / "scala/strict-scala3-domain-boundaries.yaml")
+
+    assert result.baseline.action_names == (
+        "reuse_anyval_newtype",
+        "keep_implicit_decoder",
+        "model_status_with_verbose_sealed_hierarchy",
+        "hide_import_failure",
+        "run_broad_sbt_test",
+        "respond",
+    )
+    assert result.loaded.action_names == (
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "select_scala_dialect",
+        "model_opaque_identifier",
+        "choose_enum_for_closed_sum",
+        "define_given_decoder",
+        "model_typed_import_failure",
+        "add_domain_boundary_tests",
+        "run_validation",
+        "respond",
+    )
+    assert result.loaded.actions[0]["path"] == "references/configuration.md"
+    assert result.loaded.actions[1]["path"] == "references/types-and-contextual-abstractions.md"
+    assert result.loaded.actions[2]["path"] == "references/effects-errors-and-resources.md"
+    assert result.loaded.actions[3]["path"] == "references/framework-and-platform-boundaries.md"
+    assert result.has_behavioral_delta
+
+
 def test_pipelines_and_cron_selects_current_automation_paths() -> None:
     result = run_recorded_skill_scenario(
         SCENARIOS / "pipelines-and-cron/select-automation-path.yaml"
