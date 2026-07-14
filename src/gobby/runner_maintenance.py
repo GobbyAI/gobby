@@ -645,7 +645,8 @@ async def cleanup_expired_isolation_loop(
                     try:
                         result = await asyncio.to_thread(
                             _run_git_command,
-                            ["git", "-C", repo_path, "worktree", "remove", "--force", path],
+                            ["git", "worktree", "remove", "--force", path],
+                            cwd=repo_path,
                         )
                         removed = result == 0
                         if not removed:
@@ -662,7 +663,8 @@ async def cleanup_expired_isolation_loop(
                     # Prune stale worktree references
                     prune_result = await asyncio.to_thread(
                         _run_git_command,
-                        ["git", "-C", repo_path, "worktree", "prune"],
+                        ["git", "worktree", "prune"],
+                        cwd=repo_path,
                     )
                     if prune_result != 0:
                         logger.warning(
@@ -674,7 +676,8 @@ async def cleanup_expired_isolation_loop(
                     if wt.branch_name:
                         branch_result = await asyncio.to_thread(
                             _run_git_command,
-                            ["git", "-C", repo_path, "branch", "-D", wt.branch_name],
+                            ["git", "branch", "-D", wt.branch_name],
+                            cwd=repo_path,
                         )
                         if branch_result != 0:
                             logger.warning(
@@ -828,12 +831,12 @@ def _delete_missing_clone_records(clone_storage: Any, *, limit: int) -> int:
     return removed
 
 
-def _run_git_command(args: list[str]) -> int:
-    """Run a git command and return the exit code."""
+def _run_git_command(args: list[str], *, cwd: str) -> int:
+    """Run a git command in the recorded project repository."""
     # This helper receives shell-free argv assembled by the isolation reaper.
     import subprocess  # nosec B404
 
-    result = subprocess.run(args, capture_output=True, timeout=30)  # nosec B603
+    result = subprocess.run(args, cwd=cwd, capture_output=True, timeout=30)  # nosec B603
     return result.returncode
 
 
