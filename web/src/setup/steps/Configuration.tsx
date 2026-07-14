@@ -29,14 +29,13 @@ export function Configuration({ state, setState, onNext }: StepProps): React.Rea
     setError(null);
     setPhase("saving");
 
-    // Write ports to bootstrap.yaml
-    if (
-      finalPorts.http !== 60887 ||
-      finalPorts.ws !== 60888 ||
-      finalPorts.ui !== 60889
-    ) {
-      patchPorts(finalPorts.http, finalPorts.ws, finalPorts.ui);
-    }
+    // Keep the daemon on loopback unless the firewall was explicitly configured.
+    patchPorts(
+      finalPorts.http,
+      finalPorts.ws,
+      finalPorts.ui,
+      state.firewall_configured,
+    );
 
     // Run configuration and DB initialization without installing hooks or services.
     const result = runGobby(["install", "--config-only"], { timeout: 30000 });

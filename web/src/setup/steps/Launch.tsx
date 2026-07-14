@@ -197,7 +197,7 @@ Completed: ${now}
 ## Network
 - Firewall: ${state.firewall_configured ? "macOS pf rules installed" : "not configured"}
 - Tailscale: ${state.tailscale_configured ? "configured" : "not configured"}
-- Bind host: ${state.tailscale_configured ? "0.0.0.0" : "127.0.0.1"}
+- Bind host: 127.0.0.1
 
 ## Installed CLIs
 | CLI | Version | Hooks Installed |
