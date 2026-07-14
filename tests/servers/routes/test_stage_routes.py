@@ -225,7 +225,52 @@ def test_list_filter_by_stage_state(
     )
 
     assert response.status_code == 200
-    assert [task["id"] for task in response.json()["tasks"]] == [matching.id]
+    data = response.json()
+    assert [task["id"] for task in data["tasks"]] == [matching.id]
+    assert data["total"] == 1
+
+
+def test_list_stage_filter_uses_database_pagination(
+    temp_db,
+    sample_project,
+    stage_client: TestClient,
+) -> None:
+    tasks = [
+        make_task_with_manifest(
+            temp_db,
+            sample_project,
+            [spec("development", 0)],
+            title=f"Task {index}",
+        )[0]
+        for index in range(3)
+    ]
+
+    response = stage_client.get(
+        "/api/tasks",
+        params={
+            "project_id": sample_project["id"],
+            "stage": "development",
+            "limit": 1,
+            "offset": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 3
+    assert data["limit"] == 1
+    assert data["offset"] == 1
+    assert [task["id"] for task in data["tasks"]] == [tasks[1].id]
+
+
+def test_list_stage_state_requires_stage(sample_project, stage_client: TestClient) -> None:
+    response = stage_client.get(
+        "/api/tasks",
+        params={"project_id": sample_project["id"], "stage_state": "ready"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "stage_state requires stage"
 
 
 def test_list_filter_by_repeated_stage_query_values(

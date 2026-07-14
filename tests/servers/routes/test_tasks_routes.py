@@ -204,8 +204,10 @@ class TestListTasks:
         task_manager.submit_for_review(sample_task["id"], review_notes="Ready for QA")
         response = client.get("/api/tasks?current_stage_state=needs_review")
         assert response.status_code == 200
-        ids = [t["id"] for t in response.json()["tasks"]]
+        data = response.json()
+        ids = [t["id"] for t in data["tasks"]]
         assert sample_task["id"] in ids
+        assert data["total"] == len(ids) == 1
 
     def test_list_with_claimed_filter(
         self,
@@ -265,6 +267,66 @@ class TestListTasks:
         assert data["limit"] == 1
         assert data["offset"] == 0
         assert len(data["tasks"]) <= 1
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            {"limit": 0},
+            {"limit": -1},
+            {"limit": 1001},
+            {"offset": -1},
+        ],
+    )
+    def test_list_rejects_out_of_bounds_pagination(
+        self, client: TestClient, params: dict[str, int]
+    ) -> None:
+        response = client.get("/api/tasks", params=params)
+
+        assert response.status_code == 422
+
+    def test_list_total_respects_all_task_filters(
+        self,
+        client: TestClient,
+        task_manager: LocalTaskManager,
+        project_id: str,
+        session_id: str,
+    ) -> None:
+        parent = task_manager.create_task(project_id=project_id, title="Parent")
+        matching = task_manager.create_task(
+            project_id=project_id,
+            title="Filtered needle",
+            parent_task_id=parent.id,
+            priority=1,
+            task_type="task",
+            claimed_by_session_id=session_id,
+            labels=["target"],
+        )
+        task_manager.create_task(
+            project_id=project_id,
+            title="Filtered needle decoy",
+            parent_task_id=parent.id,
+            priority=2,
+            task_type="task",
+            labels=["target"],
+        )
+
+        response = client.get(
+            "/api/tasks",
+            params={
+                "priority": 1,
+                "claimed": "true",
+                "closed": "false",
+                "task_type": "task",
+                "label": "target",
+                "parent_task_id": parent.id,
+                "search": "needle",
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert [task["id"] for task in data["tasks"]] == [matching.id]
+        assert data["total"] == 1
 
     def test_list_value_error(self, server) -> None:
         """When resolve_project_id raises ValueError, returns 400."""

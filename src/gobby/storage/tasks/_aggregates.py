@@ -3,7 +3,8 @@
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.sql_dialect import newer_than_now_expr
+from gobby.storage.sql_dialect import json_array_contains_condition, newer_than_now_expr
+from gobby.storage.tasks._models import task_type_filter_values
 
 
 def _current_stage_join_sql(task_alias: str = "t", *, join_type: str = "LEFT JOIN") -> str:
@@ -80,7 +81,18 @@ def _no_external_blocker_sql(task_alias: str = "t") -> str:
 def count_tasks(
     db: HubDatabase,
     project_id: str | None = None,
-    current_stage_state: str | None = None,
+    current_stage_state: str | list[str] | None = None,
+    priority: int | None = None,
+    claimed_by_session_id: str | None = None,
+    claimed: bool | None = None,
+    closed: bool | None = None,
+    escalated: bool | None = None,
+    task_type: str | None = None,
+    label: str | None = None,
+    parent_task_id: str | None = None,
+    title_like: str | None = None,
+    stages: list[str] | None = None,
+    stage_state: str | None = None,
 ) -> int:
     """Count tasks with optional filters.
 
@@ -108,7 +120,55 @@ def count_tasks(
         if clause:
             query += f" AND {clause}"
             params.extend(clause_params)
-            query += " AND t.closed_at IS NULL"
+            if closed is None:
+                query += " AND t.closed_at IS NULL"
+    if priority is not None:
+        query += " AND t.priority = %s"
+        params.append(priority)
+    if claimed_by_session_id:
+        query += " AND t.claimed_by_session_id = %s"
+        params.append(claimed_by_session_id)
+    if claimed is True:
+        query += " AND t.claimed_by_session_id IS NOT NULL"
+    elif claimed is False:
+        query += " AND t.claimed_by_session_id IS NULL"
+    if closed is True:
+        query += " AND t.closed_at IS NOT NULL"
+    elif closed is False:
+        query += " AND t.closed_at IS NULL"
+    if escalated is True:
+        query += " AND COALESCE(t.is_escalated, FALSE) IS TRUE"
+    elif escalated is False:
+        query += " AND COALESCE(t.is_escalated, FALSE) IS FALSE"
+    if task_type:
+        task_type_values = task_type_filter_values(task_type)
+        placeholders = ", ".join("%s" for _ in task_type_values)
+        query += f" AND t.task_type IN ({placeholders})"
+        params.extend(task_type_values)
+    if label:
+        label_clause, label_params = json_array_contains_condition(db, "t.labels", label)
+        query += f" AND {label_clause}"
+        params.extend(label_params)
+    if parent_task_id:
+        query += " AND t.parent_task_id = %s"
+        params.append(parent_task_id)
+    if title_like:
+        query += " AND t.title LIKE %s"
+        params.append(f"%{title_like}%")
+    if stages:
+        placeholders = ", ".join("%s" for _ in stages)
+        query += f"""
+        AND EXISTS (
+            SELECT 1
+              FROM task_stage_states stage_filter
+             WHERE stage_filter.task_id = t.id
+               AND stage_filter.stage_name IN ({placeholders})
+        """
+        params.extend(stages)
+        if stage_state is not None:
+            query += " AND stage_filter.state = %s"
+            params.append(stage_state)
+        query += ")"
 
     result = db.fetchone(query, tuple(params))
     return result["count"] if result else 0

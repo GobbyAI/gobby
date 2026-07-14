@@ -298,8 +298,8 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         label: str | None = Query(None, description="Filter by label"),
         parent_task_id: str | None = Query(None, description="Filter by parent task ID"),
         search: str | None = Query(None, description="Search by title"),
-        limit: int = Query(50, description="Maximum results"),
-        offset: int = Query(0, description="Pagination offset"),
+        limit: int = Query(50, ge=1, le=1000, description="Maximum results"),
+        offset: int = Query(0, ge=0, description="Pagination offset"),
         sort_by: str = Query(
             "hierarchy",
             description="Sort order: hierarchy, updated_at, created_at, or priority",
@@ -314,18 +314,9 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         """List tasks with optional filters and state distribution stats."""
         try:
             resolved_project = _resolve_project(project_id)
-            stage_task_ids: set[str] | None = None
             stage_filters = _normalize_stage_filters(stage)
-            if stage_filters:
-                stage_task_ids = set()
-                for stage_name in stage_filters:
-                    stage_task_ids.update(
-                        server.task_manager.stage_states.list_tasks_at_stage(
-                            stage_name=stage_name,
-                            state=stage_state,
-                            project_id=resolved_project,
-                        )
-                    )
+            if stage_state is not None and not stage_filters:
+                raise HTTPException(status_code=400, detail="stage_state requires stage")
 
             tasks = server.task_manager.list_tasks(
                 project_id=resolved_project,
@@ -337,17 +328,26 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 label=label,
                 parent_task_id=parent_task_id,
                 title_like=search,
-                limit=10000 if stage_task_ids is not None else limit,
-                offset=0 if stage_task_ids is not None else offset,
+                stages=stage_filters,
+                stage_state=stage_state,
+                limit=limit,
+                offset=offset,
                 sort_by=sort_by,
                 sort_order=sort_order,
             )
-            if stage_task_ids is not None:
-                tasks = [task for task in tasks if task.id in stage_task_ids]
-                total = len(tasks)
-                tasks = tasks[offset : offset + limit]
-            else:
-                total = server.task_manager.count_tasks(project_id=resolved_project)
+            total = server.task_manager.count_tasks(
+                project_id=resolved_project,
+                current_stage_state=current_stage_state,
+                priority=priority,
+                claimed=claimed,
+                closed=closed,
+                task_type=task_type,
+                label=label,
+                parent_task_id=parent_task_id,
+                title_like=search,
+                stages=stage_filters,
+                stage_state=stage_state,
+            )
 
             task_dicts = [t.to_brief() for t in tasks]
             if include_stages or stage_filters or stage_state is not None:

@@ -493,6 +493,8 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         label: str | None = None,
         parent_task_id: str | None = None,
         title_like: str | None = None,
+        stages: list[str] | None = None,
+        stage_state: str | None = None,
         limit: int = 50,
         offset: int = 0,
         sort_by: str = "hierarchy",
@@ -520,6 +522,8 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
             label=label,
             parent_task_id=parent_task_id,
             title_like=title_like,
+            stages=stages,
+            stage_state=stage_state,
             limit=limit,
             offset=offset,
             sort_by=sort_by,
@@ -584,7 +588,18 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
     def count_tasks(
         self,
         project_id: str | None = None,
-        current_stage_state: str | None = None,
+        current_stage_state: str | list[str] | None = None,
+        priority: int | None = None,
+        claimed_by_session_id: str | None = None,
+        claimed: bool | None = None,
+        closed: bool | None = None,
+        escalated: bool | None = None,
+        task_type: str | None = None,
+        label: str | None = None,
+        parent_task_id: str | None = None,
+        title_like: str | None = None,
+        stages: list[str] | None = None,
+        stage_state: str | None = None,
     ) -> int:
         """Count tasks with optional filters.
 
@@ -599,6 +614,17 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
             self.db,
             project_id=project_id,
             current_stage_state=current_stage_state,
+            priority=priority,
+            claimed_by_session_id=claimed_by_session_id,
+            claimed=claimed,
+            closed=closed,
+            escalated=escalated,
+            task_type=task_type,
+            label=label,
+            parent_task_id=parent_task_id,
+            title_like=title_like,
+            stages=stages,
+            stage_state=stage_state,
         )
 
     def count_by_state(self, project_id: str | None = None) -> dict[str, int]:
