@@ -1,6 +1,7 @@
 """Tests for ValidationHistoryManager."""
 
 from concurrent.futures import ThreadPoolExecutor
+from uuid import uuid4
 
 import pytest
 
@@ -19,23 +20,25 @@ def history_manager(temp_db):
 @pytest.fixture
 def sample_project(temp_db):
     """Create a sample project for tests."""
+    project_id = str(uuid4())
     temp_db.execute(
         """INSERT INTO projects (id, name, created_at, updated_at)
            VALUES (%s, %s, NOW(), NOW())""",
-        ("test-project", "Test Project"),
+        (project_id, "Test Project"),
     )
-    return {"id": "test-project", "name": "Test Project"}
+    return {"id": project_id, "name": "Test Project"}
 
 
 @pytest.fixture
 def sample_task(temp_db, sample_project):
     """Create a sample task for tests."""
+    task_id = str(uuid4())
     temp_db.execute(
         """INSERT INTO tasks (id, project_id, title, priority, task_type, created_at, updated_at)
            VALUES (%s, %s, %s, %s, %s, NOW(), NOW())""",
-        ("gt-test123", sample_project["id"], "Test Task", 2, "task"),
+        (task_id, sample_project["id"], "Test Task", 2, "task"),
     )
-    return {"id": "gt-test123"}
+    return {"id": task_id}
 
 
 class TestValidationHistoryManager:
@@ -188,15 +191,16 @@ class TestValidationHistoryManager:
     ) -> None:
         """Test that clear_history only affects the target task."""
         # Create a second task
+        other_task_id = str(uuid4())
         temp_db.execute(
             """INSERT INTO tasks (id, project_id, title, priority, task_type, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, NOW(), NOW())""",
-            ("gt-other", sample_project["id"], "Other Task", 2, "task"),
+            (other_task_id, sample_project["id"], "Other Task", 2, "task"),
         )
 
         # Add history to both tasks
         history_manager.record_iteration(task_id=sample_task["id"], iteration=1, status="invalid")
-        history_manager.record_iteration(task_id="gt-other", iteration=1, status="invalid")
+        history_manager.record_iteration(task_id=other_task_id, iteration=1, status="invalid")
 
         # Clear only first task
         history_manager.clear_history(sample_task["id"])
@@ -204,7 +208,7 @@ class TestValidationHistoryManager:
         # First task should have no history
         assert len(history_manager.get_iteration_history(sample_task["id"])) == 0
         # Second task should still have history
-        assert len(history_manager.get_iteration_history("gt-other")) == 1
+        assert len(history_manager.get_iteration_history(other_task_id)) == 1
 
     def test_get_latest_iteration(self, history_manager, sample_task) -> None:
         """Test getting the latest iteration for a task."""
@@ -217,6 +221,19 @@ class TestValidationHistoryManager:
         assert latest is not None
         assert latest.iteration == 3
         assert latest.status == "valid"
+
+    def test_get_latest_iteration_uses_newest_id_to_break_iteration_ties(
+        self, history_manager, sample_task
+    ) -> None:
+        history_manager.record_iteration(task_id=sample_task["id"], iteration=3, status="invalid")
+        history_manager.record_iteration(task_id=sample_task["id"], iteration=3, status="valid")
+
+        latest = history_manager.get_latest_iteration(sample_task["id"])
+        history = history_manager.get_iteration_history(sample_task["id"])
+
+        assert latest is not None
+        assert latest.status == "valid"
+        assert [item.status for item in history] == ["invalid", "valid"]
 
     def test_get_latest_iteration_empty_history(self, history_manager, sample_task) -> None:
         """Test get_latest_iteration returns None for empty history."""
@@ -293,22 +310,24 @@ class TestRecurringIssueDetection:
     @pytest.fixture
     def sample_project(self, temp_db):
         """Create a sample project for tests."""
+        project_id = str(uuid4())
         temp_db.execute(
             """INSERT INTO projects (id, name, created_at, updated_at)
                VALUES (%s, %s, NOW(), NOW())""",
-            ("test-project", "Test Project"),
+            (project_id, "Test Project"),
         )
-        return {"id": "test-project"}
+        return {"id": project_id}
 
     @pytest.fixture
     def sample_task(self, temp_db, sample_project):
         """Create a sample task for tests."""
+        task_id = str(uuid4())
         temp_db.execute(
             """INSERT INTO tasks (id, project_id, title, priority, task_type, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, NOW(), NOW())""",
-            ("gt-recurring", sample_project["id"], "Test Task", 2, "task"),
+            (task_id, sample_project["id"], "Test Task", 2, "task"),
         )
-        return {"id": "gt-recurring"}
+        return {"id": task_id}
 
     def test_group_similar_issues_clusters_by_title(self, history_manager) -> None:
         """Test that group_similar_issues clusters issues with similar titles."""

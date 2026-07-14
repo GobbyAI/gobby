@@ -88,8 +88,14 @@ class StageStatesManager:
         specs: Sequence[StageManifestSpec],
         *,
         by_session_id: str | None,
+        replace_existing: bool = False,
     ) -> list[StageState]:
-        return self._manifest.initialize_manifest(task_id, specs, by_session_id=by_session_id)
+        return self._manifest.initialize_manifest(
+            task_id,
+            specs,
+            by_session_id=by_session_id,
+            replace_existing=replace_existing,
+        )
 
     def insert_new_task_manifest_in_transaction(
         self,

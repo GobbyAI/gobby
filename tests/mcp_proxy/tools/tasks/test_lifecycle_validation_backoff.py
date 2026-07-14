@@ -14,6 +14,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._validation_backoff import TaskValidationBackoffStore
 from gobby.tasks.validation import ValidationResult as TaskValidationResult
+from gobby.tasks.validation_history import ValidationHistoryManager
 
 pytestmark = pytest.mark.unit
 
@@ -64,12 +65,15 @@ async def test_infra_failure_records_backoff_and_skips_while_active(
     store = TaskValidationBackoffStore(temp_db)
     state = store.get(task.id)
     assert state is not None and state.consecutive_failures == 1
+    history = ValidationHistoryManager(temp_db).get_iteration_history(task.id)
+    assert [(item.iteration, item.status) for item in history] == [(1, "error")]
 
     # Second attempt while the backoff window is active: validation is skipped entirely.
     second = await validate_leaf_task_with_llm(task, validator, "context", None, ctx, task.id, None)
     assert second.can_close is False
     assert second.error_type == "validation_infrastructure_unavailable"
     assert validator.calls == 1  # LLM not called again
+    assert len(ValidationHistoryManager(temp_db).get_iteration_history(task.id)) == 1
 
 
 @pytest.mark.asyncio
@@ -105,3 +109,8 @@ async def test_real_verdict_after_window_clears_backoff(
     refreshed = manager.get_task(task.id)
     assert refreshed is not None
     assert refreshed.validation_status == "valid"
+    history = ValidationHistoryManager(temp_db).get_iteration_history(task.id)
+    assert [(item.iteration, item.status) for item in history] == [
+        (1, "error"),
+        (2, "valid"),
+    ]

@@ -8,6 +8,8 @@ These tests verify that the Task dataclass includes:
 TDD Red Phase: Tests should fail initially until fields are implemented.
 """
 
+from uuid import uuid4
+
 import pytest
 
 from gobby.storage.tasks import LocalTaskManager, Task
@@ -72,6 +74,7 @@ class TestTaskGitHubFields:
         from datetime import UTC, datetime
 
         now = datetime.now(UTC).isoformat()
+        task_id = str(uuid4())
 
         with temp_db.transaction() as conn:
             conn.execute(
@@ -82,7 +85,7 @@ class TestTaskGitHubFields:
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
-                    "gt-test01",
+                    task_id,
                     project_id,
                     "GitHub linked task",
                     2,
@@ -96,7 +99,7 @@ class TestTaskGitHubFields:
             )
 
         # Fetch and verify via Task.from_row
-        row = temp_db.fetchone("SELECT * FROM tasks WHERE id = %s", ("gt-test01",))
+        row = temp_db.fetchone("SELECT * FROM tasks WHERE id = %s", (task_id,))
         task = Task.from_row(row)
 
         assert task.github_issue_number == 123

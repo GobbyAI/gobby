@@ -49,6 +49,8 @@ class TaskTreeBuilder:
         }
     """
 
+    MAX_TREE_DEPTH = 100
+
     def __init__(
         self,
         task_manager: LocalTaskManager,
@@ -66,6 +68,8 @@ class TaskTreeBuilder:
         self.project_id = project_id
         self.session_id = session_id
         self._title_to_id: dict[str, str] = {}  # Map title -> task_id for dependency resolution
+        self._ambiguous_titles: set[str] = set()
+        self._node_to_id: dict[int, str] = {}
         self._sibling_index_map: dict[
             str | None, dict[int, str]
         ] = {}  # parent_id -> {sibling_index -> task_id}
@@ -82,9 +86,21 @@ class TaskTreeBuilder:
             TreeBuildResult with created task refs
         """
         self._title_to_id = {}
+        self._ambiguous_titles = set()
+        self._node_to_id = {}
         self._sibling_index_map = {}
         self._created_tasks = []
         self._errors = []
+
+        depth_error = self._validate_tree_depth(tree)
+        if depth_error:
+            self._errors.append(depth_error)
+            return TreeBuildResult(
+                tasks_created=0,
+                epic_ref=None,
+                task_refs=[],
+                errors=self._errors,
+            )
 
         # Create the root task
         root_id = self._create_node(tree, parent_task_id=None, sibling_index=0)
@@ -109,6 +125,16 @@ class TaskTreeBuilder:
             task_refs=task_refs,
             errors=self._errors,
         )
+
+    def _validate_tree_depth(self, tree: dict[str, Any]) -> str | None:
+        """Return an error when a tree exceeds the supported nesting depth."""
+        pending = [(tree, 1)]
+        while pending:
+            node, depth = pending.pop()
+            if depth > self.MAX_TREE_DEPTH:
+                return f"Task tree exceeds maximum depth of {self.MAX_TREE_DEPTH}"
+            pending.extend((child, depth + 1) for child in node.get("children", []))
+        return None
 
     def get_id_for_title(self, title: str) -> str | None:
         """Get the task ID for a given title.
@@ -188,10 +214,12 @@ class TaskTreeBuilder:
             # Check for duplicate titles (warn but continue for partial functionality)
             if title in self._title_to_id:
                 existing_id = self._title_to_id[title]
+                self._ambiguous_titles.add(title)
                 self._errors.append(
                     f"Duplicate task title '{title}': conflicts with existing task {existing_id}"
                 )
             self._title_to_id[title] = task.id
+            self._node_to_id[id(node)] = task.id
 
             # Track sibling index for numeric dependency references
             if parent_task_id not in self._sibling_index_map:
@@ -221,7 +249,7 @@ class TaskTreeBuilder:
         Args:
             tree: The original tree structure
         """
-        from gobby.storage.task_dependencies import TaskDependencyManager
+        from gobby.storage.task_dependencies import DependencyCycleError, TaskDependencyManager
 
         dep_manager = TaskDependencyManager(self.task_manager.db)
 
@@ -229,9 +257,8 @@ class TaskTreeBuilder:
             title = node.get("title")
             depends_on = node.get("depends_on", [])
 
-            if title and depends_on and title in self._title_to_id:
-                task_id = self._title_to_id[title]
-
+            task_id = self._node_to_id.get(id(node))
+            if title and depends_on and task_id:
                 for dep in depends_on:
                     blocker_id: str | None = None
                     dep_display: str = str(dep)  # For error messages
@@ -247,6 +274,14 @@ class TaskTreeBuilder:
                             continue
                     elif isinstance(dep, str):
                         # Title string - look up by title
+                        if dep in self._ambiguous_titles:
+                            message = (
+                                f"Ambiguous dependency title '{dep}' for task '{title}'; "
+                                "use a sibling index"
+                            )
+                            logger.warning(message)
+                            self._errors.append(message)
+                            continue
                         blocker_id = self._title_to_id.get(dep)
                         if blocker_id is None:
                             message = f"Dependency not found: '{dep}' for task '{title}'"
@@ -266,15 +301,15 @@ class TaskTreeBuilder:
                             dep_type="blocks",
                         )
                         logger.debug(f"Added dependency: {title} depends on {dep_display}")
-                    except ValueError as e:
+                    except (ValueError, DependencyCycleError) as e:
                         # Ignore duplicate dependency errors
-                        if "already exists" not in str(e):
+                        if isinstance(e, DependencyCycleError) or "already exists" not in str(e):
                             message = f"Failed to add dependency {title} -> {dep_display}: {e}"
                             logger.warning(message)
                             self._errors.append(message)
 
             # Get this node's task_id to pass as parent for children
-            node_task_id = self._title_to_id.get(title) if title else None
+            node_task_id = self._node_to_id.get(id(node))
 
             # Process children
             for child in node.get("children", []):
