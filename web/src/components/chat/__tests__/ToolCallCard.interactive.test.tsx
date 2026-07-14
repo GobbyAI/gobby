@@ -143,5 +143,6 @@ describe('ToolCallCard interactions', () => {
     expect(screen.getByText('Answered')).toBeInTheDocument()
     expect(screen.getByText('Read').parentElement).toHaveClass('border-accent')
     expect(screen.getByText('Edit').parentElement).toHaveClass('border-accent')
+    expect(screen.queryByText('Render error')).not.toBeInTheDocument()
   })
 })

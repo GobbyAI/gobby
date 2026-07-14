@@ -531,12 +531,13 @@ function normalizeAnsweredValues(value: unknown): Record<string, string> | null 
   for (const [question, answer] of Object.entries(value)) {
     if (typeof answer === 'string') {
       answers[question] = answer
-    } else if (Array.isArray(answer) && answer.every((item) => typeof item === 'string')) {
-      answers[question] = answer.join(', ')
-    } else {
-      const serialized = JSON.stringify(answer)
-      if (serialized !== undefined) answers[question] = serialized
+      continue
     }
+
+    const serialized = Array.isArray(answer) && answer.every((item) => typeof item === 'string')
+      ? answer.join(', ')
+      : JSON.stringify(answer)
+    if (serialized !== undefined) answers[question] = serialized
   }
   return answers
 }
