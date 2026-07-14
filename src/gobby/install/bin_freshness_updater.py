@@ -124,10 +124,10 @@ def update_managed_bin(
                 return _record_state(
                     store,
                     inspection=inspection,
-                    latest_version=inspection.installed_version,
+                    latest_version=None,
                     target=target,
                     status="up_to_date",
-                    error=inspection.sidecar_error,
+                    error=str(exc),
                     source_url=None,
                 )
             return _record_state(
@@ -144,10 +144,10 @@ def update_managed_bin(
                 return _record_state(
                     store,
                     inspection=inspection,
-                    latest_version=inspection.installed_version,
+                    latest_version=None,
                     target=target,
                     status="up_to_date",
-                    error=inspection.sidecar_error,
+                    error=str(exc),
                     source_url=None,
                 )
             return _record_state(

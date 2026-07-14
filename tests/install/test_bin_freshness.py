@@ -408,7 +408,7 @@ class TestBinUpdater:
         assert record.last_error == "checksum mismatch"
         assert (bin_dir / spec.binary_name).read_bytes() == b"old"
 
-    def test_missing_release_tag_is_ignored_when_installed_at_floor(
+    def test_missing_release_tag_records_error_when_installed_at_floor(
         self, tmp_path: Path, postgres_db: HubDatabase
     ) -> None:
         db = postgres_db
@@ -428,10 +428,10 @@ class TestBinUpdater:
 
         assert record is not None
         assert record.last_status == "up_to_date"
-        assert record.latest_version == "0.4.1"
-        assert record.last_error is None
+        assert record.latest_version is None
+        assert record.last_error == "missing release tag"
 
-    def test_missing_platform_asset_is_ignored_when_installed_at_floor(
+    def test_missing_platform_asset_records_error_when_installed_at_floor(
         self, tmp_path: Path, postgres_db: HubDatabase
     ) -> None:
         db = postgres_db
@@ -451,8 +451,31 @@ class TestBinUpdater:
 
         assert record is not None
         assert record.last_status == "up_to_date"
-        assert record.latest_version == "0.4.1"
-        assert record.last_error is None
+        assert record.latest_version is None
+        assert record.last_error == "missing platform asset"
+
+    def test_github_api_failure_records_error_when_installed_at_floor(
+        self, tmp_path: Path, postgres_db: HubDatabase
+    ) -> None:
+        db = postgres_db
+        bin_dir = tmp_path / "bin"
+        spec = _spec()
+        _write_binary(bin_dir, spec)
+        _write_stamp(bin_dir, spec, "0.4.1")
+        client = FakeClient(resolve_error=GithubAPIError("api down"))
+
+        record = update_managed_bin(
+            db,
+            spec,
+            BinFreshnessConfig(),
+            bin_dir=bin_dir,
+            client=client,
+        )
+
+        assert record is not None
+        assert record.last_status == "up_to_date"
+        assert record.latest_version is None
+        assert record.last_error == "api down"
 
     def test_atomic_promotion_failure_keeps_existing_binary(
         self, tmp_path: Path, postgres_db: HubDatabase
