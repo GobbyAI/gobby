@@ -211,6 +211,34 @@ class TestSessionManagerLifecycle:
         pending = session_manager.get_pending_transcript_sessions()
         assert pending == []
 
+    def test_mark_transcript_processed_does_not_clobber_revival(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """A stale finalizer cannot mark a concurrently revived session processed."""
+        session = session_manager.register(
+            external_id="revival-race-test",
+            machine_id="machine",
+            source="codex",
+            project_id=sample_project["id"],
+            transcript_path="/tmp/test.jsonl",
+        )
+        session_manager.update_status(session.id, "expired")
+
+        revived = session_manager.revive_expired_terminal_session(session.id)
+        updated = session_manager.mark_transcript_processed(session.id)
+
+        assert revived is not None
+        assert revived.status == "active"
+        assert updated is not None
+        assert updated.status == "active"
+        row = session_manager.db.fetchone(
+            "SELECT transcript_processed FROM sessions WHERE id = %s",
+            (session.id,),
+        )
+        assert row["transcript_processed"] == 0
+
     def test_update_parent_session_id(
         self,
         session_manager: SessionManager,
