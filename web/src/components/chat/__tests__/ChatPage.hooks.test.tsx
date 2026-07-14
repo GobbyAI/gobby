@@ -153,6 +153,44 @@ describe("useChatPageSessionRouting", () => {
     expect(dismissOnMobile).toHaveBeenCalledTimes(1);
   });
 
+  it("reports a missing web chat target without parking the current chat", () => {
+    const showTab = vi.fn();
+    const dismissOnMobile = vi.fn();
+    const addSystemMessage = vi.fn();
+    const conversations = {
+      ...createConversations(),
+      sessions: [],
+      onSelectSession: vi.fn(),
+    };
+    const { result } = renderHook(() =>
+      useChatPageSessionRouting({
+        chat: createChat({
+          dbSessionId: "db-session-1",
+          addSystemMessage,
+        }),
+        conversations,
+        showTab,
+        dismissOnMobile,
+      }),
+    );
+
+    act(() => {
+      result.current.handleSwapSession({
+        sessionId: "missing-web-chat",
+        sessionType: "web_chat",
+        agentRunId: null,
+      });
+    });
+
+    expect(addSystemMessage).toHaveBeenCalledWith(
+      "This chat session is no longer available.",
+    );
+    expect(showTab).not.toHaveBeenCalled();
+    expect(conversations.onSelectSession).not.toHaveBeenCalled();
+    expect(dismissOnMobile).not.toHaveBeenCalled();
+    expect(result.current.focusSessionId).toBeNull();
+  });
+
   it("swaps terminal targets into observe mode", () => {
     const showTab = vi.fn();
     const viewSession = vi.fn();

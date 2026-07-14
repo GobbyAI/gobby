@@ -95,19 +95,22 @@ export function useChatPageSessionRouting({
 
   const handleSwapSession = useCallback(
     (target: SwappedSessionTarget) => {
-      parkCurrentSession(target.sessionId);
-
       if (target.sessionType === "web_chat") {
         const targetSession = conversations.sessions.find(
           (session) => session.id === target.sessionId,
         );
-        if (targetSession) {
-          conversations.onSelectSession(targetSession);
+        if (!targetSession) {
+          chat.addSystemMessage("This chat session is no longer available.");
+          return;
         }
+
+        parkCurrentSession(target.sessionId);
+        conversations.onSelectSession(targetSession);
         dismissOnMobile();
         return;
       }
 
+      parkCurrentSession(target.sessionId);
       chat.viewSession?.(target.sessionId, { forceRefresh: true });
       chat.observeSession?.(target.sessionId, "observe");
       dismissOnMobile();
