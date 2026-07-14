@@ -1028,6 +1028,109 @@ async def test_close_task_includes_latest_thirty_verification_evidence(
     assert "task_id: #15763" in changes_summary
 
 
+@pytest.mark.asyncio
+async def test_close_task_preserves_oversized_test_definitions_with_focused_evidence(
+    mock_task_manager: MagicMock,
+    mock_task_validator: AsyncMock,
+    repo_path: str,
+) -> None:
+    """Close validation receives every acceptance test name and its passing command."""
+    task = _task(
+        id="t1",
+        title="Task with oversized regression coverage",
+        project_id="p1",
+        status="open",
+        description="Preserve acceptance tests in validation evidence",
+        validation_criteria="All twelve acceptance tests and focused pytest evidence are visible",
+        commits=["abc123"],
+        priority=2,
+        task_type="task",
+        created_at="now",
+        updated_at="now",
+    )
+    mock_task_manager.get_task.return_value = task
+    mock_task_manager.list_tasks.return_value = []
+    mock_task_validator.validate_task.return_value = ValidationResult(status="valid", feedback="OK")
+    mock_task_manager.close_task.return_value = task
+
+    helper_names = [f"helper_fixture_{index:02d}" for index in range(7)]
+    test_names = [f"test_acceptance_{index:02d}" for index in range(12)]
+    test_lines = [f"+test_file_line_{line:03d}_{'t' * 40}" for line in range(331)]
+    for index, name in enumerate(helper_names):
+        test_lines[45 + index * 10] = f"+def {name}(): pass"
+    for index, name in enumerate(test_names[:-1]):
+        test_lines[125 + index * 16] = f"+def {name}(): pass"
+    test_lines[315] = f"+def {test_names[-1]}(): pass"
+
+    production_lines = "".join(f"+production_line_{line:03d}_{'p' * 80}\n" for line in range(240))
+    oversized_diff = (
+        "diff --git a/src/large.py b/src/large.py\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/src/large.py\n"
+        "@@ -0,0 +1,240 @@\n"
+        + production_lines
+        + "diff --git a/tests/test_acceptance.py b/tests/test_acceptance.py\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/tests/test_acceptance.py\n"
+        "@@ -0,0 +1,331 @@\n" + "".join(f"{line}\n" for line in test_lines)
+    )
+    focused_command = "GOBBY_TEST_PROTECT=1 uv run pytest tests/test_acceptance.py -k acceptance -q"
+
+    from gobby.tasks.commits import TaskDiffResult
+
+    with (
+        patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
+        patch("gobby.tasks.commits.get_task_diff") as mock_diff,
+        patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as mock_sm_cls,
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
+        patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
+    ):
+        mock_diff.return_value = TaskDiffResult(
+            diff=oversized_diff,
+            commits=["abc123"],
+            has_uncommitted_changes=False,
+            file_count=2,
+        )
+        mock_pm.return_value.get.return_value = MagicMock(repo_path=repo_path)
+        mock_sm = MagicMock()
+        mock_sm.resolve_session_reference.return_value = "sess-uuid"
+        mock_sm.get.return_value = MagicMock(had_edits=True)
+        mock_sm_cls.return_value = mock_sm
+        mock_svm_cls.return_value.get_variables.return_value = {
+            VERIFICATION_EVIDENCE_VARIABLE: [
+                {
+                    "evidence_type": "validation_command",
+                    "success": True,
+                    "command": focused_command,
+                    "matcher_id": "python-tests",
+                    "matcher_label": "Python tests",
+                }
+            ]
+        }
+
+        registry = create_task_registry(
+            task_manager=mock_task_manager,
+            sync_manager=MagicMock(),
+            task_validator=mock_task_validator,
+        )
+
+        result = await registry.call(
+            "close_task", {"task_id": "t1", "changes_summary": "test changes"}
+        )
+
+    assert result == {"success": True}
+    changes_summary = mock_task_validator.validate_task.call_args.kwargs["changes_summary"]
+    for name in test_names:
+        assert name in changes_summary
+    assert "hunk truncated for tests/test_acceptance.py" in changes_summary
+    assert f"- command: {focused_command}" in changes_summary
+    assert "matcher_label: Python tests" in changes_summary
+
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_close_task_autolinks_claim_window_before_validation(
