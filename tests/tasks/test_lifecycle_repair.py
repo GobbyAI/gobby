@@ -307,3 +307,35 @@ def test_repair_force_reseeds_active_task_scope(temp_db, sample_project) -> None
 
     assert result.candidates[0].applied is True
     assert _stage_names(manager, child.id) == ["development"]
+
+
+def test_repair_force_reseed_rolls_back_delete_when_initialize_fails(
+    temp_db, sample_project, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    parent = manager.create_task(
+        project_id=sample_project["id"],
+        title="Expansion parent",
+        task_type="epic",
+    )
+    manager.initialize_task_manifest(parent.id, stage_names=["development"])
+    child = manager.create_task(
+        project_id=sample_project["id"],
+        title="Active expansion child",
+        parent_task_id=parent.id,
+        task_type="task",
+        labels=["expansion-run:active"],
+    )
+    manager.initialize_task_manifest(child.id, stage_names=["holistic_qa"])
+    manager.stage_states.start_stage(child.id, "holistic_qa", by_session_id=None)
+
+    def fail_initialize(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("manifest initialization failed")
+
+    monkeypatch.setattr(manager.lifecycle_events, "record_lifecycle_event", fail_initialize)
+
+    with pytest.raises(RuntimeError, match="manifest initialization failed"):
+        LifecycleRepair(manager).run(task_id=child.id, apply=True, force=True)
+
+    rows = manager.stage_states.list_for_task(child.id)
+    assert [(row.stage_name, row.state) for row in rows] == [("holistic_qa", "in_progress")]

@@ -326,15 +326,11 @@ class LifecycleRepair:
             )
             for item in candidate.desired_manifest
         ]
-        if force:
-            self.task_manager.db.execute(
-                "DELETE FROM task_stage_states WHERE task_id = %s",
-                (candidate.task_id,),
-            )
         self.task_manager.stage_states.initialize_manifest(
             candidate.task_id,
             specs,
             by_session_id=None,
+            replace_existing=force,
         )
         reason = (
             "repair-lifecycle:reseed-plan-file-manifest"
