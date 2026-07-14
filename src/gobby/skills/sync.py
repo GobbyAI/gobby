@@ -16,7 +16,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from gobby.skills.loader import SkillLoader
+from gobby.skills.loader import SkillLoader, SkillLoadError
 from gobby.skills.parser import ParsedSkill
 
 if TYPE_CHECKING:
@@ -217,6 +217,7 @@ def sync_bundled_skills(db: HubDatabase) -> dict[str, Any]:
 
     if not skills_path.exists():
         logger.warning(f"Bundled skills path not found: {skills_path}")
+        result["success"] = False
         result["errors"].append(f"Skills path not found: {skills_path}")
         return result
 
@@ -224,15 +225,27 @@ def sync_bundled_skills(db: HubDatabase) -> dict[str, Any]:
     loader = SkillLoader(default_source_type="filesystem")
     storage = LocalSkillManager(db)
 
-    try:
-        # validate=False for bundled skills since they're trusted and may have
-        # version formats like "2.0" instead of strict semver "2.0.0"
-        parsed_skills = loader.load_directory(skills_path, validate=False)
-    except Exception as e:
-        logger.error(f"Failed to load bundled skills: {e}")
+    parsed_skills: list[ParsedSkill] = []
+    load_errors: list[str] = []
+    for skill_dir in skills_path.iterdir():
+        if not skill_dir.is_dir() or not (skill_dir / "SKILL.md").exists():
+            continue
+        try:
+            # validate=False for bundled skills since they're trusted and may have
+            # version formats like "2.0" instead of strict semver "2.0.0"
+            parsed_skills.append(loader.load_skill(skill_dir, validate=False))
+        except SkillLoadError as e:
+            error_msg = f"Failed to load bundled skill '{skill_dir.name}': {e}"
+            logger.error(error_msg)
+            load_errors.append(error_msg)
+
+    if load_errors:
         result["success"] = False
-        result["errors"].append(f"Failed to load skills: {e}")
-        return result
+        result["errors"].extend(load_errors)
+    if not parsed_skills:
+        result["success"] = False
+        if not load_errors:
+            result["errors"].append(f"No bundled skills found in: {skills_path}")
 
     # Track names on disk for orphan cleanup
     on_disk: set[str] = set()
@@ -248,12 +261,13 @@ def sync_bundled_skills(db: HubDatabase) -> dict[str, Any]:
 
     # Orphan cleanup: soft-delete gobby-owned installed skills whose
     # SKILL.md was removed from disk
-    all_installed = storage.list_skills(project_id=None, include_global=False, limit=-1)
-    for skill in all_installed:
-        if _is_gobby_owned(skill) and skill.name not in on_disk:
-            storage.delete_skill(skill.id)
-            logger.info(f"Soft-deleted orphaned bundled skill: {skill.name}")
-            result["orphaned"] += 1
+    if parsed_skills and not load_errors:
+        all_installed = storage.list_skills(project_id=None, include_global=False, limit=-1)
+        for skill in all_installed:
+            if _is_gobby_owned(skill) and skill.name not in on_disk:
+                storage.delete_skill(skill.id)
+                logger.info(f"Soft-deleted orphaned bundled skill: {skill.name}")
+                result["orphaned"] += 1
 
     # Heal project-scoped rows sourced from bundled template trees: they
     # shadow the installed rows synced above with stale template content

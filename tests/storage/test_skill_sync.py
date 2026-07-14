@@ -125,6 +125,65 @@ class TestSyncBundledSkills:
             assert orphaned is not None
             assert orphaned.deleted_at is not None
 
+    def test_unparseable_bundled_skill_is_reported_without_orphaning(
+        self,
+        db: HubDatabase,
+        skill_manager: LocalSkillManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.skills.sync import sync_bundled_skills
+
+        skill_manager.create_skill(
+            name="broken-skill",
+            description="Previously valid bundled skill",
+            content="# Broken skill\nPreviously valid content.",
+            metadata={"gobby": {"audience": "all"}},
+            source="installed",
+            source_type="filesystem",
+        )
+        skill_dir = tmp_path / "broken-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text("---\nname: [\n---\n")
+        monkeypatch.setattr("gobby.skills.sync.get_bundled_skills_path", lambda: tmp_path)
+
+        result = sync_bundled_skills(db)
+
+        assert result["success"] is False
+        assert result["orphaned"] == 0
+        assert any("broken-skill" in error for error in result["errors"])
+        retained = skill_manager.get_by_name("broken-skill")
+        assert retained is not None
+        assert retained.deleted_at is None
+
+    def test_empty_bundled_skills_directory_does_not_orphan_existing_skills(
+        self,
+        db: HubDatabase,
+        skill_manager: LocalSkillManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.skills.sync import sync_bundled_skills
+
+        skill_manager.create_skill(
+            name="existing-skill",
+            description="Existing bundled skill",
+            content="# Existing skill\nExisting content.",
+            metadata={"gobby": {"audience": "all"}},
+            source="installed",
+            source_type="filesystem",
+        )
+        monkeypatch.setattr("gobby.skills.sync.get_bundled_skills_path", lambda: tmp_path)
+
+        result = sync_bundled_skills(db)
+
+        assert result["success"] is False
+        assert result["orphaned"] == 0
+        assert result["errors"]
+        retained = skill_manager.get_by_name("existing-skill")
+        assert retained is not None
+        assert retained.deleted_at is None
+
     def test_sync_bundled_skills_includes_triage_judgment(
         self, db: HubDatabase, skill_manager: LocalSkillManager
     ) -> None:
