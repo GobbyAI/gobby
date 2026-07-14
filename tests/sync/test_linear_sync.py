@@ -22,8 +22,34 @@ from gobby.sync.linear_support import (
     is_transient_linear_fetch_error,
     linear_issue_title,
 )
+from gobby.sync.linear_task_ops import (
+    _gobby_priority_to_linear,
+    _linear_priority_to_gobby,
+)
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    ("gobby_priority", "linear_priority"),
+    [(0, 1), (1, 2), (2, 3), (3, 4), (4, 0)],
+)
+def test_gobby_priority_to_linear(gobby_priority: int, linear_priority: int) -> None:
+    assert _gobby_priority_to_linear(gobby_priority) == linear_priority
+
+
+@pytest.mark.parametrize(
+    ("linear_priority", "gobby_priority"),
+    [(0, 4), (1, 0), (2, 1), (3, 2), (4, 3)],
+)
+def test_linear_priority_to_gobby(linear_priority: int, gobby_priority: int) -> None:
+    assert _linear_priority_to_gobby(linear_priority) == gobby_priority
+
+
+def test_unknown_priorities_use_unprioritized_fallbacks() -> None:
+    assert _gobby_priority_to_linear(99) == 0
+    assert _linear_priority_to_gobby(99) == 4
+    assert _linear_priority_to_gobby(None) == 4
 
 
 @pytest.fixture(autouse=True)
@@ -362,6 +388,9 @@ class TestLinearSyncServiceImport:
         await sync_service.import_linear_issues()
 
         assert mock_task_manager.create_task.call_count >= 2
+        assert all(
+            call.kwargs["priority"] == 4 for call in mock_task_manager.create_task.call_args_list
+        )
 
     @pytest.mark.asyncio
     async def test_import_issues_links_linear_fields(
@@ -446,7 +475,7 @@ class TestLinearSyncServiceImport:
             "task-canceled",
             title="Canceled feature",
             description="",
-            priority=2,
+            priority=4,
             closed_at=None,
             closed_reason=None,
             closed_in_session_id=None,
@@ -488,7 +517,7 @@ class TestLinearSyncServiceImport:
             "task-42",
             title="Existing Feature",
             description="Test body",
-            priority=2,
+            priority=4,
         )
         assert mock_task_manager.reconcile_task_state.call_count >= 1
         assert mock_task_manager.reconcile_task_state.call_args is not None
@@ -626,6 +655,7 @@ class TestLinearSyncServiceSync:
         mock_mcp_manager.call_tool.assert_called()
         assert mock_mcp_manager.call_tool.call_count >= 1
         assert mock_mcp_manager.call_tool.call_args is not None
+        assert mock_mcp_manager.call_tool.call_args.kwargs["arguments"]["priority"] == 3
 
     @pytest.mark.asyncio
     async def test_sync_task_graphql_resolves_linear_state_id(self, sync_service, mock_mcp_manager):
@@ -660,7 +690,7 @@ class TestLinearSyncServiceSync:
             issue_id="lin-42",
             title="#42: Updated Title",
             description="Updated description",
-            priority=2,
+            priority=3,
             state_id="state-progress",
         )
         assert client.update_issue.await_count == 1
@@ -731,7 +761,7 @@ class TestLinearSyncServiceSync:
             "task-1",
             title="Finished feature",
             description="Ready to close",
-            priority=1,
+            priority=0,
             closed_at="2026-02-11T12:34:56+00:00",
             closed_reason="linear_sync",
             closed_in_session_id=None,
@@ -766,7 +796,7 @@ class TestLinearSyncServiceSync:
                     "id": "issue-1",
                     "title": "Older Linear title",
                     "description": "Description",
-                    "priority": 2,
+                    "priority": 3,
                     "state": {"name": "Todo"},
                     "updatedAt": "2026-02-11T12:34:56Z",
                 }
@@ -804,7 +834,7 @@ class TestLinearSyncServiceSync:
                     "id": "issue-1",
                     "title": "Same title",
                     "description": "",
-                    "priority": 2,
+                    "priority": 3,
                     "state": {"name": "Todo"},
                     "updatedAt": "2026-02-11T12:34:56Z",
                 }
@@ -1081,6 +1111,7 @@ class TestLinearSyncServiceCreate:
         assert mock_mcp_manager.call_tool.call_args.kwargs["arguments"]["title"] == (
             "#42: Feature: Add new thing"
         )
+        assert mock_mcp_manager.call_tool.call_args.kwargs["arguments"]["priority"] == 3
         assert result["gobby_ref"] == "#42"
         assert result["gobby_task_id"] == "test-task-id"
         assert result["linear_issue_id"] == "lin-123"

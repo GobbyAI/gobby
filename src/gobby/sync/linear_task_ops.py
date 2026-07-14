@@ -30,6 +30,33 @@ from gobby.sync.linear_support import (
 
 _LINEAR_ISSUE_PAGE_SIZE = 100
 
+_GOBBY_TO_LINEAR_PRIORITY = {
+    0: 1,  # critical -> urgent
+    1: 2,  # high -> high
+    2: 3,  # medium -> medium
+    3: 4,  # low -> low
+    4: 0,  # backlog -> no priority
+}
+_LINEAR_TO_GOBBY_PRIORITY = {
+    0: 4,  # no priority -> backlog
+    1: 0,  # urgent -> critical
+    2: 1,  # high -> high
+    3: 2,  # medium -> medium
+    4: 3,  # low -> low
+}
+
+
+def _gobby_priority_to_linear(priority: int) -> int:
+    """Translate a Gobby priority, defaulting unsupported values to no priority."""
+    return _GOBBY_TO_LINEAR_PRIORITY.get(priority, 0)
+
+
+def _linear_priority_to_gobby(priority: Any) -> int:
+    """Translate a Linear priority, defaulting missing or unsupported values to backlog."""
+    if type(priority) is not int:
+        return 4
+    return _LINEAR_TO_GOBBY_PRIORITY.get(priority, 4)
+
 
 def _next_linear_issue_cursor(result: Any, page_size: int) -> str | None:
     if not isinstance(result, dict):
@@ -217,7 +244,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
             title = issue.get("title", "Untitled Issue")
             local_title = _local_title_from_linear(title)
             description = issue.get("description", "")
-            priority_val = issue.get("priority", 2)
+            priority_val = _linear_priority_to_gobby(issue.get("priority"))
             state_name = _linear_issue_state_name(issue)
             gobby_state = (
                 self.map_linear_state_to_gobby(state_name) if state_name is not None else None
@@ -307,7 +334,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
                 issue_id=task.linear_issue_id,
                 title=issue_title,
                 description=task.description or "",
-                priority=task.priority,
+                priority=_gobby_priority_to_linear(task.priority),
                 state_id=state_id,
             )
             logger.info("Synced task %s to Linear issue %s", task_id, task.linear_issue_id)
@@ -318,7 +345,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
             "issueId": task.linear_issue_id,
             "title": issue_title,
             "description": task.description or "",
-            "priority": task.priority,
+            "priority": _gobby_priority_to_linear(task.priority),
         }
         if linear_state:
             update_args["status"] = linear_state
@@ -381,7 +408,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
                 team_id=effective_team_id,
                 title=title,
                 description=task.description or "",
-                priority=task.priority,
+                priority=_gobby_priority_to_linear(task.priority),
                 project_id=linear_project_id,
             )
             result_dict = self._extract_created_issue(result, task_id)
@@ -404,7 +431,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
             "teamId": effective_team_id,
             "title": title,
             "description": task.description or "",
-            "priority": task.priority,
+            "priority": _gobby_priority_to_linear(task.priority),
         }
         if linear_project_id:
             arguments["projectId"] = linear_project_id
@@ -602,7 +629,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
                     if linear_updated is not None
                     else datetime.now(UTC).isoformat()
                 )
-                priority_val = issue.get("priority", 2)
+                priority_val = _linear_priority_to_gobby(issue.get("priority"))
                 updates = {
                     "title": _local_title_from_linear(issue.get("title", "")),
                     "description": issue.get("description", ""),
