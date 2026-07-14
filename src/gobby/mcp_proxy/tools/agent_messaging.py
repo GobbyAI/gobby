@@ -296,13 +296,12 @@ def add_messaging_tools(
         description=(
             "Read-only query of inter-session message history. "
             "Returns sent and/or received messages without marking them "
-            "as delivered or read. Use for debugging, audit, and visibility."
+            "as delivered. Use for debugging, audit, and visibility."
         ),
     )
     async def get_inter_session_messages(
         target_session_id: str,
         direction: str = "all",
-        unread_only: bool = False,
         undelivered_only: bool = False,
         message_type: str | None = None,
         limit: int = 50,
@@ -321,7 +320,6 @@ def add_messaging_tools(
             messages = message_manager.list_messages(
                 session_id=resolved_id,
                 direction=normalized_direction,
-                unread_only=unread_only,
                 undelivered_only=undelivered_only,
                 message_type=message_type,
                 limit=limit,

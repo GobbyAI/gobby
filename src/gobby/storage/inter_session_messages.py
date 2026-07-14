@@ -45,10 +45,7 @@ def normalize_message_direction(direction: str) -> str:
 
 @normalize_datetime_model(
     required=("sent_at",),
-    optional=(
-        "read_at",
-        "delivered_at",
-    ),
+    optional=("delivered_at",),
 )
 @dataclass
 class InterSessionMessage:
@@ -61,7 +58,6 @@ class InterSessionMessage:
         content: Message content
         priority: Message priority (e.g., "normal", "urgent")
         sent_at: Timestamp when message was sent
-        read_at: Timestamp when message was read (None if unread)
     """
 
     id: str
@@ -70,7 +66,6 @@ class InterSessionMessage:
     content: str
     priority: str
     sent_at: datetime
-    read_at: datetime | None
     message_type: str = "message"
     metadata_json: str | None = None
     delivered_at: datetime | None = None
@@ -92,7 +87,6 @@ class InterSessionMessage:
             content=row["content"],
             priority=row["priority"],
             sent_at=row["sent_at"],
-            read_at=row["read_at"],
             message_type=row["message_type"],
             metadata_json=row["metadata_json"],
             delivered_at=row["delivered_at"],
@@ -111,7 +105,6 @@ class InterSessionMessage:
             "content": self.content,
             "priority": self.priority,
             "sent_at": self.sent_at,
-            "read_at": self.read_at,
             "message_type": self.message_type,
             "metadata_json": self.metadata_json,
             "delivered_at": self.delivered_at,
@@ -127,7 +120,6 @@ class InterSessionMessage:
             "priority": self.priority,
             "message_type": self.message_type,
             "sent_at": self.sent_at,
-            "read_at": self.read_at,
         }
 
 
@@ -174,9 +166,9 @@ class InterSessionMessageManager:
         self.db.execute(
             """
             INSERT INTO inter_session_messages
-            (id, from_session, to_session, content, priority, sent_at, read_at,
+            (id, from_session, to_session, content, priority, sent_at,
              message_type, metadata_json)
-            VALUES (%s, %s, %s, %s, %s, %s, NULL, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 message_id,
@@ -197,7 +189,6 @@ class InterSessionMessageManager:
             content=content,
             priority=priority,
             sent_at=sent_at,
-            read_at=None,
             message_type=message_type,
             metadata_json=metadata_json,
         )
@@ -220,26 +211,17 @@ class InterSessionMessageManager:
             return InterSessionMessage.from_row(row)
         return None
 
-    def get_messages(self, to_session: str, unread_only: bool = False) -> list[InterSessionMessage]:
+    def get_messages(self, to_session: str) -> list[InterSessionMessage]:
         """Get messages for a recipient session.
 
         Args:
             to_session: ID of the receiving session
-            unread_only: If True, only return unread messages
-
         Returns:
             List of InterSessionMessage instances
         """
-        if unread_only:
-            query = """
-                SELECT * FROM inter_session_messages
-                WHERE to_session = %s AND read_at IS NULL
-                ORDER BY sent_at ASC, id ASC
-            """
-        else:
-            query = """SELECT * FROM inter_session_messages
-                       WHERE to_session = %s
-                       ORDER BY sent_at ASC, id ASC"""
+        query = """SELECT * FROM inter_session_messages
+                   WHERE to_session = %s
+                   ORDER BY sent_at ASC, id ASC"""
 
         rows = self.db.fetchall(query, (to_session,))
         return [InterSessionMessage.from_row(row) for row in rows]
@@ -272,30 +254,6 @@ class InterSessionMessageManager:
             (to_session, message_type, completion_id, completion_id, completion_id),
         )
         return row is not None
-
-    def mark_read(self, message_id: str) -> InterSessionMessage:
-        """Mark a message as read.
-
-        Args:
-            message_id: The message ID to mark as read
-
-        Returns:
-            The updated InterSessionMessage
-
-        Raises:
-            ValueError: If message not found
-        """
-        read_at = utc_now()
-
-        self.db.execute(
-            "UPDATE inter_session_messages SET read_at = %s WHERE id = %s",
-            (read_at, message_id),
-        )
-
-        message = self.get_message(message_id)
-        if not message:
-            raise ValueError(f"Message not found: {message_id}")
-        return message
 
     def get_undelivered_messages(self, to_session: str) -> list[InterSessionMessage]:
         """Get messages not yet delivered to a session.
@@ -348,7 +306,6 @@ class InterSessionMessageManager:
         self,
         session_id: str,
         direction: str = "all",
-        unread_only: bool = False,
         undelivered_only: bool = False,
         message_type: str | None = None,
         limit: int = 50,
@@ -361,7 +318,6 @@ class InterSessionMessageManager:
         Args:
             session_id: Session to query messages for
             direction: "inbox"/"received", "sent", or "all"
-            unread_only: If True, only return messages with read_at IS NULL
             undelivered_only: If True, only return messages with delivered_at IS NULL
             message_type: Filter by message_type (e.g. "message", "command_result")
             limit: Max rows to return (default 50)
@@ -385,8 +341,6 @@ class InterSessionMessageManager:
             conditions.append("(from_session = %s OR to_session = %s)")
             params.extend([session_id, session_id])
 
-        if unread_only:
-            conditions.append("read_at IS NULL")
         if undelivered_only:
             conditions.append("delivered_at IS NULL")
         if message_type is not None:

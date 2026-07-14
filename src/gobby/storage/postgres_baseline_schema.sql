@@ -988,7 +988,6 @@ CREATE TABLE inter_session_messages (
     content TEXT NOT NULL,
     priority TEXT NOT NULL DEFAULT 'normal',
     sent_at TIMESTAMPTZ NOT NULL,
-    read_at TIMESTAMPTZ,
     message_type TEXT NOT NULL DEFAULT 'message',
     metadata_json JSONB,
     delivered_at TIMESTAMPTZ
@@ -997,9 +996,6 @@ CREATE TABLE inter_session_messages (
 CREATE INDEX idx_inter_session_messages_from_session ON inter_session_messages(from_session);
 
 CREATE INDEX idx_inter_session_messages_to_session ON inter_session_messages(to_session);
-
-CREATE INDEX idx_inter_session_messages_unread ON inter_session_messages(to_session, read_at)
-    WHERE read_at IS NULL;
 
 CREATE INDEX idx_ism_undelivered ON inter_session_messages(to_session, delivered_at)
     WHERE delivered_at IS NULL;

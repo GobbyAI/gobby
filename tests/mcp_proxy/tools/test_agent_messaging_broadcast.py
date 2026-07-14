@@ -39,7 +39,6 @@ class MockMessage:
     content: str = "hello"
     priority: str = "normal"
     sent_at: str = "2026-01-01T00:00:00"
-    read_at: str | None = None
     message_type: str = "message"
     metadata_json: str | None = None
     delivered_at: str | None = None

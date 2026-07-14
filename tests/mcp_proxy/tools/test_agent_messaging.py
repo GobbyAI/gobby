@@ -49,7 +49,6 @@ class MockMessage:
     content: str = "hello"
     priority: str = "normal"
     sent_at: str = "2026-01-01T00:00:00"
-    read_at: str | None = None
     message_type: str = "message"
     metadata_json: str | None = None
     delivered_at: str | None = None
@@ -62,7 +61,6 @@ class MockMessage:
             "content": self.content,
             "priority": self.priority,
             "sent_at": self.sent_at,
-            "read_at": self.read_at,
             "delivered_at": self.delivered_at,
         }
 
@@ -75,7 +73,6 @@ class MockMessage:
             "priority": self.priority,
             "message_type": self.message_type,
             "sent_at": self.sent_at,
-            "read_at": self.read_at,
         }
 
 
@@ -1022,7 +1019,7 @@ class TestGetInterSessionMessages:
 
     @pytest.mark.asyncio
     async def test_no_side_effects(self, messaging_registry, mock_message_manager) -> None:
-        """Does not call mark_delivered or mark_read."""
+        """Does not mark messages as delivered."""
         mock_message_manager.list_messages.return_value = [
             MockMessage(id="msg-1"),
         ]
@@ -1035,9 +1032,6 @@ class TestGetInterSessionMessages:
         mock_message_manager.mark_delivered.assert_not_called()
         assert mock_message_manager.mark_delivered.call_count == 0
         assert not mock_message_manager.mark_delivered.called
-        mock_message_manager.mark_read.assert_not_called()
-        assert mock_message_manager.mark_read.call_count == 0
-        assert not mock_message_manager.mark_read.called
 
     @pytest.mark.asyncio
     async def test_empty_list(self, messaging_registry, mock_message_manager) -> None:
@@ -1063,7 +1057,6 @@ class TestGetInterSessionMessages:
             {
                 "target_session_id": "s-child",
                 "direction": "sent",
-                "unread_only": True,
                 "undelivered_only": True,
                 "message_type": "command_result",
                 "limit": 10,
@@ -1074,7 +1067,6 @@ class TestGetInterSessionMessages:
         mock_message_manager.list_messages.assert_called_once()
         kwargs = mock_message_manager.list_messages.call_args[1]
         assert kwargs["direction"] == "sent"
-        assert kwargs["unread_only"] is True
         assert kwargs["undelivered_only"] is True
         assert kwargs["message_type"] == "command_result"
         assert kwargs["limit"] == 10
