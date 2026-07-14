@@ -92,7 +92,9 @@ def _make_test_node(
     inherited_decorators: tuple[ast.expr, ...],
 ) -> _TestNode:
     decorators = inherited_decorators + tuple(node.decorator_list)
-    decorator_lines = [decorator.lineno for decorator in decorators if hasattr(decorator, "lineno")]
+    decorator_lines = [
+        decorator.lineno for decorator in node.decorator_list if hasattr(decorator, "lineno")
+    ]
     start_line = min([node.lineno, *decorator_lines])
     return _TestNode(
         name=name,

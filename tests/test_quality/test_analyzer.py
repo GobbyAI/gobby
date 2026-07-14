@@ -237,6 +237,33 @@ def test_cleanup_no_exception():
     assert {issue.issue_code for issue in report.issues} == {"SLEEP_IN_TEST", "TODO_IN_TEST"}
 
 
+def test_class_decorator_does_not_extend_suppression_across_sibling_tests(
+    tmp_path: Path,
+) -> None:
+    _write_test(
+        tmp_path,
+        """
+import pytest
+
+
+@pytest.mark.usefixtures("resource")
+class TestDecorated:
+    def test_suppressed(self):
+        # test-quality: allow NO_ASSERTION -- verifies cleanup behavior
+        cleanup()
+
+    def test_unsuppressed(self):
+        exercise()
+""",
+    )
+
+    report = audit_paths([tmp_path / "tests"], root=tmp_path)
+
+    assert [issue.test_name for issue in report.issues if issue.issue_code == "NO_ASSERTION"] == [
+        "TestDecorated.test_unsuppressed"
+    ]
+
+
 def test_mock_only_and_heavy_mock_low_assertion_are_reported(tmp_path: Path) -> None:
     _write_test(
         tmp_path,
