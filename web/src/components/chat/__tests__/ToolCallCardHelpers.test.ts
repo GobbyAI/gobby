@@ -126,6 +126,16 @@ describe('getToolSummary', () => {
     expect(getToolSummary(call)).toBe('/src/edit.ts')
   })
 
+  it('returns null for non-string file_path values', () => {
+    const call = makeCall({
+      id: '1',
+      tool_name: 'Read',
+      arguments: { file_path: ['src', 'main.ts'] },
+    })
+
+    expect(getToolSummary(call)).toBeNull()
+  })
+
   it('returns truncated command for Bash', () => {
     const call = makeCall({
       id: '1',

@@ -182,7 +182,7 @@ export function getToolSummary(call: ToolCall): string | null {
   switch (toolType) {
     case 'read':
     case 'edit':
-      return (args.file_path as string) || null
+      return typeof args.file_path === 'string' ? args.file_path || null : null
     case 'bash':
       return truncStr(getShellCommand(args), 80)
     case 'protocol':

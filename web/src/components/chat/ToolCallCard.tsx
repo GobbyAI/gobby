@@ -68,7 +68,7 @@ function ToolArgumentsContent({
   args: Record<string, unknown>
   callId: string
 }) {
-  const filePath = args.file_path as string | undefined
+  const filePath = stringValue(args.file_path)
 
   // Write pattern: file_path + content
   if (filePath && typeof args.content === 'string') {
@@ -204,7 +204,7 @@ function ToolResultContent({ call }: { call: ToolCall }) {
       return String(rawContent)
     }
   }, [rawContent])
-  const filePath = call.arguments?.file_path as string | undefined
+  const filePath = stringValue(call.arguments?.file_path)
 
   // Base64 image — render inline
   if (imageSrc) {
@@ -337,7 +337,7 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
   // Compute artifact info for Read tools to show button in toolbar
   const artifactButton = useMemo(() => {
     if (toolType !== 'read' || call.status !== 'completed' || !call.result) return null
-    const filePath = call.arguments?.file_path as string | undefined
+    const filePath = stringValue(call.arguments?.file_path)
     if (!filePath) return null
     const content = extractResultContent(call.result)
     const resultStr = typeof content === 'string' ? content : String(content)
