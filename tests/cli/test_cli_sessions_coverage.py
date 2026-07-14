@@ -1,5 +1,5 @@
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -315,10 +315,6 @@ def test_create_handoff(
     mock_ctx.git_status = ""
     mock_analyzer.return_value.extract_handoff_context.return_value = mock_ctx
 
-    # Mock generate_session_summaries to avoid LLM calls
-    async def mock_gen_summaries(**kwargs):
-        return {"success": True, "full_length": 100}
-
     # After generate_session_summaries succeeds, the command re-fetches the session
     updated_session = Session(
         id="s1",
@@ -340,7 +336,9 @@ def test_create_handoff(
 
     runner = CliRunner()
     with patch(
-        "gobby.cli.sessions.asyncio.run", return_value={"success": True, "full_length": 100}
+        "gobby.sessions.summarize.generate_session_summaries",
+        new_callable=AsyncMock,
+        return_value={"success": True, "full_length": 100},
     ):
         result = runner.invoke(sessions, ["create-handoff", "-s", "s1", "--output", "db"])
 
@@ -410,8 +408,11 @@ def test_create_handoff_full_llm_error(
     mock_analyzer.return_value.extract_handoff_context.return_value = mock_ctx
 
     runner = CliRunner()
-    # Mock asyncio.run to raise, triggering the fallback path
-    with patch("gobby.cli.sessions.asyncio.run", side_effect=Exception("Config error")):
+    with patch(
+        "gobby.sessions.summarize.generate_session_summaries",
+        new_callable=AsyncMock,
+        side_effect=Exception("Config error"),
+    ):
         result = runner.invoke(sessions, ["create-handoff", "-s", "s1", "--output", "db"])
 
     # Should gracefully fall back to code-only summary
@@ -599,6 +600,11 @@ def test_create_handoff_full_success(mock_session_manager, mock_resolve_session)
         patch("subprocess.run"),
         patch("gobby.cli.sessions.open_runtime_hub_database"),
         patch("gobby.storage.projects.LocalProjectManager"),
+        patch(
+            "gobby.sessions.summarize.generate_session_summaries",
+            new_callable=AsyncMock,
+            return_value={"success": True, "full_length": 100},
+        ),
     ):
         # Mock file reading
         mock_file = MagicMock()
@@ -610,13 +616,8 @@ def test_create_handoff_full_success(mock_session_manager, mock_resolve_session)
         mock_ctx.git_status = "clean"
         mock_analyzer.return_value.extract_handoff_context.return_value = mock_ctx
 
-        # Mock asyncio.run to simulate successful summary generation
-        with patch(
-            "gobby.cli.sessions.asyncio.run",
-            return_value={"success": True, "full_length": 100},
-        ):
-            runner = CliRunner()
-            result = runner.invoke(sessions, ["create-handoff", "-s", "s1", "--output", "db"])
+        runner = CliRunner()
+        result = runner.invoke(sessions, ["create-handoff", "-s", "s1", "--output", "db"])
 
         assert result.exit_code == 0
         assert "Created handoff context" in result.output
@@ -675,7 +676,8 @@ def test_create_handoff_notes_persist_to_db_and_file(
         patch("gobby.sessions.analyzer.TranscriptAnalyzer") as mock_analyzer,
         patch("subprocess.run"),
         patch(
-            "gobby.cli.sessions.asyncio.run",
+            "gobby.sessions.summarize.generate_session_summaries",
+            new_callable=AsyncMock,
             return_value={"success": True, "full_length": 100},
         ),
     ):

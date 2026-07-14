@@ -112,9 +112,10 @@ def get_project_context(cwd: Path | None = None) -> dict[str, Any] | None:
                 logger.warning(f"Failed to read project context: {e}")
 
     # 3. Environment fallback (set by web chat subprocess for correct project routing)
-    override_id = os.environ.get("GOBBY_PROJECT_ID")
-    if override_id:
-        return {"id": override_id}
+    if cwd is None:
+        override_id = os.environ.get("GOBBY_PROJECT_ID")
+        if override_id:
+            return {"id": override_id}
 
     # Only search the filesystem when an explicit cwd was provided. When no
     # cwd project or environment fallback exists, resolution is unavailable.

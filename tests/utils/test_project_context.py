@@ -481,25 +481,19 @@ class TestGetVerificationConfig:
 class TestGetProjectContextEnvOverride:
     """Tests for GOBBY_PROJECT_ID environment variable override in get_project_context."""
 
-    def test_env_override_returns_minimal_context(self, tmp_path: Path, monkeypatch) -> None:
-        """When GOBBY_PROJECT_ID is set but no CWD project exists, return minimal context."""
+    def test_env_override_returns_minimal_context(self, monkeypatch) -> None:
+        """Without an explicit CWD, GOBBY_PROJECT_ID returns minimal context."""
         monkeypatch.setenv("GOBBY_PROJECT_ID", "override-project-123")
 
-        # Isolate from real project roots
-        original_exists = Path.exists
-
-        def isolated_exists(self):
-            try:
-                self.relative_to(tmp_path)
-                return original_exists(self)
-            except ValueError:
-                return False
-
-        monkeypatch.setattr(Path, "exists", isolated_exists)
-
-        result = get_project_context(tmp_path)
+        result = get_project_context()
         assert result is not None
         assert result == {"id": "override-project-123"}
+
+    def test_explicit_cwd_without_project_ignores_env(self, tmp_path: Path, monkeypatch) -> None:
+        """An explicit CWD without project metadata remains unresolved."""
+        monkeypatch.setenv("GOBBY_PROJECT_ID", "override-project-123")
+
+        assert get_project_context(tmp_path) is None
 
     def test_env_override_matching_cwd_returns_full_context(
         self, tmp_path: Path, monkeypatch
