@@ -54,6 +54,7 @@ dependencies = [
     # cryptography <48.0.1 has CVE-2026-26007, CVE-2026-34073, CVE-2026-39892
     # and the later advisory fixed in 48.0.1.
     "cryptography>=48.0.1",
+    "argon2-cffi>=23.1.0",
     "clawcare>=0.9.0",
 # pyjwt <2.13.0 has 2026 advisories (transitive via mcp)
 "pyjwt>=2.13.0",

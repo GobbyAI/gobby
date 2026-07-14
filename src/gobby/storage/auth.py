@@ -3,11 +3,12 @@
 import base64
 import binascii
 import hashlib
-import hmac
 import logging
 import os
 import secrets
 from datetime import UTC, datetime, timedelta
+
+from argon2.low_level import ARGON2_VERSION, Type, hash_secret, hash_secret_raw
 
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
@@ -23,12 +24,14 @@ REMEMBER_ME_DURATION = timedelta(days=30)  # Remember me checked
 LOCAL_API_TOKEN_HASH_KEY = "auth.api_token_hash"
 PASSWORD_HASH_KEY = "auth.password_hash"
 USERNAME_KEY = "auth.username"
-_SCRYPT_N = 2**14
-_SCRYPT_R = 8
-_SCRYPT_P = 1
-_SCRYPT_DKLEN = 32
-_INVALID_PASSWORD_DIGEST = bytes([0xFF]) * _SCRYPT_DKLEN
-_EMPTY_PASSWORD_DIGEST = bytes(_SCRYPT_DKLEN)
+_ARGON2_TIME_COST = 3
+_ARGON2_MEMORY_COST = 65536
+_ARGON2_PARALLELISM = 4
+_ARGON2_HASH_LEN = 32
+_ARGON2_SALT_LEN = 16
+_ARGON2_PARAMETERS = f"m={_ARGON2_MEMORY_COST},t={_ARGON2_TIME_COST},p={_ARGON2_PARALLELISM}"
+_INVALID_PASSWORD_DIGEST = bytes([0xFF]) * _ARGON2_HASH_LEN
+_EMPTY_PASSWORD_DIGEST = bytes(_ARGON2_HASH_LEN)
 _TOKEN_REMEDIATION = (
     "copy ~/.gobby/local_cli_token from the hub machine or run 'gobby auth token --rotate'"
 )
@@ -39,57 +42,57 @@ def hash_token(token: str) -> str:
 
 
 def hash_password(password: str, *, salt: bytes | None = None) -> str:
-    """Create the canonical scrypt password hash stored in config_store."""
-    password_salt = salt or secrets.token_bytes(16)
-    derived = hashlib.scrypt(
+    """Create the canonical Argon2id password hash stored in config_store."""
+    password_salt = salt or secrets.token_bytes(_ARGON2_SALT_LEN)
+    return hash_secret(
         password.encode("utf-8"),
-        salt=password_salt,
-        n=_SCRYPT_N,
-        r=_SCRYPT_R,
-        p=_SCRYPT_P,
-        dklen=_SCRYPT_DKLEN,
-    )
-    return "$".join(
-        (
-            "scrypt",
-            str(_SCRYPT_N),
-            str(_SCRYPT_R),
-            str(_SCRYPT_P),
-            base64.b64encode(password_salt).decode("ascii"),
-            base64.b64encode(derived).decode("ascii"),
-        )
-    )
+        password_salt,
+        time_cost=_ARGON2_TIME_COST,
+        memory_cost=_ARGON2_MEMORY_COST,
+        parallelism=_ARGON2_PARALLELISM,
+        hash_len=_ARGON2_HASH_LEN,
+        type=Type.ID,
+        version=ARGON2_VERSION,
+    ).decode("ascii")
+
+
+def _decode_argon2_component(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.b64decode(value + padding, validate=True)
 
 
 def verify_password_hash(password: str, stored_hash: str | None) -> bool:
-    """Verify a password against the canonical scrypt representation."""
+    """Verify a password against the canonical Argon2id representation."""
     expected = _INVALID_PASSWORD_DIGEST
     derived = _EMPTY_PASSWORD_DIGEST
     valid_format = False
 
     if stored_hash is not None:
         parts = stored_hash.split("$")
-        expected_prefix = ["scrypt", str(_SCRYPT_N), str(_SCRYPT_R), str(_SCRYPT_P)]
+        expected_prefix = ["", "argon2id", f"v={ARGON2_VERSION}", _ARGON2_PARAMETERS]
         if len(parts) == 6 and parts[:4] == expected_prefix:
             try:
-                salt = base64.b64decode(parts[4], validate=True)
-                candidate = base64.b64decode(parts[5], validate=True)
+                salt = _decode_argon2_component(parts[4])
+                candidate = _decode_argon2_component(parts[5])
             except (ValueError, binascii.Error):
                 pass
             else:
-                if salt and len(candidate) == _SCRYPT_DKLEN:
+                if len(salt) >= 8 and len(candidate) == _ARGON2_HASH_LEN:
                     expected = candidate
-                    derived = hashlib.scrypt(
+                    derived = hash_secret_raw(
                         password.encode("utf-8"),
-                        salt=salt,
-                        n=_SCRYPT_N,
-                        r=_SCRYPT_R,
-                        p=_SCRYPT_P,
-                        dklen=_SCRYPT_DKLEN,
+                        salt,
+                        time_cost=_ARGON2_TIME_COST,
+                        memory_cost=_ARGON2_MEMORY_COST,
+                        parallelism=_ARGON2_PARALLELISM,
+                        hash_len=_ARGON2_HASH_LEN,
+                        type=Type.ID,
+                        version=ARGON2_VERSION,
                     )
                     valid_format = True
 
-    return valid_format and hmac.compare_digest(derived, expected)
+    password_matches = secrets.compare_digest(derived, expected)
+    return valid_format and password_matches
 
 
 def _write_new_local_api_token() -> str:

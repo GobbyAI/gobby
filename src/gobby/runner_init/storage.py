@@ -38,7 +38,7 @@ def _migrate_legacy_auth_password(
     config_store: ConfigStore,
     secret_store: SecretStore,
 ) -> bool:
-    """Replace the legacy encrypted web password with a scrypt hash atomically."""
+    """Replace the legacy encrypted web password with an Argon2id hash atomically."""
     if config_store.get(PASSWORD_HASH_KEY) is not None:
         return False
 
