@@ -174,6 +174,27 @@ class TestSkillLoaderDirectory:
         names = {s.name for s in skills}
         assert names == {"commit-message", "code-review"}
 
+    def test_load_directory_skips_unexpected_error(
+        self, skills_root, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An unexpected error in one skill does not prevent loading the rest."""
+        from gobby.skills.loader import SkillLoader
+
+        loader = SkillLoader()
+        load_skill = loader.load_skill
+
+        def load_with_error(path, *, validate=True):
+            if path.name == "commit-message":
+                raise OSError("cannot read skill")
+            return load_skill(path, validate=validate)
+
+        monkeypatch.setattr(loader, "load_skill", load_with_error)
+
+        skills = loader.load_directory(skills_root)
+
+        assert [skill.name for skill in skills] == ["code-review"]
+        assert "Skipping invalid skill: cannot read skill" in caplog.text
+
     def test_load_directory_empty(self, tmp_path) -> None:
         """Test loading from empty directory returns empty list."""
         from gobby.skills.loader import SkillLoader

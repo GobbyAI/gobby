@@ -156,6 +156,41 @@ class TestSyncBundledSkills:
         assert retained is not None
         assert retained.deleted_at is None
 
+    def test_unexpected_load_error_is_reported_without_aborting_sync(
+        self,
+        db: HubDatabase,
+        skill_manager: LocalSkillManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.skills.loader import SkillLoader
+        from gobby.skills.sync import sync_bundled_skills
+
+        broken_dir = tmp_path / "broken-skill"
+        broken_dir.mkdir()
+        (broken_dir / "SKILL.md").write_text("unreadable")
+        valid_dir = tmp_path / "valid-skill"
+        valid_dir.mkdir()
+        (valid_dir / "SKILL.md").write_text(
+            "---\nname: valid-skill\ndescription: Valid bundled skill\n---\n\n# Valid\n"
+        )
+        load_skill = SkillLoader.load_skill
+
+        def load_with_error(self, path, *, validate=True):
+            if path.name == "broken-skill":
+                raise OSError("cannot read skill")
+            return load_skill(self, path, validate=validate)
+
+        monkeypatch.setattr(SkillLoader, "load_skill", load_with_error)
+        monkeypatch.setattr("gobby.skills.sync.get_bundled_skills_path", lambda: tmp_path)
+
+        result = sync_bundled_skills(db)
+
+        assert result["success"] is False
+        assert result["synced"] == 1
+        assert any("broken-skill" in error for error in result["errors"])
+        assert skill_manager.get_by_name("valid-skill") is not None
+
     def test_empty_bundled_skills_directory_does_not_orphan_existing_skills(
         self,
         db: HubDatabase,
