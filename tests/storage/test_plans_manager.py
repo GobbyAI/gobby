@@ -73,6 +73,62 @@ def test_create_plan_emits_initial_manifest(temp_db: HubDatabase, tmp_path: Path
     assert raw["rows"][0]["status"] == "missing"
 
 
+def test_create_plan_requires_explicit_reactivation(temp_db: HubDatabase, tmp_path: Path) -> None:
+    project_id = _project(temp_db, tmp_path)
+    manager = LocalPlanManager(temp_db)
+    plan_path = _write_plan(tmp_path)
+    manager.create_plan(
+        project_id=project_id,
+        plan_id="task-100-demo",
+        plan_path=plan_path,
+        root_task_ref="#100",
+    )
+    manager.archive_plan("task-100-demo", project_id=project_id)
+    replacement_path = _write_plan(tmp_path)
+
+    with pytest.raises(ValueError, match="pass reactivate=True"):
+        manager.create_plan(
+            project_id=project_id,
+            plan_id="task-100-demo",
+            plan_path=replacement_path,
+            root_task_ref="#100",
+        )
+
+    archived = manager.get_plan("task-100-demo", project_id=project_id)
+    assert archived.state == "archived"
+    reactivated = manager.create_plan(
+        project_id=project_id,
+        plan_id="task-100-demo",
+        plan_path=replacement_path,
+        root_task_ref="#100",
+        reactivate=True,
+    )
+    assert reactivated.state == "active"
+    assert reactivated.archived_at is None
+
+
+def test_create_plan_refuses_root_task_reassignment(temp_db: HubDatabase, tmp_path: Path) -> None:
+    project_id = _project(temp_db, tmp_path)
+    manager = LocalPlanManager(temp_db)
+    plan_path = _write_plan(tmp_path)
+    manager.create_plan(
+        project_id=project_id,
+        plan_id="task-100-demo",
+        plan_path=plan_path,
+        root_task_ref="#100",
+    )
+
+    with pytest.raises(ValueError, match="already registered to root task #100"):
+        manager.create_plan(
+            project_id=project_id,
+            plan_id="task-100-demo",
+            plan_path=plan_path,
+            root_task_ref="#999",
+        )
+
+    assert manager.get_plan("task-100-demo", project_id=project_id).root_task_ref == "#100"
+
+
 def test_update_plan_hash_regens_manifest(temp_db: HubDatabase, tmp_path: Path) -> None:
     project_id = _project(temp_db, tmp_path)
     plan_path = _write_plan(tmp_path)
@@ -124,6 +180,28 @@ def test_archive_plan_moves_file_and_removes_manifest(temp_db: HubDatabase, tmp_
     assert (tmp_path / archived.plan_path).exists()
     assert not manifest.exists()
     assert manager.archive_plan("task-100-demo", project_id=project_id) == archived
+
+
+def test_archive_plan_refuses_existing_destination(temp_db: HubDatabase, tmp_path: Path) -> None:
+    project_id = _project(temp_db, tmp_path)
+    plan_path = _write_plan(tmp_path)
+    manager = LocalPlanManager(temp_db)
+    manager.create_plan(
+        project_id=project_id,
+        plan_id="task-100-demo",
+        plan_path=plan_path,
+        root_task_ref="#100",
+    )
+    completed_path = tmp_path / ".gobby" / "plans" / "completed" / plan_path.name
+    completed_path.parent.mkdir(parents=True)
+    completed_path.write_text("existing archive\n", encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="archive destination already exists"):
+        manager.archive_plan("task-100-demo", project_id=project_id)
+
+    assert plan_path.exists()
+    assert completed_path.read_text(encoding="utf-8") == "existing archive\n"
+    assert manager.get_plan("task-100-demo", project_id=project_id).state == "active"
 
 
 def test_archive_plan_preserves_nested_relative_paths(temp_db: HubDatabase, tmp_path: Path) -> None:

@@ -81,6 +81,7 @@ class LocalPlanManager:
         plan_path: str | Path,
         plan_kind: str = PlanKind.implementation.value,
         root_task_ref: str,
+        reactivate: bool = False,
     ) -> PlanRecord:
         project_root = self._project_root(project_id)
         relative_path = self._relative_plan_path(project_root, plan_path)
@@ -91,7 +92,7 @@ class LocalPlanManager:
         record_id = str(uuid.uuid4())
 
         with self.db.transaction() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 """
                 INSERT INTO plans (
                     id, project_id, plan_id, plan_path, plan_hash, plan_kind, state,
@@ -106,6 +107,9 @@ class LocalPlanManager:
                     root_task_ref = excluded.root_task_ref,
                     updated_at = excluded.updated_at,
                     archived_at = NULL
+                WHERE plans.root_task_ref = excluded.root_task_ref
+                  AND (plans.state != 'archived' OR %s)
+                RETURNING state
                 """,
                 (
                     record_id,
@@ -117,8 +121,28 @@ class LocalPlanManager:
                     root_task_ref,
                     now,
                     now,
+                    reactivate,
                 ),
             )
+            if cursor.fetchone() is None:
+                existing = conn.execute(
+                    """
+                    SELECT state, root_task_ref
+                    FROM plans
+                    WHERE project_id = %s AND plan_id = %s
+                    """,
+                    (project_id, plan_id),
+                ).fetchone()
+                if existing is None:
+                    raise ValueError(f"plan registration conflict: {plan_id}")
+                if existing["root_task_ref"] != root_task_ref:
+                    raise ValueError(
+                        f"plan {plan_id} is already registered to root task "
+                        f"{existing['root_task_ref']}"
+                    )
+                raise ValueError(
+                    f"plan {plan_id} is archived; pass reactivate=True to reactivate it"
+                )
 
         record = self.get_plan(plan_id, project_id=project_id)
         if _plan_carries_coverage_manifest(record.plan_kind):
@@ -237,6 +261,8 @@ class LocalPlanManager:
         previous_path = source_path
         moved = False
         if source_path.exists():
+            if completed_path.exists():
+                raise FileExistsError(f"archive destination already exists: {completed_path}")
             completed_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(source_path), str(completed_path))
             moved = True

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import threading
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -1291,6 +1292,61 @@ class TestHookManagerSessionLookup:
         # Should have called register_session
         assert mock_register.called
         assert response.decision == "allow"
+
+    def test_slow_registration_does_not_block_different_session(
+        self, hook_manager_with_mocks: HookManager, temp_dir: Path
+    ) -> None:
+        manager = hook_manager_with_mocks
+        registration_started = threading.Event()
+        release_registration = threading.Event()
+        fast_completed = threading.Event()
+        responses: dict[str, HookResponse] = {}
+
+        def event(external_id: str) -> HookEvent:
+            return HookEvent(
+                event_type=HookEventType.BEFORE_TOOL,
+                session_id=external_id,
+                source=SessionSource.CLAUDE,
+                timestamp=datetime.now(UTC),
+                data={"tool_name": "bash", "cwd": str(temp_dir)},
+                machine_id="test-machine-id",
+            )
+
+        def register_session(*, external_id: str, **_kwargs: object) -> str:
+            if external_id == "slow-session":
+                registration_started.set()
+                assert release_registration.wait(timeout=5)
+            return f"platform-{external_id}"
+
+        def handle(name: str) -> None:
+            responses[name] = manager.handle(event(f"{name}-session"))
+            if name == "fast":
+                fast_completed.set()
+
+        with (
+            patch.object(manager._session_manager, "get_session_id", return_value=None),
+            patch.object(manager._session_manager, "lookup_session_id", return_value=None),
+            patch.object(manager._session_manager, "recover_session", return_value=None),
+            patch.object(
+                manager._session_manager, "register_session", side_effect=register_session
+            ),
+        ):
+            slow_thread = threading.Thread(target=handle, args=("slow",))
+            fast_thread = threading.Thread(target=handle, args=("fast",))
+            slow_thread.start()
+            assert registration_started.wait(timeout=5)
+            fast_thread.start()
+            try:
+                assert fast_completed.wait(timeout=1)
+            finally:
+                release_registration.set()
+                slow_thread.join(timeout=5)
+                fast_thread.join(timeout=5)
+
+        assert not slow_thread.is_alive()
+        assert not fast_thread.is_alive()
+        assert responses["slow"].decision == "allow"
+        assert responses["fast"].decision == "allow"
 
     def test_non_start_acp_child_does_not_auto_register_terminal_duplicate(
         self,

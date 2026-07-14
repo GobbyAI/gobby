@@ -18,6 +18,7 @@ import re
 import threading
 import time
 from typing import TYPE_CHECKING, Any
+from weakref import WeakValueDictionary
 
 from gobby.hooks.session_types import HookSessionManager
 
@@ -131,8 +132,11 @@ class SessionCoordinator:
         self._agent_message_cache: dict[str, tuple[str, float]] = {}
         self._cache_lock = threading.Lock()
 
-        # Lock for session lookups to prevent race conditions (double firing)
-        self._lookup_lock = threading.Lock()
+        # Per-session locks prevent duplicate registration without serializing unrelated hooks.
+        self._lookup_locks: WeakValueDictionary[tuple[str, str], threading.Lock] = (
+            WeakValueDictionary()
+        )
+        self._lookup_locks_lock = threading.Lock()
 
         # Reference to the main event loop for cross-thread async scheduling
         self._event_loop: asyncio.AbstractEventLoop | None = None
@@ -238,14 +242,15 @@ class SessionCoordinator:
 
     # ==================== LOOKUP LOCK ====================
 
-    def get_lookup_lock(self) -> threading.Lock:
-        """
-        Get the lookup lock for preventing race conditions.
-
-        Returns:
-            The lookup lock
-        """
-        return self._lookup_lock
+    def get_lookup_lock(self, external_id: str, source: str) -> threading.Lock:
+        """Get the lock that serializes lookup and registration for one source session."""
+        key = (external_id, source)
+        with self._lookup_locks_lock:
+            lock = self._lookup_locks.get(key)
+            if lock is None:
+                lock = threading.Lock()
+                self._lookup_locks[key] = lock
+            return lock
 
     # ==================== LIFECYCLE OPERATIONS ====================
 

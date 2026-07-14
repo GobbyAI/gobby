@@ -30,6 +30,7 @@ def create_plan_registry(
         plan_kind: str = "implementation",
         root_task_ref: str | None = None,
         project: str | None = None,
+        reactivate: bool = False,
     ) -> dict[str, Any]:
         allowed_plan_kinds = {"implementation", "strategy"}
         if plan_kind not in allowed_plan_kinds:
@@ -49,6 +50,7 @@ def create_plan_registry(
                 plan_path=plan_path,
                 plan_kind=plan_kind,
                 root_task_ref=root_ref,
+                reactivate=reactivate,
             )
         except (ValueError, OSError, psycopg.Error) as exc:
             return {"ok": False, "error": "create_plan_failed", "message": str(exc)}
@@ -65,6 +67,7 @@ def create_plan_registry(
                 "plan_kind": {"type": "string", "enum": ["implementation", "strategy"]},
                 "root_task_ref": {"type": "string"},
                 "project": {"type": "string"},
+                "reactivate": {"type": "boolean", "default": False},
             },
             "required": ["plan_id", "plan_path"],
         },
