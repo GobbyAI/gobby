@@ -1,7 +1,7 @@
 ---
 name: ruby
 description: "Enforces default Ruby coding standards for agents writing or refactoring Ruby: Bundler/project configuration, object model contracts, Rails and data boundaries, errors, observability, tests, performance, concurrency, and deployment safety. Use before editing Ruby unless the repo provides stricter local rules."
-version: "1.0.0"
+version: "1.1.0"
 category: development
 triggers: ruby, rails, bundler, gemfile, rake, rspec, minitest, rubocop, sorbet, rbs
 sources:
@@ -11,101 +11,69 @@ sources:
 
 # Ruby
 
-Default coding standards for Ruby. Repo conventions and configured tooling take
-precedence. If `.ruby-version`, `Gemfile`, RuboCop, Standard, RSpec, Minitest,
-Rails, Sorbet, Steep, RBS, or project instructions are stricter, follow the repo.
+Apply repository Ruby, Bundler, Rails, static-analysis, and deployment rules first.
 
 ## Tooling
 
-Run the repo's configured format, lint, type/static analysis, and focused test
-commands before finishing. If none are configured, use the local Ruby project:
-
-- Format/lint: `bundle exec rubocop` or configured Standard/RuboCop wrapper
-- Type/static analysis: Sorbet, Steep, RBS, ruby-lsp, or project wrapper
-- Tests: focused RSpec, Minitest, Rails test, or engine/gem target
-- Packages: preserve Bundler, lockfile, gemspec, and Ruby version policy
-- Runtime checks: background job, migration, system test, or smoke target where used
-
-Do not loosen lint rules, remove type signatures, bypass Bundler, delete lockfile
-constraints, or broaden tests to avoid fixing a local defect.
+- Use the checked-in Ruby/Bundler environment and configured RuboCop or Standard,
+  Sorbet/Steep/RBS checks, focused tests, and relevant Rails tasks.
 
 ## Configuration
 
-- Match existing Ruby version, Bundler, gemspec, Rails, engine, RuboCop,
-  Standard, Sorbet, Steep, RBS, CI, and deployment conventions before adding
-  files or gems.
-- Keep dependency, autoloading, initializer, environment, migration, queue, and
-  packaging changes intentional.
-- Prefer standard library, framework APIs, and existing project helpers before
-  adding gems.
+- Preserve Ruby and Bundler versions, gemspec and lockfile policy, autoloading,
+  initializers, migrations, queues, runtime config, and generated files.
+- Diagnostic hook: treat Sorbet, Steep, and RuboCop findings as contract evidence;
+  avoid `T.untyped`, `T.unsafe`, broad signatures, and disabled cops before fixing flow.
 
-For Bundler, gemspecs, Ruby versions, Rails config, lint/type tools, and CI:
+For Bundler, Rails, type tools, and CI:
 `get_skill_file(name="ruby", path="references/configuration.md")`
 
 ## Object Model And Contracts
 
-- Treat public classes, modules, mixins, service objects, jobs, serializers,
-  policies, callbacks, and gem APIs as contracts.
-- Use keyword arguments, value objects, structs, enums, pattern matching,
-  explicit return objects, RBS, Sorbet, or Steep where the repo uses them.
-- Preserve method arity, keyword compatibility, callback behavior, constants,
-  inheritance hooks, and API return shapes unless the change is intentional.
+- Preserve public methods, keyword arguments, callbacks, constants, inheritance,
+  mixins, and serialized shapes.
+- Use value objects, structs, enums, signatures, and pattern matching where they
+  make domain states explicit.
 
-For classes, modules, APIs, keyword args, signatures, value objects, and mixins:
+For Ruby APIs and signatures:
 `get_skill_file(name="ruby", path="references/object-model-and-contracts.md")`
 
 ## Data And Framework Boundaries
 
-- Keep Rails controllers, views, models, jobs, mailers, serializers, policies,
-  queries, external clients, and domain objects separated by clear boundaries.
-- Validate and normalize input at edges before it reaches domain code.
-- Preserve transactions, idempotency, authorization, callbacks, migrations, and
-  data compatibility when moving behavior.
+- Keep controllers, models, jobs, mailers, serializers, policies, and external
+  services in their existing roles.
+- Preserve transactions, authorization, callbacks, migrations, and job idempotency.
 
-For Rails, Active Record, background jobs, serializers, external services, and
-boundary design:
+For Rails, Active Record, jobs, and services:
 `get_skill_file(name="ruby", path="references/data-and-framework-boundaries.md")`
 
 ## Errors And Observability
 
-- Follow local conventions for exceptions, result objects, dry-monads, Active
-  Model errors, transaction rollback, retries, and user-facing errors.
-- Preserve original error context and avoid converting structured failures into
-  vague strings, symbols, or swallowed exceptions.
-- Emit Logger, ActiveSupport::Notifications, metrics, traces, and audit events
-  where surrounding code already does so.
+- Follow local exception or result conventions and preserve original causes.
+- Emit Logger, notifications, metrics, traces, and audit events at owned boundaries.
 
-For exceptions, result shapes, retries, transactions, logging, notifications,
-and audit events:
+For failures, retries, transactions, and events:
 `get_skill_file(name="ruby", path="references/errors-and-observability.md")`
 
 ## Testing
 
-- Add focused coverage for changed classes, service boundaries, validations,
-  query behavior, background jobs, mailers, controllers, views, and failures.
-- Use the repo's stack: RSpec, Minitest, Rails test, FactoryBot, fixtures,
-  WebMock, VCR, Capybara, Shoulda, Timecop, or custom helpers.
-- Prefer deterministic unit and boundary tests before broad suite runs.
+- Use the repository's RSpec, Minitest, Rails, fixture/factory, HTTP fake, and system
+  test stack at the boundary being changed.
+- Control database, job, clock, and external-service state explicitly.
 
-For RSpec, Minitest, Rails tests, fixtures, factories, HTTP fakes, system tests,
-and focused commands:
+For Ruby and Rails test selection:
 `get_skill_file(name="ruby", path="references/testing.md")`
 
-## Performance And Concurrency
+## Concurrency
 
-- Measure hot paths before optimizing. Check allocations, N+1 queries, eager
-  loading, memoization, caches, fibers, threads, jobs, and connection pools.
-- Keep concurrency explicit around MRI GVL behavior, JRuby/TruffleRuby,
-  Ractors, Fiber Scheduler, async gems, queues, and database connections.
-- Use batching, streaming, prepared queries, indexes, caching, or background jobs
-  only with evidence and tests.
+- Make thread, fiber, Ractor, job, connection-pool, and shutdown ownership explicit
+  for the deployed Ruby runtime.
+- Account for MRI GVL versus JRuby or TruffleRuby behavior.
 
-For Ruby runtime performance, Rails query shape, memory, caching, jobs, threads,
-fibers, and deployment:
+## Performance
+
+- Inspect allocations, object retention, N+1 queries, eager loading, serialization,
+  cache keys, and job throughput for affected workloads.
+
+For runtime, query, cache, and concurrency analysis:
 `get_skill_file(name="ruby", path="references/performance-and-concurrency.md")`
-
-## Before You Finish
-
-If you touched Ruby: verify formatting/lint, configured type/static analysis,
-focused tests, and any relevant migration/job/runtime checks pass before closing
-your work.

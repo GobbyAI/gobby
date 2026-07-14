@@ -24,7 +24,7 @@ def test_swift_skill_parses_with_references() -> None:
     parsed = SkillLoader().load_skill(SKILL_DIR, validate=False)
 
     assert parsed.name == "swift"
-    assert parsed.version == "1.0.0"
+    assert parsed.version == "1.1.0"
     assert parsed.get_category() == "development"
     assert parsed.triggers is not None
     assert {

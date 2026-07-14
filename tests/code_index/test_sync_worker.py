@@ -781,7 +781,7 @@ async def test_sync_file_warns_and_retries_when_vector_sync_times_out(
     assert code_storage.list_projection_cleanup_pending()
     assert any(
         record.levelno == logging.WARNING
-        and "Sync worker: vector sync timed out for src/app.py" in record.getMessage()
+        and "Sync worker: vector sync transport failure for src/app.py" in record.getMessage()
         and not record.exc_info
         for record in caplog.records
     )

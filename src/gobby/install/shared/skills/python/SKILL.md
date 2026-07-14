@@ -1,7 +1,7 @@
 ---
 name: python
 description: "Enforces default Python coding standards for agents writing or refactoring Python: project configuration, typing, error handling, testing, async, performance, and boundary validation. Use before editing Python unless the repo provides stricter local rules."
-version: "1.0.0"
+version: "1.1.0"
 category: development
 triggers: python, py, pyi, pyproject.toml, uv, ruff, mypy, pytest, tox, nox, typing, asyncio
 sources:
@@ -11,92 +11,70 @@ sources:
 
 # Python
 
-Default coding standards for Python. Repo conventions and configured tooling take precedence. If `pyproject.toml`, `setup.cfg`, test config, framework rules, or project instructions are stricter, follow the repo.
+Apply repository packaging, interpreter, type-checker, framework, and generated-code rules first.
 
 ## Tooling
 
-Run the repo's configured lint, type-check, and test commands before finishing. If none are configured, use:
-
-- Format fix: `uv run ruff format <files>`
-- Format verification: `uv run ruff format --check <files>`
-- Lint verification: `uv run ruff check <files>`
-- Type check: `uv run mypy <files-or-package>` or the repo's configured strict target
-- Tests: targeted `GOBBY_TEST_PROTECT=1 uv run pytest <tests>` for changed behavior
-- Packages: use the repo's Python package manager and lockfile, commonly `uv`
-
-Do not suppress lint warnings with `# noqa`, mypy errors, broad ignores, or looser tool settings without a written reason tied to an external boundary or migration step.
+- Use the configured environment manager, formatter, Ruff, mypy or Pyright,
+  focused pytest targets, and repository quality gates.
 
 ## Configuration
 
-- Treat `pyproject.toml` as the first place to inspect package metadata, Python version, build backend, dependencies, and tool settings.
-- Keep formatter, linter, type checker, and test settings aligned. Do not fix a failure by weakening the config before understanding the code issue.
-- Preserve `src/` layout, namespace packages, entry points, extras, and environment markers unless the task explicitly changes packaging.
-- Keep generated files, lockfiles, vendored stubs, migrations, and pinned tool versions under their existing ownership rules.
+- Preserve Python constraints, build backend, dependency groups, lockfiles, package
+  layout, type-checker mode, pytest config, and generated files.
+- Diagnostic hook: treat type-checker and Ruff findings as value-flow evidence;
+  avoid `Any`, `cast`, `# type: ignore`, and disabled rules before fixing the contract.
 
-For package, tool, type-checker, and test configuration: `get_skill_file(name="python", path="references/configuration.md")`
+For package, tool, type-checker, and test setup:
+`get_skill_file(name="python", path="references/configuration.md")`
 
 ## Type System
 
-- Type hints are mandatory on all function signatures: parameters and return values.
-- Use modern syntax: `str | None`, `list[str]`, `dict[str, int]`.
-- Keep untrusted or third-party values as `object` or `Any` only at the boundary, then narrow before passing inward.
-- Prefer `Protocol`, dataclasses, typed dicts, enums, and small value objects over loose `dict[str, object]` plumbing.
-- Use `TYPE_CHECKING`, local imports, or dependency inversion to avoid import cycles without hiding runtime dependencies.
+- Model domain states with dataclasses, enums, protocols, `TypedDict`, or validated
+  models instead of unstructured dictionaries.
+- Narrow untrusted input before domain construction and keep optionality explicit.
 
-For patterns and examples: `get_skill_file(name="python", path="references/types.md")`
+For typing patterns:
+`get_skill_file(name="python", path="references/types.md")`
 
 ## Error Handling
 
-- Catch specific exceptions. Reserve `except Exception` for process, request, job, or CLI boundaries that own logging and cleanup.
-- Chain with `raise NewError("context") from original` when wrapping lower-level failures.
-- Validate external input, files, environment variables, database rows, and API responses before constructing typed domain objects.
-- Keep domain errors machine-readable when callers need to branch; do not parse error messages.
+- Catch specific exceptions and translate them at process, request, job, or CLI
+  boundaries that own logging and cleanup.
+- Preserve causes with `raise ... from ...` and keep branchable failures typed.
 
-For exception hierarchy patterns: `get_skill_file(name="python", path="references/error-handling.md")`
+For exception hierarchies:
+`get_skill_file(name="python", path="references/error-handling.md")`
 
 ## Testing
 
-- Use pytest and the repo's existing fixtures, markers, async plugin, and assertion style.
-- Write one behavior per test with clear Arrange, Act, Assert phases.
-- Mock external dependencies such as HTTP, databases, clocks, queues, and filesystems at boundary adapters.
-- Parameterize related cases and test error paths, not only happy paths.
-- Run targeted tests and the configured quality gates for the files you touched.
+- Use repository fixtures, markers, async plugins, and boundary fakes.
+- Parameterize genuine case tables and control clocks, filesystems, queues,
+  databases, and HTTP adapters where behavior depends on them.
 
-For fixtures, mocking, and marker patterns: `get_skill_file(name="python", path="references/testing.md")`
+For pytest patterns:
+`get_skill_file(name="python", path="references/testing.md")`
 
-## Async
+## Concurrency
 
-- Use `async def` for I/O-bound work. Keep CPU-bound work synchronous or move it to an executor/process pool when parallelism is needed.
-- Prefer `asyncio.TaskGroup` for related tasks that share lifecycle and cancellation behavior.
-- Set explicit timeouts on network, database, queue, subprocess, and long filesystem operations.
-- Handle `asyncio.CancelledError` with cleanup and re-raise it.
-- Do not call blocking clients inside `async def` without an adapter or executor.
+- Use `asyncio.TaskGroup` for related tasks, explicit timeouts for owned I/O, and
+  cleanup that re-raises `CancelledError`.
+- Move CPU-bound or blocking clients behind an executor, process, or sync adapter.
 
-For concurrency patterns: `get_skill_file(name="python", path="references/async.md")`
+For asyncio and concurrency:
+`get_skill_file(name="python", path="references/async.md")`
 
 ## Performance
 
-- Profile before optimizing.
-- Use data structures that match access patterns: `set` and `dict` for repeated lookup, generators and iterators for large streams, `deque` for queues.
-- Cache only when inputs are stable and invalidation is clear.
-- Avoid unnecessary object churn in parsers, serializers, database loops, and hot request paths.
+- Use profile evidence to choose data structures, streaming, caching, or allocation
+  changes in parsers, serializers, database loops, and request paths.
 
-For profiling tools and optimization rules: `get_skill_file(name="python", path="references/performance.md")`
+For Python profiling:
+`get_skill_file(name="python", path="references/performance.md")`
 
-## API & Design
+## API Design
 
-- Prefer small typed return objects (`@dataclass`, Pydantic models) over `dict[str, object]`
-- Avoid boolean flag parameters that create multiple behaviors; use separate functions or enums.
-- Prefer immutable defaults and explicit dependency injection over hidden global state
-- Use `pathlib.Path` for all file operations
-- Set explicit timeouts on all network calls
-
-## Observability
-
-- Log at boundaries and failure points, not inside tight loops
-- Never log secrets, credentials, or raw tokens
-- Use structured logging with context (`logger.info("action", extra={...})`)
-
-## Before You Finish
-
-If you touched Python: verify formatting, lint, type checks, targeted tests, and any repo-specific validation pass before closing your work.
+- Prefer small typed return objects over `dict[str, object]`.
+- Replace mode-changing boolean parameters with separate functions or enums.
+- Use immutable defaults, explicit dependencies, and `pathlib.Path` at file boundaries.
+- Put structured logs at owned boundaries with enough context to diagnose the operation.

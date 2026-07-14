@@ -15,10 +15,13 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.code_index.cleanup import purge_missing_project
 from gobby.code_index.gcode_gateway import (
+    GcodeEmbeddingTransportError,
     GcodeIndexedFileNotFoundError,
     GcodeProjectNotFoundError,
     GcodeTimeoutError,
+    GcodeUnavailableError,
 )
+from gobby.code_index.sync_breaker import VectorSyncBreaker
 
 if TYPE_CHECKING:
     from gobby.code_index.context import CodeIndexContext
@@ -135,6 +138,11 @@ async def sync_worker_loop(
     """
     interval = config.sync_worker_interval_seconds
     batch_size = config.sync_worker_batch_size
+    breaker = VectorSyncBreaker(
+        failure_threshold=config.sync_worker_breaker_failure_threshold,
+        base_backoff_seconds=config.sync_worker_breaker_backoff_seconds,
+        max_backoff_seconds=config.sync_worker_breaker_max_backoff_seconds,
+    )
 
     logger.info(
         "Code index sync worker started (interval=%ss, batch=%s)",
@@ -153,6 +161,7 @@ async def sync_worker_loop(
                 batch_size=batch_size,
                 clear_graph=context.clear_graph,
                 run_db=run_db,
+                breaker=breaker,
             )
         except Exception as e:
             logger.error(f"Sync worker pass error: {e}", exc_info=True)
@@ -173,9 +182,13 @@ async def _sync_pass(
     batch_size: int,
     clear_graph: Callable[[str], Awaitable[dict[str, Any]]] | None = None,
     run_db: Callable[..., Awaitable[Any]] | None = None,
+    breaker: VectorSyncBreaker | None = None,
 ) -> None:
     """Single sync pass across all indexed projects."""
     projects = await _run_db(run_db, storage.list_indexed_projects)
+    vectors_wanted = config.embedding_enabled and gcode_gateway is not None
+    if breaker is not None and not breaker.pending_allowed():
+        vectors_wanted = False
 
     for project in projects:
         if not project.root_path:
@@ -190,7 +203,7 @@ async def _sync_pass(
             storage.get_pending_sync_files,
             project.id,
             limit=batch_size,
-            vectors=config.embedding_enabled and gcode_gateway is not None,
+            vectors=vectors_wanted,
             graph=config.graph_enabled,
         )
         if not files:
@@ -209,6 +222,7 @@ async def _sync_pass(
                     file=file,
                     clear_graph=clear_graph,
                     run_db=run_db,
+                    breaker=breaker,
                 )
                 if did_sync:
                     synced_count += 1
@@ -235,6 +249,7 @@ async def _sync_file(
     file: IndexedFile,
     clear_graph: Callable[[str], Awaitable[dict[str, Any]]] | None = None,
     run_db: Callable[..., Awaitable[Any]] | None = None,
+    breaker: VectorSyncBreaker | None = None,
 ) -> bool:
     """Sync a single file's vectors and/or graph edges. Returns True if any work done."""
     # Validate: file record still exists (not invalidated between poll and process)
@@ -251,7 +266,7 @@ async def _sync_file(
 
     # Vector sync
     if not current.vectors_synced and config.embedding_enabled:
-        if gcode_gateway is not None:
+        if gcode_gateway is not None and (breaker is None or breaker.should_attempt()):
             try:
                 await _run_db(run_db, storage.mark_vector_sync_attempted, current.id)
                 await _sync_vector_file(
@@ -268,7 +283,10 @@ async def _sync_file(
                     "vector",
                 )
                 did_work = True
+                if breaker is not None:
+                    breaker.record_success()
             except GcodeIndexedFileNotFoundError as e:
+                # Per-file data error: never affects the breaker.
                 if not await _handle_indexed_file_not_found(
                     storage=storage,
                     config=config,
@@ -281,9 +299,15 @@ async def _sync_file(
                     run_db=run_db,
                 ):
                     return False
-            except GcodeTimeoutError as e:
+            except (
+                GcodeEmbeddingTransportError,
+                GcodeTimeoutError,
+                GcodeUnavailableError,
+            ) as e:
+                if breaker is not None:
+                    breaker.record_failure()
                 logger.warning(
-                    "Sync worker: vector sync timed out for %s: %s",
+                    "Sync worker: vector sync transport failure for %s: %s",
                     current.file_path,
                     e,
                 )
