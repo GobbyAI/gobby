@@ -9,7 +9,7 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 
 from gobby.paths import get_gobby_home
 from gobby.shutdown_intent import ShutdownIntent
@@ -195,7 +195,7 @@ def _request_runner_shutdown(server: "HTTPServer", intent: ShutdownIntent) -> bo
 
 def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
     @router.post("/shutdown")
-    async def shutdown() -> dict[str, Any]:
+    async def shutdown(response: Response) -> dict[str, Any]:
         """
         Graceful daemon shutdown endpoint.
 
@@ -227,6 +227,7 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
 
         except Exception as e:
             logger.error(f"Error initiating shutdown: {e}", exc_info=True)
+            response.status_code = 500
             return {
                 "status": "error",
                 "message": "Shutdown failed to initiate",
@@ -296,7 +297,7 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
             }
 
     @router.post("/workflows/reload")
-    async def reload_workflows() -> dict[str, Any]:
+    async def reload_workflows(response: Response) -> dict[str, Any]:
         """
         Reload workflow definitions from disk.
 
@@ -314,6 +315,7 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
                         break
 
             if not workflows_registry:
+                response.status_code = 503
                 return {
                     "status": "error",
                     "message": "Workflow registry not available",
@@ -323,12 +325,14 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
             try:
                 result = await workflows_registry.call("reload_cache", {})
             except ValueError:
+                response.status_code = 503
                 return {
                     "status": "error",
                     "message": "reload_cache tool not found",
                 }
             except Exception as e:
                 logger.error(f"Failed to execute reload_cache: {e}")
+                response.status_code = 500
                 return {
                     "status": "error",
                     "message": "Failed to reload cache",
@@ -345,6 +349,7 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
 
         except Exception as e:
             logger.error(f"Error reloading workflows: {e}", exc_info=True)
+            response.status_code = 500
             return {
                 "status": "error",
                 "message": "Failed to reload workflows",

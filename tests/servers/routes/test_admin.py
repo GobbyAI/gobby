@@ -574,6 +574,19 @@ class TestAdminRoutes:
         mock_write_shutdown.assert_called_once_with("http_shutdown", intent="stop")
         mock_server._process_shutdown.assert_called_once()
 
+    def test_shutdown_endpoint_returns_500_when_shutdown_fails(self, client) -> None:
+        with patch(
+            "gobby.runner_maintenance.write_shutdown_source",
+            side_effect=RuntimeError("write failed"),
+        ):
+            response = client.post("/api/admin/shutdown")
+
+        assert response.status_code == 500
+        assert response.json() == {
+            "status": "error",
+            "message": "Shutdown failed to initiate",
+        }
+
     def test_request_runner_shutdown_rejects_runner_without_shutdown_api(self) -> None:
         from gobby.servers.routes.admin._lifecycle import _request_runner_shutdown
 
@@ -914,7 +927,7 @@ class TestWorkflowsReloadEndpoint:
         mock_server._internal_manager.get_all_registries.return_value = [other_registry]
 
         response = client.post("/api/admin/workflows/reload")
-        assert response.status_code == 200
+        assert response.status_code == 503
         data = response.json()
 
         assert data["status"] == "error"
@@ -924,7 +937,7 @@ class TestWorkflowsReloadEndpoint:
         mock_server._internal_manager = None
 
         response = client.post("/api/admin/workflows/reload")
-        assert response.status_code == 200
+        assert response.status_code == 503
         data = response.json()
 
         assert data["status"] == "error"
@@ -935,7 +948,7 @@ class TestWorkflowsReloadEndpoint:
         registry.call = AsyncMock(side_effect=ValueError("Tool not found"))
 
         response = client.post("/api/admin/workflows/reload")
-        assert response.status_code == 200
+        assert response.status_code == 503
         data = response.json()
 
         assert data["status"] == "error"
@@ -946,7 +959,7 @@ class TestWorkflowsReloadEndpoint:
         registry.call = AsyncMock(side_effect=RuntimeError("Cache corrupted"))
 
         response = client.post("/api/admin/workflows/reload")
-        assert response.status_code == 200
+        assert response.status_code == 500
         data = response.json()
 
         assert data["status"] == "error"
@@ -958,7 +971,7 @@ class TestWorkflowsReloadEndpoint:
         )
 
         response = client.post("/api/admin/workflows/reload")
-        assert response.status_code == 200
+        assert response.status_code == 500
         data = response.json()
 
         assert data["status"] == "error"
