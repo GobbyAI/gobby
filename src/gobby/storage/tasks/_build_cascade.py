@@ -9,7 +9,7 @@ from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES
 from gobby.storage.hub.protocol import HubDatabase, TaskSubtreeCascade
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._models import Isolation
-from gobby.storage.tasks._runtime_mutex import DispatchMutexUnavailableError
+from gobby.storage.tasks._runtime_mutex import DispatchMutexUnavailableError, RuntimeDispatchMutex
 from gobby.storage.tasks._stage_manifest import derive_child_manifest_specs
 from gobby.storage.tasks._stage_states import StageStatesManager
 from gobby.storage.tasks._stage_types import ManifestAlreadyInitializedError, StageManifestSpec
@@ -208,80 +208,87 @@ def _remove_pristine_omitted_stages_for_build_cascade(
     resumed expanded epic skips a delivery stage such as ``pr``. Only pristine
     ready rows are removable; progressed work stays untouched.
     """
-    existing_rows = stage_states.list_for_task(task_id)
-    desired = sorted(desired_specs, key=lambda spec: spec.position)
-    if not existing_rows or not desired:
-        return False
-
-    existing_names = [row.stage_name for row in existing_rows]
-    desired_names = [spec.stage_name for spec in desired]
-    if existing_names == desired_names:
-        return False
-    if not _is_subsequence(desired_names, existing_names):
-        return False
-
-    desired_name_set = set(desired_names)
-    current = stage_states.current_stage(task_id)
-    has_active_agent = _has_active_agent_run(db, task_id)
-    omitted_rows = [row for row in existing_rows if row.stage_name not in desired_name_set]
-    if not omitted_rows or not all(
-        _is_removable_omitted_stage(row, current, has_active_agent) for row in omitted_rows
+    with RuntimeDispatchMutex(
+        storage=stage_states.mutexes,
+        task_id=task_id,
+        holder="build",
+        action_kind="stage_state:build_cascade_prune_manifest_stages",
+        ttl_seconds=30,
     ):
-        return False
+        existing_rows = stage_states.list_for_task(task_id)
+        desired = sorted(desired_specs, key=lambda spec: spec.position)
+        if not existing_rows or not desired:
+            return False
 
-    omitted_names = {row.stage_name for row in omitted_rows}
-    removed_current = current is not None and current.stage_name in omitted_names
-    remaining_rows = [row for row in existing_rows if row.stage_name in desired_name_set]
-    if removed_current and not any(row.state != "done" for row in remaining_rows):
-        return False
+        existing_names = [row.stage_name for row in existing_rows]
+        desired_names = [spec.stage_name for spec in desired]
+        if existing_names == desired_names:
+            return False
+        if not _is_subsequence(desired_names, existing_names):
+            return False
 
-    previous_shape = ",".join(existing_names)
-    desired_by_name = {spec.stage_name: spec for spec in desired}
-    now = utc_now()
-    with db.transaction() as conn:
-        conn.executemany(
-            "DELETE FROM task_stage_states WHERE task_id = %s AND stage_name = %s",
-            [(task_id, row.stage_name) for row in omitted_rows],
+        desired_name_set = set(desired_names)
+        current = stage_states.current_stage(task_id)
+        has_active_agent = _has_active_agent_run(db, task_id)
+        omitted_rows = [row for row in existing_rows if row.stage_name not in desired_name_set]
+        if not omitted_rows or not all(
+            _is_removable_omitted_stage(row, current, has_active_agent) for row in omitted_rows
+        ):
+            return False
+
+        omitted_names = {row.stage_name for row in omitted_rows}
+        removed_current = current is not None and current.stage_name in omitted_names
+        remaining_rows = [row for row in existing_rows if row.stage_name in desired_name_set]
+        if removed_current and not any(row.state != "done" for row in remaining_rows):
+            return False
+
+        previous_shape = ",".join(existing_names)
+        desired_by_name = {spec.stage_name: spec for spec in desired}
+        now = utc_now()
+        with db.transaction() as conn:
+            conn.executemany(
+                "DELETE FROM task_stage_states WHERE task_id = %s AND stage_name = %s",
+                [(task_id, row.stage_name) for row in omitted_rows],
+            )
+            for row in remaining_rows:
+                spec = desired_by_name[row.stage_name]
+                conn.execute(
+                    """
+                    UPDATE task_stage_states
+                       SET position = %s,
+                           max_work_attempts = %s,
+                           max_review_rounds = %s,
+                           updated_at = %s
+                     WHERE task_id = %s AND stage_name = %s
+                    """,
+                    (
+                        spec.position,
+                        spec.max_work_attempts,
+                        spec.max_review_rounds,
+                        now,
+                        task_id,
+                        row.stage_name,
+                    ),
+                )
+            if removed_current:
+                conn.execute(
+                    """
+                    UPDATE tasks
+                       SET claimed_by_session_id = NULL,
+                           updated_at = %s
+                     WHERE id = %s
+                    """,
+                    (now, task_id),
+                )
+
+        TaskLifecycleEventManager(db).record_lifecycle_event(
+            task_id,
+            from_state=f"manifest:{previous_shape}",
+            to_state=f"manifest:{','.join(desired_names)}",
+            reason="build_cascade_prune_manifest_stages",
+            by_actor="build",
         )
-        for row in remaining_rows:
-            spec = desired_by_name[row.stage_name]
-            conn.execute(
-                """
-                UPDATE task_stage_states
-                   SET position = %s,
-                       max_work_attempts = %s,
-                       max_review_rounds = %s,
-                       updated_at = %s
-                 WHERE task_id = %s AND stage_name = %s
-                """,
-                (
-                    spec.position,
-                    spec.max_work_attempts,
-                    spec.max_review_rounds,
-                    now,
-                    task_id,
-                    row.stage_name,
-                ),
-            )
-        if removed_current:
-            conn.execute(
-                """
-                UPDATE tasks
-                   SET claimed_by_session_id = NULL,
-                       updated_at = %s
-                 WHERE id = %s
-                """,
-                (now, task_id),
-            )
-
-    TaskLifecycleEventManager(db).record_lifecycle_event(
-        task_id,
-        from_state=f"manifest:{previous_shape}",
-        to_state=f"manifest:{','.join(desired_names)}",
-        reason="build_cascade_prune_manifest_stages",
-        by_actor="build",
-    )
-    return True
+        return True
 
 
 def _is_subsequence(needle: list[str], haystack: list[str]) -> bool:
