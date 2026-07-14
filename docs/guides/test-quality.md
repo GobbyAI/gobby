@@ -70,9 +70,10 @@ for baselines.
 
 ## Baselines
 
-Baselines use schema version 1 and store issue fingerprints. A baseline run
-compares the current report to the saved baseline, then reports only new issues
-that meet the configured severity threshold.
+Baselines use schema version 2 and store each issue fingerprint with its
+occurrence count. Adding another instance of the same issue code to a baselined
+test is therefore reported as new. Text output separates failing new issues,
+new issues below the configured severity threshold, and known baseline issues.
 
 Use baselines to keep existing debt visible without blocking unrelated cleanup.
 Do not use them to hide new test weaknesses.
@@ -80,6 +81,11 @@ Do not use them to hide new test weaknesses.
 Missing baseline files are not a skip reason. With `--baseline <path>
 --fail-on-new`, a missing file emits `Baseline missing; treating current issues
 as new` and applies the same severity gate to current supported-language issues.
+
+When `--write-baseline` is combined with a failing `--fail-on-new` audit, Gobby
+refuses to replace the baseline. Use `--allow-failing-baseline` only when you
+intend to accept every current failure into the baseline; the audit still exits
+with status 1 so automation records the failure.
 
 ## Suppressions
 
@@ -117,6 +123,11 @@ uv run gobby test-quality audit --format text
 uv run gobby test-quality audit --format json --output report.json
 uv run gobby test-quality audit --write-baseline .gobby/test-quality-baseline.json
 uv run gobby test-quality audit --baseline .gobby/test-quality-baseline.json --fail-on-new
+uv run gobby test-quality audit \
+  --baseline .gobby/test-quality-baseline.json \
+  --fail-on-new \
+  --write-baseline .gobby/test-quality-baseline.json \
+  --allow-failing-baseline
 uv run gobby test-quality audit --min-severity low
 ```
 
