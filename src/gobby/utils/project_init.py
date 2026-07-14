@@ -47,6 +47,15 @@ def _optional_str(value: object) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _ensure_project_path_matches(name: str, repo_path: str | None, cwd: Path) -> None:
+    """Reject adoption of a same-name project belonging to another repository."""
+    if repo_path and Path(repo_path).expanduser().resolve() != cwd:
+        raise ValueError(
+            f"Project '{name}' belongs to a different repository at '{repo_path}'. "
+            "Choose a different project name with --name."
+        )
+
+
 @dataclass
 class VerificationCommands:
     """Auto-detected verification commands for a project."""
@@ -227,6 +236,7 @@ def initialize_project(
     # Check if project with same name exists in database
     existing = project_manager.get_by_name(name, include_deleted=True)
     if existing:
+        _ensure_project_path_matches(existing.name, existing.repo_path, cwd)
         if existing.deleted_at:
             restored = project_manager.restore(existing.id)
             if restored is None:
@@ -273,6 +283,7 @@ def initialize_project(
         concurrent_project = project_manager.get_by_name(name)
         if concurrent_project is None:
             raise
+        _ensure_project_path_matches(concurrent_project.name, concurrent_project.repo_path, cwd)
         project = concurrent_project
         already_existed = True
         logger.debug(f"Adopting concurrently created project: {name}")

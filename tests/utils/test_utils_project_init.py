@@ -201,9 +201,9 @@ class TestDetectVerificationCommands:
 
         result = detect_verification_commands(tmp_path)
 
-        assert result.unit_tests == "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v"
-        assert result.type_check == "uv run mypy src/"
-        assert result.lint == "uv run ruff check src/"
+        assert result.unit_tests == "pytest tests/ -v"
+        assert result.type_check == "mypy src/"
+        assert result.lint == "ruff check src/"
 
     def test_python_project_with_tests_no_src(self, tmp_path: Path) -> None:
         """Test detection for Python project with tests/ but no src/ directory."""
@@ -217,9 +217,9 @@ class TestDetectVerificationCommands:
 
         result = detect_verification_commands(tmp_path)
 
-        assert result.unit_tests == "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v"
-        assert result.type_check == "uv run mypy ."
-        assert result.lint == "uv run ruff check ."
+        assert result.unit_tests == "pytest tests/ -v"
+        assert result.type_check == "mypy ."
+        assert result.lint == "ruff check ."
 
     def test_python_project_with_src_no_tests(self, tmp_path: Path) -> None:
         """Test detection for Python project with src/ but no tests/ directory."""
@@ -234,8 +234,8 @@ class TestDetectVerificationCommands:
         result = detect_verification_commands(tmp_path)
 
         assert result.unit_tests is None
-        assert result.type_check == "uv run mypy src/"
-        assert result.lint == "uv run ruff check src/"
+        assert result.type_check == "mypy src/"
+        assert result.lint == "ruff check src/"
 
     def test_python_project_no_dirs(self, tmp_path: Path) -> None:
         """Test detection for Python project without tests/ or src/ directories."""
@@ -246,8 +246,8 @@ class TestDetectVerificationCommands:
         result = detect_verification_commands(tmp_path)
 
         assert result.unit_tests is None
-        assert result.type_check == "uv run mypy ."
-        assert result.lint == "uv run ruff check ."
+        assert result.type_check == "mypy ."
+        assert result.lint == "ruff check ."
 
     def test_nodejs_project_with_test_script(self, tmp_path: Path) -> None:
         """Test detection for Node.js project with test script."""
@@ -413,8 +413,8 @@ class TestDetectVerificationCommands:
         result = detect_verification_commands(tmp_path)
 
         # Should use fallback commands since src is a file
-        assert result.type_check == "uv run mypy ."
-        assert result.lint == "uv run ruff check ."
+        assert result.type_check == "mypy ."
+        assert result.lint == "ruff check ."
 
 
 class TestFindFrontendDirs:
@@ -489,10 +489,10 @@ class TestDetectVerificationMultiLanguage:
         result = detect_verification_commands(tmp_path)
 
         # Python claims primary slots
-        assert result.unit_tests == "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v"
-        assert result.type_check == "uv run mypy src/"
-        assert result.lint == "uv run ruff check src/"
-        assert result.format == "uv run ruff format --check src/"
+        assert result.unit_tests == "pytest tests/ -v"
+        assert result.type_check == "mypy src/"
+        assert result.lint == "ruff check src/"
+        assert result.format == "ruff format --check src/"
 
         # Frontend goes to custom with cd prefix
         assert result.custom["frontend_tests"] == "cd web && npm test"
@@ -505,14 +505,14 @@ class TestDetectVerificationMultiLanguage:
         (tmp_path / "src").mkdir()
 
         result = detect_verification_commands(tmp_path)
-        assert result.format == "uv run ruff format --check src/"
+        assert result.format == "ruff format --check src/"
 
     def test_python_no_src_detects_format_fallback(self, tmp_path: Path) -> None:
         """Python project without src/ uses fallback format command."""
         (tmp_path / "pyproject.toml").write_text("[project]\nname='test'\n")
 
         result = detect_verification_commands(tmp_path)
-        assert result.format == "uv run ruff format --check ."
+        assert result.format == "ruff format --check ."
 
     def test_standalone_web_frontend(self, tmp_path: Path) -> None:
         """Only web/ frontend, no Python — frontend gets primary slots."""
@@ -1002,6 +1002,30 @@ class TestInitializeProject:
         )
         assert project_data["id"] == existing.id
 
+    def test_rejects_same_name_project_from_different_repo(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        other_repo = tmp_path.parent / "other" / tmp_path.name
+        other_repo.mkdir(parents=True)
+        manager = LocalProjectManager(temp_db)
+        existing = manager.create(name=tmp_path.name, repo_path=str(other_repo))
+        monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
+        monkeypatch.setattr(
+            "gobby.storage.hub.runtime.open_runtime_hub_database",
+            lambda *, apply_migrations: temp_db,
+        )
+
+        with pytest.raises(ValueError, match=r"different repository.*--name"):
+            initialize_project(tmp_path)
+
+        assert not (tmp_path / ".gobby" / "project.json").exists()
+        unchanged = manager.get(existing.id)
+        assert unchanged is not None
+        assert unchanged.repo_path == str(other_repo)
+
     def test_restores_soft_deleted_project(
         self,
         tmp_path: Path,
@@ -1033,6 +1057,7 @@ class TestInitializeProject:
                         winner = MagicMock()
                         winner.id = "winner-project-id"
                         winner.name = tmp_path.name
+                        winner.repo_path = str(tmp_path)
                         winner.created_at = datetime(2024, 6, 15, tzinfo=UTC)
 
                         manager = mock_pm_cls.return_value
@@ -1124,11 +1149,9 @@ class TestInitializeProject:
                             result = initialize_project(tmp_path)
 
                             assert result.verification is not None
-                            assert result.verification.unit_tests == (
-                                "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v"
-                            )
-                            assert result.verification.type_check == "uv run mypy src/"
-                            assert result.verification.lint == "uv run ruff check src/"
+                            assert result.verification.unit_tests == "pytest tests/ -v"
+                            assert result.verification.type_check == "mypy src/"
+                            assert result.verification.lint == "ruff check src/"
 
     def test_existing_db_project_includes_verification(self, tmp_path: Path) -> None:
         """Test that existing DB project includes verification commands when synced."""
@@ -1146,6 +1169,7 @@ class TestInitializeProject:
                             mock_existing = MagicMock()
                             mock_existing.id = "db-proj-id"
                             mock_existing.name = tmp_path.name
+                            mock_existing.repo_path = str(tmp_path)
                             mock_existing.created_at = datetime(2023, 1, 1, tzinfo=UTC)
                             mock_existing.deleted_at = None
 
@@ -1158,7 +1182,7 @@ class TestInitializeProject:
 
                             # Should include verification
                             assert result.verification is not None
-                            assert result.verification.type_check == "uv run mypy src/"
+                            assert result.verification.type_check == "mypy src/"
 
     def test_new_project_without_verification_commands(self, tmp_path: Path) -> None:
         """Test that new project without recognizable structure has no verification."""
