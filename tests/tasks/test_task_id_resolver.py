@@ -8,6 +8,8 @@ These tests verify that the resolver correctly handles:
 - Unknown format errors for `gt-*` format (no longer special-cased)
 """
 
+from uuid import uuid4
+
 import pytest
 
 from gobby.storage.tasks import LocalTaskManager, TaskNotFoundError
@@ -81,18 +83,20 @@ class TestTaskIdResolver:
 
     def test_resolve_uuid_rejects_foreign_project(self, task_manager, temp_db) -> None:
         """Test that UUID resolution is project-scoped."""
+        project_a_id = str(uuid4())
+        project_b_id = str(uuid4())
         temp_db.execute(
             "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
-            ("proj-a", "Project A"),
+            (project_a_id, "Project A"),
         )
         temp_db.execute(
             "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
-            ("proj-b", "Project B"),
+            (project_b_id, "Project B"),
         )
-        foreign_task = task_manager.create_task(project_id="proj-b", title="Task B")
+        foreign_task = task_manager.create_task(project_id=project_b_id, title="Task B")
 
         with pytest.raises(TaskNotFoundError, match="not found in project"):
-            task_manager.resolve_task_reference(foreign_task.id, "proj-a")
+            task_manager.resolve_task_reference(foreign_task.id, project_a_id)
 
     def test_resolve_uuid_validates_exists(self, task_manager, project_id) -> None:
         """Test that UUID is validated to exist."""
@@ -153,25 +157,27 @@ class TestTaskIdResolver:
 
     def test_resolve_respects_project_scope(self, task_manager, temp_db) -> None:
         """Test that #N resolution is project-scoped."""
+        project_a_id = str(uuid4())
+        project_b_id = str(uuid4())
         # Create two projects
         temp_db.execute(
             "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
-            ("proj-a", "Project A"),
+            (project_a_id, "Project A"),
         )
         temp_db.execute(
             "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
-            ("proj-b", "Project B"),
+            (project_b_id, "Project B"),
         )
 
         # Create tasks in each project
-        task_a = task_manager.create_task(project_id="proj-a", title="Task A")
-        task_b = task_manager.create_task(project_id="proj-b", title="Task B")
+        task_a = task_manager.create_task(project_id=project_a_id, title="Task A")
+        task_b = task_manager.create_task(project_id=project_b_id, title="Task B")
 
         # #1 in proj-a should resolve to task_a
-        assert task_manager.resolve_task_reference("#1", "proj-a") == task_a.id
+        assert task_manager.resolve_task_reference("#1", project_a_id) == task_a.id
 
         # #1 in proj-b should resolve to task_b (different task!)
-        assert task_manager.resolve_task_reference("#1", "proj-b") == task_b.id
+        assert task_manager.resolve_task_reference("#1", project_b_id) == task_b.id
 
     def test_resolve_after_deletion_gap(self, task_manager, project_id) -> None:
         """Test resolution after creating a gap via deletion."""

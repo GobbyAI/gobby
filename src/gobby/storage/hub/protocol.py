@@ -15,6 +15,7 @@ __all__ = [
     "ChatAttachmentMutation",
     "CronRunAdmission",
     "DispatchMutexRow",
+    "ExpansionApplyMutation",
     "HubDatabase",
     "GitHubIssueTriageMutation",
     "IntegrationWorkspaceMutex",
@@ -104,6 +105,14 @@ class TaskSeqAllocation:
 
     PRIORITY: ClassVar[int] = 200
     project_id: str
+
+
+@dataclass(frozen=True)
+class ExpansionApplyMutation:
+    """Serializes expansion apply for one parent task."""
+
+    PRIORITY: ClassVar[int] = 250
+    parent_task_id: str
 
 
 @dataclass(frozen=True)

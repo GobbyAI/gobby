@@ -82,20 +82,21 @@ def reset_expansion_output(
     _validate_reset_targets(self, target_ids)
 
     deleted_ids: list[str] = []
-    for task_id in _bottom_up(self, target_ids):
-        if self.task_manager.delete_task(task_id, unlink=True):
-            deleted_ids.append(task_id)
+    with self.task_manager.db.transaction():
+        for task_id in _bottom_up(self, target_ids):
+            if self.task_manager.delete_task(task_id, unlink=True):
+                deleted_ids.append(task_id)
 
-    artifacts = self.task_manager.artifacts.get_artifacts(parent.id)
-    if artifacts.expansion_run_id in {None, run.id}:
-        self.task_manager.artifacts.set_artifact(parent.id, "expansion_run_id", None)
-    reset_stage = _reset_parent_expansion_stage(self, parent.id, session_id=session_id)
-    self.run_manager.append_log(
-        run.id,
-        level="info",
-        message="Reset expansion output",
-        extra={"deleted_task_ids": deleted_ids},
-    )
+        artifacts = self.task_manager.artifacts.get_artifacts(parent.id)
+        if artifacts.expansion_run_id in {None, run.id}:
+            self.task_manager.artifacts.set_artifact(parent.id, "expansion_run_id", None)
+        reset_stage = _reset_parent_expansion_stage(self, parent.id, session_id=session_id)
+        self.run_manager.append_log(
+            run.id,
+            level="info",
+            message="Reset expansion output",
+            extra={"deleted_task_ids": deleted_ids},
+        )
     return ResetExpansionOutputResult(
         parent_task_id=parent.id,
         run_id=run.id,

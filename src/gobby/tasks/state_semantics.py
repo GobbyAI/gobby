@@ -41,24 +41,20 @@ def current_stage(task: Any) -> Any | None:
     if task is None:
         return None
 
+    stages = _read_field(task, "stages")
+    if isinstance(stages, Sequence) and not isinstance(stages, str | bytes | bytearray):
+        pending = [stage for stage in stages if _read_field(stage, "state") != "done"]
+        if not pending:
+            return None
+        return min(pending, key=_stage_position)
+
     state_payload = _read_field(task, "state")
     if isinstance(state_payload, dict):
         direct_from_state = state_payload.get("current_stage")
         if direct_from_state is not None:
             return direct_from_state
 
-    direct = _read_field(task, "current_stage")
-    if direct is not None:
-        return direct
-
-    stages = _read_field(task, "stages")
-    if not isinstance(stages, Sequence) or isinstance(stages, str | bytes | bytearray):
-        return None
-
-    pending = [stage for stage in stages if _read_field(stage, "state") != "done"]
-    if not pending:
-        return None
-    return min(pending, key=_stage_position)
+    return _read_field(task, "current_stage")
 
 
 def current_stage_state(task: Any) -> str | None:

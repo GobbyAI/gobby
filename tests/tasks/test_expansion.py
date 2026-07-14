@@ -108,6 +108,38 @@ def test_validate_compiled_spec_rejects_manual_leaves(
     assert any("category:manual" in error for error in validation["errors"])
 
 
+@pytest.mark.parametrize(
+    ("field", "invalid_value"),
+    [
+        ("task_type", "invalid-type"),
+        ("implementation_domain", "invalid-domain"),
+    ],
+)
+def test_validate_compiled_spec_rejects_invalid_task_metadata(
+    service: ExpansionService,
+    field: str,
+    invalid_value: str,
+) -> None:
+    spec = {
+        "phases": [{"id": "phase-1", "title": "Phase", "task_ids": ["leaf"]}],
+        "tasks": [
+            {
+                "id": "leaf",
+                "phase_id": "phase-1",
+                "title": "Implementation",
+                "category": "code",
+                field: invalid_value,
+            }
+        ],
+        "dependencies": [],
+    }
+
+    validation = service.validate_compiled_spec(spec)
+
+    assert validation["valid"] is False
+    assert any(f"{field}:{invalid_value}" in error for error in validation["errors"])
+
+
 def test_validate_compiled_spec_rejects_planning_leaf_tasks(
     service: ExpansionService,
     sample_project,
