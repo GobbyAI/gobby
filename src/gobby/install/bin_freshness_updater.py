@@ -231,8 +231,6 @@ def update_managed_bin(
 
 
 def _is_up_to_date(inspection: BinInspection, asset: ReleaseAsset) -> bool:
-    if inspection.floor_drift:
-        return False
     comparison = compare_versions(inspection.installed_version, asset.version)
     return comparison is not None and comparison >= 0
 

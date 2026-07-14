@@ -288,15 +288,15 @@ class TestBinUpdater:
         assert record.source_url == client.asset.asset_url
         assert client.downloads == 0
 
-    def test_github_newer_installed_version_records_without_downloading(
+    def test_floor_ahead_of_release_does_not_redownload_current_binary(
         self,
         tmp_path: Path,
         postgres_db: HubDatabase,
     ) -> None:
         db = postgres_db
         bin_dir = tmp_path / "bin"
-        spec = _spec()
-        _write_binary(bin_dir, spec)
+        spec = _spec(floor="0.4.3")
+        binary = _write_binary(bin_dir, spec)
         _write_stamp(bin_dir, spec, "0.4.2")
         client = FakeClient(asset=_asset(spec, "0.4.1"))
 
@@ -313,6 +313,7 @@ class TestBinUpdater:
         assert record.installed_version == "0.4.2"
         assert record.latest_version == "0.4.1"
         assert client.downloads == 0
+        assert binary.read_bytes() == b"old"
 
     def test_staged_github_upgrade_promotes_binary_stamp_and_sidecar(
         self,
