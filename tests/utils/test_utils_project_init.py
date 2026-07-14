@@ -8,6 +8,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from psycopg.errors import UniqueViolation
 
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
 from gobby.utils.project_context import get_project_context
 from gobby.utils.project_init import (
     InitResult,
@@ -844,30 +846,27 @@ class TestInitializeProject:
                             assert result.already_existed is False
                             assert result.project_id == "new-proj-id"
 
-    def test_new_project_creation(self, tmp_path: Path) -> None:
-        """Test creating a new project."""
-        # Patch all the imports used inside the function
-        with patch("gobby.utils.project_context.get_project_context", return_value=None):
-            with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
-                    with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
-                        with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
-                            mock_pm_instance = MagicMock()
-                            mock_pm_instance.get_by_name.return_value = None
+    def test_new_project_creation(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Fresh initialization creates the project in the isolated database."""
+        monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
+        with patch(
+            "gobby.storage.hub.runtime.open_runtime_hub_database", return_value=temp_db
+        ) as open_db:
+            result = initialize_project(tmp_path)
 
-                            mock_project = MagicMock()
-                            mock_project.id = "new-proj-id"
-                            mock_project.name = tmp_path.name
-                            mock_project.created_at = datetime(2024, 6, 15, tzinfo=UTC)
-                            mock_pm_instance.create.return_value = mock_project
+        open_db.assert_called_once_with(apply_migrations=False)
 
-                            mock_pm_cls.return_value = mock_pm_instance
-
-                            result = initialize_project(tmp_path)
-
-                            assert result.project_id == "new-proj-id"
-                            assert result.project_name == tmp_path.name
-                            assert result.already_existed is False
+        project = LocalProjectManager(temp_db).get(result.project_id)
+        assert project is not None
+        assert project.name == tmp_path.name
+        assert project.repo_path == str(tmp_path)
+        assert result.project_name == tmp_path.name
+        assert result.already_existed is False
 
     def test_uses_provided_name(self, tmp_path: Path) -> None:
         """Test that provided name overrides directory name."""
@@ -950,67 +949,55 @@ class TestInitializeProject:
                             )
                             assert result.project_id == "id"
 
-    def test_existing_db_project_no_local_json(self, tmp_path: Path) -> None:
-        """Test handling when project exists in DB but no local project.json."""
-        with patch("gobby.utils.project_context.get_project_context", return_value=None):
-            with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
-                    with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
-                        with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
-                            # Project exists in database
-                            mock_existing = MagicMock()
-                            mock_existing.id = "db-proj-id"
-                            mock_existing.name = tmp_path.name
-                            mock_existing.created_at = datetime(2023, 1, 1, tzinfo=UTC)
-                            mock_existing.deleted_at = None
+    def test_existing_db_project_no_local_json(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Initialization adopts a same-name database project and writes local state."""
+        manager = LocalProjectManager(temp_db)
+        existing = manager.create(name=tmp_path.name)
+        monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
+        monkeypatch.setattr(
+            "gobby.storage.hub.runtime.open_runtime_hub_database",
+            lambda *, apply_migrations: temp_db,
+        )
 
-                            mock_pm_instance = MagicMock()
-                            mock_pm_instance.get_by_name.return_value = mock_existing
+        result = initialize_project(tmp_path)
 
-                            mock_pm_cls.return_value = mock_pm_instance
+        adopted = manager.get(existing.id)
+        assert adopted is not None
+        assert adopted.repo_path == str(tmp_path)
+        assert result.project_id == existing.id
+        assert result.already_existed is True
+        project_data = json.loads(
+            (tmp_path / ".gobby" / "project.json").read_text(encoding="utf-8")
+        )
+        assert project_data["id"] == existing.id
 
-                            result = initialize_project(tmp_path)
+    def test_restores_soft_deleted_project(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        manager = LocalProjectManager(temp_db)
+        deleted = manager.create(name=tmp_path.name, repo_path=str(tmp_path))
+        assert manager.soft_delete(deleted.id)
+        monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
+        monkeypatch.setattr(
+            "gobby.storage.hub.runtime.open_runtime_hub_database",
+            lambda *, apply_migrations: temp_db,
+        )
 
-                            # Should return existing project and write local json
-                            assert result.project_id == "db-proj-id"
-                            assert result.already_existed is True
+        result = initialize_project(tmp_path)
 
-                            # Should write project.json
-                            project_file = tmp_path / ".gobby" / "project.json"
-                            assert project_file.exists()
-
-                            # Should NOT call create
-                            mock_pm_instance.create.assert_not_called()
-
-    def test_restores_soft_deleted_project(self, tmp_path: Path) -> None:
-        with patch("gobby.utils.project_context.get_project_context", return_value=None):
-            with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
-                    with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
-                        deleted = MagicMock()
-                        deleted.id = "deleted-project-id"
-                        deleted.name = tmp_path.name
-                        deleted.deleted_at = "2026-01-01T00:00:00Z"
-
-                        restored = MagicMock()
-                        restored.id = deleted.id
-                        restored.name = deleted.name
-                        restored.created_at = datetime(2024, 6, 15, tzinfo=UTC)
-                        restored.deleted_at = None
-                        restored.repo_path = str(tmp_path)
-
-                        manager = mock_pm_cls.return_value
-                        manager.get_by_name.return_value = deleted
-                        manager.restore.return_value = restored
-
-                        result = initialize_project(tmp_path)
-
-                        manager.get_by_name.assert_called_once_with(
-                            tmp_path.name, include_deleted=True
-                        )
-                        manager.restore.assert_called_once_with(deleted.id)
-                        assert result.project_id == deleted.id
-                        assert result.already_existed is True
+        restored = manager.get(deleted.id)
+        assert restored is not None
+        assert restored.deleted_at is None
+        assert result.project_id == deleted.id
+        assert result.already_existed is True
 
     def test_adopts_project_created_concurrently(self, tmp_path: Path) -> None:
         with patch("gobby.utils.project_context.get_project_context", return_value=None):
