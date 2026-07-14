@@ -267,6 +267,11 @@
 
 ## Nits
 
+> **Current status (2026-07-14):** This section is the original review snapshot. The
+> revalidated, deduplicated nit ledger is maintained in
+> [`servers-routes-nit-sweep.md`](servers-routes-nit-sweep.md). Use that ledger for
+> implementation; the bullets below are retained only as historical review evidence.
+
 ### [NIT] Broad `except Exception` → 500 leaks internals across files
 `tasks.py:395-397,462-464,483-485`; `cron.py:89-257` (many); `_testing.py:102,184,230,331`. Log `exc_info=True`, return a generic detail. Confidence: high.
 
