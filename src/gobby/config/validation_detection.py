@@ -450,7 +450,14 @@ def builtin_validation_matchers() -> list[ValidationCommandMatcher]:
             "Markdown YAML and JSON checks",
             ["markdown", "yaml", "json"],
             ["lint", "format"],
-            ["markdownlint", "yamllint", "jq", "jsonlint"],
+            ["markdownlint", "yamllint", "jsonlint"],
+        ),
+        _matcher(
+            "json-jq-validation",
+            "JSON validation with jq",
+            ["json"],
+            ["lint"],
+            ["jq empty", "jq -e", "jq --exit-status"],
         ),
         _matcher(
             "prettier-format-check",
