@@ -198,6 +198,8 @@ class ChatSessionMixin:
             self,
             db_session_id: str,
             event_type: HookEventType,
+            *,
+            pending_message_ids: list[str] | None = None,
         ) -> str | None: ...
 
         async def _evaluate_blocking_webhooks(
