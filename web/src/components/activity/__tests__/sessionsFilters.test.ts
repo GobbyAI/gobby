@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   countActiveFilters,
@@ -35,6 +35,10 @@ function makeSession(overrides: Partial<TestSession> = {}): TestSession {
 }
 
 const NOW = new Date("2026-04-29T12:00:00.000Z");
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe("defaultSessionsFilters", () => {
   it("starts with all filter sets empty", () => {
@@ -189,10 +193,10 @@ describe("serializeSessionsFilters", () => {
     f.dateCustomFrom = "2026-04-01";
     f.dateCustomTo = "2026-04-15";
     const params = serializeSessionsFilters(f, NOW);
-    expect(params.get("created_after")).toBe("2026-04-01T00:00:00.000Z");
+    expect(params.get("created_after")).toBe(new Date(2026, 3, 1).toISOString());
     // The bound is bumped a day so end-of-day stays inclusive when paired
     // with the backend's exclusive-before predicate.
-    expect(params.get("created_before")).toBe("2026-04-16T00:00:00.000Z");
+    expect(params.get("created_before")).toBe(new Date(2026, 3, 16).toISOString());
   });
 });
 
@@ -208,6 +212,34 @@ describe("resolveDateRange", () => {
     const { after, before } = resolveDateRange(f, NOW);
     expect(after).toBe("2026-04-28T12:00:00.000Z");
     expect(before).toBeNull();
+  });
+
+  it("uses local-day bounds across a DST transition", () => {
+    vi.stubEnv("TZ", "America/Chicago");
+    const f = defaultSessionsFilters();
+    f.datePreset = "custom";
+    f.dateCustomFrom = "2026-03-08";
+    f.dateCustomTo = "2026-03-08";
+
+    expect(resolveDateRange(f, NOW)).toEqual({
+      after: "2026-03-08T06:00:00.000Z",
+      before: "2026-03-09T05:00:00.000Z",
+    });
+    expect(
+      matchesSessionsFilters(makeSession({ created_at: "2026-03-09T04:59:59.999Z" }), f, NOW),
+    ).toBe(true);
+    expect(
+      matchesSessionsFilters(makeSession({ created_at: "2026-03-09T05:00:00.000Z" }), f, NOW),
+    ).toBe(false);
+  });
+
+  it("returns null custom bounds for invalid dates", () => {
+    const f = defaultSessionsFilters();
+    f.datePreset = "custom";
+    f.dateCustomFrom = "junk";
+    f.dateCustomTo = "2026-02-30";
+
+    expect(resolveDateRange(f, NOW)).toEqual({ after: null, before: null });
   });
 });
 
@@ -346,6 +378,21 @@ describe("storage round-trip", () => {
   it("returns defaults on malformed JSON without throwing", () => {
     const restored = deserializeFromStorage("{not json");
     expect(restored.datePreset).toBe("all");
+  });
+
+  it("clears malformed and impossible custom dates without throwing", () => {
+    const restored = deserializeFromStorage(
+      JSON.stringify({
+        datePreset: "custom",
+        dateCustomFrom: "junk",
+        dateCustomTo: "2026-02-30",
+      }),
+    );
+
+    expect(restored.datePreset).toBe("custom");
+    expect(restored.dateCustomFrom).toBeNull();
+    expect(restored.dateCustomTo).toBeNull();
+    expect(() => matchesSessionsFilters(makeSession(), restored, NOW)).not.toThrow();
   });
 
   it("strips unknown enum values gracefully", () => {

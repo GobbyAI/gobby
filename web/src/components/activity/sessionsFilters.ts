@@ -64,6 +64,31 @@ export function countActiveFilters(filters: SessionsFilters): number {
   return count;
 }
 
+function parseLocalDate(value: string | null): Date | null {
+  if (value === null) return null;
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (match === null) return null;
+
+  const [, yearText, monthText, dayText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const date = new Date(year, month - 1, day);
+  if (year < 100) date.setFullYear(year);
+
+  return Number.isFinite(date.getTime()) &&
+    date.getFullYear() === year &&
+    date.getMonth() === month - 1 &&
+    date.getDate() === day
+    ? date
+    : null;
+}
+
+function isValidLocalDate(value: unknown): value is string {
+  return typeof value === "string" && parseLocalDate(value) !== null;
+}
+
 /**
  * Resolve a date preset to (after, before) inclusive-after / exclusive-before
  * timestamps. Returns null for either bound when the preset doesn't apply.
@@ -85,15 +110,16 @@ export function resolveDateRange(
         before: null,
       };
     case "custom": {
-      // Custom dates arrive as YYYY-MM-DD; expand them to UTC bounds.
-      const after = filters.dateCustomFrom
-        ? new Date(`${filters.dateCustomFrom}T00:00:00.000Z`).toISOString()
-        : null;
-      // Inclusive end-of-day: bump the upper bound by one day so it stays
-      // exclusive in the URL serializer (matches backend semantics).
-      const before = filters.dateCustomTo
+      const afterDate = parseLocalDate(filters.dateCustomFrom);
+      const beforeDate = parseLocalDate(filters.dateCustomTo);
+      const after = afterDate?.toISOString() ?? null;
+      // The next local midnight keeps the end date inclusive while preserving
+      // the backend's exclusive-before semantics across DST transitions.
+      const before = beforeDate
         ? new Date(
-            new Date(`${filters.dateCustomTo}T00:00:00.000Z`).getTime() + 24 * 60 * 60 * 1000,
+            beforeDate.getFullYear(),
+            beforeDate.getMonth(),
+            beforeDate.getDate() + 1,
           ).toISOString()
         : null;
       return { after, before };
@@ -282,8 +308,8 @@ export function deserializeFromStorage(raw: string | null): SessionsFilters {
       taskRefMax: typeof parsed.taskRefMax === "number" ? parsed.taskRefMax : null,
       taskRefRoles,
       datePreset,
-      dateCustomFrom: typeof parsed.dateCustomFrom === "string" ? parsed.dateCustomFrom : null,
-      dateCustomTo: typeof parsed.dateCustomTo === "string" ? parsed.dateCustomTo : null,
+      dateCustomFrom: isValidLocalDate(parsed.dateCustomFrom) ? parsed.dateCustomFrom : null,
+      dateCustomTo: isValidLocalDate(parsed.dateCustomTo) ? parsed.dateCustomTo : null,
       statuses,
     };
   } catch {
