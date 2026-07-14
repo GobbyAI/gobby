@@ -371,10 +371,10 @@ def _resolve_ide_settings_consent(
     help="Install only the FalkorDB service",
 )
 @click.option(
-    "--falkordb-password",
-    "falkordb_password",
-    default=None,
-    help="Set a custom FalkorDB password (default: auto-generated or reused from existing config)",
+    "--falkordb-password-stdin",
+    "falkordb_password_stdin",
+    is_flag=True,
+    help="Read a custom FalkorDB password from stdin",
 )
 @click.option(
     "--neo4j-password",
@@ -481,7 +481,7 @@ def install(
     all_flag: bool,
     no_ext_services_flag: bool,
     falkordb_flag: bool,
-    falkordb_password: str | None,
+    falkordb_password_stdin: bool,
     voice_flag: bool,
     project_flag: bool,
     embedding_url: str | None,
@@ -504,6 +504,12 @@ def install(
     """
     if embedding_provider and not embedding_url:
         raise click.UsageError("--embedding-provider requires --embedding-url.")
+
+    falkordb_password: str | None = None
+    if falkordb_password_stdin:
+        falkordb_password = sys.stdin.read().strip()
+        if not falkordb_password:
+            raise click.UsageError("--falkordb-password-stdin requires a password on stdin.")
 
     if falkordb_flag:
         service_results: dict[str, dict[str, Any]] = {}

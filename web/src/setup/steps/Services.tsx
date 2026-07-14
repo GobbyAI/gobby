@@ -43,7 +43,7 @@ function extractFalkorPasswordError(output: string): string | null {
 function buildInstallArgs(password?: string): string[] {
   const args = ["install", "--falkordb"];
   if (password) {
-    args.push("--falkordb-password", password);
+    args.push("--falkordb-password-stdin");
   }
   return args;
 }
@@ -86,7 +86,10 @@ export function Services({ state: _state, setState, onNext }: StepProps): React.
     setResult(null);
     setPhase("installing");
 
-    const r = runGobby(buildInstallArgs(password), { timeout: INSTALL_TIMEOUT_MS });
+    const r = runGobby(buildInstallArgs(password), {
+      timeout: INSTALL_TIMEOUT_MS,
+      input: password,
+    });
 
     if (r.success) {
       setResult({ success: true, message: "FalkorDB installed successfully." });

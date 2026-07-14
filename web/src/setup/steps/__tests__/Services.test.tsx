@@ -187,9 +187,10 @@ describe("Services FalkorDB setup", () => {
 
     expect(view.setState).toHaveBeenCalledTimes(1);
     expect(mocks.runGobby).toHaveBeenCalledWith(
-      ["install", "--falkordb", "--falkordb-password", "ValidPassword123!"],
-      { timeout: 120000 },
+      ["install", "--falkordb", "--falkordb-password-stdin"],
+      { timeout: 120000, input: "ValidPassword123!" },
     );
+    expect(mocks.runGobby.mock.calls[0]?.[0]).not.toContain("ValidPassword123!");
     expect(view.state).toMatchObject({
       falkordb_installed: true,
       falkordb_password_set: true,

@@ -283,9 +283,13 @@ describe("setup wizard end-to-end", () => {
 
     expect(mocks.runGobby).toHaveBeenCalledWith(["install"], { timeout: 30000 });
     expect(mocks.runGobby).toHaveBeenCalledWith(
-      ["install", "--falkordb", "--falkordb-password", "ValidPassword123!"],
-      { timeout: 120000 },
+      ["install", "--falkordb", "--falkordb-password-stdin"],
+      { timeout: 120000, input: "ValidPassword123!" },
     );
+    const serviceInstallArgs = mocks.runGobby.mock.calls.find(
+      ([args]) => args[0] === "install" && args.includes("--falkordb"),
+    )?.[0];
+    expect(serviceInstallArgs).not.toContain("ValidPassword123!");
     expect(mocks.runGobby).toHaveBeenCalledWith(["init", "--name", "_personal"], {
       cwd: "/tmp/gobby-home/personal",
       timeout: 15000,

@@ -38,12 +38,13 @@ class TestFalkorDBInstallFlags:
 
         option_names = _option_names(install)
         assert "--falkordb" in option_names
-        assert "--falkordb-password" in option_names
+        assert "--falkordb-password-stdin" in option_names
+        assert "--falkordb-password" not in option_names
 
-        password = _param_by_name(install, "falkordb_password")
+        password = _param_by_name(install, "falkordb_password_stdin")
         assert password.help is not None
         assert "FalkorDB" in password.help
-        assert "reused from existing config" in password.help
+        assert "stdin" in password.help
 
     def test_install_help_hides_legacy_neo4j_flags(self, runner: CliRunner) -> None:
         from gobby.cli.install import install
@@ -52,7 +53,8 @@ class TestFalkorDBInstallFlags:
 
         assert result.exit_code == 0
         assert "--falkordb" in result.output
-        assert "--falkordb-password" in result.output
+        assert "--falkordb-password-stdin" in result.output
+        assert "--falkordb-password " not in result.output
         assert "--neo4j" not in result.output
         assert "--neo4j-password" not in result.output
 
@@ -83,7 +85,8 @@ class TestFalkorDBInstallFlags:
         ):
             result = runner.invoke(
                 install,
-                ["--falkordb", "--falkordb-password", "secret"],
+                ["--falkordb", "--falkordb-password-stdin"],
+                input="secret",
                 catch_exceptions=False,
             )
 
@@ -99,6 +102,18 @@ class TestFalkorDBInstallFlags:
         mock_embedding.assert_not_called()
         mock_qdrant.assert_not_called()
         mock_voice.assert_not_called()
+
+    def test_falkordb_password_stdin_rejects_empty_input(self, runner: CliRunner) -> None:
+        from gobby.cli.install import install
+
+        result = runner.invoke(
+            install,
+            ["--falkordb", "--falkordb-password-stdin"],
+            input="",
+        )
+
+        assert result.exit_code == 2
+        assert "requires a password on stdin" in result.output
 
     def test_invalid_falkordb_password_returns_usage_error_without_side_effects(
         self,
@@ -116,7 +131,8 @@ class TestFalkorDBInstallFlags:
         ):
             result = runner.invoke(
                 install,
-                ["--falkordb", "--falkordb-password", "has space", "--no-interactive"],
+                ["--falkordb", "--falkordb-password-stdin", "--no-interactive"],
+                input="has space",
                 env={"GOBBY_HOME": str(gobby_home)},
             )
 
