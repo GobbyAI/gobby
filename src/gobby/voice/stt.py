@@ -50,7 +50,6 @@ class WhisperSTT:
     def __init__(self, config: VoiceConfig) -> None:
         self._config = config
         self._model: _WhisperModelProto | None = None
-        self._loading = False
         self._load_lock = asyncio.Lock()
 
     async def warmup(self) -> None:
@@ -167,7 +166,6 @@ class WhisperSTT:
         # Determine file extension from mime type
         ext_map = {
             "audio/webm": ".webm",
-            "audio/webm;codecs=opus": ".webm",
             "audio/wav": ".wav",
             "audio/x-wav": ".wav",
             "audio/mp3": ".mp3",
@@ -175,17 +173,18 @@ class WhisperSTT:
             "audio/ogg": ".ogg",
             "audio/mp4": ".m4a",
         }
-        ext = ext_map.get(mime_type.split(";")[0].strip(), ".webm")
+        ext = ext_map.get(normalized_mime, ".webm")
 
         def _transcribe() -> AudioCapabilityOutput:
             from gobby.ai.audio import AudioCapabilityOutput, AudioSegment
 
-            # Write to temp file for faster-whisper
-            with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
-                f.write(audio_bytes)
-                tmp_path = Path(f.name)
-
+            tmp_path: Path | None = None
             try:
+                # Write to temp file for faster-whisper
+                with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
+                    tmp_path = Path(f.name)
+                    f.write(audio_bytes)
+
                 segments, info = model.transcribe(
                     str(tmp_path),
                     vad_filter=True,
@@ -217,7 +216,8 @@ class WhisperSTT:
                     task=task,
                 )
             finally:
-                tmp_path.unlink(missing_ok=True)
+                if tmp_path is not None:
+                    tmp_path.unlink(missing_ok=True)
 
         return await asyncio.to_thread(_transcribe)
 

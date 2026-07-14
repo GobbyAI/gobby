@@ -131,9 +131,9 @@ def _relative_path(path: Path, root: Path) -> str:
 
 
 def _deduplicate_issues(issues: Iterable[AuditIssue]) -> list[AuditIssue]:
-    by_fingerprint: dict[str, AuditIssue] = {}
+    by_location: dict[tuple[str, int], AuditIssue] = {}
     for issue in sorted(
         issues, key=lambda item: (item.path, item.test_name, item.issue_code, item.line)
     ):
-        by_fingerprint.setdefault(issue.fingerprint, issue)
-    return list(by_fingerprint.values())
+        by_location.setdefault((issue.fingerprint, issue.line), issue)
+    return list(by_location.values())

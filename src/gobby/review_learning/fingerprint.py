@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from typing import Any
 
@@ -24,29 +25,45 @@ def short_hash(value: str, length: int = 12) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:length]
 
 
+def _encode_parts(*parts: str) -> str:
+    """Encode ordered identity parts without delimiter ambiguity."""
+    return "".join(f"{len(part)}:{part}" for part in parts)
+
+
 def derive_finding_fingerprint(finding: dict[str, Any]) -> str:
     """Return native finding fingerprint or derive a line-agnostic one."""
     native = finding.get("finding_fingerprint")
     if native:
         return str(native)
 
-    identity_parts = [
-        finding.get("rule_id"),
-        finding.get("principle"),
-        finding.get("title") or finding.get("message"),
-        finding.get("path"),
-        finding.get("symbol"),
-        finding.get("diagnostic_format"),
+    identity_fields = [
+        ("rule_id", finding.get("rule_id")),
+        ("principle", finding.get("principle")),
+        ("title_or_message", finding.get("title") or finding.get("message")),
+        ("path", finding.get("path")),
+        ("symbol", finding.get("symbol")),
+        ("diagnostic_format", finding.get("diagnostic_format")),
     ]
-    normalized = "|".join(normalize_identity_text(part) for part in identity_parts if part)
-    if not normalized:
-        normalized = normalize_identity_text(finding)
+    normalized_fields = [
+        (field_name, normalize_identity_text(value)) for field_name, value in identity_fields
+    ]
+    if any(value for _, value in normalized_fields):
+        normalized = _encode_parts(*(part for field in normalized_fields for part in field))
+    else:
+        canonical_finding = json.dumps(
+            finding,
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
+        )
+        normalized = normalize_identity_text(canonical_finding)
     return f"derived:{short_hash(normalized, 16)}"
 
 
 def build_occurrence_key(source_review: str, finding_fingerprint: str) -> str:
     """Build the dedupe/promote occurrence identity."""
-    return f"{source_review}:{finding_fingerprint}"
+    return _encode_parts(source_review, finding_fingerprint)
 
 
 def occurrence_tag(occurrence_key: str) -> str:

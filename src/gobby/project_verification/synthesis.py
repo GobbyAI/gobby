@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from gobby.ai.text_generation import TextGenerationRequest, TextGenerationService
+from gobby.ai.text_generation import TextGenerateJSONAdapter, TextGenerationRequest
 from gobby.config.features import ProjectVerificationSynthesisConfig
 from gobby.project_verification.candidates import (
     CommandCandidate,
@@ -50,7 +50,7 @@ class SynthesisResult:
 
 
 async def synthesize_verification_commands(
-    service: TextGenerationService,
+    service: TextGenerateJSONAdapter,
     config: ProjectVerificationSynthesisConfig,
     bundle: EvidenceBundle,
     candidates: list[CommandCandidate],

@@ -152,7 +152,8 @@ def derive_lesson_identity(finding: dict[str, Any]) -> LessonIdentity:
             promotable=True,
         )
 
-    basis = _clean_text(finding.get("title") or finding.get("message") or finding)
+    basis_value = finding.get("title") or finding.get("message")
+    basis = _clean_text(basis_value) if basis_value else _json_blob(finding)
     fallback = f"non-promotable:{short_hash(basis, 16)}"
     return LessonIdentity(
         pattern_id=fallback,
@@ -180,7 +181,6 @@ def build_tags(
     occurrence_key: str,
     repo: str | None,
     language: str | None,
-    guardrail_status: str = "lesson-only",
 ) -> list[str]:
     tags = [
         "review-lesson",
@@ -191,11 +191,12 @@ def build_tags(
         fingerprint_tag(finding_fingerprint),
         occurrence_tag(occurrence_key),
         f"lesson-type:{identity.lesson_type}",
-        f"guardrail:{guardrail_status}",
     ]
     tags.extend(_optional_tags(finding=finding, repo=repo, language=language))
     tags.extend(
-        path_tag(path) for path in extract_lesson_file_paths(finding=finding, evidence=evidence)
+        tag
+        for path in extract_lesson_file_paths(finding=finding, evidence=evidence)
+        if (tag := path_tag(path))
     )
     if not identity.promotable:
         tags.append("non-promotable")

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -159,6 +160,12 @@ class ChatterboxTurboProvider(BaseTTSProvider):
         # _ensure_model concurrently cannot create separate locks.
         self._load_lock: asyncio.Lock = asyncio.Lock()
         self._synthesis_lock: asyncio.Lock = asyncio.Lock()
+        # Cancellation releases the async lock without stopping asyncio.to_thread.
+        # The worker-owned lock therefore remains held until model.generate returns.
+        self._inference_lock = threading.Lock()
+        self._active_token_cap: int | None = None
+        self._token_cap_decoder: Any | None = None
+        self._token_cap_inference: Any | None = None
         self._sample_rate = 24000  # Chatterbox outputs 24kHz
         self._reference_audio = Path(config.tts_reference_audio).expanduser()
         self._conditioning_ready = False
@@ -203,18 +210,15 @@ class ChatterboxTurboProvider(BaseTTSProvider):
             self._runtime_primed = True
             logger.info("Chatterbox Turbo synthesis runtime primed successfully")
 
-    def unload(self) -> None:
-        """Release the model to reclaim memory.
-
-        Safe to call from sync contexts: ``synthesize_stream`` captures the
-        model in a local variable, so clearing ``self._model`` cannot affect
-        an in-flight synthesis. Python attribute assignment is GIL-atomic.
-        """
-        if self._model is not None and hasattr(self._model, "conds"):
-            self._model.conds = None
-        self._model = None
-        self._conditioning_ready = False
-        self._runtime_primed = False
+    async def unload(self) -> None:
+        """Release the model after active loading and synthesis complete."""
+        async with self._load_lock:
+            async with self._synthesis_lock:
+                self._model = None
+                self._token_cap_decoder = None
+                self._token_cap_inference = None
+                self._conditioning_ready = False
+                self._runtime_primed = False
 
     def _prepare_reference_conditioning(self, model: Any) -> None:
         _prepare_turbo_conditionals(
@@ -247,38 +251,49 @@ class ChatterboxTurboProvider(BaseTTSProvider):
         *,
         max_generation_tokens: int | None = None,
     ) -> Any:
+        with self._inference_lock:
+            token_cap_enabled = self._install_token_cap(model)
+            token_cap = max_generation_tokens or self._config.tts_chatterbox_max_generation_tokens
+            if token_cap_enabled:
+                self._active_token_cap = token_cap
+            try:
+                return model.generate(
+                    text,
+                    temperature=self._config.tts_temperature,
+                )
+            finally:
+                self._active_token_cap = None
+
+    def _install_token_cap(self, model: Any) -> bool:
         turbo_decoder = getattr(model, "t3", None)
         if turbo_decoder is None:
             logger.warning("Chatterbox token cap disabled: model.t3 is missing")
-            return model.generate(
-                text,
-                temperature=self._config.tts_temperature,
-            )
+            return False
+
+        if (
+            turbo_decoder is self._token_cap_decoder
+            and turbo_decoder.inference_turbo is self._token_cap_inference
+        ):
+            return True
 
         original_inference_turbo = getattr(turbo_decoder, "inference_turbo", None)
-        token_cap = max_generation_tokens or self._config.tts_chatterbox_max_generation_tokens
-
         if not callable(original_inference_turbo):
             logger.warning(
                 "Chatterbox token cap disabled: model.t3.inference_turbo is not callable"
             )
-            return model.generate(
-                text,
-                temperature=self._config.tts_temperature,
-            )
+            return False
 
         def _capped_inference_turbo(*args: Any, **kwargs: Any) -> Any:
-            kwargs["max_gen_len"] = token_cap
+            if self._active_token_cap is not None:
+                kwargs["max_gen_len"] = self._active_token_cap
             return original_inference_turbo(*args, **kwargs)
 
+        # Install one stable wrapper for the model lifetime. Per-call replacement can
+        # nest wrappers when an awaiting coroutine is cancelled mid-inference.
         turbo_decoder.inference_turbo = _capped_inference_turbo
-        try:
-            return model.generate(
-                text,
-                temperature=self._config.tts_temperature,
-            )
-        finally:
-            turbo_decoder.inference_turbo = original_inference_turbo
+        self._token_cap_decoder = turbo_decoder
+        self._token_cap_inference = _capped_inference_turbo
+        return True
 
     def _prime_synthesis_runtime(self, model: Any) -> None:
         self._generate_with_token_cap(
@@ -308,7 +323,10 @@ class ChatterboxTurboProvider(BaseTTSProvider):
                     with suppress_perth_pkg_resources_warning():
                         from chatterbox.tts_turbo import ChatterboxTurboTTS
 
-                    return ChatterboxTurboTTS.from_pretrained(device=device)
+                    model = ChatterboxTurboTTS.from_pretrained(device=device)
+                    with self._inference_lock:
+                        self._install_token_cap(model)
+                    return model
 
                 self._model = await asyncio.to_thread(_load)
                 assert self._model is not None  # just loaded above
@@ -348,16 +366,22 @@ class ChatterboxTurboProvider(BaseTTSProvider):
         model = await self._ensure_model()
 
         try:
+
+            def _generate_pcm() -> bytes:
+                wav = self._generate_with_token_cap(model, text)
+
+                import numpy as np
+
+                samples = wav.squeeze().cpu().numpy()
+                pcm_int16 = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)
+                return bytes(pcm_int16.tobytes())
+
             async with self._synthesis_lock:
-                wav = await asyncio.to_thread(self._generate_with_token_cap, model, text)
+                pcm_bytes = await asyncio.to_thread(_generate_pcm)
                 self._runtime_primed = True
 
-            # Convert torch.Tensor to PCM int16 bytes
-            import numpy as np
-
-            samples = wav.squeeze().cpu().numpy()
-            pcm_int16 = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)
-            yield pcm_int16.tobytes(), self._sample_rate
+            if pcm_bytes:
+                yield pcm_bytes, self._sample_rate
 
         except asyncio.CancelledError:
             logger.debug("Chatterbox TTS synthesis cancelled")
