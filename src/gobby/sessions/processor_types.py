@@ -110,6 +110,10 @@ class ProcessorHost(Protocol):
         self, session_id: str, messages: list[ParsedMessage]
     ) -> list[ParsedMessage]: ...
 
+    async def _process_parsed_batch(
+        self, session_id: str, messages: list[ParsedMessage]
+    ) -> MessageStats: ...
+
     async def _persist_usage_events(
         self,
         session_id: str,

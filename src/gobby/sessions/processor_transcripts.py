@@ -6,12 +6,14 @@ import asyncio
 import json
 import logging
 import os
+from copy import deepcopy
 
 import aiofiles
 import psycopg
 
 from gobby.memory.digest import _can_replace_with_native_title
 from gobby.memory.title_heuristics import normalize_native_title
+from gobby.sessions.message_stats import MessageStats
 from gobby.sessions.observation_tracker import ObservationTracker
 from gobby.sessions.processor_types import ProcessorHost
 from gobby.sessions.transcript_normalization import normalize_transcript_records
@@ -77,6 +79,56 @@ class ProcessorTranscriptMixin:
 
         return [m for m in messages if m.content_type != "session_title"]
 
+    async def _process_parsed_batch(
+        self: ProcessorHost,
+        session_id: str,
+        messages: list[ParsedMessage],
+    ) -> MessageStats:
+        """Run fallible batch work and roll back processor-local state on failure."""
+        had_stats = session_id in self._stats
+        previous_stats = deepcopy(self._stats.get(session_id))
+        hydration_was_skipped = session_id in self._stats_hydration_skipped
+        had_render_state = session_id in self._render_states
+        previous_render_state = deepcopy(self._render_states.get(session_id))
+        try:
+            await self._persist_usage_events(session_id, messages)
+            await self._render_and_broadcast_messages(
+                session_id,
+                messages,
+                record_observations=True,
+            )
+            stats = self._accumulate_stats(session_id, messages)
+            if self.session_manager:
+                self.session_manager.touch(session_id)
+                self.session_manager.update_stats(
+                    session_id,
+                    message_count=stats.get("message_count", 0),
+                    turn_count=stats.get("turn_count", 0),
+                    tool_call_count=stats.get("tool_call_count", 0),
+                    last_assistant_content=stats.get("last_assistant_content"),
+                )
+                for msg in messages:
+                    if msg.model:
+                        self.session_manager.update_model(session_id, msg.model)
+                        break
+            return stats
+        except Exception:
+            if had_stats:
+                assert previous_stats is not None
+                self._stats[session_id] = previous_stats
+            else:
+                self._stats.pop(session_id, None)
+            if hydration_was_skipped:
+                self._stats_hydration_skipped.add(session_id)
+            else:
+                self._stats_hydration_skipped.discard(session_id)
+            if had_render_state:
+                assert previous_render_state is not None
+                self._render_states[session_id] = previous_render_state
+            else:
+                self._render_states.pop(session_id, None)
+            raise
+
     async def _process_session(self: ProcessorHost, session_id: str, transcript_path: str) -> None:
         """Process a single session."""
         if not await asyncio.to_thread(os.path.exists, transcript_path):
@@ -138,14 +190,15 @@ class ProcessorTranscriptMixin:
         latest_parsed_index = parsed_messages[-1].index if parsed_messages else last_index
         parsed_messages = self._extract_native_titles(session_id, parsed_messages)
 
-        self._byte_offsets[session_id] = valid_offset
         appender = self._index_appenders.get(session_id)
+        pending_appender = None
         appender_stat: os.stat_result | None = None
         should_persist_appender = False
         if appender is not None:
             try:
                 appender_stat = await asyncio.to_thread(os.stat, transcript_path)
-                appender.append_positioned_lines(
+                pending_appender = deepcopy(appender)
+                pending_appender.append_positioned_lines(
                     new_lines,
                     new_line_offsets,
                     mtime_ns=appender_stat.st_mtime_ns,
@@ -163,48 +216,38 @@ class ProcessorTranscriptMixin:
                 )
 
         if not parsed_messages:
+            if pending_appender is not None:
+                self._index_appenders[session_id] = pending_appender
             if latest_parsed_index > last_index:
                 self._message_indices[session_id] = latest_parsed_index
-            if appender is not None and appender_stat is not None and should_persist_appender:
+            self._byte_offsets[session_id] = valid_offset
+            if (
+                pending_appender is not None
+                and appender_stat is not None
+                and should_persist_appender
+            ):
                 self._persist_appender_snapshot(
                     session_id,
                     transcript_path,
-                    appender,
+                    pending_appender,
                     appender_stat,
                 )
             return
 
-        stats = self._accumulate_stats(session_id, parsed_messages)
-        if appender is not None:
-            appender.index.session_stats = stats
+        stats = await self._process_parsed_batch(session_id, parsed_messages)
+
+        if pending_appender is not None:
+            pending_appender.index.session_stats = stats
+            self._index_appenders[session_id] = pending_appender
             if appender_stat is not None and should_persist_appender:
                 self._persist_appender_snapshot(
                     session_id,
                     transcript_path,
-                    appender,
+                    pending_appender,
                     appender_stat,
                 )
 
-        if self.session_manager:
-            self.session_manager.touch(session_id)
-            self.session_manager.update_stats(
-                session_id,
-                message_count=stats.get("message_count", 0),
-                turn_count=stats.get("turn_count", 0),
-                tool_call_count=stats.get("tool_call_count", 0),
-                last_assistant_content=stats.get("last_assistant_content"),
-            )
-            for msg in parsed_messages:
-                if msg.model:
-                    self.session_manager.update_model(session_id, msg.model)
-                    break
-        await self._persist_usage_events(session_id, parsed_messages)
-
-        await self._render_and_broadcast_messages(
-            session_id,
-            parsed_messages,
-            record_observations=True,
-        )
+        self._byte_offsets[session_id] = valid_offset
         self._message_indices[session_id] = latest_parsed_index
 
         logger.debug(
@@ -290,28 +333,7 @@ class ProcessorTranscriptMixin:
             self._last_mtime[session_id] = current_mtime
             return
 
-        stats = self._accumulate_stats(session_id, new_messages)
-
-        if self.session_manager:
-            self.session_manager.touch(session_id)
-            self.session_manager.update_stats(
-                session_id,
-                message_count=stats.get("message_count", 0),
-                turn_count=stats.get("turn_count", 0),
-                tool_call_count=stats.get("tool_call_count", 0),
-                last_assistant_content=stats.get("last_assistant_content"),
-            )
-            for msg in new_messages:
-                if msg.model:
-                    self.session_manager.update_model(session_id, msg.model)
-                    break
-        await self._persist_usage_events(session_id, new_messages)
-
-        await self._render_and_broadcast_messages(
-            session_id,
-            new_messages,
-            record_observations=True,
-        )
+        await self._process_parsed_batch(session_id, new_messages)
         self._message_indices[session_id] = latest_new_index
         self._last_mtime[session_id] = current_mtime
 
@@ -331,7 +353,7 @@ class ProcessorTranscriptMixin:
         *,
         record_observations: bool = False,
     ) -> None:
-        render_state = self._render_states.get(session_id, RenderState())
+        render_state = deepcopy(self._render_states.get(session_id, RenderState()))
         source = messages[0].source if messages else None
         observation_tracker = (
             ObservationTracker(self._observation_store) if record_observations else None
@@ -343,8 +365,6 @@ class ProcessorTranscriptMixin:
             source=source,
             observation_tracker=observation_tracker,
         )
-        self._render_states[session_id] = render_state
-
         if self.websocket_server:
             for rendered_msg in completed:
                 await self._broadcast_rendered_session_message(
@@ -358,3 +378,4 @@ class ProcessorTranscriptMixin:
                     render_state.current_message.to_dict(),
                     complete=False,
                 )
+        self._render_states[session_id] = render_state
