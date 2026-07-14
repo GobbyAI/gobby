@@ -461,8 +461,20 @@ def extract_write_paths(tool_name: str, input_data: dict[str, Any]) -> list[str]
     return deduped
 
 
-def is_plan_file_path(path_value: str) -> bool:
-    return bool(_PLAN_FILE_PATTERN.match(path_value))
+def is_plan_file_path(path_value: str, *, project_path: str | None) -> bool:
+    """Return whether a path is an in-repo plan file."""
+    if not project_path or not _PLAN_FILE_PATTERN.match(path_value):
+        return False
+
+    repo_root = Path(project_path).resolve()
+    target = Path(path_value)
+    if not target.is_absolute():
+        target = repo_root / target
+    try:
+        resolved = target.resolve()
+    except OSError:
+        return False
+    return resolved.is_relative_to(repo_root)
 
 
 def find_out_of_repo_write_path(
@@ -477,7 +489,7 @@ def find_out_of_repo_write_path(
 
     repo_root = Path(project_path).resolve()
     for path_value in extract_write_paths(tool_name, input_data):
-        if is_plan_file_path(path_value):
+        if is_plan_file_path(path_value, project_path=project_path):
             continue
         target = Path(path_value)
         if not target.is_absolute():

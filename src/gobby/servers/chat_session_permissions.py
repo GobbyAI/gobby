@@ -17,7 +17,6 @@ from gobby.hooks.logging_utils import block_tool_name, log_structured_block
 from gobby.hooks.normalization import canonicalize_shell_tool_name, is_shell_tool
 from gobby.servers.chat_session_helpers import (
     _BASH_WRITE_PATTERNS,
-    _PLAN_FILE_PATTERN,
     _PLAN_MODE_BLOCKED_TOOLS,
     PendingApproval,
 )
@@ -28,6 +27,7 @@ from gobby.servers.tool_approvals import (
     find_out_of_repo_write_path,
     get_global_approval_rules,
     is_gcode_shell_command,
+    is_plan_file_path,
     is_tool_auto_allowed,
     load_project_approval_rules,
     normalize_approved_tool_keys,
@@ -236,10 +236,10 @@ class ChatSessionPermissionsMixin:
         # Plan mode: always block normal repo mutations.
         if self.chat_mode == "plan":
             if tool_name in _PLAN_MODE_BLOCKED_TOOLS:
-                # Allow writes to plan files (e.g. ~/.claude/plans/*.md)
+                # Allow writes to plan files inside the active repo.
                 if tool_name in ("Write", "Edit"):
                     file_path = input_data.get("file_path", "")
-                    if _PLAN_FILE_PATTERN.match(file_path):
+                    if is_plan_file_path(file_path, project_path=self.project_path):
                         self._plan_file_path = file_path
                         return PermissionResultAllow(updated_input=input_data)
                 return PermissionResultDeny(

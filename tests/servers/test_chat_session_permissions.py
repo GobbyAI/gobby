@@ -1,6 +1,7 @@
 """Tests for ChatSession permissions and tool approval logic."""
 
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -224,14 +225,47 @@ class TestCanUseTool:
         assert "Plan mode is active" in result.message
 
     @pytest.mark.asyncio
-    async def test_plan_mode_allows_plan_file_writes(self, session: ChatSession) -> None:
+    async def test_plan_mode_allows_plan_file_writes(
+        self, session: ChatSession, tmp_path: Path
+    ) -> None:
         """Write tools writing to plan files are allowed in plan mode."""
+        session.project_path = str(tmp_path)
         session.set_chat_mode("plan")
         result = await session._can_use_tool(
             "Write", {"file_path": ".gobby/plans/my_plan.md"}, ToolPermissionContext()
         )
         assert isinstance(result, PermissionResultAllow)
         assert session._plan_file_path == ".gobby/plans/my_plan.md"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("tool_name", "file_path"),
+        [
+            ("Write", ".claude/plans/external.md"),
+            ("Edit", "../../.gobby/plans/external.md"),
+        ],
+    )
+    async def test_plan_mode_blocks_external_plan_file_writes(
+        self,
+        session: ChatSession,
+        tmp_path: Path,
+        tool_name: str,
+        file_path: str,
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        session.project_path = str(repo)
+        candidate = str(tmp_path / file_path) if file_path.startswith(".claude") else file_path
+        session.set_chat_mode("plan")
+
+        result = await session._can_use_tool(
+            tool_name,
+            {"file_path": candidate},
+            ToolPermissionContext(),
+        )
+
+        assert isinstance(result, PermissionResultDeny)
+        assert "Plan mode is active" in result.message
 
     @pytest.mark.asyncio
     async def test_plan_mode_blocks_dangerous_bash(self, session: ChatSession) -> None:
