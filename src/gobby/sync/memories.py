@@ -464,7 +464,7 @@ class MemoryBackupManager:
 
         for data in self._deduplicate_records_by_id(parsed_records):
             content = data.get("content", "")
-            if self.memory_manager.content_exists(content):
+            if not data.get("id") and self.memory_manager.content_exists(content):
                 skipped += 1
                 continue
 

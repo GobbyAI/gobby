@@ -112,7 +112,10 @@ async def test_import_from_files(sync_manager, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_import_from_files_parses_timestamp_fields(sync_manager, tmp_path) -> None:
+async def test_import_from_files_preserves_sync_metadata_for_existing_content(
+    sync_manager, tmp_path
+) -> None:
+    sync_manager.memory_manager.content_exists.return_value = True
     mem_file = tmp_path / "memories.jsonl"
     sync_manager.export_path = mem_file
     mem_file.write_text(
@@ -141,6 +144,7 @@ async def test_import_from_files_parses_timestamp_fields(sync_manager, tmp_path)
     assert call_args["updated_at"] == datetime(2023, 1, 2, 0, 30, tzinfo=UTC)
     assert call_args["source_session_id"] == "session-1"
     assert call_args["project_id"] == "project-1"
+    sync_manager.memory_manager.content_exists.assert_not_called()
 
 
 @pytest.mark.asyncio
