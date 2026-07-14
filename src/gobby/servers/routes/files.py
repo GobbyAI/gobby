@@ -7,6 +7,7 @@ Provides file tree browsing, reading, and image serving endpoints.
 import asyncio
 import logging
 import mimetypes
+import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -141,7 +142,7 @@ async def _get_git_tracked_files(project_path: str) -> set[str] | None:
                 if line:
                     files.add(line)
         return files
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return None
 
 
@@ -330,7 +331,13 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(400, "Not an image file")
 
         mime_type = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
-        return FileResponse(target, media_type=mime_type)
+        headers = None
+        if extension == ".svg":
+            headers = {
+                "Content-Security-Policy": "sandbox; default-src 'none'",
+                "X-Content-Type-Options": "nosniff",
+            }
+        return FileResponse(target, media_type=mime_type, headers=headers)
 
     class WriteFileRequest(BaseModel):
         project_id: str
@@ -415,7 +422,7 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
                     if file_path:
                         files[file_path] = status_code
                 result["files"] = files
-        except Exception:
+        except (OSError, subprocess.SubprocessError):
             logger.debug("Failed to get git status", exc_info=True)
 
         return result
