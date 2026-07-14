@@ -47,7 +47,7 @@ export function useDialogFocus({ ref, isOpen, onClose, trap = true }: UseDialogF
         .filter(isFocusableVisible)
 
     const initial = node.querySelector<HTMLElement>('[autofocus]') ?? focusables()[0] ?? node
-    requestAnimationFrame(() => {
+    const initialFocusFrame = requestAnimationFrame(() => {
       if (!node.contains(document.activeElement)) initial.focus()
     })
 
@@ -78,6 +78,7 @@ export function useDialogFocus({ ref, isOpen, onClose, trap = true }: UseDialogF
 
     node.addEventListener('keydown', handleKey)
     return () => {
+      cancelAnimationFrame(initialFocusFrame)
       node.removeEventListener('keydown', handleKey)
       if (hadTabIndex && previousTabIndex !== null) {
         node.setAttribute('tabindex', previousTabIndex)
