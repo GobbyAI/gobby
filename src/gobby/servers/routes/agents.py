@@ -37,6 +37,24 @@ def _bundled_definition_path(agents_path: Path, name: str) -> Path:
     return yaml_path
 
 
+def _reconcile_cancelled_agent_run(manager: Any, run_id: str) -> None:
+    """Persist cancellation after a process kill, retrying a transient manager failure."""
+    try:
+        cancelled = manager.cancel(run_id)
+    except Exception:
+        logger.warning(
+            "Failed to cancel agent run '%s'; retrying reconciliation",
+            run_id,
+            exc_info=True,
+        )
+        cancelled = manager.cancel(run_id)
+
+    if cancelled is None:
+        current = manager.get(run_id)
+        if current is not None and current.status in ("running", "pending"):
+            raise RuntimeError(f"Agent run '{run_id}' remained active after cancellation")
+
+
 class CreateAgentDefinitionRequest(BaseModel):
     """Request body for creating an agent definition in the DB."""
 
@@ -711,10 +729,10 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                     detail=f"Agent run '{run_id}' is not active (status={run.status})",
                 )
 
-            result = await kill_agent(run, db, signal_name="TERM")
-
-            # Update DB status
-            manager.cancel(run_id)
+            try:
+                result = await kill_agent(run, db, signal_name="TERM")
+            finally:
+                _reconcile_cancelled_agent_run(manager, run_id)
 
             return {"status": "success", "result": result}
         except HTTPException:
