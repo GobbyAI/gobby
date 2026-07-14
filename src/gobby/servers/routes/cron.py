@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from gobby.scheduler.scheduler import CronRunRejected
 from gobby.storage.cron import SystemRowProtected, is_removed_automation_job
+from gobby.storage.projects import LocalProjectManager
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -24,7 +25,7 @@ class CreateCronJobRequest(BaseModel):
     """Request body for POST /api/cron/jobs."""
 
     name: str
-    project_id: str = ""
+    project_id: str | None = None
     description: str | None = None
     schedule_type: Literal["cron", "interval", "once"] = "cron"
     cron_expr: str | None = None
@@ -110,6 +111,22 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=503, detail="Cron storage not available")
         return storage
 
+    async def _resolve_project_id(project_id: str | None) -> str:
+        """Resolve and validate the project used for a new cron job."""
+        try:
+            resolved_project_id = server.resolve_project_id(project_id, cwd=None)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        project_manager = LocalProjectManager(server.services.database)
+        project = await server.run_db(project_manager.get, resolved_project_id)
+        if project is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Project not found: {resolved_project_id}",
+            )
+        return resolved_project_id
+
     @router.get("/jobs")
     async def list_jobs(
         project_id: str | None = Query(None),
@@ -139,16 +156,12 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
     @router.post("/jobs")
     async def create_job(request: CreateCronJobRequest) -> dict[str, Any]:
         """Create a new cron job."""
-        from gobby.storage.projects import PERSONAL_PROJECT_ID
-
         try:
             storage = _get_storage()
-            # cron_jobs.project_id is a NOT NULL uuid column; fall back to the
-            # personal project (same as the MCP create_cron_job tool) instead of
-            # binding "" from the request default.
+            project_id = await _resolve_project_id(request.project_id)
             job = await server.run_db(
                 storage.create_job,
-                project_id=request.project_id or PERSONAL_PROJECT_ID,
+                project_id=project_id,
                 name=request.name,
                 schedule_type=request.schedule_type,
                 action_type=request.action_type,
