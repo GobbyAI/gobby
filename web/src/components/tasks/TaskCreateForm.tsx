@@ -61,6 +61,7 @@ const INPUT_CLS =
   `rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2.5 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.85)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] ${inputFocusCls} pointer-coarse:min-h-11`
 const TEXTAREA_CLS =
   `min-h-12 resize-y rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2.5 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.85)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] ${inputFocusCls}`
+const ERROR_CLS = 'text-[length:calc(var(--font-size-base)*0.8)] text-[var(--color-error)]'
 
 const ACTIONS_CLS = 'flex justify-end gap-2 border-t border-[var(--border)] pt-2'
 const CANCEL_BTN_CLS =
@@ -79,6 +80,7 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
   const [labelsInput, setLabelsInput] = useState('')
   const [validationCriteria, setValidationCriteria] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const handleClose = useCallback(() => {
     setTitle('')
@@ -89,6 +91,7 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
     setParentTaskId('')
     setLabelsInput('')
     setValidationCriteria('')
+    setError(null)
     onClose()
   }, [onClose])
 
@@ -104,6 +107,7 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
       setParentTaskId(defaults?.parentTaskId || '')
       setLabelsInput(defaults?.labels?.join(', ') || '')
       setValidationCriteria(defaults?.validationCriteria || '')
+      setError(null)
     }
   }, [isOpen, defaults])
 
@@ -112,6 +116,7 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
     if (!title.trim()) return
 
     setSubmitting(true)
+    setError(null)
     const params: CreateTaskParams = {
       title: title.trim(),
       task_type: taskType,
@@ -131,6 +136,7 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
       handleClose()
     } catch (err) {
       console.error('Failed to create task:', err)
+      setError(err instanceof Error ? err.message : 'Failed to create task')
     } finally {
       setSubmitting(false)
     }
@@ -266,6 +272,8 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
               rows={2}
             />
           </label>
+
+          {error && <p className={ERROR_CLS} role="alert">{error}</p>}
 
           <div className={ACTIONS_CLS}>
             <button

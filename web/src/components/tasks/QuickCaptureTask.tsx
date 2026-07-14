@@ -23,6 +23,7 @@ const TYPE_BTN_ACTIVE_CLS =
   'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-foreground)] hover:border-[var(--accent)] hover:text-[var(--accent-foreground)]'
 const SUBMIT_CLS =
   'cursor-pointer rounded-md border-none bg-[var(--accent)] px-4 py-1.5 text-[length:var(--text-md)] font-medium text-[var(--accent-foreground)] transition-opacity duration-150 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50'
+const ERROR_CLS = 'text-[length:var(--text-sm)] text-[var(--color-error)]'
 const HINT_CLS = 'text-center text-[length:var(--text-xs)] text-[var(--text-muted)]'
 const KBD_CLS =
   'inline-block rounded-[3px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-[5px] py-[1px] font-[inherit] text-[length:var(--text-2xs)]'
@@ -35,6 +36,7 @@ export function QuickCaptureTask({ isOpen, onClose }: QuickCaptureTaskProps) {
   const [title, setTitle] = useState('')
   const [taskType, setTaskType] = useState('task')
   const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
   useDialogFocus({ ref: dialogRef, isOpen, onClose })
@@ -43,6 +45,7 @@ export function QuickCaptureTask({ isOpen, onClose }: QuickCaptureTaskProps) {
     if (isOpen) {
       setTitle('')
       setTaskType('task')
+      setError(null)
       requestAnimationFrame(() => inputRef.current?.focus())
     }
   }, [isOpen])
@@ -52,6 +55,7 @@ export function QuickCaptureTask({ isOpen, onClose }: QuickCaptureTaskProps) {
     if (!title.trim() || submitting) return
 
     setSubmitting(true)
+    setError(null)
     try {
       const baseUrl = getBaseUrl()
       const response = await fetch(`${baseUrl}/api/tasks`, {
@@ -65,11 +69,13 @@ export function QuickCaptureTask({ isOpen, onClose }: QuickCaptureTaskProps) {
       })
       if (!response.ok) {
         console.error('Failed to create task:', response.status)
+        setError(`Failed to create task (${response.status})`)
         setSubmitting(false)
         return
       }
     } catch (err) {
       console.error('Failed to create task:', err)
+      setError(err instanceof Error ? err.message : 'Failed to create task')
       setSubmitting(false)
       return
     }
@@ -121,6 +127,7 @@ export function QuickCaptureTask({ isOpen, onClose }: QuickCaptureTaskProps) {
               {submitting ? 'Creating...' : 'Create'}
             </button>
           </div>
+          {error && <p className={ERROR_CLS} role="alert">{error}</p>}
           <div className={HINT_CLS}>
             <kbd className={KBD_CLS}>Enter</kbd> to create &middot; <kbd className={KBD_CLS}>Esc</kbd> to cancel
           </div>
