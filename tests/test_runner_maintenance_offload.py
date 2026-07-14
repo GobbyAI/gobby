@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -141,8 +141,9 @@ async def test_approval_expiry_loop_uses_bounded_db_runner() -> None:
 @pytest.mark.asyncio
 async def test_comms_cleanup_uses_db_runner_and_thread_with_bounds() -> None:
     store = MagicMock()
-    store.delete_messages_before.return_value = 3
+    store.delete_messages_before.return_value = (3, ["/tmp/retained-attachment"])
     attachment_manager = MagicMock()
+    attachment_manager.delete_paths.return_value = 1
     attachment_manager.cleanup_old.return_value = 2
     run_db = RecordingDbRunner()
     shutdown = iter([False, True])
@@ -167,8 +168,11 @@ async def test_comms_cleanup_uses_db_runner_and_thread_with_bounds() -> None:
 
     assert run_db.calls[0][0] == store.delete_messages_before
     assert run_db.calls[0][2]["limit"] == _COMMS_CLEANUP_BATCH_LIMIT
-    to_thread.assert_awaited_once_with(
-        attachment_manager.cleanup_old,
-        days=30,
-        limit=_COMMS_CLEANUP_BATCH_LIMIT,
-    )
+    assert to_thread.await_args_list == [
+        call(attachment_manager.delete_paths, ["/tmp/retained-attachment"]),
+        call(
+            attachment_manager.cleanup_old,
+            days=30,
+            limit=_COMMS_CLEANUP_BATCH_LIMIT,
+        ),
+    ]

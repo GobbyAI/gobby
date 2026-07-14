@@ -120,10 +120,12 @@ async def test_comms_cleanup_runs_before_24_hours_then_waits_for_normal_interval
     sleep = CancelAtInterval()
     work_times: list[float] = []
     store = MagicMock()
-    store.delete_messages_before.side_effect = (
-        lambda *_args, **_kwargs: work_times.append(sleep.elapsed) or 0
+    store.delete_messages_before.side_effect = lambda *_args, **_kwargs: (
+        work_times.append(sleep.elapsed) or 0,
+        [],
     )
     attachment_manager = MagicMock()
+    attachment_manager.delete_paths.return_value = 0
     attachment_manager.cleanup_old.return_value = 0
 
     async def run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:

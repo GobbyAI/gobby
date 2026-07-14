@@ -6,7 +6,7 @@ import json
 import logging
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.communications.models import (
     ChannelConfig,
@@ -337,23 +337,42 @@ class LocalCommunicationsStore:
         rows = self.db.fetchall(sql, tuple(params))
         return [CommsMessage.from_row(dict(row)) for row in rows]
 
-    def delete_messages_before(self, cutoff: datetime, *, limit: int = 500) -> int:
-        """Delete messages created before the given cutoff date."""
+    def delete_messages_before(
+        self, cutoff: datetime, *, limit: int = 500
+    ) -> tuple[int, list[str]]:
+        """Delete old messages and return their count and attachment paths."""
         cutoff_value = to_aware_utc(cutoff)
         with self.db.transaction() as conn:
-            cursor = conn.execute(
+            row = conn.execute(
                 """
-DELETE FROM comms_messages
-WHERE id IN (
+WITH messages_to_delete AS MATERIALIZED (
     SELECT id FROM comms_messages
     WHERE created_at < %s
     ORDER BY created_at ASC
     LIMIT %s
+), attachment_paths AS MATERIALIZED (
+    SELECT local_path
+    FROM comms_attachments
+    WHERE message_id IN (SELECT id FROM messages_to_delete)
+      AND local_path IS NOT NULL
+), deleted_messages AS (
+    DELETE FROM comms_messages
+    WHERE id IN (SELECT id FROM messages_to_delete)
+    RETURNING id
 )
+SELECT
+    (SELECT COUNT(*) FROM deleted_messages) AS deleted_count,
+    COALESCE(
+        (SELECT ARRAY_AGG(local_path) FROM attachment_paths),
+        ARRAY[]::TEXT[]
+    ) AS local_paths
 """,
                 (cutoff_value, limit),
-            )
-            return cursor.rowcount
+            ).fetchone()
+            if row is None:
+                return 0, []
+            local_paths = cast(list[str], json.loads(row["local_paths"]))
+            return int(row["deleted_count"]), local_paths
 
     def update_message_status(self, message_id: str, status: str, error: str | None = None) -> None:
         """Update a message's status."""
