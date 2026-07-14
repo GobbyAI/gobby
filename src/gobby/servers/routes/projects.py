@@ -168,7 +168,7 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
         if not project or project.deleted_at:
             raise HTTPException(404, "Project not found")
 
-        fields = body.model_dump(exclude_none=True)
+        fields = body.model_dump(exclude_unset=True)
         approval_rules = fields.pop("approval_rules", None)
         validation_detection = fields.pop("validation_detection", None)
         original_repo_path = project.repo_path

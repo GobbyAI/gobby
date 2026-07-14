@@ -252,6 +252,23 @@ class TestProjectRoutes:
         data = response.json()
         assert data["github_url"] == "https://github.com/test/updated"
 
+    def test_update_project_clears_explicit_null_and_preserves_unset_fields(
+        self, client: TestClient, real_project: dict
+    ) -> None:
+        """Explicit null clears a field while omitted fields remain unchanged."""
+        response = client.put(
+            f"/api/projects/{real_project['id']}",
+            json={"github_url": None},
+        )
+        assert response.status_code == 200
+        assert response.json()["github_url"] is None
+
+        response = client.get(f"/api/projects/{real_project['id']}")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["github_url"] is None
+        assert data["name"] == "my-project"
+
     def test_update_project_repo_path(self, client: TestClient, real_project: dict) -> None:
         """Update project repo_path."""
         response = client.put(
