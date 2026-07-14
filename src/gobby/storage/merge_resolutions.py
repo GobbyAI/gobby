@@ -192,7 +192,8 @@ class MergeResolutionManager:
             The created MergeResolution
         """
         now = utc_now()
-        resolution_id = str(uuid.uuid5(_NS_MERGE_RESOLUTIONS, worktree_id + source_branch))
+        resolution_identity = "\0".join((worktree_id, source_branch, target_branch))
+        resolution_id = str(uuid.uuid5(_NS_MERGE_RESOLUTIONS, resolution_identity))
 
         with self.db.transaction() as conn:
             conn.execute(
