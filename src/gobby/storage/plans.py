@@ -275,7 +275,7 @@ class LocalPlanManager:
                     )
             raise
 
-        self._remove_coverage_manifest(record)
+        self._remove_coverage_artifacts(record)
         return self.get_plan(plan_id, project_id=record.project_id)
 
     def delete_plan(self, plan_id: str, *, project_id: str | None = None) -> bool:
@@ -283,7 +283,7 @@ class LocalPlanManager:
         with self.db.transaction() as conn:
             cursor = conn.execute("DELETE FROM plans WHERE id = %s", (record.id,))
             deleted_count = cursor.rowcount
-        self._remove_coverage_manifest(record)
+        self._remove_coverage_artifacts(record)
         return deleted_count > 0
 
     def _find_plan(self, plan_id_or_ref: str, *, project_id: str | None) -> Any | None:
@@ -319,16 +319,19 @@ class LocalPlanManager:
         except ValueError as exc:
             raise ValueError(f"plan file must be inside project root: {absolute}") from exc
 
-    def _remove_coverage_manifest(self, record: PlanRecord) -> None:
+    def _remove_coverage_artifacts(self, record: PlanRecord) -> None:
         if not _plan_carries_coverage_manifest(record.plan_kind):
             return
+        project_root = self._project_root(record.project_id)
         path = coverage_manifest_path(
-            self._project_root(record.project_id),
+            project_root,
             project_id=record.project_id,
             root_task_ref=record.root_task_ref,
             plan_id=record.plan_id,
         )
         path.unlink(missing_ok=True)
+        ledger_path = project_root / ".gobby" / "plans" / f"{record.plan_id}.coverage-ledger.yaml"
+        ledger_path.unlink(missing_ok=True)
 
 
 def _normalize_ref(ref: str) -> str:

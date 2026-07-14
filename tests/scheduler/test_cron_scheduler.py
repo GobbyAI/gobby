@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
@@ -259,6 +261,117 @@ async def test_check_due_jobs_dispatches(
 
 
 @pytest.mark.asyncio
+async def test_check_due_jobs_keeps_loop_responsive_during_db_latency(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+    config: CronConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A blocked heartbeat query runs on a worker while the loop keeps ticking."""
+    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    loop = asyncio.get_running_loop()
+    started: asyncio.Future[None] = loop.create_future()
+    release = threading.Event()
+    blocked_at: list[float] = []
+
+    def slow_cleanup() -> int:
+        blocked_at.append(time.monotonic())
+        loop.call_soon_threadsafe(started.set_result, None)
+        failsafe = threading.Timer(0.5, release.set)
+        failsafe.start()
+        try:
+            release.wait()
+        finally:
+            failsafe.cancel()
+        return 0
+
+    monkeypatch.setattr(cron_storage, "delete_removed_automation_jobs", slow_cleanup)
+    heartbeat = asyncio.create_task(scheduler._check_due_jobs())
+    try:
+        await asyncio.wait_for(started, timeout=1)
+        assert time.monotonic() - blocked_at[0] < 0.2
+        assert not heartbeat.done()
+    finally:
+        release.set()
+    await asyncio.wait_for(heartbeat, timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_bookkeeping_failure_rolls_back_pending_run_on_repeated_heartbeats(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+    config: CronConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed schedule advance never leaves or accumulates pending rows."""
+    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Bookkeeping failure",
+        schedule_type="cron",
+        action_type="handler",
+        action_config={"handler": "test"},
+        cron_expr="0 * * * *",
+    )
+    due_at = datetime.now(UTC) - timedelta(minutes=5)
+    cron_storage.update_job(job.id, next_run_at=due_at)
+    bookkeeping = MagicMock(side_effect=RuntimeError("bookkeeping unavailable"))
+    monkeypatch.setattr(scheduler, "_update_job_bookkeeping", bookkeeping)
+
+    await scheduler._check_due_jobs()
+    await scheduler._check_due_jobs()
+
+    persisted_job = cron_storage.get_job(job.id)
+    assert bookkeeping.call_count == 2
+    assert persisted_job is not None
+    assert persisted_job.next_run_at == due_at
+    assert cron_storage.list_runs(job.id, limit=10) == []
+    assert cron_storage.count_running() == 0
+    mock_executor.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_due_one_shot_dispatches_once_and_is_disabled(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+    config: CronConfig,
+) -> None:
+    """A consumed one-shot clears its schedule without violating job invariants."""
+    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    future = datetime.now(UTC) + timedelta(hours=1)
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="One shot",
+        schedule_type="once",
+        action_type="handler",
+        action_config={"handler": "test"},
+        run_at=future.isoformat(),
+    )
+    due_at = datetime.now(UTC) - timedelta(minutes=1)
+    cron_storage.update_job(
+        job.id,
+        run_at=due_at.isoformat(),
+        next_run_at=due_at.isoformat(),
+    )
+
+    await scheduler._check_due_jobs()
+    await wait_for_async_condition(
+        lambda: mock_executor.execute.await_count == 1,
+        description="one-shot cron dispatch",
+    )
+    await scheduler._check_due_jobs()
+
+    persisted_job = cron_storage.get_job(job.id)
+    runs = cron_storage.list_runs(job.id, limit=10)
+    assert persisted_job is not None
+    assert persisted_job.enabled is False
+    assert persisted_job.next_run_at is None
+    assert len(runs) == 1
+    assert runs[0].status == "completed"
+    mock_executor.execute.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_respects_max_concurrent(
     cron_storage: CronJobStorage,
     mock_executor: CronExecutor,
@@ -413,11 +526,11 @@ async def test_due_jobs_skip_removed_automation_jobs_returned_after_cleanup(
 
 
 @pytest.mark.asyncio
-async def test_old_running_runs_are_not_failed_by_scheduler_loop(
+async def test_stale_tracked_run_is_failed_and_slot_reused(
     cron_storage: CronJobStorage,
     mock_executor: CronExecutor,
 ) -> None:
-    """Old running rows are left active during the normal scheduler loop."""
+    """The scheduler heartbeat reclaims stale runs even when locally tracked."""
     config = CronConfig(
         check_interval_seconds=60,
         max_concurrent_jobs=1,
@@ -435,8 +548,7 @@ async def test_old_running_runs_are_not_failed_by_scheduler_loop(
     stale_run = cron_storage.create_run(stale_job.id)
     old = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
     cron_storage.update_run(stale_run.id, status="running", started_at=old)
-    # A tracked run must never be failed by the loop, no matter how old:
-    # liveness, not age, decides (long handlers can legitimately run for hours)
+    # Simulate a run that is still tracked locally but has exceeded its deadline.
     scheduler._active_run_ids.add(stale_run.id)
     due_job = cron_storage.create_job(
         project_id=PROJECT_ID,
@@ -449,12 +561,17 @@ async def test_old_running_runs_are_not_failed_by_scheduler_loop(
     cron_storage.update_job(due_job.id, next_run_at=old)
 
     await scheduler._check_due_jobs()
+    await wait_for_async_condition(
+        lambda: mock_executor.execute.await_count >= 1,
+        description="dispatch after stale cron run sweep",
+    )
 
     refreshed_stale_run = cron_storage.get_run(stale_run.id)
     assert refreshed_stale_run is not None
-    assert refreshed_stale_run.status == "running"
-    assert refreshed_stale_run.error is None
-    mock_executor.execute.assert_not_awaited()
+    assert refreshed_stale_run.status == "failed"
+    assert refreshed_stale_run.error == "Cron run exceeded running timeout (60s)"
+    assert refreshed_stale_run.completed_at is not None
+    mock_executor.execute.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -753,9 +870,9 @@ async def test_run_now_reaches_terminal_state(
 async def test_run_now_returns_none_when_job_already_running(
     cron_storage: CronJobStorage,
     mock_executor: CronExecutor,
-    config: CronConfig,
 ) -> None:
     """Manual runs do not create a row when the same job is already running."""
+    config = CronConfig(check_interval_seconds=60, max_concurrent_jobs=1)
     scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
     job = cron_storage.create_job(
         project_id=PROJECT_ID,
@@ -776,6 +893,166 @@ async def test_run_now_returns_none_when_job_already_running(
     assert result is None
     assert len(cron_storage.list_runs(job.id, limit=10)) == 1
     mock_executor.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_run_now_racing_heartbeat_admits_exactly_one_run(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+    config: CronConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The manual and scheduled paths share one atomic per-job admission guard."""
+    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Manual heartbeat race",
+        schedule_type="cron",
+        action_type="handler",
+        action_config={"handler": "test"},
+        cron_expr="0 * * * *",
+    )
+    due_at = datetime.now(UTC) - timedelta(minutes=1)
+    cron_storage.update_job(job.id, next_run_at=due_at)
+
+    admission_barrier = threading.Barrier(2)
+    release_execution = asyncio.Event()
+    create_scheduled_run = scheduler._create_scheduled_run
+    create_manual_run = cron_storage.create_run_if_admitted
+
+    async def hold_admitted_run(_job: CronJob, run: CronRun) -> CronRun:
+        await release_execution.wait()
+        updated = cron_storage.update_run(
+            run.id,
+            status="completed",
+            completed_at=datetime.now(UTC),
+        )
+        return updated or run
+
+    def racing_scheduled_create(job: CronJob) -> CronRun | None:
+        admission_barrier.wait(timeout=2)
+        return create_scheduled_run(job)
+
+    def racing_manual_create(
+        cron_job_id: str,
+        *,
+        max_concurrent_jobs: int,
+        scheduler_owner: str | None = None,
+    ) -> tuple[CronRun | None, int, bool]:
+        admission_barrier.wait(timeout=2)
+        return create_manual_run(
+            cron_job_id,
+            max_concurrent_jobs=max_concurrent_jobs,
+            scheduler_owner=scheduler_owner,
+        )
+
+    monkeypatch.setattr(scheduler, "_create_scheduled_run", racing_scheduled_create)
+    monkeypatch.setattr(cron_storage, "create_run_if_admitted", racing_manual_create)
+    mock_executor.execute.side_effect = hold_admitted_run
+
+    try:
+        _, manual_run = await asyncio.gather(
+            scheduler._check_due_jobs(),
+            scheduler.run_now(job.id),
+        )
+        await wait_for_async_condition(
+            lambda: mock_executor.execute.await_count == 1,
+            description="single cron execution after admission race",
+        )
+
+        runs = cron_storage.list_runs(job.id, limit=10)
+        assert len(runs) == 1
+        if manual_run is not None:
+            assert manual_run.id == runs[0].id
+        mock_executor.execute.assert_awaited_once()
+    finally:
+        release_execution.set()
+        await asyncio.gather(*scheduler._active_tasks)
+
+
+@pytest.mark.asyncio
+async def test_run_now_racing_heartbeat_respects_global_capacity(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Manual and scheduled admission share the global capacity guard."""
+    scheduler = CronScheduler(
+        storage=cron_storage,
+        executor=mock_executor,
+        config=CronConfig(check_interval_seconds=60, max_concurrent_jobs=1),
+    )
+    scheduled_job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Scheduled capacity race",
+        schedule_type="cron",
+        action_type="handler",
+        action_config={"handler": "test"},
+        cron_expr="0 * * * *",
+    )
+    manual_job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Manual capacity race",
+        schedule_type="cron",
+        action_type="handler",
+        action_config={"handler": "test"},
+        cron_expr="0 * * * *",
+    )
+    cron_storage.update_job(
+        scheduled_job.id,
+        next_run_at=datetime.now(UTC) - timedelta(minutes=1),
+    )
+
+    scheduled_admission_ready = threading.Event()
+    release_scheduled_admission = threading.Event()
+    release_execution = asyncio.Event()
+    create_scheduled_run = scheduler._create_scheduled_run
+
+    def delayed_scheduled_create(job: CronJob) -> CronRun | None:
+        scheduled_admission_ready.set()
+        if not release_scheduled_admission.wait(timeout=2):
+            raise TimeoutError("manual admission did not complete")
+        return create_scheduled_run(job)
+
+    async def hold_admitted_run(_job: CronJob, run: CronRun) -> CronRun:
+        await release_execution.wait()
+        updated = cron_storage.update_run(
+            run.id,
+            status="completed",
+            completed_at=datetime.now(UTC),
+        )
+        return updated or run
+
+    monkeypatch.setattr(scheduler, "_create_scheduled_run", delayed_scheduled_create)
+    mock_executor.execute.side_effect = hold_admitted_run
+
+    heartbeat = asyncio.create_task(scheduler._check_due_jobs())
+    try:
+        ready = await asyncio.to_thread(scheduled_admission_ready.wait, 2)
+        assert ready, "heartbeat did not reach scheduled admission"
+
+        manual_run = await scheduler.run_now(manual_job.id)
+        assert manual_run is not None
+        release_scheduled_admission.set()
+        await heartbeat
+        await wait_for_async_condition(
+            lambda: mock_executor.execute.await_count == 1,
+            description="single cron execution at global capacity",
+        )
+
+        runs = cron_storage.list_runs(scheduled_job.id, limit=10) + cron_storage.list_runs(
+            manual_job.id,
+            limit=10,
+        )
+        assert len(runs) == 1
+        assert runs[0].id == manual_run.id
+        assert cron_storage.count_running() == 1
+        mock_executor.execute.assert_awaited_once()
+    finally:
+        release_scheduled_admission.set()
+        release_execution.set()
+        await heartbeat
+        await asyncio.gather(*scheduler._active_tasks)
 
 
 @pytest.mark.asyncio

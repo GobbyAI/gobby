@@ -142,17 +142,20 @@ pub fn sanitize_pg_search_query(query: &str) -> String {
         })
         .collect::<String>();
 
-    let mut escaped_brackets = String::with_capacity(cleaned.len());
+    let chars = cleaned.chars().collect::<Vec<_>>();
+    let literal_parentheses = literal_parenthesis_mask(&chars);
+    let mut escaped_literals = String::with_capacity(cleaned.len());
     let mut backslash_run = 0;
-    for ch in cleaned.chars() {
-        if matches!(ch, '[' | ']') && backslash_run % 2 == 0 {
-            escaped_brackets.push('\\');
+    for (index, ch) in chars.into_iter().enumerate() {
+        let needs_escape = matches!(ch, '[' | ']') || literal_parentheses[index];
+        if needs_escape && backslash_run % 2 == 0 {
+            escaped_literals.push('\\');
         }
-        escaped_brackets.push(ch);
+        escaped_literals.push(ch);
         backslash_run = if ch == '\\' { backslash_run + 1 } else { 0 };
     }
 
-    neutralize_boolean_operators(&escaped_brackets)
+    neutralize_boolean_operators(&escaped_literals)
         .split_whitespace()
         .map(|token| {
             if token.starts_with('-') {
@@ -206,6 +209,51 @@ fn neutralize_boolean_operators(query: &str) -> String {
     sanitized
 }
 
+fn literal_parenthesis_mask(chars: &[char]) -> Vec<bool> {
+    // pg_search grouping requires balanced, non-empty parentheses. Code-like calls and
+    // unmatched delimiters are literal search text; quoted phrases are already literal.
+    let mut mask = vec![false; chars.len()];
+    let mut open_parentheses = Vec::new();
+    let mut backslash_run = 0;
+    let mut in_quotes = false;
+
+    for (index, ch) in chars.iter().copied().enumerate() {
+        let is_escaped = backslash_run % 2 == 1;
+        if ch == '"' && !is_escaped {
+            in_quotes = !in_quotes;
+        } else if !in_quotes && !is_escaped {
+            match ch {
+                '(' => open_parentheses.push(index),
+                ')' => {
+                    let Some(open_index) = open_parentheses.pop() else {
+                        mask[index] = true;
+                        backslash_run = 0;
+                        continue;
+                    };
+                    let follows_identifier = open_index
+                        .checked_sub(1)
+                        .and_then(|previous| chars.get(previous))
+                        .is_some_and(|previous| previous.is_alphanumeric() || *previous == '_');
+                    let is_empty = chars[open_index + 1..index]
+                        .iter()
+                        .all(|inner| inner.is_whitespace());
+                    if follows_identifier || is_empty {
+                        mask[open_index] = true;
+                        mask[index] = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        backslash_run = if ch == '\\' { backslash_run + 1 } else { 0 };
+    }
+
+    for open_index in open_parentheses {
+        mask[open_index] = true;
+    }
+    mask
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,7 +296,26 @@ mod tests {
             sanitize_pg_search_query("alpha\tbeta\u{0}gamma"),
             "alpha betagamma"
         );
-        assert_eq!(sanitize_pg_search_query(":: + ()"), ":: + ()");
+        assert_eq!(
+            sanitize_pg_search_query(":: + compute (fence)"),
+            ":: + compute (fence)"
+        );
+        assert_eq!(
+            sanitize_pg_search_query("_compute_fence_mask()"),
+            r"_compute_fence_mask\(\)"
+        );
+        assert_eq!(
+            sanitize_pg_search_query(r"_compute_fence_mask\(\)"),
+            r"_compute_fence_mask\(\)"
+        );
+        assert_eq!(
+            sanitize_pg_search_query(r#""_compute_fence_mask()""#),
+            r#""_compute_fence_mask()""#
+        );
+        assert_eq!(
+            sanitize_pg_search_query("compute (fence"),
+            r"compute \(fence"
+        );
         assert_eq!(
             sanitize_pg_search_query("claude-opus-4-8[1m]"),
             r"claude-opus-4-8\[1m\]"

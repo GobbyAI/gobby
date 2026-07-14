@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+from typing import Any
 
 import pytest
 
@@ -27,7 +28,7 @@ class FakeStore:
     def __init__(
         self,
         *,
-        tasks: dict[str, dict] | None = None,
+        tasks: dict[str, dict[str, Any]] | None = None,
         labels: dict[str, list[str]] | None = None,
         dependencies: dict[str, list[str]] | None = None,
     ) -> None:
@@ -38,7 +39,7 @@ class FakeStore:
         self.label_calls: list[str] = []
         self.dependency_calls: list[str] = []
 
-    def get_task(self, task_ref: str) -> dict | None:
+    def get_task(self, task_ref: str) -> dict[str, Any] | None:
         self.task_calls.append(task_ref)
         return self.tasks.get(task_ref)
 
@@ -51,17 +52,23 @@ class FakeStore:
         return self.dependencies.get(task_ref, [])
 
 
-def _deferral(*, reason: str = "covered elsewhere", owner: str = "owner") -> Deferral:
+def _deferral(
+    *,
+    task_ref: str = DEFERRED_TASK_REF,
+    reason: str = "covered elsewhere",
+    owner: str = "owner",
+    item: AcceptanceItem = ITEM,
+) -> Deferral:
     return Deferral(
-        task_ref=DEFERRED_TASK_REF,
+        task_ref=task_ref,
         reason=reason,
         owner=owner,
-        original_acceptance_items=(ITEM,),
+        original_acceptance_items=(item,),
         raw_block="",
     )
 
 
-def _task(*, state: str = "ready", criteria: str = "Validate src/deferred.py") -> dict:
+def _task(*, state: str = "ready", criteria: str = "Validate src/deferred.py") -> dict[str, Any]:
     return {"state": state, "validation_criteria": criteria}
 
 
@@ -124,6 +131,70 @@ def test_validate_criteria_does_not_duplicate() -> None:
     assert store.dependency_calls == []
 
 
+@pytest.mark.parametrize(
+    ("item", "criteria", "expected_status"),
+    [
+        (
+            AcceptanceItem(
+                item_id="A1.1",
+                prose="deferred symbol",
+                artifact_kind=ArtifactKind.symbol,
+                artifact_ref="gobby.plans.parser.parse",
+                source_line=9,
+            ),
+            "The parser is great.",
+            "validation_criteria_does_not_duplicate",
+        ),
+        (
+            AcceptanceItem(
+                item_id="A1.1",
+                prose="deferred file",
+                artifact_kind=ArtifactKind.file,
+                artifact_ref="test.py",
+                source_line=9,
+            ),
+            "Run latest.py.",
+            "validation_criteria_does_not_duplicate",
+        ),
+        (
+            AcceptanceItem(
+                item_id="A1.1",
+                prose="deferred symbol",
+                artifact_kind=ArtifactKind.symbol,
+                artifact_ref="gobby.plans.parser.parse",
+                source_line=9,
+            ),
+            "Call parse().",
+            "valid",
+        ),
+        (
+            AcceptanceItem(
+                item_id="A1.1",
+                prose="deferred file",
+                artifact_kind=ArtifactKind.file,
+                artifact_ref="test.py",
+                source_line=9,
+            ),
+            "Run tests/test.py.",
+            "valid",
+        ),
+    ],
+    ids=["symbol-prefix", "file-suffix", "bounded-symbol", "bounded-file"],
+)
+def test_validate_criteria_uses_artifact_boundaries(
+    item: AcceptanceItem, criteria: str, expected_status: str
+) -> None:
+    store = FakeStore(
+        tasks={DEFERRED_TASK_REF: _task(criteria=criteria)},
+        labels={DEFERRED_TASK_REF: [PROVENANCE_LABEL]},
+        dependencies={RECOVERY_EPIC_REF: [DEFERRED_TASK_REF]},
+    )
+
+    result = _validate(_deferral(item=item), store)
+
+    assert result.status == expected_status
+
+
 def test_validate_missing_reason_or_owner() -> None:
     store = _passing_store()
 
@@ -151,6 +222,26 @@ def test_validate_dependency_path() -> None:
 
     assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
     assert result.status == "valid"
+
+
+@pytest.mark.parametrize(
+    "task_ref",
+    ["#12345", "12345"],
+    ids=["canonical", "unquoted-integer-form"],
+)
+def test_validate_numeric_task_ref_formats_match_dependency_closure(task_ref: str) -> None:
+    canonical_ref = "#12345"
+    store = FakeStore(
+        tasks={canonical_ref: _task()},
+        labels={canonical_ref: [PROVENANCE_LABEL]},
+        dependencies={RECOVERY_EPIC_REF: [canonical_ref]},
+    )
+
+    result = _validate(_deferral(task_ref=task_ref), store)
+
+    assert result.status == "valid"
+    assert store.task_calls[0] == canonical_ref
+    assert store.label_calls[0] == canonical_ref
 
 
 def test_validate_cited_parent_path() -> None:
@@ -218,6 +309,36 @@ def test_validate_cited_parent_inside_dependency_closure_rejected() -> None:
             "#parent": [f"out-of-scope-for:{RECOVERY_EPIC_REF}"],
         },
         dependencies={RECOVERY_EPIC_REF: ["#parent"]},
+    )
+
+    result = _validate(_deferral(), store)
+
+    assert result.status == "missing_dependency_or_cited_parent"
+
+
+@pytest.mark.parametrize(
+    "cited_parent_label",
+    ["cited-parent:#12345", "cited-parent:12345"],
+    ids=["canonical", "unquoted-integer-form"],
+)
+def test_validate_numeric_cited_parent_inside_dependency_closure_rejected(
+    cited_parent_label: str,
+) -> None:
+    canonical_ref = "#12345"
+    plain_ref = "12345"
+    out_of_scope_label = f"out-of-scope-for:{RECOVERY_EPIC_REF}"
+    store = FakeStore(
+        tasks={
+            DEFERRED_TASK_REF: _task(),
+            canonical_ref: _task(criteria="Parent task"),
+            plain_ref: _task(criteria="Parent task"),
+        },
+        labels={
+            DEFERRED_TASK_REF: [PROVENANCE_LABEL, cited_parent_label],
+            canonical_ref: [out_of_scope_label],
+            plain_ref: [out_of_scope_label],
+        },
+        dependencies={RECOVERY_EPIC_REF: [canonical_ref]},
     )
 
     result = _validate(_deferral(), store)

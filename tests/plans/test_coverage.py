@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from gobby.plans.coverage import (
     CoverageStatus,
@@ -11,6 +13,8 @@ from gobby.plans.coverage import (
     MissingScopeError,
     StaleHashError,
     TaskTreeSource,
+    _coerce_task_record,
+    _plan_node_hash,
     evaluate,
 )
 from gobby.plans.parser import (
@@ -20,6 +24,7 @@ from gobby.plans.parser import (
     Kind,
     PlanDocument,
     PlanSection,
+    parse_plan,
 )
 
 pytestmark = pytest.mark.unit
@@ -64,10 +69,91 @@ def _plan(*sections: PlanSection, plan_id: str = "plan", source_hash: str = "has
     )
 
 
+def _deferred_plan(tmp_path: Path, *, task_ref: str = "#999") -> tuple[Path, str]:
+    path = tmp_path / "deferred-plan.md"
+    path.write_text(
+        f"""> **Plan ID:** plan
+
+## A1 Deferred Work
+`kind: deferred`
+
+```yaml
+deferral:
+  task_ref: "{task_ref}"
+  reason: "covered by follow-up"
+  owner: "backend"
+  original_acceptance_items:
+    - A1.1
+```
+""",
+        encoding="utf-8",
+    )
+    return path, hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def test_exports_a4_public_api() -> None:
     assert EvidenceKind.none.value == "none"
     assert TaskTreeSource.db.value == "db"
     assert CoverageStatus.covered.value == "covered"
+
+
+@pytest.mark.parametrize(
+    ("raw_state", "expected"),
+    [
+        ({"is_closed": True, "is_escalated": True}, "closed"),
+        ({"is_closed": False, "is_escalated": True}, "escalated"),
+        (
+            {
+                "is_closed": False,
+                "is_escalated": False,
+                "current_stage": {"name": "development", "state": "in_progress"},
+            },
+            "in_progress",
+        ),
+        ("ready", "ready"),
+        (None, "unknown"),
+        ({"is_closed": "true", "current_stage": {"state": "ready"}}, "unknown"),
+        ({"current_stage": {"state": 3}}, "unknown"),
+    ],
+    ids=["closed", "escalated", "stage", "string", "none", "invalid-bool", "invalid-stage"],
+)
+def test_coerce_task_record_reads_serialized_state(raw_state: object, expected: str) -> None:
+    record = _coerce_task_record({"ref": "#1", "state": raw_state})
+
+    assert record.state == expected
+
+
+def test_coerce_task_record_missing_state_is_unknown() -> None:
+    assert _coerce_task_record({"ref": "#1"}).state == "unknown"
+
+
+def test_closed_serialized_task_record_rejects_deferral(tmp_path: Path) -> None:
+    plan_path, plan_hash = _deferred_plan(tmp_path)
+
+    report = evaluate(
+        plan=plan_path,
+        plan_id="plan",
+        plan_hash=plan_hash,
+        task_tree=TaskTreeSource.db,
+        root_task_ref="#1",
+        project_id="project",
+        task_records=[
+            {"ref": "#1", "path_cache": "1", "dependencies": ["#999"]},
+            {
+                "ref": "#999",
+                "path_cache": "2.999",
+                "state": {
+                    "is_closed": True,
+                    "is_escalated": False,
+                    "current_stage": {"name": "development", "state": "ready"},
+                },
+                "labels": ["deferred-from:plan:A1"],
+                "validation_criteria": "Follow-up owns A1.1.",
+            },
+        ],
+    )
+
+    assert report.rows[0].status is CoverageStatus.invalid
 
 
 def test_evaluate_reports_covered_missing_invalid_and_deferred() -> None:
@@ -126,6 +212,169 @@ def test_evaluate_reports_covered_missing_invalid_and_deferred() -> None:
     ]
     assert report.rows[0].leaves[0].leaf_task_ref == "#101"
     assert report.rows[3].deferral_target == "#200"
+
+
+def test_evaluate_surfaces_invalid_covers_labels_without_cross_plan_leakage() -> None:
+    report = evaluate(
+        plan=_plan(_section(_item("A1.1", "src/covered.py"))),
+        plan_id="plan",
+        plan_hash="hash",
+        task_tree=TaskTreeSource.db,
+        root_task_ref="#1",
+        project_id="project",
+        task_records=[
+            {"ref": "#1", "path_cache": "1"},
+            {
+                "ref": "#101",
+                "path_cache": "1.101",
+                "labels": ["covers:plan:A1:A1.1"],
+                "validation_criteria": "Touches src/covered.py.",
+            },
+            {
+                "ref": "#102",
+                "path_cache": "1.102",
+                "labels": ["covers:plan:A9:A9.1"],
+            },
+            {
+                "ref": "#103",
+                "path_cache": "1.103",
+                "labels": ["covers:plan:A1:A1.9"],
+            },
+            {
+                "ref": "#104",
+                "path_cache": "1.104",
+                "labels": ["covers:plan:A1"],
+            },
+            {
+                "ref": "#105",
+                "path_cache": "1.105",
+                "labels": ["covers:other-plan:A9:A9.1"],
+            },
+        ],
+    )
+
+    assert report.rows[0].status is CoverageStatus.covered
+    invalid_rows = [row for row in report.rows if row.status is CoverageStatus.invalid]
+    assert len(invalid_rows) == 3
+    assert [(row.section_id, row.item_id) for row in invalid_rows[:2]] == [
+        ("A9", "A9.1"),
+        ("A1", "A1.9"),
+    ]
+    assert invalid_rows[2].leaves[0].matched_artifact_ref == "covers:plan:A1"
+    assert all("other-plan" not in row.leaves[0].matched_artifact_ref for row in invalid_rows)
+    assert report.is_complete is False
+
+
+@pytest.mark.parametrize(
+    ("task_state", "labels", "expected_status"),
+    [
+        (None, (), CoverageStatus.invalid),
+        ("closed", ("deferred-from:plan:A1",), CoverageStatus.invalid),
+        ("ready", (), CoverageStatus.invalid),
+        ("ready", ("deferred-from:plan:A1",), CoverageStatus.deferred),
+    ],
+    ids=["missing-task", "closed-task", "missing-provenance", "valid-open-task"],
+)
+def test_parsed_deferred_section_validates_task_and_provenance(
+    tmp_path: Path,
+    task_state: str | None,
+    labels: tuple[str, ...],
+    expected_status: CoverageStatus,
+) -> None:
+    plan_path, plan_hash = _deferred_plan(tmp_path)
+    task_records: list[dict[str, object]] = [
+        {"ref": "#1", "path_cache": "1", "dependencies": ["#999"]}
+    ]
+    if task_state is not None:
+        task_records.append(
+            {
+                "ref": "#999",
+                "path_cache": "1.999",
+                "state": task_state,
+                "labels": list(labels),
+                "validation_criteria": "Follow-up owns A1.1.",
+            }
+        )
+
+    report = evaluate(
+        plan=plan_path,
+        plan_id="plan",
+        plan_hash=plan_hash,
+        task_tree=TaskTreeSource.db,
+        root_task_ref="#1",
+        project_id="project",
+        task_records=task_records,
+    )
+
+    assert len(report.rows) == 1
+    assert report.rows[0].section_id == "A1"
+    assert report.rows[0].item_id == "A1.1"
+    assert report.rows[0].status is expected_status
+    assert report.rows[0].deferral_target == "#999"
+    assert report.is_complete is (expected_status is CoverageStatus.deferred)
+
+
+def test_parsed_deferred_item_accepts_valid_covers_label(tmp_path: Path) -> None:
+    plan_path, plan_hash = _deferred_plan(tmp_path)
+
+    report = evaluate(
+        plan=plan_path,
+        plan_id="plan",
+        plan_hash=plan_hash,
+        task_tree=TaskTreeSource.db,
+        root_task_ref="#1",
+        project_id="project",
+        task_records=[
+            {"ref": "#1", "path_cache": "1"},
+            {
+                "ref": "#101",
+                "path_cache": "1.101",
+                "labels": ["covers:plan:A1:A1.1"],
+                "validation_criteria": "Implements A1.1.",
+            },
+        ],
+    )
+
+    assert len(report.rows) == 1
+    assert report.rows[0].status is CoverageStatus.covered
+    assert report.rows[0].leaves[0].leaf_task_ref == "#101"
+
+
+def test_matrix_reconciliation_recognizes_parsed_deferred_items(tmp_path: Path) -> None:
+    plan_path, plan_hash = _deferred_plan(tmp_path)
+    plan_doc = parse_plan(plan_path, parse_mode="draft")
+    section = plan_doc.sections[0]
+    assert section.deferral is not None
+    item = section.deferral.original_acceptance_items[0]
+    matrix = tmp_path / "deferred.coverage.yaml"
+    matrix.write_text(
+        yaml.safe_dump(
+            {
+                "header": {"plan_id": "plan", "plan_hash": plan_hash},
+                "rows": [
+                    {
+                        "section_id": "A1",
+                        "item_id": "A1.1",
+                        "plan_node_hash": _plan_node_hash(section, item),
+                        "status": "deferred",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = evaluate(
+        plan=plan_path,
+        plan_id="plan",
+        plan_hash=plan_hash,
+        task_tree=TaskTreeSource.matrix_file,
+        matrix_file=matrix,
+    )
+
+    assert len(report.rows) == 1
+    assert report.rows[0].status is CoverageStatus.deferred
+    assert report.is_complete is True
 
 
 def test_db_source_ignores_filesystem_task_export(
@@ -192,6 +441,83 @@ def test_db_source_loads_live_task_records(
     assert report.rows[0].leaves[0].leaf_task_ref == f"#{leaf.seq_num}"
 
 
+def test_db_deferral_uses_project_records_without_widening_root_scope(
+    tmp_path: Path,
+    temp_db: Any,
+) -> None:
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.task_dependencies import TaskDependencyManager
+    from gobby.storage.tasks import LocalTaskManager
+
+    projects = LocalProjectManager(temp_db)
+    project = projects.create("project")
+    foreign_project = projects.create("foreign-project")
+    manager = LocalTaskManager(temp_db)
+    root = manager.create_task(project.id, "Root")
+    deferral = manager.create_task(
+        project.id,
+        "Project-wide deferral",
+        labels=["deferred-from:plan:A1", "covers:plan:A1:A1.1"],
+        validation_criteria="Follow-up owns A1.1.",
+    )
+    foreign_deferral = manager.create_task(
+        foreign_project.id,
+        "Foreign deferral",
+        labels=["deferred-from:plan:A1", "covers:plan:A1:A1.1"],
+        validation_criteria="Follow-up owns A1.1.",
+    )
+    dependencies = TaskDependencyManager(temp_db)
+    dependencies.add_dependency(root.id, deferral.id)
+    dependencies.add_dependency(root.id, foreign_deferral.id)
+    plan_path, plan_hash = _deferred_plan(tmp_path, task_ref=f"#{deferral.seq_num}")
+
+    report = evaluate(
+        plan=plan_path,
+        plan_id="plan",
+        plan_hash=plan_hash,
+        task_tree=TaskTreeSource.db,
+        root_task_ref=f"#{root.seq_num}",
+        project_id=project.id,
+        db=temp_db,
+    )
+
+    assert report.rows[0].status is CoverageStatus.deferred
+    assert report.rows[0].deferral_target == f"#{deferral.seq_num}"
+    scoped_hash = report.header.task_tree_source_hash
+
+    manager.create_task(project.id, "Unrelated project task")
+    report_with_outsider = evaluate(
+        plan=plan_path,
+        plan_id="plan",
+        plan_hash=plan_hash,
+        task_tree=TaskTreeSource.db,
+        root_task_ref=f"#{root.seq_num}",
+        project_id=project.id,
+        db=temp_db,
+    )
+
+    assert report_with_outsider.rows[0].status is CoverageStatus.deferred
+    assert report_with_outsider.header.task_tree_source_hash == scoped_hash
+
+    foreign_plan_dir = tmp_path / "foreign"
+    foreign_plan_dir.mkdir()
+    foreign_plan, foreign_plan_hash = _deferred_plan(
+        foreign_plan_dir,
+        task_ref=f"#{foreign_deferral.seq_num}",
+    )
+    foreign_report = evaluate(
+        plan=foreign_plan,
+        plan_id="plan",
+        plan_hash=foreign_plan_hash,
+        task_tree=TaskTreeSource.db,
+        root_task_ref=f"#{root.seq_num}",
+        project_id=project.id,
+        db=temp_db,
+    )
+
+    assert foreign_report.rows[0].status is CoverageStatus.invalid
+
+
 def test_evaluate_root_scope_excludes_other_subtree() -> None:
     plan_doc = _plan(_section(_item("A1.1", "src/covered.py")))
 
@@ -231,8 +557,9 @@ def test_stale_hash_raises() -> None:
 def test_matrix_file_rejects_scope(tmp_path: Path) -> None:
     matrix = tmp_path / "matrix.coverage.yaml"
     matrix.write_text("header:\n  plan_hash: hash\nrows: []\n", encoding="utf-8")
+    unchecked_evaluate: Any = evaluate
     with pytest.raises(MissingScopeError):
-        evaluate(
+        unchecked_evaluate(
             plan=_plan(_section(_item())),
             plan_id="plan",
             plan_hash="hash",

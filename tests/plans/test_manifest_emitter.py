@@ -6,10 +6,17 @@ import inspect
 import textwrap
 from pathlib import Path
 from typing import get_args
+from unittest.mock import patch
 
 import pytest
 
-from gobby.plans.manifest_emitter import EmitOutcome, emit_stub_manifest
+from gobby.plans.manifest_emitter import (
+    EmitOutcome,
+    ManifestSynthesisError,
+    _has_manifest_section,
+    _strip_manifest_section,
+    emit_stub_manifest,
+)
 from gobby.plans.parser import (
     MISSING_PLAN_ID_SENTINEL,
     PlanKind,
@@ -143,6 +150,29 @@ def test_signature() -> None:
     }
 
 
+def test_strategy_rejected_before_file_access(tmp_path: Path) -> None:
+    missing_plan = tmp_path / "missing.md"
+
+    with pytest.raises(ManifestSynthesisError, match="strategy"):
+        emit_stub_manifest(missing_plan, plan_kind=PlanKind.strategy)
+
+    assert missing_plan.exists() is False
+
+
+def test_repeated_strategy_calls_leave_plan_byte_identical(tmp_path: Path) -> None:
+    plan = _plan_two_deliverables(tmp_path)
+    original = plan.read_bytes()
+
+    for _ in range(2):
+        with pytest.raises(ManifestSynthesisError, match="strategy"):
+            emit_stub_manifest(plan, plan_kind=PlanKind.strategy)
+
+    assert plan.read_bytes() == original
+    text = plan.read_text(encoding="utf-8")
+    assert "kind: manifest" not in text
+    assert "## Yolo Fallbacks" not in text
+
+
 def test_fresh_emission(tmp_path: Path) -> None:
     """2.21a.2 — plan with no manifest gets one synthesized from deliverables."""
     plan = _plan_two_deliverables(tmp_path)
@@ -160,6 +190,55 @@ def test_fresh_emission(tmp_path: Path) -> None:
     assert set(by_section) == {"1.1", "1.2"}
     assert "covers:demo-plan:1.1:1.1.1" in by_section["1.1"].labels
     assert "covers:demo-plan:1.2:1.2.1" in by_section["1.2"].labels
+
+
+def test_fresh_emission_restores_body_after_post_write_validation_failure(
+    tmp_path: Path,
+) -> None:
+    plan = _plan_two_deliverables(tmp_path, name="post-write-validation-error.md")
+    original_body = plan.read_text(encoding="utf-8")
+
+    with patch(
+        "gobby.plans.manifest_emitter._write_manifest_section",
+        return_value=original_body,
+    ):
+        first_outcome = emit_stub_manifest(plan)
+        first_text = plan.read_text(encoding="utf-8")
+
+        assert first_outcome == "fallback_force_approve"
+        restored_body, failure_note = first_text.split("\n\n## Yolo Fallbacks\n", maxsplit=1)
+        assert restored_body == original_body.rstrip()
+        assert "synthesized manifest failed draft validation" in failure_note
+        assert "## M1 Task Manifest" not in first_text
+        assert "`kind: manifest`" not in first_text
+
+        second_outcome = emit_stub_manifest(plan)
+
+    assert second_outcome == "fallback_force_approve"
+    assert plan.read_text(encoding="utf-8") == first_text
+    assert first_text.count("## M1 Task Manifest") == 0
+    assert first_text.count("## Yolo Fallbacks") == 1
+
+
+def test_fresh_emission_restores_body_when_post_write_parse_raises(tmp_path: Path) -> None:
+    plan = _plan_two_deliverables(tmp_path, name="post-write-parse-error.md")
+    original_body = plan.read_text(encoding="utf-8")
+    initial_document = parse_plan(plan, parse_mode="draft")
+    forced_error = PlanParseError([(1, "forced post-write failure")], plan)
+
+    with patch(
+        "gobby.plans.manifest_emitter.parse_plan",
+        side_effect=[initial_document, forced_error],
+    ):
+        outcome = emit_stub_manifest(plan)
+
+    text = plan.read_text(encoding="utf-8")
+    restored_body, failure_note = text.split("\n\n## Yolo Fallbacks\n", maxsplit=1)
+    assert outcome == "fallback_force_approve"
+    assert restored_body == original_body.rstrip()
+    assert "forced post-write failure" in failure_note
+    assert "## M1 Task Manifest" not in text
+    assert "`kind: manifest`" not in text
 
 
 def test_noop_on_valid_existing(tmp_path: Path) -> None:
@@ -191,6 +270,67 @@ def test_replace_malformed(tmp_path: Path) -> None:
     assert len(document.manifest_entries) == 2
     titles = {entry.title for entry in document.manifest_entries}
     assert "Stale" not in titles
+
+
+def test_four_backtick_manifest_example_is_not_treated_as_existing_manifest(
+    tmp_path: Path,
+) -> None:
+    plan = _plan_two_deliverables(tmp_path, name="four-backtick-example.md")
+    example = textwrap.dedent(
+        """
+
+        ````markdown
+        ```yaml
+        ## M1 Task Manifest
+        `kind: manifest`
+        - title: "Documentation example only"
+        ```
+        ````
+        """
+    )
+    original = plan.read_text(encoding="utf-8").rstrip() + example
+    plan.write_text(original, encoding="utf-8")
+
+    assert parse_plan(plan, parse_mode="draft").manifest_entries == ()
+    assert not _has_manifest_section(original)
+
+    outcome = emit_stub_manifest(plan)
+
+    assert outcome == "fresh"
+    emitted = plan.read_text(encoding="utf-8")
+    assert example.strip() in emitted
+    assert len(parse_plan(plan, parse_mode="expansion").manifest_entries) == 2
+
+
+def test_strip_manifest_ignores_column_zero_heading_inside_yaml() -> None:
+    raw = textwrap.dedent(
+        """
+        ## A1 Before
+        `kind: framing`
+
+        ## M1 Task Manifest
+        `kind: manifest`
+
+        ```yaml
+        - title: "Malformed entry"
+        ## heading-shaped YAML comment
+          category: code
+        ```
+
+        ## A2 After
+        `kind: framing`
+
+        Preserve this section.
+        """
+    ).lstrip()
+
+    stripped = _strip_manifest_section(raw)
+
+    assert "## M1 Task Manifest" not in stripped
+    assert "## heading-shaped YAML comment" not in stripped
+    assert "category: code" not in stripped
+    assert "## A2 After" in stripped
+    assert "Preserve this section." in stripped
 
 
 def test_fallback_force_approve_no_raise(tmp_path: Path) -> None:

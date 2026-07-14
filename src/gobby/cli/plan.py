@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 import click
+import yaml
 
 from gobby.plans.coverage import (
     CoverageReport,
@@ -30,8 +31,10 @@ from gobby.plans.evidence import (
     EvidenceRow,
     InvalidEvidenceError,
     resolve_evidence,
+    validate_evidence_ref,
 )
-from gobby.storage.tasks import LocalTaskManager
+from gobby.plans.parser import PlanParseError
+from gobby.storage.tasks import LocalTaskManager, TaskNotFoundError
 from gobby.tasks.commits import get_task_diff
 
 logger = logging.getLogger(__name__)
@@ -51,12 +54,25 @@ def plan() -> None:
 )
 @click.option("--plan-id", required=True)
 @click.option("--plan-hash", required=True)
-@click.option("--task-tree", type=click.Choice(["db", "matrix-file"]), required=True)
-@click.option("--root-task")
-@click.option("--project-id")
-@click.option("--matrix-file", type=click.Path(dir_okay=False, path_type=Path))
+@click.option(
+    "--task-tree",
+    type=click.Choice(["db", "matrix-file"]),
+    required=True,
+    help="db reads live tasks; matrix-file reads --matrix-file.",
+)
+@click.option("--root-task", help="Root task ref (required for db mode).")
+@click.option("--project-id", help="Project UUID (required for db mode).")
+@click.option(
+    "--matrix-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Coverage matrix YAML/JSON (required for matrix-file mode).",
+)
 @click.option("--evidence")
-@click.option("--manifest", type=click.Path(dir_okay=False, path_type=Path))
+@click.option(
+    "--manifest",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Coverage manifest output path (defaults under .gobby/plans/coverage).",
+)
 @click.option("--regenerate", is_flag=True)
 def coverage(
     plan_path: Path,
@@ -70,7 +86,10 @@ def coverage(
     manifest: Path | None,
     regenerate: bool,
 ) -> None:
-    """Evaluate plan coverage."""
+    """Evaluate plan coverage.
+
+    Writes a coverage manifest and prints its path.
+    """
     try:
         evidence_rows = _resolve_evidence_rows(evidence, project_id=project_id)
         report = _evaluate_for_cli(
@@ -100,6 +119,8 @@ def coverage(
     except PathIdentityMismatchError as exc:
         _fail(str(exc), 8)
     except InvalidEvidenceError as exc:
+        _fail(str(exc), 3)
+    except (PlanParseError, OSError, yaml.YAMLError) as exc:
         _fail(str(exc), 3)
 
     click.echo(output_path)
@@ -187,6 +208,7 @@ class _CliEvidenceContext:
         return raw
 
     def get_commit_range_diff(self, range_: str) -> str:
+        validate_evidence_ref(range_)
         result = subprocess.run(  # nosec B603 B607 # fixed git argv plus caller ref.
             ["git", "-C", str(self.repo_root), "diff", range_],
             check=False,
@@ -206,7 +228,10 @@ class _CliEvidenceContext:
     def _resolve_task_id(self, task_ref: str) -> str:
         if self.project_id is None:
             raise InvalidEvidenceError(f"Evidence spec requires --project-id for {task_ref}")
-        return self.task_manager.resolve_task_reference(task_ref, self.project_id)
+        try:
+            return self.task_manager.resolve_task_reference(task_ref, self.project_id)
+        except TaskNotFoundError as error:
+            raise InvalidEvidenceError(str(error)) from error
 
 
 def _report_exit_code(report: CoverageReport) -> int:

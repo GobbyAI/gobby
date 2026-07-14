@@ -323,3 +323,34 @@ Entry format:
   (release) + reinstalled ~00:45Z 07-13 via cp-to-.new + rename. Carries
   #17823+#17848+#18005+#18109.
 - attempt=12 next on the fixed binary (same command, --verbose kept).
+
+## 2026-07-13 06:38Z — ARM S PUBLISHED CLEAN: attempt=12 exit=0, degraded=0
+
+- attempt=12 (post-#18109 binary, --verbose) ran 00:50Z→06:38:19Z (~5h48m):
+  635 fresh file gens (2616 files, skipped=2192 reuse), modules 271,
+  symbols=33530, curated/aggregate phase regenerated under
+  claude/sonnet@xhigh, publish validation passed, degraded_pages=[] and
+  jq degraded count = 0. Aggregates present: code/repo.md,
+  _architecture.md, concepts/ x6, narrative/ 01..09 canonical (this
+  run's planner chose 6 concepts and no deep-dive extras vs attempt-6's
+  12+2 — plan shape varies per run; valid publish).
+- The #18109 fix held through the full pass (multiple sessions committed
+  during the run; no mid-run deletion abort).
+- Arm S COMPLETE after 12 attempts / 4 live-found gcode fixes
+  (#17823, #17848, #18005, #18109). Proceeding to arm O via
+  run-arm-o.zsh in-session fallback (01:40 CDT, Josh asleep): copies
+  healed arm-sonnet → arm-opus, reruns with opus@xhigh aggregates;
+  leaves/modules reuse byte-identical.
+
+## 2026-07-13 ~15:55Z — overnight machine event killed arm O; relaunched
+
+- DAEMON RESTART (disclose): 2026-07-13 01:45:40 local, "Shutdown
+  source: unknown (no shutdown_intent_active.json - external SIGTERM)" —
+  a machine-level event (not a gobby CLI restart) that also killed the
+  Claude Code process and the arm-O gcode ~6min into its first run
+  (ARM_O_START 06:39:55Z, no END). Zero files were written to arm-opus
+  by the killed run; the arm-sonnet→arm-opus copy is intact and no
+  commits landed overnight, so byte-identity with arm S is unaffected.
+- Arm O relaunched ~15:55Z 07-13 via run-arm-o.zsh (copy skipped, exists;
+  opus@xhigh aggregate candidate; gcode pid 77734). Caffeinate + restart
+  trap re-armed after the event.

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Literal
 
 import yaml
@@ -93,25 +95,39 @@ def write_manifest(
     )
     coverage_root = root / ".gobby" / "plans" / "coverage"
 
-    _ensure_path_identity(path, identity, coverage_root)
+    _ensure_path_identity(
+        path,
+        identity,
+        coverage_root,
+        allow_invalid_target=regenerate,
+    )
     existing = _read_manifest(path)
     if existing is not None:
         existing_identity = _identity_from_manifest(existing)
         if existing_identity != identity:
-            raise PathIdentityMismatchError(
-                f"manifest path {path} already belongs to {existing_identity}"
+            if not regenerate or existing_identity is not None:
+                raise PathIdentityMismatchError(
+                    f"manifest path {path} already belongs to {existing_identity}"
+                )
+            _append_regenerate_audit(
+                coverage_root,
+                identity,
+                "invalid-manifest",
+                new_hash,
             )
-        existing_hash = _plan_hash_from_manifest(existing)
-        if existing_hash != new_hash:
-            if not regenerate:
-                raise IdentityCollisionError(existing_hash, new_hash)
-            _append_regenerate_audit(coverage_root, identity, existing_hash, new_hash)
+            existing = None
+        else:
+            existing_hash = _plan_hash_from_manifest(existing)
+            if existing_hash != new_hash:
+                if not regenerate:
+                    raise IdentityCollisionError(existing_hash, new_hash)
+                _append_regenerate_audit(coverage_root, identity, existing_hash, new_hash)
 
     payload = _manifest_payload(report)
     if regenerate and existing is not None:
         payload = _preserve_stable_rows(payload, existing)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    _atomic_write_text(path, yaml.safe_dump(payload, sort_keys=False))
     return path
 
 
@@ -128,13 +144,21 @@ def _sanitize(value: str, *, kind: ComponentKind = "component") -> str:
     return replaced
 
 
-def _ensure_path_identity(path: Path, identity: ManifestIdentity, coverage_root: Path) -> None:
+def _ensure_path_identity(
+    path: Path,
+    identity: ManifestIdentity,
+    coverage_root: Path,
+    *,
+    allow_invalid_target: bool = False,
+) -> None:
     for existing_path in _candidate_manifest_paths(path, coverage_root):
         existing = _read_manifest(existing_path)
         existing_identity = _identity_from_manifest(existing) if existing is not None else None
         if existing_identity == identity:
             continue
         if existing_path == path:
+            if allow_invalid_target and existing_identity is None:
+                continue
             raise PathIdentityMismatchError(
                 f"manifest path {path} already belongs to {existing_identity}"
             )
@@ -190,12 +214,36 @@ def _relative_parts(path: Path, root: Path) -> tuple[str, ...] | None:
 
 
 def _read_manifest(path: Path) -> Mapping[str, object] | None:
-    if not path.exists():
-        return None
-    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    try:
+        if not path.exists():
+            return None
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
     if isinstance(raw, Mapping):
         return raw
     return {}
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    temp_path: Path | None = None
+    try:
+        with NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+            temp_file.write(content)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+        os.replace(temp_path, path)
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
 
 
 def _identity_from_manifest(raw: Mapping[str, object]) -> ManifestIdentity | None:
@@ -247,13 +295,17 @@ def _required_header(report: object, field: str) -> str:
 
 
 def _manifest_payload(report: object) -> dict[str, object]:
+    rows = list(_iter_attr(report, "rows"))
+    header = _header_payload(_attr(report, "header"))
+    header["evidence"] = _manifest_evidence(rows)
     return {
-        "header": _header_payload(_attr(report, "header")),
-        "rows": [_row_payload(row) for row in _iter_attr(report, "rows")],
+        "header": header,
+        "rows": [_row_payload(row) for row in rows],
     }
 
 
-_PRESERVED_ROW_FIELDS = ("status", "leaves", "deferral_target", "evidence")
+_PRESERVED_ROW_FIELDS = ("status", "leaves", "deferral_target")
+_PRESERVABLE_ROW_STATUSES = frozenset({"covered", "deferred"})
 
 
 def _preserve_stable_rows(
@@ -263,15 +315,24 @@ def _preserve_stable_rows(
     rows = payload.get("rows")
     if not isinstance(rows, list):
         return payload
+    task_tree_source_hash = _task_tree_source_hash(payload)
+    if not task_tree_source_hash or task_tree_source_hash != _task_tree_source_hash(existing):
+        return payload
 
     prior_rows = _prior_rows_by_item(existing)
     preserved_rows: list[object] = []
+    preserved_any = False
     for row in rows:
         if not isinstance(row, dict):
             preserved_rows.append(row)
             continue
         prior = prior_rows.get(_row_identity(row))
-        if prior is None or not _same_plan_node(row, prior):
+        if (
+            prior is None
+            or not _same_plan_node(row, prior)
+            or _string(row.get("status")) not in _PRESERVABLE_ROW_STATUSES
+            or _string(prior.get("status")) not in _PRESERVABLE_ROW_STATUSES
+        ):
             preserved_rows.append(row)
             continue
         preserved = dict(row)
@@ -279,8 +340,25 @@ def _preserve_stable_rows(
             if field in prior:
                 preserved[field] = prior[field]
         preserved_rows.append(preserved)
+        preserved_any = True
 
-    return {**payload, "rows": preserved_rows}
+    result = {**payload, "rows": preserved_rows}
+    if preserved_any:
+        return _preserve_header_evidence(result, existing)
+    return result
+
+
+def _preserve_header_evidence(
+    payload: dict[str, object], existing: Mapping[str, object]
+) -> dict[str, object]:
+    header = payload.get("header")
+    existing_header = existing.get("header")
+    if not isinstance(header, dict) or not isinstance(existing_header, Mapping):
+        return payload
+    existing_evidence = existing_header.get("evidence")
+    if header.get("evidence") or not isinstance(existing_evidence, list):
+        return payload
+    return {**payload, "header": {**header, "evidence": existing_evidence}}
 
 
 def _prior_rows_by_item(raw: Mapping[str, object]) -> dict[tuple[str, str], Mapping[str, object]]:
@@ -302,6 +380,13 @@ def _row_identity(row: Mapping[str, object]) -> tuple[str, str]:
 def _same_plan_node(left: Mapping[str, object], right: Mapping[str, object]) -> bool:
     left_hash = _string(left.get("plan_node_hash"))
     return bool(left_hash) and left_hash == _string(right.get("plan_node_hash"))
+
+
+def _task_tree_source_hash(raw: Mapping[str, object]) -> str:
+    header = raw.get("header")
+    if not isinstance(header, Mapping):
+        return ""
+    return _string(header.get("task_tree_source_hash"))
 
 
 def _string(raw: object) -> str:
@@ -329,7 +414,6 @@ def _row_payload(row: object) -> dict[str, object]:
         "status": _value(_attr(row, "status")),
         "leaves": [_leaf_payload(leaf) for leaf in _iter_attr(row, "leaves")],
         "deferral_target": _attr(row, "deferral_target"),
-        "evidence": [_evidence_payload(evidence) for evidence in _iter_attr(row, "evidence")],
     }
 
 
@@ -349,6 +433,16 @@ def _evidence_payload(evidence: object) -> dict[str, object]:
         "detail": _attr(evidence, "detail"),
         "artifacts_touched": list(_iter_attr(evidence, "artifacts_touched")),
     }
+
+
+def _manifest_evidence(rows: Iterable[object]) -> list[dict[str, object]]:
+    evidence_payloads: list[dict[str, object]] = []
+    for row in rows:
+        for evidence in _iter_attr(row, "evidence"):
+            payload = _evidence_payload(evidence)
+            if payload not in evidence_payloads:
+                evidence_payloads.append(payload)
+    return evidence_payloads
 
 
 def _value(raw: object) -> object:

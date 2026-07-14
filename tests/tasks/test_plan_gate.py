@@ -9,10 +9,12 @@ no-op when no plan artifact is recorded.
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import psycopg
 import pytest
 
 from gobby.tasks.expansion._plan_gate import (
@@ -290,6 +292,64 @@ def test_artifact_lookup_failure_passes_through(tmp_path: Path) -> None:
     result = validate_plan_for_agent_spawn(agent_name="planner", task_id="t1", task_manager=manager)
 
     assert result is None
+
+
+def test_transient_postgres_error_skips_plan_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    plan = _write_clean_plan(tmp_path / "clean.md")
+    manager = _make_task_manager_with_artifact(str(plan))
+
+    def fail_validation(*_args: object, **_kwargs: object) -> dict[str, object]:
+        raise psycopg.OperationalError("database temporarily unavailable")
+
+    monkeypatch.setattr(
+        "gobby.tasks.expansion._validate.validate_plan_file",
+        fail_validation,
+    )
+    caplog.set_level(logging.WARNING)
+
+    result = validate_plan_for_agent_spawn(
+        agent_name="planner",
+        task_id="t1",
+        task_manager=manager,
+    )
+
+    assert result is None
+    assert "Skipping plan validation gate" in caplog.text
+    assert "database temporarily unavailable" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_spawn_agent_impl_dispatches_plan_gate_off_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
+    from gobby.tasks.expansion import _plan_gate as plan_gate_module
+
+    caller_thread = threading.get_ident()
+    gate_threads: list[int] = []
+    gate_failure = {"success": False, "error": "PlanValidationError: blocked"}
+
+    def gate(*_args: object, **_kwargs: object) -> dict[str, object]:
+        gate_threads.append(threading.get_ident())
+        return gate_failure
+
+    monkeypatch.setattr(plan_gate_module, "validate_plan_for_agent_spawn", gate)
+
+    result = await spawn_agent_impl(
+        prompt="review plan",
+        runner=MagicMock(),
+        agent_lookup_name="planner",
+        task_id="t1",
+        task_manager=MagicMock(),
+    )
+
+    assert result == gate_failure
+    assert len(gate_threads) == 1
+    assert gate_threads[0] != caller_thread
 
 
 def test_plan_adversary_spawn_blocks_on_consumer_sweep(tmp_path: Path) -> None:

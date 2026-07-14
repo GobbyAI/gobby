@@ -152,7 +152,13 @@ async def test_handler_dispatch_via_run_now(
     run = await scheduler.run_now(job.id)
     assert run is not None
 
-    await wait_for_async_condition(lambda: call_log, description="handler cron dispatch")
+    await wait_for_async_condition(
+        lambda: (
+            (persisted := cron_storage.get_run(run.id)) is not None
+            and persisted.status == "completed"
+        ),
+        description="handler cron terminal persistence",
+    )
 
     assert call_log == ["handler-test"]
     final = cron_storage.get_run(run.id)

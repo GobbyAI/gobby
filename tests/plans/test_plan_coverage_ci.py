@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar, Protocol
+from uuid import NAMESPACE_URL, uuid5
 
 import psycopg
 import pytest
@@ -128,7 +129,7 @@ def _seed_registry(db: TestDatabase) -> dict[str, PlanRegistryEntry]:
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', %s)
             """,
             (
-                f"plan-{entry.plan_id}",
+                str(uuid5(NAMESPACE_URL, f"gobby-plan:{entry.plan_id}")),
                 entry.project_id,
                 entry.plan_id,
                 str(entry.plan_path.relative_to(PROJECT_ROOT)),
@@ -348,7 +349,7 @@ def test_plans_table_has_unique_project_plan_constraint(temp_db: TestDatabase) -
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
             """,
             (
-                "duplicate-plan-row",
+                str(uuid5(NAMESPACE_URL, "gobby-plan:duplicate-row")),
                 first.project_id,
                 first.plan_id,
                 str(first.plan_path.relative_to(PROJECT_ROOT)),

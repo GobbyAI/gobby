@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import textwrap
+import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from gobby.mcp_proxy.tools.plans import create_plan_registry
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.plans import LocalPlanManager
 from gobby.storage.projects import LocalProjectManager
 
 pytestmark = pytest.mark.unit
@@ -66,6 +69,49 @@ def _write_plan_without_plan_id(root: Path) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+@pytest.mark.asyncio
+async def test_plan_storage_tools_dispatch_off_event_loop(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    caller_thread = threading.get_ident()
+    worker_threads: list[int] = []
+    manifest_path = tmp_path / "plan.coverage.yaml"
+
+    def create_plan(self: LocalPlanManager, **_kwargs: object) -> SimpleNamespace:
+        worker_threads.append(threading.get_ident())
+        return SimpleNamespace(to_dict=lambda: {"plan_id": "plan"})
+
+    def regenerate_manifest(
+        self: LocalPlanManager,
+        plan_id: str,
+        *,
+        project_id: str | None = None,
+    ) -> Path:
+        worker_threads.append(threading.get_ident())
+        return manifest_path
+
+    monkeypatch.setattr(LocalPlanManager, "create_plan", create_plan)
+    monkeypatch.setattr(LocalPlanManager, "regenerate_coverage_manifest", regenerate_manifest)
+    registry = create_plan_registry(temp_db, default_project_id="project-1")
+
+    created = await registry.call(
+        "create_plan",
+        {
+            "plan_id": "plan",
+            "plan_path": str(tmp_path / "plan.md"),
+            "root_task_ref": "#1",
+        },
+    )
+    regenerated = await registry.call("regenerate_coverage_manifest", {"plan_id": "plan"})
+
+    assert created == {"ok": True, "plan": {"plan_id": "plan"}}
+    assert regenerated == {"ok": True, "manifest_path": str(manifest_path)}
+    assert len(worker_threads) == 2
+    assert all(thread_id != caller_thread for thread_id in worker_threads)
 
 
 @pytest.mark.asyncio

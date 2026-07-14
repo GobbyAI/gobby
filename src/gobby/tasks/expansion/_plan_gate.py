@@ -18,6 +18,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import psycopg
+
 logger = logging.getLogger(__name__)
 
 # Agent names whose spawn must be gated by plan validation. Centralized so the
@@ -26,6 +28,31 @@ PLANNING_AGENTS = frozenset({"planner", "plan-adversary", "plan-enhancer"})
 
 
 def validate_plan_for_agent_spawn(
+    agent_name: str | None,
+    task_id: str | None,
+    task_manager: Any | None,
+    code_index: Any | None = None,
+) -> dict[str, Any] | None:
+    """Validate a recorded plan, skipping the gate on transient database errors."""
+    try:
+        return _validate_plan_for_agent_spawn(
+            agent_name,
+            task_id,
+            task_manager,
+            code_index,
+        )
+    except psycopg.Error as exc:
+        logger.warning(
+            "Skipping plan validation gate for %s spawn on task %s because database "
+            "access failed: %s",
+            agent_name,
+            task_id,
+            exc,
+        )
+        return None
+
+
+def _validate_plan_for_agent_spawn(
     agent_name: str | None,
     task_id: str | None,
     task_manager: Any | None,

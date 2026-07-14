@@ -91,8 +91,12 @@ class CronRunStorageMixin:
         *,
         max_concurrent_jobs: int,
         scheduler_owner: str | None = None,
-    ) -> tuple[CronRun | None, int]:
-        """Create a cron run after atomically checking global active-run capacity."""
+    ) -> tuple[CronRun | None, int, bool]:
+        """Create a run after atomic admission.
+
+        Returns the run, the pre-insert active count, and whether the target job
+        already had active work.
+        """
         if max_concurrent_jobs < 1:
             raise ValueError("max_concurrent_jobs must be positive")
 
@@ -111,8 +115,20 @@ class CronRunStorageMixin:
                 "SELECT COUNT(*) as cnt FROM cron_runs WHERE status IN ('pending', 'running')"
             ).fetchone()
             active_count = int(count_row["cnt"]) if count_row else 0
+            active_job_row = conn.execute(
+                """
+                SELECT 1
+                  FROM cron_runs
+                 WHERE cron_job_id = %s
+                   AND status IN ('pending', 'running')
+                 LIMIT 1
+                """,
+                (cron_job_id,),
+            ).fetchone()
+            if active_job_row is not None:
+                return None, active_count, True
             if active_count >= max_concurrent_jobs:
-                return None, active_count
+                return None, active_count, False
 
             row = conn.execute(
                 """
@@ -145,8 +161,8 @@ class CronRunStorageMixin:
             ).fetchone()
 
         if row is None:
-            return None, active_count
-        return self._hydrate_run(CronRun.from_row(row)), active_count
+            return None, active_count, True
+        return self._hydrate_run(CronRun.from_row(row)), active_count, False
 
     def update_run(self, run_id: str, **fields: Any) -> CronRun | None:
         """Update a cron run's fields."""
@@ -205,6 +221,34 @@ class CronRunStorageMixin:
             "SELECT COUNT(*) as cnt FROM cron_runs WHERE status IN ('pending', 'running')"
         )
         return row["cnt"] if row else 0
+
+    def fail_stale_running_runs(self, timeout_seconds: int) -> int:
+        """Fail running cron rows older than the configured execution timeout."""
+        if (
+            not isinstance(timeout_seconds, int)
+            or isinstance(timeout_seconds, bool)
+            or timeout_seconds <= 0
+        ):
+            raise ValueError("timeout_seconds must be a positive integer")
+
+        now = utc_now()
+        cutoff = now - timedelta(seconds=timeout_seconds)
+        cursor = self.db.execute(
+            """
+            UPDATE cron_runs
+               SET status = 'failed',
+                   completed_at = %s,
+                   error = %s
+             WHERE status = 'running'
+               AND COALESCE(started_at, triggered_at, created_at) < %s
+            """,
+            (
+                now,
+                f"Cron run exceeded running timeout ({timeout_seconds}s)",
+                cutoff,
+            ),
+        )
+        return cursor.rowcount
 
     def has_running_run(self, cron_job_id: str) -> bool:
         """Return whether a cron job already has pending/running cron-owned work."""
