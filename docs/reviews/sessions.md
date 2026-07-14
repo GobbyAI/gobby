@@ -244,6 +244,34 @@
 ### [NIT] Mailbox/storage small items
 - **Where:** `inter_session_messages.py:264-286` (`mark_read`/`read_at` dead — `unread_only` filters are no-ops); `transcript_search.py:36-48` (casefold offset drift on non-ASCII); `transcript_renderer.py:37` (`ToolResult.truncated` never set — multi-MB results serialized whole), `:823-832` (bootstrap-heading heuristic can flip a real user message to system), `:361-364` (nested same-tag protocol regex mis-nests); `pending_tool_calls` never popped after pairing; `_detect_source_from_path` classifies any `.json` as gemini before the `.claude` check; zombie sweep stamps `delivered_at` on never-delivered messages; `restore_session_transcript` MCP tool writes to arbitrary `target_path`; `storage/sessions/_query.py:50-60` (`statuses=["deleted"]` can never match); `session_resolution.py:62-140` (LIKE metacharacters unescaped); `_bulk_update.py:120-134` (conflict redirect applies caller's values to a different session; dead NULL-project branch); `_discovery.py:101-114` (fetchone without ORDER BY across terminal/web_chat twins), `:254-263` (terminal-context scan capped at 250); `_registration_cache.py:108-150` (find_parent_session pins a worker thread with time.sleep up to 30s).
 
+### Task #16817 stale-review disposition (2026-07-14)
+
+The review above describes commit `bad39fcba`; subsequent changes moved or resolved many
+references. Task #16817 was narrowed to remaining dead session/storage examples. The
+following records the disposition of every item in the five nit groups:
+
+- **Processor:** dead `_hook_manager` / `_build_codex_hook_event`, the same-tick JSON mtime
+  gate, and Gemini history-shrink handling are waived from this narrowed stale-review leaf.
+  None was retained as a remaining example in the updated task description.
+- **Parser:** multi-tool assistant handling, thinking-block order, the boundary-recheck loop,
+  non-text tool-result rendering, duplicate dispatch, unknown-block logging, timestamp
+  tolerance, Gemini function-call IDs, and Codex web-search pairing are waived from this
+  narrowed leaf. The separately cited dead `HookTranscriptAssembler` example is resolved:
+  its source, tests, factory wiring, and manager field are absent from the current tree.
+- **Analyzer/summarize:** initial-goal wrapper handling, `found_active_task`, uncapped
+  `files_modified`, whole-file summary loading, and token-tracker fallback drift are waived
+  because the updated task identified no remaining target in this group.
+- **Index/window:** size-snapshot overrun, `boundaries_used`, lookback abort, scan complexity,
+  duplicate exception handling, and sidecar fsync are waived from the narrowed leaf. The
+  `transcript_index.py` size observation is obsolete; the task update explicitly records
+  that the file is no longer over the cited size.
+- **Mailbox/storage:** dead `mark_read` / `read_at` state and no-op `unread_only` filters are
+  fixed by `ce7cd704f`. Casefold offsets, renderer truncation/heading/regex handling,
+  `pending_tool_calls`, source detection, zombie delivery stamping, transcript restore path,
+  deleted-status querying, LIKE escaping, bulk-update redirect/NULL handling, discovery
+  ordering/cap, and registration-cache sleeping are waived from this narrowed stale-review
+  leaf because none was retained as a remaining example in the updated task description.
+
 ## Systemic patterns
 
 1. **Parsers built against assumed formats, not captured ones.** Every parser Blocker traces to fixture-vs-reality divergence: qwen's envelope, gemini's `tokens` shape, codex's reasoning-inclusive output, claude's attachment/queue/compaction/isMeta shapes, the invented hook_blocking_error fixture. There is no captured-transcript corpus test ("every line either parses or is intentionally classified"); hand-written fixtures assert the parser's own assumptions back at it.
