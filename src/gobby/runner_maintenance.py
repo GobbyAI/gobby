@@ -63,6 +63,7 @@ _JITTER_RANDOM = SystemRandom()
 _ISOLATION_CLEANUP_SCAN_LIMIT = 1000
 _CHAT_ATTACHMENT_CLEANUP_BATCH_LIMIT = 500
 _COMMS_CLEANUP_BATCH_LIMIT = 500
+_SKILL_CLEANUP_BATCH_LIMIT = 500
 _APPROVAL_EXPIRY_BATCH_LIMIT = 100
 _METRIC_SNAPSHOT_CLEANUP_BATCH_LIMIT = 1000
 
@@ -414,6 +415,53 @@ async def cleanup_comms_messages_loop(
             break
         except Exception as e:
             logger.error(f"Error in comms message cleanup loop: {e}")
+        try:
+            await sleep_fn(interval_seconds)
+        except asyncio.CancelledError:
+            break
+        if is_shutdown_requested():
+            break
+
+
+async def purge_deleted_skills_loop(
+    db: Any,
+    is_shutdown_requested: Callable[[], bool],
+    retention_days: int = 30,
+    *,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
+    interval_seconds: int = 24 * 60 * 60,
+    startup_delay_seconds: float | None = None,
+    sleep: Callable[[float], Awaitable[None]] | None = None,
+) -> None:
+    """Permanently remove skills whose soft-delete retention period has elapsed."""
+    from gobby.storage.skills import LocalSkillManager
+
+    storage = LocalSkillManager(db)
+    sleep_fn = sleep or asyncio.sleep
+
+    if not await _wait_for_first_maintenance_cycle(
+        "deleted-skill-purge",
+        is_shutdown_requested,
+        startup_delay_seconds=startup_delay_seconds,
+        sleep=sleep_fn,
+    ):
+        return
+
+    while True:
+        try:
+            cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+            deleted = await _run_db(
+                run_db,
+                storage.purge_soft_deleted_before,
+                cutoff,
+                limit=_SKILL_CLEANUP_BATCH_LIMIT,
+            )
+            if deleted > 0:
+                logger.info("Skill retention purge: removed %s soft-deleted skills", deleted)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error("Error in deleted skill purge loop: %s", e)
         try:
             await sleep_fn(interval_seconds)
         except asyncio.CancelledError:

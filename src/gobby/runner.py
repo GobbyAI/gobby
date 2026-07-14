@@ -99,6 +99,7 @@ class GobbyRunner:
     _vector_rebuild_task: asyncio.Task[None] | None
     _zombie_messages_task: asyncio.Task[None] | None
     _comms_messages_task: asyncio.Task[None] | None
+    _skill_purge_task: asyncio.Task[None] | None
     _chat_attachments_cleanup_task: asyncio.Task[None] | None
     _span_cleanup_task: asyncio.Task[None] | None
     _unmodeled_observations_cleanup_task: asyncio.Task[None] | None
