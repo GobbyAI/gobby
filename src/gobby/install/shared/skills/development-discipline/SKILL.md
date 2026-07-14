@@ -7,8 +7,7 @@ internal: true
 triggers: development discipline, developer validation, test judgment
 metadata:
   gobby:
-    audience: agent
-    depth: 1
+    audience: all
 ---
 
 # Development Discipline

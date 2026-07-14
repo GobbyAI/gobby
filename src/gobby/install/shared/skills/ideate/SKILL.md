@@ -7,8 +7,7 @@ internal: true
 triggers: ideation, discovery brief, problem framing
 metadata:
   gobby:
-    audience: agent
-    depth: 0
+    audience: all
 ---
 
 # ideate - Discovery Brief Methodology
