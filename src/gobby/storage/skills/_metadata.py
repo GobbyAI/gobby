@@ -6,6 +6,7 @@ import json
 import logging
 import uuid
 from collections.abc import Mapping
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from gobby.storage.skills._bundled import (
@@ -13,7 +14,7 @@ from gobby.storage.skills._bundled import (
     is_bundled_template_path,
 )
 from gobby.storage.skills._errors import SkillScopeConflictError
-from gobby.storage.skills._models import Skill, SkillSourceType
+from gobby.storage.skills._models import Skill, SkillSourceType, SkillUsageStats
 from gobby.storage.sql_dialect import json_text_expr
 from gobby.utils.datetime import utc_now
 
@@ -684,6 +685,30 @@ class SkillMetadataMixin:
             skills = list(seen.values())
 
         return skills
+
+    def get_skill_usage_stats(self, skill_names: list[str]) -> dict[str, SkillUsageStats]:
+        """Return session load count and latest use for each requested skill name."""
+        names = tuple(dict.fromkeys(skill_names))
+        if not names:
+            return {}
+
+        placeholders = ", ".join("%s" for _ in names)
+        rows = self._fetchall(
+            f"""
+            SELECT skill_name, COUNT(*) AS loads, MAX(created_at) AS last_used
+            FROM session_skills
+            WHERE skill_name IN ({placeholders})
+            GROUP BY skill_name
+            """,  # nosec B608 # placeholders are generated; values remain bound.
+            names,
+        )
+        return {
+            str(row["skill_name"]): SkillUsageStats(
+                loads=int(row["loads"]),
+                last_used=cast(datetime, row["last_used"]),
+            )
+            for row in rows
+        }
 
     def search_skills(
         self,
