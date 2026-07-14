@@ -149,6 +149,25 @@ class TestChatterboxTurboProvider:
         assert len(set(conversion_threads)) == 1
 
     @pytest.mark.asyncio
+    async def test_synthesize_stream_suppresses_empty_pcm(self, voice_config: VoiceConfig) -> None:
+        from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
+
+        provider = ChatterboxTurboProvider(voice_config)
+        mock_wav = MagicMock()
+        mock_wav.squeeze.return_value.cpu.return_value.numpy.return_value = np.array(
+            [], dtype=np.float32
+        )
+        mock_model = MagicMock()
+        mock_model.sr = 24000
+        mock_model.generate.return_value = mock_wav
+        provider._model = mock_model
+        provider._conditioning_ready = True
+
+        chunks = [chunk async for chunk in provider.synthesize_stream("Hello world")]
+
+        assert chunks == []
+
+    @pytest.mark.asyncio
     async def test_synthesize_stream_uses_cached_conditioning(
         self, voice_config: VoiceConfig
     ) -> None:

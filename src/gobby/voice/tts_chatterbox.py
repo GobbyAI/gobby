@@ -380,7 +380,8 @@ class ChatterboxTurboProvider(BaseTTSProvider):
                 pcm_bytes = await asyncio.to_thread(_generate_pcm)
                 self._runtime_primed = True
 
-            yield pcm_bytes, self._sample_rate
+            if pcm_bytes:
+                yield pcm_bytes, self._sample_rate
 
         except asyncio.CancelledError:
             logger.debug("Chatterbox TTS synthesis cancelled")
