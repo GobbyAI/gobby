@@ -521,7 +521,7 @@ class PipelineExecutionStorageMixin:
             params.append(like_pattern)
 
         if search_outputs:
-            like_conditions.append("se.output_json LIKE %s ESCAPE '\\'")
+            like_conditions.append("CAST(se.output_json AS TEXT) LIKE %s ESCAPE '\\'")
             params.append(like_pattern)
 
         like_clause = " OR ".join(like_conditions)
@@ -574,7 +574,7 @@ class PipelineExecutionStorageMixin:
             like_conditions.append("se.error LIKE %s ESCAPE '" + chr(92) + "'")
             params.append(like_pattern)
         if search_outputs:
-            like_conditions.append("se.output_json LIKE %s ESCAPE '" + chr(92) + "'")
+            like_conditions.append("CAST(se.output_json AS TEXT) LIKE %s ESCAPE '" + chr(92) + "'")
             params.append(like_pattern)
         like_clause = " OR ".join(like_conditions)
 
