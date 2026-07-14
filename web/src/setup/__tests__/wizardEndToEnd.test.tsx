@@ -281,7 +281,9 @@ describe("setup wizard end-to-end", () => {
 
     await waitFor(() => expect(screen.getByText(/Setup complete!/i)).toBeTruthy());
 
-    expect(mocks.runGobby).toHaveBeenCalledWith(["install"], { timeout: 30000 });
+    expect(mocks.runGobby).toHaveBeenCalledWith(["install", "--config-only"], {
+      timeout: 30000,
+    });
     expect(mocks.runGobby).toHaveBeenCalledWith(
       ["install", "--falkordb", "--falkordb-password-stdin"],
       { timeout: 120000, input: "ValidPassword123!" },

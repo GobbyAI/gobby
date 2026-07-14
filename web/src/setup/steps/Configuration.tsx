@@ -8,7 +8,7 @@ import { saveState } from "../utils/state.js";
 import { StatusMessage } from "../components/StatusMessage.js";
 import type { StepProps } from "../types.js";
 
-type Phase = "show" | "editing" | "saving" | "done";
+type Phase = "show" | "editing" | "saving" | "error" | "done";
 type EditField = "http" | "ws" | "ui";
 
 const FIELD_ORDER: EditField[] = ["http", "ws", "ui"];
@@ -23,8 +23,10 @@ export function Configuration({ state, setState, onNext }: StepProps): React.Rea
   const [ports, setPorts] = useState(state.ports);
   const [editingIdx, setEditingIdx] = useState(0);
   const [editValue, setEditValue] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   const commit = (finalPorts: typeof ports): void => {
+    setError(null);
     setPhase("saving");
 
     // Write ports to bootstrap.yaml
@@ -36,8 +38,13 @@ export function Configuration({ state, setState, onNext }: StepProps): React.Rea
       patchPorts(finalPorts.http, finalPorts.ws, finalPorts.ui);
     }
 
-    // Run gobby install for DB init + config
-    runGobby(["install"], { timeout: 30000 });
+    // Run configuration and DB initialization without installing hooks or services.
+    const result = runGobby(["install", "--config-only"], { timeout: 30000 });
+    if (!result.success) {
+      setError(result.output.trim() || "gobby install --config-only failed or timed out.");
+      setPhase("error");
+      return;
+    }
 
     setState((prev) => {
       const next = {
@@ -116,6 +123,27 @@ export function Configuration({ state, setState, onNext }: StepProps): React.Rea
 
   if (phase === "saving") {
     return <Text>  Saving configuration...</Text>;
+  }
+
+  if (phase === "error") {
+    return (
+      <Box flexDirection="column">
+        <StatusMessage level="error">Configuration failed: {error}</StatusMessage>
+        <SelectInput
+          items={[
+            { label: "Retry", value: "retry" },
+            { label: "Exit setup", value: "exit" },
+          ]}
+          onSelect={(item) => {
+            if (item.value === "retry") {
+              commit(ports);
+            } else {
+              process.exit(1);
+            }
+          }}
+        />
+      </Box>
+    );
   }
 
   return <StatusMessage level="success">Configuration saved.</StatusMessage>;

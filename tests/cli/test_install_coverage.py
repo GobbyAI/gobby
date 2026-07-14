@@ -142,8 +142,55 @@ class TestInstallCommand:
         with (
             patch("gobby.cli.install.install_qdrant", return_value=qdrant_result),
             patch("gobby.cli.install.install_falkordb", return_value=falkordb_result),
+            patch("gobby.cli.install._resolve_ide_settings_consent", return_value=False),
         ):
             yield
+
+    def test_install_config_only_skips_hooks_and_services(self, runner: CliRunner) -> None:
+        with (
+            patch(
+                "gobby.cli.install._ensure_daemon_config",
+                return_value={"created": False, "path": "/fake/bootstrap.yaml"},
+            ),
+            patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install")),
+            patch("gobby.cli.install.run_daemon_setup") as mock_setup,
+            patch("gobby.cli.install._should_initialize_project") as mock_should_init,
+            patch("gobby.cli.install._resolve_ide_settings_consent") as mock_ide_consent,
+            patch("gobby.cli.install.install_agy") as mock_agy,
+            patch("gobby.cli.install.install_claude") as mock_claude,
+            patch("gobby.cli.install.install_codex") as mock_codex,
+            patch("gobby.cli.install.install_droid") as mock_droid,
+            patch("gobby.cli.install.install_grok") as mock_grok,
+            patch("gobby.cli.install.install_qwen") as mock_qwen,
+            patch("gobby.cli.install.install_git_hooks") as mock_git_hooks,
+            patch("gobby.cli.install._run_embedding_install") as mock_embedding,
+            patch("gobby.cli.install._run_voice_install") as mock_voice,
+            patch("gobby.cli.install._run_qdrant_install") as mock_qdrant,
+            patch("gobby.cli.install._run_falkordb_install") as mock_falkordb,
+            patch("gobby.cli.install._maybe_start_daemon_after_install") as mock_start,
+        ):
+            result = runner.invoke(install, ["--config-only"], catch_exceptions=False)
+
+        assert result.exit_code == 0
+        assert "Configuration and database initialization complete." in result.output
+        mock_setup.assert_called_once_with(Path.cwd(), configure_ide_settings=False)
+        mock_should_init.assert_not_called()
+        mock_ide_consent.assert_not_called()
+        for skipped in (
+            mock_agy,
+            mock_claude,
+            mock_codex,
+            mock_droid,
+            mock_grok,
+            mock_qwen,
+            mock_git_hooks,
+            mock_embedding,
+            mock_voice,
+            mock_qdrant,
+            mock_falkordb,
+            mock_start,
+        ):
+            skipped.assert_not_called()
 
     @patch("gobby.cli.install.run_daemon_setup")
     @patch(
