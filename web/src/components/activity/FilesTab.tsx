@@ -141,6 +141,7 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
     }
   }, [layout, leftWidth])
   const [fileContent, setFileContent] = useState<string | null>(null)
+  const [fileError, setFileError] = useState<string | null>(null)
   const [fileLoading, setFileLoading] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [editContent, setEditContent] = useState<string>('')
@@ -235,6 +236,8 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
     setSelectedFile(path)
     setFileLoading(true)
     setFileContent(null)
+    setFileError(null)
+    setEditContent('')
     setIsEditing(false)
     const baseUrl = getBaseUrl()
     openFileController.current?.abort()
@@ -243,15 +246,22 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
     fetch(`${baseUrl}/api/files/read?project_id=${encodeURIComponent(projectId)}&path=${encodeURIComponent(path)}`, {
       signal: controller.signal,
     })
-      .then((res) => (res.ok ? res.json() : { content: 'Failed to load file' }))
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        return res.json()
+      })
       .then((data) => {
         if (controller.signal.aborted) return
-        const content = data.content ?? data.error ?? 'No content'
+        if (typeof data.content !== 'string') throw new Error('File response has no content')
+        const content = data.content
         setFileContent(content)
         setEditContent(content)
       })
       .catch(() => {
-        if (!controller.signal.aborted) setFileContent('Error loading file')
+        if (controller.signal.aborted) return
+        setFileContent(null)
+        setEditContent('')
+        setFileError('Failed to load file')
       })
       .finally(() => {
         if (!controller.signal.aborted) setFileLoading(false)
@@ -368,7 +378,7 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
   }, [projectId, closeCtxMenu, loadChildren])
 
   const handleSaveEdit = useCallback(async () => {
-    if (!projectId || !selectedFile) return
+    if (!projectId || !selectedFile || fileError) return
     const baseUrl = getBaseUrl()
     const response = await fetch(`${baseUrl}/api/files/write`, {
       method: 'POST',
@@ -381,7 +391,7 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
     }
     setFileContent(editContent)
     setIsEditing(false)
-  }, [projectId, selectedFile, editContent])
+  }, [projectId, selectedFile, editContent, fileError])
 
   // Close context menu on outside click
   useEffect(() => {
@@ -534,6 +544,7 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
                   <button
                     className="btn btn-accent btn-sm file-viewer-btn"
                     onClick={handleSaveEdit}
+                    disabled={Boolean(fileError)}
                     aria-label="Save"
                     title="Save"
                   >
@@ -554,6 +565,7 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
                 <button
                   className="btn btn-accent btn-sm file-viewer-btn"
                   onClick={() => { setIsEditing(true); setEditContent(fileContent ?? '') }}
+                  disabled={fileLoading || Boolean(fileError)}
                   aria-label="Edit"
                   title="Edit"
                 >
@@ -566,6 +578,8 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
           <div className="files-code-viewer">
             {fileLoading ? (
               <div className="p-3 text-xs text-muted-foreground">Loading...</div>
+            ) : fileError ? (
+              <div className="p-3 text-xs text-destructive" role="alert">{fileError}</div>
             ) : isEditing ? (
               <CodeMirrorEditor
                 content={editContent}

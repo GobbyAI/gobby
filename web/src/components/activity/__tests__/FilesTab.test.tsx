@@ -283,4 +283,31 @@ describe('FilesTab', () => {
     expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/files/write'))).toBe(false)
   })
+
+  it('keeps failed file reads out of the editor and never writes the error message', async () => {
+    vi.mocked(useIsMobile).mockReturnValue(false)
+    fetchMock.mockImplementation(async (input?: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/files/git-status')) return Response.json({ files: {} })
+      if (url.includes('/api/files/read')) return new Response('unavailable', { status: 500 })
+      if (url.includes('/api/files/tree')) {
+        return Response.json([
+          { name: 'broken.ts', path: 'broken.ts', is_dir: false, extension: 'ts' },
+        ])
+      }
+      return Response.json([])
+    })
+
+    render(<FilesTab projectId="test-project" />)
+    fireEvent.click(await screen.findByText('broken.ts'))
+
+    expect(await screen.findByText('Failed to load file')).toBeInTheDocument()
+    const editButton = screen.getByRole('button', { name: 'Edit' })
+    expect(editButton).toBeDisabled()
+    fireEvent.click(editButton)
+
+    expect(screen.queryByRole('textbox', { name: 'File contents' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/files/write'))).toBe(false)
+  })
 })
