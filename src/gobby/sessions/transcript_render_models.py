@@ -86,5 +86,7 @@ class RenderState:
     current_message: RenderedMessage | None = None
     # Map of tool_use_id -> RenderedToolCall
     pending_tool_calls: dict[str, RenderedToolCall] = field(default_factory=dict)
+    # Map of tool_use_id -> message containing the call, for late result re-broadcasts.
+    tool_call_messages: dict[str, RenderedMessage] = field(default_factory=dict)
     # Track seen content hashes to deduplicate Claude Code streaming duplicates
     seen_content: set[int] = field(default_factory=set)

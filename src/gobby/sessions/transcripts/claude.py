@@ -398,7 +398,7 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
         def _make_msg(
             *,
             role: str,
-            content: str,
+            content: str | dict[str, Any],
             content_type: str = "text",
             tool_name: str | None = None,
             tool_input: dict[str, Any] | None = None,
@@ -420,6 +420,14 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                 model=model,
                 message_id=message_id,
             )
+
+        def _media_source(block: dict[str, Any], block_type: str) -> dict[str, Any]:
+            source = block.get("source")
+            normalized = dict(source) if isinstance(source, dict) else {"data": str(source or "")}
+            title = block.get("title")
+            if block_type == "document" and isinstance(title, str) and title:
+                normalized.setdefault("name", title)
+            return normalized
 
         def _make_unknown(*, role: str, block_type: str, raw: dict[str, Any]) -> ParsedMessage:
             return _unknown_block_message(
@@ -477,6 +485,17 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                     btype = block.get("type")
                     if btype == "text":
                         text_parts.append(block.get("text", ""))
+                    elif btype in ("image", "document"):
+                        if text_parts:
+                            results.append(_make_msg(role="user", content=" ".join(text_parts)))
+                            text_parts = []
+                        results.append(
+                            _make_msg(
+                                role="user",
+                                content=_media_source(block, btype),
+                                content_type=btype,
+                            )
+                        )
                     elif btype == "tool_result":
                         # Emit accumulated text first
                         if text_parts:
@@ -520,6 +539,19 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                     btype = block.get("type")
                     if btype == "text":
                         text_parts.append(block.get("text", ""))
+                    elif btype in ("image", "document"):
+                        if text_parts:
+                            results.append(
+                                _make_msg(role="assistant", content=" ".join(text_parts))
+                            )
+                            text_parts = []
+                        results.append(
+                            _make_msg(
+                                role="assistant",
+                                content=_media_source(block, btype),
+                                content_type=btype,
+                            )
+                        )
                     elif btype == "tool_use":
                         # Emit accumulated text first
                         if text_parts:
