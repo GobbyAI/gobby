@@ -104,12 +104,6 @@ class DaemonClient:
         self.logger = logger or logging.getLogger(__name__)
         self._auth_headers = daemon_auth_headers()
 
-        # Health status cache (thread-safe)
-        self._cache_lock = threading.Lock()
-        self._cached_is_ready: bool | None = None
-        self._cached_message: str | None = None
-        self._cached_status: str | None = None
-        self._cached_error: str | None = None
         self._health_log_lock = threading.Lock()
         self._health_failed_since_last_success = False
 
@@ -233,11 +227,20 @@ class DaemonClient:
             Response object (httpx.Response)
         """
         url = f"{self.url}{endpoint}"
-        timeout_val = timeout or self.timeout
+        timeout_val = self.timeout if timeout is None else timeout
 
         try:
             if method.upper() == "GET":
-                response = httpx.get(url, headers=self._auth_headers, timeout=timeout_val)
+                if json_data is None:
+                    response = httpx.get(url, headers=self._auth_headers, timeout=timeout_val)
+                else:
+                    response = httpx.request(
+                        "GET",
+                        url,
+                        json=json_data,
+                        headers=self._auth_headers,
+                        timeout=timeout_val,
+                    )
             elif method.upper() == "POST":
                 response = httpx.post(
                     url, json=json_data, headers=self._auth_headers, timeout=timeout_val
@@ -247,7 +250,16 @@ class DaemonClient:
                     url, json=json_data, headers=self._auth_headers, timeout=timeout_val
                 )
             elif method.upper() == "DELETE":
-                response = httpx.delete(url, headers=self._auth_headers, timeout=timeout_val)
+                if json_data is None:
+                    response = httpx.delete(url, headers=self._auth_headers, timeout=timeout_val)
+                else:
+                    response = httpx.request(
+                        "DELETE",
+                        url,
+                        json=json_data,
+                        headers=self._auth_headers,
+                        timeout=timeout_val,
+                    )
             else:
                 raise ValueError(f"Unsupported HTTP method: {method}")
 
@@ -289,33 +301,3 @@ class DaemonClient:
         )
         response.raise_for_status()
         return cast(dict[str, Any], response.json())
-
-    def update_status_cache(self) -> None:
-        """Update cached daemon status by calling check_status()."""
-        with self._cache_lock:
-            (
-                self._cached_is_ready,
-                self._cached_message,
-                self._cached_status,
-                self._cached_error,
-            ) = self.check_status()
-
-            self.logger.debug(
-                f"Daemon status updated: {self.DAEMON_STATUS_TEXT.get(self._cached_status, 'Unknown')}"
-            )
-
-    def get_cached_status(self) -> tuple[bool | None, str | None, str | None, str | None]:
-        """
-        Get cached daemon status without making HTTP calls.
-
-        Returns:
-            Tuple of (is_ready, message, status, error_reason)
-            Values may be None if status hasn't been checked yet.
-        """
-        with self._cache_lock:
-            return (
-                self._cached_is_ready,
-                self._cached_message,
-                self._cached_status,
-                self._cached_error,
-            )

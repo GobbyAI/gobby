@@ -133,6 +133,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         logger.warning(
             "Failed to migrate legacy web password; run 'gobby auth credentials': %s",
             exc,
+            exc_info=True,
         )
     if secret_migration.migrated:
         logger.info(
@@ -153,7 +154,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         cost_store = ModelCostStore(runner.database)
         cost_store.populate()
     except Exception as e:
-        logger.warning(f"Failed to populate model metadata: {e}")
+        logger.warning(f"Failed to populate model metadata: {e}", exc_info=True)
 
     runner.session_manager = SessionManager(runner.database)
     runner.task_manager = LocalTaskManager(runner.database)
@@ -254,4 +255,4 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         )
         logger.debug(f"HubManager initialized with {len(skills_config.hubs)} hubs")
     except Exception as e:
-        logger.warning(f"Failed to initialize HubManager: {e}")
+        logger.warning(f"Failed to initialize HubManager: {e}", exc_info=True)

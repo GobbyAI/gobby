@@ -12,6 +12,7 @@ from typing import Any, Self
 
 import pytest
 
+import gobby.install.bin_freshness_locks as freshness_locks
 from gobby.config.bin_freshness import BinFreshnessConfig
 from gobby.install.bin_freshness_github import (
     GithubAPIError,
@@ -19,13 +20,38 @@ from gobby.install.bin_freshness_github import (
     SourceUnavailableError,
 )
 from gobby.install.bin_freshness_inspector import inspect_managed_bin
-from gobby.install.bin_freshness_locks import try_acquire_native_bin_lock
+from gobby.install.bin_freshness_locks import NativeBinFileLock, try_acquire_native_bin_lock
 from gobby.install.bin_freshness_models import ManagedBinSpec, ReleaseAsset, managed_bin_specs
 from gobby.install.bin_freshness_updater import update_all_managed_bins, update_managed_bin
 from gobby.storage.bin_update_state import BinUpdateStateStore
 from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
+
+
+def test_lock_close_error_does_not_mask_unlock_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unlock_error = OSError("unlock failed")
+
+    class FailingFcntl:
+        LOCK_UN = 8
+
+        @staticmethod
+        def flock(_fd: int, _operation: int) -> None:
+            raise unlock_error
+
+    def fail_close(_fd: int) -> None:
+        raise OSError("close failed")
+
+    monkeypatch.setattr(freshness_locks, "_fcntl", FailingFcntl())
+    monkeypatch.setattr(freshness_locks.os, "close", fail_close)
+    lock = NativeBinFileLock(tmp_path / "lock", 123)
+
+    with pytest.raises(OSError, match="unlock failed") as exc_info:
+        lock.release()
+
+    assert exc_info.value is unlock_error
 
 
 def _spec(name: str = "ghook", floor: str = "0.4.1") -> ManagedBinSpec:

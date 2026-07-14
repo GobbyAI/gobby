@@ -30,8 +30,6 @@ class TestDaemonClientInit:
 
         assert client.url == "http://localhost:61999"
         assert client.timeout == 5.0
-        assert client._cached_is_ready is None
-        assert client._cached_status is None
 
     def test_custom_values(self) -> None:
         """Test custom initialization values."""
@@ -329,6 +327,25 @@ class TestDaemonClientCallHttpApi:
         call_args = mock_get.call_args
         assert call_args.kwargs["timeout"] == 30.0
 
+    def test_zero_timeout_is_preserved(self) -> None:
+        client = DaemonClient(timeout=5.0)
+
+        with patch("httpx.get", return_value=MagicMock()) as mock_get:
+            client.call_http_api("/test", method="GET", timeout=0)
+
+        assert mock_get.call_args.kwargs["timeout"] == 0
+
+    @pytest.mark.parametrize("method", ["GET", "DELETE"])
+    def test_request_body_is_preserved(self, method: str) -> None:
+        client = DaemonClient()
+        payload = {"key": "value"}
+
+        with patch("httpx.request", return_value=MagicMock()) as mock_request:
+            client.call_http_api("/test", method=method, json_data=payload)
+
+        assert mock_request.call_args.args[:2] == (method, f"{client.url}/test")
+        assert mock_request.call_args.kwargs["json"] == payload
+
     def test_exception_handling(self) -> None:
         """Test exception is raised on failure."""
         client = DaemonClient()
@@ -378,59 +395,3 @@ class TestDaemonClientCallMcpTool:
         )
         assert mock_call.call_count == 1
         assert mock_call.call_args is not None
-
-
-class TestDaemonClientStatusCache:
-    """Tests for status caching functionality."""
-
-    def test_update_status_cache(self) -> None:
-        """Test updating status cache."""
-        client = DaemonClient()
-
-        with patch.object(client, "check_status", return_value=(True, "Ready", "ready", None)):
-            client.update_status_cache()
-
-        assert client._cached_is_ready is True
-        assert client._cached_message == "Ready"
-        assert client._cached_status == "ready"
-        assert client._cached_error is None
-
-    def test_get_cached_status_initial(self) -> None:
-        """Test getting cached status before any check."""
-        client = DaemonClient()
-
-        is_ready, message, status, error = client.get_cached_status()
-
-        assert is_ready is None
-        assert message is None
-        assert status is None
-        assert error is None
-
-    def test_get_cached_status_after_update(self) -> None:
-        """Test getting cached status after update."""
-        client = DaemonClient()
-
-        with patch.object(
-            client, "check_status", return_value=(False, "Not running", "not_running", None)
-        ):
-            client.update_status_cache()
-
-        is_ready, message, status, error = client.get_cached_status()
-
-        assert is_ready is False
-        assert message == "Not running"
-        assert status == "not_running"
-
-    def test_cache_thread_safety(self) -> None:
-        """Test that cache operations use lock."""
-        client = DaemonClient()
-
-        # Verify the lock exists
-        assert hasattr(client, "_cache_lock")
-
-        # Test that operations work (thread safety is implicit via lock usage)
-        with patch.object(client, "check_status", return_value=(True, "Ready", "ready", None)):
-            client.update_status_cache()
-
-        result = client.get_cached_status()
-        assert result[0] is True
