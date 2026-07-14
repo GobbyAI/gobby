@@ -33,6 +33,28 @@ def _clear_app_context_between_tests() -> Iterator[None]:
     clear_app_context()
 
 
+def test_pipeline_heartbeat_without_startup_project_is_cross_project(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from gobby.runner_init.orchestration import _init_pipeline_heartbeat
+
+    runner = SimpleNamespace(
+        database=MagicMock(),
+        db_executor=SimpleNamespace(run=AsyncMock()),
+        task_manager=MagicMock(),
+        session_manager=MagicMock(),
+        project_id=None,
+    )
+
+    with caplog.at_level(logging.INFO):
+        heartbeat = _init_pipeline_heartbeat(runner)
+
+    assert heartbeat is not None
+    assert heartbeat._execution_manager.project_id is None
+    assert "pipeline heartbeat will monitor all projects" in caplog.text
+    assert "Failed to initialize pipeline heartbeat maintenance" not in caplog.text
+
+
 class TestGobbyRunnerSignalHandlers:
     """Tests for signal handler setup."""
 

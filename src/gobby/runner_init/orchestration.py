@@ -14,6 +14,7 @@ from gobby.sessions.lifecycle import SessionLifecycleManager
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
+    from gobby.system_automation import PipelineHeartbeatService
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,33 @@ async def _send_tmux_pane_wake(
         )
     else:
         await send_literal_text_to_tmux_target(pane_id, message, tmux_cmd=tmux_cmd)
+
+
+def _init_pipeline_heartbeat(runner: GobbyRunner) -> PipelineHeartbeatService | None:
+    """Create a cross-project pipeline heartbeat for the daemon."""
+    try:
+        from gobby.storage.agents import LocalAgentRunManager
+        from gobby.storage.pipelines import LocalPipelineExecutionManager
+        from gobby.workflows.pipeline_heartbeat import PipelineHeartbeat
+
+        execution_manager = LocalPipelineExecutionManager(db=runner.database, project_id=None)
+        heartbeat = PipelineHeartbeat(
+            execution_manager=execution_manager,
+            task_manager=runner.task_manager,
+            agent_run_manager=LocalAgentRunManager(runner.database),
+            session_manager=runner.session_manager,
+            run_db=runner.db_executor.run,
+        )
+        if runner.project_id is None:
+            logger.info(
+                "Daemon has no startup project; pipeline heartbeat will monitor all projects"
+            )
+        else:
+            logger.debug("Cross-project PipelineHeartbeat maintenance registered")
+        return heartbeat
+    except Exception as e:
+        logger.error(f"Failed to initialize pipeline heartbeat maintenance: {e}")
+        return None
 
 
 def init_orchestration(runner: GobbyRunner) -> None:
@@ -189,23 +217,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
             config=runner.config.cron,
             run_db=runner.db_executor.run,
         )
-        pipeline_heartbeat = None
-        try:
-            from gobby.workflows.pipeline_heartbeat import PipelineHeartbeat
-
-            if runner.pipeline_execution_manager is None:
-                raise RuntimeError("pipeline_execution_manager required for heartbeat")
-
-            pipeline_heartbeat = PipelineHeartbeat(
-                execution_manager=runner.pipeline_execution_manager,
-                task_manager=runner.task_manager,
-                agent_run_manager=LocalAgentRunManager(runner.database),
-                session_manager=runner.session_manager,
-                run_db=runner.db_executor.run,
-            )
-            logger.debug("PipelineHeartbeat maintenance registered")
-        except Exception as e:
-            logger.error(f"Failed to initialize pipeline heartbeat maintenance: {e}")
+        pipeline_heartbeat = _init_pipeline_heartbeat(runner)
 
         runner.system_automation_loop = SystemAutomationLoop(
             db=runner.database,
