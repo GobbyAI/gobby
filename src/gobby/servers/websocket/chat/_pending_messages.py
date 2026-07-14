@@ -46,7 +46,7 @@ class ChatPendingMessagesMixin:
                 msg_type = getattr(msg, "message_type", "message") or "message"
                 groups.setdefault(msg_type, []).append(msg)
                 try:
-                    inter_session_msg_manager.mark_delivered(msg.id)
+                    inter_session_msg_manager.mark_delivered(msg.id, db_session_id)
                 except Exception:
                     logger.debug(
                         "Failed to mark inter-session message %s delivered",

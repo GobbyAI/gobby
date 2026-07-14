@@ -1570,7 +1570,7 @@ class TestContinueInChatTerminalKill:
         mock_get_tmux_manager.assert_called_once_with(source_session.terminal_context)
         tmux_manager.send_keys.assert_awaited_once_with("%7", "hello\n")
         assert inter_msg_manager.create_message.call_args.kwargs["from_session"] == "web-123"
-        inter_msg_manager.mark_delivered.assert_called_once_with("msg-1")
+        inter_msg_manager.mark_delivered.assert_called_once_with("msg-1", "source-uuid")
         host._send_error.assert_not_awaited()
 
         payload = ws.send.await_args_list[0].args[0]

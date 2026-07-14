@@ -153,8 +153,8 @@ class TestInjectPendingMessages:
         assert "Pending P2P messages from other sessions" in res
         assert "- [URGENT] help me" in res
 
-        mixin.inter_session_msg_manager.mark_delivered.assert_any_call("1")
-        mixin.inter_session_msg_manager.mark_delivered.assert_any_call("2")
+        mixin.inter_session_msg_manager.mark_delivered.assert_any_call("1", "sid")
+        mixin.inter_session_msg_manager.mark_delivered.assert_any_call("2", "sid")
 
 
 class TestHandleChatMessage:

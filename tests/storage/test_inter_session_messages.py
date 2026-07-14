@@ -6,7 +6,9 @@ Tests cover:
 - InterSessionMessageManager CRUD operations
 """
 
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
 import pytest
@@ -539,6 +541,95 @@ class TestInterSessionMessageManagerGetMessage:
         assert result is None
 
 
+class TestInterSessionMessageManagerDeliveryClaims:
+    """Atomic delivery claims are scoped to one recipient."""
+
+    @pytest.fixture
+    def mailbox(self, temp_db: HubDatabase):
+        from gobby.storage.inter_session_messages import InterSessionMessageManager
+        from gobby.storage.projects import LocalProjectManager
+        from gobby.storage.sessions import SessionManager
+
+        project = LocalProjectManager(temp_db).create(
+            name="delivery-claims",
+            repo_path="/tmp/delivery-claims",
+        )
+        sessions = SessionManager(temp_db)
+        sender = sessions.register(
+            external_id="claim-sender",
+            machine_id="m1",
+            source="claude",
+            project_id=project.id,
+        )
+        recipient = sessions.register(
+            external_id="claim-recipient",
+            machine_id="m1",
+            source="claude",
+            project_id=project.id,
+        )
+        foreign = sessions.register(
+            external_id="claim-foreign",
+            machine_id="m1",
+            source="claude",
+            project_id=project.id,
+        )
+        return InterSessionMessageManager(temp_db), sender, recipient, foreign
+
+    def test_claim_is_recipient_scoped_and_not_redelivered(self, mailbox) -> None:
+        manager, sender, recipient, foreign = mailbox
+        recipient_message = manager.create_message(
+            from_session=sender.id,
+            to_session=recipient.id,
+            content="recipient message",
+        )
+        foreign_message = manager.create_message(
+            from_session=sender.id,
+            to_session=foreign.id,
+            content="foreign message",
+        )
+
+        claimed = manager.claim_undelivered_messages(recipient.id)
+
+        assert [message.id for message in claimed] == [recipient_message.id]
+        assert manager.claim_undelivered_messages(recipient.id) == []
+        assert manager.get_message(foreign_message.id).delivered_at is None
+
+    def test_concurrent_claim_delivers_each_message_once(self, mailbox) -> None:
+        manager, sender, recipient, _foreign = mailbox
+        message = manager.create_message(
+            from_session=sender.id,
+            to_session=recipient.id,
+            content="claim once",
+        )
+        barrier = threading.Barrier(2)
+
+        def claim() -> list[str]:
+            barrier.wait()
+            return [item.id for item in manager.claim_undelivered_messages(recipient.id)]
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(lambda _index: claim(), range(2)))
+
+        assert sum(results, []) == [message.id]
+
+    def test_mark_delivered_requires_matching_undelivered_recipient(self, mailbox) -> None:
+        manager, sender, recipient, foreign = mailbox
+        message = manager.create_message(
+            from_session=sender.id,
+            to_session=recipient.id,
+            content="recipient guard",
+        )
+
+        with pytest.raises(ValueError, match="Undelivered message not found"):
+            manager.mark_delivered(message.id, foreign.id)
+        assert manager.get_message(message.id).delivered_at is None
+
+        delivered = manager.mark_delivered(message.id, recipient.id)
+        assert delivered.delivered_at is not None
+        with pytest.raises(ValueError, match="Undelivered message not found"):
+            manager.mark_delivered(message.id, recipient.id)
+
+
 class TestInterSessionMessageManagerListMessages:
     """Tests for list_messages read-only query method."""
 
@@ -575,7 +666,7 @@ class TestInterSessionMessageManagerListMessages:
 
         # Mark m1 as read and delivered
         mgr.mark_read(m1.id)
-        mgr.mark_delivered(m1.id)
+        mgr.mark_delivered(m1.id, s_beta.id)
 
         class Setup:
             alpha = s_alpha

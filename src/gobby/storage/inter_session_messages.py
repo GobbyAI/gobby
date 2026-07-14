@@ -311,6 +311,21 @@ class InterSessionMessageManager:
         )
         return [InterSessionMessage.from_row(row) for row in rows]
 
+    def claim_undelivered_messages(self, to_session: str) -> list[InterSessionMessage]:
+        """Atomically claim every undelivered message for a recipient."""
+        delivered_at = utc_now()
+        rows = self.db.fetchall(
+            """WITH claimed AS (
+                   UPDATE inter_session_messages
+                   SET delivered_at = %s
+                   WHERE to_session = %s AND delivered_at IS NULL
+                   RETURNING *
+               )
+               SELECT * FROM claimed ORDER BY sent_at""",
+            (delivered_at, to_session),
+        )
+        return [InterSessionMessage.from_row(row) for row in rows]
+
     def list_messages(
         self,
         session_id: str,
@@ -370,11 +385,12 @@ class InterSessionMessageManager:
         rows = self.db.fetchall(query, tuple(params))
         return [InterSessionMessage.from_row(row) for row in rows]
 
-    def mark_delivered(self, message_id: str) -> InterSessionMessage:
+    def mark_delivered(self, message_id: str, to_session: str) -> InterSessionMessage:
         """Mark a message as delivered.
 
         Args:
             message_id: The message ID to mark as delivered
+            to_session: ID of the receiving session
 
         Returns:
             The updated InterSessionMessage
@@ -384,12 +400,15 @@ class InterSessionMessageManager:
         """
         delivered_at = utc_now()
 
-        self.db.execute(
-            "UPDATE inter_session_messages SET delivered_at = %s WHERE id = %s",
-            (delivered_at, message_id),
+        row = self.db.fetchone(
+            """UPDATE inter_session_messages
+               SET delivered_at = %s
+               WHERE id = %s AND to_session = %s AND delivered_at IS NULL
+               RETURNING *""",
+            (delivered_at, message_id, to_session),
         )
-
-        message = self.get_message(message_id)
-        if not message:
-            raise ValueError(f"Message not found: {message_id}")
-        return message
+        if not row:
+            raise ValueError(
+                f"Undelivered message not found for recipient {to_session}: {message_id}"
+            )
+        return InterSessionMessage.from_row(row)

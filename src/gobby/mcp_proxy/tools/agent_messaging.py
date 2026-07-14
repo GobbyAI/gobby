@@ -164,7 +164,7 @@ def add_messaging_tools(
                     }
 
             from_id = _resolve(from_session)
-            if project_id is None:
+            if project_id is None and normalized_target != "session":
                 project_id = get_context_project_id()
 
             resolved_target_id = target_id
@@ -250,21 +250,34 @@ def add_messaging_tools(
     @registry.tool(
         name="deliver_pending_messages",
         description=(
-            "Fetch undelivered messages for a session and mark them as delivered. "
-            "Use this to inject pending messages as context."
+            "Fetch and atomically claim undelivered messages for the calling session. "
+            "target_session_id defaults to the caller and must resolve to the caller."
         ),
     )
     async def deliver_pending_messages(
-        target_session_id: str,
+        target_session_id: str | None = None,
     ) -> dict[str, Any]:
         try:
-            resolved_id = _resolve(target_session_id)
-            undelivered = message_manager.get_undelivered_messages(resolved_id)
+            from gobby.utils.session_context import get_current_session_id
 
-            messages = []
-            for msg in undelivered:
-                message_manager.mark_delivered(msg.id)
-                messages.append(_message_delivery_payload(msg))
+            caller_session_id = get_current_session_id()
+            if not caller_session_id:
+                return {
+                    "success": False,
+                    "error": "No calling session is available for message delivery.",
+                }
+            resolved_caller_id = _resolve(caller_session_id)
+            resolved_id = (
+                resolved_caller_id if target_session_id is None else _resolve(target_session_id)
+            )
+            if resolved_id != resolved_caller_id:
+                return {
+                    "success": False,
+                    "error": "target_session_id must resolve to the calling session.",
+                }
+
+            claimed = message_manager.claim_undelivered_messages(resolved_id)
+            messages = [_message_delivery_payload(msg) for msg in claimed]
 
             return {
                 "success": True,
