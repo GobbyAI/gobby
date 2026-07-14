@@ -264,6 +264,102 @@ class TestTaskSyncManager:
         t2_fresh = task_manager.get_task(t2.id)
         assert t2_fresh.title == "File Newer"
 
+    def test_import_lww_snapshot_is_loaded_inside_transaction(
+        self, sync_manager, task_manager, sample_project, monkeypatch
+    ) -> None:
+        task = task_manager.create_task(sample_project["id"], "Local Older")
+        local_old = "2020-01-01T00:00:00+00:00"
+        file_time = "2022-01-01T00:00:00+00:00"
+        concurrent_new = "2025-01-01T00:00:00+00:00"
+        task_manager.db.execute(
+            "UPDATE tasks SET updated_at = %s WHERE id = %s", (local_old, task.id)
+        )
+
+        file_data = {
+            "id": task.id,
+            "title": "File Version",
+            "description": "",
+            "created_at": local_old,
+            "updated_at": file_time,
+            "project_id": sample_project["id"],
+            "parent_id": None,
+            "deps_on": [],
+        }
+        sync_manager.export_path.parent.mkdir(parents=True, exist_ok=True)
+        sync_manager.export_path.write_text(json.dumps(file_data) + "\n")
+
+        original_fetchall = sync_manager.db.fetchall
+        update_applied = False
+
+        def fetchall_then_concurrent_update(sql: str, params: Any = ()) -> Any:
+            nonlocal update_applied
+            rows = original_fetchall(sql, params)
+            if not update_applied and "FROM tasks" in sql:
+                update_applied = True
+                task_manager.db.execute(
+                    "UPDATE tasks SET title = %s, updated_at = %s WHERE id = %s",
+                    ("Concurrent Local", concurrent_new, task.id),
+                )
+            return rows
+
+        monkeypatch.setattr(sync_manager.db, "fetchall", fetchall_then_concurrent_update)
+
+        sync_manager.import_from_jsonl()
+
+        imported = task_manager.get_task(task.id)
+        assert imported.title == "Concurrent Local"
+        assert imported.updated_at == datetime.fromisoformat(concurrent_new)
+
+    def test_import_ignores_same_id_inserted_after_snapshot(
+        self, sync_manager, task_manager, sample_project, monkeypatch
+    ) -> None:
+        task_id = _task_id("concurrent-insert")
+        file_time = "2022-01-01T00:00:00+00:00"
+        file_data = {
+            "id": task_id,
+            "title": "File Version",
+            "created_at": file_time,
+            "updated_at": file_time,
+            "project_id": sample_project["id"],
+            "parent_id": None,
+            "deps_on": [],
+        }
+        sync_manager.export_path.parent.mkdir(parents=True, exist_ok=True)
+        sync_manager.export_path.write_text(json.dumps(file_data) + "\n")
+
+        original_fetchall = sync_manager.db.fetchall
+        insert_applied = False
+
+        def fetchall_then_concurrent_insert(sql: str, params: Any = ()) -> Any:
+            nonlocal insert_applied
+            rows = original_fetchall(sql, params)
+            if not insert_applied and "FROM tasks" in sql:
+                insert_applied = True
+                task_manager.db.execute(
+                    """
+                    INSERT INTO tasks (
+                        id, project_id, title, created_at, updated_at, seq_num, path_cache
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        task_id,
+                        sample_project["id"],
+                        "Concurrent Local",
+                        datetime.fromisoformat(file_time),
+                        datetime.fromisoformat(file_time),
+                        999_999,
+                        "999999",
+                    ),
+                )
+            return rows
+
+        monkeypatch.setattr(sync_manager.db, "fetchall", fetchall_then_concurrent_insert)
+
+        sync_manager.import_from_jsonl()
+
+        imported = task_manager.get_task(task_id)
+        assert imported.title == "Concurrent Local"
+
     @pytest.mark.integration
     def test_export_always_writes_fresh_content(
         self, sync_manager, task_manager, sample_project

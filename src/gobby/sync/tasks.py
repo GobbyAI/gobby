@@ -405,41 +405,38 @@ class TaskSyncManager:
             pending_deps: list[tuple[str, str]] = []
             pending_path_rebuilds: list[str] = []
 
-            # Bulk-load existing task metadata in one query to avoid per-task SELECTs
-            existing_tasks: dict[str, dict[str, Any]] = {}
-            for row in self.db.fetchall(
-                "SELECT id, updated_at, seq_num, path_cache, project_id, parent_task_id, "
-                "claimed_by_session_id, created_in_session_id, closed_in_session_id "
-                "FROM tasks"
-            ):
-                existing_tasks[row["id"]] = {
-                    "updated_at": row["updated_at"],
-                    "seq_num": row["seq_num"],
-                    "path_cache": row["path_cache"],
-                    "project_id": row["project_id"],
-                    "parent_task_id": row["parent_task_id"],
-                    "claimed_by_session_id": row["claimed_by_session_id"],
-                    "created_in_session_id": row["created_in_session_id"],
-                    "closed_in_session_id": row["closed_in_session_id"],
-                }
-
-            # Track occupied seq_nums per project to preserve JSONL values
-            # and only assign fresh ones on collision
-            occupied_seq_nums: dict[str | None, set[int]] = {}
-            max_seq_tracker: dict[str | None, int] = {}
-            for task_meta in existing_tasks.values():
-                pid = task_meta["project_id"]
-                sn = task_meta["seq_num"]
-                if sn is not None:
-                    occupied_seq_nums.setdefault(pid, set()).add(sn)
-                    max_seq_tracker[pid] = max(max_seq_tracker.get(pid, 0), sn)
-            batch_claimed: dict[str | None, set[int]] = {}
-            existing_session_ids = {
-                row["id"] for row in self.db.fetchall("SELECT id FROM sessions")
-            }
-
             with self.db.transaction() as conn:
                 conn.execute("SET CONSTRAINTS ALL DEFERRED")
+                # Use the write transaction's snapshot for LWW and sequence decisions.
+                existing_tasks: dict[str, dict[str, Any]] = {}
+                for row in self.db.fetchall(
+                    "SELECT id, updated_at, seq_num, path_cache, project_id, parent_task_id, "
+                    "claimed_by_session_id, created_in_session_id, closed_in_session_id "
+                    "FROM tasks"
+                ):
+                    existing_tasks[row["id"]] = {
+                        "updated_at": row["updated_at"],
+                        "seq_num": row["seq_num"],
+                        "path_cache": row["path_cache"],
+                        "project_id": row["project_id"],
+                        "parent_task_id": row["parent_task_id"],
+                        "claimed_by_session_id": row["claimed_by_session_id"],
+                        "created_in_session_id": row["created_in_session_id"],
+                        "closed_in_session_id": row["closed_in_session_id"],
+                    }
+
+                occupied_seq_nums: dict[str | None, set[int]] = {}
+                max_seq_tracker: dict[str | None, int] = {}
+                for task_meta in existing_tasks.values():
+                    pid = task_meta["project_id"]
+                    sn = task_meta["seq_num"]
+                    if sn is not None:
+                        occupied_seq_nums.setdefault(pid, set()).add(sn)
+                        max_seq_tracker[pid] = max(max_seq_tracker.get(pid, 0), sn)
+                batch_claimed: dict[str | None, set[int]] = {}
+                existing_session_ids = {
+                    row["id"] for row in self.db.fetchall("SELECT id FROM sessions")
+                }
                 for line in lines:
                     if not line.strip():
                         continue
@@ -618,15 +615,19 @@ class TaskSyncManager:
                             # Rebuild after every task is present so file order cannot
                             # truncate a child's hierarchy.
                             synced_values["path_cache"] = str(final_seq)
-                            pending_path_rebuilds.append(task_id)
 
                             # INSERT with all synced fields
                             columns = ", ".join(["id"] + list(synced_values.keys()))
                             placeholders = ", ".join(["%s"] * (1 + len(synced_values)))
-                            conn.execute(
-                                f"INSERT INTO {'tasks'} ({columns}) VALUES ({placeholders})",
+                            cursor = conn.execute(
+                                f"INSERT INTO {'tasks'} ({columns}) VALUES ({placeholders}) "
+                                "ON CONFLICT (id) DO NOTHING",
                                 (task_id, *synced_values.values()),
                             )
+                            if cursor.rowcount == 0:
+                                skipped_count += 1
+                                continue
+                            pending_path_rebuilds.append(task_id)
                             existing_tasks[task_id] = {
                                 "updated_at": synced_values["updated_at"],
                                 "seq_num": synced_values["seq_num"],
@@ -641,10 +642,14 @@ class TaskSyncManager:
                         else:
                             # Existing task: update synced fields while preserving local state.
                             set_clause = ", ".join(f"{col} = %s" for col in synced_values)
-                            conn.execute(
-                                f"UPDATE tasks SET {set_clause} WHERE id = %s",
-                                (*synced_values.values(), task_id),
+                            cursor = conn.execute(
+                                f"UPDATE tasks SET {set_clause} WHERE id = %s "
+                                "AND (updated_at IS NULL OR updated_at < %s)",
+                                (*synced_values.values(), task_id, updated_at_file),
                             )
+                            if cursor.rowcount == 0:
+                                skipped_count += 1
+                                continue
                             existing_tasks[task_id] = {
                                 **existing_row,
                                 "updated_at": synced_values["updated_at"],
