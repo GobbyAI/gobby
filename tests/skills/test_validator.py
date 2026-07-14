@@ -96,6 +96,13 @@ class TestValidateSkillName:
         assert result.valid is False
         assert any("required" in e.lower() for e in result.errors)
 
+    @pytest.mark.parametrize("name", [["a", "b"], 123])
+    def test_rejects_non_string_name(self, name: object) -> None:
+        """Test that non-string names return a validation result."""
+        result = validate_skill_name(name)
+        assert result.valid is False
+        assert any("string" in e.lower() for e in result.errors)
+
     def test_rejects_uppercase(self) -> None:
         """Test that uppercase letters are rejected."""
         result = validate_skill_name("CommitMessage")

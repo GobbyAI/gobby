@@ -306,6 +306,19 @@ Content
         with pytest.raises(SkillParseError, match="name"):
             parse_skill_text(text)
 
+    @pytest.mark.parametrize("yaml_name", ["[a, b]", "123"])
+    def test_non_string_name_raises_error(self, yaml_name: str) -> None:
+        """Test that non-string YAML names raise a clean parse error."""
+        text = f"""---
+name: {yaml_name}
+description: Has a non-string name
+---
+
+Content
+"""
+        with pytest.raises(SkillParseError, match="name.*string"):
+            parse_skill_text(text)
+
     def test_missing_description_raises_error(self) -> None:
         """Test that missing description raises error."""
         text = """---

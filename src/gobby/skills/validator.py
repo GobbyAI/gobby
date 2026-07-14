@@ -71,7 +71,7 @@ class ValidationResult:
         }
 
 
-def validate_skill_name(name: str | None) -> ValidationResult:
+def validate_skill_name(name: object) -> ValidationResult:
     """Validate a skill name per Agent Skills spec.
 
     Requirements:
@@ -92,6 +92,10 @@ def validate_skill_name(name: str | None) -> ValidationResult:
 
     if name is None or name == "":
         result.add_error("Skill name is required")
+        return result
+
+    if not isinstance(name, str):
+        result.add_error("Skill name must be a string")
         return result
 
     # Check for uppercase letters

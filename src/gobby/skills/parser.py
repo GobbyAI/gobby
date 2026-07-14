@@ -383,6 +383,8 @@ def parse_skill_text(text: str, source_path: str | None = None) -> ParsedSkill:
     name = frontmatter.get("name")
     if not name:
         raise SkillParseError("Missing required field: name", source_path)
+    if not isinstance(name, str):
+        raise SkillParseError("Field 'name' must be a string", source_path)
 
     description = frontmatter.get("description")
     if not description:
