@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import sys
 import threading
 import warnings
@@ -296,32 +295,24 @@ class TestChatterboxTurboProvider:
 
         assert inference_calls[0]["max_gen_len"] == 8
 
-    def test_generate_with_token_cap_warns_when_t3_missing(
+    def test_generate_with_token_cap_fails_closed_when_t3_missing(
         self,
-        caplog: pytest.LogCaptureFixture,
         voice_config: VoiceConfig,
-        enable_log_propagation: None,
     ) -> None:
+        """Token-cap API drift must refuse synthesis, not run unbounded."""
         from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
 
         provider = ChatterboxTurboProvider(voice_config)
         mock_model = SimpleNamespace(generate=MagicMock(return_value=MagicMock()))
 
-        caplog.set_level(logging.WARNING, logger="gobby.voice.tts_chatterbox")
+        with pytest.raises(RuntimeError, match="token cap could not"):
+            provider._generate_with_token_cap(mock_model, "Fallback")
 
-        provider._generate_with_token_cap(mock_model, "Fallback")
+        mock_model.generate.assert_not_called()
 
-        assert "model.t3 is missing" in caplog.text
-        mock_model.generate.assert_called_once_with(
-            "Fallback",
-            temperature=voice_config.tts_temperature,
-        )
-
-    def test_generate_with_token_cap_warns_when_inference_turbo_not_callable(
+    def test_generate_with_token_cap_fails_closed_when_inference_turbo_not_callable(
         self,
-        caplog: pytest.LogCaptureFixture,
         voice_config: VoiceConfig,
-        enable_log_propagation: None,
     ) -> None:
         from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
 
@@ -330,15 +321,10 @@ class TestChatterboxTurboProvider:
         mock_model.t3 = SimpleNamespace(inference_turbo=None)
         mock_model.generate.return_value = MagicMock()
 
-        caplog.set_level(logging.WARNING, logger="gobby.voice.tts_chatterbox")
+        with pytest.raises(RuntimeError, match="token cap could not"):
+            provider._generate_with_token_cap(mock_model, "Fallback")
 
-        provider._generate_with_token_cap(mock_model, "Fallback")
-
-        assert "model.t3.inference_turbo is not callable" in caplog.text
-        mock_model.generate.assert_called_once_with(
-            "Fallback",
-            temperature=voice_config.tts_temperature,
-        )
+        mock_model.generate.assert_not_called()
 
     def test_missing_reference_audio_makes_provider_unavailable(
         self, voice_config_no_ref: VoiceConfig
@@ -875,3 +861,96 @@ class TestVoiceConfigTTSDefaults:
         )
         assert config.voice.tts_provider == "chatterbox"
         assert config.voice.tts_reference_audio == "/tmp/ref.wav"
+
+
+class TestMpsGuardrails:
+    """Incident #18196: MPS memory cap, load guard, and safe cache release."""
+
+    def _provider(self, voice_config: VoiceConfig) -> Any:
+        from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
+
+        return ChatterboxTurboProvider(voice_config)
+
+    def test_apply_mps_memory_cap_converts_absolute_limit_to_fraction(
+        self, voice_config: VoiceConfig, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sys
+        from types import ModuleType
+
+        calls: list[float] = []
+        fake_torch = ModuleType("torch")
+        fake_torch.mps = SimpleNamespace(  # type: ignore[attr-defined]
+            set_per_process_memory_fraction=calls.append,
+            recommended_max_memory=lambda: 24 * 1024**3,
+        )
+        monkeypatch.setitem(sys.modules, "torch", fake_torch)
+
+        provider = self._provider(voice_config)
+        provider._config.tts_mps_memory_limit_gb = 12.0
+        provider._apply_mps_memory_cap()
+        assert calls == [0.5]  # 12GB of a 24GB recommended max
+
+        calls.clear()
+        provider._config.tts_mps_memory_limit_gb = 64.0
+        provider._apply_mps_memory_cap()
+        assert calls == [1.0]  # clamped
+
+    def test_apply_mps_memory_cap_fails_open_without_torch_mps(
+        self, voice_config: VoiceConfig, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sys
+        from types import ModuleType
+
+        monkeypatch.setitem(sys.modules, "torch", ModuleType("torch"))
+        provider = self._provider(voice_config)
+        provider._apply_mps_memory_cap()  # must not raise
+
+    async def test_ensure_model_raises_when_load_guard_latched(
+        self, voice_config: VoiceConfig
+    ) -> None:
+        provider = self._provider(voice_config)
+        provider._load_guard = MagicMock()
+        provider._load_guard.check.return_value = "TTS model loading disabled: cooldown"
+
+        with pytest.raises(RuntimeError, match="loading disabled"):
+            await provider._ensure_model()
+        provider._load_guard.record_attempt.assert_not_called()
+
+    def test_release_mps_cache_is_never_the_first_mps_touch(
+        self, voice_config: VoiceConfig, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sys
+        from types import ModuleType
+
+        called: list[bool] = []
+        fake_torch = ModuleType("torch")
+        fake_torch.mps = SimpleNamespace(  # type: ignore[attr-defined]
+            empty_cache=lambda: called.append(True)
+        )
+        monkeypatch.setitem(sys.modules, "torch", fake_torch)
+
+        provider = self._provider(voice_config)
+        provider._release_mps_cache()  # _mps_used False -> no allocator touch
+        assert called == []
+
+        provider._mps_used = True
+        provider._release_mps_cache()
+        assert called == [True]
+
+    async def test_unload_awaits_inflight_load_before_release(
+        self, voice_config: VoiceConfig
+    ) -> None:
+        import asyncio
+
+        provider = self._provider(voice_config)
+        loop = asyncio.get_running_loop()
+        inflight: asyncio.Future[Any] = loop.create_future()
+        provider._inflight_load = inflight
+
+        unload_task = asyncio.create_task(provider.unload())
+        await asyncio.sleep(0.01)
+        assert not unload_task.done()  # blocked on the in-flight load
+
+        inflight.set_result(MagicMock())
+        await asyncio.wait_for(unload_task, timeout=1.0)
+        assert provider._inflight_load is None

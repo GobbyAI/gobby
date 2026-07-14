@@ -206,3 +206,9 @@ class TestVoiceConfig:
     def test_transcription_timeout_bounds_validation(self, value: float):
         with pytest.raises(ValidationError):
             VoiceConfig(transcription_timeout_seconds=value)
+
+    def test_mps_memory_limit_default_and_bounds(self):
+        assert VoiceConfig().tts_mps_memory_limit_gb == 12.0
+        assert VoiceConfig(tts_mps_memory_limit_gb=4.0).tts_mps_memory_limit_gb == 4.0
+        with pytest.raises(ValidationError):
+            VoiceConfig(tts_mps_memory_limit_gb=0.0)
