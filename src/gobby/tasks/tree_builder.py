@@ -49,6 +49,8 @@ class TaskTreeBuilder:
         }
     """
 
+    MAX_TREE_DEPTH = 100
+
     def __init__(
         self,
         task_manager: LocalTaskManager,
@@ -86,6 +88,16 @@ class TaskTreeBuilder:
         self._created_tasks = []
         self._errors = []
 
+        depth_error = self._validate_tree_depth(tree)
+        if depth_error:
+            self._errors.append(depth_error)
+            return TreeBuildResult(
+                tasks_created=0,
+                epic_ref=None,
+                task_refs=[],
+                errors=self._errors,
+            )
+
         # Create the root task
         root_id = self._create_node(tree, parent_task_id=None, sibling_index=0)
 
@@ -109,6 +121,16 @@ class TaskTreeBuilder:
             task_refs=task_refs,
             errors=self._errors,
         )
+
+    def _validate_tree_depth(self, tree: dict[str, Any]) -> str | None:
+        """Return an error when a tree exceeds the supported nesting depth."""
+        pending = [(tree, 1)]
+        while pending:
+            node, depth = pending.pop()
+            if depth > self.MAX_TREE_DEPTH:
+                return f"Task tree exceeds maximum depth of {self.MAX_TREE_DEPTH}"
+            pending.extend((child, depth + 1) for child in node.get("children", []))
+        return None
 
     def get_id_for_title(self, title: str) -> str | None:
         """Get the task ID for a given title.
@@ -221,7 +243,7 @@ class TaskTreeBuilder:
         Args:
             tree: The original tree structure
         """
-        from gobby.storage.task_dependencies import TaskDependencyManager
+        from gobby.storage.task_dependencies import DependencyCycleError, TaskDependencyManager
 
         dep_manager = TaskDependencyManager(self.task_manager.db)
 
@@ -266,9 +288,9 @@ class TaskTreeBuilder:
                             dep_type="blocks",
                         )
                         logger.debug(f"Added dependency: {title} depends on {dep_display}")
-                    except ValueError as e:
+                    except (ValueError, DependencyCycleError) as e:
                         # Ignore duplicate dependency errors
-                        if "already exists" not in str(e):
+                        if isinstance(e, DependencyCycleError) or "already exists" not in str(e):
                             message = f"Failed to add dependency {title} -> {dep_display}: {e}"
                             logger.warning(message)
                             self._errors.append(message)

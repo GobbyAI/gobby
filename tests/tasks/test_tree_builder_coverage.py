@@ -2,6 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.storage.task_dependencies import DependencyCycleError
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.tree_builder import TaskTreeBuilder
 
@@ -15,6 +16,14 @@ def _task(**kwargs) -> Task:
     elif status == "escalated":
         kwargs.setdefault("is_escalated", True)
         kwargs.setdefault("escalated_at", "now")
+    kwargs.setdefault("project_id", "p1")
+    kwargs.setdefault("priority", 2)
+    kwargs.setdefault("task_type", "task")
+    kwargs.setdefault("created_at", "2026-01-01T00:00:00+00:00")
+    kwargs.setdefault("updated_at", "2026-01-01T00:00:00+00:00")
+    for field in ("created_at", "updated_at", "closed_at", "escalated_at"):
+        if kwargs.get(field) == "now":
+            kwargs[field] = "2026-01-01T00:00:00+00:00"
     return Task(**kwargs)
 
 
@@ -356,3 +365,56 @@ def test_dependency_not_found(MockDepManager, builder, mock_task_manager):
 
     assert len(result.errors) == 1
     assert "Dependency not found: 'NonExistent'" in result.errors[0]
+
+
+@patch("gobby.storage.task_dependencies.TaskDependencyManager")
+def test_dependency_cycle_is_reported_per_edge(MockDepManager, builder, mock_task_manager):
+    """A cyclic edge is reported without aborting the completed tree build."""
+    root = _task(id="root", title="Root", seq_num=1)
+    first = _task(id="first", title="First", seq_num=2)
+    second = _task(id="second", title="Second", seq_num=3)
+    mock_task_manager.create_task.side_effect = [root, first, second]
+    mock_task_manager.get_task.side_effect = lambda task_id: {
+        "root": root,
+        "first": first,
+        "second": second,
+    }.get(task_id)
+    dependency_manager = MockDepManager.return_value
+    dependency_manager.add_dependency.side_effect = [
+        None,
+        DependencyCycleError("Adding this dependency would create a cycle"),
+    ]
+
+    result = builder.build(
+        {
+            "title": "Root",
+            "children": [
+                {"title": "First", "depends_on": ["Second"]},
+                {"title": "Second", "depends_on": ["First"]},
+            ],
+        }
+    )
+
+    assert result.tasks_created == 3
+    assert result.task_refs == ["#1", "#2", "#3"]
+    assert result.errors == [
+        "Failed to add dependency Second -> First: Adding this dependency would create a cycle"
+    ]
+    assert dependency_manager.add_dependency.call_count == 2
+
+
+def test_tree_exceeding_depth_limit_fails_before_creating_tasks(builder, mock_task_manager) -> None:
+    """Over-deep trees fail clearly before creating any tasks."""
+    tree = {"title": "Level 1"}
+    node = tree
+    for depth in range(2, TaskTreeBuilder.MAX_TREE_DEPTH + 2):
+        child = {"title": f"Level {depth}"}
+        node["children"] = [child]
+        node = child
+
+    result = builder.build(tree)
+
+    assert result.tasks_created == 0
+    assert result.task_refs == []
+    assert result.errors == [f"Task tree exceeds maximum depth of {TaskTreeBuilder.MAX_TREE_DEPTH}"]
+    mock_task_manager.create_task.assert_not_called()
