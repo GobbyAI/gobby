@@ -156,9 +156,9 @@ class TestGenerateMachineId:
     """Tests for _generate_machine_id function."""
 
     def test_uses_machineid_library_when_available(self) -> None:
-        """Test uses machineid library if available."""
+        """Test uses an app-scoped machine ID hash if available."""
         mock_machineid = MagicMock()
-        mock_machineid.id.return_value = "hardware-id"
+        mock_machineid.hashed_id.return_value = "hashed-machine-id"
 
         # Remove machineid from sys.modules if cached, so the mock is picked up
         import sys
@@ -170,8 +170,8 @@ class TestGenerateMachineId:
                 result = _generate_machine_id()
 
                 # Should return the mocked value
-                assert result == "hardware-id"
-                mock_machineid.id.assert_called_once()
+                assert result == "hashed-machine-id"
+                mock_machineid.hashed_id.assert_called_once_with("gobby")
         finally:
             # Restore if it was cached
             if cached_module is not None:
@@ -188,9 +188,9 @@ class TestGenerateMachineId:
         assert len(result) == 36  # UUID format
 
     def test_falls_back_to_uuid_when_machineid_raises(self) -> None:
-        """Test falls back to UUID when machineid.id() raises."""
+        """Test falls back to UUID when machineid.hashed_id() raises."""
         mock_machineid = MagicMock()
-        mock_machineid.id.side_effect = Exception("Hardware access failed")
+        mock_machineid.hashed_id.side_effect = Exception("Hardware access failed")
 
         with patch.dict("sys.modules", {"machineid": mock_machineid}):
             result = _generate_machine_id()

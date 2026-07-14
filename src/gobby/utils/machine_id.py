@@ -127,7 +127,7 @@ def _write_file_secure(path: Path, content: str) -> None:
 def _generate_machine_id() -> str:
     """Generate a new machine ID.
 
-    Uses py-machineid for hardware-based ID, falls back to UUID4.
+    Uses py-machineid for an app-scoped hardware ID hash, falls back to UUID4.
 
     Returns:
         Generated machine ID string
@@ -135,13 +135,13 @@ def _generate_machine_id() -> str:
     try:
         import machineid
 
-        return str(machineid.id())
+        return str(machineid.hashed_id("gobby"))
     except ImportError:
         # Library not available, use UUID fallback
         return str(uuid.uuid4())
     except Exception as e:
         # machineid library failed (hardware access issues, etc.)
-        logger.debug(f"machineid.id() failed, using UUID fallback: {e}")
+        logger.debug(f"machineid.hashed_id() failed, using UUID fallback: {e}")
         return str(uuid.uuid4())
 
 
