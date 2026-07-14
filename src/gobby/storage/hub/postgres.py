@@ -460,12 +460,6 @@ class _PostgresTransaction:
 
     def _acquire_lock_target(self, lock: LockTarget) -> None:
         if isinstance(lock, TaskSeqAllocation):
-            row = self.execute(
-                "SELECT 1 FROM projects WHERE id = %s FOR UPDATE",
-                (lock.project_id,),
-            ).fetchone()
-            if row is not None:
-                return
             self._acquire_advisory_lock(f"task_seq:{lock.project_id}")
             return
 
