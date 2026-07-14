@@ -495,8 +495,8 @@ class LocalCloneManager:
         """
         Find clones that are stale (no activity for N hours).
 
-        Finds active clones with no agent_session_id and updated_at
-        older than the threshold.
+        Finds active or interrupted-sync clones with no agent_session_id and
+        updated_at older than the threshold.
 
         Args:
             project_id: Project ID (None matches no rows)
@@ -512,13 +512,19 @@ class LocalCloneManager:
             """
             SELECT * FROM clones
             WHERE project_id = %s
-              AND status = %s
+              AND status IN (%s, %s)
               AND agent_session_id IS NULL
               AND updated_at < %s
             ORDER BY updated_at ASC
             LIMIT %s
             """,
-            (project_id, CloneStatus.ACTIVE.value, cutoff, limit),
+            (
+                project_id,
+                CloneStatus.ACTIVE.value,
+                CloneStatus.SYNCING.value,
+                cutoff,
+                limit,
+            ),
         )
         return [Clone.from_row(row) for row in rows]
 

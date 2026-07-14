@@ -941,10 +941,20 @@ class TestLocalCloneManagerFindStale:
         call_args = mock_db.fetchall.call_args
         query = call_args[0][0]
         assert "project_id = %s" in query
-        assert "status = %s" in query
+        assert "status IN (%s, %s)" in query
         assert "agent_session_id IS NULL" in query
         assert "updated_at < %s" in query
         assert "LIMIT %s" in query
+
+    def test_find_stale_includes_interrupted_syncs(self, manager, mock_db) -> None:
+        """find_stale includes syncing clones older than the threshold."""
+        mock_db.fetchall.return_value = [_clone_row(status="syncing")]
+
+        result = manager.find_stale("proj-abc", hours=24)
+
+        assert result[0].status == "syncing"
+        params = mock_db.fetchall.call_args.args[1]
+        assert params[1:3] == ("active", "syncing")
 
     def test_find_stale_empty(self, manager, mock_db) -> None:
         """find_stale returns empty list when no stale clones."""
@@ -962,11 +972,11 @@ class TestLocalCloneManagerFindStale:
 
         call_args = mock_db.fetchall.call_args
         params = call_args[0][1]
-        # params: (project_id, status, cutoff, limit)
+        # params: (project_id, active status, syncing status, cutoff, limit)
         assert params[0] == "proj-abc"
         assert params[1] == "active"
-        # cutoff is an ISO timestamp (3rd param)
-        assert params[3] == 5
+        assert params[2] == "syncing"
+        assert params[4] == 5
 
 
 class TestLocalCloneManagerCleanupStale:
