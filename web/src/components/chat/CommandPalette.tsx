@@ -51,7 +51,15 @@ export function CommandPalette({
   }, [isOpen])
 
   // Filter items based on query
-  const { filteredSessions, filteredActions, allItems } = useMemo(() => {
+  const {
+    filteredActions,
+    allItems,
+    sessionIndexMap,
+    actionIndexMap,
+    todaySessions,
+    weekSessions,
+    olderSessions,
+  } = useMemo(() => {
     const q = query.toLowerCase().trim()
     const showOnlySessions = q.startsWith('#')
     const showOnlyActions = q.startsWith('>')
@@ -80,13 +88,40 @@ export function CommandPalette({
     const actionItems = filteredActions.filter((a) => a.category === 'action')
     const navItems = filteredActions.filter((a) => a.category === 'navigate')
 
+    const todaySessions: GobbySession[] = []
+    const weekSessions: GobbySession[] = []
+    const olderSessions: GobbySession[] = []
+    for (const session of filteredSessions) {
+      const age = now - new Date(session.updated_at).getTime()
+      if (age < 86400000) todaySessions.push(session)
+      else if (age < 604800000) weekSessions.push(session)
+      else olderSessions.push(session)
+    }
+
     const allItems: Array<{ type: 'session'; session: GobbySession } | { type: 'action'; action: CommandPaletteAction }> = []
-    for (const s of filteredSessions) allItems.push({ type: 'session', session: s })
+    for (const session of todaySessions) allItems.push({ type: 'session', session })
+    for (const session of weekSessions) allItems.push({ type: 'session', session })
+    for (const session of olderSessions) allItems.push({ type: 'session', session })
     for (const a of actionItems) allItems.push({ type: 'action', action: a })
     for (const a of navItems) allItems.push({ type: 'action', action: a })
 
-    return { filteredSessions, filteredActions, allItems }
-  }, [query, sessions, actions])
+    const sessionIndexMap = new Map<string, number>()
+    const actionIndexMap = new Map<string, number>()
+    allItems.forEach((item, index) => {
+      if (item.type === 'session') sessionIndexMap.set(item.session.id, index)
+      else actionIndexMap.set(item.action.id, index)
+    })
+
+    return {
+      filteredActions,
+      allItems,
+      sessionIndexMap,
+      actionIndexMap,
+      todaySessions,
+      weekSessions,
+      olderSessions,
+    }
+  }, [query, sessions, actions, now])
 
   // Clamp selection
   useEffect(() => {
@@ -142,29 +177,6 @@ export function CommandPalette({
     },
     [allItems, selectedIndex, handleSelect, onClose, query, onDeleteSession],
   )
-
-  // Group sessions by recency + precompute index maps (must be above early return to avoid hook ordering issues)
-  const { sessionIndexMap, actionIndexMap, todaySessions, weekSessions, olderSessions } = useMemo(() => {
-    const todaySessions: GobbySession[] = []
-    const weekSessions: GobbySession[] = []
-    const olderSessions: GobbySession[] = []
-    for (const s of filteredSessions) {
-      const age = now - new Date(s.updated_at).getTime()
-      if (age < 86400000) todaySessions.push(s)
-      else if (age < 604800000) weekSessions.push(s)
-      else olderSessions.push(s)
-    }
-
-    const sessionIndexMap = new Map<string, number>()
-    const actionIndexMap = new Map<string, number>()
-    let idx = 0
-    for (const s of todaySessions) sessionIndexMap.set(s.id, idx++)
-    for (const s of weekSessions) sessionIndexMap.set(s.id, idx++)
-    for (const s of olderSessions) sessionIndexMap.set(s.id, idx++)
-    for (const a of filteredActions.filter((a) => a.category === 'action')) actionIndexMap.set(a.id, idx++)
-    for (const a of filteredActions.filter((a) => a.category === 'navigate')) actionIndexMap.set(a.id, idx++)
-    return { sessionIndexMap, actionIndexMap, todaySessions, weekSessions, olderSessions }
-  }, [filteredSessions, filteredActions, now])
 
   if (!isOpen) return null
 

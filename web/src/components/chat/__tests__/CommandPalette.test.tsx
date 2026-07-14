@@ -117,4 +117,56 @@ describe("CommandPalette", () => {
     const refs = screen.getAllByTestId("session-ref").map((el) => el.textContent);
     expect(refs).toEqual(["#42", "#13", "#5"]);
   });
+
+  it("targets the visually highlighted session across recency buckets", () => {
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const now = Date.now();
+    const todaySession = makeSession({
+      id: "today",
+      ref: "#1",
+      seq_num: 1,
+      updated_at: new Date(now - 60_000).toISOString(),
+    });
+    const weekSession = makeSession({
+      id: "week",
+      ref: "#30",
+      seq_num: 30,
+      updated_at: new Date(now - 2 * 86_400_000).toISOString(),
+    });
+    const olderSession = makeSession({
+      id: "older",
+      ref: "#20",
+      seq_num: 20,
+      updated_at: new Date(now - 8 * 86_400_000).toISOString(),
+    });
+    const onSelectSession = vi.fn();
+    const onDeleteSession = vi.fn();
+
+    render(
+      <CommandPalette
+        isOpen={true}
+        onClose={vi.fn()}
+        sessions={[weekSession, olderSession, todaySession]}
+        activeSessionId={null}
+        onSelectSession={onSelectSession}
+        onDeleteSession={onDeleteSession}
+        actions={[]}
+      />,
+    );
+
+    const input = screen.getByPlaceholderText("Search");
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Backspace" });
+
+    expect(screen.getAllByTestId("session-ref").map((el) => el.textContent)).toEqual([
+      "#1",
+      "#30",
+      "#20",
+    ]);
+    expect(onSelectSession).toHaveBeenCalledWith(todaySession);
+    expect(onDeleteSession).toHaveBeenCalledWith(todaySession);
+  });
 });
