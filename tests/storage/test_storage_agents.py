@@ -320,6 +320,21 @@ class TestLocalAgentRunManager:
         assert retrieved.id == created.id
         assert retrieved.prompt == "Get test"
 
+    def test_find_by_id_prefix(
+        self,
+        agent_manager: LocalAgentRunManager,
+        sample_session: dict,
+    ) -> None:
+        created = agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="Prefix lookup",
+        )
+
+        matches = agent_manager.find_by_id_prefix(created.id[:8])
+
+        assert [run.id for run in matches] == [created.id]
+
     def test_get_nonexistent(self, agent_manager: LocalAgentRunManager) -> None:
         """Test getting nonexistent agent run returns None."""
         result = agent_manager.get("00000000-0000-0000-0000-0000000000ff")
