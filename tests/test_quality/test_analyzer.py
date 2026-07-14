@@ -737,6 +737,64 @@ fn test_multiline_ignore_attr() {
     assert report.issues[0].line == 10
 
 
+def test_rust_same_line_attrs_and_functions_are_scanned(tmp_path: Path) -> None:
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    path = tests_dir / "sample_test.rs"
+    path.write_text(
+        """
+#[test] fn test_same_line_without_assertion() { build_value(); }
+#[tokio::test] async fn test_same_line_with_assertion() { assert_eq!(1, 1); }
+""",
+        encoding="utf-8",
+    )
+
+    report = audit_paths([path], root=tmp_path)
+
+    assert report.tests_scanned == 2
+    assert [(issue.test_name, issue.issue_code) for issue in report.issues] == [
+        ("test_same_line_without_assertion", "NO_ASSERTION")
+    ]
+
+
+def test_rust_result_requires_real_try_propagation(tmp_path: Path) -> None:
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    path = tests_dir / "sample_test.rs"
+    path.write_text(
+        """
+#[test]
+fn test_real_try() -> Result<(), Error> {
+    load()?;
+    Ok(())
+}
+
+#[test]
+fn test_question_marks_in_text() -> Result<(), Error> {
+    let message = "is this enough?";
+    // load()? is only an example
+    Ok(())
+}
+
+#[test]
+fn test_non_propagation_question_marks() -> Result<(), Error> {
+    fn accepts_unsized<T: ?Sized>(value: &T) {}
+    macro_rules! optional { ($($value:expr),?) => {}; }
+    Ok(())
+}
+""",
+        encoding="utf-8",
+    )
+
+    report = audit_paths([path], root=tmp_path)
+
+    assert report.tests_scanned == 3
+    assert [issue.test_name for issue in report.issues if issue.issue_code == "NO_ASSERTION"] == [
+        "test_non_propagation_question_marks",
+        "test_question_marks_in_text",
+    ]
+
+
 def test_rust_problem_patterns_are_reported(tmp_path: Path) -> None:
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir()
