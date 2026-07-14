@@ -139,7 +139,6 @@ class PostgresHubDatabase:
                 "row_factory": dict_row,
             },
         )
-        self._state = threading.local()
         self._open_lock = threading.Lock()
         self._pool_opened = False
         self._pool_closed = False
@@ -275,37 +274,24 @@ class PostgresHubDatabase:
         initial_lock: LockTarget | None = None,
     ) -> Iterator[Transaction]:
         self.open()
-        start_len = _lock_stack_len(self._state)
-        try:
+        with self._pool_connection() as conn, conn.transaction():
+            txn = _PostgresTransaction(
+                conn,
+                is_immediate=is_immediate,
+                initial_lock=initial_lock,
+            )
             if initial_lock is not None:
-                _acquire_lock(self._state, initial_lock)
-            callbacks: list[Callable[[], Any]] = []
-            _push_after_commit_scope(self._state)
+                txn._acquire_lock_target(initial_lock)
             try:
-                with self._pool_connection() as conn, conn.transaction():
-                    txn = _PostgresTransaction(
-                        conn,
-                        is_immediate=is_immediate,
-                        state=self._state,
-                    )
-                    if initial_lock is not None:
-                        txn._acquire_lock_target(initial_lock)
-                    try:
-                        yield txn
-                    finally:
-                        txn.closed = True
-                callbacks = _pop_after_commit_scope(self._state, committed=True)
-            except Exception:
-                _pop_after_commit_scope(self._state, committed=False)
-                raise
+                yield txn
+            finally:
+                txn.closed = True
 
-            for callback in callbacks:
-                try:
-                    callback()
-                except Exception:
-                    logger.exception("PostgreSQL after-commit callback failed")
-        finally:
-            _truncate_lock_stack(self._state, start_len)
+        for callback in txn._after_commit_callbacks:
+            try:
+                callback()
+            except Exception:
+                logger.exception("PostgreSQL after-commit callback failed")
 
     def execute(
         self,
@@ -327,7 +313,11 @@ class PostgresHubDatabase:
             return txn.executemany(sql, rows)
 
     def after_commit(self, callback: Callable[[], None]) -> None:
-        _after_commit(self._state, callback)
+        ambient = ambient_transaction(self)
+        if ambient is None:
+            callback()
+            return
+        ambient.after_commit(callback)
 
     def fetchone(
         self,
@@ -417,12 +407,13 @@ class _PostgresTransaction:
         conn: psycopg.Connection[Any],
         *,
         is_immediate: bool = False,
-        state: threading.local | None = None,
+        initial_lock: LockTarget | None = None,
     ) -> None:
         self._conn = conn
         self.is_immediate = is_immediate
         self.closed = False
-        self._state = state if state is not None else threading.local()
+        self._locks = [initial_lock] if initial_lock is not None else []
+        self._after_commit_callbacks: list[Callable[[], Any]] = []
 
     def execute(
         self,
@@ -451,18 +442,20 @@ class _PostgresTransaction:
         return _PostgresSavepoint(self._conn, quoted_name)
 
     def after_commit(self, callback: Callable[[], None]) -> None:
-        _after_commit(self._state, callback)
+        if self.closed:
+            callback()
+            return
+        self._after_commit_callbacks.append(callback)
 
     def acquire_additional_lock(self, lock: LockTarget) -> None:
         if not self.is_immediate:
             raise RuntimeError("additional locks require an immediate transaction")
 
-        start_len = _lock_stack_len(self._state)
-        _acquire_lock(self._state, lock)
+        _acquire_lock(self._locks, lock)
         try:
             self._acquire_lock_target(lock)
         except Exception:
-            _truncate_lock_stack(self._state, start_len)
+            self._locks.pop()
             raise
 
     def _acquire_lock_target(self, lock: LockTarget) -> None:
@@ -851,28 +844,7 @@ def _advisory_lock_keys(lock: LockTarget) -> tuple[str, ...]:
     return (f"{lock_type.__module__}.{lock_type.__qualname__}:{lock}",)
 
 
-def _lock_stack(state: threading.local) -> list[LockTarget]:
-    stack = getattr(state, "lock_stack", None)
-    if stack is None:
-        stack = []
-        state.lock_stack = stack
-    return cast(list[LockTarget], stack)
-
-
-def _lock_stack_len(state: threading.local) -> int:
-    stack = getattr(state, "lock_stack", None)
-    if stack is None:
-        return 0
-    return len(cast(list[LockTarget], stack))
-
-
-def _truncate_lock_stack(state: threading.local, length: int) -> None:
-    stack = _lock_stack(state)
-    del stack[length:]
-
-
-def _acquire_lock(state: threading.local, lock: LockTarget) -> None:
-    stack = _lock_stack(state)
+def _acquire_lock(stack: list[LockTarget], lock: LockTarget) -> None:
     if stack:
         current = stack[-1]
         if lock.PRIORITY <= current.PRIORITY:
@@ -881,43 +853,3 @@ def _acquire_lock(state: threading.local, lock: LockTarget) -> None:
                 f"{current.PRIORITY} ({current}) -> {lock.PRIORITY} ({lock})"
             )
     stack.append(lock)
-
-
-def _after_commit(state: threading.local, callback: Callable[[], Any]) -> None:
-    stack = getattr(state, "after_commit_stack", None)
-    if not stack:
-        callback()
-        return
-    cast(list[list[Callable[[], Any]]], stack)[-1].append(callback)
-
-
-def _push_after_commit_scope(state: threading.local) -> None:
-    stack = cast(
-        list[list[Callable[[], Any]]] | None,
-        getattr(state, "after_commit_stack", None),
-    )
-    if stack is None:
-        stack = []
-        state.after_commit_stack = stack
-    stack.append([])
-
-
-def _pop_after_commit_scope(
-    state: threading.local,
-    *,
-    committed: bool,
-) -> list[Callable[[], Any]]:
-    stack = cast(
-        list[list[Callable[[], Any]]] | None,
-        getattr(state, "after_commit_stack", None),
-    )
-    if not stack:
-        return []
-
-    callbacks = stack.pop()
-    if committed and stack:
-        stack[-1].extend(callbacks)
-        callbacks = []
-    if not stack:
-        state.after_commit_stack = []
-    return callbacks

@@ -6,7 +6,9 @@ import inspect
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, timezone
+from typing import ClassVar
 
 import pytest
 
@@ -31,7 +33,6 @@ def test_postgres_transaction_is_closed_when_context_exits(
 
     connection = Connection()
     database = object.__new__(module.PostgresHubDatabase)
-    database._state = module.threading.local()
     monkeypatch.setattr(database, "open", lambda: None)
 
     @contextmanager
@@ -102,7 +103,6 @@ def test_postgres_after_commit_callback_failures_are_isolated(
             yield
 
     database = object.__new__(module.PostgresHubDatabase)
-    database._state = module.threading.local()
     monkeypatch.setattr(database, "open", lambda: None)
 
     @contextmanager
@@ -132,6 +132,63 @@ def test_postgres_after_commit_callback_failures_are_isolated(
     )
     assert record.exc_info is not None
     assert record.exc_info[0] is RuntimeError
+
+
+@pytest.mark.asyncio
+async def test_interleaved_transactions_own_callbacks_and_lock_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _postgres_module()
+
+    @dataclass(frozen=True)
+    class Lock:
+        PRIORITY: ClassVar[int]
+        name: str
+
+    @dataclass(frozen=True)
+    class OuterLock(Lock):
+        PRIORITY: ClassVar[int] = 20
+
+    @dataclass(frozen=True)
+    class IndependentLock(Lock):
+        PRIORITY: ClassVar[int] = 10
+
+    class Connection:
+        @contextmanager
+        def transaction(self) -> Iterator[None]:
+            yield
+
+        def execute(self, sql: str, params: object = ()) -> object:
+            return object()
+
+    database = object.__new__(module.PostgresHubDatabase)
+    monkeypatch.setattr(database, "open", lambda: None)
+
+    @contextmanager
+    def pool_connection() -> Iterator[Connection]:
+        yield Connection()
+
+    monkeypatch.setattr(database, "_pool_connection", pool_connection)
+    first_entered = asyncio.Event()
+    second_committed = asyncio.Event()
+    callbacks_run: list[str] = []
+
+    async def first_transaction() -> None:
+        with database.transaction_immediate(OuterLock("outer")):
+            database.after_commit(lambda: callbacks_run.append("first"))
+            first_entered.set()
+            await second_committed.wait()
+            assert callbacks_run == ["second"]
+
+    async def second_transaction() -> None:
+        await first_entered.wait()
+        with database.transaction_immediate(IndependentLock("independent")):
+            database.after_commit(lambda: callbacks_run.append("second"))
+        second_committed.set()
+
+    await asyncio.gather(first_transaction(), second_transaction())
+
+    assert callbacks_run == ["second", "first"]
 
 
 @pytest.mark.asyncio
