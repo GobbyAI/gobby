@@ -353,7 +353,11 @@ def _collect_make_like_commands(bundle: EvidenceBundle) -> None:
         ("Makefile", "makefile", "justfile", "Justfile"),
     ):
         filename = path.name
-        for target, command in _parse_indented_recipes(_read_text(path)):
+        try:
+            recipe_text = _read_text(path)
+        except OSError:
+            continue
+        for target, command in _parse_indented_recipes(recipe_text):
             if _script_name_is_relevant(target) and _looks_like_command(command):
                 bundle.items.append(
                     EvidenceItem(

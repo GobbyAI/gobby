@@ -311,6 +311,20 @@ jobs:
     assert verification["custom"]["ts_check"] == "cd web && npx tsc --noEmit"
 
 
+def test_unreadable_makefile_is_skipped(tmp_path: Path) -> None:
+    (tmp_path / "Makefile").mkdir()
+    (tmp_path / "Taskfile.yml").write_text(
+        "version: '3'\ntasks:\n  build:\n    cmds:\n      - go build ./...\n",
+        encoding="utf-8",
+    )
+
+    bundle = collect_evidence(tmp_path)
+
+    assert any(
+        item.source == "Taskfile.yml" and item.command == "go build ./..." for item in bundle.items
+    )
+
+
 class FakeJSONService:
     def __init__(self, payload: dict[str, Any]) -> None:
         self.payload = payload
