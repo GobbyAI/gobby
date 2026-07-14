@@ -659,6 +659,33 @@ class TestSaveTemplate:
         assert response.status_code == 200
         assert response.json()["ok"] is True
 
+    def test_save_preserves_non_daemon_config_namespaces(
+        self, client: TestClient, temp_db: Any
+    ) -> None:
+        ui_response = client.put(
+            "/api/config/ui-settings",
+            json={"fontSize": 18},
+        )
+        approvals_response = client.put(
+            "/api/config/tool-approvals/global",
+            json={"rules": ["tool:Write", "mcp:third-party:*"]},
+        )
+        assert ui_response.status_code == 200
+        assert approvals_response.status_code == 200
+
+        response = client.put(
+            "/api/config/template",
+            json={"content": "daemon_port: 9999\n"},
+        )
+
+        assert response.status_code == 200
+        store = ConfigStore(temp_db)
+        assert store.get("ui_settings.fontSize") == 18
+        assert store.get("tool_approvals.global_rules") == [
+            "tool:Write",
+            "mcp:third-party:*",
+        ]
+
 
 # ---------------------------------------------------------------------------
 # UI settings + approval rules

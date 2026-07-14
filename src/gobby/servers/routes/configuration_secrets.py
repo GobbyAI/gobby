@@ -23,6 +23,8 @@ FALKOR_RESTART_HINT = (
 
 logger = logging.getLogger(__name__)
 
+PRESERVED_CONFIG_PREFIXES = ("ui_settings.", "tool_approvals.")
+
 
 def mask_secret_value(key: str, value: Any) -> Any:
     if is_secret_key_name(key) and value not in (None, ""):
@@ -75,6 +77,9 @@ def delete_all_except(
 ) -> int:
     """Delete unpreserved config rows and their encrypted secrets atomically."""
     preserved_keys = runtime_embedding_config_keys_to_storage(preserved_keys)
+    preserved_keys.update(
+        key for key in config_store.list_keys() if key.startswith(PRESERVED_CONFIG_PREFIXES)
+    )
     if not preserved_keys:
         return config_store.delete_all(secret_store)
     with config_store.db.transaction():
