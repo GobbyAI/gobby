@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+import threading
 import warnings
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -47,8 +48,7 @@ def voice_config_no_ref(tmp_path: Path) -> VoiceConfig:
 def _fake_chatterbox_turbo_modules() -> dict[str, ModuleType]:
     fake_chatterbox = ModuleType("chatterbox")
     fake_turbo = ModuleType("chatterbox.tts_turbo")
-    fake_turbo.S3GEN_SR = 24000
-    fake_turbo.S3_SR = 16000
+    fake_turbo.__dict__.update(S3GEN_SR=24000, S3_SR=16000)
 
     class FakeT3Cond:
         def __init__(self, **kwargs: object) -> None:
@@ -67,9 +67,8 @@ def _fake_chatterbox_turbo_modules() -> dict[str, ModuleType]:
             self.device = device
             return self
 
-    fake_turbo.T3Cond = FakeT3Cond
-    fake_turbo.Conditionals = FakeConditionals
-    fake_chatterbox.tts_turbo = fake_turbo
+    fake_turbo.__dict__.update(T3Cond=FakeT3Cond, Conditionals=FakeConditionals)
+    fake_chatterbox.__dict__["tts_turbo"] = fake_turbo
     return {"chatterbox": fake_chatterbox, "chatterbox.tts_turbo": fake_turbo}
 
 
@@ -94,7 +93,9 @@ class TestChatterboxTurboProvider:
         mock_available.assert_called_once_with("chatterbox")
 
     @pytest.mark.asyncio
-    async def test_synthesize_stream_yields_pcm(self, voice_config: VoiceConfig) -> None:
+    async def test_synthesize_stream_yields_pcm(
+        self, voice_config: VoiceConfig, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Test that synthesize_stream yields correct PCM int16 bytes."""
         from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
 
@@ -102,10 +103,25 @@ class TestChatterboxTurboProvider:
 
         # Create a mock torch.Tensor-like object
         mock_samples = np.array([0.5, -0.5, 0.0, 1.0, -1.0], dtype=np.float32)
+        event_loop_thread = threading.get_ident()
+        conversion_threads: list[int] = []
+
+        def observe_conversion(result: Any) -> Any:
+            conversion_threads.append(threading.get_ident())
+            return result
+
         mock_wav = MagicMock()
-        mock_wav.squeeze.return_value = mock_wav
-        mock_wav.cpu.return_value = mock_wav
-        mock_wav.numpy.return_value = mock_samples
+        mock_wav.squeeze.side_effect = lambda: observe_conversion(mock_wav)
+        mock_wav.cpu.side_effect = lambda: observe_conversion(mock_wav)
+        mock_wav.numpy.side_effect = lambda: observe_conversion(mock_samples)
+
+        original_clip = np.clip
+
+        def observed_clip(samples: Any, minimum: float, maximum: float) -> Any:
+            conversion_threads.append(threading.get_ident())
+            return original_clip(samples, minimum, maximum)
+
+        monkeypatch.setattr(np, "clip", observed_clip)
 
         mock_model = MagicMock()
         mock_model.sr = 24000
@@ -128,6 +144,28 @@ class TestChatterboxTurboProvider:
         assert len(decoded) == 5
         assert decoded[0] == 16383  # 0.5 * 32767
         assert decoded[1] == -16383  # -0.5 * 32767
+        assert len(conversion_threads) == 4
+        assert set(conversion_threads) != {event_loop_thread}
+        assert len(set(conversion_threads)) == 1
+
+    @pytest.mark.asyncio
+    async def test_synthesize_stream_suppresses_empty_pcm(self, voice_config: VoiceConfig) -> None:
+        from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
+
+        provider = ChatterboxTurboProvider(voice_config)
+        mock_wav = MagicMock()
+        mock_wav.squeeze.return_value.cpu.return_value.numpy.return_value = np.array(
+            [], dtype=np.float32
+        )
+        mock_model = MagicMock()
+        mock_model.sr = 24000
+        mock_model.generate.return_value = mock_wav
+        provider._model = mock_model
+        provider._conditioning_ready = True
+
+        chunks = [chunk async for chunk in provider.synthesize_stream("Hello world")]
+
+        assert chunks == []
 
     @pytest.mark.asyncio
     async def test_synthesize_stream_uses_cached_conditioning(
@@ -181,7 +219,7 @@ class TestChatterboxTurboProvider:
                 "max_gen_len": 1000,
             }
         ]
-        assert mock_model.t3.inference_turbo is inference_turbo
+        assert mock_model.t3.inference_turbo is not inference_turbo
 
     @pytest.mark.asyncio
     async def test_synthesize_stream_honors_generation_token_override(self, tmp_path: Path) -> None:
@@ -336,6 +374,64 @@ class TestChatterboxTurboProvider:
         assert provider._runtime_primed is True
         mock_prepare.assert_called_once_with(provider._model)
         mock_prime.assert_called_once_with(provider._model)
+
+    async def test_unload_waits_for_model_work_and_preserves_conditioning(
+        self, voice_config: VoiceConfig
+    ) -> None:
+        from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
+
+        class ObservedLock(asyncio.Lock):
+            def __init__(self, signal_on_attempt: int) -> None:
+                super().__init__()
+                self._attempts = 0
+                self.attempted = asyncio.Event()
+                self._signal_on_attempt = signal_on_attempt
+
+            async def acquire(self) -> bool:
+                self._attempts += 1
+                if self._attempts == self._signal_on_attempt:
+                    self.attempted.set()
+                return await super().acquire()
+
+        provider = ChatterboxTurboProvider(voice_config)
+        load_lock = ObservedLock(signal_on_attempt=2)
+        synthesis_lock = ObservedLock(signal_on_attempt=2)
+        provider._load_lock = load_lock
+        provider._synthesis_lock = synthesis_lock
+
+        conditioning = object()
+        model = MagicMock(sr=24000)
+        model.conds = conditioning
+        provider._model = model
+        conditioning_started = asyncio.Event()
+        allow_conditioning = asyncio.Event()
+
+        async def run_conditioning(func: Any, *args: Any) -> Any:
+            conditioning_started.set()
+            await allow_conditioning.wait()
+            return func(*args)
+
+        await synthesis_lock.acquire()
+        try:
+            with patch("gobby.voice.tts_chatterbox.asyncio.to_thread", new=run_conditioning):
+                with patch.object(provider, "_prepare_reference_conditioning"):
+                    ensure_task = asyncio.create_task(provider._ensure_model())
+                    await conditioning_started.wait()
+                    unload_task = asyncio.create_task(provider.unload())
+                    await load_lock.attempted.wait()
+                    assert not unload_task.done()
+
+                    allow_conditioning.set()
+                    assert await ensure_task is model
+                    await synthesis_lock.attempted.wait()
+                    assert not unload_task.done()
+        finally:
+            synthesis_lock.release()
+
+        await unload_task
+        assert model.conds is conditioning
+        assert provider._model is None
+        assert not (provider._conditioning_ready and provider._model is None)
 
     @pytest.mark.asyncio
     async def test_warmup_raises_when_reference_preparation_fails(
@@ -552,6 +648,84 @@ class TestChatterboxTurboProvider:
                 async for _ in provider.synthesize_stream("Hello"):
                     pass
 
+    async def test_cancelled_synthesis_keeps_generate_serialized_and_token_cap_fresh(
+        self, voice_config: VoiceConfig
+    ) -> None:
+        from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
+
+        provider = ChatterboxTurboProvider(voice_config)
+        provider._config.tts_chatterbox_max_generation_tokens = 8
+
+        mock_wav = MagicMock()
+        mock_wav.squeeze.return_value = mock_wav
+        mock_wav.cpu.return_value = mock_wav
+        mock_wav.numpy.return_value = np.zeros(100, dtype=np.float32)
+
+        first_started = threading.Event()
+        second_started = threading.Event()
+        release_first = threading.Event()
+        counter_lock = threading.Lock()
+        active_generates = 0
+        max_active_generates = 0
+        inference_caps: dict[str, int] = {}
+
+        def inference_turbo(*args: object, **kwargs: Any) -> str:
+            inference_caps[str(kwargs["text_tokens"])] = int(kwargs["max_gen_len"])
+            return "speech_tokens"
+
+        def generate(text: str, **kwargs: Any) -> Any:
+            nonlocal active_generates, max_active_generates
+            with counter_lock:
+                active_generates += 1
+                max_active_generates = max(max_active_generates, active_generates)
+            try:
+                if text == "first":
+                    first_started.set()
+                    assert release_first.wait(timeout=2)
+                else:
+                    second_started.set()
+                mock_model.t3.inference_turbo(
+                    t3_cond="conds",
+                    text_tokens=text,
+                    temperature=kwargs["temperature"],
+                )
+                return mock_wav
+            finally:
+                with counter_lock:
+                    active_generates -= 1
+
+        mock_model = MagicMock()
+        mock_model.sr = 24000
+        mock_model.t3 = SimpleNamespace(inference_turbo=inference_turbo)
+        mock_model.generate.side_effect = generate
+        provider._model = mock_model
+        provider._conditioning_ready = True
+
+        async def consume(text: str) -> None:
+            async for _ in provider.synthesize_stream(text):
+                pass
+
+        first_task = asyncio.create_task(consume("first"))
+        assert await asyncio.to_thread(first_started.wait, 1)
+        installed_inference = mock_model.t3.inference_turbo
+
+        first_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first_task
+
+        provider._config.tts_chatterbox_max_generation_tokens = 144
+        second_task = asyncio.create_task(consume("second"))
+        try:
+            second_entered_before_release = await asyncio.to_thread(second_started.wait, 0.1)
+        finally:
+            release_first.set()
+        await second_task
+
+        assert not second_entered_before_release
+        assert max_active_generates == 1
+        assert inference_caps == {"first": 8, "second": 144}
+        assert mock_model.t3.inference_turbo is installed_inference
+
 
 class TestAutoDevice:
     def test_auto_device_no_torch(self) -> None:
@@ -567,6 +741,31 @@ class TestAutoDevice:
 
 
 class TestDepCheck:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("dependency_kind", ["stt", "tts"])
+    async def test_dependency_check_runs_off_event_loop(self, dependency_kind: str) -> None:
+        from gobby.voice import dep_check
+
+        event_loop_thread = threading.get_ident()
+        import_threads: list[int] = []
+
+        def record_import_thread(deps: list[tuple[str, str]]) -> list[str]:
+            import_threads.append(threading.get_ident())
+            return []
+
+        if dependency_kind == "stt":
+            config = VoiceConfig(enabled=True, stt_enabled=True)
+            ensure_deps = dep_check.ensure_stt_deps
+        else:
+            config = VoiceConfig(enabled=True, tts_enabled=True, tts_provider="chatterbox")
+            ensure_deps = dep_check.ensure_tts_deps
+
+        with patch("gobby.voice.dep_check._check_imports", side_effect=record_import_thread):
+            assert await ensure_deps(config) is True
+
+        assert import_threads
+        assert import_threads[0] != event_loop_thread
+
     @pytest.mark.asyncio
     async def test_ensure_stt_deps_disabled(self) -> None:
         """When voice is disabled, returns False without checking."""

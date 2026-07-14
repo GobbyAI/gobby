@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
+import stat
 import tempfile
 from dataclasses import dataclass, field
 from difflib import unified_diff
 from pathlib import Path
 from typing import Any, Literal
 
-from gobby.ai.text_generation import TextGenerationService
+from gobby.ai.text_generation import FeatureGenerationUnavailableError, TextGenerateJSONAdapter
 from gobby.config.features import ProjectVerificationSynthesisConfig
 from gobby.project_verification.candidates import (
     CommandCandidate,
@@ -19,7 +21,7 @@ from gobby.project_verification.candidates import (
     select_best_candidates,
     verification_dict_from_candidates,
 )
-from gobby.project_verification.evidence import collect_evidence
+from gobby.project_verification.evidence import MAX_FILE_BYTES, collect_evidence
 from gobby.project_verification.synthesis import RejectedCommand, synthesize_verification_commands
 
 AIMode = Literal["auto", "on", "off"]
@@ -28,6 +30,10 @@ logger = logging.getLogger(__name__)
 
 class ProjectVerificationAIError(RuntimeError):
     """AI synthesis was required but did not produce usable commands."""
+
+
+class ProjectVerificationReadError(RuntimeError):
+    """Existing project metadata could not be read safely for an update."""
 
 
 @dataclass
@@ -42,6 +48,7 @@ class RefreshResult:
     selected: dict[str, CommandCandidate]
     changed: bool
     diff: str
+    warnings: list[str] = field(default_factory=list)
     written: bool = False
     ai_mode: AIMode = "off"
     ai_used: bool = False
@@ -55,6 +62,7 @@ class RefreshResult:
             "project_json": str(self.project_json_path),
             "changed": self.changed,
             "written": self.written,
+            "warnings": list(self.warnings),
             "ai": {
                 "mode": self.ai_mode,
                 "used": self.ai_used,
@@ -81,7 +89,9 @@ def refresh_project_verification_deterministic(root: Path, *, fix: bool = False)
         candidates=candidates,
         selected=selected,
         ai_mode="off",
+        warnings=bundle.warnings,
     )
+    result.changed = result.changed or not bundle.existing_project_json_intact
     if fix and result.changed:
         _write_verification(result.project_json_path, after)
         result.written = True
@@ -94,10 +104,10 @@ async def refresh_project_verification(
     fix: bool = False,
     ai_mode: AIMode = "auto",
     synthesis_config: ProjectVerificationSynthesisConfig | None = None,
-    text_generation_service: TextGenerationService | None = None,
+    text_generation_service: TextGenerateJSONAdapter | None = None,
 ) -> RefreshResult:
     """Refresh verification commands with optional AI synthesis."""
-    bundle = collect_evidence(root)
+    bundle = await asyncio.to_thread(collect_evidence, root)
     candidates = generate_candidates(bundle)
     selected = select_best_candidates(candidates)
     ai_error: str | None = None
@@ -118,9 +128,7 @@ async def refresh_project_verification(
                     bundle,
                     candidates,
                 )
-            except Exception as exc:
-                if isinstance(exc, MemoryError):
-                    raise
+            except (FeatureGenerationUnavailableError, ValueError) as exc:
                 ai_error = str(exc)
                 if ai_mode == "on":
                     raise ProjectVerificationAIError(
@@ -146,9 +154,11 @@ async def refresh_project_verification(
         ai_used=ai_used,
         ai_error=ai_error,
         ai_rejected=rejected,
+        warnings=bundle.warnings,
     )
+    result.changed = result.changed or not bundle.existing_project_json_intact
     if fix and result.changed:
-        _write_verification(result.project_json_path, after)
+        await asyncio.to_thread(_write_verification, result.project_json_path, after)
         result.written = True
     return result
 
@@ -161,6 +171,7 @@ def _build_result(
     candidates: list[CommandCandidate],
     selected: dict[str, CommandCandidate],
     ai_mode: AIMode,
+    warnings: list[str],
     ai_used: bool = False,
     ai_error: str | None = None,
     ai_rejected: list[RejectedCommand] | None = None,
@@ -176,6 +187,7 @@ def _build_result(
         selected=selected,
         changed=normalized_before != normalized_after,
         diff=_verification_diff(normalized_before, normalized_after),
+        warnings=list(warnings),
         ai_mode=ai_mode,
         ai_used=ai_used,
         ai_error=ai_error,
@@ -186,8 +198,11 @@ def _build_result(
 def _write_verification(project_json_path: Path, verification: dict[str, Any]) -> None:
     project_json_path.parent.mkdir(parents=True, exist_ok=True)
     data: dict[str, Any] = {}
+    existing_mode: int | None = None
     if project_json_path.exists():
-        data = json.loads(project_json_path.read_text(encoding="utf-8"))
+        data, corrupt_content, existing_mode = _read_project_json_for_write(project_json_path)
+        if corrupt_content is not None:
+            _backup_corrupt_project_json(project_json_path, corrupt_content)
     data["verification"] = verification
 
     fd, tmp_name = tempfile.mkstemp(
@@ -198,6 +213,8 @@ def _write_verification(project_json_path: Path, verification: dict[str, Any]) -
     )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as tmp:
+            if existing_mode is not None:
+                os.fchmod(tmp.fileno(), existing_mode)
             json.dump(data, tmp, indent=2)
             tmp.write("\n")
         os.replace(tmp_name, project_json_path)
@@ -207,6 +224,50 @@ def _write_verification(project_json_path: Path, verification: dict[str, Any]) -
         except OSError as exc:
             logger.debug("Failed to clean up temp file %s: %s", tmp_name, exc)
         raise
+
+
+def _read_project_json_for_write(
+    project_json_path: Path,
+) -> tuple[dict[str, Any], bytes | None, int | None]:
+    try:
+        with project_json_path.open("rb") as project_file:
+            file_stat = os.fstat(project_file.fileno())
+            content = project_file.read(MAX_FILE_BYTES + 1)
+    except OSError as exc:
+        raise ProjectVerificationReadError(
+            f"Refusing to update {project_json_path}: could not read file ({exc})"
+        ) from exc
+
+    if len(content) > MAX_FILE_BYTES:
+        raise ProjectVerificationReadError(
+            f"Refusing to update {project_json_path}: file exceeds MAX_FILE_BYTES "
+            f"({MAX_FILE_BYTES} bytes)"
+        )
+
+    try:
+        data = json.loads(content)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return {}, content, _regular_file_mode(file_stat.st_mode)
+    if not isinstance(data, dict):
+        return {}, content, _regular_file_mode(file_stat.st_mode)
+    return data, None, _regular_file_mode(file_stat.st_mode)
+
+
+def _regular_file_mode(file_mode: int) -> int | None:
+    if not stat.S_ISREG(file_mode):
+        return None
+    return stat.S_IMODE(file_mode)
+
+
+def _backup_corrupt_project_json(project_json_path: Path, content: bytes) -> None:
+    backup_path = project_json_path.with_suffix(f"{project_json_path.suffix}.bak")
+    try:
+        backup_path.write_bytes(content)
+    except OSError as exc:
+        raise ProjectVerificationReadError(
+            f"Refusing to update {project_json_path}: could not back up corrupt metadata "
+            f"to {backup_path} ({exc})"
+        ) from exc
 
 
 def _verification_diff(before: dict[str, Any], after: dict[str, Any]) -> str:

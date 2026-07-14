@@ -26,7 +26,7 @@ def test_quality() -> None:
 
 
 @test_quality.command("audit")
-@click.argument("paths", nargs=-1, type=click.Path(exists=True, path_type=Path))
+@click.argument("paths", nargs=-1, type=click.Path(path_type=Path))
 @click.option(
     "--format",
     "output_format",
@@ -36,6 +36,11 @@ def test_quality() -> None:
 )
 @click.option("--output", type=click.Path(dir_okay=False, path_type=Path))
 @click.option("--write-baseline", type=click.Path(dir_okay=False, path_type=Path))
+@click.option(
+    "--allow-failing-baseline",
+    is_flag=True,
+    help="Write the baseline even when --fail-on-new fails.",
+)
 @click.option("--baseline", type=click.Path(dir_okay=False, path_type=Path))
 @click.option("--fail-on-new", is_flag=True)
 @click.option(
@@ -49,6 +54,7 @@ def audit(
     output_format: str,
     output: Path | None,
     write_baseline: Path | None,
+    allow_failing_baseline: bool,
     baseline: Path | None,
     fail_on_new: bool,
     min_severity: Severity,
@@ -57,6 +63,8 @@ def audit(
 
     if fail_on_new and baseline is None:
         raise click.ClickException("--fail-on-new requires --baseline")
+    if allow_failing_baseline and write_baseline is None:
+        raise click.ClickException("--allow-failing-baseline requires --write-baseline")
 
     audit_paths_input = paths or (Path("tests"),)
     report = audit_paths(audit_paths_input, root=Path.cwd())
@@ -75,14 +83,21 @@ def audit(
         else:
             diff = diff_report(
                 report,
-                AuditBaseline(path=str(baseline), fingerprints=frozenset()),
+                AuditBaseline(path=str(baseline), issue_counts={}),
                 min_severity=min_severity,
                 baseline_status="missing",
                 baseline_mode="current-issues-as-new",
                 warning_message=BASELINE_MISSING_MESSAGE,
             )
 
-    if write_baseline is not None:
+    zero_file_audit = any(warning.code == "NO_ANALYZABLE_FILES" for warning in report.warnings)
+    audit_failed = fail_on_new and (
+        zero_file_audit or (diff is not None and bool(diff.failing_issues))
+    )
+    baseline_write_refused = (
+        write_baseline is not None and audit_failed and not allow_failing_baseline
+    )
+    if write_baseline is not None and not baseline_write_refused:
         write_baseline_file(report, write_baseline)
 
     rendered = render_json(report, diff) if output_format == "json" else render_text(report, diff)
@@ -92,5 +107,10 @@ def audit(
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(rendered, encoding="utf-8")
 
-    if fail_on_new and diff is not None and diff.failing_issues:
+    if baseline_write_refused:
+        raise click.ClickException(
+            "refusing to write a baseline from a failing audit; "
+            "pass --allow-failing-baseline to explicitly accept the current failures"
+        )
+    if audit_failed:
         raise click.exceptions.Exit(1)

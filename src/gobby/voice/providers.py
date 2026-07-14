@@ -20,57 +20,63 @@ _PROVIDER_CLASSES: dict[str, tuple[str, str]] = {
 }
 
 
-def list_tts_providers() -> tuple[str, ...]:
-    """Return the registered provider ids."""
-    return tuple(sorted(_PROVIDER_CLASSES))
-
-
-def _load_provider_factory(provider: str) -> ProviderFactory | None:
+def _load_provider_factory(provider: str) -> tuple[ProviderFactory | None, str | None]:
     spec = _PROVIDER_CLASSES.get(provider)
     if spec is None:
-        return None
+        return None, f"Unknown TTS provider: {provider}"
 
     module_name, class_name = spec
     try:
         module = importlib.import_module(module_name)
-        provider_cls = cast(ProviderFactory, getattr(module, class_name))
-    except (ImportError, AttributeError):
+    except ImportError:
         logger.debug(
-            "Failed to load TTS provider factory %s from %s.%s",
-            provider,
+            "Failed to import TTS provider module %s for %s",
             module_name,
-            class_name,
+            provider,
             exc_info=True,
         )
-        return None
-    return provider_cls
+        return None, f"TTS provider module import failed: {module_name}"
+
+    try:
+        provider_cls = cast(ProviderFactory, getattr(module, class_name))
+    except AttributeError:
+        logger.debug(
+            "TTS provider factory %s is missing from %s",
+            class_name,
+            module_name,
+            exc_info=True,
+        )
+        return None, f"TTS provider class missing: {module_name}.{class_name}"
+    return provider_cls, None
+
+
+def _create_tts_provider(config: VoiceConfig) -> tuple[TTSProvider | None, str | None]:
+    provider_name = getattr(config, "tts_provider", "chatterbox")
+    factory, failure_reason = _load_provider_factory(provider_name)
+    if factory is None:
+        return None, failure_reason
+    try:
+        return factory(config), None
+    except Exception:
+        logger.warning("Failed to initialize TTS provider %s", provider_name, exc_info=True)
+        return None, f"TTS provider unavailable: {provider_name}"
 
 
 def create_tts_provider(config: VoiceConfig) -> TTSProvider | None:
     """Instantiate the configured TTS provider."""
-    provider_name = getattr(config, "tts_provider", "chatterbox")
-    factory = _load_provider_factory(provider_name)
-    if factory is None:
-        return None
-    try:
-        return factory(config)
-    except Exception:
-        logger.warning("Failed to initialize TTS provider %s", provider_name, exc_info=True)
-        return None
+    provider, _ = _create_tts_provider(config)
+    return provider
 
 
 def get_tts_provider_status(config: VoiceConfig) -> TTSProviderStatus:
     """Return provider status without making callers branch on provider type."""
     provider_name = getattr(config, "tts_provider", "chatterbox")
-    provider = create_tts_provider(config)
+    provider, failure_reason = _create_tts_provider(config)
     if provider is None:
-        reason = f"Unknown TTS provider: {provider_name}"
-        if provider_name in _PROVIDER_CLASSES:
-            reason = f"TTS provider unavailable: {provider_name}"
         return TTSProviderStatus(
             provider=provider_name,
             available=False,
-            reason=reason,
+            reason=failure_reason or f"TTS provider unavailable: {provider_name}",
             capabilities=TTSProviderCapabilities(),
             details={},
         )

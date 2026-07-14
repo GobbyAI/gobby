@@ -58,12 +58,13 @@ def _analyze_python_file(
 ) -> tuple[list[AuditIssue], int]:
     tree = ast.parse(source, filename=filename)
     comments = _collect_comments(source)
+    sleep_call_names = _sleep_call_names(tree.body)
 
     issues: list[AuditIssue] = []
     test_nodes = list(_iter_test_nodes(tree))
     for test in test_nodes:
         suppressions = _suppressed_codes(comments, test.start_line, test.end_line)
-        issues.extend(_analyze_test(relative_path, test, comments, suppressions))
+        issues.extend(_analyze_test(relative_path, test, comments, suppressions, sleep_call_names))
     return issues, len(test_nodes)
 
 
@@ -75,15 +76,35 @@ def _iter_test_nodes(tree: ast.Module) -> Iterable[_TestNode]:
             if _has_pytest_fixture_decorator(node.decorator_list):
                 continue
             yield _make_test_node(node.name, node, ())
-        elif isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
-            class_decorators = tuple(node.decorator_list)
-            for child in node.body:
-                if isinstance(
-                    child, (ast.FunctionDef, ast.AsyncFunctionDef)
-                ) and child.name.startswith("test_"):
-                    if _has_pytest_fixture_decorator(child.decorator_list):
-                        continue
-                    yield _make_test_node(f"{node.name}.{child.name}", child, class_decorators)
+        elif isinstance(node, ast.ClassDef) and _is_test_class(node):
+            yield from _iter_class_test_nodes(node, node.name, ())
+
+
+def _iter_class_test_nodes(
+    node: ast.ClassDef,
+    name: str,
+    inherited_decorators: tuple[ast.expr, ...],
+) -> Iterable[_TestNode]:
+    class_decorators = inherited_decorators + tuple(node.decorator_list)
+    for child in node.body:
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and child.name.startswith(
+            "test_"
+        ):
+            if _has_pytest_fixture_decorator(child.decorator_list):
+                continue
+            yield _make_test_node(f"{name}.{child.name}", child, class_decorators)
+        elif isinstance(child, ast.ClassDef) and _is_test_class(child):
+            yield from _iter_class_test_nodes(
+                child,
+                f"{name}.{child.name}",
+                class_decorators,
+            )
+
+
+def _is_test_class(node: ast.ClassDef) -> bool:
+    return node.name.startswith("Test") or any(
+        _call_name(base).endswith("TestCase") for base in node.bases
+    )
 
 
 def _make_test_node(
@@ -92,7 +113,9 @@ def _make_test_node(
     inherited_decorators: tuple[ast.expr, ...],
 ) -> _TestNode:
     decorators = inherited_decorators + tuple(node.decorator_list)
-    decorator_lines = [decorator.lineno for decorator in decorators if hasattr(decorator, "lineno")]
+    decorator_lines = [
+        decorator.lineno for decorator in node.decorator_list if hasattr(decorator, "lineno")
+    ]
     start_line = min([node.lineno, *decorator_lines])
     return _TestNode(
         name=name,
@@ -108,8 +131,11 @@ def _analyze_test(
     test: _TestNode,
     comments: Sequence[_Comment],
     suppressions: set[str],
+    module_sleep_call_names: set[str],
 ) -> list[AuditIssue]:
-    facts = _TestBodyVisitor()
+    local_nodes = (node for statement in test.node.body for node in ast.walk(statement))
+    sleep_call_names = module_sleep_call_names | _sleep_call_names(local_nodes)
+    facts = _TestBodyVisitor(sleep_call_names)
     for decorator in test.decorators:
         facts.visit(decorator)
     for statement in test.node.body:
@@ -156,12 +182,13 @@ def _analyze_test(
 
 
 class _TestBodyVisitor(ast.NodeVisitor):
-    def __init__(self) -> None:
+    def __init__(self, sleep_call_names: set[str]) -> None:
         self.strong_assertions = 0
         self.mock_assertions = 0
         self.mock_uses = 0
         self.truthy_assert_lines: list[int] = []
         self.sleep_lines: list[int] = []
+        self.sleep_call_names = sleep_call_names
 
     def visit_Assert(self, node: ast.Assert) -> None:
         if _is_truthy_constant(node.test):
@@ -189,7 +216,7 @@ class _TestBodyVisitor(ast.NodeVisitor):
         if leaf_name == "setattr" and "monkeypatch" in call_name:
             self.mock_uses += 1
 
-        if _is_sleep_call(call_name):
+        if _is_sleep_call(call_name, self.sleep_call_names):
             self.sleep_lines.append(node.lineno)
 
         self.generic_visit(node)
@@ -206,11 +233,11 @@ def _is_unconditional_skip(decorator: ast.expr) -> bool:
 
 
 def _is_xfail_without_strict_or_reason(decorator: ast.expr) -> bool:
-    if not isinstance(decorator, ast.Call):
-        return False
-    name = _call_name(decorator.func)
+    name = _call_name(decorator.func if isinstance(decorator, ast.Call) else decorator)
     if name not in {"xfail", "pytest.mark.xfail"}:
         return False
+    if not isinstance(decorator, ast.Call):
+        return True
 
     has_strict_true = any(
         keyword.arg == "strict"
@@ -239,7 +266,7 @@ def _is_nonempty_string(node: ast.expr) -> bool:
 
 def _is_strong_assertion_call(call_name: str) -> bool:
     leaf_name = call_name.rsplit(".", 1)[-1]
-    if call_name in {"pytest.raises", "pytest.warns", "pytest.deprecated_call"}:
+    if leaf_name in {"raises", "warns", "deprecated_call"}:
         return True
     if call_name.startswith("self.assert") or call_name.startswith("cls.assert"):
         return True
@@ -250,8 +277,22 @@ def _is_mock_assertion(call_name: str) -> bool:
     return call_name.rsplit(".", 1)[-1] in _MOCK_ASSERT_NAMES
 
 
-def _is_sleep_call(call_name: str) -> bool:
-    return call_name in {"sleep", "time.sleep", "asyncio.sleep"} or call_name.endswith(".sleep")
+def _sleep_call_names(nodes: Iterable[ast.AST]) -> set[str]:
+    call_names = {"time.sleep", "asyncio.sleep"}
+    for node in nodes:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in {"time", "asyncio"}:
+                    call_names.add(f"{alias.asname or alias.name}.sleep")
+        elif isinstance(node, ast.ImportFrom) and node.module in {"time", "asyncio"}:
+            for alias in node.names:
+                if alias.name == "sleep":
+                    call_names.add(alias.asname or alias.name)
+    return call_names
+
+
+def _is_sleep_call(call_name: str, sleep_call_names: set[str]) -> bool:
+    return call_name in sleep_call_names
 
 
 def _call_name(node: ast.AST) -> str:

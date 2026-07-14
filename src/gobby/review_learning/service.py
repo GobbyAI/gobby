@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 import logging
@@ -30,11 +31,18 @@ from gobby.review_learning.promotion import (
     PromotionTaskManager,
     promote_lesson,
 )
+from gobby.storage.hub.protocol import HubDatabase, ReviewLearningPatternMutation
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
 
 logger = logging.getLogger(__name__)
+
+# Recall builds at most two queries and searches ordinary and review-lesson
+# scopes for each query, so this caps one request at 80 backend searches.
+MAX_RECALL_FINDINGS = 20
+# Matches also appear in per-finding groups; cap the flattened duplicate view.
+MAX_RECALL_FLAT_MATCHES = 100
 
 _SPACE_RE = re.compile(r"\s+")
 _LESSON_FIELD_RE = re.compile(r"^-\s+(?P<key>[a-zA-Z_]+):\s*(?P<value>.*)$")
@@ -42,7 +50,7 @@ _LEGACY_SCAN_LIMIT = 200
 
 
 class ReviewLearningMemoryManager(PromotionMemoryManager, Protocol):
-    db: Any
+    db: HubDatabase
 
     async def create_memory(
         self,
@@ -102,7 +110,7 @@ class ReviewLearningService:
     ) -> dict[str, Any]:
         """Search memories for review-context relevant to each finding."""
         normalized_findings = _normalize_recall_findings(findings)
-        project_id, _ = self._resolve_scope(session_id)
+        project_id, _ = await self._resolve_scope(session_id)
         grouped: list[dict[str, Any]] = []
         flat_matches: list[dict[str, Any]] = []
         for index, finding in enumerate(normalized_findings):
@@ -129,7 +137,9 @@ class ReviewLearningService:
                 )
                 matches = []
             grouped.append({"finding_index": index, "matches": matches})
-            flat_matches.extend(matches)
+            remaining_flat_matches = MAX_RECALL_FLAT_MATCHES - len(flat_matches)
+            if remaining_flat_matches > 0:
+                flat_matches.extend(matches[:remaining_flat_matches])
         return {"findings": grouped, "matches": flat_matches}
 
     async def recall_review_lessons_for_files(
@@ -142,7 +152,7 @@ class ReviewLearningService:
         limit: int = 3,
     ) -> dict[str, Any]:
         """Recall confirmed review lessons with deterministic file-path matching."""
-        resolved_project_id = project_id or self._resolve_scope(session_id)[0]
+        resolved_project_id = project_id or (await self._resolve_scope(session_id))[0]
         normalized_paths = _coerce_file_paths(
             file_paths=file_paths, file_paths_json=file_paths_json
         )
@@ -198,7 +208,7 @@ class ReviewLearningService:
                 "promotable": False,
             }
 
-        project_id, source_session_id = self._resolve_scope(session_id)
+        project_id, source_session_id = await self._resolve_record_scope(session_id)
         finding_fingerprint = derive_finding_fingerprint(finding)
         occurrence_key = build_occurrence_key(source_review, finding_fingerprint)
         normalized = normalize_lesson(
@@ -215,63 +225,77 @@ class ReviewLearningService:
             risk=risk,
         )
 
-        existing = await self.memory_manager.alist_memories(
+        lock = ReviewLearningPatternMutation(
             project_id=project_id,
-            memory_type="pattern",
-            limit=1,
-            tags_all=["review-lesson", normalized.occurrence_tag],
+            pattern_key=normalized.identity.pattern_key,
         )
-        if existing:
-            memory = existing[0]
+        async with self.memory_manager.db.advisory_lock(lock):
+            existing = await self.memory_manager.alist_memories(
+                project_id=project_id,
+                memory_type="pattern",
+                limit=1,
+                tags_all=["review-lesson", normalized.occurrence_tag],
+            )
+            if existing:
+                memory = existing[0]
+                promotion = await promote_lesson(
+                    lesson=normalized,
+                    evidence_memory_id=memory.id,
+                    memory_manager=self.memory_manager,
+                    task_manager=self.task_manager,
+                    project_id=project_id,
+                    source_session_id=source_session_id,
+                )
+                return {
+                    "lesson_id": getattr(memory, "id", None),
+                    "pattern_id": normalized.identity.pattern_id,
+                    "finding_fingerprint": finding_fingerprint,
+                    "occurrence_key": occurrence_key,
+                    "decision": validated_decision,
+                    "promotable": normalized.identity.promotable,
+                    **promotion,
+                    "skipped_reason": "duplicate_occurrence",
+                }
+
+            if (
+                normalized.source_kind in CI_SOURCE_KINDS
+                and normalized.decision == "confirmed"
+                and not has_verified_fix(evidence)
+            ):
+                return {
+                    "pattern_id": normalized.identity.pattern_id,
+                    "finding_fingerprint": finding_fingerprint,
+                    "occurrence_key": occurrence_key,
+                    "decision": validated_decision,
+                    "promotable": normalized.identity.promotable,
+                    "skipped_reason": "missing_verified_fix",
+                }
+
+            memory = await self.memory_manager.create_memory(
+                content=normalized.content,
+                memory_type="pattern",
+                project_id=project_id,
+                source_type="agent",
+                source_session_id=source_session_id,
+                tags=normalized.tags,
+            )
+            promotion = await promote_lesson(
+                lesson=normalized,
+                evidence_memory_id=memory.id,
+                memory_manager=self.memory_manager,
+                task_manager=self.task_manager,
+                project_id=project_id,
+                source_session_id=source_session_id,
+            )
             return {
-                "lesson_id": getattr(memory, "id", None),
+                "lesson_id": memory.id,
                 "pattern_id": normalized.identity.pattern_id,
                 "finding_fingerprint": finding_fingerprint,
                 "occurrence_key": occurrence_key,
                 "decision": validated_decision,
                 "promotable": normalized.identity.promotable,
-                "skipped_reason": "duplicate_occurrence",
+                **promotion,
             }
-
-        if (
-            normalized.source_kind in CI_SOURCE_KINDS
-            and normalized.decision == "confirmed"
-            and not has_verified_fix(evidence)
-        ):
-            return {
-                "pattern_id": normalized.identity.pattern_id,
-                "finding_fingerprint": finding_fingerprint,
-                "occurrence_key": occurrence_key,
-                "decision": validated_decision,
-                "promotable": normalized.identity.promotable,
-                "skipped_reason": "missing_verified_fix",
-            }
-
-        memory = await self.memory_manager.create_memory(
-            content=normalized.content,
-            memory_type="pattern",
-            project_id=project_id,
-            source_type="agent",
-            source_session_id=source_session_id,
-            tags=normalized.tags,
-        )
-        promotion = await promote_lesson(
-            lesson=normalized,
-            evidence_memory_id=memory.id,
-            memory_manager=self.memory_manager,
-            task_manager=self.task_manager,
-            project_id=project_id,
-            source_session_id=source_session_id,
-        )
-        return {
-            "lesson_id": memory.id,
-            "pattern_id": normalized.identity.pattern_id,
-            "finding_fingerprint": finding_fingerprint,
-            "occurrence_key": occurrence_key,
-            "decision": validated_decision,
-            "promotable": normalized.identity.promotable,
-            **promotion,
-        }
 
     async def _search_recall_matches(
         self,
@@ -315,7 +339,34 @@ class ReviewLearningService:
                     )
         return matches
 
-    def _resolve_scope(self, session_id: str | None) -> tuple[str, str | None]:
+    async def _resolve_scope(self, session_id: str | None) -> tuple[str, str | None]:
+        return await asyncio.to_thread(self._resolve_scope_sync, session_id)
+
+    async def _resolve_record_scope(self, session_id: str | None) -> tuple[str, str | None]:
+        if session_id is None:
+            return await self._resolve_scope(None)
+        return await asyncio.to_thread(self._resolve_explicit_scope_sync, session_id)
+
+    def _resolve_explicit_scope_sync(self, session_id: str) -> tuple[str, str]:
+        try:
+            resolved_session_id = resolve_session_reference(
+                self.memory_manager.db,
+                session_id,
+                _current_project_id(),
+            )
+            row = self.memory_manager.db.fetchone(
+                "SELECT project_id FROM sessions WHERE id = %s",
+                (resolved_session_id,),
+            )
+            if row and row.get("project_id"):
+                return str(row["project_id"]), resolved_session_id
+            raise RuntimeError(f"Session {resolved_session_id!r} has no project")
+        except (AttributeError, RuntimeError, ValueError, OSError) as exc:
+            raise RuntimeError(
+                f"Review-learning could not resolve explicit session {session_id!r}"
+            ) from exc
+
+    def _resolve_scope_sync(self, session_id: str | None) -> tuple[str, str | None]:
         project_id = _current_project_id()
         effective_session_id = session_id or get_current_session_id()
         if not effective_session_id:
@@ -362,7 +413,7 @@ class ReviewLearningService:
         touched_paths: list[str],
         limit: int,
     ) -> list[tuple[Any, str | None]]:
-        tagged_paths = {path_tag(path): path for path in touched_paths}
+        tagged_paths = {tag: path for path in touched_paths if (tag := path_tag(path))}
         candidates: list[tuple[Any, str | None]] = []
         seen: set[str] = set()
 
@@ -380,6 +431,9 @@ class ReviewLearningService:
                     continue
                 seen.add(memory_id)
                 candidates.append((memory, touched_path))
+
+        if len(candidates) >= limit:
+            return candidates
 
         legacy_memories = await self.memory_manager.alist_memories(
             project_id=project_id,
@@ -432,12 +486,14 @@ def build_recall_queries(
 
 
 def _normalize_recall_findings(findings: list[dict[str, Any] | str]) -> list[dict[str, Any]]:
-    """Normalize supported recall finding shapes before backend fail-open handling."""
+    """Normalize supported finding shapes up to the documented recall cap."""
     if not isinstance(findings, list):
         raise ValueError("findings must be an array")
 
     normalized: list[dict[str, Any]] = []
     for index, finding in enumerate(findings):
+        if index >= MAX_RECALL_FINDINGS:
+            break
         if isinstance(finding, dict):
             normalized.append(copy.deepcopy(finding))
             continue
@@ -538,7 +594,7 @@ def _build_file_lesson(
         "evidence_path": evidence_path or matched_path,
         "principle": principle,
         "prevention": prevention,
-        "do": do_text or prevention or principle,
+        "do": do_text if do_text or avoid else prevention or principle,
         "avoid": avoid,
     }
 
@@ -565,10 +621,10 @@ def _parse_lesson_content(content: str) -> tuple[dict[str, str], list[str]]:
 
 
 def _parse_evidence(content: str) -> Any | None:
-    marker = "## Evidence"
-    if marker not in content:
+    matches = list(re.finditer(r"(?m)^## Evidence[ \t]*\r?$", content))
+    if not matches:
         return None
-    raw = content.split(marker, 1)[1].strip()
+    raw = content[matches[-1].end() :].strip()
     if not raw:
         return None
     try:
@@ -600,8 +656,11 @@ def _pattern_id_from_tags(tags: list[str]) -> str:
 
 
 def _extract_do_text(prevention: str) -> str:
-    if "; avoid " in prevention.lower():
-        index = prevention.lower().find("; avoid ")
+    lower = prevention.lower()
+    if lower.startswith("avoid "):
+        return ""
+    if "; avoid " in lower:
+        index = lower.find("; avoid ")
         return prevention[:index].strip(" ;.")
     return prevention
 

@@ -8,9 +8,14 @@ from gobby.review_learning.lessons import (
     derive_lesson_identity,
     has_verified_fix,
     normalize_lesson,
+    validate_guardrail_target,
 )
 
 pytestmark = pytest.mark.unit
+
+
+def test_tool_config_is_a_valid_guardrail_target() -> None:
+    assert validate_guardrail_target("tool-config") == "tool-config"
 
 
 def test_pattern_id_derives_from_lesson_type_and_principle() -> None:
@@ -28,6 +33,13 @@ def test_non_promotable_fallback_when_pattern_is_underivable() -> None:
 
     assert identity.promotable is False
     assert identity.pattern_id.startswith("non-promotable:")
+
+
+def test_non_promotable_fallback_is_independent_of_finding_key_order() -> None:
+    first = derive_lesson_identity({"risk": "medium", "decision": "confirmed"})
+    reordered = derive_lesson_identity({"decision": "confirmed", "risk": "medium"})
+
+    assert first == reordered
 
 
 def test_normalized_lesson_uses_bounded_tags_and_full_content() -> None:
@@ -63,6 +75,7 @@ def test_normalized_lesson_uses_bounded_tags_and_full_content() -> None:
     assert "source:coderabbit" in lesson.tags
     assert any(tag.startswith("fingerprint:") for tag in lesson.tags)
     assert any(tag.startswith("occurrence:") for tag in lesson.tags)
+    assert not any(tag.startswith("guardrail:") for tag in lesson.tags)
     assert path_tag("src/gobby/storage/example.py") in lesson.tags
     assert "Use psycopg %s placeholders in Gobby storage code" in lesson.content
     assert '"commit": "abc123"' in lesson.content

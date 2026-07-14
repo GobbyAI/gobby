@@ -1,9 +1,23 @@
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any, cast
+
 import pytest
 
-from gobby.mcp_proxy.tools.review_learning import create_review_learning_registry
-from tests.review_learning.conftest import FakeDB, FakeMemoryManager, FakeTaskManager
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.review_learning import (
+    create_review_learning_registry as _create_review_learning_registry,
+)
+from gobby.review_learning.file_paths import path_tag
+from gobby.review_learning.promotion import PromotionTaskManager
+from gobby.review_learning.service import ReviewLearningMemoryManager
+from tests.review_learning.conftest import (
+    FakeDB,
+    FakeMemory,
+    FakeMemoryManager,
+    FakeTaskManager,
+)
 
 pytestmark = pytest.mark.unit
 SESSION_ID = "11111111-1111-1111-1111-111111111111"
@@ -34,6 +48,16 @@ LEGACY_SERVICE_CONFIG_LESSON = """# Review Lesson: Propagate service config-stor
 
 def _scoped_memory_manager(project_id: str = "_personal") -> FakeMemoryManager:
     return FakeMemoryManager(db=FakeDB(session_id=SESSION_ID, project_id=project_id))
+
+
+def create_review_learning_registry(
+    memory_manager: FakeMemoryManager,
+    task_manager: FakeTaskManager,
+) -> InternalToolRegistry:
+    return _create_review_learning_registry(
+        cast(ReviewLearningMemoryManager, memory_manager),
+        cast(PromotionTaskManager, task_manager),
+    )
 
 
 def test_create_review_learning_registry_registers_two_tools() -> None:
@@ -196,6 +220,67 @@ async def test_recall_review_lessons_for_files_matches_recorded_finding_path() -
 
 
 @pytest.mark.asyncio
+async def test_recall_review_lessons_uses_tag_fast_path_across_checkouts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    main_root = tmp_path / "main"
+    worktree_root = tmp_path / "worktree"
+    for root in (main_root, worktree_root):
+        (root / ".gobby").mkdir(parents=True)
+        (root / ".gobby" / "project.json").write_text("{}", encoding="utf-8")
+
+    relative_path = Path("src/gobby/wiki/scheduled_jobs.py")
+    memory_manager = _scoped_memory_manager()
+    registry = create_review_learning_registry(memory_manager, FakeTaskManager())
+    await registry.call(
+        "record_review_lesson",
+        {
+            "source_kind": "review_comment",
+            "source": "coderabbit",
+            "source_review": "review-absolute-worktree",
+            "decision": "confirmed",
+            "finding": {
+                "title": "Use shared coordinator",
+                "pattern_id": "shared-coordinator",
+                "path": str(worktree_root / relative_path),
+                "principle": "Scheduled writes must route through the coordinator.",
+            },
+            "evidence": {"commit": "abc"},
+            "session_id": SESSION_ID,
+        },
+    )
+
+    list_calls: list[list[str]] = []
+    original_alist_memories = memory_manager.alist_memories
+
+    async def tagged_only(**kwargs: Any) -> list[FakeMemory]:
+        tags_all = list(kwargs.get("tags_all") or [])
+        list_calls.append(tags_all)
+        if len(tags_all) == 2:
+            return []
+        return await original_alist_memories(**kwargs)
+
+    monkeypatch.setattr(memory_manager, "alist_memories", tagged_only)
+
+    result = await registry.call(
+        "recall_review_lessons_for_files",
+        {
+            "file_paths": [str(main_root / relative_path)],
+            "session_id": SESSION_ID,
+        },
+    )
+
+    assert result["success"] is True
+    assert result["count"] == 1
+    assert list_calls[0] == [
+        "review-lesson",
+        "confirmed",
+        path_tag(relative_path.as_posix()),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_recall_review_lessons_for_files_ignores_unrelated_path() -> None:
     memory_manager = FakeMemoryManager()
     await memory_manager.create_memory(
@@ -247,6 +332,40 @@ async def test_recall_review_lessons_for_files_matches_legacy_evidence_paths() -
     assert "preserve env precedence" in lesson["prevention"]
     assert "database reads" in lesson["avoid"]
     assert "## Provenance" not in result["message"]
+
+
+async def test_recall_uses_anchored_evidence_and_renders_avoid_only_guidance() -> None:
+    memory_manager = FakeMemoryManager()
+    await memory_manager.create_memory(
+        """# Review Lesson: Finding mentions ## Evidence inline
+
+## Identity
+- pattern_id: avoid-bare-except
+
+## Lesson
+- principle: Exception handlers should preserve actionable failures.
+- prevention: Avoid using bare except.
+
+## Evidence
+{"changed_files": ["src/gobby/review_learning/service.py"]}
+""",
+        tags=["review-lesson", "confirmed", "pattern:avoid-bare-except"],
+        project_id="_personal",
+    )
+    registry = create_review_learning_registry(memory_manager, FakeTaskManager())
+
+    result = await registry.call(
+        "recall_review_lessons_for_files",
+        {
+            "file_paths": ["src/gobby/review_learning/service.py"],
+            "project_id": "_personal",
+        },
+    )
+
+    assert result["count"] == 1
+    assert result["lessons"][0]["evidence_path"] == "src/gobby/review_learning/service.py"
+    assert "  Avoid: using bare except" in result["message"]
+    assert "  Do:" not in result["message"]
 
 
 @pytest.mark.asyncio

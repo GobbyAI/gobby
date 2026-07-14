@@ -1084,6 +1084,22 @@ def test_list_dream_candidates_active_only_and_cooldown(memory_manager) -> None:
     assert ids.index(never.id) < ids.index(stale.id)
 
 
+def test_list_dream_candidates_excludes_review_lesson_patterns(memory_manager) -> None:
+    cutoff = datetime.now(UTC).isoformat()
+    protected = memory_manager.create_memory(
+        content="Repeated review finding",
+        memory_type="pattern",
+        tags=["review-lesson", "pattern:sql-placeholders", "occurrence:review-1"],
+    )
+    ordinary = memory_manager.create_memory(content="ordinary candidate")
+
+    page = memory_manager.list_dream_candidates(limit=50, redream_cutoff=cutoff)
+    ids = {memory.id for memory in page}
+
+    assert protected.id not in ids
+    assert ordinary.id in ids
+
+
 def test_list_dream_candidates_limit(memory_manager) -> None:
     cutoff = datetime.now(UTC).isoformat()
     for i in range(3):

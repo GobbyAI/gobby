@@ -25,6 +25,16 @@ def _find_matching_delimiter(
             index += 1
             continue
 
+        if source.startswith("//", index):
+            newline_index = source.find("\n", index + 2)
+            index = len(source) if newline_index == -1 else newline_index + 1
+            continue
+
+        if source.startswith("/*", index):
+            comment_end = source.find("*/", index + 2)
+            index = len(source) if comment_end == -1 else comment_end + 2
+            continue
+
         if rust_body:
             raw_string_end = _rust_raw_string_end(source, index)
             if raw_string_end is not None:
