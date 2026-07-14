@@ -6,7 +6,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from gobby.review_learning.lessons import GuardrailTarget, NormalizedLesson
+from gobby.review_learning.lessons import Decision, GuardrailTarget, NormalizedLesson
 
 TARGET_CATEGORY: dict[str, str] = {
     "helper": "code",
@@ -261,7 +261,12 @@ def _create_or_update_task(
         raise ValueError("promotion decision requires guardrail_target")
     if decision.category is None:
         raise ValueError("promotion decision requires category")
-    existing = _find_existing_task(task_manager, project_id, lesson.identity.pattern_key)
+    existing = _find_existing_task(
+        task_manager,
+        project_id,
+        lesson.identity.pattern_key,
+        lesson.decision,
+    )
     labels = _task_labels(
         lesson=lesson,
         target=decision.guardrail_target,
@@ -285,34 +290,41 @@ def _create_or_update_task(
         merged_labels = [label for label in merged_labels if not label.startswith("target:")] + [
             f"target:{decision.guardrail_target}"
         ]
+        updates: dict[str, Any] = {
+            "title": title,
+            "description": description,
+            "labels": merged_labels,
+            "category": decision.category,
+            "validation_criteria": validation_criteria,
+        }
+        if decision.category == "code":
+            updates["implementation_domain"] = "backend"
         return task_manager.update_task(
             existing.id,
-            title=title,
-            description=description,
-            labels=merged_labels,
-            category=decision.category,
-            validation_criteria=validation_criteria,
-            implementation_domain="backend" if decision.category == "code" else None,
+            **updates,
         )
 
-    return task_manager.create_task(
-        project_id=project_id,
-        title=title,
-        description=description,
-        created_in_session_id=source_session_id,
-        priority=1 if lesson.risk == "high" else 2,
-        task_type="task",
-        labels=labels,
-        category=decision.category,
-        validation_criteria=validation_criteria,
-        implementation_domain="backend" if decision.category == "code" else None,
-    )
+    task_fields: dict[str, Any] = {
+        "project_id": project_id,
+        "title": title,
+        "description": description,
+        "created_in_session_id": source_session_id,
+        "priority": 1 if lesson.risk == "high" else 2,
+        "task_type": "task",
+        "labels": labels,
+        "category": decision.category,
+        "validation_criteria": validation_criteria,
+    }
+    if decision.category == "code":
+        task_fields["implementation_domain"] = "backend"
+    return task_manager.create_task(**task_fields)
 
 
 def _find_existing_task(
     task_manager: PromotionTaskManager,
     project_id: str,
     pattern_key: str,
+    decision: Decision,
 ) -> Any | None:
     candidates = task_manager.list_tasks(
         project_id=project_id,
@@ -322,7 +334,7 @@ def _find_existing_task(
     )
     for task in candidates:
         labels = set(getattr(task, "labels", None) or [])
-        if {"review-learning", "guardrail"}.issubset(labels):
+        if {"review-learning", "guardrail", f"decision:{decision}"}.issubset(labels):
             return task
     return None
 
@@ -338,6 +350,7 @@ def _task_labels(
         "review-learning",
         f"pattern:{lesson.identity.pattern_key}",
         f"lesson-type:{lesson.identity.lesson_type}",
+        f"decision:{lesson.decision}",
         f"target:{target}",
         f"source:{lesson.source}",
         f"review-lesson:{lesson.source_review}",

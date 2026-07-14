@@ -458,6 +458,43 @@ async def test_no_fix_policy_only_promotes_to_checklist(
     assert fake_task_manager.created[0]["category"] == "docs"
 
 
+async def test_no_fix_policy_promotion_preserves_confirmed_guardrail_task(
+    fake_memory_manager, fake_task_manager
+) -> None:
+    service = ReviewLearningService(fake_memory_manager, fake_task_manager)
+    for index in range(1, 4):
+        await service.record(
+            source_kind="agent_review",
+            source="code-reviewer",
+            source_review=f"confirmed-{index}",
+            decision="confirmed",
+            finding=_finding(),
+            evidence={"commit": f"confirmed-{index}"},
+        )
+
+    confirmed_task = fake_task_manager.tasks[0]
+    for index in range(1, 4):
+        await service.record(
+            source_kind="review_comment",
+            source="coderabbit",
+            source_review=f"policy-{index}",
+            decision="no-fix-policy",
+            finding=_finding(),
+            evidence={"reason": f"policy-{index}"},
+        )
+
+    assert len(fake_task_manager.created) == 2
+    assert confirmed_task.category == "code"
+    assert "target:validation" in confirmed_task.labels
+    assert "decision:confirmed" in confirmed_task.labels
+    policy_task = fake_task_manager.tasks[1]
+    assert policy_task.category == "docs"
+    assert "target:checklist" in policy_task.labels
+    assert "decision:no-fix-policy" in policy_task.labels
+    assert "implementation_domain" not in fake_task_manager.created[1]
+    assert "implementation_domain" not in fake_task_manager.updated[-1]
+
+
 @pytest.mark.asyncio
 async def test_non_promotable_lessons_never_create_tasks(
     fake_memory_manager, fake_task_manager
