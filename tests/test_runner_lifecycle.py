@@ -390,7 +390,7 @@ class TestInitSubsystems:
         runner.task_sync_manager = None
         runner.memory_sync_manager = None
         runner.memory_manager = None
-        runner.llm_service = object()
+        runner.llm_service = None
         runner.vector_store = None
         runner.mcp_proxy = None
         runner.mcp_db_manager = None
@@ -438,6 +438,7 @@ class TestInitSubsystems:
         assert web_chat_init["codex_client"] is fake_client
         assert http_init["codex_client"] is fake_client
         assert http_init["services"].text_generation_service is runner.text_generation_service
+        assert http_init["services"].llm_service is runner.llm_service
         assert fake_client.start_calls == 0
         assert fake_client.stop_calls == 0
         assert fake_client.archived_thread_ids == []

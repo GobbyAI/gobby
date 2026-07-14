@@ -13,13 +13,9 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
-from gobby.ai import (
-    build_daemon_text_generation_service,
-    build_daemon_tool_chat_service,
-)
+from gobby.ai import build_daemon_tool_chat_service
 from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
 from gobby.hooks.broadcaster import HookEventBroadcaster
-from gobby.llm import create_llm_service
 from gobby.mcp_proxy.registries import setup_internal_registries
 from gobby.mcp_proxy.semantic_search import (
     DEFAULT_EMBEDDING_DIM,
@@ -101,26 +97,6 @@ class HTTPServer:
 
         self._start_time: float = time.time()
 
-        # Create LLM/text-generation services if not provided in container (fallback)
-        if services.config and (
-            services.text_generation_service is None or not services.llm_service
-        ):
-            try:
-                if services.text_generation_service is None:
-                    services.text_generation_service = build_daemon_text_generation_service(
-                        services.config,
-                    )
-                if not services.llm_service:
-                    services.llm_service = create_llm_service(
-                        services.config,
-                        text_generation=services.text_generation_service,
-                    )
-                    logger.debug(
-                        "LLM service initialized with providers: %s",
-                        services.llm_service.enabled_providers,
-                    )
-            except Exception as e:
-                logger.error(f"Failed to initialize LLM service: {e}")
         if services.config and services.tool_chat_service is None:
             try:
                 services.tool_chat_service = build_daemon_tool_chat_service(
