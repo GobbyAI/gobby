@@ -313,7 +313,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
         try:
             from gobby.skills.sync import sync_bundled_skills
 
-            result = sync_bundled_skills(server.services.database)
+            result = await run_in_threadpool(partial(sync_bundled_skills, server.services.database))
             await _broadcast_skill("skills_bulk_changed", "bulk")
             return result
         except Exception as e:
@@ -601,7 +601,9 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
     ) -> dict[str, Any]:
         """Move a skill to project scope."""
         try:
-            skill = server.skill_manager.move_to_project(skill_id, project_id)
+            skill = await run_in_threadpool(
+                partial(server.skill_manager.move_to_project, skill_id, project_id)
+            )
             await _broadcast_skill("skill_updated", skill_id)
             return {"moved": True, "skill": skill.to_dict()}
         except SkillScopeConflictError as e:
@@ -616,7 +618,9 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
     async def move_to_installed(skill_id: str) -> dict[str, Any]:
         """Move a project-scoped skill back to installed scope."""
         try:
-            skill = server.skill_manager.move_to_installed(skill_id)
+            skill = await run_in_threadpool(
+                partial(server.skill_manager.move_to_installed, skill_id)
+            )
             await _broadcast_skill("skill_updated", skill_id)
             return {"moved": True, "skill": skill.to_dict()}
         except SkillScopeConflictError as e:

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from starlette.testclient import TestClient
 
@@ -208,6 +211,39 @@ class TestRestoreDefaults:
         mock_sync.side_effect = Exception("Fail")
         response = client.post("/api/skills/restore-defaults")
         assert response.status_code == 500
+
+    @pytest.mark.asyncio
+    @patch("gobby.skills.sync.sync_bundled_skills")
+    async def test_restore_defaults_keeps_other_requests_responsive(
+        self, mock_sync: MagicMock, server: HTTPServer, skill_manager: MagicMock
+    ) -> None:
+        sync_started = threading.Event()
+        release_sync = threading.Event()
+
+        def blocking_sync(_database: HubDatabase) -> dict[str, str]:
+            sync_started.set()
+            release_sync.wait(5)
+            return {"sync": "done"}
+
+        mock_sync.side_effect = blocking_sync
+        skill_manager.list_skills.return_value = []
+        transport = httpx.ASGITransport(app=server.app)
+
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            restore_task = asyncio.create_task(client.post("/api/skills/restore-defaults"))
+            try:
+                assert await asyncio.to_thread(sync_started.wait, 1)
+
+                list_response = await asyncio.wait_for(client.get("/api/skills"), timeout=1)
+
+                assert restore_task.done() is False
+                assert list_response.status_code == 200
+            finally:
+                release_sync.set()
+            restore_response = await asyncio.wait_for(restore_task, timeout=1)
+
+        assert restore_response.status_code == 200
+        assert restore_response.json() == {"sync": "done"}
 
 
 class TestImportSkill:
@@ -698,12 +734,19 @@ class TestDeleteSkill:
 
 
 class TestMoveToProject:
-    def test_move_to_project(self, client: TestClient, skill_manager, websocket_server) -> None:
+    @patch("gobby.servers.routes.skills.run_in_threadpool", new_callable=AsyncMock)
+    def test_move_to_project(
+        self, run_in_threadpool: AsyncMock, client: TestClient, skill_manager, websocket_server
+    ) -> None:
         skill_mock = MagicMock()
         skill_mock.to_dict.return_value = {"id": "1"}
-        skill_manager.move_to_project.return_value = skill_mock
+        run_in_threadpool.return_value = skill_mock
         response = client.post("/api/skills/1/move-to-project?project_id=2")
         assert response.status_code == 200
+        operation = run_in_threadpool.await_args.args[0]
+        assert operation.func is skill_manager.move_to_project
+        assert operation.args == ("1", "2")
+        skill_manager.move_to_project.assert_not_called()
         websocket_server.broadcast_skill_event.assert_awaited_once_with("skill_updated", "1")
 
     def test_move_to_project_val_err(self, client: TestClient, skill_manager) -> None:
@@ -724,12 +767,19 @@ class TestMoveToProject:
 
 
 class TestMoveToInstalled:
-    def test_move_to_installed(self, client: TestClient, skill_manager, websocket_server) -> None:
+    @patch("gobby.servers.routes.skills.run_in_threadpool", new_callable=AsyncMock)
+    def test_move_to_installed(
+        self, run_in_threadpool: AsyncMock, client: TestClient, skill_manager, websocket_server
+    ) -> None:
         skill_mock = MagicMock()
         skill_mock.to_dict.return_value = {"id": "1"}
-        skill_manager.move_to_installed.return_value = skill_mock
+        run_in_threadpool.return_value = skill_mock
         response = client.post("/api/skills/1/move-to-installed")
         assert response.status_code == 200
+        operation = run_in_threadpool.await_args.args[0]
+        assert operation.func is skill_manager.move_to_installed
+        assert operation.args == ("1",)
+        skill_manager.move_to_installed.assert_not_called()
         websocket_server.broadcast_skill_event.assert_awaited_once_with("skill_updated", "1")
 
     def test_move_to_installed_val_err(self, client: TestClient, skill_manager) -> None:
