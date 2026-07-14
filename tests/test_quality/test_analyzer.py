@@ -300,6 +300,33 @@ it("handles \\"quoted\\" names", () => {
     assert report.issues == ()
 
 
+def test_script_delimiter_scanner_ignores_apostrophes_in_comments(tmp_path: Path) -> None:
+    tests_dir = tmp_path / "web" / "src" / "__tests__"
+    tests_dir.mkdir(parents=True)
+    path = tests_dir / "sample.test.ts"
+    path.write_text(
+        """
+import { it, expect } from 'vitest'
+
+it("handles line comments", () => {
+  // don't treat this apostrophe or }) as syntax
+  expect(true).toBe(true)
+})
+
+it("handles block comments", () => {
+  /* it's still a comment, even with }) inside */
+  expect(true).toBe(true)
+})
+""",
+        encoding="utf-8",
+    )
+
+    report = audit_paths([path], root=tmp_path)
+
+    assert report.tests_scanned == 2
+    assert report.issues == ()
+
+
 def test_member_access_test_is_not_a_test_declaration(tmp_path: Path) -> None:
     """`x.test(...)` in comments or code is member access, not a test call."""
     tests_dir = tmp_path / "web" / "src" / "__tests__"
