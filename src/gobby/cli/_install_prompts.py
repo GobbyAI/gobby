@@ -505,6 +505,8 @@ def _run_voice_install(
     *,
     db: HubDatabase | None = None,
     secret_store: SecretStore | None = None,
+    reconfigure: bool = False,
+    current_enabled: bool | None = None,
 ) -> None:
     """Interactive voice chat setup.
 
@@ -517,6 +519,7 @@ def _run_voice_install(
         no_interactive: If True, skip the prompt (only enable if voice_flag is set)
     """
     install_voice = voice_flag
+    setting_selected = voice_flag
 
     if not install_voice and not no_interactive:
         click.echo("-" * 40)
@@ -527,27 +530,32 @@ def _run_voice_install(
         click.echo("")
 
         try:
-            install_voice = click.confirm("Enable voice chat?", default=False)
+            install_voice = click.confirm(
+                "Enable voice chat?",
+                default=current_enabled if reconfigure and current_enabled is not None else False,
+            )
+            setting_selected = install_voice or reconfigure
         except (click.Abort, EOFError):
             click.echo("")
             install_voice = False
 
         click.echo("")
 
-    if not install_voice:
+    if not setting_selected:
         return
 
     click.echo("-" * 40)
-    click.echo("Enabling Voice Chat")
+    click.echo("Updating Voice Chat")
     click.echo("-" * 40)
 
     try:
         from gobby.storage.config_store import ConfigStore
 
         with _ensure_db_and_secrets(db, None) as (_db, _store):
-            ConfigStore(_db).set("voice.enabled", True)
-        click.echo("Voice enabled in daemon config")
-        results["voice"] = {"success": True}
+            ConfigStore(_db).set("voice.enabled", install_voice)
+        state = "enabled" if install_voice else "disabled"
+        click.echo(f"Voice {state} in daemon config")
+        results["voice"] = {"success": True, "enabled": install_voice}
     except Exception as e:
         logger.warning(f"Failed to update daemon config: {e}")
         click.echo(f"  Warning: Could not enable voice in config: {e}")
@@ -555,14 +563,15 @@ def _run_voice_install(
         results["voice"] = {"success": False, "error": str(e)}
 
     click.echo("")
-    click.echo("Voice dependencies are installed by normal project sync.")
-    click.echo("If the daemon reports a missing voice package, run: uv sync")
-    click.echo("")
-    click.echo("Next: place a 10-20s voice reference WAV at:")
-    click.echo("  ~/.gobby/voice/reference.wav")
-    click.echo("")
-    click.echo("See docs/guides/voice.md for how to sample from YouTube.")
-    click.echo("")
+    if install_voice:
+        click.echo("Voice dependencies are installed by normal project sync.")
+        click.echo("If the daemon reports a missing voice package, run: uv sync")
+        click.echo("")
+        click.echo("Next: place a 10-20s voice reference WAV at:")
+        click.echo("  ~/.gobby/voice/reference.wav")
+        click.echo("")
+        click.echo("See docs/guides/voice.md for how to sample from YouTube.")
+        click.echo("")
 
 
 def _run_falkordb_install(

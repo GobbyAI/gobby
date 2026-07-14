@@ -15,6 +15,7 @@ from gobby.cli._install_prompts import (
     _run_falkordb_install,
     _run_voice_install,
 )
+from gobby.cli._install_state import empty_install_state
 from gobby.cli.install import install as install_command
 from gobby.config.skills import HubConfig, SkillsConfig
 
@@ -251,6 +252,7 @@ class TestPromptHubApiKeys:
 class TestInstallSummary:
     def test_forwards_injected_db_and_secret_store_to_prompts(self) -> None:
         db = MagicMock()
+        db.fetchone.return_value = None
         secret_store = MagicMock()
 
         with (
@@ -314,6 +316,26 @@ class TestVoiceInstall:
         assert mock_config_store.return_value.set.call_args is not None
         assert results["voice"]["success"] is True
 
+    def test_reconfigure_can_disable_voice(self) -> None:
+        db = MagicMock()
+        results: dict[str, dict[str, object]] = {}
+
+        with (
+            patch("click.confirm", return_value=False),
+            patch("gobby.storage.config_store.ConfigStore") as config_store,
+        ):
+            _run_voice_install(
+                results,
+                voice_flag=False,
+                no_interactive=False,
+                db=db,
+                reconfigure=True,
+                current_enabled=True,
+            )
+
+        config_store.return_value.set.assert_called_once_with("voice.enabled", False)
+        assert results["voice"] == {"success": True, "enabled": False}
+
 
 class TestFalkorDBInstallPrompt:
     @pytest.mark.parametrize(
@@ -373,6 +395,8 @@ class TestInstallCommandSharedStores:
                 embedding_model=None,
                 embedding_dim=None,
                 secret_kek_posture="key-file",
+                auth_mode="local",
+                ide_settings_flag=None,
                 no_interactive_flag=True,
                 working_dir=tmp_path,
             )
@@ -381,6 +405,7 @@ class TestInstallCommandSharedStores:
         config = MagicMock()
         config.database_url = str(tmp_path / "shared.db")
         db = MagicMock()
+        db.fetchone.return_value = None
         secret_store = MagicMock()
 
         with (
@@ -429,6 +454,8 @@ class TestInstallCommandSharedStores:
                 embedding_model=None,
                 embedding_dim=None,
                 secret_kek_posture="key-file",
+                auth_mode="local",
+                ide_settings_flag=None,
                 no_interactive_flag=True,
                 working_dir=tmp_path,
             )
@@ -447,6 +474,7 @@ class TestInstallCommandSharedStores:
         config = MagicMock()
         config.database_url = str(tmp_path / "shared.db")
         db = MagicMock()
+        db.fetchone.return_value = None
         secret_store = MagicMock()
 
         with (
@@ -472,6 +500,7 @@ class TestInstallCommandSharedStores:
             patch("gobby.cli.install.run_daemon_setup"),
             patch("gobby.cli.install.get_install_dir", return_value=tmp_path),
             patch("gobby.cli.install._run_standard_cli_install"),
+            patch("gobby.cli.install.prepare_install_state", return_value=empty_install_state()),
             patch(
                 "gobby.cli.install._run_embedding_install",
                 return_value="lmstudio",
@@ -502,6 +531,8 @@ class TestInstallCommandSharedStores:
                 embedding_model=None,
                 embedding_dim=None,
                 secret_kek_posture="key-file",
+                auth_mode="local",
+                ide_settings_flag=None,
                 no_interactive_flag=True,
                 working_dir=tmp_path,
             )

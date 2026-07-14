@@ -193,11 +193,17 @@ class TestInstallQdrant:
             patch("gobby.cli.installers.qdrant.subprocess.run", return_value=mock_result),
             patch("gobby.cli.installers.qdrant._wait_for_health", return_value=True),
             patch("gobby.cli.installers.qdrant._update_config"),
+            patch("gobby.cli.installers.qdrant.resolve_compose_runtime") as resolve,
         ):
+            resolve.return_value.environment = {
+                "GOBBY_QDRANT_HTTP_PORT": "6333",
+                "GOBBY_POSTGRES_PASSWORD": "postgres-secret",
+            }
             result = install_qdrant(gobby_home=tmp_path, port=6333)
 
         assert result["qdrant_url"] == "http://localhost:6333"
         assert result["success"] is True
+        assert resolve.call_count == 1
 
     def test_install_health_check_failure(self, tmp_path: Path) -> None:
         """install_qdrant returns error when health check fails."""
@@ -210,7 +216,10 @@ class TestInstallQdrant:
             patch.object(shutil, "which", return_value="/usr/bin/docker"),
             patch("gobby.cli.installers.qdrant.subprocess.run", return_value=mock_result),
             patch("gobby.cli.installers.qdrant._wait_for_health", return_value=False),
+            patch("gobby.cli.installers.qdrant._update_config"),
+            patch("gobby.cli.installers.qdrant.resolve_compose_runtime") as resolve,
         ):
+            resolve.return_value.environment = {"GOBBY_QDRANT_HTTP_PORT": "6333"}
             result = install_qdrant(gobby_home=tmp_path)
 
         assert result["success"] is False

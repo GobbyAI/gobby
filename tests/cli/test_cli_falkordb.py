@@ -113,7 +113,6 @@ class TestFalkorDBInstallFlags:
             patch("gobby.cli.installers.falkor.shutil.which") as mock_docker_lookup,
             patch("gobby.cli.installers.falkor.subprocess.run") as mock_subprocess,
             patch("gobby.cli.installers.falkor._update_config") as mock_update_config,
-            patch("gobby.cli.installers.falkor._write_bootstrap_password") as mock_bootstrap_write,
         ):
             result = runner.invoke(
                 install,
@@ -127,7 +126,6 @@ class TestFalkorDBInstallFlags:
         mock_docker_lookup.assert_not_called()
         mock_subprocess.assert_not_called()
         mock_update_config.assert_not_called()
-        mock_bootstrap_write.assert_not_called()
         assert not (gobby_home / "bootstrap.yaml").exists()
         assert not (gobby_home / "hub-postgres.db").exists()
         assert not (gobby_home / "services").exists()

@@ -21,6 +21,7 @@ from gobby.agents.spawners.auth_env import has_auth_env
 from gobby.runner_pid_file import probe_daemon_lock
 from gobby.utils.status import fetch_rich_status, format_startup_summary, format_status_message
 
+from .installers.compose_env import ComposeEnvironmentError, resolve_compose_runtime
 from .installers.service import (
     get_service_status,
     service_start,
@@ -47,16 +48,6 @@ logger = logging.getLogger(__name__)
 SERVICE_MANAGED_STOP_TIMEOUT_SECONDS = 75.0
 
 
-def _open_services_config_db(gobby_home: Path) -> Any:
-    """Open the runtime hub DB using the bootstrap file for a Gobby home."""
-    from gobby.storage.hub.runtime import open_runtime_hub_database
-
-    return open_runtime_hub_database(
-        str(gobby_home / "bootstrap.yaml"),
-        apply_migrations=False,
-    )
-
-
 def _services_start(gobby_home: Path) -> None:
     """Start Docker services (Qdrant, FalkorDB) via unified compose file.
 
@@ -73,45 +64,18 @@ def _services_start(gobby_home: Path) -> None:
     if not compose_file.exists():
         return
 
-    # Build subprocess env with resolved service config.
-    env = dict(os.environ)
-    profiles: list[str] = []
-    db = None
     try:
-        from gobby.config.app import load_config
-        from gobby.config.persistence import is_falkordb_enabled
-        from gobby.storage.config_store import ConfigStore
-        from gobby.storage.secrets import SecretStore
+        runtime = resolve_compose_runtime(gobby_home)
+    except ComposeEnvironmentError as exc:
+        logger.warning("Could not resolve config for services; skipping Docker startup: %s", exc)
+        return
 
-        db = _open_services_config_db(gobby_home)
-        config_store = ConfigStore(db)
-        secret_store = SecretStore(db)
-        bootstrap_file = gobby_home / "bootstrap.yaml"
-        config = load_config(
-            str(bootstrap_file),
-            config_store=config_store,
-            secret_resolver=secret_store.get,
-        )
-
-        # Determine which profiles to start
-        if is_falkordb_enabled(config.databases):
-            env["GOBBY_FALKORDB_PASSWORD"] = config.databases.falkordb.password or ""
-            profiles.append("falkordb")
-        if config.databases.qdrant.url:
-            profiles.append("qdrant")
-    except Exception as e:
-        logger.warning(f"Could not resolve config for services; skipping Docker startup: {e}")
-        profiles = []
-    finally:
-        if db is not None:
-            db.close()
-
-    if not profiles:
+    if not runtime.profiles:
         logger.debug("No external services configured — skipping Docker startup")
         return
 
     cmd = ["docker", "compose", "-f", str(compose_file)]
-    for profile in profiles:
+    for profile in runtime.profiles:
         cmd.extend(["--profile", profile])
     cmd.extend(["up", "-d"])
 
@@ -121,7 +85,7 @@ def _services_start(gobby_home: Path) -> None:
             capture_output=True,
             text=True,
             timeout=120,
-            env=env,
+            env=runtime.environment,
             cwd=str(services_dir),
         )
         if result.returncode != 0:
@@ -146,6 +110,7 @@ def _services_stop(gobby_home: Path) -> None:
         return
 
     try:
+        runtime = resolve_compose_runtime(gobby_home)
         result = subprocess.run(  # nosec B603 B607 # hardcoded docker command
             [
                 "docker",
@@ -157,10 +122,13 @@ def _services_stop(gobby_home: Path) -> None:
             capture_output=True,
             text=True,
             timeout=60,
+            env=runtime.environment,
             cwd=str(services_dir),
         )
         if result.returncode != 0:
             logger.warning(f"Failed to stop services: {result.stderr or result.stdout}")
+    except ComposeEnvironmentError as exc:
+        logger.warning("Could not resolve config for services; skipping Docker shutdown: %s", exc)
     except subprocess.TimeoutExpired:
         logger.warning("Timed out stopping Docker services")
     except Exception as e:

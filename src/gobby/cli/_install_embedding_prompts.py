@@ -389,15 +389,13 @@ def _run_embedding_install(
     if not should_install:
         return provider
 
-    embedding_api_key: str | None = None
-    if provider == "openai":
-        embedding_api_key = _get_embedding_api_key(
-            no_interactive=no_interactive,
-            results=results,
-            required=True,
-        )
-        if not embedding_api_key:
-            return provider
+    embedding_api_key = _get_embedding_api_key(
+        no_interactive=no_interactive,
+        results=results,
+        required=provider == "openai",
+    )
+    if provider == "openai" and not embedding_api_key:
+        return provider
 
     api_base_override, model_override, dim_override = _prompt_customization(
         no_interactive=no_interactive,

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -17,21 +16,15 @@ from gobby.cli.daemon import (
     status,
     stop,
 )
-from gobby.config.persistence import DatabasesConfig
+from gobby.cli.installers.compose_env import ComposeEnvironmentError, ComposeRuntime
 
 pytestmark = pytest.mark.unit
 
 
-def _service_config(
-    *,
-    falkordb_password: str | None = None,
-    qdrant_url: str | None = None,
-) -> SimpleNamespace:
-    return SimpleNamespace(
-        databases=DatabasesConfig(
-            falkordb={"password": falkordb_password},
-            qdrant={"url": qdrant_url},
-        )
+def _runtime(*profiles: str) -> ComposeRuntime:
+    return ComposeRuntime(
+        environment={"GOBBY_FALKORDB_PASSWORD": "password123"},
+        profiles=profiles,
     )
 
 
@@ -50,21 +43,14 @@ class TestServicesStart:
         assert not (tmp_path / "services" / "docker-compose.yml").exists()
 
     @patch("gobby.cli.daemon.subprocess.run")
-    @patch("gobby.config.app.load_config")
-    def test_compose_exists_success(
-        self, mock_config: MagicMock, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_compose_exists_success(self, mock_run: MagicMock, tmp_path: Path) -> None:
         compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
 
-        mock_config.return_value = _service_config(
-            falkordb_password="password123",
-            qdrant_url=None,
-        )
         mock_run.return_value = MagicMock(returncode=0)
 
-        with patch("gobby.cli.daemon._open_services_config_db", return_value=MagicMock()):
+        with patch("gobby.cli.daemon.resolve_compose_runtime", return_value=_runtime("falkordb")):
             _services_start(tmp_path)
         mock_run.assert_called_once()
         assert mock_run.call_count == 1
@@ -74,21 +60,14 @@ class TestServicesStart:
         assert mock_run.call_args.kwargs["env"]["GOBBY_FALKORDB_PASSWORD"] == "password123"
 
     @patch("gobby.cli.daemon.subprocess.run")
-    @patch("gobby.config.app.load_config")
-    def test_compose_exists_failure(
-        self, mock_config: MagicMock, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_compose_exists_failure(self, mock_run: MagicMock, tmp_path: Path) -> None:
         compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
 
-        mock_config.return_value = _service_config(
-            falkordb_password=None,
-            qdrant_url="http://localhost:6333",
-        )
         mock_run.return_value = MagicMock(returncode=1, stderr="err", stdout="")
 
-        with patch("gobby.cli.daemon._open_services_config_db", return_value=MagicMock()):
+        with patch("gobby.cli.daemon.resolve_compose_runtime", return_value=_runtime("qdrant")):
             _services_start(tmp_path)
         mock_run.assert_called_once()
         assert mock_run.call_count == 1
@@ -97,37 +76,31 @@ class TestServicesStart:
         assert mock_run.call_args.kwargs["cwd"] == str(tmp_path / "services")
 
     @patch("gobby.cli.daemon.subprocess.run")
-    @patch("gobby.config.app.load_config")
-    def test_compose_timeout(
-        self, mock_config: MagicMock, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_compose_timeout(self, mock_run: MagicMock, tmp_path: Path) -> None:
         compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
 
-        mock_config.return_value = _service_config(
-            falkordb_password=None,
-            qdrant_url="http://localhost:6333",
-        )
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="docker", timeout=120)
-        with patch("gobby.cli.daemon._open_services_config_db", return_value=MagicMock()):
+        with patch("gobby.cli.daemon.resolve_compose_runtime", return_value=_runtime("qdrant")):
             result = _services_start(tmp_path)
         assert result is None
         mock_run.assert_called_once()
         assert mock_run.call_count == 1
         assert mock_run.call_args is not None
 
-    @patch("gobby.config.app.load_config")
-    def test_config_error(self, mock_config: MagicMock, tmp_path: Path) -> None:
+    def test_config_error(self, tmp_path: Path) -> None:
         compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
 
-        mock_config.side_effect = RuntimeError("config error")
         # Without resolved service config there are no profiles to start.
         with patch("gobby.cli.daemon.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
-            with patch("gobby.cli.daemon._open_services_config_db", return_value=MagicMock()):
+            with patch(
+                "gobby.cli.daemon.resolve_compose_runtime",
+                side_effect=ComposeEnvironmentError("config error"),
+            ):
                 result = _services_start(tmp_path)
             assert result is None
             assert compose.exists()
@@ -145,7 +118,8 @@ class TestServicesStop:
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
         mock_run.return_value = MagicMock(returncode=0)
-        _services_stop(tmp_path)
+        with patch("gobby.cli.daemon.resolve_compose_runtime", return_value=_runtime()):
+            _services_stop(tmp_path)
         mock_run.assert_called_once()
         assert mock_run.call_count == 1
         assert mock_run.call_args is not None
@@ -156,7 +130,8 @@ class TestServicesStop:
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="docker", timeout=60)
-        result = _services_stop(tmp_path)
+        with patch("gobby.cli.daemon.resolve_compose_runtime", return_value=_runtime()):
+            result = _services_stop(tmp_path)
         assert result is None
         mock_run.assert_called_once()
 
@@ -166,7 +141,8 @@ class TestServicesStop:
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
         mock_run.side_effect = FileNotFoundError("docker not found")
-        result = _services_stop(tmp_path)
+        with patch("gobby.cli.daemon.resolve_compose_runtime", return_value=_runtime()):
+            result = _services_stop(tmp_path)
         assert result is None
         mock_run.assert_called_once()
 

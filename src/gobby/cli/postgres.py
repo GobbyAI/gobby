@@ -18,9 +18,7 @@ import psycopg
 
 from gobby import __version__
 from gobby.cli.installers.postgres import (
-    DEFAULT_POSTGRES_PORT,
     _active_install_mode,
-    _docker_database_url,
     _extension_present,
     _preload_libraries,
     _read_bootstrap_database_url,
@@ -328,9 +326,11 @@ printf '%s\\n%s\\n' "$audit_file" "$audit_line"
 
 
 def _postgres_connection() -> Any:
-    database_url = _read_bootstrap_database_url(get_gobby_home()) or _docker_database_url(
-        DEFAULT_POSTGRES_PORT
-    )
+    database_url = _read_bootstrap_database_url(get_gobby_home())
+    if not database_url:
+        raise click.ClickException(
+            "PostgreSQL credentials are unavailable; run `gobby postgres install` first."
+        )
     try:
         return psycopg.connect(database_url, connect_timeout=5)
     except psycopg.Error as exc:

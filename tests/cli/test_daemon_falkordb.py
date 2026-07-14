@@ -18,7 +18,8 @@ pytestmark = pytest.mark.unit
 def _seed_falkordb_config(db: HubDatabase, password: str) -> None:
     config_store = ConfigStore(db)
     secret_store = SecretStore(db)
-    config_store.set("databases.qdrant.url", None, source="test")
+    config_store.set("databases.falkordb.host", "127.0.0.1", source="test")
+    config_store.set("databases.falkordb.port", 16379, source="test")
     config_store.set_secret(
         "databases.falkordb.password",
         password,
@@ -56,8 +57,11 @@ def test_services_start_uses_falkordb_config_store_password(
 
     with (
         patch("shutil.which", return_value="/usr/bin/docker"),
-        patch("gobby.cli.daemon._open_services_config_db", return_value=postgres_db),
-        patch("gobby.config.app.load_config", side_effect=load_config),
+        patch(
+            "gobby.cli.installers.compose_env._bootstrap_database_url",
+            return_value="postgresql://gobby:postgres-secret@localhost:5432/gobby",
+        ),
+        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=postgres_db),
         patch("gobby.cli.daemon.subprocess.run") as mock_run,
     ):
         mock_run.return_value = MagicMock(returncode=0)

@@ -109,9 +109,7 @@ def test_docker_install_runs_postgres_profile_and_writes_bootstrap(
     assert "up" in compose_up
     assert "-d" in compose_up
     assert subprocess_envs[0]["GOBBY_POSTGRES_PASSWORD"] == "generated-password"
-    compose_env = tmp_path / "services" / ".env"
-    assert "GOBBY_POSTGRES_PASSWORD=generated-password" in compose_env.read_text()
-    assert compose_env.stat().st_mode & 0o777 == 0o600
+    assert not (tmp_path / "services" / ".env").exists()
     payload_text = repr(bootstrap_payloads)
     assert "postgresql://" in payload_text
     assert "generated-password" in payload_text
@@ -120,14 +118,17 @@ def test_docker_install_runs_postgres_profile_and_writes_bootstrap(
     assert "docker" in payload_text
 
 
-def test_postgres_password_resolution_reuses_persisted_install_secret(
+def test_postgres_database_url_reuses_bootstrap_credentials(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     installer = _import_installer()
-    env_path = tmp_path / "services" / ".env"
-    env_path.parent.mkdir(parents=True)
-    env_path.write_text("GOBBY_POSTGRES_PASSWORD=persisted-password\n")
+    (tmp_path / "bootstrap.yaml").write_text(
+        "hub_backend: postgres\n"
+        "database_url: postgresql://gobby:persisted-password@localhost:5432/gobby\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "bootstrap.yaml").chmod(0o600)
     monkeypatch.setenv("GOBBY_POSTGRES_PASSWORD", "transient-password")
     monkeypatch.setattr(
         installer.secrets,
@@ -135,7 +136,10 @@ def test_postgres_password_resolution_reuses_persisted_install_secret(
         lambda _size: pytest.fail("persisted installs must not generate a new password"),
     )
 
-    assert installer._resolve_postgres_password(gobby_home=tmp_path) == "persisted-password"
+    assert (
+        installer._resolve_postgres_install_database_url(gobby_home=tmp_path, port=60991)
+        == "postgresql://gobby:persisted-password@localhost:5432/gobby"
+    )
 
 
 def test_postgres_install_refreshes_stale_unified_compose(

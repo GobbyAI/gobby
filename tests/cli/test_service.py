@@ -26,6 +26,7 @@ def test_install_success():
         assert "A note" in result.output
         assert "warn1" in result.output
         assert "git pull" in result.output
+        assert "uv run gobby service install" in result.output
 
 
 def test_install_prod_success():

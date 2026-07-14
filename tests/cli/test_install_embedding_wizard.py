@@ -388,6 +388,50 @@ class TestRunEmbeddingInstallNoInteractive:
         )
         installer.assert_not_called()
 
+    @pytest.mark.parametrize(
+        ("provider", "api_base", "required"),
+        [
+            ("lmstudio", "http://localhost:1234/v1", False),
+            ("ollama", "http://localhost:11434/v1", False),
+            ("openai-compatible", "http://embeddings.example/v1", False),
+            ("openai", None, True),
+        ],
+    )
+    def test_canonical_embedding_key_reaches_every_compatible_provider(
+        self, provider: str, api_base: str | None, required: bool
+    ) -> None:
+        installer = MagicMock(
+            return_value={
+                "success": True,
+                "provider": provider,
+                "model": "embedding-model",
+                "dim": 768,
+                "api_base": api_base,
+                "health_check": True,
+            }
+        )
+        results: dict = {}
+
+        with patch(
+            "gobby.cli._install_embedding_prompts._get_embedding_api_key",
+            return_value="stored-key",
+        ) as get_key:
+            selected = _run_embedding_install(
+                installer,
+                results,
+                no_interactive=True,
+                provider_override=provider,
+                api_base_override=api_base,
+            )
+
+        assert selected == provider
+        get_key.assert_called_once_with(
+            no_interactive=True,
+            results=results,
+            required=required,
+        )
+        assert installer.call_args.kwargs["embedding_api_key"] == "stored-key"
+
 
 class TestRunEmbeddingInstallInteractive:
     """Test interactive menu flow."""
