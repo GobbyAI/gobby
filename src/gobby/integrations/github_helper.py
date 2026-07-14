@@ -10,12 +10,12 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
-import json
 import logging
 import subprocess  # nosec B404 # subprocess needed for git fallback
 from typing import TYPE_CHECKING, Any
 
 from gobby.integrations.github import GitHubIntegration
+from gobby.integrations.mcp_result import MCPToolResultError, parse_mcp_tool_result
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.manager import MCPClientManager
@@ -45,22 +45,10 @@ class GitHubMCPResponseError(RuntimeError):
 
 def parse_github_mcp_result(result: Any, tool_name: str) -> Any:
     """Parse a GitHub MCP SDK result into its domain payload."""
-    if getattr(result, "isError", False):
-        details = [
-            item.text
-            for item in getattr(result, "content", [])
-            if isinstance(getattr(item, "text", None), str)
-        ]
-        raise GitHubMCPToolError(tool_name, "\n".join(details) or "unknown error")
-
-    for item in getattr(result, "content", []):
-        text = getattr(item, "text", None)
-        if isinstance(text, str):
-            try:
-                return json.loads(text)
-            except json.JSONDecodeError:
-                return text
-    return result
+    try:
+        return parse_mcp_tool_result(result)
+    except MCPToolResultError as exc:
+        raise GitHubMCPToolError(tool_name, exc.detail) from exc
 
 
 def parse_github_repo(github_repo: str) -> tuple[str, str]:

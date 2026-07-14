@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from mcp.types import CallToolResult, TextContent
 
 from gobby.integrations.linear_graphql import LinearGraphQLError
 from gobby.mcp_proxy.models import MCPError
@@ -347,12 +348,16 @@ class TestLinearSyncServiceImport:
         self, sync_service, mock_mcp_manager, mock_task_manager
     ):
         """import_linear_issues creates gobby tasks from Linear issues."""
-        mock_mcp_manager.call_tool.return_value = {
-            "issues": [
-                {"id": "issue-1", "title": "Issue 1", "description": "Description 1"},
-                {"id": "issue-2", "title": "Issue 2", "description": "Description 2"},
-            ]
-        }
+        mock_mcp_manager.call_tool.return_value = CallToolResult(
+            content=[],
+            structuredContent={
+                "issues": [
+                    {"id": "issue-1", "title": "Issue 1", "description": "Description 1"},
+                    {"id": "issue-2", "title": "Issue 2", "description": "Description 2"},
+                ]
+            },
+            isError=False,
+        )
 
         await sync_service.import_linear_issues()
 
@@ -990,10 +995,15 @@ class TestLinearSyncServiceCreate:
         mock_task.seq_num = 42
 
         sync_service.task_manager.get_task.return_value = mock_task
-        mock_mcp_manager.call_tool.return_value = {
-            "id": "lin-123",
-            "title": "#42: Feature: Add new thing",
-        }
+        mock_mcp_manager.call_tool.return_value = CallToolResult(
+            content=[
+                TextContent(
+                    type="text",
+                    text='{"id":"lin-123","title":"#42: Feature: Add new thing"}',
+                )
+            ],
+            isError=False,
+        )
 
         result = await sync_service.create_issue_for_task(task_id="test-task-id")
 

@@ -16,6 +16,7 @@ from gobby.sync.linear_support import (
     _gobby_seq_from_linear_title,
     _linear_fetch_failure_limiter,
     _local_title_from_linear,
+    _parse_linear_mcp_result,
     is_transient_linear_fetch_error,
     logger,
     project_gobby_state_for_linear,
@@ -667,6 +668,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
         return _map_gobby_state_to_linear(gobby_state)
 
     def _extract_created_issue(self, result: Any, task_id: str) -> dict[str, Any]:
+        result = _parse_linear_mcp_result(result)
         if isinstance(result, dict):
             issue = result.get("issue")
             if isinstance(issue, dict):
