@@ -354,3 +354,25 @@ Entry format:
 - Arm O relaunched ~15:55Z 07-13 via run-arm-o.zsh (copy skipped, exists;
   opus@xhigh aggregate candidate; gcode pid 77734). Caffeinate + restart
   trap re-armed after the event.
+
+## 2026-07-14 — arm O attempt-3 publish failure → #18190 fix + transition #7
+
+Arm O attempt-3 (START 23:35:12Z 07-13) ran 8h02m and failed at publish:
+`generated link in code/_ownership.md has no staged target
+code/modules/crates/gcode/src/context_for.md`. #8166's review-fix merges
+landed on 0.5.0 at ~18:33 CDT (2 min before the run started), invalidating
+1000 file docs + 63 module pages; the module regen re-partitioned the
+crates/gcode/src clusters, and the keyless ownership page was retained
+stale by the persist gate (provenance hashes blind to cluster renames) with
+a dangling link. Publish correctly failed closed; all fresh gens (1000
+files, 63 modules, concepts, narrative, repo, architecture) are preserved
+in the stage vault. Also 9 pages recorded degraded from the single 19:38:45
+CDT daemon cli_restart (#8166-attributed) transport failure — the re-run
+heals them. Root cause fixed as #18190 (commit c7681dfb5): ownership page
+now carries an invalidation key over the emitted module-link set
+(mirroring #17731's architecture guard); regression test proven to fail
+pre-fix. Binary transition #7 follows (rebuild + reinstall) so the re-run
+publishes with the fix; arm O relaunch reuses the stage vault.
+Consequence for the gate: S-vs-O byte-identity on code/files/** is broken
+by the mid-bakeoff merges (disclosed); arm G launches immediately after
+arm O at the same HEAD so O-vs-G is the clean primary comparison.
