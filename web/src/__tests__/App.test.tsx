@@ -316,6 +316,42 @@ describe("App wiring", () => {
     });
   });
 
+  it("waits for persisted project hydration before syncing the project", async () => {
+    let resolveSettings: ((response: Response) => void) | undefined;
+    globalThis.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/config/ui-settings" && !init) {
+        return new Promise<Response>((resolve) => {
+          resolveSettings = resolve;
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({}),
+      } as Response);
+    }) as unknown as typeof fetch;
+
+    render(<App />);
+
+    expect(mockSetProjectIdRef).not.toHaveBeenCalled();
+    expect(mockSendProjectChange).not.toHaveBeenCalled();
+
+    await waitFor(() => {
+      expect(resolveSettings).toBeDefined();
+    });
+    await act(async () => {
+      resolveSettings?.({
+        ok: true,
+        json: () => Promise.resolve({ selectedProjectId: "personal" }),
+      } as Response);
+    });
+
+    await waitFor(() => {
+      expect(mockSetProjectIdRef).toHaveBeenCalledWith("personal");
+      expect(mockSendProjectChange).toHaveBeenCalledWith("personal");
+    });
+    expect(mockSendProjectChange).not.toHaveBeenCalledWith("repo-project");
+  });
+
   it("shows transport errors in the app toast", async () => {
     const clearTransportError = vi.fn();
     vi.mocked(useChat).mockReturnValue({

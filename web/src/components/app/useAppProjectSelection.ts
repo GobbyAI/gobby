@@ -147,11 +147,12 @@ export function useAppProjectSelection({
   }, [effectiveProjectId, startNewChat, projectReady]);
 
   useEffect(() => {
+    if (!projectReady) return;
     setProjectIdRef(effectiveProjectId);
     if (effectiveProjectId) {
       sendProjectChange(effectiveProjectId);
     }
-  }, [effectiveProjectId, setProjectIdRef, sendProjectChange]);
+  }, [effectiveProjectId, setProjectIdRef, sendProjectChange, projectReady]);
 
   return {
     effectiveProjectId,
