@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,7 @@ from gobby.utils.git import run_git_command
 logger = logging.getLogger(__name__)
 
 _GIT_TIMEOUT = 10
+_MAX_NEW_FILE_DIFF_BYTES = 1_000_000
 _RECOVERABLE_WORKSPACE_ERRORS = (
     AttributeError,
     KeyError,
@@ -80,7 +82,22 @@ def _new_file_diff(abs_path: Path, rel_path: str) -> str:
     when files differ), so build the added-file diff directly from contents.
     """
     try:
-        content = abs_path.read_text(encoding="utf-8")
+        file_size = os.path.getsize(abs_path)
+        if file_size > _MAX_NEW_FILE_DIFF_BYTES:
+            return (
+                f"diff --git a/{rel_path} b/{rel_path}\n"
+                "new file mode 100644\n"
+                f"File too large to display ({file_size} bytes)\n"
+            )
+        with abs_path.open("rb") as file:
+            raw_content = file.read(_MAX_NEW_FILE_DIFF_BYTES + 1)
+        if len(raw_content) > _MAX_NEW_FILE_DIFF_BYTES:
+            return (
+                f"diff --git a/{rel_path} b/{rel_path}\n"
+                "new file mode 100644\n"
+                f"File too large to display (more than {_MAX_NEW_FILE_DIFF_BYTES} bytes)\n"
+            )
+        content = raw_content.decode("utf-8")
     except (OSError, UnicodeDecodeError):
         return ""
     lines = content.splitlines()

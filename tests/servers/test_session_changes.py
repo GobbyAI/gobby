@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from gobby.servers import session_changes
 from gobby.servers.session_changes import (
     SessionWorkspace,
     compute_session_changes,
@@ -110,6 +111,24 @@ async def test_compute_session_file_diff_for_edited_and_untracked(tmp_path: Path
 
     fresh_diff = await compute_session_file_diff(workspace, "fresh.txt")
     assert "brand new" in fresh_diff
+
+
+def test_new_file_diff_rejects_oversized_file_before_reading(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "large.txt"
+    path.write_bytes(b"large")
+    monkeypatch.setattr(session_changes, "_MAX_NEW_FILE_DIFF_BYTES", 4)
+
+    def fail_open(*args: object, **kwargs: object) -> None:
+        raise AssertionError("oversized file content must not be opened")
+
+    monkeypatch.setattr(Path, "open", fail_open)
+
+    diff = session_changes._new_file_diff(path, "large.txt")
+
+    assert "diff --git a/large.txt b/large.txt" in diff
+    assert "File too large to display (5 bytes)" in diff
 
 
 @pytest.mark.asyncio
