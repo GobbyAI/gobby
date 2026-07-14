@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from gobby.app_context import ServiceContainer
 from gobby.scheduler.scheduler import CronRunRejected
 from gobby.servers.http import HTTPServer
-from gobby.storage.cron import CronJobStorage
+from gobby.storage.cron import CronJobStorage, SystemRowProtected
 from gobby.storage.cron_models import CronJob, CronRun, CronRunChild
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -153,6 +153,23 @@ class TestCronCreateJob:
         assert data["status"] == "success"
         assert data["job"]["name"] == "Test Job"
 
+    @pytest.mark.parametrize(
+        "schedule",
+        [
+            {"schedule_type": "cron"},
+            {"schedule_type": "interval"},
+            {"schedule_type": "once"},
+        ],
+    )
+    def test_create_rejects_missing_schedule_field(self, client, cron_storage, schedule) -> None:
+        resp = client.post(
+            "/api/cron/jobs",
+            json={"name": "Test", "action_type": "shell", **schedule},
+        )
+
+        assert resp.status_code == 422
+        cron_storage.create_job.assert_not_called()
+
 
 class TestCronGetJob:
     def test_get_job(self, client, cron_storage) -> None:
@@ -183,6 +200,22 @@ class TestCronUpdateJob:
         resp = client.patch("/api/cron/jobs/cj-nonexistent", json={"name": "X"})
         assert resp.status_code == 404
 
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"schedule_type": "cron"},
+            {"schedule_type": "interval"},
+            {"schedule_type": "once"},
+            {"schedule_type": "invalid"},
+            {"action_type": "invalid"},
+        ],
+    )
+    def test_update_rejects_invalid_schedule_or_action(self, client, cron_storage, payload) -> None:
+        resp = client.patch("/api/cron/jobs/cj-abc123", json=payload)
+
+        assert resp.status_code == 422
+        cron_storage.update_job.assert_not_called()
+
 
 class TestCronDeleteJob:
     def test_delete_job(self, client, cron_storage) -> None:
@@ -207,6 +240,32 @@ class TestCronToggleJob:
         cron_storage.toggle_job.return_value = None
         resp = client.post("/api/cron/jobs/cj-nonexistent/toggle")
         assert resp.status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("storage_method", "http_method", "path", "payload"),
+    [
+        ("update_job", "PATCH", "/api/cron/jobs/cj-system", {"name": "Updated"}),
+        ("delete_job", "DELETE", "/api/cron/jobs/cj-system", None),
+        ("toggle_job", "POST", "/api/cron/jobs/cj-system/toggle", None),
+    ],
+)
+def test_system_row_protection_returns_403(
+    client,
+    cron_storage,
+    storage_method,
+    http_method,
+    path,
+    payload,
+) -> None:
+    internal_message = "internal system-row mutation instructions"
+    getattr(cron_storage, storage_method).side_effect = SystemRowProtected(internal_message)
+
+    resp = client.request(http_method, path, json=payload)
+
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "System cron job is protected"
+    assert internal_message not in resp.text
 
 
 class TestCronRunNow:

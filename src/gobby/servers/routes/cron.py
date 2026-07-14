@@ -8,10 +8,10 @@ import logging
 from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from gobby.scheduler.scheduler import CronRunRejected
-from gobby.storage.cron import is_removed_automation_job
+from gobby.storage.cron import SystemRowProtected, is_removed_automation_job
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -34,20 +34,58 @@ class CreateCronJobRequest(BaseModel):
     action_type: Literal["agent_spawn", "pipeline", "shell"]
     action_config: dict[str, Any] = Field(default_factory=dict)
 
+    @model_validator(mode="after")
+    def validate_schedule_fields(self) -> "CreateCronJobRequest":
+        _validate_schedule_fields(
+            self.schedule_type,
+            cron_expr=self.cron_expr,
+            interval_seconds=self.interval_seconds,
+            run_at=self.run_at,
+        )
+        return self
+
 
 class UpdateCronJobRequest(BaseModel):
     """Request body for PATCH /api/cron/jobs/{job_id}."""
 
     name: str | None = None
     description: str | None = None
-    schedule_type: str | None = None
+    schedule_type: Literal["cron", "interval", "once"] | None = None
     cron_expr: str | None = None
     interval_seconds: int | None = None
     run_at: str | None = None
     timezone: str | None = None
-    action_type: str | None = None
+    action_type: Literal["agent_spawn", "pipeline", "shell"] | None = None
     action_config: dict[str, Any] | None = None
     enabled: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_schedule_fields(self) -> "UpdateCronJobRequest":
+        if self.schedule_type is not None:
+            _validate_schedule_fields(
+                self.schedule_type,
+                cron_expr=self.cron_expr,
+                interval_seconds=self.interval_seconds,
+                run_at=self.run_at,
+            )
+        return self
+
+
+def _validate_schedule_fields(
+    schedule_type: Literal["cron", "interval", "once"],
+    *,
+    cron_expr: str | None,
+    interval_seconds: int | None,
+    run_at: str | None,
+) -> None:
+    required_fields = {
+        "cron": ("cron_expr", cron_expr),
+        "interval": ("interval_seconds", interval_seconds),
+        "once": ("run_at", run_at),
+    }
+    field_name, value = required_fields[schedule_type]
+    if value is None or isinstance(value, str) and not value.strip():
+        raise ValueError(f"{field_name} is required when schedule_type={schedule_type!r}")
 
 
 def create_cron_router(server: "HTTPServer") -> APIRouter:
@@ -174,6 +212,8 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
             return {"status": "success", "job": updated.to_dict()}
         except HTTPException:
             raise
+        except SystemRowProtected as e:
+            raise HTTPException(status_code=403, detail="System cron job is protected") from e
         except Exception as e:
             logger.error(f"Error updating cron job: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
@@ -189,6 +229,8 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
             return {"status": "success"}
         except HTTPException:
             raise
+        except SystemRowProtected as e:
+            raise HTTPException(status_code=403, detail="System cron job is protected") from e
         except Exception as e:
             logger.error(f"Error deleting cron job: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
@@ -204,6 +246,8 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
             return {"status": "success", "job": job.to_dict()}
         except HTTPException:
             raise
+        except SystemRowProtected as e:
+            raise HTTPException(status_code=403, detail="System cron job is protected") from e
         except Exception as e:
             logger.error(f"Error toggling cron job: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
