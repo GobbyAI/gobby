@@ -58,26 +58,27 @@ def extract_json_from_text(text: str | None) -> str | None:
 
     # Build list of positions to try, prioritizing code block content
     positions_to_try: list[int] = []
+    seen_positions: set[int] = set()
+
+    def add_positions(start: int) -> None:
+        for pos in range(start, len(text)):
+            if text[pos] in "{[" and pos not in seen_positions:
+                positions_to_try.append(pos)
+                seen_positions.add(pos)
 
     # Look for ```json marker first (most specific)
     code_block_idx = text.find("```json")
     if code_block_idx != -1:
-        brace_pos = text.find("{", code_block_idx + 7)
-        if brace_pos != -1:
-            positions_to_try.append(brace_pos)
+        add_positions(code_block_idx + 7)
 
     # Then try plain ``` marker
     if not positions_to_try:
         code_block_idx = text.find("```")
         if code_block_idx != -1:
-            brace_pos = text.find("{", code_block_idx + 3)
-            if brace_pos != -1:
-                positions_to_try.append(brace_pos)
+            add_positions(code_block_idx + 3)
 
-    # Finally try raw JSON (first { in text)
-    first_brace = text.find("{")
-    if first_brace != -1 and first_brace not in positions_to_try:
-        positions_to_try.append(first_brace)
+    # Finally try every raw object or array start in the text
+    add_positions(0)
 
     # Try each position until we find valid JSON
     logger.debug(
