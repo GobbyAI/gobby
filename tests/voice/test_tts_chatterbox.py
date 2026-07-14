@@ -723,6 +723,31 @@ class TestAutoDevice:
 
 class TestDepCheck:
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("dependency_kind", ["stt", "tts"])
+    async def test_dependency_check_runs_off_event_loop(self, dependency_kind: str) -> None:
+        from gobby.voice import dep_check
+
+        event_loop_thread = threading.get_ident()
+        import_threads: list[int] = []
+
+        def record_import_thread(deps: list[tuple[str, str]]) -> list[str]:
+            import_threads.append(threading.get_ident())
+            return []
+
+        if dependency_kind == "stt":
+            config = VoiceConfig(enabled=True, stt_enabled=True)
+            ensure_deps = dep_check.ensure_stt_deps
+        else:
+            config = VoiceConfig(enabled=True, tts_enabled=True, tts_provider="chatterbox")
+            ensure_deps = dep_check.ensure_tts_deps
+
+        with patch("gobby.voice.dep_check._check_imports", side_effect=record_import_thread):
+            assert await ensure_deps(config) is True
+
+        assert import_threads
+        assert import_threads[0] != event_loop_thread
+
+    @pytest.mark.asyncio
     async def test_ensure_stt_deps_disabled(self) -> None:
         """When voice is disabled, returns False without checking."""
         from gobby.voice.dep_check import ensure_stt_deps

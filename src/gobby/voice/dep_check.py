@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import logging
 from typing import TYPE_CHECKING
@@ -45,7 +46,7 @@ async def ensure_stt_deps(config: VoiceConfig) -> bool:
     if not config.enabled or not config.stt_enabled:
         return False
 
-    missing = _check_imports(_STT_DEPS)
+    missing = await asyncio.to_thread(_check_imports, _STT_DEPS)
     if missing:
         logger.error(
             "Daemon environment is missing required STT package(s): %s; run uv sync",
@@ -69,7 +70,7 @@ async def ensure_tts_deps(config: VoiceConfig) -> bool:
         logger.warning(f"Unknown TTS provider: {provider}")
         return False
 
-    missing = _check_imports(deps)
+    missing = await asyncio.to_thread(_check_imports, deps)
     if missing:
         logger.error(
             "Daemon environment is missing required TTS package(s): %s; run uv sync",
