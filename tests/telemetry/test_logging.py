@@ -1,5 +1,8 @@
+import io
+import json
 import logging
 import warnings
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -73,14 +76,38 @@ def test_json_otel_formatter_produces_json():
         exc_info=None,
     )
 
-    import json
-
     formatted = formatter.format(record)
     data = json.loads(formatted)
 
     assert data["level"] == "INFO"
     assert data["message"] == "test message"
     assert data["name"] == "gobby.test"
+
+
+def test_json_otel_formatter_serializes_non_json_extra_values():
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(JsonOTelFormatter())
+    logger = logging.getLogger("gobby.test.json.extra")
+    previous_level = logger.level
+    previous_propagate = logger.propagate
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+
+    try:
+        path = Path("/x")
+        created_at = datetime(2026, 7, 14, 12, 30)
+        logger.info("structured message", extra={"path": path, "created_at": created_at})
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous_level)
+        logger.propagate = previous_propagate
+
+    data = json.loads(stream.getvalue())
+    assert data["message"] == "structured message"
+    assert data["path"] == str(path)
+    assert data["created_at"] == str(created_at)
 
 
 def test_setup_otel_logging_creates_files(telemetry_config):

@@ -134,7 +134,7 @@ class JsonOTelFormatter(logging.Formatter):
         if record.exc_info:
             log_data["exception"] = self.formatException(record.exc_info)
 
-        return json.dumps(log_data)
+        return json.dumps(log_data, default=str)
 
 
 def setup_otel_logging(config: TelemetrySettings, verbose: bool = False) -> None:
