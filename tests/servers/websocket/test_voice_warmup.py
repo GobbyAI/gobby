@@ -451,6 +451,23 @@ class TestVoiceWarmup:
         provider.get_status.assert_called_once()
         assert status["tts_runtime_primed"] is True
 
+    async def test_replacing_tts_pipeline_tracks_cancel_task(self) -> None:
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=False))
+        mixin._voice_enabled["conv-1"] = True
+        mixin._tts_provider = MagicMock()
+        existing = MagicMock()
+        existing.cancel = AsyncMock()
+        mixin._active_tts_pipelines["conv-1"] = existing
+
+        with patch("gobby.servers.websocket.voice.mixin.TTSPipeline"):
+            mixin._create_tts_pipeline("conv-1")
+
+        assert len(mixin._background_tasks) == 1
+        cancel_task = next(iter(mixin._background_tasks))
+        assert cancel_task.get_name() == "cancel-tts-pipeline"
+        await cancel_task
+        existing.cancel.assert_awaited_once()
+
     @pytest.mark.asyncio
     async def test_start_voice_warmup_records_failures(self) -> None:
         """Missing warmup providers should record unavailable status details."""
@@ -505,7 +522,8 @@ class TestVoiceWarmup:
         mixin._background_tasks.add(background_task)
         mixin._voice_enabled["conv-1"] = True
 
-        await mixin.cleanup_voice()
+        with patch("torch.mps.empty_cache"):
+            await mixin.cleanup_voice()
 
         assert mixin._voice_warmup_task is None
         assert background_task.cancelled()

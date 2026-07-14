@@ -148,7 +148,7 @@ class VoiceMixin(VoiceWarmupMixin):
         # Cancel existing pipeline if any
         existing = self._active_tts_pipelines.pop(conversation_id, None)
         if existing:
-            asyncio.create_task(existing.cancel())
+            self._spawn_background_task(existing.cancel(), name="cancel-tts-pipeline")
 
         pipeline = TTSPipeline(
             tts,
