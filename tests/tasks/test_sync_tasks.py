@@ -141,6 +141,22 @@ class TestTaskSyncManager:
         assert task2_data["state"]["is_closed"] is False
         assert "status" not in task2_data
 
+    def test_export_to_jsonl_fetches_all_pages(
+        self, sync_manager, task_manager, sample_project
+    ) -> None:
+        task_manager.create_task(sample_project["id"], "Task 1")
+        task_manager.create_task(sample_project["id"], "Task 2")
+
+        list_tasks = sync_manager.task_manager.list_tasks
+        with (
+            patch("gobby.sync.tasks.TASK_EXPORT_PAGE_SIZE", 1),
+            patch.object(sync_manager.task_manager, "list_tasks", wraps=list_tasks) as mock_list,
+        ):
+            sync_manager.export_to_jsonl()
+
+        assert [call.kwargs["offset"] for call in mock_list.call_args_list] == [0, 1, 2]
+        assert len(sync_manager.export_path.read_text().splitlines()) == 2
+
     @pytest.mark.integration
     def test_import_from_jsonl(self, sync_manager, task_manager, sample_project) -> None:
         """Test importing tasks from JSONL."""

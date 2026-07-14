@@ -19,6 +19,8 @@ from gobby.sync.tombstones import (
 from gobby.tasks.state_semantics import serialize_task_state
 from gobby.utils.json_helpers import json_dumps
 
+TASK_EXPORT_PAGE_SIZE = 100_000
+
 logger = logging.getLogger(__name__)
 
 # Removed in 0.2.28: continuous sync machinery (trigger_export, _process_export_queue,
@@ -247,12 +249,16 @@ class TaskSyncManager:
         try:
             target_path = self._get_export_path(project_id)
 
-            tasks = self.task_manager.list_tasks(limit=100000, project_id=project_id)
+            tasks = []
+            offset = 0
+            while page := self.task_manager.list_tasks(
+                limit=TASK_EXPORT_PAGE_SIZE, offset=offset, project_id=project_id
+            ):
+                tasks.extend(page)
+                offset += len(page)
 
-            # Fetch dependencies in one query instead of once per task.
             deps_rows = self.db.fetchall("SELECT task_id, depends_on FROM task_dependencies")
 
-            # Build dependency map: task_id -> list[depends_on]
             deps_map: dict[str, list[str]] = {}
             for row in deps_rows:
                 task_id = row["task_id"]
@@ -260,7 +266,6 @@ class TaskSyncManager:
                     deps_map[task_id] = []
                 deps_map[task_id].append(row["depends_on"])
 
-            # Sort tasks by ID for deterministic output
             tasks.sort(key=lambda t: t.id)
 
             export_data: list[dict[str, Any]] = []
@@ -275,7 +280,6 @@ class TaskSyncManager:
                     "state": state,
                     "priority": task.priority,
                     "task_type": task.task_type,
-                    # Normalize timestamps to ensure RFC 3339 compliance (with timezone)
                     "created_at": _normalize_timestamp(task.created_at),
                     "updated_at": _normalize_timestamp(task.updated_at),
                     "project_id": task.project_id,
@@ -283,16 +287,12 @@ class TaskSyncManager:
                     "created_in_session_id": task.created_in_session_id,
                     "claimed_by_session_id": task.claimed_by_session_id,
                     "deps_on": sorted(deps_map.get(task.id, [])),  # Sort deps for stability
-                    # Commit SHAs are already normalized at write time by link_commit()
                     "commits": sorted(set(task.commits)) if task.commits else [],
-                    # Closed state fields
                     "closed_at": _normalize_timestamp(task.closed_at),
                     "closed_reason": task.closed_reason,
                     "closed_in_session_id": task.closed_in_session_id,
                     "closed_commit_sha": task.closed_commit_sha,
-                    # Labels (already a list on Task model)
                     "labels": task.labels if task.labels else None,
-                    # Validation history (for tracking validation state across syncs)
                     "validation": (
                         {
                             "state": task.validation_status,
