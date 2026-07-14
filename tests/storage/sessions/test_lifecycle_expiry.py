@@ -48,7 +48,7 @@ def test_empty_session_prune_reference_guards_use_postgres_information_schema() 
     )
 
 
-def test_expire_stale_sessions_expires_old_untracked_terminal_session(
+def test_expire_stale_sessions_keeps_recently_active_untracked_terminal_session(
     session_mgr: SessionManager,
     project_id: str,
 ) -> None:
@@ -70,10 +70,10 @@ def test_expire_stale_sessions_expires_old_untracked_terminal_session(
 
     expired = session_mgr.expire_stale_sessions(timeout_hours=24)
 
-    assert expired == 1
+    assert expired == 0
     refreshed = session_mgr.get(session.id)
     assert refreshed is not None
-    assert refreshed.status == "expired"
+    assert refreshed.status == "active"
 
 
 def test_expire_stale_sessions_keeps_tracked_terminal_session_with_recent_activity(
