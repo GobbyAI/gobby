@@ -1,7 +1,7 @@
 ---
 name: rust
 description: "Enforces default Rust coding standards for agents writing or refactoring Rust: Cargo and toolchain configuration, ownership, error handling, types, testing, async, and API design. Use before editing Rust unless the repo provides stricter local rules."
-version: "1.3.0"
+version: "1.4.0"
 category: development
 triggers: rust, cargo, cargo.toml, rust-toolchain, clippy, rustfmt, tokio, async rust, lifetime, borrow checker
 sources:
@@ -11,117 +11,78 @@ sources:
 
 # Rust
 
-Default coding standards for Rust. **Repo conventions and configured tooling take precedence** — if `Cargo.toml`, `clippy.toml`, `CLAUDE.md`, or project rules specify stricter or different standards, follow those instead.
-
----
+Apply repository Cargo, toolchain, MSRV, feature, lint, and target rules first.
 
 ## Tooling
 
-Run the repo's configured lint, format, and test commands before finishing. If none are configured, use:
-
-- **Format**: `cargo fmt --check` (fix with `cargo fmt`)
-- **Lint**: `cargo clippy -- -D warnings`
-- **Tests**: `cargo test` targeting changed crates, not the full workspace
-- **Bench**: `cargo bench` if performance-sensitive code changed
-
-Don't suppress clippy lints with `#[allow(...)]` without a documented reason.
+- Use configured `cargo fmt`, Clippy with repository severity, focused `cargo test`
+  or nextest, doctests, and benchmarks for performance-sensitive changes.
 
 ## Configuration
 
-- Preserve workspace and package boundaries in `Cargo.toml`; do not move dependency, feature, or resolver settings without checking all affected crates
-- Keep feature flags additive and composable; avoid mutually exclusive features unless the crate already documents that pattern
-- Respect `rust-toolchain.toml`, MSRV, edition, target triples, and platform-specific `.cargo/config.toml` settings before choosing language features
-- Keep `rustfmt.toml` and `clippy.toml` aligned with the repository; do not relax lint or formatting settings to make a local change pass
-- Validate the smallest affected crate and feature combination with `-p <package>` and explicit feature flags when applicable
+- Preserve workspace/package boundaries, resolver, feature composition, edition,
+  MSRV, target triples, and `.cargo` configuration.
+- Diagnostic hook: treat borrow-checker and Clippy findings as ownership evidence;
+  avoid cloning, added `Send + Sync`, or `#[allow]` solely to silence diagnostics.
 
-For Cargo, toolchain, feature, and lint configuration patterns: `get_skill_file(name="rust", path="references/configuration.md")`
+For Cargo, toolchain, features, and lint:
+`get_skill_file(name="rust", path="references/configuration.md")`
 
-## Ownership & Borrowing
+## Ownership And Borrowing
 
-- Prefer borrowing (`&T`, `&mut T`) over cloning — clone only when ownership transfer is genuinely needed
-- Accept `&str` not `&String`, `&[T]` not `&Vec<T>`, `&Path` not `&PathBuf` in function parameters
-- Use `Cow<'_, str>` when a function sometimes allocates and sometimes does not
-- Keep lifetimes simple — if you need more than two named lifetime parameters, restructure
-- Never `.clone()` to silence the borrow checker without understanding why it complains
+- Prefer borrowing to cloning and accept slices, paths, and string slices at read-only
+  boundaries.
+- Use `Cow` for conditional ownership and restructure APIs when lifetimes become opaque.
 
-For patterns and examples: `get_skill_file(name="rust", path="references/ownership.md")`
+For ownership patterns:
+`get_skill_file(name="rust", path="references/ownership.md")`
 
 ## Error Handling
 
-- Libraries: define error enums with `thiserror`. Applications: use `anyhow` with `.context()`
-- Propagate with `?` — avoid manual `match` on `Result` just to re-wrap
-- No `.unwrap()` outside tests and cases with a proof comment explaining why it cannot fail
-- Use `Option` for absence, `Result` for failure — do not conflate them
-- Convert foreign errors at crate boundaries with `From` impls
+- Use typed library errors and contextual application errors, propagating with `?`.
+- Reserve `unwrap` for tests or locally proven invariants and convert foreign errors
+  at crate boundaries.
 
-For error type patterns: `get_skill_file(name="rust", path="references/error-handling.md")`
+For error contracts:
+`get_skill_file(name="rust", path="references/error-handling.md")`
 
 ## Type System
 
-- Use enums to make invalid states unrepresentable — not structs with optional fields
-- Newtype pattern for domain concepts (`struct UserId(u64)`) to prevent type confusion
-- Prefer generics + trait bounds over `dyn Trait` unless you need runtime polymorphism
-- Derive `Debug` on everything. Add `Clone`, `PartialEq`, `Eq`, `Hash` where appropriate
-- Do not introduce `Box<dyn Any>` — find the concrete type or use an enum
+- Use enums and newtypes to prevent invalid states and domain confusion.
+- Prefer generics and trait bounds until runtime polymorphism is a real requirement.
 
-For type modeling patterns: `get_skill_file(name="rust", path="references/types.md")`
+For type modeling:
+`get_skill_file(name="rust", path="references/types.md")`
 
 ## Testing
 
-- Unit tests in `#[cfg(test)] mod tests` in the same file
-- Integration tests in `tests/` directory, one file per major feature
-- Use `-> Result<()>` for tests with fallible operations instead of `.unwrap()` chains
-- Use the repo's configured test runner — `cargo test`, or `cargo nextest run` where the repo has adopted nextest (then run `cargo test --doc` separately, because nextest does not run doctests)
-- Use `assert_cmd` for CLI subprocess tests, `pretty_assertions` for high-signal equality diffs, and `cargo-llvm-cov` for coverage reports
-- Use `rstest` narrowly for genuine case tables and fixtures; do not replace clear single-case tests or helper loops with parameterization
-- Use `insta` for stable text/JSON snapshots with redactions for nondeterministic fields
-- Use `proptest` for parsers, serialization, deterministic IDs, and other pure algorithmic contracts
-- In async tests, pause/control time with the runtime's time facilities instead of sleeping on wall-clock time
-- Mock external I/O with trait objects or generics; do not default to heavy mock frameworks
+- Keep unit tests with the module and integration tests at crate boundaries.
+- Use controlled runtime time, `assert_cmd`, snapshots with redaction, property tests,
+  and repository coverage tooling where each matches the changed contract.
 
-Pytest-to-Rust mapping:
+For Rust test patterns:
+`get_skill_file(name="rust", path="references/testing.md")`
 
-| Python/pytest | Rust default |
-| --- | --- |
-| `pytest` runner | `cargo test` (or `cargo nextest run` if the repo uses nextest) |
-| doctests | `cargo test --doc` |
-| `CliRunner` / subprocess assertions | `assert_cmd` |
-| `@pytest.mark.parametrize` | narrow `rstest` `#[case]` tables |
-| `@pytest.fixture` | `rstest` fixtures, explicit builders, and `Drop` teardown |
-| `syrupy` snapshots | `insta` snapshots with redactions |
-| `hypothesis` | `proptest` |
-| `pytest.approx` / rich diffs | `pretty_assertions` plus domain-specific assertions |
-| `coverage.py` | `cargo-llvm-cov` |
+## Concurrency
 
-For testing patterns: `get_skill_file(name="rust", path="references/testing.md")`
+- Use the repository runtime, put CPU-bound work behind blocking pools, and apply
+  timeouts to owned I/O.
+- Make cancellation safety and `Send + Sync` requirements explicit around spawned work.
 
-## Async
-
-- Use tokio as the default runtime unless the project specifies otherwise
-- CPU-bound work goes in `spawn_blocking`, never in async tasks
-- All async I/O must have explicit timeouts (`tokio::time::timeout`)
-- Understand `Send + Sync` bounds — do not sprinkle them to silence the compiler
-- Use `tokio::select!` with cancellation safety awareness
-
-For async patterns: `get_skill_file(name="rust", path="references/async.md")`
+For async and cancellation patterns:
+`get_skill_file(name="rust", path="references/async.md")`
 
 ## Performance
 
-- **Profile before optimizing** — use `cargo flamegraph` or `criterion` benchmarks
-- Prefer iterator chains over indexed loops — they compile to the same machine code
-- Pre-allocate with `Vec::with_capacity` when size is known or estimable
-- Avoid unnecessary allocations: `&str` over `String`, `&[T]` over `Vec<T>` in read paths
+- Use flamegraphs or benchmarks to justify allocation, preallocation, iterator,
+  representation, or dispatch changes.
 
-For profiling tools and optimization patterns: `get_skill_file(name="rust", path="references/performance.md")`
+For profiling and optimization:
+`get_skill_file(name="rust", path="references/performance.md")`
 
-## API & Design
+## API Design
 
-- Implement `Display` for user-facing types, `Debug` for all types
-- Use builder pattern for structs with more than 3-4 optional fields
-- Implement `From`, not `Into` — you get `Into` for free
-- Accept generics at boundaries: `impl AsRef<Path>`, `impl Into<String>`
-- Unsafe: isolate in minimal blocks, document invariants with `// SAFETY:` comments, prefer safe abstractions from established crates (`bytemuck`, `zerocopy`, `crossbeam`)
-
-## Before You Finish
-
-If you touched Rust: verify `cargo fmt`, `cargo clippy`, and targeted `cargo test` pass before closing your work.
+- Implement `Display` for user-facing values and `Debug` for diagnostic values.
+- Use builders when optional construction state would otherwise obscure invariants.
+- Implement `From` and accept narrow ergonomic bounds such as `AsRef<Path>`.
+- Isolate unsafe code and document each required invariant with `// SAFETY:`.

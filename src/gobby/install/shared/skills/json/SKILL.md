@@ -1,7 +1,7 @@
 ---
 name: json
 description: "Enforces default JSON coding standards for agents writing or refactoring JSON and JSON-adjacent configuration: parser-aware syntax, schema validation, serialization boundaries, tooling, testing, and secret handling. Use before editing JSON unless the repo provides stricter local rules."
-version: "1.0.0"
+version: "1.1.0"
 category: development
 triggers: json, jsonc, json5, json-schema, package-json, jq, prettier, biome, eslint, tsconfig
 sources:
@@ -11,106 +11,64 @@ sources:
 
 # JSON
 
-Default coding standards for JSON and JSON-adjacent configuration. Repo
-conventions and configured tooling take precedence. If JSON Schema, OpenAPI,
-package-manager lockfiles, `package.json`, `tsconfig.json`, `biome.json`,
-`.eslintrc`, `.prettierrc`, generated fixtures, or platform docs are stricter,
-follow the repo.
+Identify the consuming parser, dialect, schema, and generated-file policy before editing.
 
 ## Tooling
 
-Run the repo's configured format, lint, schema validation, parser checks, and
-focused tests before finishing. If none are configured, use the local JSON
-context:
-
-- Format/lint: prettier, biome, jq, eslint config validators, editorconfig, or
-  repo wrappers
-- Parse/schema: JSON parser round-trip, JSON Schema, OpenAPI, package-manager,
-  TypeScript config, app config, or domain-specific validators
-- Consumer checks: package manager install checks, CLI config validation,
-  fixture tests, schema conformance, or application tests that load the JSON
-- Tests: focused tests for the system that consumes the changed JSON
-- Packages: preserve lockfiles, generated JSON, checked-in schemas, snapshot
-  fixtures, pinned tool versions, and file ordering conventions
-
-Do not treat JSON as plain text. Do not relax schemas, add comments/trailing
-commas to strict JSON, reorder generated files casually, inline secrets, or
-silence parse errors to make a quick edit pass.
+- Use the repository formatter or linter, strict parser, applicable schema, and
+  focused consumer validation.
+- Preserve lockfiles and generated artifacts through their owning tool.
 
 ## Configuration
 
-- Identify the owning consumer before editing. A JSON file may be strict JSON,
-  JSONC, JSON5, package metadata, lockfile data, TypeScript/ESLint/Biome config,
-  OpenAPI/JSON Schema, test fixture data, or app-specific config.
-- Match the repo's parser dialect, indentation, key order, newline policy,
-  generated-file policy, and package-manager expectations.
-- Prefer local schemas, examples, fixture builders, and validation commands
-  already in use before adding new tooling.
+- Distinguish strict JSON from JSONC, JSON5, JSON Lines, manifests, and tool-specific
+  files before using comments, trailing commas, or duplicate-key behavior.
+- Diagnostic hook: treat parser and schema errors as consumer-contract evidence;
+  avoid loosening schemas or coercing values before identifying the expected shape.
 
-For parser dialects, generated files, package/config ownership, and formatting:
+For dialects, tools, schemas, and generated files:
 `get_skill_file(name="json", path="references/configuration.md")`
 
 ## Syntax And Data Model
 
-- Preserve JSON's data model intentionally: objects, arrays, strings, numbers,
-  booleans, and null are not interchangeable with host-language types.
-- Watch for duplicate keys, numeric precision, Unicode escaping, null vs missing
-  fields, object ordering expectations, and top-level array/object contracts.
-- Use JSONC/JSON5 features only when the target parser explicitly supports them.
+- Preserve object/array shape, key spelling, ordering where a consumer observes it,
+  number precision, Unicode, and null-versus-missing semantics.
+- Serialize non-JSON values such as dates, bytes, decimals, and large integers through
+  an explicit wire convention.
 
-For duplicate keys, numbers, string escaping, null semantics, and dialect
-differences:
+For syntax and data-model boundaries:
 `get_skill_file(name="json", path="references/syntax-and-data-model.md")`
 
 ## Schema And Validation
 
-- Validate the shape consumed by the target system, not just JSON syntax.
-- Keep `$schema`, `$id`, required keys, enum values, references, defaults, and
-  additional-property rules explicit.
-- Update schemas, fixtures, generated examples, migration data, and docs
-  together when a JSON contract changes.
+- Validate against the schema version and entry point used by the consumer.
+- Update dependent fixtures, examples, generated types, and migrations with schema changes.
 
-For JSON Schema, OpenAPI, custom validators, fixtures, and migration checks:
+For JSON Schema and migration patterns:
 `get_skill_file(name="json", path="references/schema-and-validation.md")`
 
 ## Parsing And Serialization
 
-- Use structured parser/serializer APIs instead of string splicing.
-- Preserve stable formatting and ordering where diffs, lockfiles, signatures,
-  snapshots, or reproducible builds depend on them.
-- Round-trip through the same parser or serializer that the consuming system
-  uses when precision, dates, binary data, or patch formats matter.
+- Parse untrusted input with bounded size/depth and reject duplicate keys when they
+  would create ambiguity or security risk.
+- Keep canonicalization, escaping, and round-trip expectations explicit.
 
-For parsing APIs, streaming, canonicalization, merge patches, and precision:
+For parser and serializer choices:
 `get_skill_file(name="json", path="references/parsing-and-serialization.md")`
 
 ## Security And Secrets
 
-- Never inline secrets, tokens, private keys, credentials, or sensitive endpoints.
-- Treat untrusted JSON as hostile input: validate size, depth, schema, keys, and
-  prototype-pollution-sensitive fields before merging.
-- Review package metadata, scripts, registry URLs, plugin config, and generated
-  artifacts for supply-chain or privilege changes.
+- Keep credentials and sensitive endpoints in the repository's reference or secret
+  mechanism, and review prototype-pollution or signature-canonicalization boundaries.
 
-For secret references, prototype pollution, package metadata, and untrusted
-input:
+For secret handling and parser threats:
 `get_skill_file(name="json", path="references/security-and-secrets.md")`
 
 ## Testing
 
-- Add or update focused validation for the consumer of the JSON, not only the
-  JSON file itself.
-- Use syntax lint, schema checks, parser round trips, fixture/golden tests,
-  config loader tests, and targeted application tests that cover the changed
-  behavior.
-- Keep validation commands narrow enough to run locally and broad enough to
-  prove the changed contract.
+- Exercise the actual consumer with representative valid, invalid, boundary, and
+  round-trip fixtures.
+- Include generated-output or lockfile checks when those files are the contract.
 
-For command selection, schema tests, snapshot hygiene, and fixture validation:
+For fixture and validation selection:
 `get_skill_file(name="json", path="references/testing.md")`
-
-## Before You Finish
-
-If you touched JSON: verify formatting/lint, parser/schema validation, focused
-consumer tests, and any relevant generated-output or lockfile checks pass before
-closing your work.

@@ -63,6 +63,9 @@ def _make_mock_agent_run(
     run.workflow_name = kwargs.get("workflow_name")
     run.agent_name = kwargs.get("agent_name")
     run.model = kwargs.get("model")
+    run.tool_calls_count = kwargs.get("tool_calls_count", 0)
+    run.turns_used = kwargs.get("turns_used", 0)
+    run.resume_metadata_json = kwargs.get("resume_metadata_json")
 
     run.to_dict.return_value = {
         "run_id": run_id,
@@ -76,6 +79,10 @@ def _make_mock_agent_run(
         "provider": provider,
         "model": kwargs.get("model"),
         "terminal_type": kwargs.get("terminal_type"),
+        "worktree_id": kwargs.get("worktree_id"),
+        "tool_calls_count": kwargs.get("tool_calls_count", 0),
+        "turns_used": kwargs.get("turns_used", 0),
+        "resume_metadata_json": kwargs.get("resume_metadata_json"),
     }
     run.to_brief.return_value = {
         "run_id": run_id,
@@ -429,17 +436,20 @@ class TestListAgentRuns:
         assert result["count"] == 0
 
     @pytest.mark.asyncio
-    async def test_returns_runs_with_truncated_prompts(self) -> None:
-        """Test that long prompts are truncated in list."""
+    async def test_returns_compact_decision_fields(self) -> None:
+        """List rows expose only identity and coordinator decision fields."""
         mock_run = MagicMock()
         mock_run.id = "run-123"
         mock_run.status = "running"
-        mock_run.provider = "claude"
-        mock_run.model = "claude-3"
-        mock_run.workflow_name = "plan-execute"
-        mock_run.prompt = "A" * 200  # Long prompt
+        mock_run.agent_name = "backend-developer"
         mock_run.started_at = _RUN_STARTED_AT
-        mock_run.completed_at = None
+        mock_run.tool_calls_count = 4
+        mock_run.turns_used = 2
+        mock_run.resume_metadata_json = {
+            "task_ref": "#18213",
+            "branch_name": "fix/18213-agents-list-get",
+            "sandbox_args": ["workspace-write"],
+        }
 
         runner = MagicMock()
         runner.list_runs.return_value = [mock_run]
@@ -451,8 +461,16 @@ class TestListAgentRuns:
 
         assert result["success"] is True
         assert result["count"] == 1
-        assert len(result["runs"][0]["prompt"]) == 103  # 100 chars + "..."
-        assert result["runs"][0]["prompt"].endswith("...")
+        assert result["runs"][0] == {
+            "run_id": "run-123",
+            "task_ref": "#18213",
+            "agent_name": "backend-developer",
+            "status": "running",
+            "started_at": _RUN_STARTED_AT,
+            "branch_name": "fix/18213-agents-list-get",
+            "tool_calls_count": 4,
+            "turns_used": 2,
+        }
 
     @pytest.mark.asyncio
     async def test_respects_status_filter(self) -> None:
@@ -695,6 +713,41 @@ class TestListRunningAgents:
         runner.run_storage.list_active.assert_called_once_with(limit=100)
 
     @pytest.mark.asyncio
+    async def test_list_rows_have_only_compact_decision_fields(self) -> None:
+        """Running-agent rows omit full record and resume state fields."""
+        runner = _make_runner_with_run_storage()
+        run = _make_mock_agent_run(
+            run_id="run-1",
+            task_id="task-uuid",
+            agent_name="backend-developer",
+            started_at=_RUN_STARTED_AT,
+            tool_calls_count=7,
+            turns_used=3,
+            resume_metadata_json={
+                "task_ref": "#18213",
+                "branch_name": "fix/18213-agents-list-get",
+                "sandbox_args": ["workspace-write"],
+                "tmux_config": {"window": "agent"},
+                "config_overrides": ["model=x"],
+            },
+        )
+        runner.run_storage.list_active.return_value = [run]
+
+        registry = create_agents_registry(runner)
+        result = await registry._tools["list_running_agents"].func()
+
+        assert result["agents"][0] == {
+            "run_id": "run-1",
+            "task_ref": "#18213",
+            "agent_name": "backend-developer",
+            "status": "running",
+            "started_at": _RUN_STARTED_AT,
+            "branch_name": "fix/18213-agents-list-get",
+            "tool_calls_count": 7,
+            "turns_used": 3,
+        }
+
+    @pytest.mark.asyncio
     async def test_clamps_zero_limit_to_positive_bound(self) -> None:
         """Explicit zero is clamped to the smallest positive limit."""
         runner = _make_runner_with_run_storage()
@@ -810,19 +863,21 @@ class TestListRunningAgents:
         result = await list_running(parent_session_id="parent-1")
 
         assert result["agents"][0]["agent_name"] == "merge-worker"
-        assert result["agents"][0]["workflow_name"] == "merge-worker"
-        assert result["agents"][0]["model"] == "sonnet"
+        assert "workflow_name" not in result["agents"][0]
+        assert "model" not in result["agents"][0]
 
 
 class TestGetRunningAgent:
     """Tests for get_running_agent MCP tool (DB-backed)."""
+
+    RUN_ID = "11111111-1111-4111-8111-111111111111"
 
     @pytest.mark.asyncio
     async def test_agent_found(self) -> None:
         """Test getting an existing running agent."""
         runner = _make_runner_with_run_storage()
         mock_run = _make_mock_agent_run(
-            run_id="run-123",
+            run_id=self.RUN_ID,
             session_id="sess-456",
             parent_session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001",
             pid=12345,
@@ -834,11 +889,13 @@ class TestGetRunningAgent:
         registry = create_agents_registry(runner)
         get_running = registry._tools["get_running_agent"].func
 
-        result = await get_running(run_id="run-123")
+        result = await get_running(run_id=self.RUN_ID)
 
         assert result["success"] is True
-        assert result["agent"]["run_id"] == "run-123"
+        assert result["agent"]["run_id"] == self.RUN_ID
         assert result["agent"]["pid"] == 12345
+        assert result["agent"]["session_id"] == "sess-456"
+        assert "resume_metadata_json" not in result["agent"]
 
     @pytest.mark.asyncio
     async def test_agent_not_found(self) -> None:
@@ -849,7 +906,7 @@ class TestGetRunningAgent:
         registry = create_agents_registry(runner)
         get_running = registry._tools["get_running_agent"].func
 
-        result = await get_running(run_id="non-existent")
+        result = await get_running(run_id="22222222-2222-4222-8222-222222222222")
 
         assert result["success"] is False
         assert "no running agent found" in result["error"].lower()
@@ -858,16 +915,71 @@ class TestGetRunningAgent:
     async def test_completed_agent_not_returned(self) -> None:
         """Test that completed agents are not returned as 'running'."""
         runner = _make_runner_with_run_storage()
-        mock_run = _make_mock_agent_run(run_id="run-123", status="success")
+        mock_run = _make_mock_agent_run(run_id=self.RUN_ID, status="success")
         runner.run_storage.get.return_value = mock_run
 
         registry = create_agents_registry(runner)
         get_running = registry._tools["get_running_agent"].func
 
-        result = await get_running(run_id="run-123")
+        result = await get_running(run_id=self.RUN_ID)
 
         assert result["success"] is False
         assert "no running agent found" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_resume_metadata_requires_explicit_opt_in(self) -> None:
+        runner = _make_runner_with_run_storage()
+        run = _make_mock_agent_run(
+            run_id=self.RUN_ID,
+            resume_metadata_json={"sandbox_args": ["workspace-write"]},
+        )
+        runner.run_storage.get.return_value = run
+        get_running = create_agents_registry(runner)._tools["get_running_agent"].func
+
+        result = await get_running(run_id=self.RUN_ID, include_resume_metadata=True)
+
+        assert result["agent"]["resume_metadata_json"] == {"sandbox_args": ["workspace-write"]}
+
+    @pytest.mark.asyncio
+    async def test_unique_short_prefix_resolves_run(self) -> None:
+        runner = _make_runner_with_run_storage()
+        run = _make_mock_agent_run(run_id=self.RUN_ID)
+        runner.run_storage.find_by_id_prefix.return_value = [run]
+        get_running = create_agents_registry(runner)._tools["get_running_agent"].func
+
+        result = await get_running(run_id="11111111")
+
+        assert result["success"] is True
+        assert result["agent"]["run_id"] == self.RUN_ID
+        runner.run_storage.find_by_id_prefix.assert_called_once_with("11111111", limit=2)
+        runner.run_storage.get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_ambiguous_prefix_returns_structured_invalid_arguments(self) -> None:
+        runner = _make_runner_with_run_storage()
+        runner.run_storage.find_by_id_prefix.return_value = [
+            _make_mock_agent_run(run_id=self.RUN_ID),
+            _make_mock_agent_run(run_id="11111111-2222-4222-8222-222222222222"),
+        ]
+        get_running = create_agents_registry(runner)._tools["get_running_agent"].func
+
+        result = await get_running(run_id="11111111")
+
+        assert result["success"] is False
+        assert result["error_code"] == "INVALID_ARGUMENTS"
+        assert "postgres" not in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_malformed_run_id_returns_structured_invalid_arguments(self) -> None:
+        runner = _make_runner_with_run_storage()
+        get_running = create_agents_registry(runner)._tools["get_running_agent"].func
+
+        result = await get_running(run_id="not-a-run-id")
+
+        assert result["success"] is False
+        assert result["error_code"] == "INVALID_ARGUMENTS"
+        runner.run_storage.get.assert_not_called()
+        runner.run_storage.find_by_id_prefix.assert_not_called()
 
 
 class TestUnregisterAgent:
