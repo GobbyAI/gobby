@@ -130,3 +130,60 @@ class TestScannerUnavailableFailClosed:
         assert result["success"] is False
         assert "clawcare is not installed" in result["error"]
         assert "external source" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_zip_install_fails_closed(self, db: HubDatabase, tmp_path: Path) -> None:
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+        from gobby.skills.parser import ParsedSkill
+
+        zip_path = tmp_path / "ext-skill.zip"
+        zip_path.touch()
+        parsed = ParsedSkill(
+            name="ext-skill",
+            description="external",
+            content="# Ext\n\nprose\n",
+            version="1.0.0",
+        )
+        registry = create_skills_registry(db)
+        tool = registry.get_tool("install_skill")
+
+        with (
+            patch("gobby.skills.loader.SkillLoader.load_from_zip", return_value=parsed),
+            patch(
+                "gobby.skills.scanner.scan_parsed_skill",
+                side_effect=ImportError("no clawcare"),
+            ),
+        ):
+            result = await tool(source=str(zip_path))
+
+        assert result["success"] is False
+        assert "clawcare is not installed" in result["error"]
+        assert "external source (zip)" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_hub_install_fails_closed(self, db: HubDatabase, tmp_path: Path) -> None:
+        from unittest.mock import AsyncMock, MagicMock
+
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+        from gobby.skills.hubs.base import DownloadResult
+
+        skill_dir = _write_skill(tmp_path, with_payload_reference=False)
+        provider = MagicMock()
+        provider.download_skill = AsyncMock(
+            return_value=DownloadResult(success=True, path=str(skill_dir), slug="ext-skill")
+        )
+        hub_manager = MagicMock()
+        hub_manager.has_hub.return_value = True
+        hub_manager.get_provider.return_value = provider
+        registry = create_skills_registry(db, hub_manager=hub_manager)
+        tool = registry.get_tool("install_skill")
+
+        with patch(
+            "gobby.skills.scanner.scan_parsed_skill",
+            side_effect=ImportError("no clawcare"),
+        ):
+            result = await tool(source="clawdhub:ext-skill")
+
+        assert result["success"] is False
+        assert "clawcare is not installed" in result["error"]
+        assert "external source (hub)" in result["error"]
