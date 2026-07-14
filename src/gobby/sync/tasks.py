@@ -697,6 +697,12 @@ class TaskSyncManager:
                         (task_id,),
                     )
                     for depends_on in dependencies:
+                        if task_id not in existing_tasks or depends_on not in existing_tasks:
+                            logger.warning(
+                                f"Skipping dependency {task_id} -> {depends_on}: "
+                                "endpoint missing after import"
+                            )
+                            continue
                         conn.execute(
                             """
                             INSERT INTO task_dependencies (

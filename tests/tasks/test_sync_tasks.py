@@ -251,6 +251,54 @@ class TestTaskSyncManager:
         assert deps[0]["depends_on"] == t1.id
 
     @pytest.mark.integration
+    def test_import_skips_dependency_with_missing_endpoint(
+        self, sync_manager, task_manager, sample_project, caplog
+    ) -> None:
+        task_id = _task_id("task-with-dangling-dependency")
+        other_task_id = _task_id("independent-imported-task")
+        missing_id = _task_id("missing-dependency")
+        records = [
+            {
+                "id": task_id,
+                "title": "Task with dangling dependency",
+                "created_at": "2023-01-02T00:00:00+00:00",
+                "updated_at": "2023-01-02T00:00:00+00:00",
+                "project_id": sample_project["id"],
+                "parent_id": None,
+                "deps_on": [missing_id],
+            },
+            {
+                "id": other_task_id,
+                "title": "Independent imported task",
+                "created_at": "2023-01-02T00:00:00+00:00",
+                "updated_at": "2023-01-02T00:00:00+00:00",
+                "project_id": sample_project["id"],
+                "parent_id": None,
+                "deps_on": [],
+            },
+        ]
+        sync_manager.export_path.parent.mkdir(parents=True, exist_ok=True)
+        sync_manager.export_path.write_text(
+            "".join(json.dumps(record) + "\n" for record in records)
+        )
+
+        with caplog.at_level("WARNING", logger="gobby.sync.tasks"):
+            sync_manager.import_from_jsonl()
+
+        assert task_manager.get_task(task_id) is not None
+        assert task_manager.get_task(other_task_id) is not None
+        assert (
+            sync_manager.db.fetchall(
+                "SELECT * FROM task_dependencies WHERE task_id = %s", (task_id,)
+            )
+            == []
+        )
+        assert (
+            f"Skipping dependency {task_id} -> {missing_id}: endpoint missing after import"
+            in caplog.messages
+        )
+
+    @pytest.mark.integration
     def test_import_conflict_resolution(self, sync_manager, task_manager, sample_project) -> None:
         """Test LWW conflict resolution during import."""
         # 1. Local Task is NEWER (should keep local)
