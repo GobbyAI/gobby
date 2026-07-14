@@ -115,6 +115,160 @@ fn unchanged_sources_are_reused_without_any_generation_call() {
 }
 
 #[test]
+fn reconciled_stage_reuses_unchanged_page_and_bypasses_since_hash_shortcut() {
+    let (project, input) = reuse_project();
+    let live_out = project.path().join("codewiki");
+    let ai_settings = AiGenerationSettings::default();
+    let ai_outcome = CodewikiAiOutcome::default();
+    let snapshot = CodewikiIndexSnapshot::default();
+    let initial_fingerprint = PublicationFingerprint::from_run(
+        project.path(),
+        &input.files,
+        "symbols",
+        &ai_settings,
+        ai_outcome,
+        ai_outcome,
+        &[],
+        None,
+        &snapshot,
+    )
+    .expect("initial fingerprint");
+    let first_publication =
+        CodewikiPublication::prepare(&live_out, &initial_fingerprint).expect("prepare first stage");
+    let stage_out = first_publication.stage_out().to_path_buf();
+
+    let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
+        if system == prompts::CURATED_NAVIGATION_SYSTEM {
+            Some(test_curated_navigation_json())
+        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
+            Some(test_concept_handbook_body())
+        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
+            Some(test_narrative_handbook_body())
+        } else {
+            Some("Initial generated prose.".to_string())
+        }
+    };
+    let mut sink = DocSink::open(project.path(), &stage_out, "symbols").expect("first sink");
+    generate_hierarchical_docs(
+        &input,
+        GenerateDocsOptions {
+            generate: Some(&mut first_generator),
+            ai_depth: AiDepth::Symbols,
+            ..Default::default()
+        },
+        &mut |doc| sink.persist(&doc).map(|_| ()),
+    )
+    .expect("generate initial stage");
+    sink.finish(None).expect("finish initial stage");
+
+    let changed_page_path = stage_out.join("code/files/src/lib.rs.md");
+    let unchanged_page_path = stage_out.join("code/files/src/nested/api.rs.md");
+    let changed_page_before = std::fs::read(&changed_page_path).expect("changed page before");
+    let unchanged_page_before = std::fs::read(&unchanged_page_path).expect("unchanged page before");
+    drop(first_publication);
+
+    std::fs::write(
+        project.path().join("src/lib.rs"),
+        "pub struct Client { pub id: u64 }\n",
+    )
+    .expect("change source");
+    let since_changed = Some(std::collections::BTreeSet::new());
+    let changed_fingerprint = PublicationFingerprint::from_run(
+        project.path(),
+        &input.files,
+        "symbols",
+        &ai_settings,
+        ai_outcome,
+        ai_outcome,
+        &[],
+        since_changed.as_ref(),
+        &snapshot,
+    )
+    .expect("changed fingerprint");
+    let publication = CodewikiPublication::prepare(&live_out, &changed_fingerprint)
+        .expect("reconcile changed stage");
+    assert!(publication.requires_full_hash_scan());
+    assert_eq!(
+        std::fs::read(&changed_page_path).expect("changed page after reconcile"),
+        changed_page_before,
+        "reconciliation must retain the changed page's staged bytes before reuse checks"
+    );
+    assert_eq!(
+        std::fs::read(&unchanged_page_path).expect("unchanged page after reconcile"),
+        unchanged_page_before,
+        "reconciliation must retain the unchanged page's staged bytes"
+    );
+
+    let effective_since = if publication.requires_full_hash_scan() {
+        None
+    } else {
+        since_changed
+    };
+    let mut systems = Vec::new();
+    let mut second_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
+        systems.push(system.to_string());
+        if system == prompts::CURATED_NAVIGATION_SYSTEM {
+            Some(test_curated_navigation_json())
+        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
+            Some(test_concept_handbook_body())
+        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
+            Some(test_narrative_handbook_body())
+        } else {
+            Some("Regenerated prose.".to_string())
+        }
+    };
+    let mut reuse = ReusePlan::load_with_since(
+        project.path(),
+        publication.stage_out(),
+        "symbols",
+        effective_since.clone(),
+    )
+    .expect("load reconciled reuse plan");
+    let mut sink = DocSink::open(project.path(), publication.stage_out(), "symbols")
+        .expect("reconciled sink")
+        .with_since(effective_since);
+    generate_hierarchical_docs(
+        &input,
+        GenerateDocsOptions {
+            generate: Some(&mut second_generator),
+            ai_depth: AiDepth::Symbols,
+            reuse: Some(&mut reuse),
+            ..Default::default()
+        },
+        &mut |doc| sink.persist(&doc).map(|_| ()),
+    )
+    .expect("generate reconciled stage");
+    sink.finish(None).expect("finish reconciled stage");
+
+    assert_eq!(
+        systems
+            .iter()
+            .filter(|system| system.as_str() == prompts::SYMBOL_SYSTEM)
+            .count(),
+        1,
+        "only the changed source's symbol should regenerate"
+    );
+    assert_eq!(
+        systems
+            .iter()
+            .filter(|system| system.as_str() == prompts::FILE_SYSTEM)
+            .count(),
+        1,
+        "only the changed source's file page should regenerate"
+    );
+    assert_ne!(
+        std::fs::read(&changed_page_path).expect("changed page after generation"),
+        changed_page_before,
+        "full hashing must regenerate a source changed outside the --since set"
+    );
+    assert_eq!(
+        std::fs::read(&unchanged_page_path).expect("unchanged page after generation"),
+        unchanged_page_before,
+        "the unchanged page must reuse its staged bytes without an LLM call"
+    );
+}
+
+#[test]
 fn stale_render_version_disables_reuse() {
     let (project, input) = reuse_project();
     let out_dir = project.path().join("codewiki");
