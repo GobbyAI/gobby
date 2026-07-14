@@ -234,6 +234,37 @@ class TestResolveReferenceExternalId:
         )
         assert resolved == sess.id
 
+    @pytest.mark.parametrize(
+        ("literal", "wildcard_match"),
+        [("_", "X"), ("%", "X"), ("\\", "")],
+    )
+    def test_resolve_reference_treats_like_wildcards_as_literals(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+        literal: str,
+        wildcard_match: str,
+    ) -> None:
+        prefix = f"literal{literal}prefix"
+        expected = session_manager.register(
+            external_id=f"{prefix}-target",
+            machine_id="literal-machine",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        session_manager.register(
+            external_id=f"literal{wildcard_match}prefix-decoy",
+            machine_id="decoy-machine",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+
+        resolved = session_manager.resolve_session_reference(
+            prefix, project_id=sample_project["id"]
+        )
+
+        assert resolved == expected.id
+
     def test_resolve_reference_prefers_id_match_over_external_id_match(
         self,
         session_manager: SessionManager,
