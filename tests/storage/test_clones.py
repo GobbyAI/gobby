@@ -10,6 +10,7 @@ import pytest
 from gobby.storage.clones import Clone, CloneStatus, LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
 
@@ -401,6 +402,54 @@ class TestLocalCloneManagerGetByTask:
         clone = manager.get_by_task("gt-nonexistent")
 
         assert clone is None
+
+    def test_get_by_task_prefers_status_then_recency(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, object],
+    ) -> None:
+        """Real storage prefers the newest active clone over newer dead clones."""
+        task = LocalTaskManager(temp_db).create_task(
+            project_id=str(sample_project["id"]),
+            title="Clone ordering",
+        )
+        manager = LocalCloneManager(temp_db)
+        older_active = manager.create(
+            project_id=str(sample_project["id"]),
+            branch_name="feature/older-active",
+            clone_path="/tmp/gobby-older-active",
+            task_id=task.id,
+        )
+        newer_active = manager.create(
+            project_id=str(sample_project["id"]),
+            branch_name="feature/newer-active",
+            clone_path="/tmp/gobby-newer-active",
+            task_id=task.id,
+        )
+        stale = manager.create(
+            project_id=str(sample_project["id"]),
+            branch_name="feature/stale",
+            clone_path="/tmp/gobby-stale",
+            task_id=task.id,
+        )
+        manager.mark_stale(stale.id)
+        temp_db.execute(
+            "UPDATE clones SET updated_at = %s WHERE id = %s",
+            (datetime(2026, 1, 1, tzinfo=UTC), older_active.id),
+        )
+        temp_db.execute(
+            "UPDATE clones SET updated_at = %s WHERE id = %s",
+            (datetime(2026, 1, 2, tzinfo=UTC), newer_active.id),
+        )
+        temp_db.execute(
+            "UPDATE clones SET updated_at = %s WHERE id = %s",
+            (datetime(2026, 1, 3, tzinfo=UTC), stale.id),
+        )
+
+        clone = manager.get_by_task(task.id)
+
+        assert clone is not None
+        assert clone.id == newer_active.id
 
 
 class TestLocalCloneManagerList:

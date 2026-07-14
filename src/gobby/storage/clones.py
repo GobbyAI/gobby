@@ -226,8 +226,31 @@ class LocalCloneManager:
     def get_by_task(self, task_id: str) -> Clone | None:
         """Get clone linked to a task."""
         row = self.db.fetchone(
-            "SELECT * FROM clones WHERE task_id = %s AND status != %s",
-            (task_id, CloneStatus.CLEANUP.value),
+            """
+            SELECT * FROM clones
+            WHERE task_id = %s AND status != %s
+            ORDER BY
+                CASE status
+                    WHEN %s THEN 0
+                    WHEN %s THEN 1
+                    WHEN %s THEN 2
+                    WHEN %s THEN 3
+                    WHEN %s THEN 4
+                    ELSE 5
+                END,
+                updated_at DESC,
+                created_at DESC
+            LIMIT 1
+            """,
+            (
+                task_id,
+                CloneStatus.CLEANUP.value,
+                CloneStatus.ACTIVE.value,
+                CloneStatus.SYNCING.value,
+                CloneStatus.STALE.value,
+                CloneStatus.MERGED.value,
+                CloneStatus.DELETING.value,
+            ),
         )
         return Clone.from_row(row) if row else None
 
