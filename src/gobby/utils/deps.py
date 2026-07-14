@@ -13,6 +13,7 @@ import shutil
 import subprocess  # nosec B404 # needed for version detection
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from gobby.install.version_probe import probe_native_bin_version
 from gobby.utils.native_bin import local_native_bin_path, resolve_native_bin
@@ -377,6 +378,20 @@ def _infer_embedding_provider_from_api_base(api_base: Any) -> str | None:
     return None
 
 
+def _is_openai_cloud_api_base(api_base: Any) -> bool:
+    """Return whether an API base targets OpenAI or Azure OpenAI cloud."""
+    normalized_api_base = _strip_config_string(api_base)
+    if not isinstance(normalized_api_base, str):
+        return False
+    hostname = urlparse(normalized_api_base).hostname
+    if hostname is None:
+        return False
+    hostname = hostname.lower()
+    return hostname == "api.openai.com" or hostname.endswith(
+        (".openai.azure.com", ".services.ai.azure.com")
+    )
+
+
 def _infer_from_config_or_none(*, dim: Any, api_key: Any, model: Any, api_base: Any) -> str | None:
     """Infer provider from configured embedding values, or explicit disabled state."""
     normalized_dim = _strip_config_string(dim)
@@ -391,7 +406,11 @@ def _infer_from_config_or_none(*, dim: Any, api_key: Any, model: Any, api_base: 
             pass
     if dim_int == 0:
         return "none"
-    if normalized_api_base in (None, "") and normalized_api_key:
+    if normalized_api_key:
+        if _is_openai_cloud_api_base(normalized_api_base):
+            return "openai"
+        if normalized_api_base not in (None, ""):
+            return None
         from gobby.ai.embeddings import is_openai_cloud_embedding_model
 
         if isinstance(normalized_model, str) and is_openai_cloud_embedding_model(normalized_model):

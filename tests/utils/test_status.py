@@ -215,6 +215,20 @@ class TestStatusUtils:
         )
         assert "LM Studio (running)" in msg
 
+    def test_format_status_message_shows_configured_openai_over_local_fallback(self) -> None:
+        msg = format_status_message(
+            running=True,
+            deps_info={
+                "dependencies": {
+                    "embeddings_provider": "openai",
+                    "ollama": {"version": "0.1.30", "running": False},
+                    "lmstudio": {"running": False},
+                },
+            },
+        )
+        assert "Embeddings:       OpenAI" in msg
+        assert "Ollama (stopped)" not in msg
+
     def test_format_status_message_postgres_healthy(self) -> None:
         msg = format_status_message(
             running=True,

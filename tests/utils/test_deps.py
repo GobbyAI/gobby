@@ -340,6 +340,45 @@ def test_get_configured_embedding_provider_detects_embedding_api_key(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    "api_base",
+    [
+        "https://api.openai.com/v1",
+        "https://example.openai.azure.com/openai/deployments/embedding",
+        "https://example.services.ai.azure.com/models",
+    ],
+)
+def test_get_configured_embedding_provider_detects_explicit_cloud_api_base(
+    api_base: str,
+    temp_db: HubDatabase,
+    mock_machine_id: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.storage.config_store import ConfigStore
+    from gobby.storage.secrets import SecretStore
+
+    store = ConfigStore(temp_db)
+    store.set_many(
+        {
+            AI_EMBEDDING_MODEL_KEY: "text-embedding-3-small",
+            AI_EMBEDDING_API_BASE_KEY: api_base,
+            AI_EMBEDDING_DIM_KEY: 1536,
+        }
+    )
+
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    with _patch_runtime_hub_database(temp_db):
+        store.set_secret(
+            AI_EMBEDDING_API_KEY_KEY,
+            "sk-test",
+            SecretStore(temp_db),
+            source="test",
+        )
+        assert deps.get_configured_embedding_provider() == "openai"
+
+
+@pytest.mark.unit
 def test_get_configured_embedding_provider_strips_whitespace_values(
     temp_db: HubDatabase,
 ) -> None:
