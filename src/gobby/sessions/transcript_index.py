@@ -73,6 +73,7 @@ from gobby.sessions.transcripts.base import (
     NON_MESSAGE_CONTENT_TYPES,
     ParsedMessage,
     RawLine,
+    TokenUsage,
 )
 
 if TYPE_CHECKING:
@@ -490,8 +491,11 @@ class TranscriptIndexAppender:
         self.index.next_parser_index = self._next_start_index
         self.index.next_raw_line_no = self._next_raw_line_no
         self.index.safe_to_start_event = self._safe_to_start_event
+        new_adjustments = _resolve_adjustments(self._parser, self.index)
         self.index.parser_state = self._parser.snapshot_state()
-        self.index.post_pass_adjustments = _resolve_adjustments(self._parser, self.index)
+        self.index.post_pass_adjustments = _merge_adjustments(
+            self.index.post_pass_adjustments, new_adjustments
+        )
         return self.index
 
 
@@ -566,6 +570,35 @@ def _resolve_adjustments(
             )
         )
     return resolved
+
+
+def _merge_adjustments(
+    existing: list[RenderedAdjustment], new: list[RenderedAdjustment]
+) -> list[RenderedAdjustment]:
+    merged = list(existing)
+    for adjustment in new:
+        for index, previous in enumerate(merged):
+            if previous.group_index != adjustment.group_index or previous.field != adjustment.field:
+                continue
+            if isinstance(previous.value, TokenUsage) and isinstance(adjustment.value, TokenUsage):
+                merged[index] = RenderedAdjustment(
+                    group_index=adjustment.group_index,
+                    field=adjustment.field,
+                    value=TokenUsage(
+                        input_tokens=previous.value.input_tokens + adjustment.value.input_tokens,
+                        output_tokens=previous.value.output_tokens + adjustment.value.output_tokens,
+                        cache_creation_tokens=previous.value.cache_creation_tokens
+                        + adjustment.value.cache_creation_tokens,
+                        cache_read_tokens=previous.value.cache_read_tokens
+                        + adjustment.value.cache_read_tokens,
+                    ),
+                )
+            else:
+                merged[index] = adjustment
+            break
+        else:
+            merged.append(adjustment)
+    return merged
 
 
 def build_index_from_file(

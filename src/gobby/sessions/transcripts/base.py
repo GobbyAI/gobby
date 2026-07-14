@@ -351,6 +351,10 @@ class TranscriptParser(Protocol):
         """
         ...
 
+    def snapshot_state(self) -> dict[str, Any]: ...
+
+    def hydrate_state(self, state: Mapping[str, Any]) -> None: ...
+
     def extract_last_messages(
         self, turns: list[dict[str, Any]], num_pairs: int = 2
     ) -> list[dict[str, Any]]:

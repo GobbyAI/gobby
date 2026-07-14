@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
@@ -55,6 +55,43 @@ def _coerce_token_count(value: Any) -> int:
     return 0
 
 
+def _usage_state(usage: TokenUsage) -> dict[str, int]:
+    return {
+        "input_tokens": usage.input_tokens,
+        "output_tokens": usage.output_tokens,
+        "cache_creation_tokens": usage.cache_creation_tokens,
+        "cache_read_tokens": usage.cache_read_tokens,
+    }
+
+
+def _usage_from_state(value: Any) -> TokenUsage | None:
+    if not isinstance(value, dict):
+        return None
+    return TokenUsage(
+        input_tokens=_coerce_token_count(value.get("input_tokens")),
+        output_tokens=_coerce_token_count(value.get("output_tokens")),
+        cache_creation_tokens=_coerce_token_count(value.get("cache_creation_tokens")),
+        cache_read_tokens=_coerce_token_count(value.get("cache_read_tokens")),
+    )
+
+
+def _usage_delta(current: TokenUsage, previous: TokenUsage | None) -> TokenUsage:
+    if previous is None:
+        return current
+    return TokenUsage(
+        input_tokens=max(0, current.input_tokens - previous.input_tokens),
+        output_tokens=max(0, current.output_tokens - previous.output_tokens),
+        cache_creation_tokens=max(
+            0, current.cache_creation_tokens - previous.cache_creation_tokens
+        ),
+        cache_read_tokens=max(0, current.cache_read_tokens - previous.cache_read_tokens),
+    )
+
+
+def _usage_has_tokens(usage: TokenUsage) -> bool:
+    return any(_usage_state(usage).values())
+
+
 def _todo_state_tool_use_id(session_id: str | None, todos: list[Any]) -> str:
     payload = json.dumps(
         {"session_id": session_id or "", "todos": todos},
@@ -79,16 +116,19 @@ class DroidTranscriptParser(BaseTranscriptParser):
         self._transcript_path: Path | None = Path(transcript_path) if transcript_path else None
         self._sidecar_usage: TokenUsage | None = None
         self._sidecar_model: str | None = None
-        self._sidecar_loaded_for: Path | None = None
+        self._last_emitted_usage: TokenUsage | None = None
         self._last_assistant_index: int | None = None
+
+    def snapshot_state(self) -> dict[str, Any]:
+        if self._last_emitted_usage is None:
+            return {}
+        return {"last_emitted_usage": _usage_state(self._last_emitted_usage)}
+
+    def hydrate_state(self, state: Mapping[str, Any]) -> None:
+        self._last_emitted_usage = _usage_from_state(state.get("last_emitted_usage"))
 
     def _load_sidecar(self, jsonl_path: Path) -> None:
         """Side-read <droid-uuid>.settings.json beside the JSONL transcript."""
-        if self._sidecar_loaded_for == jsonl_path and (
-            self._sidecar_usage is not None or self._sidecar_model is not None
-        ):
-            return
-
         sidecar_path = jsonl_path.with_suffix(".settings.json")
         self._sidecar_usage = None
         self._sidecar_model = None
@@ -110,18 +150,17 @@ class DroidTranscriptParser(BaseTranscriptParser):
         if not isinstance(data, dict):
             return
 
-        self._sidecar_loaded_for = jsonl_path
-
-        usage_raw = data.get("tokenUsage") or {}
-        if not isinstance(usage_raw, dict):
-            usage_raw = {}
-
-        self._sidecar_usage = TokenUsage(
-            input_tokens=_coerce_token_count(usage_raw.get("inputTokens")),
-            output_tokens=_coerce_token_count(usage_raw.get("outputTokens")),
-            cache_creation_tokens=_coerce_token_count(usage_raw.get("cacheCreationTokens")),
-            cache_read_tokens=_coerce_token_count(usage_raw.get("cacheReadTokens")),
-        )
+        usage_raw = data.get("tokenUsage")
+        if isinstance(usage_raw, dict):
+            self._sidecar_usage = TokenUsage(
+                input_tokens=_coerce_token_count(usage_raw.get("inputTokens")),
+                output_tokens=(
+                    _coerce_token_count(usage_raw.get("outputTokens"))
+                    + _coerce_token_count(usage_raw.get("thinkingTokens"))
+                ),
+                cache_creation_tokens=_coerce_token_count(usage_raw.get("cacheCreationTokens")),
+                cache_read_tokens=_coerce_token_count(usage_raw.get("cacheReadTokens")),
+            )
         model = data.get("model")
         self._sidecar_model = model if isinstance(model, str) else None
 
@@ -368,10 +407,13 @@ class DroidTranscriptParser(BaseTranscriptParser):
                 )
 
     def finalize(self) -> list[ParsedAdjustment]:
-        """Assign sidecar token usage to the last assistant message (post-pass)."""
+        """Assign new sidecar token usage to the last assistant message."""
         last_assistant_index = getattr(self, "_last_assistant_index", None)
         if self._sidecar_usage is not None and last_assistant_index is not None:
-            return [ParsedAdjustment(last_assistant_index, "usage", self._sidecar_usage)]
+            delta = _usage_delta(self._sidecar_usage, self._last_emitted_usage)
+            self._last_emitted_usage = self._sidecar_usage
+            if _usage_has_tokens(delta):
+                return [ParsedAdjustment(last_assistant_index, "usage", delta)]
         return []
 
     def extract_last_messages(

@@ -222,6 +222,7 @@ class TestSessionRegistration:
         index = build_index_from_file(
             str(transcript), "codex", "sid", mtime_ns=st.st_mtime_ns, size=st.st_size
         )
+        index.parser_state = {"pending_tool_search_use_ids": ["call_resume"]}
         persist_index_sidecar(str(transcript), index)
 
         processor.register_session("sid", str(transcript), source="codex")
@@ -237,6 +238,7 @@ class TestSessionRegistration:
         assert appender._state.current_message is not None
         assert appender._state.current_message.role == "assistant"
         assert "call_1" in appender._state.pending_tool_calls
+        assert processor._parsers["sid"].snapshot_state() == index.parser_state
         session_manager.touch.assert_not_called()
         assert index.session_stats is not None
         session_manager.update_stats.assert_called_once_with(

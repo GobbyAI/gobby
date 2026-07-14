@@ -241,6 +241,7 @@ class ProcessorLifecycleMixin:
             return
 
         hydrate_appender_from_index(appender, index)
+        self._parsers[session_id].hydrate_state(index.parser_state)
         self._byte_offsets[session_id] = index.size
         next_parser_index = (
             index.next_parser_index
