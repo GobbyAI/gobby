@@ -46,18 +46,19 @@ def _make_mock_client(dim: int = 4) -> AsyncMock:
 
     async def fake_create(model: str, input: list[str]):
         class FakeItem:
-            def __init__(self, embedding: list[float]):
+            def __init__(self, embedding: list[float], index: int):
                 self.embedding = embedding
+                self.index = index
 
         class FakeResponse:
             def __init__(self, items: list[FakeItem]):
                 self.data = items
 
         items = []
-        for text in input:
+        for index, text in enumerate(input):
             vec = [0.0] * dim
             vec[0] = hash(text) % 1000 / 1000.0
-            items.append(FakeItem(vec))
+            items.append(FakeItem(vec, index))
         return FakeResponse(items)
 
     mock_client.embeddings.create = fake_create

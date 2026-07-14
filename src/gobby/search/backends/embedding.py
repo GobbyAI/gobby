@@ -6,11 +6,14 @@ It stores embeddings in memory and uses an OpenAI-compatible embeddings API.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import math
+import threading
 from typing import TYPE_CHECKING, Any
 
 from gobby.ai.embeddings import EmbeddingService
-from gobby.search.similarity import cosine_similarity
+from gobby.search.similarity import cosine_similarity as _cosine_similarity
 
 if TYPE_CHECKING:
     from gobby.config.persistence import EmbeddingsConfig
@@ -18,7 +21,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-_cosine_similarity = cosine_similarity
+_SCAN_OFFLOAD_MIN_FLOAT_OPS = 50_000
 
 
 class EmbeddingBackend:
@@ -74,6 +77,7 @@ class EmbeddingBackend:
         self._item_contents: dict[str, str] = {}  # For reindexing
         self._fitted = False
         self._needs_refit = False
+        self._state_lock = threading.Lock()
 
     @classmethod
     def from_config(cls, config: EmbeddingsConfig) -> EmbeddingBackend:
@@ -104,32 +108,41 @@ class EmbeddingBackend:
             RuntimeError: If embedding generation fails
         """
         if not items:
-            self._item_ids = []
-            self._item_embeddings = []
-            self._item_contents = {}
-            self._fitted = True
-            self._needs_refit = False
+            with self._state_lock:
+                self._item_ids = []
+                self._item_embeddings = []
+                self._item_contents = {}
+                self._fitted = True
+                self._needs_refit = False
             logger.debug("Embedding index cleared (no items)")
             return
 
-        # Store contents for potential reindexing
-        self._item_ids = [item_id for item_id, _ in items]
-        self._item_contents = dict(items)
+        item_ids = [item_id for item_id, _ in items]
+        item_contents = dict(items)
         contents = [content for _, content in items]
 
         # Generate embeddings in batch
         try:
-            self._item_embeddings = await self._embedding_service.generate_embeddings(contents)
-            self._fitted = True
-            self._needs_refit = False
+            embeddings = await self._embedding_service.generate_embeddings(contents)
+            if _embedding_float_count(embeddings) >= _SCAN_OFFLOAD_MIN_FLOAT_OPS:
+                item_embeddings = await asyncio.to_thread(_normalize_vectors, embeddings)
+            else:
+                item_embeddings = _normalize_vectors(embeddings)
+            with self._state_lock:
+                self._item_ids = item_ids
+                self._item_contents = item_contents
+                self._item_embeddings = item_embeddings
+                self._fitted = True
+                self._needs_refit = False
             logger.info(f"Embedding index built with {len(items)} items")
         except Exception as e:
             # Clear stale state to prevent inconsistent data
-            self._item_ids = []
-            self._item_contents = {}
-            self._item_embeddings = []
-            self._fitted = False
-            self._needs_refit = False
+            with self._state_lock:
+                self._item_ids = []
+                self._item_contents = {}
+                self._item_embeddings = []
+                self._fitted = False
+                self._needs_refit = False
             logger.error(f"Failed to build embedding index: {e}")
             raise
 
@@ -154,8 +167,11 @@ class EmbeddingBackend:
         Raises:
             RuntimeError: If embedding generation fails
         """
-        if not self._fitted or not self._item_embeddings:
-            return []
+        with self._state_lock:
+            if not self._fitted or not self._item_embeddings:
+                return []
+            item_ids = self._item_ids
+            item_embeddings = self._item_embeddings
 
         # Generate query embedding
         try:
@@ -167,43 +183,52 @@ class EmbeddingBackend:
             logger.error(f"Failed to embed query: {e}")
             raise
 
-        # Compute similarities
-        similarities: list[tuple[str, float]] = []
-        for item_id, item_embedding in zip(self._item_ids, self._item_embeddings, strict=True):
-            similarity = _cosine_similarity(query_embedding, item_embedding)
-            if similarity > 0:
-                similarities.append((item_id, similarity))
-
-        # Sort by similarity descending
-        similarities.sort(key=lambda x: x[1], reverse=True)
-
-        return similarities[:top_k]
+        normalized_query = _normalize_vector(query_embedding)
+        scan_float_ops = len(item_embeddings) * len(normalized_query)
+        if scan_float_ops >= _SCAN_OFFLOAD_MIN_FLOAT_OPS:
+            return await asyncio.to_thread(
+                _rank_embeddings,
+                item_ids,
+                item_embeddings,
+                normalized_query,
+                top_k,
+            )
+        return _rank_embeddings(
+            item_ids,
+            item_embeddings,
+            normalized_query,
+            top_k,
+        )
 
     def needs_refit(self) -> bool:
         """Check if the search index needs rebuilding."""
-        return not self._fitted or self._needs_refit
+        with self._state_lock:
+            return not self._fitted or self._needs_refit
 
     def mark_update(self) -> None:
         """Mark that indexed item data changed after the last fit."""
-        self._needs_refit = True
+        with self._state_lock:
+            self._needs_refit = True
 
     def get_stats(self) -> dict[str, Any]:
         """Get statistics about the search index."""
-        return {
-            "backend_type": "embedding",
-            "fitted": self._fitted,
-            "item_count": len(self._item_ids),
-            "model": self._model,
-            "has_api_base": self._api_base is not None,
-        }
+        with self._state_lock:
+            return {
+                "backend_type": "embedding",
+                "fitted": self._fitted,
+                "item_count": len(self._item_ids),
+                "model": self._model,
+                "has_api_base": self._api_base is not None,
+            }
 
     def clear(self) -> None:
         """Clear the search index."""
-        self._item_ids = []
-        self._item_embeddings = []
-        self._item_contents = {}
-        self._fitted = False
-        self._needs_refit = False
+        with self._state_lock:
+            self._item_ids = []
+            self._item_embeddings = []
+            self._item_contents = {}
+            self._fitted = False
+            self._needs_refit = False
 
     def get_item_contents(self) -> dict[str, str]:
         """Get stored item contents.
@@ -213,4 +238,40 @@ class EmbeddingBackend:
         Returns:
             Dict mapping item_id to content
         """
-        return self._item_contents.copy()
+        with self._state_lock:
+            return self._item_contents.copy()
+
+
+def _embedding_float_count(embeddings: list[list[float]]) -> int:
+    return sum(len(embedding) for embedding in embeddings)
+
+
+def _normalize_vectors(embeddings: list[list[float]]) -> list[list[float]]:
+    return [_normalize_vector(embedding) for embedding in embeddings]
+
+
+def _normalize_vector(embedding: list[float]) -> list[float]:
+    norm = math.sqrt(sum(value * value for value in embedding))
+    if norm == 0:
+        return [0.0] * len(embedding)
+    return [value / norm for value in embedding]
+
+
+def _rank_embeddings(
+    item_ids: list[str],
+    normalized_embeddings: list[list[float]],
+    normalized_query: list[float],
+    top_k: int,
+) -> list[tuple[str, float]]:
+    similarities: list[tuple[str, float]] = []
+    for item_id, item_embedding in zip(item_ids, normalized_embeddings, strict=True):
+        if len(item_embedding) != len(normalized_query):
+            _cosine_similarity(item_embedding, normalized_query)
+        similarity = sum(
+            query_value * item_value
+            for query_value, item_value in zip(normalized_query, item_embedding, strict=True)
+        )
+        if similarity > 0:
+            similarities.append((item_id, similarity))
+    similarities.sort(key=lambda result: result[1], reverse=True)
+    return similarities[:top_k]

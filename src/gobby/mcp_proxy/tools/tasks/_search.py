@@ -9,6 +9,7 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._formatters import task_search_payload
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
+from gobby.search.keyword import SearchQuerySyntaxError
 
 
 def create_search_registry(ctx: RegistryContext) -> InternalToolRegistry:
@@ -86,22 +87,32 @@ def create_search_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 }
 
         # Perform search
-        results = ctx.task_manager.search_tasks(
-            query=query.strip(),
-            project_id=project_id,
-            current_stage_state=current_stage_filter,
-            task_type=task_type,
-            priority=priority,
-            parent_task_id=resolved_parent_id,
-            category=category,
-            limit=limit,
-            min_score=min_score,
-        )
+        normalized_query = query.strip()
+        try:
+            results = ctx.task_manager.search_tasks(
+                query=normalized_query,
+                project_id=project_id,
+                current_stage_state=current_stage_filter,
+                task_type=task_type,
+                priority=priority,
+                parent_task_id=resolved_parent_id,
+                category=category,
+                limit=limit,
+                min_score=min_score,
+            )
+        except SearchQuerySyntaxError as exc:
+            return {
+                "error": str(exc),
+                "error_code": "SEARCH_QUERY_SYNTAX_ERROR",
+                "tasks": [],
+                "count": 0,
+                "query": normalized_query,
+            }
 
         return {
             "tasks": [task_search_payload(task, score) for task, score in results],
             "count": len(results),
-            "query": query.strip(),
+            "query": normalized_query,
         }
 
     registry.register(

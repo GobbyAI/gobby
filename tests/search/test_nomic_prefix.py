@@ -91,14 +91,15 @@ def _make_mock_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]]:
         captured.append(input)
 
         class FakeItem:
-            def __init__(self, embedding: list[float]):
+            def __init__(self, embedding: list[float], index: int):
                 self.embedding = embedding
+                self.index = index
 
         class FakeResponse:
             def __init__(self, items: list[FakeItem]):
                 self.data = items
 
-        items = [FakeItem([0.1] * dim) for _ in input]
+        items = [FakeItem([0.1] * dim, index) for index, _ in enumerate(input)]
         return FakeResponse(items)
 
     mock_client.embeddings.create = fake_create
@@ -182,14 +183,15 @@ def _make_evicting_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]]:
             )
 
         class FakeItem:
-            def __init__(self, embedding: list[float]):
+            def __init__(self, embedding: list[float], index: int):
                 self.embedding = embedding
+                self.index = index
 
         class FakeResponse:
             def __init__(self, items: list[FakeItem]):
                 self.data = items
 
-        items = [FakeItem([0.1] * dim) for _ in input]
+        items = [FakeItem([0.1] * dim, index) for index, _ in enumerate(input)]
         return FakeResponse(items)
 
     mock_client.embeddings.create = fake_create
@@ -222,14 +224,15 @@ def _make_missing_model_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]
             )
 
         class FakeItem:
-            def __init__(self, embedding: list[float]):
+            def __init__(self, embedding: list[float], index: int):
                 self.embedding = embedding
+                self.index = index
 
         class FakeResponse:
             def __init__(self, items: list[FakeItem]):
                 self.data = items
 
-        items = [FakeItem([0.1] * dim) for _ in input]
+        items = [FakeItem([0.1] * dim, index) for index, _ in enumerate(input)]
         return FakeResponse(items)
 
     mock_client.embeddings.create = fake_create
@@ -251,14 +254,15 @@ def _make_connect_error_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]
             raise httpx.ConnectError("refused")
 
         class FakeItem:
-            def __init__(self, embedding: list[float]):
+            def __init__(self, embedding: list[float], index: int):
                 self.embedding = embedding
+                self.index = index
 
         class FakeResponse:
             def __init__(self, items: list[FakeItem]):
                 self.data = items
 
-        items = [FakeItem([0.1] * dim) for _ in input]
+        items = [FakeItem([0.1] * dim, index) for index, _ in enumerate(input)]
         return FakeResponse(items)
 
     mock_client.embeddings.create = fake_create

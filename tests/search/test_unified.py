@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import math
+import threading
 from dataclasses import dataclass
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -16,7 +19,9 @@ from gobby.search import (
     SearchMode,
     UnifiedSearcher,
 )
-from gobby.search.keyword import KeywordAsyncSearchBackend
+from gobby.search.backends import embedding as embedding_module
+from gobby.search.keyword import BM25SearchBackend, KeywordAsyncSearchBackend, SearchHit
+from gobby.search.similarity import cosine_similarity
 
 pytestmark = pytest.mark.unit
 
@@ -50,13 +55,14 @@ def _make_openai_client(dim: int) -> AsyncMock:
     @dataclass
     class FakeItem:
         embedding: list[float]
+        index: int
 
     @dataclass
     class FakeResponse:
         data: list[FakeItem]
 
     async def fake_create(model: str, input: list[str]) -> FakeResponse:
-        return FakeResponse([FakeItem([0.1] * dim) for _ in input])
+        return FakeResponse([FakeItem([0.1] * dim, index) for index, _ in enumerate(input)])
 
     create_mock: AsyncMock = AsyncMock(side_effect=fake_create)
     mock_client.embeddings.create = create_mock
@@ -499,6 +505,170 @@ class TestDeprecatedSqliteKeywordSearch:
 
 
 class TestKeywordAsyncSearchBackend:
+    @pytest.mark.asyncio
+    async def test_search_async_runs_database_search_off_event_loop(self) -> None:
+        backend = KeywordAsyncSearchBackend(SimpleNamespace(dialect="postgres"), "skills")
+        await backend.fit_async([("inside", "shared query")])
+        loop_thread = threading.get_ident()
+        worker_threads: list[int] = []
+        search_started = threading.Event()
+        release_search = threading.Event()
+
+        def blocking_search(*_args: object, **_kwargs: object) -> list[SearchHit]:
+            worker_threads.append(threading.get_ident())
+            search_started.set()
+            if not release_search.wait(timeout=2):
+                raise TimeoutError("test did not release blocking search")
+            return [SearchHit(id="inside", score=1.0)]
+
+        backend._backend.search = blocking_search
+
+        search_task = asyncio.create_task(backend.search_async("shared query", top_k=10))
+        try:
+            started = await asyncio.to_thread(search_started.wait, 2)
+            assert started, "blocking search did not start"
+            assert not search_task.done(), "blocking search stalled the event loop"
+        finally:
+            release_search.set()
+
+        assert await search_task == [("inside", 1.0)]
+        assert len(worker_threads) == 1
+        assert worker_threads[0] != loop_thread
+
+    @pytest.mark.asyncio
+    async def test_search_async_uses_consistent_fit_snapshot_during_clear(self) -> None:
+        backend = KeywordAsyncSearchBackend(SimpleNamespace(dialect="postgres"), "skills")
+        await backend.fit_async([("inside", "shared query")])
+        search_started = threading.Event()
+        release_search = threading.Event()
+
+        def blocking_search(*_args: object, **_kwargs: object) -> list[SearchHit]:
+            search_started.set()
+            assert release_search.wait(timeout=1)
+            raise RuntimeError("backend unavailable")
+
+        backend._backend.search = blocking_search
+
+        search_task = asyncio.create_task(backend.search_async("shared query", top_k=10))
+        assert await asyncio.to_thread(search_started.wait, 1)
+        backend.clear()
+        release_search.set()
+
+        assert await search_task == [("inside", 1.0)]
+
+    @pytest.mark.asyncio
+    async def test_get_stats_uses_fitted_count_without_database_query(self) -> None:
+        fetchone = MagicMock(side_effect=AssertionError("get_stats queried the database"))
+        backend = KeywordAsyncSearchBackend(
+            SimpleNamespace(dialect="postgres", fetchone=fetchone),
+            "skills",
+        )
+        await backend.fit_async([("one", "first"), ("two", "second")])
+
+        stats = backend.get_stats()
+
+        assert stats["backend_type"] == "pg_search_bm25"
+        assert stats["document_count"] == 2
+        assert stats["fitted"] is True
+        fetchone.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_search_restricts_database_hits_to_fitted_ids(self) -> None:
+        backend = KeywordAsyncSearchBackend(SimpleNamespace(dialect="postgres"), "skills")
+        native_search = MagicMock(
+            return_value=[
+                SearchHit(id="outside", score=1.0),
+                SearchHit(id="inside", score=0.5),
+            ]
+        )
+        backend._backend.search = native_search
+        await backend.fit_async([("inside", "shared query")])
+
+        results = await backend.search_async("shared query", top_k=10)
+
+        assert results == [("inside", 0.5)]
+        native_search.assert_called_once_with(
+            "shared query",
+            10,
+            allowed_ids=("inside",),
+        )
+
+    async def test_successful_empty_database_search_does_not_use_fitted_fallback(self) -> None:
+        backend = KeywordAsyncSearchBackend(SimpleNamespace(dialect="postgres"), "skills")
+        backend._backend.search = MagicMock(return_value=[])
+        await backend.fit_async([("inside", "shared query")])
+
+        with patch(
+            "gobby.search.keyword._search_fitted_items",
+            side_effect=AssertionError("fallback must only run after backend errors"),
+        ):
+            results = await backend.search_async("shared query", top_k=10)
+
+        assert results == []
+
+    @pytest.mark.parametrize(
+        ("query", "content"),
+        [
+            ("你好", "你好 世界"),
+            ("привет", "ПРИВЕТ мир"),
+            ("café", "CAFÉ menu"),
+        ],
+    )
+    async def test_backend_error_fallback_tokenizes_unicode(
+        self,
+        query: str,
+        content: str,
+    ) -> None:
+        backend = KeywordAsyncSearchBackend(SimpleNamespace(dialect="postgres"), "skills")
+        backend._backend.search = MagicMock(side_effect=RuntimeError("backend unavailable"))
+        await backend.fit_async([("match", content), ("other", "unrelated")])
+
+        results = await backend.search_async(query, top_k=10)
+
+        assert results == [("match", 1.0)]
+
+    @pytest.mark.asyncio
+    async def test_empty_fit_returns_no_results_without_querying_database(self) -> None:
+        backend = KeywordAsyncSearchBackend(SimpleNamespace(dialect="postgres"), "skills")
+        native_search = MagicMock(return_value=[SearchHit(id="outside", score=1.0)])
+        backend._backend.search = native_search
+        await backend.fit_async([])
+
+        assert await backend.search_async("shared query", top_k=10) == []
+        native_search.assert_not_called()
+
+    def test_skills_table_supports_project_and_enabled_filters(self) -> None:
+        class RecordingHub:
+            def __init__(self) -> None:
+                self.sql = ""
+                self.params: tuple[object, ...] = ()
+
+            def fetchall(self, sql: str, params: tuple[object, ...]) -> list[object]:
+                self.sql = sql
+                self.params = params
+                return []
+
+        hub = RecordingHub()
+        backend = BM25SearchBackend(hub, "skills")
+
+        assert (
+            backend.search(
+                "shared query",
+                10,
+                filters={"project_id": "project-a", "enabled": True},
+            )
+            == []
+        )
+        assert "skills.project_id = %s" in hub.sql
+        assert "skills.enabled = %s" in hub.sql
+        assert hub.params == ("shared query", "shared query", "shared query", "project-a", True, 10)
+
+    def test_unknown_table_filter_raises(self) -> None:
+        backend = BM25SearchBackend(SimpleNamespace(dialect="postgres"), "skills")
+
+        with pytest.raises(ValueError, match="unsupported filter 'tenant_id'.*'skills'"):
+            backend.search("shared query", 10, filters={"tenant_id": "other"})
+
     @pytest.mark.parametrize(
         "updated_items",
         [
@@ -569,6 +739,198 @@ class TestEmbeddingBackend:
             assert len(results) == 2
             # id1 should have higher similarity (identical embedding)
             assert results[0][0] == "id1"
+
+    async def test_search_dimension_mismatch_raises(self) -> None:
+        """A query dimension change must not degrade to an empty result."""
+        backend = EmbeddingBackend()
+
+        with (
+            patch(
+                "gobby.search.backends.embedding.EmbeddingService.generate_embeddings",
+                new_callable=AsyncMock,
+                return_value=[[1.0, 0.0]],
+            ),
+            patch(
+                "gobby.search.backends.embedding.EmbeddingService.generate_embedding",
+                new_callable=AsyncMock,
+                return_value=[1.0, 0.0, 0.0],
+            ),
+        ):
+            await backend.fit_async([("id1", "hello")])
+
+            with pytest.raises(ValueError, match=r"Vector length mismatch: 2 != 3"):
+                await backend.search_async("greeting")
+
+    @pytest.mark.asyncio
+    async def test_search_during_threaded_refit_uses_one_complete_index(self) -> None:
+        backend = EmbeddingBackend()
+        old_items = [("old-a", "old alpha"), ("old-b", "old beta")]
+        new_items = [
+            ("new-a", "new alpha"),
+            ("new-b", "new beta"),
+            ("new-c", "new gamma"),
+        ]
+        refit_started = threading.Event()
+        release_refit = threading.Event()
+
+        async def generate_embeddings(
+            _service: object,
+            contents: list[str],
+        ) -> list[list[float]]:
+            if contents == [content for _item_id, content in old_items]:
+                return [[1.0, 0.0], [0.0, 1.0]]
+
+            assert contents == [content for _item_id, content in new_items]
+            refit_started.set()
+            await asyncio.to_thread(release_refit.wait)
+            return [[1.0, 0.0], [0.5, 0.5], [0.0, 1.0]]
+
+        async def generate_query_embedding(
+            _service: object,
+            _query: str,
+            **_kwargs: object,
+        ) -> list[float]:
+            return [1.0, 0.0]
+
+        def refit_in_worker_thread() -> None:
+            asyncio.run(backend.fit_async(new_items))
+
+        with (
+            patch(
+                "gobby.search.backends.embedding.EmbeddingService.generate_embeddings",
+                new=generate_embeddings,
+            ),
+            patch(
+                "gobby.search.backends.embedding.EmbeddingService.generate_embedding",
+                new=generate_query_embedding,
+            ),
+        ):
+            await backend.fit_async(old_items)
+            refit_task = asyncio.create_task(asyncio.to_thread(refit_in_worker_thread))
+            try:
+                assert await asyncio.to_thread(refit_started.wait, 5.0)
+                during_refit = await backend.search_async("query", top_k=10)
+            finally:
+                release_refit.set()
+                await refit_task
+
+            after_refit = await backend.search_async("query", top_k=10)
+
+        assert [item_id for item_id, _score in during_refit] == ["old-a"]
+        assert [item_id for item_id, _score in after_refit] == ["new-a", "new-b"]
+
+    @pytest.mark.asyncio
+    async def test_normalized_scan_matches_cosine_and_preserves_ties(self) -> None:
+        backend = EmbeddingBackend()
+        item_embeddings = [
+            [3.0, 4.0],
+            [6.0, 8.0],
+            [4.0, 3.0],
+            [0.0, 0.0],
+            [-3.0, -4.0],
+        ]
+        query_embedding = [3.0, 4.0]
+        items = [(f"id{index}", str(index)) for index in range(len(item_embeddings))]
+
+        with (
+            patch(
+                "gobby.search.backends.embedding.EmbeddingService.generate_embeddings",
+                new_callable=AsyncMock,
+                return_value=item_embeddings,
+            ),
+            patch(
+                "gobby.search.backends.embedding.EmbeddingService.generate_embedding",
+                new_callable=AsyncMock,
+                return_value=query_embedding,
+            ),
+        ):
+            await backend.fit_async(items)
+            with patch.object(
+                embedding_module,
+                "_normalize_vector",
+                wraps=embedding_module._normalize_vector,
+            ) as normalize_query:
+                results = await backend.search_async("query", top_k=10)
+
+        expected: list[tuple[str, float]] = []
+        for (item_id, _content), item_embedding in zip(items, item_embeddings, strict=True):
+            similarity = cosine_similarity(query_embedding, item_embedding)
+            if similarity > 0:
+                expected.append((item_id, similarity))
+        expected.sort(key=lambda result: result[1], reverse=True)
+
+        assert [item_id for item_id, _score in results] == [item_id for item_id, _score in expected]
+        assert [score for _item_id, score in results] == pytest.approx(
+            [score for _item_id, score in expected]
+        )
+        assert normalize_query.call_count == 1
+        assert results[0][0] == "id0"
+        assert results[1][0] == "id1"
+        normalized_norms = [
+            math.sqrt(sum(value * value for value in vector)) for vector in backend._item_embeddings
+        ]
+        assert normalized_norms == pytest.approx([1.0, 1.0, 1.0, 0.0, 1.0])
+
+    @pytest.mark.asyncio
+    async def test_large_embedding_scan_runs_off_event_loop(self) -> None:
+        backend = EmbeddingBackend()
+        item_count = 400
+        dimensions = 128
+        items = [(f"id{index}", str(index)) for index in range(item_count)]
+        item_embeddings = [
+            [1.0, *([float(index % 2)] * (dimensions - 1))] for index in range(item_count)
+        ]
+        query_embedding = [1.0] * dimensions
+        loop_thread = threading.get_ident()
+        worker_threads: list[int] = []
+        rank_embeddings = embedding_module._rank_embeddings
+        rank_started = threading.Event()
+        release_rank = threading.Event()
+
+        def blocking_rank(
+            item_ids: list[str],
+            normalized_embeddings: list[list[float]],
+            normalized_query: list[float],
+            top_k: int,
+        ) -> list[tuple[str, float]]:
+            worker_threads.append(threading.get_ident())
+            rank_started.set()
+            if not release_rank.wait(timeout=2):
+                raise TimeoutError("test did not release embedding rank")
+            return rank_embeddings(
+                item_ids,
+                normalized_embeddings,
+                normalized_query,
+                top_k,
+            )
+
+        with (
+            patch(
+                "gobby.search.backends.embedding.EmbeddingService.generate_embeddings",
+                new_callable=AsyncMock,
+                return_value=item_embeddings,
+            ),
+            patch(
+                "gobby.search.backends.embedding.EmbeddingService.generate_embedding",
+                new_callable=AsyncMock,
+                return_value=query_embedding,
+            ),
+        ):
+            await backend.fit_async(items)
+            with patch.object(embedding_module, "_rank_embeddings", side_effect=blocking_rank):
+                search_task = asyncio.create_task(backend.search_async("query", top_k=10))
+                try:
+                    started = await asyncio.to_thread(rank_started.wait, 2)
+                    assert started, "embedding rank did not start"
+                    assert not search_task.done(), "embedding scan stalled the event loop"
+                finally:
+                    release_rank.set()
+
+                results = await search_task
+
+        assert len(results) == 10
+        assert len(worker_threads) == 1
+        assert worker_threads[0] != loop_thread
 
     @pytest.mark.asyncio
     async def test_fit_dimension_mismatch_raises(self) -> None:

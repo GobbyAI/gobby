@@ -34,6 +34,7 @@ class _SkillIndexer:
         """Rebuild the search index from all skills."""
         skills = self._ctx.storage.list_skills(
             project_id=self._ctx.project_id,
+            enabled=True,
             limit=_MAX_SKILL_INDEX,
             include_global=True,
         )

@@ -338,6 +338,52 @@ class TestSearchTasksResults:
         assert result["count"] == 0
         assert result["tasks"] == []
 
+    def test_query_syntax_error_returns_actionable_typed_failure(
+        self,
+        task_manager: LocalTaskManager,
+    ) -> None:
+        from gobby.search.keyword import SearchQuerySyntaxError
+
+        ctx = _make_ctx(task_manager)
+        registry = create_search_registry(ctx)
+        func = registry.get_tool("search_tasks")
+
+        with patch.object(
+            task_manager,
+            "search_tasks",
+            side_effect=SearchQuerySyntaxError("title:("),
+        ):
+            result = func(query=" title:( ")
+
+        assert result == {
+            "error": (
+                "Search query could not be parsed: 'title:('. "
+                "Simplify the query to plain words and retry."
+            ),
+            "error_code": "SEARCH_QUERY_SYNTAX_ERROR",
+            "tasks": [],
+            "count": 0,
+            "query": "title:(",
+        }
+
+    def test_search_infrastructure_error_propagates(
+        self,
+        task_manager: LocalTaskManager,
+    ) -> None:
+        ctx = _make_ctx(task_manager)
+        registry = create_search_registry(ctx)
+        func = registry.get_tool("search_tasks")
+
+        with (
+            patch.object(
+                task_manager,
+                "search_tasks",
+                side_effect=RuntimeError("database connection lost"),
+            ),
+            pytest.raises(RuntimeError, match="connection lost"),
+        ):
+            func(query="alpha")
+
 
 class TestSearchTasksStageStateFilter:
     """Tests for current-stage-state filter handling."""

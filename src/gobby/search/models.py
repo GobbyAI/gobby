@@ -45,7 +45,7 @@ class SearchConfig(BaseModel):
     - keyword: PostgreSQL keyword search only
     - embedding: Embedding-based search only (fails if unavailable)
     - auto: Try embedding, fallback to keyword if unavailable
-    - hybrid: Combine both with weighted scores
+    - hybrid: Combine both with weighted reciprocal-rank fusion
     """
 
     model_config = ConfigDict(populate_by_name=True)
@@ -58,13 +58,13 @@ class SearchConfig(BaseModel):
         default=0.4,
         ge=0.0,
         le=1.0,
-        description="Weight for keyword scores in hybrid mode",
+        description="Weight for keyword rank contributions in hybrid mode",
     )
     embedding_weight: float = Field(
         default=0.6,
         ge=0.0,
         le=1.0,
-        description="Weight for embedding scores in hybrid mode",
+        description="Weight for embedding rank contributions in hybrid mode",
     )
     notify_on_fallback: bool = Field(
         default=True,

@@ -33,6 +33,8 @@ from gobby.search.models import FallbackEvent, SearchConfig, SearchMode
 
 logger = logging.getLogger(__name__)
 
+_RRF_RANK_CONSTANT = 60
+
 # Type alias for fallback event callback
 FallbackCallback = Callable[[FallbackEvent], None]
 
@@ -47,7 +49,7 @@ class UnifiedSearcher:
     - keyword: PostgreSQL keyword search only
     - embedding: Embedding-based only (fails if unavailable)
     - auto: Try embedding, fallback to keyword if unavailable
-    - hybrid: Combine both with weighted scores
+    - hybrid: Combine both with weighted reciprocal-rank fusion
 
     Fallback Behavior:
     When in "auto" mode and embedding fails (no API key, connection error,
@@ -404,38 +406,58 @@ class UnifiedSearcher:
         query: str,
         top_k: int,
     ) -> list[tuple[str, float]]:
-        """Perform hybrid search combining keyword and embedding scores."""
+        """Fuse keyword and embedding rankings into normalized scores.
+
+        Weighted reciprocal-rank fusion makes backend score scales irrelevant.
+        Each rank contribution is normalized so rank one scores 1.0, and the
+        configured weights are re-normalized across backends that returned
+        results. The final score therefore remains in the public [0, 1] range
+        even when one backend is unavailable.
+        """
         keyword_weight, embedding_weight = self._config.get_normalized_weights()
 
         # Get keyword results
         keyword_results = await self._get_keyword_backend().search_async(query, top_k * 2)
-        keyword_scores = dict(keyword_results)
 
         # Try to get embedding results
-        embedding_scores: dict[str, float] = {}
+        embedding_results: list[tuple[str, float]] = []
         if self._embedding_backend is not None and not self._using_fallback:
             try:
                 embedding_results = await self._embedding_backend.search_async(query, top_k * 2)
-                embedding_scores = dict(embedding_results)
             except Exception as e:
                 logger.warning(f"Hybrid embedding search failed: {e}")
                 self._emit_fallback_event(f"Hybrid search embedding failed: {e}", error=e)
                 # Continue with keyword only for this search
 
-        # Combine scores
-        all_ids = set(keyword_scores.keys()) | set(embedding_scores.keys())
-        combined: list[tuple[str, float]] = []
+        active_rankings = [
+            (results, weight)
+            for results, weight in (
+                (keyword_results, keyword_weight),
+                (embedding_results, embedding_weight),
+            )
+            if results
+        ]
+        if not active_rankings:
+            return []
 
-        for item_id in all_ids:
-            keyword_score = keyword_scores.get(item_id, 0.0)
-            emb_score = embedding_scores.get(item_id, 0.0)
-            combined_score = (keyword_weight * keyword_score) + (embedding_weight * emb_score)
-            combined.append((item_id, combined_score))
+        active_weight_total = sum(weight for _results, weight in active_rankings)
+        equal_weight = 1.0 / len(active_rankings)
+        combined_scores: dict[str, float] = {}
 
-        # Sort by combined score descending
-        combined.sort(key=lambda x: x[1], reverse=True)
+        for results, weight in active_rankings:
+            active_weight = (
+                weight / active_weight_total if active_weight_total > 0 else equal_weight
+            )
+            for rank, (item_id, _raw_score) in enumerate(results, start=1):
+                normalized_rank_score = (_RRF_RANK_CONSTANT + 1) / (_RRF_RANK_CONSTANT + rank)
+                combined_scores[item_id] = combined_scores.get(item_id, 0.0) + (
+                    active_weight * normalized_rank_score
+                )
 
-        return combined[:top_k]
+        return sorted(
+            combined_scores.items(),
+            key=lambda result: (-result[1], result[0]),
+        )[:top_k]
 
     def get_active_backend(self) -> str:
         """Get the name of the currently active backend.
