@@ -43,6 +43,11 @@ EXTENDED_TIMEOUT_TOOL_NAMES = (
     # 30s below this HTTP cap so structured timeout envelopes still arrive.
     "wiki_ask",
     "wiki_compile",
+    # Agent spawn performs bounded isolation repair (env preseed, hook copy),
+    # child-session creation, and tmux launch; under concurrent fleet load the
+    # daemon side exceeds 30s while still succeeding, so keep the caller alive
+    # for the authoritative run record instead of losing the result envelope.
+    "spawn_agent",
 )
 CLIENT_GUARDED_TOOL_NAMES = (*WAIT_TOOL_NAMES, *EXTENDED_TIMEOUT_TOOL_NAMES)
 HEARTBEAT_TOOL_NAMES = (*WAIT_TOOL_NAMES, *EXTENDED_TIMEOUT_TOOL_NAMES)
