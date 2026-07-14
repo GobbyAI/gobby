@@ -2208,7 +2208,10 @@ class TestReadUndigestedTurns:
                         "type": "user",
                         "message": {
                             "role": "user",
-                            "content": "<command-name>/clear</command-name>",
+                            "content": (
+                                "<command-name>/clear</command-name>\n"
+                                "<command-message>clear</command-message>"
+                            ),
                         },
                     }
                 )
@@ -2249,7 +2252,10 @@ class TestReadUndigestedTurns:
                     "type": "user",
                     "message": {
                         "role": "user",
-                        "content": "<command-name>/clear</command-name>",
+                        "content": (
+                            "<command-name>/clear</command-name>\n"
+                            "<command-message>clear</command-message>"
+                        ),
                     },
                 },
                 {
@@ -2306,7 +2312,10 @@ class TestReadUndigestedTurns:
                     "type": "user",
                     "message": {
                         "role": "user",
-                        "content": "<command-name>/clear</command-name>",
+                        "content": (
+                            "<command-name>/clear</command-name>\n"
+                            "<command-message>clear</command-message>"
+                        ),
                     },
                 },
                 {

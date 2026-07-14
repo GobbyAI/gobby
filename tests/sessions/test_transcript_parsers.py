@@ -268,7 +268,38 @@ class TestClaudeTranscriptParser:
         assert parser.is_session_boundary(
             {
                 "type": "user",
-                "message": {"content": "blah <command-name>/clear</command-name> blah"},
+                "message": {
+                    "content": (
+                        "<command-name>/clear</command-name>\n"
+                        "<command-message>clear</command-message>"
+                    )
+                },
+            }
+        )
+
+        # Quoted marker without the command-message sibling
+        assert not parser.is_session_boundary(
+            {
+                "type": "user",
+                "message": {"content": "quoted <command-name>/clear</command-name> marker"},
+            }
+        )
+
+        # Tool results may quote the complete command without being a boundary
+        assert not parser.is_session_boundary(
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "content": (
+                                "<command-name>/clear</command-name>\n"
+                                "<command-message>clear</command-message>"
+                            ),
+                        }
+                    ]
+                },
             }
         )
 
@@ -324,7 +355,15 @@ class TestClaudeTranscriptParser:
     def test_extract_turns_since_clear_with_boundary(self, parser) -> None:
         turns = [
             {"type": "user", "message": {"content": "before"}},
-            {"type": "user", "message": {"content": "<command-name>/clear</command-name>"}},
+            {
+                "type": "user",
+                "message": {
+                    "content": (
+                        "<command-name>/clear</command-name>\n"
+                        "<command-message>clear</command-message>"
+                    )
+                },
+            },
             {"type": "user", "message": {"content": "after1"}},
             {"type": "agent", "message": {"content": "after2"}},
         ]
@@ -335,10 +374,23 @@ class TestClaudeTranscriptParser:
 
     def test_extract_turns_since_clear_consecutive(self, parser) -> None:
         turns = [
-            {"type": "user", "message": {"content": "<command-name>/clear</command-name>"}},
             {
                 "type": "user",
-                "message": {"content": "<command-name>/clear</command-name>"},
+                "message": {
+                    "content": (
+                        "<command-name>/clear</command-name>\n"
+                        "<command-message>clear</command-message>"
+                    )
+                },
+            },
+            {
+                "type": "user",
+                "message": {
+                    "content": (
+                        "<command-name>/clear</command-name>\n"
+                        "<command-message>clear</command-message>"
+                    )
+                },
             },  # consecutive
             {"type": "user", "message": {"content": "real start"}},
         ]

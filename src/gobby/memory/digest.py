@@ -102,7 +102,7 @@ def _extract_digest_pairs(parser: Any, turns: list[dict[str, Any]]) -> list[tupl
         pairs.append((current_prompt, ""))
 
     def _is_lifecycle_prompt(prompt: str) -> bool:
-        normalized = re.sub(r"<[^>]+>", "", prompt).strip().lower()
+        normalized = " ".join(re.sub(r"<[^>]+>", "", prompt).lower().split())
         return any(
             normalized == command or normalized.startswith(command + " ")
             for command in LIFECYCLE_CMDS

@@ -268,7 +268,8 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
 
         Example:
             >>> parser = ClaudeTranscriptParser()
-            >>> turn = {"type": "user", "message": {"content": "<command-name>/clear</command-name>"}}
+            >>> content = "<command-name>/clear</command-name>\n<command-message>clear</command-message>"
+            >>> turn = {"type": "user", "message": {"content": content}}
             >>> parser.is_session_boundary(turn)
             True
         """
@@ -278,9 +279,11 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
         message = turn.get("message", {})
         content = message.get("content", "")
 
-        # Check for /clear command marker
-        # Check for /clear command marker
-        return "<command-name>/clear</command-name>" in str(content)
+        return (
+            isinstance(content, str)
+            and "<command-message>clear</command-message>" in content
+            and "<command-name>/clear</command-name>" in content
+        )
 
     def _validate_tool_pairing(
         self, turns: list[dict[str, Any]]
