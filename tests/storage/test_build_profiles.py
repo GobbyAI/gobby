@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -329,3 +330,54 @@ def test_sync_refreshes_legacy_hashed_bundled_row(
     )
     assert refreshed is not None
     assert refreshed["bundled_hash"] == new_hash
+
+
+def test_enabled_toggle_does_not_change_bundled_drift_hashes(temp_db: Any) -> None:
+    BuildProfileLoader().sync(temp_db)
+    manager = BuildProfileManager(temp_db)
+    row = temp_db.fetchone(
+        "SELECT * FROM build_profiles WHERE name = %s AND source = 'installed'",
+        ("default",),
+    )
+    assert row is not None
+    bundled_hash = row["bundled_hash"]
+    legacy_hash = manager.legacy_row_hash(row)
+
+    manager.set_enabled("default", source="installed", project_id=None, enabled=False)
+
+    toggled = temp_db.fetchone("SELECT * FROM build_profiles WHERE id = %s", (row["id"],))
+    assert toggled is not None
+    assert manager.row_hash(toggled) == bundled_hash
+    assert manager.legacy_row_hash(toggled) == legacy_hash
+
+
+def test_sync_refresh_preserves_installed_enabled_toggle(temp_db: Any, tmp_path: Path) -> None:
+    registry = tmp_path / "build_profiles.yaml"
+    registry.write_text(
+        """version: 1
+profiles:
+  - name: default
+    display_label: Default
+    description: Original description
+"""
+    )
+    loader = BuildProfileLoader(registry)
+    loader.sync(temp_db)
+    manager = BuildProfileManager(temp_db)
+    manager.set_enabled("default", source="installed", project_id=None, enabled=False)
+
+    registry.write_text(
+        """version: 1
+profiles:
+  - name: default
+    display_label: Default
+    description: Updated description
+"""
+    )
+    result = loader.sync(temp_db)
+
+    refreshed = manager.get("default", source="installed", project_id=None)
+    assert result.upserted == 1
+    assert refreshed is not None
+    assert refreshed.description == "Updated description"
+    assert refreshed.enabled is False
