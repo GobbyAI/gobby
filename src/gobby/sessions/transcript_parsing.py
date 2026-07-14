@@ -45,7 +45,10 @@ def _get_parser(
         return CodexTranscriptParser(session_id=session_id)
     if source == "droid":
         return DroidTranscriptParser(session_id=session_id, transcript_path=transcript_path)
-    return ClaudeTranscriptParser(session_id=session_id)
+    if source == "claude":
+        return ClaudeTranscriptParser(session_id=session_id)
+    source_label = repr(source) if source else "<empty>"
+    raise ValueError(f"Unsupported transcript source: {source_label}")
 
 
 def _parse_lines(
