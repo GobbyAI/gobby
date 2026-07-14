@@ -111,15 +111,21 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
             db_cfg = runner.config.databases
             emb_cfg = runner.config.embeddings
             embedding_api_key = _resolve_embedding_api_key(runner, emb_cfg)
+            embeddings_enabled = False
             if runner.llm_service:
-                _validate_memory_embedding_config(emb_cfg, api_key=embedding_api_key)
+                try:
+                    _validate_memory_embedding_config(emb_cfg, api_key=embedding_api_key)
+                except ValueError as e:
+                    logger.warning("Memory embeddings disabled: %s", e)
+                else:
+                    embeddings_enabled = True
             runner.vector_store = VectorStore(
                 url=db_cfg.qdrant.url,
                 api_key=db_cfg.qdrant.api_key,
                 embedding_dim=emb_cfg.dim,
             )
             embed_fn: Callable[..., Any] | None = None
-            if runner.llm_service:
+            if embeddings_enabled:
                 embedding_service = EmbeddingService(
                     model=emb_cfg.model,
                     api_base=emb_cfg.api_base,
