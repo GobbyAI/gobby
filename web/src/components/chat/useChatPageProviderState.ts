@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 
 import type {
   ChatState,
@@ -46,10 +52,15 @@ export function useChatPageProviderState({
   projectId,
   confirm,
 }: UseChatPageProviderStateArgs) {
+  const latestChatRef = useRef(chat);
   const [availableProviders, setAvailableProviders] = useState<string[]>([]);
   const [providerModelCatalog, setProviderModelCatalog] = useState<
     ProviderModelEntry[]
   >([]);
+
+  useLayoutEffect(() => {
+    latestChatRef.current = chat;
+  }, [chat]);
 
   const viewingMeta = chat.viewingSessionMeta ?? chat.attachedSessionMeta ?? null;
   const isSwappedTerminal = viewingMeta?.sessionType === "terminal";
@@ -202,6 +213,7 @@ export function useChatPageProviderState({
       ) {
         return;
       }
+      const viewingSessionId = chat.viewingSessionId;
 
       const confirmChange = canAttachViewedSession
         ? await confirm({
@@ -213,22 +225,43 @@ export function useChatPageProviderState({
         : true;
       if (!confirmChange) return;
 
-      chat.onProviderChange?.(provider);
+      const currentChat = latestChatRef.current;
+      const currentViewingMeta =
+        currentChat.viewingSessionMeta ?? currentChat.attachedSessionMeta ?? null;
+      if (
+        currentChat.viewingSessionId !== viewingSessionId ||
+        currentViewingMeta?.sessionType !== "terminal" ||
+        currentViewingMeta.agentRunId ||
+        !currentChat.continueSessionInChat
+      ) {
+        return;
+      }
+
+      try {
+        await currentChat.continueSessionInChat(
+          viewingSessionId,
+          projectId ?? undefined,
+          {
+            provider,
+            model,
+            reasoningEffort,
+            chatMode: currentViewingMeta.chatMode ?? null,
+            fallbackContext: "auto",
+          },
+        );
+      } catch (error) {
+        console.error("Failed to change provider for viewed session:", error);
+        currentChat.addSystemMessage(
+          "Failed to change provider. The terminal session is still running.",
+        );
+        return;
+      }
+
+      currentChat.onProviderChange?.(provider);
       onModelChange?.(model);
       if (reasoningEffort) {
         onReasoningPreferenceChange?.(provider, model, reasoningEffort);
       }
-      await chat.continueSessionInChat(
-        chat.viewingSessionId,
-        projectId ?? undefined,
-        {
-          provider,
-          model,
-          reasoningEffort,
-          chatMode: viewingMeta?.chatMode ?? null,
-          fallbackContext: "auto",
-        },
-      );
     },
     [
       chat,
@@ -238,7 +271,6 @@ export function useChatPageProviderState({
       onModelChange,
       onReasoningPreferenceChange,
       projectId,
-      viewingMeta?.chatMode,
       canAttachViewedSession,
     ],
   );
