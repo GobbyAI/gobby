@@ -7,10 +7,12 @@ This service delegates all GitHub operations to the official GitHub MCP server
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.integrations.github import GitHubIntegration
 from gobby.integrations.github_helper import parse_github_mcp_result, parse_github_repo
+from gobby.tasks.state_semantics import is_task_closed
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.manager import MCPClientManager
@@ -174,6 +176,23 @@ class GitHubSyncService:
             issue_labels = [
                 lbl["name"] if isinstance(lbl, dict) else lbl for lbl in (issue.get("labels") or [])
             ]
+            mapped_labels = self.map_github_labels_to_gobby(issue_labels)
+            issue_state = issue.get("state")
+            lifecycle_updates: dict[str, Any] = {}
+            if issue_state == "closed":
+                lifecycle_updates = {
+                    "closed_at": issue.get("closed_at") or datetime.now(UTC).isoformat(),
+                    "closed_reason": "github_sync",
+                    "closed_in_session_id": None,
+                    "closed_commit_sha": None,
+                }
+            elif issue_state == "open":
+                lifecycle_updates = {
+                    "closed_at": None,
+                    "closed_reason": None,
+                    "closed_in_session_id": None,
+                    "closed_commit_sha": None,
+                }
 
             # Dedup: check if task already exists for this repo + issue number
             existing = self._find_task_by_github_issue(repo, issue_number)
@@ -182,8 +201,10 @@ class GitHubSyncService:
                     existing.id,
                     title=title,
                     description=description,
-                    labels=issue_labels or None,
+                    labels=mapped_labels or None,
                 )
+                if lifecycle_updates:
+                    self.task_manager.reconcile_task_state(existing.id, **lifecycle_updates)
                 refreshed = self.task_manager.get_task(existing.id)
                 if refreshed:
                     updated.append(refreshed.to_dict())
@@ -194,8 +215,10 @@ class GitHubSyncService:
                     description=description,
                     github_issue_number=issue_number,
                     github_repo=repo,
-                    labels=issue_labels or None,
+                    labels=mapped_labels or None,
                 )
+                if lifecycle_updates:
+                    task = self.task_manager.reconcile_task_state(task.id, **lifecycle_updates)
                 imported.append(task.to_dict())
 
         all_tasks = imported + updated
@@ -263,6 +286,8 @@ class GitHubSyncService:
                 "issue_number": task.github_issue_number,
                 "title": task.title,
                 "body": task.description or "",
+                "state": "closed" if is_task_closed(task) else "open",
+                "labels": self.map_gobby_labels_to_github(task.labels or []),
             },
         )
 

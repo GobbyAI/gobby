@@ -35,6 +35,7 @@ def mock_task_manager():
     manager = MagicMock()
     manager.create_task = MagicMock()
     manager.update_task = MagicMock()
+    manager.reconcile_task_state = MagicMock()
     manager.get_task = MagicMock()
     manager.list_tasks = MagicMock(return_value=[])
     # Mock db.execute() for dedup queries — return no existing tasks by default
@@ -218,6 +219,39 @@ class TestGitHubSyncServiceImport:
         )
 
     @pytest.mark.asyncio
+    async def test_import_closed_issue_maps_labels_and_closes_task(
+        self, sync_service, mock_mcp_manager, mock_task_manager
+    ):
+        """Closed GitHub issues create closed tasks with mapped labels."""
+        mock_mcp_manager.call_tool.return_value = {
+            "issues": [
+                {
+                    "number": 123,
+                    "title": "Closed issue",
+                    "state": "closed",
+                    "closed_at": "2026-07-14T12:00:00Z",
+                    "labels": [{"name": "gobby:bug"}],
+                }
+            ]
+        }
+        created = MagicMock(id="new-task-id")
+        reconciled = MagicMock()
+        reconciled.to_dict.return_value = {"id": "new-task-id"}
+        mock_task_manager.create_task.return_value = created
+        mock_task_manager.reconcile_task_state.return_value = reconciled
+
+        await sync_service.import_github_issues(repo="owner/repo")
+
+        assert mock_task_manager.create_task.call_args.kwargs["labels"] == ["gobby:bug"]
+        mock_task_manager.reconcile_task_state.assert_called_once_with(
+            "new-task-id",
+            closed_at="2026-07-14T12:00:00Z",
+            closed_reason="github_sync",
+            closed_in_session_id=None,
+            closed_commit_sha=None,
+        )
+
+    @pytest.mark.asyncio
     async def test_import_issues_raises_when_unavailable(self, mock_mcp_manager, mock_task_manager):
         """import_github_issues raises RuntimeError when GitHub unavailable."""
         mock_mcp_manager.has_server.return_value = False
@@ -260,6 +294,30 @@ class TestGitHubSyncServiceDedup:
         assert len(result) == 1
 
     @pytest.mark.asyncio
+    async def test_import_open_issue_reopens_existing_task(
+        self, sync_service, mock_mcp_manager, mock_task_manager
+    ):
+        """Open GitHub issues clear close metadata on existing tasks."""
+        mock_mcp_manager.call_tool.return_value = {
+            "issues": [{"number": 1, "title": "Reopened", "state": "open"}]
+        }
+        mock_task_manager.db.execute.return_value.fetchone.return_value = {"id": "existing-task-id"}
+        existing_task = MagicMock(id="existing-task-id")
+        existing_task.to_dict.return_value = {"id": "existing-task-id"}
+        mock_task_manager.get_task.return_value = existing_task
+
+        result = await sync_service.import_github_issues(repo="owner/repo")
+
+        mock_task_manager.reconcile_task_state.assert_called_once_with(
+            "existing-task-id",
+            closed_at=None,
+            closed_reason=None,
+            closed_in_session_id=None,
+            closed_commit_sha=None,
+        )
+        assert result == [{"id": "existing-task-id"}]
+
+    @pytest.mark.asyncio
     async def test_import_creates_new_task_when_no_existing(
         self, sync_service, mock_mcp_manager, mock_task_manager
     ):
@@ -285,6 +343,8 @@ class TestGitHubSyncServiceSync:
         mock_task.github_repo = "owner/repo"
         mock_task.title = "Updated Title"
         mock_task.description = "Updated description"
+        mock_task.closed_at = "2026-07-14T12:00:00Z"
+        mock_task.labels = ["bug", "priority:high"]
 
         sync_service.task_manager.get_task.return_value = mock_task
         mock_mcp_manager.call_tool.return_value = CallToolResult(
@@ -297,6 +357,29 @@ class TestGitHubSyncServiceSync:
         mock_mcp_manager.call_tool.assert_called()
         assert mock_mcp_manager.call_tool.call_count >= 1
         assert mock_mcp_manager.call_tool.call_args is not None
+        assert mock_mcp_manager.call_tool.call_args.kwargs["arguments"]["state"] == "closed"
+        assert mock_mcp_manager.call_tool.call_args.kwargs["arguments"]["labels"] == [
+            "bug",
+            "priority:high",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_sync_open_task_reopens_github_issue(self, sync_service, mock_mcp_manager):
+        """An open Gobby task pushes GitHub issue state as open."""
+        task = SimpleNamespace(
+            github_issue_number=42,
+            github_repo="owner/repo",
+            title="Reopened task",
+            description=None,
+            closed_at=None,
+            labels=[],
+        )
+        sync_service.task_manager.get_task.return_value = task
+        mock_mcp_manager.call_tool.return_value = {"success": True}
+
+        await sync_service.sync_task_to_github(task_id="test-task-id")
+
+        assert mock_mcp_manager.call_tool.call_args.kwargs["arguments"]["state"] == "open"
 
     @pytest.mark.asyncio
     async def test_sync_task_raises_when_no_issue_number(self, sync_service, mock_task_manager):
