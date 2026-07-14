@@ -7,6 +7,7 @@ from collections.abc import Sequence
 
 import pytest
 
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SYSTEM_SESSION_ID, SessionManager
 from gobby.storage.sessions import _crud as session_crud
@@ -718,6 +719,40 @@ class TestSessionManagerRegistration:
             assert recovered.title == "Recovered"
         finally:
             session_manager.db.execute("DROP INDEX IF EXISTS idx_sessions_unique_legacy_test")
+
+    def test_register_cross_project_recovery_allocates_destination_seq_num(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        destination = LocalProjectManager(session_manager.db).create(
+            name="registration-recovery-destination",
+            repo_path="/tmp/registration-recovery-destination",
+        )
+        original = session_manager.register(
+            external_id="cross-project-recovery",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        for index in range(2):
+            session_manager.register(
+                external_id=f"destination-session-{index}",
+                machine_id="machine-1",
+                source="codex",
+                project_id=destination.id,
+            )
+
+        recovered = session_manager.register(
+            external_id="cross-project-recovery",
+            machine_id="machine-1",
+            source="codex",
+            project_id=destination.id,
+        )
+
+        assert recovered.id == original.id
+        assert recovered.project_id == destination.id
+        assert recovered.seq_num == 3
 
     def test_get_session(
         self,

@@ -51,6 +51,8 @@ class _SessionCRUDHost(Protocol):
 
     def get(self, session_id: str) -> Session | None: ...
 
+    def move_to_project(self, session_id: str, project_id: str) -> Session | None: ...
+
     def _notify_session_change(self, event: str, session_id: str) -> None: ...
 
     def register(
@@ -164,17 +166,16 @@ class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
                         session_type=session_type,
                     )
                     if existing and existing.project_id != project_id:
-                        conn.execute(
-                            "UPDATE sessions SET project_id = %s, updated_at = %s WHERE id = %s",
-                            (project_id, now, existing.id),
-                        )
+                        previous_project_id = existing.project_id
+                        existing = self.move_to_project(existing.id, project_id)
+                        if existing is None:
+                            raise RuntimeError("Recovered session disappeared during project move")
                         get_logger().info(
                             "Recovered session %s: project_id %s -> %s",
                             existing.id,
-                            existing.project_id,
+                            previous_project_id,
                             project_id,
                         )
-                        existing = self.get(existing.id)
 
             if existing:
                 registration_title = title
@@ -363,6 +364,37 @@ class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
 
         self._notify_session_change(change_event, session.id)
         return session
+
+    def move_to_project(
+        self: _SessionCRUDHost,
+        session_id: str,
+        project_id: str,
+    ) -> Session | None:
+        """Move a session and allocate its sequence number in the destination project."""
+        with self.db.transaction_immediate(SessionSeqMutation(project_id=project_id)) as conn:
+            existing = self.get(session_id)
+            if existing is None:
+                return None
+            if existing.project_id == project_id:
+                return existing
+
+            max_seq_row = conn.execute(
+                "SELECT MAX(seq_num) AS max_seq FROM sessions WHERE project_id = %s",
+                (project_id,),
+            ).fetchone()
+            next_seq_num = ((max_seq_row["max_seq"] if max_seq_row else None) or 0) + 1
+            conn.execute(
+                """
+                UPDATE sessions
+                SET project_id = %s, seq_num = %s, updated_at = %s
+                WHERE id = %s
+                """,
+                (project_id, next_seq_num, utc_now(), existing.id),
+            )
+            moved = self.get(existing.id)
+            if moved is None:
+                raise RuntimeError(f"Session {existing.id} not found after project move")
+            return moved
 
     def get(self: _SessionCRUDHost, session_id: str) -> Session | None:
         """Get session by ID."""
