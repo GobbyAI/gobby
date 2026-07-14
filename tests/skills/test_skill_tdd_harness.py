@@ -620,3 +620,31 @@ def test_yaml_skill_loads_strict_config_boundary_pattern() -> None:
     assert result.loaded.actions[3]["path"] == "references/ci-and-platform-boundaries.md"
     assert result.loaded.actions[4]["path"] == "references/security-and-secrets.md"
     assert result.has_behavioral_delta
+
+
+def test_pipelines_and_cron_selects_current_automation_paths() -> None:
+    result = run_recorded_skill_scenario(
+        SCENARIOS / "pipelines-and-cron/select-automation-path.yaml"
+    )
+
+    assert result.baseline.action_names == (
+        "run_gobby_build",
+        "write_agent_definition",
+        "respond",
+    )
+    assert result.loaded.action_names == (
+        "classify_automation_path",
+        "write_pipeline_yaml",
+        "validate_pipeline_definition",
+        "create_pipeline",
+        "run_pipeline",
+        "get_pipeline_status",
+        "create_cron_job",
+        "run_cron_job",
+        "list_cron_runs",
+        "respond",
+    )
+    assert result.loaded.actions[0]["deterministic"] == "pipeline"
+    assert result.loaded.actions[0]["scheduled"] == "cron"
+    assert result.loaded.actions[0]["task_lifecycle"] == "build_dispatch"
+    assert result.has_behavioral_delta
