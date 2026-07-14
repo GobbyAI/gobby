@@ -18,6 +18,13 @@ if TYPE_CHECKING:
     from starlette.types import ASGIApp
 
 
+def _route_template(request: Request) -> str:
+    """Return the matched route template without exposing raw request paths."""
+    route = request.scope.get("route")
+    path = getattr(route, "path", None)
+    return path if isinstance(path, str) else "unmatched"
+
+
 class TelemetryMiddleware(BaseHTTPMiddleware):
     """
     FastAPI middleware for automated metrics and tracing.
@@ -35,28 +42,9 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
     ) -> Response:
         start_time = time.perf_counter()
 
-        # Extract attributes for labeling
-        method = request.method
-        path = request.url.path
-
-        # Try to get route path from scope (FastAPI sets this)
-        route_path = path
-        if "route" in request.scope:
-            route_path = request.scope["route"].path
-
         attributes = {
-            "http.method": method,
-            "http.target": route_path,
+            "http.method": request.method,
         }
-
-        # Add project/session context if available in headers/query
-        session_id = request.headers.get("X-Session-ID") or request.query_params.get("session_id")
-        if session_id:
-            attributes["session_id"] = str(session_id)
-
-        project_id = request.headers.get("X-Project-ID") or request.query_params.get("project_id")
-        if project_id:
-            attributes["project_id"] = str(project_id)
 
         try:
             response = await call_next(request)
@@ -64,6 +52,7 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
             # Record metrics
             duration = time.perf_counter() - start_time
             status_code = response.status_code
+            attributes["http.target"] = _route_template(request)
             attributes["http.status_code"] = str(status_code)
 
             self.metrics.inc_counter("http_requests_total", attributes=attributes)
@@ -79,6 +68,7 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
         except Exception:
             # Record error
             duration = time.perf_counter() - start_time
+            attributes["http.target"] = _route_template(request)
             attributes["http.status_code"] = "500"
 
             self.metrics.inc_counter("http_requests_total", attributes=attributes)
