@@ -55,6 +55,7 @@ const DIFF_BTN_ACTIVE_CLS = ''
 
 const VIEWER_CLS = 'flex flex-1 flex-col overflow-hidden'
 const CODE_VIEWER_CLS = 'min-h-0 flex-1 overflow-auto [&>div]:min-h-full'
+const EDITOR_CLS = 'flex min-h-0 flex-1 flex-col'
 
 const MARKDOWN_VIEWER_CLS =
   'overflow-wrap-break-word px-6 py-4 text-[length:var(--text-base)] leading-[1.7] text-[var(--text-primary)]'
@@ -65,6 +66,8 @@ const EMPTY_VIEWER_CLS =
 const VIEWER_STATUS_CLS =
   'flex flex-1 flex-col items-center justify-center gap-2 text-[length:var(--text-base)] text-[var(--text-muted)]'
 const VIEWER_ERROR_CLS = 'text-[var(--color-error)]'
+const SAVE_ERROR_CLS =
+  'flex items-center justify-between gap-3 border-b border-[var(--color-error)] bg-[var(--bg-secondary)] px-3 py-2 text-[length:var(--text-sm)] text-[var(--color-error)]'
 const VIEWER_MUTED_CLS = 'text-[length:var(--text-sm)] text-[var(--text-muted)]'
 
 const IMAGE_VIEWER_CLS = 'flex flex-1 flex-col items-center justify-center gap-4 overflow-auto p-8'
@@ -109,6 +112,7 @@ interface FilesPageProps {
   onToggleEditing: (index: number) => void
   onCancelEditing: (index: number) => void
   onUpdateEditContent: (index: number, content: string) => void
+  onClearSaveError: (index: number) => void
   onSaveFile: (index: number) => void
   gitStatuses: Map<string, GitStatus>
   onFetchDiff: (projectId: string, path: string) => Promise<string>
@@ -130,6 +134,7 @@ export function FilesPage({
   onToggleEditing,
   onCancelEditing,
   onUpdateEditContent,
+  onClearSaveError,
   onSaveFile,
   gitStatuses,
   onFetchDiff,
@@ -356,6 +361,7 @@ export function FilesPage({
               file={activeFile}
               getImageUrl={getImageUrl}
               onContentChange={(content) => onUpdateEditContent(activeFileIndex, content)}
+              onDismissSaveError={() => onClearSaveError(activeFileIndex)}
               onSave={() => onSaveFile(activeFileIndex)}
               editorViewRef={editorViewRef}
             />
@@ -537,10 +543,18 @@ function TreeEntry({ entry, projectId, depth, expandedDirs, loadingDirs, gitFile
   )
 }
 
-function FileContent({ file, getImageUrl, onContentChange, onSave, editorViewRef }: {
+function FileContent({
+  file,
+  getImageUrl,
+  onContentChange,
+  onDismissSaveError,
+  onSave,
+  editorViewRef,
+}: {
   file: OpenFile
   getImageUrl: (projectId: string, path: string) => string
   onContentChange: (content: string) => void
+  onDismissSaveError: () => void
   onSave: () => void
   editorViewRef?: React.MutableRefObject<EditorView | null>
 }) {
@@ -585,15 +599,30 @@ function FileContent({ file, getImageUrl, onContentChange, onSave, editorViewRef
 
   if (file.editing) {
     return (
-      <div className={CODE_VIEWER_CLS}>
-        <CodeMirrorEditor
-          content={file.editContent ?? file.content}
-          language={file.language}
-          readOnly={false}
-          onChange={onContentChange}
-          onSave={onSave}
-          editorViewRef={editorViewRef}
-        />
+      <div className={EDITOR_CLS}>
+        {file.saveError && (
+          <div className={SAVE_ERROR_CLS} role="alert">
+            <span>Save failed: {file.saveError}</span>
+            <button
+              className={ICON_BTN_CLS}
+              onClick={onDismissSaveError}
+              aria-label="Dismiss save error"
+              title="Dismiss"
+            >
+              <XIcon />
+            </button>
+          </div>
+        )}
+        <div className={CODE_VIEWER_CLS}>
+          <CodeMirrorEditor
+            content={file.editContent ?? file.content}
+            language={file.language}
+            readOnly={false}
+            onChange={onContentChange}
+            onSave={onSave}
+            editorViewRef={editorViewRef}
+          />
+        </div>
       </div>
     )
   }
