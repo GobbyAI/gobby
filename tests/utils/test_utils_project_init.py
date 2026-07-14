@@ -1,6 +1,7 @@
 """Tests for the project initialization utilities."""
 
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -678,6 +679,31 @@ class TestWriteProjectJson:
         content = json.loads(project_file.read_text())
         assert content["id"] == "new-id"
         assert content["name"] == "new-name"
+
+    def test_destination_stays_complete_until_atomic_replace(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cwd = tmp_path / "project"
+        project_file = cwd / ".gobby" / "project.json"
+        project_file.parent.mkdir(parents=True)
+        original = {"id": "old-id", "name": "old-name"}
+        project_file.write_text(json.dumps(original), encoding="utf-8")
+        real_replace = os.replace
+
+        def assert_complete_then_replace(src: str, dst: str | Path) -> None:
+            assert json.loads(Path(dst).read_text(encoding="utf-8")) == original
+            assert json.loads(Path(src).read_text(encoding="utf-8")) == {
+                "id": "new-id",
+                "name": "new-name",
+                "created_at": "2024-01-01",
+            }
+            real_replace(src, dst)
+
+        monkeypatch.setattr("gobby.utils.project_init.os.replace", assert_complete_then_replace)
+
+        _write_project_json(cwd, "new-id", "new-name", "2024-01-01")
+
+        assert json.loads(project_file.read_text(encoding="utf-8"))["id"] == "new-id"
 
     def test_handles_existing_gobby_dir(self, tmp_path: Path) -> None:
         """Test that existing .gobby directory is handled correctly."""

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -18,6 +20,27 @@ from psycopg.errors import UniqueViolation
 from gobby.utils.datetime import datetime_to_required_iso
 
 logger = logging.getLogger(__name__)
+
+
+def _atomic_write_project_json(project_file: Path, project_data: dict[str, Any]) -> None:
+    """Serialize project data before atomically replacing project.json."""
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{project_file.name}.",
+        suffix=".tmp",
+        dir=str(project_file.parent),
+        text=True,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as tmp:
+            json.dump(project_data, tmp, indent=2)
+            tmp.write("\n")
+        os.replace(tmp_name, project_file)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError as exc:
+            logger.debug("Failed to clean up temp project.json %s: %s", tmp_name, exc)
+        raise
 
 
 def _optional_str(value: object) -> str | None:
@@ -299,8 +322,7 @@ def _update_project_json_verification(
     if merged_custom:
         project_data["verification"]["custom"] = merged_custom
 
-    with open(project_file, "w") as f:
-        json.dump(project_data, f, indent=2)
+    _atomic_write_project_json(project_file, project_data)
 
     logger.debug(f"Updated verification in {project_file}")
 
@@ -321,9 +343,7 @@ def update_project_json_fields(cwd: Path, **fields: Any) -> None:
     for key, value in fields.items():
         project_data[key] = value
 
-    with open(project_file, "w", encoding="utf-8") as f:
-        json.dump(project_data, f, indent=2)
-        f.write("\n")
+    _atomic_write_project_json(project_file, project_data)
 
     logger.debug(f"Updated project.json fields in {project_file}")
 
@@ -366,8 +386,6 @@ def _write_project_json(
         if verification_dict:
             project_data["verification"] = verification_dict
 
-    with open(project_file, "w") as f:
-        json.dump(project_data, f, indent=2)
-        f.write("\n")
+    _atomic_write_project_json(project_file, project_data)
 
     logger.debug(f"Wrote project.json to {project_file}")
