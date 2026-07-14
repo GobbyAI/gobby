@@ -27,6 +27,38 @@ from gobby.sync.linear_support import (
     map_linear_state_to_gobby as _map_linear_state_to_gobby,
 )
 
+_LINEAR_ISSUE_PAGE_SIZE = 100
+
+
+def _next_linear_issue_cursor(result: Any, page_size: int) -> str | None:
+    if not isinstance(result, dict):
+        if page_size < _LINEAR_ISSUE_PAGE_SIZE:
+            return None
+        raise LinearSyncError("Linear MCP returned a full issue page without pagination metadata")
+
+    pagination = result
+    issues = result.get("issues")
+    if isinstance(issues, dict):
+        pagination = issues
+    page_info = pagination.get("pageInfo")
+    if isinstance(page_info, dict):
+        pagination = page_info
+
+    has_next_page = pagination.get("hasNextPage")
+    if has_next_page is None:
+        if page_size < _LINEAR_ISSUE_PAGE_SIZE:
+            return None
+        raise LinearSyncError("Linear MCP returned a full issue page without pagination metadata")
+    if not isinstance(has_next_page, bool):
+        raise LinearSyncError("Linear MCP returned invalid hasNextPage pagination metadata")
+    if not has_next_page:
+        return None
+
+    cursor = pagination.get("cursor", pagination.get("endCursor"))
+    if not isinstance(cursor, str) or not cursor:
+        raise LinearSyncError("Linear MCP reported another issue page without a cursor")
+    return cursor
+
 
 def _parse_linear_timestamp(value: str | datetime | None) -> datetime | None:
     if isinstance(value, datetime):
@@ -112,6 +144,37 @@ def _linear_lifecycle_fields(
 class LinearTaskOpsMixin(LinearProjectOpsMixin):
     """Task-level Linear import, push, pull, and sync operations."""
 
+    async def _list_issues_via_mcp(
+        self,
+        team_id: str,
+        *,
+        state: str | None = None,
+        labels: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        issues: list[dict[str, Any]] = []
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
+
+        while True:
+            result = await self.mcp_manager.call_tool(
+                server_name="linear",
+                tool_name="list_issues",
+                arguments=self._issue_list_args(
+                    team_id,
+                    state=state,
+                    labels=labels,
+                    cursor=cursor,
+                ),
+            )
+            page = _extract_records(result)
+            issues.extend(page)
+            cursor = _next_linear_issue_cursor(result, len(page))
+            if cursor is None:
+                return issues
+            if cursor in seen_cursors:
+                raise LinearSyncError("Linear MCP repeated an issue pagination cursor")
+            seen_cursors.add(cursor)
+
     async def import_linear_issues(
         self,
         team_id: str | None = None,
@@ -125,17 +188,14 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
         if not effective_team_id:
             raise ValueError("No team_id provided and no default linear_team_id configured.")
 
-        args = self._issue_list_args(effective_team_id, state=state, labels=labels)
-
         try:
             if not self._linear_mcp_has_tool("list_issues"):
                 raise LinearSyncError("Linear MCP server does not expose list_issues.")
-            result = await self.mcp_manager.call_tool(
-                server_name="linear",
-                tool_name="list_issues",
-                arguments=args,
+            issues = await self._list_issues_via_mcp(
+                effective_team_id,
+                state=state,
+                labels=labels,
             )
-            issues = _extract_records(result)
         except LinearSyncError:
             client = await self._get_graphql_client()
             if not client:
@@ -361,13 +421,8 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
         """Find a deterministic existing Linear issue for a Gobby task."""
         issues: list[dict[str, Any]] | None = None
         if self._linear_mcp_has_tool("list_issues"):
-            result = await self.mcp_manager.call_tool(
-                server_name="linear",
-                tool_name="list_issues",
-                arguments=self._issue_list_args(team_id),
-            )
             try:
-                issues = _extract_records(result)
+                issues = await self._list_issues_via_mcp(team_id)
             except LinearSyncError as exc:
                 logger.warning(
                     "Failed to parse Linear issues while checking for existing %s: %s",
@@ -477,12 +532,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
         try:
             if not self._linear_mcp_has_tool("list_issues"):
                 raise LinearSyncError("Linear MCP server does not expose list_issues.")
-            result = await self.mcp_manager.call_tool(
-                server_name="linear",
-                tool_name="list_issues",
-                arguments=self._issue_list_args(effective_team_id),
-            )
-            issues = _extract_records(result)
+            issues = await self._list_issues_via_mcp(effective_team_id)
         except LinearSyncError as e:
             client = await self._get_graphql_client()
             if not client:
@@ -511,7 +561,8 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
             linear_id = row["linear_issue_id"]
             issue = issue_map.get(linear_id)
             if not issue:
-                stats["skipped"] += 1
+                logger.warning("Linked Linear issue %s was missing for task %s", linear_id, task_id)
+                stats["errors"] += 1
                 continue
 
             try:

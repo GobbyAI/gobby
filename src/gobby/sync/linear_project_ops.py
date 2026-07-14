@@ -254,8 +254,9 @@ class LinearProjectOpsMixin:
         team_id: str,
         state: str | None = None,
         labels: list[str] | None = None,
+        cursor: str | None = None,
     ) -> dict[str, Any]:
-        args: dict[str, Any] = {"teamId": team_id}
+        args: dict[str, Any] = {"teamId": team_id, "limit": 100}
         linear_project_id = self._get_linear_project_id()
         if linear_project_id:
             args["projectId"] = linear_project_id
@@ -263,4 +264,6 @@ class LinearProjectOpsMixin:
             args["state"] = state
         if labels:
             args["labels"] = labels
+        if cursor:
+            args["cursor"] = cursor
         return args

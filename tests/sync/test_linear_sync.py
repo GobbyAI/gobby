@@ -471,6 +471,62 @@ class TestLinearSyncServiceImport:
         call = mock_mcp_manager.call_tool.call_args
         assert call.kwargs["arguments"]["teamId"] == "team-123"
         assert call.kwargs["arguments"]["projectId"] == "lin-proj"
+        assert call.kwargs["arguments"]["limit"] == 100
+
+    @pytest.mark.asyncio
+    async def test_linear_mcp_issue_listing_fetches_every_cursor_page(
+        self, sync_service: LinearSyncService, mock_mcp_manager
+    ) -> None:
+        first_page = [{"id": f"issue-{index}"} for index in range(100)]
+        second_page = [{"id": f"issue-{index}"} for index in range(100, 125)]
+        mock_mcp_manager.call_tool.side_effect = [
+            {"issues": first_page, "hasNextPage": True, "cursor": "cursor-100"},
+            {"issues": second_page, "hasNextPage": False, "cursor": None},
+        ]
+
+        issues = await sync_service._list_issues_via_mcp("team-123")
+
+        assert [issue["id"] for issue in issues] == [f"issue-{index}" for index in range(125)]
+        calls = mock_mcp_manager.call_tool.await_args_list
+        assert calls[0].kwargs["arguments"] == {
+            "teamId": "team-123",
+            "limit": 100,
+            "projectId": "lin-proj",
+        }
+        assert calls[1].kwargs["arguments"] == {
+            "teamId": "team-123",
+            "limit": 100,
+            "projectId": "lin-proj",
+            "cursor": "cursor-100",
+        }
+
+    @pytest.mark.asyncio
+    async def test_sync_all_preserves_cursor_when_linked_issue_is_missing(
+        self,
+        sync_service: LinearSyncService,
+        mock_mcp_manager,
+        mock_task_manager,
+    ) -> None:
+        mock_task_manager.db.fetchall.return_value = [
+            {"id": "task-1", "linear_issue_id": "missing-issue"}
+        ]
+        mock_mcp_manager.call_tool.return_value = {"issues": []}
+        sync_service._get_project_synced_at = MagicMock(return_value="old-cursor")
+        sync_service._update_synced_at = MagicMock()
+        sync_service.push_dirty_tasks = AsyncMock()
+
+        result = await sync_service.sync_all(team_id="team-123")
+
+        assert result["pull"] == {
+            "updated": 0,
+            "skipped": 0,
+            "errors": 1,
+            "deferred": 0,
+        }
+        assert result["cursor_updated"] is False
+        assert result["synced_at"] == "old-cursor"
+        sync_service.push_dirty_tasks.assert_not_awaited()
+        sync_service._update_synced_at.assert_not_called()
 
 
 class TestLinearSyncServiceSync:
@@ -798,9 +854,9 @@ class TestLinearSyncServiceSync:
             if record.levelno >= logging.WARNING
             and "Deferred Linear issue fetch" in record.getMessage()
         ]
-        assert recovered["errors"] == 0
+        assert recovered["errors"] == 1
         assert recovered["deferred"] == 0
-        assert recovered["skipped"] == 1
+        assert recovered["skipped"] == 0
         assert len(warning_records) == 2
         assert any(
             "Linear issue fetch recovered after 1 suppressed repeat(s)" in record.getMessage()
