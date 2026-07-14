@@ -33,6 +33,8 @@ export function useWorkflows() {
   const [isLoading, setIsLoading] = useState(true)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedWorkflow, setSelectedWorkflow] = useState<WorkflowDetail | null>(null)
+  const workflowsRequestGenerationRef = useRef(0)
+  const selectionRequestGenerationRef = useRef(0)
 
   const fetchWorkflows = useCallback(async (params?: {
     workflow_type?: string
@@ -40,6 +42,7 @@ export function useWorkflows() {
     project_id?: string
     include_deleted?: boolean
   }) => {
+    const requestGeneration = ++workflowsRequestGenerationRef.current
     try {
       const baseUrl = getBaseUrl()
       const searchParams = new URLSearchParams()
@@ -53,10 +56,14 @@ export function useWorkflows() {
       const response = await fetch(url)
       if (response.ok) {
         const data = await response.json()
-        setWorkflows(data.definitions || [])
+        if (requestGeneration === workflowsRequestGenerationRef.current) {
+          setWorkflows(data.definitions || [])
+        }
       }
     } catch (e) {
-      console.error('Failed to fetch workflows:', e)
+      if (requestGeneration === workflowsRequestGenerationRef.current) {
+        console.error('Failed to fetch workflows:', e)
+      }
     }
   }, [])
 
@@ -261,10 +268,13 @@ export function useWorkflows() {
 
   // Select a workflow and fetch its details
   const selectWorkflow = useCallback(async (id: string | null) => {
+    const requestGeneration = ++selectionRequestGenerationRef.current
     setSelectedId(id)
     if (id) {
       const detail = await fetchWorkflow(id)
-      setSelectedWorkflow(detail)
+      if (requestGeneration === selectionRequestGenerationRef.current) {
+        setSelectedWorkflow(detail)
+      }
     } else {
       setSelectedWorkflow(null)
     }
@@ -294,6 +304,8 @@ export function useWorkflows() {
   useEffect(() => {
     return () => {
       if (debounceRef.current) window.clearTimeout(debounceRef.current)
+      workflowsRequestGenerationRef.current += 1
+      selectionRequestGenerationRef.current += 1
     }
   }, [])
   useWebSocketEvent(

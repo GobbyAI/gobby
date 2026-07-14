@@ -104,9 +104,12 @@ export function useCronJobs(projectId?: string | null) {
   const [isLoading, setIsLoading] = useState(true)
   const [isRunsLoading, setIsRunsLoading] = useState(false)
   const debouncedRefetchRef = useRef<number | null>(null)
+  const jobsRequestGenerationRef = useRef(0)
+  const runsRequestGenerationRef = useRef(0)
 
   // Fetch jobs list
   const fetchJobs = useCallback(async () => {
+    const requestGeneration = ++jobsRequestGenerationRef.current
     try {
       const baseUrl = getBaseUrl()
       const params = new URLSearchParams()
@@ -116,29 +119,42 @@ export function useCronJobs(projectId?: string | null) {
       const response = await fetch(`${baseUrl}/api/cron/jobs?${params}`)
       if (response.ok) {
         const data = await response.json()
-        setJobs(data.jobs || [])
+        if (requestGeneration === jobsRequestGenerationRef.current) {
+          setJobs(data.jobs || [])
+        }
       }
     } catch (e) {
-      console.error('Failed to fetch cron jobs:', e)
+      if (requestGeneration === jobsRequestGenerationRef.current) {
+        console.error('Failed to fetch cron jobs:', e)
+      }
     } finally {
-      setIsLoading(false)
+      if (requestGeneration === jobsRequestGenerationRef.current) {
+        setIsLoading(false)
+      }
     }
   }, [filters.enabled, projectId])
 
   // Fetch runs for a job
   const fetchRuns = useCallback(async (jobId: string) => {
+    const requestGeneration = ++runsRequestGenerationRef.current
     setIsRunsLoading(true)
     try {
       const baseUrl = getBaseUrl()
       const response = await fetch(`${baseUrl}/api/cron/jobs/${encodeURIComponent(jobId)}/runs?limit=20`)
       if (response.ok) {
         const data = await response.json()
-        setRuns(data.runs || [])
+        if (requestGeneration === runsRequestGenerationRef.current) {
+          setRuns(data.runs || [])
+        }
       }
     } catch (e) {
-      console.error('Failed to fetch cron runs:', e)
+      if (requestGeneration === runsRequestGenerationRef.current) {
+        console.error('Failed to fetch cron runs:', e)
+      }
     } finally {
-      setIsRunsLoading(false)
+      if (requestGeneration === runsRequestGenerationRef.current) {
+        setIsRunsLoading(false)
+      }
     }
   }, [])
 
@@ -258,7 +274,9 @@ export function useCronJobs(projectId?: string | null) {
     if (job) {
       fetchRuns(job.id)
     } else {
+      runsRequestGenerationRef.current += 1
       setRuns([])
+      setIsRunsLoading(false)
     }
   }, [fetchRuns])
 
@@ -266,8 +284,18 @@ export function useCronJobs(projectId?: string | null) {
   useEffect(() => {
     return () => {
       if (debouncedRefetchRef.current) window.clearTimeout(debouncedRefetchRef.current)
+      jobsRequestGenerationRef.current += 1
+      runsRequestGenerationRef.current += 1
     }
   }, [])
+
+  // A project or server-side filter change invalidates the current detail selection.
+  useEffect(() => {
+    runsRequestGenerationRef.current += 1
+    setSelectedJob(null)
+    setRuns([])
+    setIsRunsLoading(false)
+  }, [projectId, filters.enabled])
 
   // Sync selectedJob with fresh data after fetchJobs updates jobs list
   useEffect(() => {
