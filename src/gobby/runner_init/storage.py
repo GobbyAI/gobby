@@ -21,7 +21,7 @@ from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.telemetry.logging import init_telemetry
+from gobby.telemetry import init_telemetry
 from gobby.utils.machine_id import get_machine_id
 
 if TYPE_CHECKING:

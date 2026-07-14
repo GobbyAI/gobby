@@ -1,11 +1,12 @@
 import logging
+import warnings
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
 
-from gobby.telemetry import shutdown_telemetry
+from gobby.telemetry import init_telemetry, shutdown_telemetry
 from gobby.telemetry.config import TelemetrySettings
 from gobby.telemetry.logging import (
     JsonOTelFormatter,
@@ -182,13 +183,36 @@ def test_setup_otel_logging_attaches_otel_handler(telemetry_config):
 def test_init_telemetry_sets_providers(telemetry_config):
     from opentelemetry import metrics, trace
 
-    from gobby.telemetry.logging import init_telemetry
-
     # Clear providers if possible or just check they are set
     init_telemetry(telemetry_config)
 
     assert trace.get_tracer_provider() is not None
     assert metrics.get_meter_provider() is not None
+
+
+def test_daemon_init_activates_llm_instrumentor(telemetry_config):
+    from gobby.runner_init.storage import init_telemetry as daemon_init_telemetry
+    from gobby.telemetry.instrumentors import _instrumented
+
+    telemetry_config.llm_tracing.enabled = True
+    telemetry_config.llm_tracing.providers = ["anthropic"]
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="'asyncio.iscoroutinefunction' is deprecated.*",
+            category=DeprecationWarning,
+        )
+        from opentelemetry.instrumentation.anthropic import AnthropicInstrumentor
+
+        instrumentor = AnthropicInstrumentor()
+        try:
+            daemon_init_telemetry(telemetry_config)
+
+            assert instrumentor.is_instrumented_by_opentelemetry
+        finally:
+            instrumentor.uninstrument()
+            _instrumented.discard("anthropic")
 
 
 def test_shutdown_telemetry_skips_uninstrument_when_not_instrumented() -> None:

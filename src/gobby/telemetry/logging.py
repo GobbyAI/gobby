@@ -232,29 +232,3 @@ def setup_otel_logging(config: TelemetrySettings, verbose: bool = False) -> None
     logger_provider = get_logger_provider(config)
     otel_handler = LoggingHandler(level=level, logger_provider=logger_provider)
     root_logger.addHandler(otel_handler)
-
-
-def init_telemetry(config: TelemetrySettings, verbose: bool = False) -> None:
-    """
-    Initialize all telemetry providers and logging.
-
-    Args:
-        config: TelemetrySettings instance.
-        verbose: Verbose logging flag.
-    """
-    from opentelemetry import metrics, trace
-
-    from gobby.telemetry.providers import (
-        get_meter_provider,
-        get_tracer_provider,
-    )
-
-    # Init and set global providers
-    tracer_provider = get_tracer_provider(config)
-    trace.set_tracer_provider(tracer_provider)
-
-    meter_provider = get_meter_provider(config)
-    metrics.set_meter_provider(meter_provider)
-
-    # Setup logging bridge
-    setup_otel_logging(config, verbose=verbose)
