@@ -448,6 +448,13 @@ Also refs gobby-#43 for related work.
         assert "#1" in result
         assert "#2" in result
 
+    @pytest.mark.parametrize("project_name", ["gobby-pro", "gobby pro"])
+    def test_project_names_with_separators_in_all_formats(self, project_name: str) -> None:
+        """Test task references for project names containing hyphens or spaces."""
+        message = f"[{project_name}-#7]\n{project_name}-#8\nFixes {project_name}-#9"
+        result = extract_task_ids_from_message(message, project_name=project_name)
+        assert set(result) == {"#7", "#8", "#9"}
+
     def test_project_name_filtering(self) -> None:
         """Test filtering by project name."""
         message = "[gobby-#1] Also refs myapp-#2"
@@ -485,7 +492,8 @@ class TestAutoLinkCommits:
         manager = MagicMock()
         return manager
 
-    def test_links_commits_matching_task_id(self, mock_task_manager) -> None:
+    @pytest.mark.parametrize("project_name", ["gobby", "gobby-pro"])
+    def test_links_commits_matching_task_id(self, mock_task_manager, project_name: str) -> None:
         """Test that commits mentioning task IDs are linked."""
         # Mock task exists
         mock_task = MagicMock()
@@ -495,9 +503,11 @@ class TestAutoLinkCommits:
 
         with patch("gobby.tasks.commits.run_git_command") as mock_git:
             # Mock git log output with commit mentioning task
-            mock_git.return_value = "abc123|Fix bug [gobby-#1]\ndef456|Unrelated commit\n"
+            mock_git.return_value = f"abc123|Fix bug [{project_name}-#1]\ndef456|Unrelated commit\n"
 
-            result = auto_link_commits(mock_task_manager, cwd="/tmp/repo", project_name="gobby")
+            result = auto_link_commits(
+                mock_task_manager, cwd="/tmp/repo", project_name=project_name
+            )
 
             assert isinstance(result, AutoLinkResult)
             assert "#1" in result.linked_tasks

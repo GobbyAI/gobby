@@ -511,11 +511,11 @@ def extract_mentioned_symbols(task: dict[str, Any]) -> list[str]:
 # Patterns capture both project name and task number for validation
 TASK_ID_PATTERNS = [
     # [project-#N] - bracket format (primary)
-    r"\[(\w+)-#(\d+)\]",
+    r"\[(\w+(?:[ -]\w+)*)-#(\d+)\]",
     # project-#N - standalone format (word boundary before, after digits)
-    r"(?:^|\s)(\w+)-#(\d+)\b",
+    r"(?:^|\s)(\w+(?:[ -]\w+)*)-#(\d+)\b",
     # Implements/Fixes/Closes/Refs project-#N
-    r"(?:implements|fixes|closes|refs)\s+(\w+)-#(\d+)",
+    r"(?:implements|fixes|closes|refs)\s+(\w+(?:[ -]\w+)*)-#(\d+)",
 ]
 
 
