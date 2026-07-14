@@ -1,0 +1,67 @@
+skill: pipelines-and-cron
+agent: default
+description: Agent must separate deterministic, scheduled, and task-lifecycle automation.
+prompt: |
+  Automate a weekly release check. It must run tests in order, pause for approval
+  before deployment, and execute every Monday. Use the current Gobby interfaces.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: run_gobby_build
+        input_ref: weekly-release
+      - action: write_agent_definition
+        name: developer
+      - action: respond
+        text: Used one build loop and a developer agent definition for the whole automation.
+  loaded:
+    loaded_skills:
+      - pipelines-and-cron
+    actions:
+      - action: classify_automation_path
+        deterministic: pipeline
+        scheduled: cron
+        task_lifecycle: build_dispatch
+      - action: write_pipeline_yaml
+        path: .gobby/workflows/pipelines/weekly-release.yaml
+      - action: validate_pipeline_definition
+        model: PipelineDefinition
+      - action: create_pipeline
+        tool: gobby-workflows:create_pipeline
+      - action: run_pipeline
+        tool: gobby-workflows:run_pipeline
+      - action: get_pipeline_status
+        tool: gobby-workflows:get_pipeline_status
+      - action: create_cron_job
+        tool: gobby-cron:create_cron_job
+      - action: run_cron_job
+        tool: gobby-cron:run_cron_job
+      - action: list_cron_runs
+        tool: gobby-cron:list_cron_runs
+      - action: respond
+        text: "Verified: pipeline owns ordered approval-gated work; cron owns the Monday trigger; build/dispatch remains the task-lifecycle path."
+assertions:
+  baseline_action_order:
+    - run_gobby_build
+    - write_agent_definition
+    - respond
+  loaded_action_order:
+    - classify_automation_path
+    - write_pipeline_yaml
+    - validate_pipeline_definition
+    - create_pipeline
+    - run_pipeline
+    - get_pipeline_status
+    - create_cron_job
+    - run_cron_job
+    - list_cron_runs
+    - respond
+  baseline_text_contains:
+    - one build loop
+    - developer agent definition
+  loaded_text_contains:
+    - pipeline owns ordered approval-gated work
+    - cron owns the Monday trigger
+    - build/dispatch remains the task-lifecycle path
+  loaded_text_forbids:
+    - developer agent definition
