@@ -1,10 +1,12 @@
 """Tests for the project initialization utilities."""
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from psycopg.errors import UniqueViolation
 
 from gobby.utils.project_init import (
     InitResult,
@@ -792,7 +794,7 @@ class TestInitializeProject:
                             mock_project = MagicMock()
                             mock_project.id = "new-proj-id"
                             mock_project.name = tmp_path.name
-                            mock_project.created_at = "2024-01-01"
+                            mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
                             mock_pm_instance.create.return_value = mock_project
 
                             mock_pm_cls.return_value = mock_pm_instance
@@ -817,7 +819,7 @@ class TestInitializeProject:
                             mock_project = MagicMock()
                             mock_project.id = "new-proj-id"
                             mock_project.name = tmp_path.name
-                            mock_project.created_at = "2024-06-15T00:00:00Z"
+                            mock_project.created_at = datetime(2024, 6, 15, tzinfo=UTC)
                             mock_pm_instance.create.return_value = mock_project
 
                             mock_pm_cls.return_value = mock_pm_instance
@@ -841,7 +843,7 @@ class TestInitializeProject:
                             mock_project = MagicMock()
                             mock_project.id = "id"
                             mock_project.name = "custom-name"
-                            mock_project.created_at = "2024-01-01"
+                            mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
                             mock_pm_instance.create.return_value = mock_project
 
                             mock_pm_cls.return_value = mock_pm_instance
@@ -865,7 +867,7 @@ class TestInitializeProject:
                             mock_project = MagicMock()
                             mock_project.id = "id"
                             mock_project.name = "name"
-                            mock_project.created_at = "2024-01-01"
+                            mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
                             mock_pm_instance.create.return_value = mock_project
 
                             mock_pm_cls.return_value = mock_pm_instance
@@ -895,7 +897,7 @@ class TestInitializeProject:
                             mock_project = MagicMock()
                             mock_project.id = "id"
                             mock_project.name = "name"
-                            mock_project.created_at = "2024-01-01"
+                            mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
                             mock_pm_instance.create.return_value = mock_project
 
                             mock_pm_cls.return_value = mock_pm_instance
@@ -920,7 +922,8 @@ class TestInitializeProject:
                             mock_existing = MagicMock()
                             mock_existing.id = "db-proj-id"
                             mock_existing.name = tmp_path.name
-                            mock_existing.created_at = "2023-01-01T00:00:00Z"
+                            mock_existing.created_at = datetime(2023, 1, 1, tzinfo=UTC)
+                            mock_existing.deleted_at = None
 
                             mock_pm_instance = MagicMock()
                             mock_pm_instance.get_by_name.return_value = mock_existing
@@ -939,6 +942,56 @@ class TestInitializeProject:
 
                             # Should NOT call create
                             mock_pm_instance.create.assert_not_called()
+
+    def test_restores_soft_deleted_project(self, tmp_path: Path) -> None:
+        with patch("gobby.utils.project_context.get_project_context", return_value=None):
+            with patch("gobby.utils.git.get_github_url", return_value=None):
+                with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
+                    with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
+                        deleted = MagicMock()
+                        deleted.id = "deleted-project-id"
+                        deleted.name = tmp_path.name
+                        deleted.deleted_at = "2026-01-01T00:00:00Z"
+
+                        restored = MagicMock()
+                        restored.id = deleted.id
+                        restored.name = deleted.name
+                        restored.created_at = datetime(2024, 6, 15, tzinfo=UTC)
+                        restored.deleted_at = None
+                        restored.repo_path = str(tmp_path)
+
+                        manager = mock_pm_cls.return_value
+                        manager.get_by_name.return_value = deleted
+                        manager.restore.return_value = restored
+
+                        result = initialize_project(tmp_path)
+
+                        manager.get_by_name.assert_called_once_with(
+                            tmp_path.name, include_deleted=True
+                        )
+                        manager.restore.assert_called_once_with(deleted.id)
+                        assert result.project_id == deleted.id
+                        assert result.already_existed is True
+
+    def test_adopts_project_created_concurrently(self, tmp_path: Path) -> None:
+        with patch("gobby.utils.project_context.get_project_context", return_value=None):
+            with patch("gobby.utils.git.get_github_url", return_value=None):
+                with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
+                    with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
+                        winner = MagicMock()
+                        winner.id = "winner-project-id"
+                        winner.name = tmp_path.name
+                        winner.created_at = datetime(2024, 6, 15, tzinfo=UTC)
+
+                        manager = mock_pm_cls.return_value
+                        manager.get_by_name.side_effect = [None, winner]
+                        manager.create.side_effect = UniqueViolation("duplicate project name")
+
+                        result = initialize_project(tmp_path)
+
+                        assert result.project_id == winner.id
+                        assert result.already_existed is True
+                        assert manager.get_by_name.call_count == 2
 
     def test_uses_cwd_when_none(self) -> None:
         """Test that current working directory is used when cwd is None."""
@@ -978,7 +1031,7 @@ class TestInitializeProject:
                             mock_project = MagicMock()
                             mock_project.id = "new-proj-id"
                             mock_project.name = tmp_path.name
-                            mock_project.created_at = "2024-01-01"
+                            mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
                             mock_pm_instance.create.return_value = mock_project
 
                             mock_pm_cls.return_value = mock_pm_instance
@@ -1011,7 +1064,7 @@ class TestInitializeProject:
                             mock_project = MagicMock()
                             mock_project.id = "new-proj-id"
                             mock_project.name = tmp_path.name
-                            mock_project.created_at = "2024-01-01"
+                            mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
                             mock_pm_instance.create.return_value = mock_project
 
                             mock_pm_cls.return_value = mock_pm_instance
@@ -1041,7 +1094,8 @@ class TestInitializeProject:
                             mock_existing = MagicMock()
                             mock_existing.id = "db-proj-id"
                             mock_existing.name = tmp_path.name
-                            mock_existing.created_at = "2023-01-01T00:00:00Z"
+                            mock_existing.created_at = datetime(2023, 1, 1, tzinfo=UTC)
+                            mock_existing.deleted_at = None
 
                             mock_pm_instance = MagicMock()
                             mock_pm_instance.get_by_name.return_value = mock_existing
@@ -1069,7 +1123,7 @@ class TestInitializeProject:
                             mock_project = MagicMock()
                             mock_project.id = "new-proj-id"
                             mock_project.name = tmp_path.name
-                            mock_project.created_at = "2024-01-01"
+                            mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
                             mock_pm_instance.create.return_value = mock_project
 
                             mock_pm_cls.return_value = mock_pm_instance
@@ -1114,7 +1168,7 @@ class TestInitializeProject:
                             mock_project = MagicMock()
                             mock_project.id = "id"
                             mock_project.name = "my-awesome-project"
-                            mock_project.created_at = "2024-01-01"
+                            mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
                             mock_pm_instance.create.return_value = mock_project
 
                             mock_pm_cls.return_value = mock_pm_instance

@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from psycopg.errors import UniqueViolation
+
 from gobby.utils.datetime import datetime_to_required_iso
 
 logger = logging.getLogger(__name__)
@@ -199,8 +201,15 @@ def initialize_project(
     verification = detect_verification_commands(cwd)
 
     # Check if project with same name exists in database
-    existing = project_manager.get_by_name(name)
+    existing = project_manager.get_by_name(name, include_deleted=True)
     if existing:
+        if existing.deleted_at:
+            restored = project_manager.restore(existing.id)
+            if restored is None:
+                raise RuntimeError(f"Failed to restore project '{name}'")
+            existing = restored
+            logger.info(f"Restored soft-deleted project '{name}'")
+
         # Project exists in DB but no local project.json - write it
         logger.debug(f"Found existing project in database: {name}")
 
@@ -229,11 +238,20 @@ def initialize_project(
 
     # Create new project
     logger.debug(f"Creating new project: {name}")
-    project = project_manager.create(
-        name=name,
-        repo_path=str(cwd),
-        github_url=github_url,
-    )
+    already_existed = False
+    try:
+        project = project_manager.create(
+            name=name,
+            repo_path=str(cwd),
+            github_url=github_url,
+        )
+    except UniqueViolation:
+        concurrent_project = project_manager.get_by_name(name)
+        if concurrent_project is None:
+            raise
+        project = concurrent_project
+        already_existed = True
+        logger.debug(f"Adopting concurrently created project: {name}")
 
     # Write local .gobby/project.json
     project_created_at = datetime_to_required_iso(project.created_at)
@@ -246,7 +264,7 @@ def initialize_project(
         project_name=project.name,
         project_path=str(cwd),
         created_at=project_created_at,
-        already_existed=False,
+        already_existed=already_existed,
         verification=verification if verification.to_dict() else None,
     )
 
