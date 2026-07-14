@@ -25,6 +25,7 @@ Example:
 
 import logging
 import threading
+from enum import StrEnum
 from typing import Any, ClassVar, cast
 
 import httpx
@@ -42,6 +43,12 @@ DAEMON_AUTH_REMEDIATION = (
 
 class DaemonAuthenticationError(RuntimeError):
     """Raised when the daemon rejects the install-scoped bearer token."""
+
+
+class DaemonHealthError(StrEnum):
+    """Typed daemon health failures that callers need to classify."""
+
+    NOT_RUNNING = "Daemon is not running"
 
 
 class DaemonClient:
@@ -123,7 +130,7 @@ class DaemonClient:
         Returns:
             Tuple of (is_healthy, error_reason) where:
             - is_healthy: True if daemon is healthy, False otherwise
-            - error_reason: None if healthy, otherwise error description
+            - error_reason: None if healthy, otherwise a typed failure or error description
         """
         try:
             response = httpx.get(
@@ -144,23 +151,20 @@ class DaemonClient:
                 self._mark_health_failed()
                 self.logger.warning(f"Daemon health check failed: status {response.status_code}")
                 return False, error_reason
-        except Exception as e:
-            error_msg = str(e)
+        except httpx.ConnectError as e:
             self._mark_health_failed()
-            # Check if it's a connection refused (daemon not running)
-            if "refused" in error_msg.lower() or "connection" in error_msg.lower():
-                restart_source = self._planned_restart_source()
-                if restart_source:
-                    self.logger.debug(
-                        f"Daemon not running during planned restart ({restart_source}): {e}"
-                    )
-                else:
-                    self.logger.warning(f"Daemon not running: {e}")
-                return False, None  # None means daemon not running
+            restart_source = self._planned_restart_source()
+            if restart_source:
+                self.logger.debug(
+                    f"Daemon not running during planned restart ({restart_source}): {e}"
+                )
             else:
-                # Other errors (timeout, DNS, etc.)
-                self.logger.warning(f"Daemon health check error: {e}")
-                return False, error_msg
+                self.logger.warning(f"Daemon not running: {e}")
+            return False, DaemonHealthError.NOT_RUNNING
+        except httpx.HTTPError as e:
+            self._mark_health_failed()
+            self.logger.warning(f"Daemon health check error: {e}")
+            return False, str(e)
 
     def _log_health_success(self) -> None:
         with self._health_log_lock:
@@ -193,8 +197,8 @@ class DaemonClient:
         is_healthy, health_error = self.check_health()
 
         if not is_healthy:
-            if health_error is None:
-                return False, "Daemon is not running", "not_running", None
+            if health_error is DaemonHealthError.NOT_RUNNING:
+                return False, str(health_error), "not_running", str(health_error)
             else:
                 return False, f"Cannot access daemon: {health_error}", "cannot_access", health_error
 

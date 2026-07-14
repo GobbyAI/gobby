@@ -2,10 +2,11 @@
 
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from gobby.shutdown_intent import ShutdownIntent, write_shutdown_intent
-from gobby.utils.daemon_client import DaemonClient
+from gobby.utils.daemon_client import DaemonClient, DaemonHealthError
 from gobby.utils.daemon_url import DaemonUrlError
 
 pytestmark = pytest.mark.unit
@@ -106,11 +107,11 @@ class TestDaemonClientCheckHealth:
         logger = MagicMock()
         client = DaemonClient(logger=logger)
 
-        with patch("httpx.get", side_effect=Exception("Connection refused")):
+        with patch("httpx.get", side_effect=httpx.ConnectError("Connection refused")):
             is_healthy, error = client.check_health()
 
         assert is_healthy is False
-        assert error is None  # None indicates daemon not running
+        assert error is DaemonHealthError.NOT_RUNNING
         logger.warning.assert_called_once()
 
     def test_health_check_recovery_logs_info_once(self) -> None:
@@ -153,24 +154,31 @@ class TestDaemonClientCheckHealth:
         logger = MagicMock()
         client = DaemonClient(logger=logger)
 
-        with patch("httpx.get", side_effect=Exception("Connection refused")):
+        with patch("httpx.get", side_effect=httpx.ConnectError("Connection refused")):
             is_healthy, error = client.check_health()
 
         assert is_healthy is False
-        assert error is None
+        assert error is DaemonHealthError.NOT_RUNNING
         logger.warning.assert_not_called()
         logger.debug.assert_called_once()
         assert "during planned restart (cli_restart)" in logger.debug.call_args.args[0]
 
-    def test_health_check_other_error(self) -> None:
-        """Test health check with other errors."""
+    @pytest.mark.parametrize(
+        "error",
+        [
+            httpx.ReadError("Connection reset by peer"),
+            httpx.ConnectTimeout("Connection timed out"),
+        ],
+    )
+    def test_health_check_other_http_error(self, error: httpx.HTTPError) -> None:
+        """HTTP failures other than ConnectError preserve their diagnostic."""
         client = DaemonClient()
 
-        with patch("httpx.get", side_effect=Exception("DNS resolution failed")):
-            is_healthy, error = client.check_health()
+        with patch("httpx.get", side_effect=error):
+            is_healthy, health_error = client.check_health()
 
         assert is_healthy is False
-        assert "DNS resolution failed" in error
+        assert health_error == str(error)
 
 
 class TestDaemonClientCheckStatus:
@@ -192,13 +200,17 @@ class TestDaemonClientCheckStatus:
         """Test status when daemon is not running."""
         client = DaemonClient()
 
-        with patch.object(client, "check_health", return_value=(False, None)):
+        with patch.object(
+            client,
+            "check_health",
+            return_value=(False, DaemonHealthError.NOT_RUNNING),
+        ):
             is_ready, message, status, error = client.check_status()
 
         assert is_ready is False
         assert message == "Daemon is not running"
         assert status == "not_running"
-        assert error is None
+        assert error == "Daemon is not running"
 
     def test_status_cannot_access(self) -> None:
         """Test status when daemon cannot be accessed."""
@@ -211,6 +223,25 @@ class TestDaemonClientCheckStatus:
         assert "Cannot access daemon" in message
         assert status == "cannot_access"
         assert error == "HTTP 503"
+
+    @pytest.mark.parametrize(
+        "health_error",
+        [
+            httpx.ReadError("Connection reset by peer"),
+            httpx.ConnectTimeout("Connection timed out"),
+        ],
+    )
+    def test_http_error_status_is_cannot_access(self, health_error: httpx.HTTPError) -> None:
+        """Transport and timeout failures report cannot-access status."""
+        client = DaemonClient()
+
+        with patch("httpx.get", side_effect=health_error):
+            is_ready, message, status, error = client.check_status()
+
+        assert is_ready is False
+        assert message == f"Cannot access daemon: {health_error}"
+        assert status == "cannot_access"
+        assert error == str(health_error)
 
 
 class TestDaemonClientCallHttpApi:
