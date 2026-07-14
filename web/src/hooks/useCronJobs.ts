@@ -55,6 +55,7 @@ export interface CronJobFilters {
 }
 
 export interface CreateCronJobRequest {
+  project_id: string
   name: string
   action_type: string
   action_config: Record<string, unknown>
@@ -142,13 +143,20 @@ export function useCronJobs(projectId?: string | null) {
   }, [])
 
   // Create a job
-  const createJob = useCallback(async (request: CreateCronJobRequest): Promise<CronJob | null> => {
+  const createJob = useCallback(async (
+    request: Omit<CreateCronJobRequest, 'project_id'>,
+  ): Promise<CronJob | null> => {
+    if (!projectId) {
+      console.error('Cannot create cron job without a project ID')
+      return null
+    }
+
     try {
       const baseUrl = getBaseUrl()
       const response = await fetch(`${baseUrl}/api/cron/jobs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(request),
+        body: JSON.stringify({ ...request, project_id: projectId }),
       })
       if (response.ok) {
         const data = await response.json()
@@ -160,7 +168,7 @@ export function useCronJobs(projectId?: string | null) {
       console.error('Failed to create cron job:', e)
     }
     return null
-  }, [])
+  }, [projectId])
 
   // Update a job
   const updateJob = useCallback(async (jobId: string, request: UpdateCronJobRequest): Promise<CronJob | null> => {
