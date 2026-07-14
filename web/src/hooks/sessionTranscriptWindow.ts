@@ -239,9 +239,25 @@ export function applyTailRefreshTranscriptPage<TMessage extends TranscriptWindow
   maxGroups = WINDOW_MAX_GROUPS,
 ): TranscriptWindowUpdate<TMessage> {
   const refreshedMessages = uniqueById(page.messages)
+  const refreshedStart = Math.max(
+    0,
+    normalizeCount(page.renderedTotal) - page.messages.length,
+  )
+  const tailContiguous = state.windowEnd >= state.renderedTotal
+  if (tailContiguous && refreshedStart > state.windowEnd) {
+    const ids = currentIds(state.messages)
+    const nextState = createTailTranscriptWindow(page, START_INDEX, maxGroups)
+    const addedCount = refreshedMessages.filter((message) => !ids.has(message.id)).length
+
+    return updateResult({
+      state: nextState,
+      previous: state,
+      addedCount,
+    })
+  }
+
   const replaced = replaceExisting(state.messages, refreshedMessages)
   const ids = currentIds(state.messages)
-  const tailContiguous = state.windowEnd >= state.renderedTotal
   // Append refreshed tail rows whenever the window reaches the tail, regardless
   // of whether the viewport is pinned. Gating the append on `atBottom` stalled
   // rendering after a burst pushed the viewport off-bottom.
