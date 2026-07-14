@@ -361,8 +361,10 @@ async def cleanup_comms_messages_loop(
 ) -> None:
     from gobby.communications.attachments import AttachmentManager
     from gobby.storage.communications import LocalCommunicationsStore
+    from gobby.storage.inter_session_messages import InterSessionMessageManager
 
     store = LocalCommunicationsStore(db)
+    mailbox_store = InterSessionMessageManager(db)
     attachment_manager = AttachmentManager()
     sleep_fn = sleep or asyncio.sleep
 
@@ -384,6 +386,12 @@ async def cleanup_comms_messages_loop(
                 cutoff,
                 limit=_COMMS_CLEANUP_BATCH_LIMIT,
             )
+            deleted_mailbox_messages = await _run_db(
+                run_db,
+                mailbox_store.delete_delivered_before,
+                cutoff,
+                limit=_COMMS_CLEANUP_BATCH_LIMIT,
+            )
             deleted_attachments = await asyncio.to_thread(
                 attachment_manager.cleanup_old,
                 days=retention_days,
@@ -392,6 +400,11 @@ async def cleanup_comms_messages_loop(
 
             if deleted_messages > 0:
                 logger.info(f"Comms message cleanup: removed {deleted_messages} old messages")
+            if deleted_mailbox_messages > 0:
+                logger.info(
+                    "Mailbox message cleanup: removed %s old delivered messages",
+                    deleted_mailbox_messages,
+                )
             if deleted_attachments > 0:
                 logger.info(
                     "Comms attachment cleanup: removed %s old local files",

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from gobby.hooks.events import HookEventType
 
@@ -41,10 +40,13 @@ class ChatPendingMessagesMixin:
             if not undelivered:
                 return None
 
-            groups: dict[str, list[Any]] = {}
+            groups: dict[tuple[str, str], list[str]] = {}
             for msg in undelivered:
                 msg_type = getattr(msg, "message_type", "message") or "message"
-                groups.setdefault(msg_type, []).append(msg)
+                header = self._message_group_header(msg_type)
+                urgent = "[URGENT] " if getattr(msg, "priority", "normal") == "urgent" else ""
+                sender = self._resolve_chat_sender(getattr(msg, "from_session", None))
+                rendered = f"- {urgent}{sender}{msg.content}"
                 try:
                     inter_session_msg_manager.mark_delivered(msg.id, db_session_id)
                 except Exception:
@@ -53,15 +55,16 @@ class ChatPendingMessagesMixin:
                         getattr(msg, "id", None),
                         exc_info=True,
                     )
+                    continue
+                groups.setdefault((msg_type, header), []).append(rendered)
+
+            if not groups:
+                return None
 
             sections: list[str] = []
-            for msg_type, msgs in groups.items():
-                header = self._message_group_header(msg_type)
+            for (_msg_type, header), rendered_messages in groups.items():
                 lines = [header]
-                for msg in msgs:
-                    urgent = "[URGENT] " if getattr(msg, "priority", "normal") == "urgent" else ""
-                    sender = self._resolve_chat_sender(getattr(msg, "from_session", None))
-                    lines.append(f"- {urgent}{sender}{msg.content}")
+                lines.extend(rendered_messages)
                 sections.append("\n".join(lines))
 
             return "\n\n".join(sections)

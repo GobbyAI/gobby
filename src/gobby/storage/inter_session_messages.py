@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from gobby.utils.datetime import normalize_datetime_model, utc_now
+from gobby.utils.datetime import normalize_datetime_model, to_aware_utc, utc_now
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -234,9 +234,12 @@ class InterSessionMessageManager:
             query = """
                 SELECT * FROM inter_session_messages
                 WHERE to_session = %s AND read_at IS NULL
+                ORDER BY sent_at ASC, id ASC
             """
         else:
-            query = "SELECT * FROM inter_session_messages WHERE to_session = %s"
+            query = """SELECT * FROM inter_session_messages
+                       WHERE to_session = %s
+                       ORDER BY sent_at ASC, id ASC"""
 
         rows = self.db.fetchall(query, (to_session,))
         return [InterSessionMessage.from_row(row) for row in rows]
@@ -321,10 +324,25 @@ class InterSessionMessageManager:
                    WHERE to_session = %s AND delivered_at IS NULL
                    RETURNING *
                )
-               SELECT * FROM claimed ORDER BY sent_at""",
+               SELECT * FROM claimed ORDER BY sent_at, id""",
             (delivered_at, to_session),
         )
         return [InterSessionMessage.from_row(row) for row in rows]
+
+    def delete_delivered_before(self, cutoff: datetime, *, limit: int = 500) -> int:
+        """Delete a bounded batch of delivered messages older than a cutoff."""
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """DELETE FROM inter_session_messages
+                   WHERE id IN (
+                       SELECT id FROM inter_session_messages
+                       WHERE delivered_at < %s
+                       ORDER BY delivered_at ASC, id ASC
+                       LIMIT %s
+                   )""",
+                (to_aware_utc(cutoff), limit),
+            )
+            return cursor.rowcount
 
     def list_messages(
         self,

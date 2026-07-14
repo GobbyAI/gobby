@@ -9,7 +9,7 @@ Tests cover:
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -601,14 +601,14 @@ class TestInterSessionMessageManagerDeliveryClaims:
             to_session=recipient.id,
             content="claim once",
         )
-        barrier = threading.Barrier(2)
+        barrier = threading.Barrier(3)
 
         def claim() -> list[str]:
             barrier.wait()
             return [item.id for item in manager.claim_undelivered_messages(recipient.id)]
 
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            results = list(executor.map(lambda _index: claim(), range(2)))
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            results = list(executor.map(lambda _index: claim(), range(3)))
 
         assert sum(results, []) == [message.id]
 
@@ -628,6 +628,69 @@ class TestInterSessionMessageManagerDeliveryClaims:
         assert delivered.delivered_at is not None
         with pytest.raises(ValueError, match="Undelivered message not found"):
             manager.mark_delivered(message.id, recipient.id)
+
+    def test_get_messages_is_oldest_first_with_stable_id_tiebreaker(self, mailbox) -> None:
+        manager, sender, recipient, _foreign = mailbox
+        first = manager.create_message(
+            from_session=sender.id,
+            to_session=recipient.id,
+            content="first id",
+        )
+        second = manager.create_message(
+            from_session=sender.id,
+            to_session=recipient.id,
+            content="second id",
+        )
+        older = manager.create_message(
+            from_session=sender.id,
+            to_session=recipient.id,
+            content="older",
+        )
+        tied_at = datetime(2026, 1, 2, tzinfo=UTC)
+        manager.db.execute(
+            "UPDATE inter_session_messages SET sent_at = %s WHERE id IN (%s, %s)",
+            (tied_at, first.id, second.id),
+        )
+        manager.db.execute(
+            "UPDATE inter_session_messages SET sent_at = %s WHERE id = %s",
+            (tied_at - timedelta(days=1), older.id),
+        )
+
+        messages = manager.get_messages(recipient.id)
+
+        assert [message.id for message in messages] == [older.id, *sorted([first.id, second.id])]
+
+    def test_retention_deletes_only_old_delivered_messages(self, mailbox) -> None:
+        manager, sender, recipient, _foreign = mailbox
+        old = manager.create_message(
+            from_session=sender.id,
+            to_session=recipient.id,
+            content="old delivered",
+        )
+        recent = manager.create_message(
+            from_session=sender.id,
+            to_session=recipient.id,
+            content="recent delivered",
+        )
+        undelivered = manager.create_message(
+            from_session=sender.id,
+            to_session=recipient.id,
+            content="old undelivered",
+        )
+        manager.mark_delivered(old.id, recipient.id)
+        manager.mark_delivered(recent.id, recipient.id)
+        cutoff = datetime(2026, 2, 1, tzinfo=UTC)
+        manager.db.execute(
+            "UPDATE inter_session_messages SET delivered_at = %s WHERE id = %s",
+            (cutoff - timedelta(days=1), old.id),
+        )
+
+        deleted = manager.delete_delivered_before(cutoff)
+
+        assert deleted == 1
+        assert manager.get_message(old.id) is None
+        assert manager.get_message(recent.id) is not None
+        assert manager.get_message(undelivered.id) is not None
 
 
 class TestInterSessionMessageManagerListMessages:
