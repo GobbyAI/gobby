@@ -640,6 +640,14 @@ class TestLinearSyncServiceImport:
         mock_task_manager.create_task.assert_not_called()
         assert mock_task_manager.create_task.call_count == 0
         assert not mock_task_manager.create_task.called
+        assert any(
+            call.args
+            == (
+                "SELECT id, updated_at FROM tasks WHERE project_id = %s AND seq_num = %s",
+                ("test-project-id", 42),
+            )
+            for call in mock_task_manager.db.fetchone.call_args_list
+        )
 
     @pytest.mark.asyncio
     async def test_import_issues_raises_when_unavailable(self, mock_mcp_manager, mock_task_manager):
@@ -692,6 +700,38 @@ class TestLinearSyncServiceImport:
         assert call.kwargs["arguments"]["teamId"] == "team-123"
         assert call.kwargs["arguments"]["projectId"] == "lin-proj"
         assert call.kwargs["arguments"]["limit"] == 100
+
+    async def test_import_issues_requires_linear_project_binding(
+        self, mock_mcp_manager, mock_task_manager
+    ):
+        service = LinearSyncService(
+            mcp_manager=mock_mcp_manager,
+            task_manager=mock_task_manager,
+            project_id="test-project",
+            linear_team_id="team-123",
+        )
+
+        with pytest.raises(ValueError, match="gobby linear setup --bootstrap"):
+            await service.import_linear_issues()
+
+        mock_mcp_manager.call_tool.assert_not_called()
+
+    async def test_import_issues_allows_explicit_team_wide_override(
+        self, mock_mcp_manager, mock_task_manager
+    ):
+        mock_mcp_manager.call_tool.return_value = {"issues": []}
+        service = LinearSyncService(
+            mcp_manager=mock_mcp_manager,
+            task_manager=mock_task_manager,
+            project_id="test-project",
+            linear_team_id="team-123",
+        )
+
+        await service.import_linear_issues(allow_team_wide=True)
+
+        call = mock_mcp_manager.call_tool.call_args
+        assert call.kwargs["arguments"]["teamId"] == "team-123"
+        assert "projectId" not in call.kwargs["arguments"]
 
     @pytest.mark.asyncio
     async def test_linear_mcp_issue_listing_fetches_every_cursor_page(
@@ -1701,6 +1741,7 @@ class TestLinearSyncIntegration:
             task_manager=mock_task_manager,
             project_id="test-project",
             linear_team_id="team-123",
+            linear_project_id="lin-proj",
         )
 
         imported = await service.import_linear_issues()
@@ -1723,6 +1764,7 @@ class TestLinearSyncIntegration:
             task_manager=mock_task_manager,
             project_id="test-project",
             linear_team_id="team-123",
+            linear_project_id="lin-proj",
         )
 
         result = await service.import_linear_issues()
@@ -1803,6 +1845,7 @@ class TestLinearSyncErrorHandling:
             task_manager=mock_task_manager,
             project_id="test-project",
             linear_team_id="team-123",
+            linear_project_id="lin-proj",
         )
 
         with pytest.raises(Exception, match="Network error"):

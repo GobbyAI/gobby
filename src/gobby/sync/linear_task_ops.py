@@ -209,6 +209,8 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
         team_id: str | None = None,
         state: str | None = None,
         labels: list[str] | None = None,
+        *,
+        allow_team_wide: bool = False,
     ) -> list[dict[str, Any]]:
         """Import Linear issues as gobby tasks with dedup."""
         self.linear.require_available()
@@ -216,6 +218,11 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
         effective_team_id = team_id or self.linear_team_id
         if not effective_team_id:
             raise ValueError("No team_id provided and no default linear_team_id configured.")
+        if not self._get_linear_project_id() and not allow_team_wide:
+            raise ValueError(
+                "No Linear project binding configured. Run 'gobby linear setup --bootstrap' "
+                "or explicitly allow a team-wide import."
+            )
 
         try:
             if not self._linear_mcp_has_tool("list_issues"):
@@ -538,6 +545,8 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
 
     async def _push_task_rows(self, rows: list[Any]) -> dict[str, int]:
         stats = {"pushed": 0, "skipped": 0, "errors": 0, "deferred": 0}
+        if not rows:
+            return stats
         client = await self._get_graphql_client()
         state_ids_by_team: dict[str, dict[str, str]] = {}
         for row in rows:
