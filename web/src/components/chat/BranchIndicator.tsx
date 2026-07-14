@@ -207,7 +207,7 @@ export function BranchIndicator({
           aria-label="Switch branch or worktree"
         >
           {checkoutError && (
-            <div role="alert" className="border-b border-border px-3 py-1.5 text-xs text-destructive">
+            <div role="alert" className="border-b border-border px-3 py-1.5 text-xs text-destructive-foreground">
               {checkoutError}
             </div>
           )}

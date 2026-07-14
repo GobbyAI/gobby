@@ -51,7 +51,7 @@ export function ChatInputQueuedFiles({
             {queuedFile.status === 'error' && (
               <button
                 type="button"
-                className="text-destructive underline"
+                className="text-destructive-foreground underline"
                 onClick={() => onRetry(queuedFile.id)}
                 title={queuedFile.error ?? 'Upload failed'}
               >

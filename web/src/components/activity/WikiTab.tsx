@@ -338,7 +338,7 @@ export const WikiTab = memo(function WikiTab({
       ) : null}
 
       {actions.status.error ? (
-        <p role="alert" className="border-b border-border px-3 py-1.5 text-xs text-destructive">
+        <p role="alert" className="border-b border-border px-3 py-1.5 text-xs text-destructive-foreground">
           {actions.status.error}
         </p>
       ) : actions.status.message ? (

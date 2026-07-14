@@ -579,7 +579,7 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
             {fileLoading ? (
               <div className="p-3 text-xs text-muted-foreground">Loading...</div>
             ) : fileError ? (
-              <div className="p-3 text-xs text-destructive" role="alert">{fileError}</div>
+              <div className="p-3 text-xs text-destructive-foreground" role="alert">{fileError}</div>
             ) : isEditing ? (
               <CodeMirrorEditor
                 content={editContent}

@@ -71,7 +71,7 @@ export const AGENT_EDIT_CHECKBOX_GROUP_CLS = "flex flex-col gap-1.5";
 
 export const AGENT_RULES_EDITOR_CLS = "flex flex-col gap-2";
 export const AGENT_EDITOR_ERROR_CLS =
-  "rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive";
+  "rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive-foreground";
 export const AGENT_RULES_CHIPS_CLS = "flex flex-wrap gap-1.5 items-center";
 export const AGENT_RULES_CHIP_CLS =
   "inline-flex items-center gap-1 bg-[var(--bg-tertiary)] border border-border rounded-xl pl-2.5 pr-2 py-0.5 text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-primary)]";

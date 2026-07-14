@@ -345,7 +345,7 @@ export function WikiAskMode({ scope, nav, offline, onSearchVault }: WikiAskModeP
 
         {phase.status === "error" ? (
           <div className="flex items-center gap-3">
-            <p role="alert" className="max-w-[65ch] text-xs text-destructive">
+            <p role="alert" className="max-w-[65ch] text-xs text-destructive-foreground">
               {phase.message}
             </p>
             <button

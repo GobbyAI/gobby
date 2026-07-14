@@ -71,7 +71,7 @@ export function WikiCodewikiStatus() {
           className="size-1.5 shrink-0 animate-pulse rounded-full bg-foreground motion-reduce:animate-none"
         />
       ) : null}
-      <span className={`truncate ${failed ? "text-destructive" : ""}`}>
+      <span className={`truncate ${failed ? "text-destructive-foreground" : ""}`}>
         {snapshot === null
           ? "Codewiki status unavailable"
           : snapshot.running
