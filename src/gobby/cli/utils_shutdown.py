@@ -6,12 +6,33 @@ import os
 import signal
 import time
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import click
 import psutil
 
 from gobby.cli.utils_runtime import facade
+
+
+def _report_lock_survivor(deps: Any, quiet: bool) -> None:
+    """After a stop, surface any process still holding the daemon lock.
+
+    A held lock at this point means an orphaned daemon the kill sequence
+    missed (e.g. reparented past the pid file's record).
+    """
+    from gobby.runner_pid_file import probe_daemon_lock
+
+    pid_file = cast(Path, deps.get_gobby_home() / "gobby.pid")
+    owner = probe_daemon_lock(pid_file)
+    if owner is None:
+        return
+    deps.logger.warning(f"Daemon lock still held by PID {owner or 'unknown'} after stop")
+    if not quiet:
+        deps._stop_step(
+            f"Warning: daemon lock still held by PID {owner or 'unknown'} — "
+            "an orphaned daemon may still be running",
+            error=True,
+        )
 
 
 def stop_daemon(
@@ -113,6 +134,7 @@ def stop_daemon(
             elapsed = time.time() - stop_start
             if not quiet:
                 deps._stop_step(f"Stopped via {svc.get('platform', 'OS')} service ({elapsed:.1f}s)")
+            _report_lock_survivor(deps, quiet)
             return True
         if not quiet:
             deps._stop_step("Service stop failed, falling back to direct signal...", error=True)
@@ -131,6 +153,7 @@ def stop_daemon(
                     deps._stop_step(f"Daemon stopped ({elapsed:.1f}s)")
                 pid_file.unlink(missing_ok=True)
                 deps.kill_all_gobby_daemons()
+                _report_lock_survivor(deps, quiet)
                 return True
 
         if not quiet:
@@ -148,6 +171,7 @@ def stop_daemon(
                 deps._stop_step(f"Force killed ({elapsed:.1f}s)")
             pid_file.unlink(missing_ok=True)
             deps.kill_all_gobby_daemons()
+            _report_lock_survivor(deps, quiet)
             return True
 
         if not quiet:
@@ -164,6 +188,7 @@ def stop_daemon(
         if not quiet:
             deps._stop_step(f"Daemon stopped ({elapsed:.1f}s)")
         pid_file.unlink(missing_ok=True)
+        _report_lock_survivor(deps, quiet)
         return True
 
     except OSError as exc:
