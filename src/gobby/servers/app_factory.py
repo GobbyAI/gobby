@@ -113,15 +113,6 @@ def create_app(server: "HTTPServer") -> FastAPI:
     # starlette via DEFAULT_EXCLUDED_CONTENT_TYPES.
     app.add_middleware(GZipMiddleware, minimum_size=1024)
 
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=exact_origins if exact_origins else [],
-        allow_origin_regex=origin_regex,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
     from gobby.telemetry.middleware import TelemetryMiddleware
 
     app.add_middleware(TelemetryMiddleware)
@@ -133,6 +124,17 @@ def create_app(server: "HTTPServer") -> FastAPI:
     from gobby.servers.middleware.auth import AuthMiddleware
 
     app.add_middleware(AuthMiddleware, server=server)
+
+    # Outermost middleware so responses returned directly by auth still carry
+    # CORS headers and preflight requests do not require authentication.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=exact_origins if exact_origins else [],
+        allow_origin_regex=origin_regex,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     register_exception_handlers(app)
     _register_routes(app, server)

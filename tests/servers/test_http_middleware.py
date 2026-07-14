@@ -113,6 +113,31 @@ def test_required_by_default(temp_db: HubDatabase) -> None:
     assert explicit_server.auth_service.enabled is False
 
 
+def test_cors_wraps_auth_rejections_and_protected_preflights(temp_db: HubDatabase) -> None:
+    origin = "https://app.example.test"
+    services = ServiceContainer(
+        config=DaemonConfig(auth_mode="required", cors_origins=[origin]),
+        database=temp_db,
+        session_manager=MagicMock(),
+        task_manager=MagicMock(),
+    )
+    client = TestClient(HTTPServer(services).app)
+
+    rejected = client.get("/api/sessions", headers={"Origin": origin})
+    preflight = client.options(
+        "/api/sessions",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert rejected.status_code == 401
+    assert rejected.headers["access-control-allow-origin"] == origin
+    assert preflight.status_code == 200
+    assert preflight.headers["access-control-allow-origin"] == origin
+
+
 def test_public_prefix_matrix() -> None:
     client = TestClient(_required_auth_app())
     public_paths = (
