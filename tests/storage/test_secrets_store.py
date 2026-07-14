@@ -7,8 +7,12 @@ is mocked.
 
 from __future__ import annotations
 
+import multiprocessing
 import os
+import stat
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -17,12 +21,15 @@ import pytest
 from cryptography.fernet import Fernet
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.secret_names import SECRET_NAME_PATTERN
 from gobby.storage.secrets import (
     POSTURE_KEY_FILE,
     POSTURE_SCRYPT_PASSPHRASE,
     SECRET_KEK_PASSPHRASE_ENV,
     SECRET_REF_PATTERN,
     VALID_CATEGORIES,
+    InvalidSecretSaltError,
+    SecretDecryptionError,
     SecretInfo,
     SecretKeyUnavailable,
     SecretMigrationError,
@@ -33,6 +40,125 @@ from gobby.storage.secrets import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+def _create_salt_with_publish_barrier(
+    home: str,
+    candidate: bytes,
+    barrier: Any,
+    result_queue: Any,
+) -> None:
+    """Create a salt after synchronizing both processes at atomic publication."""
+    os.environ["GOBBY_HOME"] = home
+    from gobby.storage import secrets as secrets_module
+
+    original_link = secrets_module.os.link
+    original_urandom = secrets_module.os.urandom
+    original_exists = secrets_module.Path.exists
+    original_read_bytes = secrets_module.Path.read_bytes
+    salt_file = secrets_module.Path(home) / ".secret_salt"
+    is_first_lookup = True
+
+    def deterministic_urandom(size: int) -> bytes:
+        return candidate if size == len(candidate) else original_urandom(size)
+
+    def synchronized_exists(path: Path) -> bool:
+        nonlocal is_first_lookup
+        exists = original_exists(path)
+        if is_first_lookup and path == salt_file:
+            is_first_lookup = False
+            barrier.wait(timeout=10)
+        return exists
+
+    def synchronized_read_bytes(path: Path) -> bytes:
+        nonlocal is_first_lookup
+        if not is_first_lookup or path != salt_file:
+            return original_read_bytes(path)
+
+        try:
+            salt = original_read_bytes(path)
+        except FileNotFoundError:
+            is_first_lookup = False
+            barrier.wait(timeout=10)
+            raise
+        is_first_lookup = False
+        barrier.wait(timeout=10)
+        return salt
+
+    def synchronized_link(src: Any, dst: Any, *args: Any, **kwargs: Any) -> None:
+        barrier.wait(timeout=10)
+        original_link(src, dst, *args, **kwargs)
+
+    secrets_module.os.urandom = deterministic_urandom
+    secrets_module.Path.exists = synchronized_exists
+    secrets_module.Path.read_bytes = synchronized_read_bytes
+    secrets_module.os.link = synchronized_link
+    try:
+        result_queue.put(("ok", secrets_module._get_or_create_salt()))
+    except Exception as exc:
+        result_queue.put(("error", repr(exc)))
+
+
+def _create_kek_with_publish_barrier(
+    home: str,
+    candidate: bytes,
+    barrier: Any,
+    result_queue: Any,
+) -> None:
+    """Create a KEK after synchronizing both processes at atomic publication."""
+    os.environ["GOBBY_HOME"] = home
+    from gobby.storage import secrets as secrets_module
+
+    original_generate_key = secrets_module.Fernet.generate_key
+    original_link = secrets_module.os.link
+
+    def deterministic_generate_key() -> bytes:
+        return candidate
+
+    def synchronized_link(src: Any, dst: Any, *args: Any, **kwargs: Any) -> None:
+        barrier.wait(timeout=10)
+        original_link(src, dst, *args, **kwargs)
+
+    secrets_module.Fernet.generate_key = deterministic_generate_key
+    secrets_module.os.link = synchronized_link
+    try:
+        result_queue.put(("ok", secrets_module._get_or_create_kek_file_key()))
+    except Exception as exc:
+        result_queue.put(("error", repr(exc)))
+    finally:
+        secrets_module.Fernet.generate_key = original_generate_key
+        secrets_module.os.link = original_link
+
+
+def _create_salt_with_paused_write(
+    home: str,
+    partial_ready: Any,
+    release_write: Any,
+    result_queue: Any,
+) -> None:
+    """Pause a real child process after its first byte reaches the temp file."""
+    os.environ["GOBBY_HOME"] = home
+    from gobby.storage import secrets as secrets_module
+
+    original_write = secrets_module.os.write
+    is_first_write = True
+
+    def paused_write(fd: int, data: Any) -> int:
+        nonlocal is_first_write
+        if is_first_write:
+            is_first_write = False
+            written = original_write(fd, data[:1])
+            partial_ready.set()
+            if not release_write.wait(timeout=10):
+                raise TimeoutError("test did not release the paused salt write")
+            return written
+        return original_write(fd, data)
+
+    secrets_module.os.write = paused_write
+    try:
+        result_queue.put(("ok", secrets_module._get_or_create_salt()))
+    except Exception as exc:
+        result_queue.put(("error", repr(exc)))
 
 
 # =============================================================================
@@ -81,6 +207,30 @@ def _insert_legacy_secret(
         ),
     )
     return token
+
+
+def _synchronize_empty_key_material_loads(
+    stores: list[SecretStore],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Force stores to observe absent key material before either initializes it."""
+    first_load_barrier = threading.Barrier(len(stores))
+    for store in stores:
+        original_load = store._load_key_material
+        load_state = {"first": True}
+
+        def synchronized_load(
+            original_load: Any = original_load,
+            load_state: dict[str, bool] = load_state,
+        ) -> Any:
+            row = original_load()
+            if load_state["first"]:
+                assert row is None
+                load_state["first"] = False
+                first_load_barrier.wait(timeout=5)
+            return row
+
+        monkeypatch.setattr(store, "_load_key_material", synchronized_load)
 
 
 # =============================================================================
@@ -161,6 +311,104 @@ class TestGetOrCreateSalt:
         mode = oct(salt_file.stat().st_mode & 0o777)
         assert mode == "0o600"
 
+    @pytest.mark.parametrize("invalid_salt", [b"", b"x" * 15, b"x" * 17])
+    def test_rejects_invalid_salt_length(self, salt_dir: Path, invalid_salt: bytes) -> None:
+        salt_file = salt_dir / ".secret_salt"
+        salt_file.write_bytes(invalid_salt)
+
+        with pytest.raises(
+            InvalidSecretSaltError,
+            match=rf"expected 16 bytes, found {len(invalid_salt)}",
+        ):
+            _get_or_create_salt()
+
+    def test_racing_processes_converge_on_one_salt(self, salt_dir: Path) -> None:
+        context = multiprocessing.get_context("spawn")
+        barrier = context.Barrier(2)
+        result_queue = context.Queue()
+        candidates = [b"a" * 16, b"b" * 16]
+        processes = [
+            context.Process(
+                target=_create_salt_with_publish_barrier,
+                args=(str(salt_dir), candidate, barrier, result_queue),
+            )
+            for candidate in candidates
+        ]
+
+        try:
+            for process in processes:
+                process.start()
+            for process in processes:
+                process.join(timeout=15)
+
+            assert [process.exitcode for process in processes] == [0, 0]
+            results = [result_queue.get(timeout=2) for _ in processes]
+        finally:
+            for process in processes:
+                if process.is_alive():
+                    process.terminate()
+                    process.join(timeout=5)
+            result_queue.close()
+            result_queue.join_thread()
+
+        assert [status for status, _ in results] == ["ok", "ok"]
+        salts = [value for _, value in results]
+        assert salts[0] == salts[1]
+        assert salts[0] in candidates
+        assert (salt_dir / ".secret_salt").read_bytes() == salts[0]
+        assert list(salt_dir.glob("..secret_salt.*.tmp")) == []
+
+    def test_failed_write_removes_temp_file(
+        self,
+        salt_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def fail_write(fd: int, data: Any) -> int:
+            raise OSError("injected write failure")
+
+        monkeypatch.setattr(os, "write", fail_write)
+
+        with pytest.raises(OSError, match="injected write failure"):
+            _get_or_create_salt()
+
+        assert not (salt_dir / ".secret_salt").exists()
+        assert list(salt_dir.glob("..secret_salt.*.tmp")) == []
+
+    def test_partial_temp_write_is_never_observable_as_salt(self, salt_dir: Path) -> None:
+        context = multiprocessing.get_context("spawn")
+        partial_ready = context.Event()
+        release_write = context.Event()
+        result_queue = context.Queue()
+        process = context.Process(
+            target=_create_salt_with_paused_write,
+            args=(str(salt_dir), partial_ready, release_write, result_queue),
+        )
+
+        try:
+            process.start()
+            assert partial_ready.wait(timeout=10)
+            assert not (salt_dir / ".secret_salt").exists()
+            temp_files = list(salt_dir.glob("..secret_salt.*.tmp"))
+            assert len(temp_files) == 1
+            assert temp_files[0].stat().st_size == 1
+
+            release_write.set()
+            process.join(timeout=15)
+            assert process.exitcode == 0
+            status, salt = result_queue.get(timeout=2)
+        finally:
+            release_write.set()
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5)
+            result_queue.close()
+            result_queue.join_thread()
+
+        assert status == "ok"
+        assert len(salt) == 16
+        assert (salt_dir / ".secret_salt").read_bytes() == salt
+        assert list(salt_dir.glob("..secret_salt.*.tmp")) == []
+
 
 class TestGetOrCreateKekFile:
     def test_creates_kek_file(self, salt_dir: Path) -> None:
@@ -175,6 +423,61 @@ class TestGetOrCreateKekFile:
         kek_file = salt_dir / ".secret_kek"
         mode = oct(kek_file.stat().st_mode & 0o777)
         assert mode == "0o600"
+
+    def test_racing_processes_converge_on_one_kek(self, salt_dir: Path) -> None:
+        context = multiprocessing.get_context("spawn")
+        barrier = context.Barrier(2)
+        result_queue = context.Queue()
+        candidates = [Fernet.generate_key(), Fernet.generate_key()]
+        processes = [
+            context.Process(
+                target=_create_kek_with_publish_barrier,
+                args=(str(salt_dir), candidate, barrier, result_queue),
+            )
+            for candidate in candidates
+        ]
+
+        try:
+            for process in processes:
+                process.start()
+            for process in processes:
+                process.join(timeout=15)
+
+            assert [process.exitcode for process in processes] == [0, 0]
+            results = [result_queue.get(timeout=2) for _ in processes]
+        finally:
+            for process in processes:
+                if process.is_alive():
+                    process.terminate()
+                    process.join(timeout=5)
+            result_queue.close()
+            result_queue.join_thread()
+
+        assert [status for status, _ in results] == ["ok", "ok"]
+        keys = [value for _, value in results]
+        assert keys[0] == keys[1]
+        assert keys[0] in candidates
+        assert (salt_dir / ".secret_kek").read_bytes() == keys[0]
+        assert list(salt_dir.glob("..secret_kek.*.tmp")) == []
+
+    def test_kek_publication_fsyncs_file_and_parent(
+        self,
+        salt_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        original_fsync = os.fsync
+        fsync_targets: list[str] = []
+
+        def recording_fsync(fd: int) -> None:
+            mode = os.fstat(fd).st_mode
+            fsync_targets.append("directory" if stat.S_ISDIR(mode) else "file")
+            original_fsync(fd)
+
+        monkeypatch.setattr("gobby.storage.secrets.os.fsync", recording_fsync)
+
+        _get_or_create_kek_file_key()
+
+        assert fsync_targets == ["file", "directory"]
 
 
 def test_secret_material_paths_follow_gobby_home_changes(
@@ -335,27 +638,6 @@ class TestSecretStoreSet:
         info = store.set("KEY", "value", description=None)
         assert info.description is None
 
-    def test_set_raises_if_row_vanishes_after_upsert(
-        self, store: SecretStore, temp_db: HubDatabase
-    ) -> None:
-        """Defensive guard: if the row is missing after upsert, raise ValueError."""
-        original_fetchone = temp_db.fetchone
-        call_count = 0
-
-        def patched_fetchone(sql: str, params: tuple = ()) -> Any:
-            nonlocal call_count
-            call_count += 1
-            if "SELECT * FROM secrets WHERE id" in sql:
-                return None  # Simulate row vanishing
-            return original_fetchone(sql, params)
-
-        setattr(temp_db, "fetchone", patched_fetchone)  # noqa: B010 - monkeypatches instance method
-        try:
-            with pytest.raises(ValueError, match="not found after upsert"):
-                store.set("VANISH", "value")
-        finally:
-            setattr(temp_db, "fetchone", original_fetchone)  # noqa: B010
-
     def test_set_encrypts_value(self, store: SecretStore, temp_db: HubDatabase) -> None:
         """The stored value in the DB should NOT be the plaintext."""
         store.set("SENSITIVE", "super-secret-value")
@@ -365,6 +647,34 @@ class TestSecretStoreSet:
         assert row is not None
         assert row["encrypted_value"] != "super-secret-value"
         assert len(row["encrypted_value"]) > 0
+
+    @pytest.mark.parametrize("name", ["", "   ", "my-key", "my.key", "1leading"])
+    def test_set_rejects_names_that_cannot_be_referenced(
+        self,
+        store: SecretStore,
+        name: str,
+    ) -> None:
+        with pytest.raises(ValueError, match="Invalid secret name: must start"):
+            store.set(name, "value")
+
+    @pytest.mark.parametrize(
+        ("name", "normalized_name"),
+        [
+            ("API_KEY", "api_key"),
+            ("  _Private  ", "_private"),
+            ("name123", "name123"),
+        ],
+    )
+    def test_every_accepted_name_round_trips_through_reference(
+        self,
+        store: SecretStore,
+        name: str,
+        normalized_name: str,
+    ) -> None:
+        info = store.set(name, "stored-value")
+
+        assert info.name == normalized_name
+        assert store.resolve(f"$secret:{info.name}") == "stored-value"
 
 
 # =============================================================================
@@ -387,8 +697,10 @@ class TestSecretStoreGet:
         store.set("KEY", "new")
         assert store.get("KEY") == "new"
 
-    def test_get_invalid_token_returns_none(self, temp_db: HubDatabase, salt_dir: Path) -> None:
-        """Corrupt envelope tokens fail gracefully."""
+    def test_get_invalid_token_raises_decryption_error(
+        self, temp_db: HubDatabase, salt_dir: Path
+    ) -> None:
+        """Corrupt envelope tokens are distinct from missing rows."""
         store = SecretStore(temp_db)
         store.set("KEY", "secret")
         temp_db.execute(
@@ -396,15 +708,15 @@ class TestSecretStoreGet:
             ("not-a-fernet-token", "key"),
         )
 
-        assert SecretStore(temp_db).get("KEY") is None
+        with pytest.raises(SecretDecryptionError):
+            SecretStore(temp_db).get("KEY")
 
-    def test_get_invalid_token_logs_safe_identifier(
+    def test_get_invalid_token_error_uses_safe_identifier(
         self,
         temp_db: HubDatabase,
         salt_dir: Path,
-        caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Decrypt failures log a deterministic hash, not the secret name."""
+        """Decrypt failures expose a deterministic hash, not the secret name."""
         store = SecretStore(temp_db)
         store.set("KEY", "secret")
         temp_db.execute(
@@ -412,11 +724,11 @@ class TestSecretStoreGet:
             ("not-a-fernet-token", "key"),
         )
 
-        with caplog.at_level("ERROR", logger="gobby.storage.secrets"):
-            assert SecretStore(temp_db).get("KEY") is None
+        with pytest.raises(SecretDecryptionError) as exc_info:
+            SecretStore(temp_db).get("KEY")
 
-        assert any(getattr(record, "secret", "").startswith("sha256:") for record in caplog.records)
-        assert "KEY" not in caplog.text
+        assert exc_info.value.secret_identifier.startswith("sha256:")
+        assert "KEY" not in str(exc_info.value)
 
     def test_get_various_value_types(self, store: SecretStore) -> None:
         """Encrypt/decrypt handles various string content."""
@@ -436,6 +748,75 @@ class TestSecretStoreGet:
 
 
 class TestSecretStoreEnvelope:
+    def test_concurrent_first_use_converges_on_one_envelope(
+        self,
+        temp_db: HubDatabase,
+        salt_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        stores = [SecretStore(temp_db), SecretStore(temp_db)]
+        _synchronize_empty_key_material_loads(stores, monkeypatch)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            fernets = list(executor.map(lambda store: store._get_fernet(), stores))
+
+        stores[0].set("FIRST_WRITER", "alpha")
+        stores[1].set("SECOND_WRITER", "bravo")
+
+        fresh_store = SecretStore(temp_db)
+        assert fresh_store.get("FIRST_WRITER") == "alpha"
+        assert fresh_store.get("SECOND_WRITER") == "bravo"
+        probe = fernets[0].encrypt(b"shared-dek")
+        assert fernets[1].decrypt(probe) == b"shared-dek"
+        assert temp_db.fetchone("SELECT COUNT(*) AS count FROM secret_key_material")["count"] == 1
+
+    def test_posture_change_wins_when_default_initialization_publishes_first(
+        self,
+        temp_db: HubDatabase,
+        salt_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        default_store = SecretStore(temp_db)
+        posture_store = SecretStore(temp_db)
+        stores = [default_store, posture_store]
+        _synchronize_empty_key_material_loads(stores, monkeypatch)
+
+        default_insert = default_store._insert_key_material_if_absent
+        posture_insert = posture_store._insert_key_material_if_absent
+        default_published = threading.Event()
+
+        def publish_default_first(*args: Any, **kwargs: Any) -> bool:
+            inserted = default_insert(*args, **kwargs)
+            assert inserted
+            default_published.set()
+            return inserted
+
+        def wait_for_default(*args: Any, **kwargs: Any) -> bool:
+            assert default_published.wait(timeout=5)
+            return posture_insert(*args, **kwargs)
+
+        monkeypatch.setattr(default_store, "_insert_key_material_if_absent", publish_default_first)
+        monkeypatch.setattr(posture_store, "_insert_key_material_if_absent", wait_for_default)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            default_future = executor.submit(default_store._get_fernet)
+            posture_future = executor.submit(
+                posture_store.set_kek_posture,
+                POSTURE_SCRYPT_PASSPHRASE,
+                passphrase="correct horse",
+            )
+            default_future.result(timeout=10)
+            posture_future.result(timeout=10)
+
+        assert posture_store.current_kek_posture() == POSTURE_SCRYPT_PASSPHRASE
+        default_store.set("AFTER_POSTURE_RACE", "secret")
+        assert (
+            SecretStore(temp_db, kek_passphrase="correct horse").get("AFTER_POSTURE_RACE")
+            == "secret"
+        )
+        with pytest.raises(SecretKeyUnavailable, match=SECRET_KEK_PASSPHRASE_ENV):
+            SecretStore(temp_db)._get_fernet()
+
     def test_machine_id_change_does_not_break_envelope_decryption(
         self,
         temp_db: HubDatabase,
@@ -581,7 +962,8 @@ class TestSecretStoreLegacyMigration:
         assert report.skipped == 1
         assert report.entries[0].status == "skipped"
         assert temp_db.fetchone("SELECT 1 FROM secret_key_material WHERE id = %s", ("default",))
-        assert SecretStore(temp_db).get("KEY") is None
+        with pytest.raises(SecretDecryptionError):
+            SecretStore(temp_db).get("KEY")
         assert any(getattr(record, "secret", "").startswith("sha256:") for record in caplog.records)
         assert "KEY" not in caplog.text
 
@@ -690,9 +1072,10 @@ class TestSecretStoreResolve:
         result = store.resolve("$secret:USER:$secret:PASS")
         assert result == "admin:s3cret"
 
-    def test_resolve_unresolved_stays(self, store: SecretStore) -> None:
+    def test_resolve_missing_reference_substitutes_empty(self, store: SecretStore) -> None:
         result = store.resolve("Bearer $secret:MISSING_KEY")
-        assert result == "Bearer $secret:MISSING_KEY"
+        assert result == "Bearer "
+        assert "$secret:" not in result
 
     def test_resolve_missing_reference_logs_safe_identifier(
         self,
@@ -702,9 +1085,34 @@ class TestSecretStoreResolve:
         with caplog.at_level("WARNING", logger="gobby.storage.secrets"):
             result = store.resolve("Bearer $secret:MISSING_KEY")
 
-        assert result == "Bearer $secret:MISSING_KEY"
+        assert result == "Bearer "
+        assert "Configured secret reference not found" in caplog.text
+        assert "could not be decrypted" not in caplog.text
         assert "sha256:" in caplog.text
         assert "MISSING_KEY" not in caplog.text
+
+    def test_resolve_decrypt_failure_logs_distinctly_and_substitutes_empty(
+        self,
+        temp_db: HubDatabase,
+        salt_dir: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        store = SecretStore(temp_db)
+        store.set("KEY", "secret")
+        temp_db.execute(
+            "UPDATE secrets SET encrypted_value = %s WHERE name = %s",
+            ("not-a-fernet-token", "key"),
+        )
+
+        with caplog.at_level("ERROR", logger="gobby.storage.secrets"):
+            result = SecretStore(temp_db).resolve("Bearer $secret:KEY")
+
+        assert result == "Bearer "
+        assert "$secret:" not in result
+        assert "Configured secret reference could not be decrypted" in caplog.text
+        assert "not found" not in caplog.text
+        assert any(getattr(record, "reason", None) == "invalid_token" for record in caplog.records)
+        assert "KEY" not in caplog.text
 
     def test_resolve_no_refs(self, store: SecretStore) -> None:
         result = store.resolve("plain text no refs")
@@ -716,7 +1124,8 @@ class TestSecretStoreResolve:
     def test_resolve_mixed_found_and_missing(self, store: SecretStore) -> None:
         store.set("FOUND", "value")
         result = store.resolve("$secret:FOUND and $secret:MISSING")
-        assert result == "value and $secret:MISSING"
+        assert result == "value and "
+        assert "$secret:" not in result
 
 
 # =============================================================================
@@ -746,6 +1155,17 @@ class TestSecretStoreResolveDict:
         result = store.resolve_dict({"x": "$secret:A", "y": "$secret:B"})
         assert result == {"x": "val_a", "y": "val_b"}
 
+    def test_resolve_dict_never_forwards_missing_refs(self, store: SecretStore) -> None:
+        result = store.resolve_dict(
+            {
+                "Authorization": "Bearer $secret:MISSING",
+                "NestedJson": '{"token":"$secret:MISSING"}',
+            }
+        )
+
+        assert result == {"Authorization": "Bearer ", "NestedJson": '{"token":""}'}
+        assert all("$secret:" not in value for value in result.values())
+
 
 # =============================================================================
 # SECRET_REF_PATTERN
@@ -767,6 +1187,13 @@ class TestSecretRefPattern:
         m = SECRET_REF_PATTERN.search("prefix $secret:MY_KEY suffix")
         assert m is not None
         assert m.group(1) == "MY_KEY"
+
+    @pytest.mark.parametrize("name", ["API_KEY", "_private", "MyKey123", "1bad", "bad-name"])
+    def test_name_and_reference_patterns_share_one_grammar(self, name: str) -> None:
+        name_matches = SECRET_NAME_PATTERN.fullmatch(name) is not None
+        reference_matches = SECRET_REF_PATTERN.fullmatch(f"$secret:{name}") is not None
+
+        assert reference_matches is name_matches
 
 
 # =============================================================================

@@ -6,11 +6,11 @@ import hashlib
 import re
 from dataclasses import dataclass
 
+from gobby.storage.secret_names import SECRET_REF_PATTERN
 from gobby.storage.secrets import SecretStore
 
 SECRET_REF_PREFIX = "$secret:"
 _MANAGED_DESCRIPTION_PREFIX = "Gobby-managed MCP secret:"
-_SECRET_REFERENCE_RE = re.compile(r"\$secret:[A-Za-z_][A-Za-z0-9_]*")
 _NAME_TOKEN_RE = re.compile(r"[a-z0-9]+")
 _SAFE_NAME_RE = re.compile(r"[^a-z0-9]+")
 _HIGH_CONFIDENCE_VALUE_RE = re.compile(
@@ -78,7 +78,7 @@ def _safe_component(value: str, *, fallback: str) -> str:
 
 def is_explicit_secret_reference(value: str) -> bool:
     """Return whether a value already delegates any content to SecretStore."""
-    return _SECRET_REFERENCE_RE.search(value) is not None
+    return SECRET_REF_PATTERN.search(value) is not None
 
 
 def is_secret_looking_mcp_value(key: str, value: str) -> bool:

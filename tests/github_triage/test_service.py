@@ -147,6 +147,22 @@ def test_webhook_acceptance_validates_hmac_and_deduplicates(temp_db, sample_proj
     assert duplicate.duplicate is True
 
 
+def test_webhook_rejects_empty_resolved_secret(temp_db, sample_project) -> None:
+    raw_body = _payload()
+    _enable_config(temp_db, sample_project["id"], secret="$secret:missing")
+    service = GitHubIssueTriageService(
+        db=temp_db,
+        secret_store=SimpleNamespace(resolve=lambda _value: ""),
+    )
+
+    with pytest.raises(WebhookAuthenticationError):
+        service.accept_webhook_delivery(
+            sample_project["id"],
+            _headers(raw_body, secret=""),
+            raw_body,
+        )
+
+
 def test_webhook_rejects_bad_signature(temp_db, sample_project) -> None:
     raw_body = _payload()
     _enable_config(temp_db, sample_project["id"])

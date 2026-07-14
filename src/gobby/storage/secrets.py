@@ -11,7 +11,9 @@ import hashlib
 import logging
 import os
 import re
+import threading
 import uuid
+from collections import OrderedDict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -25,12 +27,16 @@ from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 from gobby.paths import get_gobby_home
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.secret_names import (
+    SECRET_REF_PATTERN,
+    normalize_and_validate_secret_name,
+    normalize_secret_name,
+)
 from gobby.utils.datetime import datetime_to_required_iso, require_stored_datetime, utc_now
 from gobby.utils.machine_id import get_machine_id
 
 logger = logging.getLogger(__name__)
 
-SECRET_REF_PATTERN = re.compile(r"\$secret:([A-Za-z_][A-Za-z0-9_]*)")
 _SALT_FILENAME = ".secret_salt"
 _KEK_FILENAME = ".secret_kek"
 # Every file holding secret key material under ~/.gobby. Anything that
@@ -53,9 +59,25 @@ SCRYPT_P = 1
 
 VALID_CATEGORIES = {"general", "llm", "mcp_server", "memory", "integration"}
 
+_LEGACY_FERNET_KEY_CACHE_MAX_SIZE = 8
+_legacy_fernet_key_cache: OrderedDict[bytes, bytes] = OrderedDict()
+_legacy_fernet_key_cache_lock = threading.Lock()
+
 
 class SecretKeyUnavailable(RuntimeError):
     """Raised when the configured KEK cannot be loaded or cannot unwrap the DEK."""
+
+
+class InvalidSecretSaltError(RuntimeError):
+    """Raised when the legacy secret salt does not have the required length."""
+
+
+class SecretDecryptionError(RuntimeError):
+    """Raised when stored secret ciphertext cannot be decrypted."""
+
+    def __init__(self, secret_identifier: str) -> None:
+        self.secret_identifier = secret_identifier
+        super().__init__(f"Failed to decrypt configured secret {secret_identifier}")
 
 
 class SecretMigrationError(RuntimeError):
@@ -159,26 +181,85 @@ class SecretInfo:
         }
 
 
-def _get_or_create_salt() -> bytes:
-    """Get or create the legacy machine_id encryption salt."""
-    salt_file = get_gobby_home() / _SALT_FILENAME
-    salt_file.parent.mkdir(parents=True, exist_ok=True)
-
-    if salt_file.exists():
-        return salt_file.read_bytes()
-
-    salt = os.urandom(16)
-    fd = os.open(salt_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        os.write(fd, salt)
-    finally:
-        os.close(fd)
-
-    logger.info("Generated new legacy secret encryption salt")
+def _read_secret_salt(salt_file: Path) -> bytes:
+    salt = salt_file.read_bytes()
+    if len(salt) != 16:
+        raise InvalidSecretSaltError(
+            f"Invalid secret salt file {salt_file}: expected 16 bytes, found {len(salt)}"
+        )
     return salt
 
 
-def _derive_fernet_key(machine_id: str, salt: bytes) -> bytes:
+def _write_all(fd: int, data: bytes) -> None:
+    remaining = memoryview(data)
+    while remaining:
+        written = os.write(fd, remaining)
+        if written <= 0:
+            raise OSError("Failed to write secret material")
+        remaining = remaining[written:]
+
+
+def _fsync_directory(directory: Path) -> None:
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _publish_private_file(path: Path, data: bytes) -> bool:
+    """Durably publish a complete private file without replacing a racing winner."""
+    temp_file = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    fd = os.open(temp_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    published = False
+    try:
+        try:
+            os.fchmod(fd, 0o600)
+            _write_all(fd, data)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+        try:
+            # A hard link is an atomic, no-clobber publication within one directory.
+            # os.rename()/os.replace() would let a later racer overwrite the winner.
+            os.link(temp_file, path)
+        except FileExistsError:
+            return False
+        published = True
+        return True
+    finally:
+        try:
+            temp_file.unlink(missing_ok=True)
+        finally:
+            if published:
+                _fsync_directory(path.parent)
+
+
+def _publish_secret_salt(salt_file: Path, salt: bytes) -> bool:
+    """Publish a complete salt without replacing a racing process's winner."""
+    return _publish_private_file(salt_file, salt)
+
+
+def _get_or_create_salt() -> bytes:
+    """Get or atomically create the legacy machine_id encryption salt."""
+    salt_file = get_gobby_home() / _SALT_FILENAME
+    salt_file.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        return _read_secret_salt(salt_file)
+    except FileNotFoundError:
+        pass
+
+    salt = os.urandom(16)
+    if _publish_secret_salt(salt_file, salt):
+        logger.info("Generated new legacy secret encryption salt")
+        return salt
+
+    return _read_secret_salt(salt_file)
+
+
+def _derive_fernet_key_uncached(machine_id: str, salt: bytes) -> bytes:
     """Derive the legacy Fernet key from machine ID using PBKDF2."""
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
@@ -188,6 +269,41 @@ def _derive_fernet_key(machine_id: str, salt: bytes) -> bytes:
     )
     key_bytes = kdf.derive(machine_id.encode("utf-8"))
     return base64.urlsafe_b64encode(key_bytes)
+
+
+def _legacy_fernet_key_cache_key(machine_id: str, salt: bytes) -> bytes:
+    """Return a fixed-size cache key without retaining raw derivation inputs."""
+    machine_id_bytes = machine_id.encode("utf-8")
+    digest = hashlib.sha256()
+    digest.update(len(machine_id_bytes).to_bytes(8, "big"))
+    digest.update(machine_id_bytes)
+    digest.update(len(salt).to_bytes(8, "big"))
+    digest.update(salt)
+    return digest.digest()
+
+
+def _derive_fernet_key(machine_id: str, salt: bytes) -> bytes:
+    """Return a process-cached legacy Fernet key for stable derivation inputs."""
+    cache_key = _legacy_fernet_key_cache_key(machine_id, salt)
+    with _legacy_fernet_key_cache_lock:
+        cached = _legacy_fernet_key_cache.get(cache_key)
+        if cached is not None:
+            _legacy_fernet_key_cache.move_to_end(cache_key)
+            return cached
+
+        # Keep derivation inside the lock: concurrent first users must not each
+        # pay the 600k-iteration PBKDF2 cost for the same process-stable inputs.
+        key = _derive_fernet_key_uncached(machine_id, salt)
+        _legacy_fernet_key_cache[cache_key] = key
+        if len(_legacy_fernet_key_cache) > _LEGACY_FERNET_KEY_CACHE_MAX_SIZE:
+            _legacy_fernet_key_cache.popitem(last=False)
+        return key
+
+
+def _clear_legacy_fernet_key_cache() -> None:
+    """Clear the bounded process cache (primarily for isolated tests)."""
+    with _legacy_fernet_key_cache_lock:
+        _legacy_fernet_key_cache.clear()
 
 
 def _derive_scrypt_fernet_key(
@@ -213,26 +329,34 @@ def write_private_file(path: Path, data: bytes) -> None:
         os.close(fd)
 
 
+def _read_kek_file(kek_file: Path) -> bytes:
+    key = kek_file.read_bytes().strip()
+    try:
+        Fernet(key)
+    except (TypeError, ValueError) as exc:
+        raise SecretKeyUnavailable(f"Invalid secret KEK file: {kek_file}") from exc
+    try:
+        kek_file.chmod(0o600)
+    except OSError:
+        logger.warning("Could not enforce 0600 permissions on %s", kek_file)
+    return key
+
+
 def _get_or_create_kek_file_key() -> bytes:
     """Return the default key-file KEK, creating it with 0600 permissions."""
     kek_file = get_gobby_home() / _KEK_FILENAME
     kek_file.parent.mkdir(parents=True, exist_ok=True)
-    if kek_file.exists():
-        key = kek_file.read_bytes().strip()
-        try:
-            Fernet(key)
-        except (TypeError, ValueError) as exc:
-            raise SecretKeyUnavailable(f"Invalid secret KEK file: {kek_file}") from exc
-        try:
-            kek_file.chmod(0o600)
-        except OSError:
-            logger.warning("Could not enforce 0600 permissions on %s", kek_file)
-        return key
+    try:
+        return _read_kek_file(kek_file)
+    except FileNotFoundError:
+        pass
 
     key = Fernet.generate_key()
-    write_private_file(kek_file, key)
-    logger.info("Generated new secret KEK file")
-    return key
+    if _publish_private_file(kek_file, key):
+        logger.info("Generated new secret KEK file")
+        return key
+
+    return _read_kek_file(kek_file)
 
 
 def _encode_bytes(value: bytes) -> str:
@@ -260,6 +384,9 @@ class SecretStore:
     and stored in ``secret_key_material``. Only daemon-internal code can call
     ``get()``/``resolve()``; HTTP APIs expose write-only secret management.
 
+    Legacy migration's 600k-iteration PBKDF2 key uses a synchronized, bounded
+    process cache, so repeated store instances reuse the process-stable result.
+
     All secret names are normalized to lowercase for case-insensitive matching.
     """
 
@@ -271,7 +398,7 @@ class SecretStore:
     @staticmethod
     def _normalize_name(name: str) -> str:
         """Normalize secret name to lowercase for case-insensitive matching."""
-        return name.strip().lower()
+        return normalize_secret_name(name)
 
     @classmethod
     def find_secret_references(cls, values: Iterable[Any]) -> set[str]:
@@ -351,12 +478,13 @@ class SecretStore:
         )
         return kek.encrypt(dek).decode("utf-8"), salt_text, kdf_n, kdf_r, kdf_p
 
-    def _unwrap_dek(self, row: Any) -> bytes:
+    def _unwrap_dek(self, row: Any, *, passphrase: str | None = None) -> bytes:
         posture = str(row["kek_posture"])
         try:
             kek, _salt, _n, _r, _p = self._kek_fernet(
                 posture,
                 salt_text=row["kek_salt"],
+                passphrase=passphrase,
                 n=row["kek_kdf_n"],
                 r=row["kek_kdf_r"],
                 p=row["kek_kdf_p"],
@@ -399,6 +527,33 @@ class SecretStore:
                    updated_at = EXCLUDED.updated_at""",
             (SECRET_KEY_ID, wrapped_dek, posture, salt_text, kdf_n, kdf_r, kdf_p, now, now),
         )
+
+    def _insert_key_material_if_absent(
+        self,
+        dek: bytes,
+        *,
+        posture: str,
+        passphrase: str | None,
+        executor: Any,
+    ) -> bool:
+        posture = _normalize_posture(posture)
+        wrapped_dek, salt_text, kdf_n, kdf_r, kdf_p = self._wrap_dek(
+            dek,
+            posture=posture,
+            passphrase=passphrase,
+        )
+        now = utc_now()
+        cursor = executor.execute(
+            """INSERT INTO secret_key_material (
+                   id, wrapped_dek, kek_posture, kek_salt, kek_kdf_n, kek_kdf_r, kek_kdf_p,
+                   created_at, updated_at
+               )
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT (id) DO NOTHING
+               RETURNING id""",
+            (SECRET_KEY_ID, wrapped_dek, posture, salt_text, kdf_n, kdf_r, kdf_p, now, now),
+        )
+        return cursor.fetchone() is not None
 
     def _legacy_fernet(self) -> Fernet:
         machine_id = get_machine_id()
@@ -472,17 +627,33 @@ class SecretStore:
             return None, report
 
         with self.db.transaction() as txn:
-            self._upsert_key_material(
+            key_material_created = self._insert_key_material_if_absent(
                 dek,
                 posture=posture,
                 passphrase=passphrase,
                 executor=txn,
             )
-            for name, encrypted_value in migrated_values:
-                txn.execute(
-                    "UPDATE secrets SET encrypted_value = %s, updated_at = %s WHERE name = %s",
-                    (encrypted_value, utc_now(), name),
+            if key_material_created:
+                for name, encrypted_value in migrated_values:
+                    txn.execute(
+                        "UPDATE secrets SET encrypted_value = %s, updated_at = %s WHERE name = %s",
+                        (encrypted_value, utc_now(), name),
+                    )
+
+        if not key_material_created:
+            winner = self._load_key_material()
+            if winner is None:
+                raise RuntimeError(
+                    "Concurrent secret envelope initialization did not publish a key"
                 )
+            winner_dek = self._unwrap_dek(winner, passphrase=passphrase)
+            concurrent_report = SecretMigrationReport(
+                dry_run=False,
+                key_material_created=False,
+                entries=entries,
+            )
+            self._fernet = Fernet(winner_dek)
+            return winner_dek, concurrent_report
 
         for entry in entries:
             if entry.status == "skipped":
@@ -569,7 +740,7 @@ class SecretStore:
         posture = _normalize_posture(posture)
         row = self._load_key_material()
         if row is None:
-            dek, _report = self._initialize_envelope(
+            dek, report = self._initialize_envelope(
                 required_secret_names=set(),
                 dry_run=False,
                 posture=posture,
@@ -577,6 +748,8 @@ class SecretStore:
             )
             if dek is None:
                 raise RuntimeError("Secret envelope was not initialized")
+            if not report.key_material_created:
+                self._upsert_key_material(dek, posture=posture, passphrase=passphrase)
         else:
             dek = self._unwrap_dek(row)
             self._upsert_key_material(dek, posture=posture, passphrase=passphrase)
@@ -593,32 +766,25 @@ class SecretStore:
         if category not in VALID_CATEGORIES:
             raise ValueError(f"Invalid category '{category}'. Must be one of: {VALID_CATEGORIES}")
 
-        name = self._normalize_name(name)
+        name = normalize_and_validate_secret_name(name)
         fernet = self._get_fernet()
         encrypted = fernet.encrypt(plaintext_value.encode("utf-8")).decode("utf-8")
         now = utc_now()
-
-        existing = self.db.fetchone("SELECT id FROM secrets WHERE name = %s", (name,))
-
-        if existing:
-            self.db.execute(
-                """UPDATE secrets
-                   SET encrypted_value = %s, category = %s, description = %s, updated_at = %s
-                   WHERE name = %s""",
-                (encrypted, category, description, now, name),
-            )
-            secret_id = existing["id"]
-        else:
-            secret_id = str(uuid.uuid4())
-            self.db.execute(
-                """INSERT INTO secrets (id, name, encrypted_value, category, description, created_at, updated_at)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-                (secret_id, name, encrypted, category, description, now, now),
-            )
-
-        row = self.db.fetchone("SELECT * FROM secrets WHERE id = %s", (secret_id,))
+        row = self.db.fetchone(
+            """INSERT INTO secrets (
+                   id, name, encrypted_value, category, description, created_at, updated_at
+               )
+               VALUES (%s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT (name) DO UPDATE SET
+                   encrypted_value = EXCLUDED.encrypted_value,
+                   category = EXCLUDED.category,
+                   description = EXCLUDED.description,
+                   updated_at = EXCLUDED.updated_at
+               RETURNING id, name, category, description, created_at, updated_at""",
+            (str(uuid.uuid4()), name, encrypted, category, description, now, now),
+        )
         if row is None:
-            raise ValueError(f"Secret '{name}' not found after upsert (id={secret_id})")
+            raise RuntimeError("Secret upsert did not return a row")
         return SecretInfo(
             id=row["id"],
             name=row["name"],
@@ -640,11 +806,7 @@ class SecretStore:
             decrypted: str = fernet.decrypt(row["encrypted_value"].encode("utf-8")).decode("utf-8")
             return decrypted
         except InvalidToken:
-            logger.error(
-                "Failed to decrypt configured secret; envelope token is invalid",
-                extra={"secret": _safe_secret_identifier(name), "reason": "invalid_token"},
-            )
-            return None
+            raise SecretDecryptionError(_safe_secret_identifier(name)) from None
 
     def delete(self, name: str) -> bool:
         """Delete a secret."""
@@ -683,14 +845,22 @@ class SecretStore:
 
         def _replace(match: re.Match[str]) -> str:
             name = match.group(1)
-            value = self.get(name)
+            try:
+                value = self.get(name)
+            except SecretDecryptionError as exc:
+                logger.error(
+                    "Configured secret reference could not be decrypted: %s",
+                    exc.secret_identifier,
+                    extra={"reason": "invalid_token"},
+                )
+                return ""
             if value is not None:
                 return value
             logger.warning(
                 "Configured secret reference not found: %s",
                 _safe_secret_identifier(self._normalize_name(name)),
             )
-            return match.group(0)
+            return ""
 
         return SECRET_REF_PATTERN.sub(_replace, text)
 
