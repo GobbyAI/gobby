@@ -5,6 +5,7 @@ and Linear via the official Linear MCP server.
 """
 
 import logging
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -607,6 +608,82 @@ class TestLinearSyncServiceSync:
             escalated_at=None,
             escalation_reason=None,
         )
+
+    @pytest.mark.asyncio
+    async def test_pull_updates_preserves_newer_local_changes(
+        self, sync_service: LinearSyncService, mock_mcp_manager, mock_task_manager
+    ) -> None:
+        mock_task_manager.db.fetchall.return_value = [
+            {
+                "id": "task-1",
+                "linear_issue_id": "issue-1",
+                "title": "New local title",
+                "description": "Description",
+                "priority": 2,
+                "updated_at": datetime(2026, 2, 12, 12, 34, 56, tzinfo=UTC),
+                "closed_at": None,
+                "closed_reason": None,
+                "closed_in_session_id": None,
+                "closed_commit_sha": None,
+                "escalated_at": None,
+                "escalation_reason": None,
+            }
+        ]
+        mock_mcp_manager.call_tool.return_value = {
+            "issues": [
+                {
+                    "id": "issue-1",
+                    "title": "Older Linear title",
+                    "description": "Description",
+                    "priority": 2,
+                    "state": {"name": "Todo"},
+                    "updatedAt": "2026-02-11T12:34:56Z",
+                }
+            ]
+        }
+
+        result = await sync_service.pull_linear_updates()
+
+        assert result == {"updated": 0, "skipped": 1, "errors": 1, "deferred": 0}
+        mock_task_manager.reconcile_task_state.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_pull_updates_skips_unchanged_task_without_touching_updated_at(
+        self, sync_service: LinearSyncService, mock_mcp_manager, mock_task_manager
+    ) -> None:
+        mock_task_manager.db.fetchall.return_value = [
+            {
+                "id": "task-1",
+                "linear_issue_id": "issue-1",
+                "title": "Same title",
+                "description": None,
+                "priority": 2,
+                "updated_at": "2026-02-10T12:34:56Z",
+                "closed_at": None,
+                "closed_reason": None,
+                "closed_in_session_id": None,
+                "closed_commit_sha": None,
+                "escalated_at": None,
+                "escalation_reason": None,
+            }
+        ]
+        mock_mcp_manager.call_tool.return_value = {
+            "issues": [
+                {
+                    "id": "issue-1",
+                    "title": "Same title",
+                    "description": "",
+                    "priority": 2,
+                    "state": {"name": "Todo"},
+                    "updatedAt": "2026-02-11T12:34:56Z",
+                }
+            ]
+        }
+
+        result = await sync_service.pull_linear_updates()
+
+        assert result == {"updated": 0, "skipped": 1, "errors": 0, "deferred": 0}
+        mock_task_manager.reconcile_task_state.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_pull_updates_rate_limits_repeated_linear_fetch_failures(

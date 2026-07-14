@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -27,7 +28,11 @@ from gobby.sync.linear_support import (
 )
 
 
-def _parse_linear_timestamp(value: str | None) -> datetime | None:
+def _parse_linear_timestamp(value: str | datetime | None) -> datetime | None:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
     if not isinstance(value, str) or not value:
         return None
     try:
@@ -37,6 +42,23 @@ def _parse_linear_timestamp(value: str | None) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
+
+
+_TIMESTAMP_FIELDS = {"closed_at", "escalated_at"}
+
+
+def _linear_update_changes_task(row: Mapping[str, Any], updates: Mapping[str, Any]) -> bool:
+    for field, value in updates.items():
+        current = row.get(field)
+        if field in _TIMESTAMP_FIELDS:
+            if _parse_linear_timestamp(current) != _parse_linear_timestamp(value):
+                return True
+        elif field == "description":
+            if (current or "") != (value or ""):
+                return True
+        elif current != value:
+            return True
+    return False
 
 
 def _linear_issue_state_name(issue: dict[str, Any]) -> str | None:
@@ -443,7 +465,9 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
         stats = {"updated": 0, "skipped": 0, "errors": 0, "deferred": 0}
 
         rows = self.task_manager.db.fetchall(
-            "SELECT id, linear_issue_id FROM tasks "
+            "SELECT id, linear_issue_id, title, description, priority, updated_at, "
+            "closed_at, closed_reason, closed_in_session_id, closed_commit_sha, "
+            "escalated_at, escalation_reason FROM tasks "
             "WHERE project_id = %s AND linear_issue_id IS NOT NULL",
             (self.project_id,),
         )
@@ -506,17 +530,31 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
                     else datetime.now(UTC).isoformat()
                 )
                 priority_val = issue.get("priority", 2)
-                self.task_manager.reconcile_task_state(
-                    task_id,
-                    title=_local_title_from_linear(issue.get("title", "")),
-                    description=issue.get("description", ""),
-                    priority=priority_val,
+                updates = {
+                    "title": _local_title_from_linear(issue.get("title", "")),
+                    "description": issue.get("description", ""),
+                    "priority": priority_val,
                     **_linear_lifecycle_fields(
                         gobby_state,
                         state_name=state_name,
                         changed_at=changed_at,
                     ),
-                )
+                }
+                if not _linear_update_changes_task(row, updates):
+                    stats["skipped"] += 1
+                    continue
+
+                local_updated = _parse_linear_timestamp(row.get("updated_at"))
+                if local_updated and linear_updated and local_updated > linear_updated:
+                    logger.warning(
+                        "Skipped Linear update for task %s because local changes are newer",
+                        task_id,
+                    )
+                    stats["skipped"] += 1
+                    stats["errors"] += 1
+                    continue
+
+                self.task_manager.reconcile_task_state(task_id, **updates)
                 stats["updated"] += 1
             except Exception as e:
                 logger.warning("Failed to update task %s from Linear: %s", task_id, e)
