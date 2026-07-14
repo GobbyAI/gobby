@@ -10,6 +10,7 @@ let ws: WebSocket | null = null
 let reconnectTimer: number | null = null
 let closed = false
 let reconnectAttempts = 0
+let connectionGeneration = 0
 const BASE_DELAY = 1000
 const MAX_DELAY = 30000
 
@@ -72,29 +73,38 @@ function onMessage(evt: MessageEvent) {
 
 function connect() {
   if (closed) return
-  ws = new WebSocket(getWsUrl())
+  const generation = ++connectionGeneration
+  const socket = new WebSocket(getWsUrl())
+  ws = socket
 
-  ws.onopen = () => {
+  socket.onopen = () => {
+    if (closed || generation !== connectionGeneration) return
     reconnectAttempts = 0
     setConnected(true)
     sendSubscriptions()
   }
 
-  ws.onmessage = onMessage
-
-  ws.onclose = () => {
-    ws = null
-    setConnected(false)
-    if (!closed) {
-      const baseDelay = Math.min(BASE_DELAY * 2 ** reconnectAttempts, MAX_DELAY)
-      const jitter = baseDelay * 0.2 * (Math.random() * 2 - 1)
-      const delay = Math.max(0, baseDelay + jitter)
-      reconnectAttempts++
-      reconnectTimer = window.setTimeout(connect, delay)
-    }
+  socket.onmessage = (event) => {
+    if (closed || generation !== connectionGeneration) return
+    onMessage(event)
   }
 
-  ws.onerror = () => {
+  socket.onclose = () => {
+    if (closed || generation !== connectionGeneration) return
+    ws = null
+    setConnected(false)
+    const baseDelay = Math.min(BASE_DELAY * 2 ** reconnectAttempts, MAX_DELAY)
+    const jitter = baseDelay * 0.2 * (Math.random() * 2 - 1)
+    const delay = Math.max(0, baseDelay + jitter)
+    reconnectAttempts++
+    reconnectTimer = window.setTimeout(() => {
+      reconnectTimer = null
+      ensureConnection()
+    }, delay)
+  }
+
+  socket.onerror = () => {
+    if (closed || generation !== connectionGeneration) return
     // onclose fires after onerror
   }
 }
@@ -160,6 +170,7 @@ export function useWebSocketEvent(eventType: string, handler: Handler): void {
       // Close connection if no handlers remain
       if (handlers.size === 0) {
         closed = true
+        connectionGeneration++
         if (reconnectTimer) {
           window.clearTimeout(reconnectTimer)
           reconnectTimer = null

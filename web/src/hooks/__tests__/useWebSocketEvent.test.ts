@@ -137,6 +137,48 @@ describe('useWebSocketEvent', () => {
     expect(mockWs.instances).toHaveLength(2)
   })
 
+  it('ignores callbacks from a socket retired by an event type change', async () => {
+    await loadModule()
+    const handler = vi.fn()
+    const { rerender, result } = renderHook(
+      ({ eventType }) => {
+        useWebSocketEvent(eventType, handler)
+        return useWebSocketConnected()
+      },
+      { initialProps: { eventType: 'task_event' } },
+    )
+
+    const retired = mockWs.instances[0]
+    act(() => retired.simulateOpen())
+
+    rerender({ eventType: 'session_event' })
+    const current = mockWs.instances[1]
+    act(() => current.simulateOpen())
+
+    act(() => {
+      retired.simulateError()
+      retired.simulateClose()
+    })
+
+    expect(result.current).toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
+    expect(mockWs.instances).toHaveLength(2)
+  })
+
+  it('does not reconnect after a late close callback following unmount', async () => {
+    await loadModule()
+    const { unmount } = renderHook(() => useWebSocketEvent('task_event', vi.fn()))
+    const retired = mockWs.instances[0]
+
+    act(() => retired.simulateOpen())
+    unmount()
+    act(() => retired.simulateClose())
+    act(() => vi.advanceTimersByTime(2000))
+
+    expect(vi.getTimerCount()).toBe(0)
+    expect(mockWs.instances).toHaveLength(1)
+  })
+
   it('ignores malformed JSON messages', async () => {
     await loadModule()
     const handler = vi.fn()
@@ -192,18 +234,20 @@ describe('useWebSocketEvent', () => {
       { initialProps: { eventType: 'task_event' } },
     )
 
-    const ws = mockWs.instances[0]
-    act(() => ws.simulateOpen())
+    const retired = mockWs.instances[0]
+    act(() => retired.simulateOpen())
 
     // Change event type
     rerender({ eventType: 'session_event' })
+    const current = mockWs.instances[1]
+    act(() => current.simulateOpen())
 
     // Old event should not trigger handler
-    act(() => ws.simulateMessage({ type: 'task_event', id: '1' }))
+    act(() => retired.simulateMessage({ type: 'task_event', id: '1' }))
     expect(handler).not.toHaveBeenCalled()
 
     // New event should
-    act(() => ws.simulateMessage({ type: 'session_event', id: '2' }))
+    act(() => current.simulateMessage({ type: 'session_event', id: '2' }))
     expect(handler).toHaveBeenCalledWith({ type: 'session_event', id: '2' })
   })
 
