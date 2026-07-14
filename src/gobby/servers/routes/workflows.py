@@ -4,13 +4,17 @@ Workflow definition routes for Gobby HTTP server.
 Provides CRUD endpoints for managing workflow definitions in the database.
 """
 
+import json
 import logging
 from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
-from pydantic import BaseModel
+from psycopg.errors import UniqueViolation
+from pydantic import BaseModel, ValidationError
+
+from gobby.workflows.definitions import RuleDefinitionBody
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -200,7 +204,24 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
     async def create_workflow(request: CreateWorkflowRequest) -> dict[str, Any]:
         """Create a new workflow definition."""
         try:
+            definition = json.loads(request.definition_json)
+            if request.workflow_type == "rule":
+                RuleDefinitionBody.model_validate(definition)
+        except (json.JSONDecodeError, ValidationError) as e:
+            raise HTTPException(status_code=400, detail=f"Invalid definition_json: {e}") from e
+
+        try:
             manager = _get_manager()
+            existing = await server.run_db(
+                manager.get_by_name,
+                request.name,
+                project_id=request.project_id,
+            )
+            if existing is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Workflow definition '{request.name}' already exists",
+                )
             row = await server.run_db(
                 manager.create,
                 name=request.name,
@@ -222,6 +243,13 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             )
             await _broadcast_workflow("workflow_created", row.id)
             return {"status": "success", "definition": row.to_dict()}
+        except HTTPException:
+            raise
+        except UniqueViolation as e:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Workflow definition '{request.name}' already exists",
+            ) from e
         except Exception as e:
             logger.error(f"Error creating workflow definition: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e

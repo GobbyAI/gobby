@@ -151,6 +151,40 @@ class TestCreateWorkflow:
         assert data["status"] == "success"
         assert data["definition"]["name"] == "new-workflow"
 
+    @pytest.mark.parametrize(
+        "definition_json",
+        ["not-json", '{"unexpected": true}'],
+    )
+    def test_rejects_invalid_rule_definition(
+        self, client: TestClient, definition_json: str
+    ) -> None:
+        resp = client.post(
+            "/api/workflows",
+            json={
+                "name": "invalid-rule",
+                "definition_json": definition_json,
+                "workflow_type": "rule",
+            },
+        )
+
+        assert resp.status_code == 400
+
+    def test_rejects_duplicate_name(
+        self, client: TestClient, wf_manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        existing = _create_workflow(wf_manager)
+
+        resp = client.post(
+            "/api/workflows",
+            json={
+                "name": existing["name"],
+                "definition_json": existing["definition_json"],
+                "workflow_type": "rule",
+            },
+        )
+
+        assert resp.status_code == 409
+
 
 # ---------------------------------------------------------------------------
 # PUT /api/workflows/{id}

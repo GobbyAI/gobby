@@ -69,6 +69,15 @@ def _seed_rule(
     return row.id
 
 
+def _seed_invalid_rule(def_manager: LocalWorkflowDefinitionManager) -> None:
+    def_manager.create(
+        name="invalid-rule",
+        definition_json=json.dumps("not-json"),
+        workflow_type="rule",
+        tags=["invalid-tag"],
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # GET /api/rules
 # ═══════════════════════════════════════════════════════════════════════
@@ -151,6 +160,22 @@ class TestListRules:
         assert data["count"] == 0
         assert data["rules"] == []
         assert data["aggregate_blocks"] is True
+
+    def test_skips_unparseable_rules(
+        self,
+        client: TestClient,
+        def_manager: LocalWorkflowDefinitionManager,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        _seed_rule(def_manager, name="valid-rule")
+        _seed_invalid_rule(def_manager)
+
+        with caplog.at_level(logging.WARNING):
+            resp = client.get("/api/rules")
+
+        assert resp.status_code == 200
+        assert [rule["name"] for rule in resp.json()["rules"]] == ["valid-rule"]
+        assert "invalid-rule" in caplog.text
 
 
 class TestRulesCollectionSettings:
@@ -568,3 +593,21 @@ class TestListGroups:
         resp = client.get("/api/rules/groups")
         data = resp.json()
         assert data["groups"] == []
+
+    @pytest.mark.parametrize("endpoint", ["groups", "tags"])
+    def test_skips_unparseable_rules(
+        self,
+        endpoint: str,
+        client: TestClient,
+        def_manager: LocalWorkflowDefinitionManager,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        _seed_rule(def_manager, name="valid-rule", group="valid-group", tags=["valid-tag"])
+        _seed_invalid_rule(def_manager)
+
+        with caplog.at_level(logging.WARNING):
+            resp = client.get(f"/api/rules/{endpoint}")
+
+        assert resp.status_code == 200
+        assert "invalid-rule" in caplog.text
+        assert "invalid-tag" not in resp.json()[endpoint]

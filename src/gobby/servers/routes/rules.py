@@ -113,7 +113,13 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
             rows = await server.run_db(manager.list_all, workflow_type="rule")
             groups: set[str] = set()
             for row in rows:
-                body = json.loads(row.definition_json)
+                try:
+                    body = json.loads(row.definition_json)
+                    if not isinstance(body, dict):
+                        raise TypeError("rule definition must be a JSON object")
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.warning("Skipping unparseable rule '%s': %s", row.name, e)
+                    continue
                 group = body.get("group")
                 if group:
                     groups.add(group)
@@ -133,6 +139,13 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
             rows = await server.run_db(manager.list_all, workflow_type="rule")
             tags: set[str] = set()
             for row in rows:
+                try:
+                    body = json.loads(row.definition_json)
+                    if not isinstance(body, dict):
+                        raise TypeError("rule definition must be a JSON object")
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.warning("Skipping unparseable rule '%s': %s", row.name, e)
+                    continue
                 for tag in row.tags or []:
                     tags.add(tag)
             return {
