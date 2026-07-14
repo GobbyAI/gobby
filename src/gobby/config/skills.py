@@ -76,6 +76,12 @@ class SkillsConfig(BaseModel):
         description="Format selector for skill manifests: 'summary', 'full', or 'none'",
     )
 
+    soft_delete_retention_days: int = Field(
+        default=30,
+        gt=0,
+        description="Days to retain soft-deleted skills before permanent removal",
+    )
+
     hubs: dict[str, HubConfig] = Field(
         default_factory=lambda: {
             "anthropic-skills": HubConfig(
