@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Literal, cast
+from uuid import uuid4
 
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.utils.datetime import parse_stored_datetime
@@ -50,6 +51,10 @@ class RuntimeDispatchMutex:
     _acquired: bool = field(default=False, init=False)
     _released: bool = field(default=False, init=False)
     _run_id: str | None = field(default=None, init=False)
+    _lease_holder: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        self._lease_holder = f"{self.holder}:{uuid4()}"
 
     def __enter__(self) -> RuntimeDispatchMutex:
         if self.borrowed_run_id is not None:
@@ -75,11 +80,12 @@ class RuntimeDispatchMutex:
                     f"run {self.borrowed_run_id!r}"
                 )
                 raise DispatchMutexUnavailableError(msg)
+            self._lease_holder = mutex.lease_holder
             self._run_id = self.borrowed_run_id
         else:
             acquired = self.storage.acquire_mutex(
                 self.task_id,
-                holder=self.holder,
+                holder=self._lease_holder,
                 kind=self.action_kind,
                 ttl_seconds=self.ttl_seconds,
                 run_id=None,
@@ -114,7 +120,12 @@ class RuntimeDispatchMutex:
         if not self.acquired:
             msg = "cannot attach run id without an active dispatch mutex"
             raise RuntimeDispatchMutexError(msg)
-        if not self.storage.attach_run_id(self.task_id, run_id):
+        if not self.storage.attach_run_id(
+            self.task_id,
+            run_id,
+            self._lease_holder,
+            now=self.now,
+        ):
             msg = f"dispatch mutex for task {self.task_id!r} disappeared before attach"
             raise RuntimeDispatchMutexError(msg)
         self._run_id = run_id
@@ -132,7 +143,11 @@ class RuntimeDispatchMutex:
             return False
         if not self._acquired or self._released:
             return False
-        released = self.storage.release_mutex(self.task_id, self.holder)
+        released = self.storage.release_mutex(
+            self.task_id,
+            self._lease_holder,
+            now=self.now,
+        )
         self._released = True
         return released
 
