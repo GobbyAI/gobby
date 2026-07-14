@@ -1324,6 +1324,7 @@ class TestCallMCPTool:
             )
 
         assert response.status_code == 500
+        assert response.json() == {"detail": "Internal server error"}
 
     def test_call_tool_external_server_no_manager(self, client: TestClient) -> None:
         """Test calling tool when MCP manager not available."""
@@ -1417,6 +1418,7 @@ class TestCallMCPTool:
             )
 
         assert response.status_code == 500
+        assert response.json() == {"detail": "Internal server error"}
 
     @pytest.mark.parametrize(
         ("path", "payload"),
@@ -2548,6 +2550,7 @@ class TestMCPProxy:
             )
 
         assert response.status_code == 500
+        assert response.json() == {"detail": "Internal server error"}
 
     def test_proxy_no_mcp_manager(self, client: TestClient) -> None:
         """Test proxy when MCP manager not available."""
@@ -2645,6 +2648,7 @@ class TestMCPProxy:
             )
 
         assert response.status_code == 500
+        assert response.json() == {"detail": "Internal server error"}
 
 
 # ============================================================================

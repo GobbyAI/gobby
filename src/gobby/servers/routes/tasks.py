@@ -397,8 +397,8 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Failed to create task: {e}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            logger.error(f"Failed to create task: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/{task_id}")
     async def get_task(task_id: str) -> Any:
@@ -464,8 +464,8 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Failed to update task {task_id}: {e}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            logger.error(f"Failed to update task {task_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.delete("/{task_id}")
     async def delete_task(
@@ -489,8 +489,8 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         except (ValueError, TaskNotFoundError) as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Failed to delete task {task_id}: {e}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            logger.error(f"Failed to delete task {task_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     register_task_comment_routes(
         router,

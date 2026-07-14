@@ -425,7 +425,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Error spawning agent: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     # -----------------------------------------------------------------------
     # POST /api/agents/spawn/batch
@@ -479,7 +479,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             return {"status": "success", "defaults": saved, "built_in": _BUILT_IN_DEFAULTS}
         except Exception as e:
             logger.error(f"Error fetching launch defaults: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     # -----------------------------------------------------------------------
     # PUT /api/agents/launch-defaults
@@ -502,7 +502,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             return {"status": "success", "category": request.category}
         except Exception as e:
             logger.error(f"Error saving launch defaults: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     # -----------------------------------------------------------------------
     # POST /api/agents/spawn/prompt-preview
@@ -516,7 +516,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
         try:
             task_manager = server.services.task_manager
             if not task_manager:
-                raise HTTPException(status_code=500, detail="Task manager unavailable")
+                raise HTTPException(status_code=500, detail="Internal server error")
 
             try:
                 task = task_manager.get_task(task_id)
@@ -564,6 +564,6 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Error generating prompt preview: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     return router

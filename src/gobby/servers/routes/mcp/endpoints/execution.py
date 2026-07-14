@@ -344,11 +344,12 @@ async def _call_internal_tool(
         return _success_response_payload(result, response_time_ms)
     except Exception as e:
         inc_counter("mcp_tool_calls_failed_total")
-        error_msg = str(e) or f"{type(e).__name__}: (no message)"
-        raise HTTPException(
-            status_code=500,
-            detail={"success": False, "error": error_msg},
-        ) from e
+        logger.error(
+            f"Internal MCP tool call error: {server_name}.{tool_name}",
+            exc_info=True,
+            extra={"server": server_name, "tool": tool_name},
+        )
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 async def list_mcp_tools(
@@ -720,10 +721,12 @@ async def call_mcp_tool(
                 return _timeout_response_payload(timeout, response_time_ms)
             except Exception as e:
                 inc_counter("mcp_tool_calls_failed_total")
-                error_msg = str(e) or f"{type(e).__name__}: (no message)"
-                raise HTTPException(
-                    status_code=500, detail={"success": False, "error": error_msg}
-                ) from e
+                logger.error(
+                    f"MCP tool call error: {server_name}.{tool_name}",
+                    exc_info=True,
+                    extra={"server": server_name, "tool": tool_name},
+                )
+                raise HTTPException(status_code=500, detail="Internal server error") from e
         finally:
             _reset_context(ctx_token)
 
@@ -731,9 +734,8 @@ async def call_mcp_tool(
         raise
     except Exception as e:
         inc_counter("mcp_tool_calls_failed_total")
-        error_msg = str(e) or f"{type(e).__name__}: (no message)"
-        logger.error(f"Call MCP tool error: {error_msg}", exc_info=True)
-        raise HTTPException(status_code=500, detail={"success": False, "error": error_msg}) from e
+        logger.error("Call MCP tool error", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 async def mcp_proxy(
@@ -848,15 +850,12 @@ async def mcp_proxy(
                 ) from e
             except Exception as e:
                 inc_counter("mcp_tool_calls_failed_total")
-                error_msg = str(e) or f"{type(e).__name__}: (no message)"
                 logger.error(
                     f"MCP tool call error: {server_name}.{tool_name}",
                     exc_info=True,
                     extra={"server": server_name, "tool": tool_name},
                 )
-                raise HTTPException(
-                    status_code=500, detail={"success": False, "error": error_msg}
-                ) from e
+                raise HTTPException(status_code=500, detail="Internal server error") from e
 
         finally:
             _reset_context(ctx_token)
@@ -865,9 +864,8 @@ async def mcp_proxy(
         raise
     except Exception as e:
         inc_counter("mcp_tool_calls_failed_total")
-        error_msg = str(e) or f"{type(e).__name__}: (no message)"
         logger.error(f"MCP proxy error: {server_name}.{tool_name}", exc_info=True)
-        raise HTTPException(status_code=500, detail={"success": False, "error": error_msg}) from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 __all__ = [

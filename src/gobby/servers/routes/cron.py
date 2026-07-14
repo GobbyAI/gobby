@@ -94,7 +94,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Error listing cron jobs: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/jobs")
     async def create_job(request: CreateCronJobRequest) -> dict[str, Any]:
@@ -123,7 +123,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Error creating cron job: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/jobs/{job_id}")
     async def get_job(job_id: str) -> dict[str, Any]:
@@ -138,7 +138,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Error getting cron job: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.patch("/jobs/{job_id}")
     async def update_job(job_id: str, request: UpdateCronJobRequest) -> dict[str, Any]:
@@ -173,7 +173,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Error updating cron job: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.delete("/jobs/{job_id}")
     async def delete_job(job_id: str) -> dict[str, Any]:
@@ -188,7 +188,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Error deleting cron job: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/jobs/{job_id}/toggle")
     async def toggle_job(job_id: str) -> dict[str, Any]:
@@ -203,7 +203,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Error toggling cron job: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/jobs/{job_id}/run", response_model=None)
     async def run_job_now(job_id: str) -> dict[str, Any]:
@@ -243,7 +243,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Error running cron job: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/jobs/{job_id}/runs")
     async def list_runs(
@@ -263,7 +263,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Error listing cron runs: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/runs/{run_id}")
     async def get_run(run_id: str) -> dict[str, Any]:
@@ -278,6 +278,6 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Error getting cron run: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     return router

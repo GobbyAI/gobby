@@ -157,7 +157,7 @@ def register_lifecycle_routes(
             raise
         except Exception as e:
             logger.error(f"Bulk move sessions error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/{session_id}")
     async def sessions_get(session_id: str) -> dict[str, Any]:
@@ -225,7 +225,7 @@ def register_lifecycle_routes(
             raise
         except Exception as e:
             logger.error(f"Sessions get error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/find_current")
     async def find_current_session(request: Request) -> dict[str, Any]:
@@ -275,7 +275,7 @@ def register_lifecycle_routes(
             raise
         except Exception as e:
             logger.error(f"Find current session error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/find_parent")
     async def find_parent_session(request: Request) -> dict[str, Any]:
@@ -326,7 +326,7 @@ def register_lifecycle_routes(
             raise
         except Exception as e:
             logger.error(f"Find parent session error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/find_by_terminal_context")
     async def find_session_by_terminal_context(request: Request) -> dict[str, Any]:
@@ -365,7 +365,7 @@ def register_lifecycle_routes(
             raise
         except Exception as e:
             logger.error(f"Find session by terminal context error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/update_status")
     async def update_session_status(request: Request) -> dict[str, Any]:
@@ -394,7 +394,7 @@ def register_lifecycle_routes(
             raise
         except Exception as e:
             logger.error(f"Update session status error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/{session_id}/expire")
     async def expire_session(session_id: str) -> dict[str, Any]:
@@ -430,7 +430,7 @@ def register_lifecycle_routes(
             raise
         except Exception as e:
             logger.error(f"Expire session error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/{session_id}/rename")
     async def rename_session(session_id: str, request: Request) -> dict[str, Any]:
@@ -474,4 +474,4 @@ def register_lifecycle_routes(
             raise
         except Exception as e:
             logger.error(f"Rename session error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e

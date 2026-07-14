@@ -277,9 +277,7 @@ def register_core_routes(
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
             logger.error(f"Error creating web chat session: {e}", exc_info=True)
-            raise HTTPException(
-                status_code=500, detail="Internal server error while creating web chat session"
-            ) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/register")
     async def register_session(request_data: SessionRegisterRequest) -> dict[str, Any]:
@@ -344,9 +342,7 @@ def register_core_routes(
 
         except Exception as e:
             logger.error(f"Error registering session: {e}", exc_info=True)
-            raise HTTPException(
-                status_code=500, detail="Internal server error while registering session"
-            ) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/usage")
     async def get_usage_breakdown(
@@ -675,7 +671,7 @@ def register_core_routes(
             raise
         except Exception as e:
             logger.error(f"Error listing sessions: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     # Remaining routes (bulk-move, get, find_current, find_parent,
     # update_status, expire, rename) are in lifecycle.py

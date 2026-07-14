@@ -94,7 +94,7 @@ def register_message_routes(
             raise
         except Exception as e:
             logger.error(f"Get messages error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     # --- Transcript Archive Endpoints ---
 
@@ -157,7 +157,7 @@ def register_message_routes(
             return result
         except Exception as e:
             logger.error(f"Error getting transcript status: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/{session_id}/transcript")
     async def get_transcript(session_id: str) -> Any:
@@ -209,7 +209,7 @@ def register_message_routes(
             raise
         except Exception as e:
             logger.error(f"Error getting transcript: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/{session_id}/restore-transcript")
     async def restore_transcript_endpoint(session_id: str) -> dict[str, Any]:
@@ -243,4 +243,4 @@ def register_message_routes(
             raise
         except Exception as e:
             logger.error(f"Error restoring transcript: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e

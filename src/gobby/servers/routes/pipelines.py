@@ -275,7 +275,7 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
         loader = server.services.workflow_loader
 
         if loader is None:
-            raise HTTPException(status_code=500, detail="Workflow loader not configured")
+            raise HTTPException(status_code=500, detail="Internal server error")
 
         project_id = request.project_id or ""
         if not project_id:
@@ -285,9 +285,7 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
 
         executor = server.services.get_pipeline_executor(project_id)
         if executor is None:
-            raise HTTPException(
-                status_code=500, detail="Pipeline executor not available for project"
-            )
+            raise HTTPException(status_code=500, detail="Internal server error")
 
         # Load the pipeline
         pipeline = await loader.load_pipeline(request.name, project_id)
@@ -307,9 +305,7 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
                 )
             except Exception as e:
                 logger.error(f"Failed to start detached pipeline run: {e}", exc_info=True)
-                raise HTTPException(
-                    status_code=500, detail=f"Failed to start detached run: {e}"
-                ) from None
+                raise HTTPException(status_code=500, detail="Internal server error") from e
             return JSONResponse(
                 status_code=202,
                 content={
@@ -349,7 +345,7 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
 
         except Exception as e:
             logger.error(f"Pipeline execution failed: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Execution error: {e}") from None
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/{execution_id}")
     async def get_execution(execution_id: str) -> dict[str, Any]:
@@ -438,9 +434,7 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
 
         executor = server.services.get_pipeline_executor(execution_record.project_id)
         if executor is None:
-            raise HTTPException(
-                status_code=500, detail="Pipeline executor not available for project"
-            )
+            raise HTTPException(status_code=500, detail="Internal server error")
 
         try:
             execution = await executor.approve(token, approved_by=None)
@@ -492,9 +486,7 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
 
         executor = server.services.get_pipeline_executor(execution_record.project_id)
         if executor is None:
-            raise HTTPException(
-                status_code=500, detail="Pipeline executor not available for project"
-            )
+            raise HTTPException(status_code=500, detail="Internal server error")
 
         try:
             execution = await executor.reject(token, rejected_by=None)
