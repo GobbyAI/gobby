@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import stat
 import threading
 from pathlib import Path
 from typing import Any
@@ -764,3 +766,41 @@ def test_fix_refuses_oversized_project_json_without_losing_user_commands(
     assert project_json.read_bytes() == original
     persisted = json.loads(project_json.read_text(encoding="utf-8"))
     assert persisted["verification"]["unit_tests"] == command
+
+
+def test_write_verification_preserves_existing_project_json_mode(tmp_path: Path) -> None:
+    project_json = write_project_json(tmp_path, {})
+    project_json.chmod(0o640)
+
+    refresh_module._write_verification(project_json, {"unit_tests": "pytest"})
+
+    assert stat.S_IMODE(project_json.stat().st_mode) == 0o640
+
+
+def test_write_verification_uses_secure_mode_for_new_project_json(tmp_path: Path) -> None:
+    project_json = tmp_path / ".gobby" / "project.json"
+
+    refresh_module._write_verification(project_json, {"unit_tests": "pytest"})
+
+    assert stat.S_IMODE(project_json.stat().st_mode) == 0o600
+
+
+def test_write_verification_backs_up_corrupt_file_and_cleans_temp_on_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_json = tmp_path / ".gobby" / "project.json"
+    project_json.parent.mkdir()
+    corrupt_content = b"{not-json\n"
+    project_json.write_bytes(corrupt_content)
+
+    def fail_replace(_source: str, _destination: Path) -> None:
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(os, "replace", fail_replace)
+
+    with pytest.raises(OSError, match="replace failed"):
+        refresh_module._write_verification(project_json, {"unit_tests": "pytest"})
+
+    assert project_json.with_suffix(".json.bak").read_bytes() == corrupt_content
+    assert list(project_json.parent.glob(".project.json.*.tmp")) == []

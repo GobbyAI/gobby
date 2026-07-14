@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import stat
 import tempfile
 from dataclasses import dataclass, field
 from difflib import unified_diff
@@ -197,8 +198,9 @@ def _build_result(
 def _write_verification(project_json_path: Path, verification: dict[str, Any]) -> None:
     project_json_path.parent.mkdir(parents=True, exist_ok=True)
     data: dict[str, Any] = {}
+    existing_mode: int | None = None
     if project_json_path.exists():
-        data, corrupt_content = _read_project_json_for_write(project_json_path)
+        data, corrupt_content, existing_mode = _read_project_json_for_write(project_json_path)
         if corrupt_content is not None:
             _backup_corrupt_project_json(project_json_path, corrupt_content)
     data["verification"] = verification
@@ -211,6 +213,8 @@ def _write_verification(project_json_path: Path, verification: dict[str, Any]) -
     )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as tmp:
+            if existing_mode is not None:
+                os.fchmod(tmp.fileno(), existing_mode)
             json.dump(data, tmp, indent=2)
             tmp.write("\n")
         os.replace(tmp_name, project_json_path)
@@ -222,9 +226,12 @@ def _write_verification(project_json_path: Path, verification: dict[str, Any]) -
         raise
 
 
-def _read_project_json_for_write(project_json_path: Path) -> tuple[dict[str, Any], bytes | None]:
+def _read_project_json_for_write(
+    project_json_path: Path,
+) -> tuple[dict[str, Any], bytes | None, int | None]:
     try:
         with project_json_path.open("rb") as project_file:
+            file_stat = os.fstat(project_file.fileno())
             content = project_file.read(MAX_FILE_BYTES + 1)
     except OSError as exc:
         raise ProjectVerificationReadError(
@@ -240,10 +247,16 @@ def _read_project_json_for_write(project_json_path: Path) -> tuple[dict[str, Any
     try:
         data = json.loads(content)
     except (json.JSONDecodeError, UnicodeDecodeError):
-        return {}, content
+        return {}, content, _regular_file_mode(file_stat.st_mode)
     if not isinstance(data, dict):
-        return {}, content
-    return data, None
+        return {}, content, _regular_file_mode(file_stat.st_mode)
+    return data, None, _regular_file_mode(file_stat.st_mode)
+
+
+def _regular_file_mode(file_mode: int) -> int | None:
+    if not stat.S_ISREG(file_mode):
+        return None
+    return stat.S_IMODE(file_mode)
 
 
 def _backup_corrupt_project_json(project_json_path: Path, content: bytes) -> None:
