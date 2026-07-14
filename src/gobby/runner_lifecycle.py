@@ -32,7 +32,7 @@ from gobby.runner_lifecycle_startup import (
     _refresh_provider_model_catalog,
 )
 from gobby.runner_lifecycle_subsystems import init_subsystems
-from gobby.runner_pid_file import PidFileClaim, claim_pid_file
+from gobby.runner_pid_file import PidFileClaim, claim_pid_file, probe_daemon_lock
 from gobby.telemetry import shutdown_telemetry
 
 if TYPE_CHECKING:
@@ -95,8 +95,12 @@ async def _serve_http(server: uvicorn.Server) -> BaseException | None:
     return None
 
 
-async def run_daemon(runner: GobbyRunner) -> None:
-    """Main daemon startup, event loop, and shutdown sequence."""
+async def run_daemon(runner: GobbyRunner, pid_claim: PidFileClaim | None = None) -> None:
+    """Main daemon startup, event loop, and shutdown sequence.
+
+    ``pid_claim`` carries a singleton lock already claimed by ``main()``;
+    when absent (embedded/test callers), the claim happens here.
+    """
     from gobby.runner_maintenance import (
         bin_freshness_loop,
         cleanup_chat_attachments_loop,
@@ -118,8 +122,6 @@ async def run_daemon(runner: GobbyRunner) -> None:
         unmodeled_observation_cleanup_loop,
     )
 
-    pid_claim: PidFileClaim | None = None
-
     def cleanup_owned_pid_file() -> None:
         try:
             cleanup_pid_file()
@@ -139,21 +141,27 @@ async def run_daemon(runner: GobbyRunner) -> None:
         from gobby.cli.utils import get_gobby_home
 
         pid_file = get_gobby_home() / "gobby.pid"
-        try:
-            pid_claim = claim_pid_file(pid_file)
-        except OSError as e:
-            logger.warning(f"Could not claim PID file {pid_file}: {e}")
         if pid_claim is None:
-            from gobby.runner import _healthy_daemon_running
-
-            if _healthy_daemon_running(runner.http_server.port, runner.config.bind_host):
+            contended = False
+            try:
+                pid_claim = claim_pid_file(pid_file)
+                contended = pid_claim is None
+            except OSError as e:
+                # Advisory locking unavailable — fail open and run unlocked.
+                logger.warning(f"Could not claim PID file {pid_file}: {e}")
+            if contended:
+                # A held flock means a live owner (locks die with their
+                # process). Exit 0 so launchd (KeepAlive.SuccessfulExit=false)
+                # never hot-loops the loser, healthy or not.
+                owner = probe_daemon_lock(pid_file)
                 logger.info(
-                    "Another healthy Gobby daemon owns %s; exiting cleanly",
+                    "PID file %s is owned by another live daemon (PID %s); exiting cleanly",
                     pid_file,
+                    owner or "unknown",
                 )
                 return
-            raise RuntimeError(f"PID file is owned by another live process: {pid_file}")
-        logger.info(f"Wrote PID file: {pid_file} (PID {os.getpid()})")
+        if pid_claim is not None:
+            logger.info(f"Wrote PID file: {pid_file} (PID {os.getpid()})")
 
         uvicorn_drain_timeout = 15
         config = uvicorn.Config(

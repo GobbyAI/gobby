@@ -452,31 +452,32 @@ class TestStartCommand:
         mock_daemon_config: MagicMock,
         temp_dir: Path,
     ) -> None:
-        """Test start when daemon is already running."""
-        mock_load_config.return_value = mock_daemon_config
+        """Test start when a live daemon holds the singleton lock."""
+        from gobby.runner_pid_file import claim_pid_file
 
-        mock_proc = MagicMock()
-        mock_proc.cmdline.return_value = ["python", "-m", "gobby.runner"]
+        mock_load_config.return_value = mock_daemon_config
         gobby_dir = temp_dir / ".gobby"
 
         with (
             runner.isolated_filesystem(temp_dir=str(temp_dir)),
             patch("gobby.cli.daemon.Path.home", return_value=temp_dir),
             patch("gobby.cli.daemon.get_gobby_home", return_value=gobby_dir),
-            patch("gobby.cli.daemon._is_process_alive", return_value=True),
-            patch("gobby.cli.daemon.psutil.Process", return_value=mock_proc),
         ):
             gobby_dir.mkdir(parents=True, exist_ok=True)
             (gobby_dir / "logs").mkdir(parents=True, exist_ok=True)
 
-            # Create PID file with current process PID (guaranteed to be running)
+            # Hold the daemon lock as the "running daemon" (flock conflicts
+            # across file descriptors even within one process).
             pid_file = gobby_dir / "gobby.pid"
-            pid_file.write_text(str(os.getpid()))
-
-            result = runner.invoke(cli, ["start"])
+            claim = claim_pid_file(pid_file)
+            assert claim is not None
+            try:
+                result = runner.invoke(cli, ["start"])
+            finally:
+                claim.release()
 
             assert result.exit_code == 1
-            assert "already running" in result.output
+            assert f"already running (PID: {os.getpid()})" in result.output
             assert pid_file.read_text() == str(os.getpid())
             mock_kill_daemons.assert_not_called()
             mock_init_storage.assert_not_called()
