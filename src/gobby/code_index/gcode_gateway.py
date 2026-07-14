@@ -21,6 +21,13 @@ GCODE_ALLOW_MISSING_INDEXED_FILE_VERSION = "0.9.5"
 _VERSION_PATTERN = re.compile(r"\b(\d+\.\d+\.\d+(?:\.\d+)?)\b")
 _PROJECT_NOT_FOUND_PATTERN = re.compile(r"Project '([^']+)' not found")
 _NO_GCODE_PROJECT_FOUND = "No gcode project found. Run `gcode init`"
+# Stderr signatures for embedding-endpoint transport failures (incident #18196
+# logged: "embedding response was invalid: AI transport failed: error sending
+# request for url (http://localhost:1234/v1/embeddings)").
+_EMBEDDING_TRANSPORT_SIGNATURES = (
+    "ai transport failed",
+    "embedding response was invalid",
+)
 _INDEXED_FILE_NOT_FOUND_PATTERN = re.compile(
     r"indexed file `([^`]+)` was not found for project (\S+)"
 )
@@ -114,6 +121,15 @@ class GcodeIndexedFileNotFoundError(GcodeCommandError):
         super().__init__(command, returncode, stderr, stdout=stdout)
 
 
+class GcodeEmbeddingTransportError(GcodeCommandError):
+    """Raised when gcode fails because the embedding endpoint is unreachable.
+
+    Distinct from generic ``GcodeCommandError`` so the vector-sync circuit
+    breaker trips only on embedding-transport failures, never on unrelated
+    per-file command errors.
+    """
+
+
 class GcodeJsonError(GcodeGatewayError):
     """Raised when gcode returns invalid JSON."""
 
@@ -182,6 +198,9 @@ def _classify_gcode_command_error(
                 project_path,
                 stdout=stdout_text,
             )
+    lowered = stderr_text.lower()
+    if any(signature in lowered for signature in _EMBEDDING_TRANSPORT_SIGNATURES):
+        return GcodeEmbeddingTransportError(command, returncode, stderr_text, stdout=stdout_text)
     return GcodeCommandError(command, returncode, stderr_text, stdout=stdout_text)
 
 
@@ -626,6 +645,7 @@ class GcodeGateway:
 __all__ = [
     "GcodeCommandError",
     "GcodeCommandResult",
+    "GcodeEmbeddingTransportError",
     "GcodeGateway",
     "GcodeGatewayError",
     "GcodeIndexedFileNotFoundError",
