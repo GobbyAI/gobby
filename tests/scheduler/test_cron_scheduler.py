@@ -261,6 +261,79 @@ async def test_check_due_jobs_dispatches(
 
 
 @pytest.mark.asyncio
+async def test_concurrent_schedulers_claim_due_job_once(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+    config: CronConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two schedulers selecting the same due row dispatch one running run."""
+    second_storage = CronJobStorage(cron_storage.db)
+    first_scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    second_scheduler = CronScheduler(storage=second_storage, executor=mock_executor, config=config)
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Concurrent claim",
+        schedule_type="interval",
+        action_type="handler",
+        action_config={"handler": "test"},
+        interval_seconds=60,
+    )
+    cron_storage.update_job(job.id, next_run_at=datetime.now(UTC) - timedelta(minutes=1))
+
+    selection_barrier = threading.Barrier(2)
+    first_get_due_jobs = cron_storage.get_due_jobs
+    second_get_due_jobs = second_storage.get_due_jobs
+
+    def first_synchronized_selection() -> list[CronJob]:
+        jobs = first_get_due_jobs()
+        selection_barrier.wait(timeout=2)
+        return jobs
+
+    def second_synchronized_selection() -> list[CronJob]:
+        jobs = second_get_due_jobs()
+        selection_barrier.wait(timeout=2)
+        return jobs
+
+    monkeypatch.setattr(cron_storage, "get_due_jobs", first_synchronized_selection)
+    monkeypatch.setattr(second_storage, "get_due_jobs", second_synchronized_selection)
+
+    release_execution = asyncio.Event()
+
+    async def hold_running_run(_job: CronJob, run: CronRun) -> CronRun:
+        await release_execution.wait()
+        updated = cron_storage.update_run(
+            run.id,
+            status="completed",
+            completed_at=datetime.now(UTC),
+        )
+        return updated or run
+
+    mock_executor.execute.side_effect = hold_running_run
+
+    try:
+        await asyncio.gather(
+            first_scheduler._check_due_jobs(),
+            second_scheduler._check_due_jobs(),
+        )
+        await wait_for_async_condition(
+            lambda: mock_executor.execute.await_count == 1,
+            description="single claimed cron execution",
+        )
+
+        runs = cron_storage.list_runs(job.id, limit=10)
+        assert len(runs) == 1
+        assert runs[0].status == "running"
+        mock_executor.execute.assert_awaited_once()
+    finally:
+        release_execution.set()
+        await asyncio.gather(
+            *first_scheduler._active_tasks,
+            *second_scheduler._active_tasks,
+        )
+
+
+@pytest.mark.asyncio
 async def test_check_due_jobs_keeps_loop_responsive_during_db_latency(
     cron_storage: CronJobStorage,
     mock_executor: CronExecutor,
@@ -315,14 +388,14 @@ async def test_bookkeeping_failure_rolls_back_pending_run_on_repeated_heartbeats
     )
     due_at = datetime.now(UTC) - timedelta(minutes=5)
     cron_storage.update_job(job.id, next_run_at=due_at)
-    bookkeeping = MagicMock(side_effect=RuntimeError("bookkeeping unavailable"))
-    monkeypatch.setattr(scheduler, "_update_job_bookkeeping", bookkeeping)
+    claim_due_job = MagicMock(side_effect=RuntimeError("bookkeeping unavailable"))
+    monkeypatch.setattr(cron_storage, "claim_due_job", claim_due_job)
 
     await scheduler._check_due_jobs()
     await scheduler._check_due_jobs()
 
     persisted_job = cron_storage.get_job(job.id)
-    assert bookkeeping.call_count == 2
+    assert claim_due_job.call_count == 2
     assert persisted_job is not None
     assert persisted_job.next_run_at == due_at
     assert cron_storage.list_runs(job.id, limit=10) == []
@@ -348,10 +421,9 @@ async def test_due_one_shot_dispatches_once_and_is_disabled(
         run_at=future.isoformat(),
     )
     due_at = datetime.now(UTC) - timedelta(minutes=1)
-    cron_storage.update_job(
-        job.id,
-        run_at=due_at.isoformat(),
-        next_run_at=due_at.isoformat(),
+    cron_storage.db.execute(
+        "UPDATE cron_jobs SET run_at = %s, next_run_at = %s WHERE id = %s",
+        (due_at, due_at, job.id),
     )
 
     await scheduler._check_due_jobs()

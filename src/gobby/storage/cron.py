@@ -192,8 +192,9 @@ class CronJobStorage(CronRunStorageMixin):
 
         # Compute initial next_run_at
         next_run = compute_next_run(job)
-        if next_run:
-            job.next_run_at = next_run
+        if enabled and next_run is None:
+            raise ValueError("enabled cron job requires a valid future schedule")
+        job.next_run_at = next_run
 
         self.db.execute(
             """
@@ -413,10 +414,24 @@ class CronJobStorage(CronRunStorageMixin):
                 )
 
         self._normalize_update_fields(job, fields)
-        resulting_enabled = fields.get("enabled", job.enabled)
-        resulting_next_run_at = fields.get("next_run_at", job.next_run_at)
-        if resulting_enabled and resulting_next_run_at is None:
-            raise ValueError("enabled=True requires next_run_at")
+        schedule_fields = {
+            "schedule_type",
+            "cron_expr",
+            "interval_seconds",
+            "run_at",
+            "timezone",
+            "enabled",
+        }
+        if schedule_fields.intersection(fields):
+            candidate_fields = {key: fields[key] for key in schedule_fields if key in fields}
+            if "run_at" in candidate_fields:
+                candidate_fields["run_at"] = parse_stored_datetime(candidate_fields["run_at"])
+                fields["run_at"] = candidate_fields["run_at"]
+            candidate = replace(job, **candidate_fields)
+            next_run = compute_next_run(candidate)
+            if candidate.enabled and next_run is None:
+                raise ValueError("enabled cron job requires a valid future schedule")
+            fields["next_run_at"] = next_run
         fields["updated_at"] = utc_now()
 
         return self._update_job_fields(job_id, **fields)
@@ -655,37 +670,24 @@ class CronJobStorage(CronRunStorageMixin):
 
     def toggle_job(self, job_id: str) -> CronJob | None:
         """Toggle a cron job's enabled state."""
-        job = self.get_job(job_id)
-        if not job:
-            return None
+        from dataclasses import replace
 
-        new_enabled = not job.enabled
-        updates: dict[str, Any] = {"enabled": bool(new_enabled)}
-
-        # Recompute next_run when enabling
-        if new_enabled:
-            from dataclasses import replace
-
-            enabled_job = replace(job, enabled=True)
-            next_run = compute_next_run(enabled_job)
-            updates["next_run_at"] = next_run
-        else:
-            updates["next_run_at"] = None
-
-        if job.is_system:
-            updated = self._update_job_fields(
-                job_id,
-                enabled=updates["enabled"],
-                updated_at=utc_now(),
-            )
-            if updated is None:
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                "SELECT * FROM cron_jobs WHERE id = %s FOR UPDATE", (job_id,)
+            ).fetchone()
+            if row is None:
                 return None
-            return self.update_system_job_bookkeeping(
-                job_id,
-                next_run_at=updates["next_run_at"],
+            job = CronJob.from_row(row)
+            new_enabled = not job.enabled
+            next_run = compute_next_run(replace(job, enabled=True)) if new_enabled else None
+            conn.execute(
+                """UPDATE cron_jobs
+                   SET enabled = %s, next_run_at = %s, updated_at = %s
+                   WHERE id = %s""",
+                (new_enabled, next_run, utc_now(), job_id),
             )
-
-        return self.update_job(job_id, **updates)
+        return self.get_job(job_id)
 
     def get_due_jobs(self) -> list[CronJob]:
         """Get enabled jobs whose next_run_at has passed."""
@@ -708,3 +710,35 @@ class CronJobStorage(CronRunStorageMixin):
                 job.id,
             ),
         )
+
+    def claim_due_job(
+        self,
+        job_id: str,
+        *,
+        expected_next_run_at: datetime,
+        next_run_at: datetime | None,
+        disable: bool = False,
+    ) -> bool:
+        """Advance a due job only when its schedule still matches the selected row."""
+        now = utc_now()
+        cursor = self.db.execute(
+            """
+            UPDATE cron_jobs
+               SET enabled = %s,
+                   next_run_at = %s,
+                   updated_at = %s
+             WHERE id = %s
+               AND enabled = TRUE
+               AND next_run_at = %s
+               AND next_run_at <= %s
+            """,
+            (
+                not disable,
+                _db_timestamp(next_run_at),
+                now,
+                job_id,
+                _db_timestamp(expected_next_run_at),
+                now,
+            ),
+        )
+        return cursor.rowcount == 1

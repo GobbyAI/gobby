@@ -36,4 +36,4 @@ pub(crate) use infrastructure::{build_infrastructure_doc, infra_descriptor};
 pub(crate) use modules::build_module_docs;
 pub(crate) use modules::build_module_docs_with_filter;
 pub(crate) use onboarding::build_onboarding_doc;
-pub(crate) use snapshot::build_codewiki_index_snapshot;
+pub(crate) use snapshot::{build_codewiki_index_snapshot, hash_snapshot_file};

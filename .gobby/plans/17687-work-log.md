@@ -376,3 +376,17 @@ publishes with the fix; arm O relaunch reuses the stage vault.
 Consequence for the gate: S-vs-O byte-identity on code/files/** is broken
 by the mid-bakeoff merges (disclosed); arm G launches immediately after
 arm O at the same HEAD so O-vs-G is the clean primary comparison.
+
+## 2026-07-14 — daemon restart #3 during arm O attempt-7 (disclosed)
+
+- Session #8166 restarted the daemon at Josh's request to activate #18212/#18213: issued 2026-07-14T17:57:36Z, healthy 17:57:54Z (~18s outage). Coordinated in advance via P2P; I approved proceeding rather than holding their fleet (arm O fires ~1 opus call/26s — no clean gap existed).
+- Impact: exactly 1 clipped generation → 1 degraded page (AST-only fallback), transport-fail count 0→1. Post-END heal loop will re-run until degraded=0, as with the 07-13 19:38:45 CDT and 07-14 04:46:09 CDT restarts.
+- Josh switched Claude accounts (usage limits) in the same window. Model pins unchanged (claude/opus@xhigh); page provenance unaffected.
+
+## 2026-07-14 — IDE crash, attempt-8 misfire, bug #6 (#18248) + binary transition #8
+
+- IDE crash (~17:18–17:41 CDT) killed arm O attempt-7 mid-aggregates — after it had staged all ten narrative chapters and repo.md fresh. Stage vault intact.
+- My error: relaunched attempt-8 against the LIVE repo, which had drifted 378 files since snapshot 2b2bc1848 (#8166 merge fleet). It began re-cascading file docs (~30–60 pages regenerated from drifted sources before I caught it at the 17:58 tick). Killed it; those pages re-regenerate at frozen sources on the next attempt (self-correcting; disclosed in arm-opus.log).
+- Fix adopted (Josh-approved): frozen git worktree at 2b2bc1848 (`wiki-bakeoff/gobby-frozen-2b2bc1848`); run-arm-o.zsh and run-arm-g.zsh now point --project at it. Reuse keys on content hashes only, so file/module pages fully reuse; arm G becomes aggregates-only.
+- Relaunch against the worktree exposed bakeoff bug #6: `PublicationFingerprint::from_run` hard-crashed (`No such file or directory (os error 2)`) on 17 index-listed files that don't exist at 2b2bc1848 (post-snapshot additions). Residual of #18109, which fixed the identical failure in the snapshot builder but missed this sibling hashing loop. Filed + fixed as #18248: `hash_snapshot_file` (Ok(None)=warn+skip) now shared with fingerprinting; regression test `fingerprint_skips_sources_missing_from_disk` proven to fail pre-fix with the exact production error.
+- Binary transition #8: rebuilt release gcode with #18248 and atomically installed to ~/.gobby/bin/gcode (cp + mv -f). Render version unchanged — no reuse invalidation.

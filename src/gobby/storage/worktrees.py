@@ -31,6 +31,7 @@ class WorktreeStatus(str, Enum):
         "updated_at",
     ),
     optional=(
+        "last_activity_at",
         "merged_at",
         "cleanup_after",
     ),
@@ -49,6 +50,7 @@ class Worktree:
     status: str
     created_at: datetime
     updated_at: datetime
+    last_activity_at: datetime | None
     merged_at: datetime | None
     merge_state: str | None = None  # "pending", "resolved", or None
     cleanup_after: datetime | None = None  # ISO timestamp for auto-cleanup after merge
@@ -78,6 +80,7 @@ class Worktree:
             status=row["status"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            last_activity_at=_safe_get("last_activity_at"),
             merged_at=row["merged_at"],
             merge_state=_safe_get("merge_state"),
             cleanup_after=_safe_get("cleanup_after"),
@@ -97,6 +100,7 @@ class Worktree:
             "status": self.status,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "last_activity_at": self.last_activity_at,
             "merged_at": self.merged_at,
             "merge_state": self.merge_state,
             "cleanup_after": self.cleanup_after,
@@ -143,9 +147,9 @@ class LocalWorktreeManager:
             INSERT INTO worktrees (
                 id, project_id, task_id, branch_name, worktree_path,
                 base_branch, agent_session_id, status, created_at, updated_at,
-                workspace_role
+                last_activity_at, workspace_role
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 worktree_id,
@@ -156,6 +160,7 @@ class LocalWorktreeManager:
                 base_branch,
                 agent_session_id,
                 WorktreeStatus.ACTIVE.value,
+                now,
                 now,
                 now,
                 workspace_role,
@@ -173,6 +178,7 @@ class LocalWorktreeManager:
             status=WorktreeStatus.ACTIVE.value,
             created_at=now,
             updated_at=now,
+            last_activity_at=now,
             merged_at=None,
             workspace_role=workspace_role,
         )
@@ -324,9 +330,10 @@ class LocalWorktreeManager:
 
     def touch(self, worktree_id: str) -> Worktree | None:
         """Refresh a worktree's activity timestamp."""
+        now = utc_now()
         self.db.execute(
-            "UPDATE worktrees SET updated_at = %s WHERE id = %s",
-            (utc_now(), worktree_id),
+            "UPDATE worktrees SET last_activity_at = %s, updated_at = %s WHERE id = %s",
+            (now, now, worktree_id),
         )
         return self.get(worktree_id)
 
@@ -354,9 +361,13 @@ class LocalWorktreeManager:
             session_id: Session ID claiming ownership
 
         Returns:
-            Updated Worktree or None if not found
+            Updated Worktree, or None if the worktree is missing or owned by another session
         """
-        return self.update(worktree_id, agent_session_id=session_id)
+        return self.claim_if_available(
+            worktree_id,
+            session_id,
+            allowed_existing_session_ids=(None, session_id),
+        )
 
     def is_claimed_by_live_session(self, worktree_id: str) -> bool:
         """Return True when the worktree owner is an active session."""
@@ -381,7 +392,8 @@ class LocalWorktreeManager:
         """Claim a worktree only if it is unowned or owned by an allowed prior session."""
         allowed = [value for value in allowed_existing_session_ids if value]
         conditions = ["id = %s", "(agent_session_id IS NULL"]
-        params: list[Any] = [session_id, utc_now(), worktree_id]
+        now = utc_now()
+        params: list[Any] = [session_id, now, now, worktree_id]
         if allowed:
             placeholders = ", ".join("%s" for _ in allowed)
             conditions[-1] += f" OR agent_session_id IN ({placeholders})"
@@ -391,7 +403,7 @@ class LocalWorktreeManager:
         cursor = self.db.execute(
             f"""
             UPDATE worktrees
-            SET agent_session_id = %s, updated_at = %s
+            SET agent_session_id = %s, last_activity_at = %s, updated_at = %s
             WHERE {" AND ".join(conditions)}
             """,  # nosec B608
             tuple(params),
@@ -482,8 +494,9 @@ class LocalWorktreeManager:
             SELECT * FROM worktrees
             WHERE project_id = %s
               AND status = %s
-              AND updated_at < %s
-            ORDER BY updated_at ASC
+              AND agent_session_id IS NULL
+              AND COALESCE(last_activity_at, updated_at) < %s
+            ORDER BY COALESCE(last_activity_at, updated_at) ASC
             LIMIT %s
             """,
             (project_id, WorktreeStatus.ACTIVE.value, cutoff, limit),
@@ -509,7 +522,13 @@ class LocalWorktreeManager:
             List of expired Worktree instances
         """
         now = utc_now()
-        sql = "SELECT * FROM worktrees WHERE status = %s AND cleanup_after IS NOT NULL AND cleanup_after < %s"
+        sql = """
+            SELECT * FROM worktrees
+            WHERE status = %s
+              AND agent_session_id IS NULL
+              AND cleanup_after IS NOT NULL
+              AND cleanup_after < %s
+        """
         params: list[Any] = [WorktreeStatus.MERGED.value, now]
         if project_id:
             sql += " AND project_id = %s"
@@ -627,49 +646,3 @@ class LocalWorktreeManager:
                 (merge_state, limit),
             )
         return [Worktree.from_row(row) for row in rows]
-
-    def sync_with_merge_resolution(
-        self,
-        worktree_id: str,
-        merge_manager: Any | None = None,
-        strategy: str = "auto",
-    ) -> dict[str, Any]:
-        """
-        Sync worktree with merge resolution support.
-
-        When conflicts are detected during sync, a merge resolution
-        is initiated with the specified strategy.
-
-        Args:
-            worktree_id: Worktree ID
-            merge_manager: MergeResolutionManager for creating resolutions
-            strategy: Resolution strategy ("auto", "ai-only", "human")
-
-        Returns:
-            Dict with sync result and optional merge info
-        """
-        worktree = self.get(worktree_id)
-        if not worktree:
-            return {"success": False, "error": "Worktree not found"}
-
-        # Placeholder: actual sync would involve git operations
-        # and detection of merge conflicts
-
-        return {
-            "success": True,
-            "worktree_id": worktree_id,
-            "merge_initiated": False,
-            "message": "Sync completed without conflicts",
-        }
-
-    def sync(self, worktree_id: str) -> dict[str, Any]:
-        """
-        Basic sync without merge resolution.
-
-        Args:
-            worktree_id: Worktree ID
-
-        Returns:
-            Dict with sync result
-        """
-        return self.sync_with_merge_resolution(worktree_id)

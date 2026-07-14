@@ -159,20 +159,19 @@ class BuildHistoryStorage:
         root_task_id: str | None = None,
         summary: Mapping[str, Any] | None = None,
     ) -> BuildRun:
-        current = self._require_run(run_id)
-        merged_summary: dict[str, Any] | None = None
-        if summary is not None:
-            merged_summary = dict(current.summary or {})
-            merged_summary.update(summary)
+        summary_json = _json_dump(summary)
         with self.db.transaction() as conn:
             conn.execute(
                 """
                 UPDATE build_runs
                    SET root_task_id = COALESCE(%s, root_task_id),
-                       summary_json = COALESCE(%s, summary_json)
+                       summary_json = CASE
+                           WHEN %s::jsonb IS NULL THEN summary_json
+                           ELSE COALESCE(summary_json, '{}'::jsonb) || %s::jsonb
+                       END
                  WHERE id = %s
                 """,
-                (root_task_id, _json_dump(merged_summary), run_id),
+                (root_task_id, summary_json, summary_json, run_id),
             )
         return self._require_run(run_id)
 
@@ -288,15 +287,18 @@ class BuildHistoryStorage:
         ancestor_rows = self.db.fetchall(
             """
             -- Walk the task hierarchy so coordinator sessions on any parent task are considered.
-            WITH RECURSIVE ancestors(id, parent_task_id) AS (
-                SELECT id, parent_task_id
+            WITH RECURSIVE ancestors(id, parent_task_id, depth, path) AS (
+                SELECT id, parent_task_id, 0, ARRAY[id]
                   FROM tasks
                  WHERE id = %s AND project_id = %s
                 UNION ALL
-                SELECT parent.id, parent.parent_task_id
+                SELECT parent.id, parent.parent_task_id, child.depth + 1,
+                       child.path || parent.id
                   FROM tasks parent
                   JOIN ancestors child ON child.parent_task_id = parent.id
                  WHERE parent.project_id = %s
+                   AND child.depth < 100
+                   AND NOT parent.id = ANY(child.path)
             )
             SELECT id FROM ancestors
             """,
@@ -443,7 +445,11 @@ def _json_obj(value: Any) -> dict[str, Any] | None:
         return dict(value)
     if not isinstance(value, str) or not value:
         return None
-    loaded = json.loads(value)
+    try:
+        loaded = json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("Invalid build history JSON object", exc_info=True)
+        return None
     return loaded if isinstance(loaded, dict) else None
 
 

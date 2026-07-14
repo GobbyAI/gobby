@@ -11,6 +11,11 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.uuid_validation import parse_uuid_reference
 
 
+def _escape_like_prefix(prefix: str) -> str:
+    """Escape SQL LIKE wildcard characters in a session prefix."""
+    return prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def is_session_uuid(value: str | None) -> bool:
     """Return whether a value can be safely used against session UUID columns."""
     return parse_uuid_reference(value) is not None
@@ -63,8 +68,8 @@ def resolve_session_reference(db: HubDatabase, ref: str, project_id: str | None 
         is_seq_num_lookup = seq_num_ref.isdigit()
         if is_seq_num_lookup and len(seq_num_ref) >= 8:
             prefix_rows = db.fetchall(
-                "SELECT id FROM sessions WHERE id::text LIKE %s LIMIT 2",
-                (f"{seq_num_ref}%",),
+                "SELECT id FROM sessions WHERE id::text LIKE %s ESCAPE '\\' LIMIT 2",
+                (f"{_escape_like_prefix(seq_num_ref)}%",),
             )
             if len(prefix_rows) == 1:
                 return str(prefix_rows[0]["id"])
@@ -122,7 +127,11 @@ def resolve_session_reference(db: HubDatabase, ref: str, project_id: str | None 
         return str(ext_rows[0]["id"])
 
     # Prefix matching — id first, then external_id.
-    rows = db.fetchall("SELECT id FROM sessions WHERE id::text LIKE %s LIMIT 5", (f"{ref}%",))
+    escaped_prefix = f"{_escape_like_prefix(ref)}%"
+    rows = db.fetchall(
+        "SELECT id FROM sessions WHERE id::text LIKE %s ESCAPE '\\' LIMIT 5",
+        (escaped_prefix,),
+    )
     if rows:
         if len(rows) > 1:
             matches = [str(r["id"]) for r in rows]
@@ -131,13 +140,14 @@ def resolve_session_reference(db: HubDatabase, ref: str, project_id: str | None 
 
     if project_id:
         ext_rows = db.fetchall(
-            "SELECT id FROM sessions WHERE external_id LIKE %s AND project_id = %s LIMIT 5",
-            (f"{ref}%", project_id),
+            "SELECT id FROM sessions "
+            "WHERE external_id LIKE %s ESCAPE '\\' AND project_id = %s LIMIT 5",
+            (escaped_prefix, project_id),
         )
     else:
         ext_rows = db.fetchall(
-            "SELECT id FROM sessions WHERE external_id LIKE %s LIMIT 5",
-            (f"{ref}%",),
+            "SELECT id FROM sessions WHERE external_id LIKE %s ESCAPE '\\' LIMIT 5",
+            (escaped_prefix,),
         )
     if not ext_rows:
         raise ValueError(f"Session '{ref}' not found")

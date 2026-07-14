@@ -257,11 +257,13 @@ def test_delete_attachments_for_message(comms_store: LocalCommunicationsStore) -
 
 
 def test_attachment_cascade_on_message_delete(
-    comms_store: LocalCommunicationsStore,
+    comms_store: LocalCommunicationsStore, tmp_path: Path
 ) -> None:
     channel_id = _create_test_channel(comms_store)
     message_id = _create_test_message(comms_store, channel_id)
 
+    attachment_path = tmp_path / "cascade.txt"
+    attachment_path.write_text("retained attachment")
     comms_store.create_attachment(
         CommsAttachment(
             id="",
@@ -269,14 +271,33 @@ def test_attachment_cascade_on_message_delete(
             filename="cascade.txt",
             content_type="text/plain",
             size_bytes=10,
+            local_path=str(attachment_path),
             created_at="2024-01-01T00:00:00Z",
         )
     )
 
     from datetime import datetime
 
-    comms_store.delete_messages_before(datetime(2025, 1, 1))
+    deleted_count, local_paths = comms_store.delete_messages_before(datetime(2025, 1, 1))
+
+    assert deleted_count == 1
+    assert local_paths == [str(attachment_path)]
     assert comms_store.list_attachments(message_id) == []
+
+
+def test_delete_paths_only_unlinks_files_in_storage_directory(
+    attachment_manager: AttachmentManager, attachment_dir: Path, tmp_path: Path
+) -> None:
+    stored_path = attachment_dir / "stored.txt"
+    stored_path.write_text("stored")
+    outside_path = tmp_path / "outside.txt"
+    outside_path.write_text("outside")
+
+    deleted = attachment_manager.delete_paths([str(stored_path), str(outside_path)])
+
+    assert deleted == 1
+    assert not stored_path.exists()
+    assert outside_path.exists()
 
 
 @pytest.mark.asyncio

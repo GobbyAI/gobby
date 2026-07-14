@@ -11,6 +11,7 @@ from gobby.agents.kill import (
     _run_subprocess,
     _validate_terminal_value,
     kill_agent,
+    pid_matches_agent_identity,
 )
 from gobby.agents.tmux import configure_tmux
 from gobby.config.tmux import TmuxConfig
@@ -47,6 +48,106 @@ class TestRunSubprocess:
         mock_proc.wait.assert_called_once()
         assert mock_proc.wait.call_count == 1
         assert mock_proc.wait.call_args is not None
+
+
+class TestPidMatchesAgentIdentity:
+    SESSION_ID = "ec032f4b-c626-4177-90ce-c1f3765c47d0"
+
+    @staticmethod
+    def _runner(cmdline: str, rc: int = 0):
+        async def run_subprocess(*args, timeout=2.0):
+            return rc, cmdline, ""
+
+        return run_subprocess
+
+    @pytest.mark.asyncio
+    async def test_claude_cmdline_session_marker_matches(self):
+        cmdline = f"claude --model opus --session-id {self.SESSION_ID}"
+        assert (
+            await pid_matches_agent_identity(
+                1234,
+                provider="claude",
+                session_id=self.SESSION_ID,
+                run_subprocess=self._runner(cmdline),
+            )
+            is True
+        )
+
+    @pytest.mark.asyncio
+    async def test_codex_without_argv_marker_matches_via_environment(self):
+        cmdline = 'codex --model gpt-5.6-sol -c model_reasoning_effort="medium"'
+        with patch("gobby.agents.kill.psutil.Process") as process_cls:
+            process_cls.return_value.environ.return_value = {"GOBBY_SESSION_ID": self.SESSION_ID}
+            assert (
+                await pid_matches_agent_identity(
+                    1234,
+                    provider="codex",
+                    session_id=self.SESSION_ID,
+                    run_subprocess=self._runner(cmdline),
+                )
+                is True
+            )
+
+    @pytest.mark.asyncio
+    async def test_environment_session_mismatch_is_refused(self):
+        cmdline = "codex --model gpt-5.6-sol"
+        with patch("gobby.agents.kill.psutil.Process") as process_cls:
+            process_cls.return_value.environ.return_value = {
+                "GOBBY_SESSION_ID": "some-other-session"
+            }
+            assert (
+                await pid_matches_agent_identity(
+                    1234,
+                    provider="codex",
+                    session_id=self.SESSION_ID,
+                    run_subprocess=self._runner(cmdline),
+                )
+                is False
+            )
+
+    @pytest.mark.asyncio
+    async def test_missing_process_environment_is_refused(self):
+        import psutil
+
+        cmdline = "codex --model gpt-5.6-sol"
+        with patch("gobby.agents.kill.psutil.Process") as process_cls:
+            process_cls.return_value.environ.side_effect = psutil.NoSuchProcess(1234)
+            assert (
+                await pid_matches_agent_identity(
+                    1234,
+                    provider="codex",
+                    session_id=self.SESSION_ID,
+                    run_subprocess=self._runner(cmdline),
+                )
+                is False
+            )
+
+    @pytest.mark.asyncio
+    async def test_provider_mismatch_is_refused_without_env_lookup(self):
+        cmdline = f"claude --session-id {self.SESSION_ID}"
+        with patch("gobby.agents.kill.psutil.Process") as process_cls:
+            assert (
+                await pid_matches_agent_identity(
+                    1234,
+                    provider="codex",
+                    session_id=self.SESSION_ID,
+                    run_subprocess=self._runner(cmdline),
+                )
+                is False
+            )
+            process_cls.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_dead_process_nonzero_ps_is_refused(self):
+        assert (
+            await pid_matches_agent_identity(
+                1234,
+                provider="codex",
+                session_id=self.SESSION_ID,
+                run_subprocess=self._runner("", rc=1),
+            )
+            is False
+        )
 
 
 class TestValidateTerminalValue:

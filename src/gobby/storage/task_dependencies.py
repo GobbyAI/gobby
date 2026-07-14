@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
 
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase, TaskDependencyMutation, Transaction
 from gobby.utils.datetime import normalize_datetime_model, utc_now
 
 logger = logging.getLogger(__name__)
@@ -59,20 +59,26 @@ class TaskDependencyManager:
         if task_id == depends_on:
             raise ValueError("Task cannot depend on itself")
 
-        # For 'blocks', prevent cycles
-        if dep_type == "blocks" and self._would_create_cycle(task_id, depends_on):
-            raise DependencyCycleError(
-                f"Adding dependency {task_id} blocks {depends_on} would create a cycle"
-            )
-
         now = utc_now()
+        transaction = (
+            self.db.transaction_immediate(TaskDependencyMutation())
+            if dep_type == "blocks"
+            else self.db.transaction()
+        )
 
-        with self.db.transaction() as conn:
+        with transaction as conn:
+            if dep_type == "blocks" and self._would_create_cycle(task_id, depends_on, conn):
+                raise DependencyCycleError(
+                    f"Adding dependency {task_id} blocks {depends_on} would create a cycle"
+                )
+
             row = conn.execute(
                 """
                 INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at)
                 VALUES (%s, %s, %s, %s)
-                RETURNING id
+                ON CONFLICT (task_id, depends_on, dep_type)
+                DO UPDATE SET dep_type = excluded.dep_type
+                RETURNING id, created_at
                 """,
                 (task_id, depends_on, dep_type, now),
             ).fetchone()
@@ -81,15 +87,17 @@ class TaskDependencyManager:
                 raise ValueError("Failed to retrieve dependency ID")
 
             conn.execute("UPDATE tasks SET updated_at = %s WHERE id = %s", (now, task_id))
-            dep_id = int(row["id"])
-            return TaskDependency(dep_id, task_id, depends_on, dep_type, now)
+            return TaskDependency(int(row["id"]), task_id, depends_on, dep_type, row["created_at"])
 
-    def remove_dependency(self, task_id: str, depends_on: str) -> bool:
+    def remove_dependency(
+        self, task_id: str, depends_on: str, dep_type: DependencyType = "blocks"
+    ) -> bool:
         """Remove a dependency."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "DELETE FROM task_dependencies WHERE task_id = %s AND depends_on = %s",
-                (task_id, depends_on),
+                """DELETE FROM task_dependencies
+                   WHERE task_id = %s AND depends_on = %s AND dep_type = %s""",
+                (task_id, depends_on, dep_type),
             )
             deleted: bool = cursor.rowcount > 0
             if deleted:
@@ -120,7 +128,7 @@ class TaskDependencyManager:
         )
         return [TaskDependency.from_row(row) for row in rows]
 
-    def _would_create_cycle(self, task_id: str, depends_on: str) -> bool:
+    def _would_create_cycle(self, task_id: str, depends_on: str, conn: Transaction) -> bool:
         """
         Check if adding edge task_id -> depends_on creates a cycle.
         This implies exists path depends_on -> ... -> task_id.
@@ -137,10 +145,10 @@ class TaskDependencyManager:
                 continue
             visited.add(current)
 
-            deps = self.db.fetchall(
+            deps = conn.execute(
                 "SELECT depends_on FROM task_dependencies WHERE task_id = %s AND dep_type = 'blocks'",
                 (current,),
-            )
+            ).fetchall()
             for row in deps:
                 stack.append(row["depends_on"])
 

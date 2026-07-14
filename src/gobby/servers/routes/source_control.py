@@ -869,10 +869,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
                 "source_branch": source_branch or wt.base_branch,
             }
 
-        return cast(
-            dict[str, Any],
-            await server.run_db(server.services.worktree_storage.sync, worktree_id),
-        )
+        raise HTTPException(503, "Git manager not available")
 
     # --- Clones ---
 

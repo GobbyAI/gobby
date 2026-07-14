@@ -11,6 +11,7 @@ from gobby.storage.tasks._id import generate_task_id
 from gobby.storage.tasks._models import (
     SeqNumCollisionError,
     TaskIDCollisionError,
+    validate_category,
     validate_implementation_domain,
     validate_task_type,
 )
@@ -106,6 +107,7 @@ def _create_task_in_transaction(
     task_id = ""
 
     task_type = validate_task_type(task_type)
+    category = validate_category(category)
     implementation_domain = validate_implementation_domain(implementation_domain)
     validation_status = "pending" if validation_criteria else None
 

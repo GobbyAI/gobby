@@ -78,14 +78,16 @@ def find_holistic_descendant_gate(
 
     rows = db.fetchall(
         """
-        WITH RECURSIVE descendants(id, depth) AS (
-            SELECT child.id, 1
+        WITH RECURSIVE descendants(id, depth, path) AS (
+            SELECT child.id, 1, ARRAY[child.parent_task_id, child.id]
               FROM tasks child
              WHERE child.parent_task_id = %s
             UNION ALL
-            SELECT child.id, descendants.depth + 1
+            SELECT child.id, descendants.depth + 1, descendants.path || child.id
               FROM tasks child
               JOIN descendants ON child.parent_task_id = descendants.id
+             WHERE descendants.depth < 100
+               AND NOT child.id = ANY(descendants.path)
         ),
         current_stage AS (
             SELECT stage_scan.task_id,
@@ -156,15 +158,18 @@ def has_holistic_ancestor_gate(
     state_placeholders = ", ".join(["%s"] * len(gate_states))
     row = db.fetchone(
         f"""
-        WITH RECURSIVE ancestors(id, parent_task_id, depth) AS (
-            SELECT parent.id, parent.parent_task_id, 1
+        WITH RECURSIVE ancestors(id, parent_task_id, depth, path) AS (
+            SELECT parent.id, parent.parent_task_id, 1, ARRAY[child.id, parent.id]
               FROM tasks child
               JOIN tasks parent ON parent.id = child.parent_task_id
              WHERE child.id = %s
             UNION ALL
-            SELECT parent.id, parent.parent_task_id, ancestors.depth + 1
+            SELECT parent.id, parent.parent_task_id, ancestors.depth + 1,
+                   ancestors.path || parent.id
               FROM tasks parent
               JOIN ancestors ON parent.id = ancestors.parent_task_id
+             WHERE ancestors.depth < 100
+               AND NOT parent.id = ANY(ancestors.path)
         )
         SELECT ancestors.id
           FROM ancestors

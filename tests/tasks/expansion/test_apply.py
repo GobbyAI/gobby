@@ -58,6 +58,7 @@ def test_apply_copies_parent_target_branch_onto_generated_leaves(temp_db, sample
         triggering_session_id=None,
         input_source="task",
     )
+    run_manager.start(run.id)
     run_manager.save_compiled_spec(
         run.id,
         {
@@ -101,6 +102,7 @@ def _save_run(
         triggering_session_id=None,
         input_source="plan",
     )
+    service.run_manager.start(run.id)
     service.run_manager.save_compiled_spec(run.id, spec)
     return run
 
@@ -364,6 +366,10 @@ def test_reset_discovers_historical_phase_ancestor(temp_db, sample_project) -> N
         triggering_session_id=None,
         input_source="task",
     )
+    service.run_manager.db.execute(
+        "UPDATE expansion_runs SET status = 'applying' WHERE id = %s",
+        (run.id,),
+    )
     service.run_manager.save_apply_result(
         run.id,
         task_id_map={"leaf": leaf.id},
@@ -396,6 +402,10 @@ def test_reset_refuses_progressed_generated_task(temp_db, sample_project) -> Non
         project_id=sample_project["id"],
         triggering_session_id=None,
         input_source="task",
+    )
+    service.run_manager.db.execute(
+        "UPDATE expansion_runs SET status = 'applying' WHERE id = %s",
+        (run.id,),
     )
     service.run_manager.save_apply_result(
         run.id,

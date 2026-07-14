@@ -14,6 +14,8 @@ import sys
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+import psutil
+
 from gobby.storage.agents import AgentRun
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -117,14 +119,36 @@ async def pid_matches_agent_identity(
         return False
 
     cmdline = stdout.strip()
-    matches = rc == 0 and f"session-id {session_id}" in cmdline
-    matches = matches and provider_marker in cmdline.lower()
-    if not matches:
+    if rc != 0 or provider_marker not in cmdline.lower():
         logger.warning(
-            "Refusing to signal PID %s: cmdline does not match provider/session identity",
+            "Refusing to signal PID %s: cmdline does not match provider identity",
             pid,
         )
-    return matches
+        return False
+    if f"session-id {session_id}" in cmdline:
+        return True
+    # Providers like codex carry no session marker in argv; the spawn-time
+    # GOBBY_SESSION_ID environment variable is the identity there.
+    if await _process_env_matches_session(pid, session_id):
+        return True
+    logger.warning(
+        "Refusing to signal PID %s: cmdline does not match provider/session identity",
+        pid,
+    )
+    return False
+
+
+async def _process_env_matches_session(pid: int, session_id: str) -> bool:
+    """Check whether a process's environment carries GOBBY_SESSION_ID=session_id."""
+
+    def _read_env() -> bool:
+        try:
+            env = psutil.Process(pid).environ()
+        except (psutil.Error, OSError):
+            return False
+        return bool(env.get("GOBBY_SESSION_ID") == session_id)
+
+    return await asyncio.to_thread(_read_env)
 
 
 async def _close_terminal_window(

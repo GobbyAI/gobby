@@ -219,10 +219,21 @@ class LocalProjectManager:
         github_url: str | None = None,
     ) -> Project:
         """Get existing project or create new one."""
-        project = self.get_by_name(name)
-        if project:
-            return project
-        return self.create(name, repo_path, github_url)
+        project_id = str(uuid.uuid4())
+        now = utc_now()
+        row = self.db.fetchone(
+            """
+            INSERT INTO projects (id, name, repo_path, github_url, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (name) WHERE deleted_at IS NULL
+            DO UPDATE SET name = EXCLUDED.name
+            RETURNING *
+            """,
+            (project_id, name, repo_path, github_url, now, now),
+        )
+        if row is None:
+            raise RuntimeError(f"Project '{name}' not found after atomic upsert")
+        return Project.from_row(row)
 
     def ensure_exists(
         self,
@@ -250,7 +261,7 @@ class LocalProjectManager:
             """
             INSERT INTO projects (id, name, repo_path, created_at, updated_at)
             VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (id) DO NOTHING
+            ON CONFLICT DO NOTHING
             """,
             (project_id, name, repo_path, now, now),
         )
@@ -259,8 +270,12 @@ class LocalProjectManager:
         if project:
             return project
 
+        project = self.get_by_name(name)
+        if project:
+            return project
+
         raise RuntimeError(
-            f"Project '{name}' ({project_id}) not found after idempotent insert — "
+            f"Project '{name}' ({project_id}) not found after conflict-safe insert — "
             "possible database inconsistency"
         )
 

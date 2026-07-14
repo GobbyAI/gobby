@@ -4,26 +4,35 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.communications.attachments import AttachmentManager
 from gobby.runner_maintenance import cleanup_comms_messages_loop
 
 
 @pytest.fixture(autouse=True)
 def mock_attachment_manager() -> MagicMock:
     manager = MagicMock()
+    manager.delete_paths.return_value = 0
     manager.cleanup_old.return_value = 0
     with patch("gobby.communications.attachments.AttachmentManager", return_value=manager):
         yield manager
 
 
 @pytest.mark.asyncio
-async def test_cleanup_deletes_old_messages(mock_attachment_manager: MagicMock):
+async def test_cleanup_deletes_old_messages(
+    mock_attachment_manager: MagicMock, tmp_path: Path
+) -> None:
     """cleanup_comms_messages_loop deletes messages older than retention_days."""
+    attachment_path = tmp_path / "retained-attachment"
+    attachment_path.write_text("attachment")
+    manager = AttachmentManager(storage_dir=tmp_path)
     mock_store = MagicMock()
-    mock_store.delete_messages_before.return_value = 5
+    mock_store.delete_messages_before.return_value = (5, [str(attachment_path)])
+    mock_attachment_manager.delete_paths.side_effect = manager.delete_paths
     mock_attachment_manager.cleanup_old.return_value = 2
 
     shutdown_calls = iter([False, True])
@@ -44,7 +53,9 @@ async def test_cleanup_deletes_old_messages(mock_attachment_manager: MagicMock):
 
     sleep_mock.assert_called_once_with(24 * 60 * 60)
     mock_store.delete_messages_before.assert_called_once()
+    mock_attachment_manager.delete_paths.assert_called_once_with([str(attachment_path)])
     mock_attachment_manager.cleanup_old.assert_called_once_with(days=30, limit=500)
+    assert not attachment_path.exists()
     cutoff_arg = mock_store.delete_messages_before.call_args[0][0]
     assert isinstance(cutoff_arg, datetime)
     # Cutoff should be approximately 30 days ago
@@ -56,7 +67,7 @@ async def test_cleanup_deletes_old_messages(mock_attachment_manager: MagicMock):
 async def test_cleanup_respects_retention_days():
     """Different retention_days values produce different cutoff dates."""
     mock_store = MagicMock()
-    mock_store.delete_messages_before.return_value = 0
+    mock_store.delete_messages_before.return_value = (0, [])
 
     shutdown_calls = iter([False, True])
 
@@ -84,7 +95,7 @@ async def test_cleanup_respects_retention_days():
 async def test_cleanup_runs_on_interval():
     """Cleanup loop sleeps for 24 hours between iterations."""
     mock_store = MagicMock()
-    mock_store.delete_messages_before.return_value = 0
+    mock_store.delete_messages_before.return_value = (0, [])
 
     call_count = 0
     max_calls = 3
@@ -133,7 +144,7 @@ async def test_cleanup_handles_cancelled_error():
 async def test_cleanup_handles_db_error_gracefully():
     """Cleanup loop continues on database errors."""
     mock_store = MagicMock()
-    mock_store.delete_messages_before.side_effect = [RuntimeError("DB locked"), 3]
+    mock_store.delete_messages_before.side_effect = [RuntimeError("DB locked"), (3, [])]
 
     call_count = 0
 
@@ -162,7 +173,7 @@ async def test_cleanup_handles_db_error_gracefully():
 async def test_cleanup_zero_deleted_no_error():
     """Cleanup loop handles zero deleted messages without error."""
     mock_store = MagicMock()
-    mock_store.delete_messages_before.return_value = 0
+    mock_store.delete_messages_before.return_value = (0, [])
 
     shutdown_calls = iter([False, True])
 

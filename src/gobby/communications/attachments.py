@@ -6,6 +6,7 @@ import asyncio
 import logging
 import re
 import time
+from collections.abc import Iterable
 from pathlib import Path
 
 import httpx
@@ -87,6 +88,25 @@ class AttachmentManager:
                     break
         if removed:
             logger.info(f"Cleaned up {removed} attachments older than {days} days")
+        return removed
+
+    def delete_paths(self, local_paths: Iterable[str]) -> int:
+        """Delete stored attachment paths that are contained by the storage directory."""
+        storage_dir = self._storage_dir.resolve()
+        removed = 0
+        for local_path in local_paths:
+            try:
+                path = Path(local_path).expanduser().resolve()
+            except (OSError, RuntimeError, ValueError):
+                continue
+            if path == storage_dir or storage_dir not in path.parents:
+                logger.warning("Skipping attachment path outside storage directory: %s", path)
+                continue
+            try:
+                path.unlink(missing_ok=True)
+                removed += 1
+            except OSError:
+                logger.warning("Failed to remove communication attachment %s", path, exc_info=True)
         return removed
 
     def validate_size(self, size_bytes: int, channel_type: str) -> bool:

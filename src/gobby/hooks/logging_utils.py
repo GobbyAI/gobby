@@ -36,7 +36,7 @@ def log_structured_block(
     reason: str,
 ) -> None:
     """Emit the canonical structured block log line used across transports."""
-    logger.info(
+    logger.debug(
         "BLOCK session=%s event=%s tool=%s source=%s rule=%s reason=%s",
         session_id,
         event,

@@ -223,7 +223,7 @@ class SessionLookupService:
 
         # If not in mapping and not session-start, try to query database
         if not platform_session_id and event.event_type != HookEventType.SESSION_START:
-            with self._session_coordinator.get_lookup_lock():
+            with self._session_coordinator.get_lookup_lock(external_id, event.source.value):
                 # Double check in case another thread finished lookup
                 platform_session_id = self._session_manager.get_session_id(
                     external_id,

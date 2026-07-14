@@ -74,20 +74,3 @@ class TaskDecompositionMixin:
             additional_skills=additional_skills,
         )
         return {"task": task.to_dict()}
-
-    def update_task_with_result(
-        self: Any,
-        task_id: str,
-        description: str | None = None,
-    ) -> dict[str, Any]:
-        """Update a task description and return the decomposition tool payload.
-
-        Args:
-            task_id: Task ID or resolvable task reference.
-            description: Replacement task description.
-
-        Returns:
-            Dict containing the updated task projection under ``task``.
-        """
-        updated = self.update_task(task_id, description=description)
-        return {"task": updated.to_dict()}

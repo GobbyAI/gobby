@@ -947,7 +947,7 @@ class TestConcurrentOperations:
         call_count = {"count": 0}
 
         def increment_with_lock() -> Any:
-            with coordinator.get_lookup_lock():
+            with coordinator.get_lookup_lock("external-1", "claude"):
                 # Simulate work
                 current = call_count["count"]
                 threading.Event().wait(0.01)
@@ -961,6 +961,15 @@ class TestConcurrentOperations:
 
         # With proper locking, all increments should be serialized
         assert call_count["count"] == 10
+
+    def test_lookup_locks_are_keyed_by_external_id_and_source(self) -> None:
+        coordinator = SessionCoordinator()
+
+        first = coordinator.get_lookup_lock("external-1", "claude")
+
+        assert coordinator.get_lookup_lock("external-1", "claude") is first
+        assert coordinator.get_lookup_lock("external-2", "claude") is not first
+        assert coordinator.get_lookup_lock("external-1", "codex") is not first
 
 
 class TestSessionCoordinatorInitialization:
@@ -1004,7 +1013,8 @@ class TestSessionCoordinatorInitialization:
 
         assert hasattr(coordinator, "_registered_sessions_lock")
         assert hasattr(coordinator, "_cache_lock")
-        assert hasattr(coordinator, "_lookup_lock")
+        assert hasattr(coordinator, "_lookup_locks")
+        assert hasattr(coordinator, "_lookup_locks_lock")
 
 
 class TestIntegrationWithHookManager:

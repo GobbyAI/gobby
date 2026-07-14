@@ -242,7 +242,21 @@ def test_postgres_migrations_limited_to_known_post_baseline() -> None:
         "316_memory_vector_reindex_state.sql",
         "317_sync_tombstones.sql",
         "318_chat_messages_sequence_unique.sql",
+        "319_worktree_last_activity.sql",
+        "320_projects_active_name_unique.sql",
     ]
+
+
+def test_worktree_last_activity_is_consistent_across_schema_and_migration() -> None:
+    baseline = _baseline_text()
+    migration = (SRC_ROOT / "storage" / "migrations" / "319_worktree_last_activity.sql").read_text(
+        encoding="utf-8"
+    )
+
+    worktrees = _table_definition(baseline, "worktrees")
+    assert "last_activity_at TIMESTAMPTZ" in worktrees
+    assert "ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ" in migration
+    assert "SET last_activity_at = updated_at" in migration
 
 
 def test_uuid_cast_migrations_ship_a_preflight_guard() -> None:
@@ -283,7 +297,7 @@ def test_postgres_baseline_version_is_flattened_to_305() -> None:
     # The 0.5.0 pre-release flatten folded 295-305 into the baseline. Hubs below
     # 305 take the corrupt_partial backup/recreate path; later migrations replay.
     assert module.BASELINE_VERSION == 305
-    assert module.latest_known_version() == 318
+    assert module.latest_known_version() == 320
 
 
 def test_postgres_baseline_uses_uuid_for_internal_identity_columns() -> None:

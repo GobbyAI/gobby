@@ -212,10 +212,12 @@ class TaskDeliveryStateManager:
         }
 
     def _clean_campaign_fields(self, fields: dict[str, Any]) -> dict[str, Any]:
+        unknown_fields = set(fields) - CAMPAIGN_COLUMNS
+        if unknown_fields:
+            names = ", ".join(sorted(unknown_fields))
+            raise ValueError(f"Unknown delivery campaign field(s): {names}")
         cleaned: dict[str, Any] = {}
         for column, value in fields.items():
-            if column not in CAMPAIGN_COLUMNS:
-                continue
             if column in CAMPAIGN_DEFAULT_COLUMNS and value is None:
                 continue
             cleaned[column] = (
@@ -226,10 +228,12 @@ class TaskDeliveryStateManager:
         return cleaned
 
     def _clean_unit_fields(self, fields: dict[str, Any]) -> dict[str, Any]:
+        unknown_fields = set(fields) - UNIT_COLUMNS
+        if unknown_fields:
+            names = ", ".join(sorted(unknown_fields))
+            raise ValueError(f"Unknown delivery unit field(s): {names}")
         cleaned: dict[str, Any] = {}
         for column, value in fields.items():
-            if column not in UNIT_COLUMNS:
-                continue
             if column in {"local_update_attempts", "target_branch"} and value is None:
                 continue
             if value is None:

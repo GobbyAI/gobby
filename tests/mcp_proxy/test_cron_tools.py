@@ -77,6 +77,14 @@ def registry(mock_storage: MagicMock, mock_scheduler: MagicMock) -> InternalTool
     return create_cron_registry(cron_storage=mock_storage, cron_scheduler=mock_scheduler)
 
 
+@pytest.fixture
+def real_registry(temp_db, mock_scheduler: MagicMock) -> InternalToolRegistry:
+    return create_cron_registry(
+        cron_storage=CronJobStorage(temp_db),
+        cron_scheduler=mock_scheduler,
+    )
+
+
 class TestListCronJobs:
     def test_list_returns_jobs(self, registry, mock_storage) -> None:
         mock_storage.list_jobs.return_value = [_make_job(), _make_job(id="cj-def")]
@@ -130,6 +138,30 @@ class TestCreateCronJob:
         assert result["success"] is True
         assert result["job"]["name"] == "Test Job"
 
+    @pytest.mark.parametrize(
+        ("schedule_type", "schedule"),
+        [("cron", {"cron_expr": "invalid"}), ("once", {"run_at": "not-a-date"})],
+    )
+    def test_create_invalid_schedule_returns_error(
+        self,
+        real_registry: InternalToolRegistry,
+        schedule_type: str,
+        schedule: dict[str, object],
+    ) -> None:
+        tool = real_registry.get_tool("create_cron_job")
+
+        result = tool(
+            name="Invalid",
+            action_type="shell",
+            action_config={"command": "echo"},
+            project_id=PROJECT_ID,
+            schedule_type=schedule_type,
+            **schedule,
+        )
+
+        assert result["success"] is False
+        assert result["error"]
+
 
 class TestGetCronJob:
     def test_get_found(self, registry, mock_storage) -> None:
@@ -165,6 +197,26 @@ class TestUpdateCronJob:
         tool = registry.get_tool("update_cron_job")
         result = tool(job_id="cj-nonexistent", name="X")
         assert result["success"] is False
+
+    def test_update_reenables_disabled_job(self, real_registry: InternalToolRegistry) -> None:
+        create = real_registry.get_tool("create_cron_job")
+        update = real_registry.get_tool("update_cron_job")
+        created = create(
+            name="Toggle",
+            action_type="shell",
+            action_config={"command": "echo"},
+            project_id=PROJECT_ID,
+            cron_expr="0 * * * *",
+        )
+        job_id = created["job"]["id"]
+
+        disabled = update(job_id=job_id, enabled=False)
+        enabled = update(job_id=job_id, enabled=True)
+
+        assert disabled["success"] is True
+        assert disabled["job"]["next_run_at"] is None
+        assert enabled["success"] is True
+        assert enabled["job"]["next_run_at"] is not None
 
 
 class TestToggleCronJob:

@@ -38,6 +38,7 @@ from gobby.storage.hub.protocol import (
     ReviewLearningPatternMutation,
     Row,
     Savepoint,
+    SessionLineageMutation,
     SessionRecoveryByProject,
     SessionRegistration,
     SessionSeqMutation,
@@ -529,6 +530,8 @@ class _PostgresTransaction:
     def acquire_additional_lock(self, lock: LockTarget) -> None:
         if not self.is_immediate:
             raise RuntimeError("additional locks require an immediate transaction")
+        if lock in self._locks:
+            return
 
         _acquire_lock(self._locks, lock)
         try:
@@ -942,9 +945,10 @@ def _advisory_lock_keys(lock: LockTarget) -> tuple[str, ...]:
     if isinstance(lock, SessionRegistration):
         return (
             "session_register:"
-            f"{lock.external_id}|{lock.machine_id}|{lock.source}|"
-            f"{lock.project_id or ''}|{lock.session_type}",
+            f"{lock.external_id}|{lock.machine_id}|{lock.source}|{lock.session_type}",
         )
+    if isinstance(lock, SessionLineageMutation):
+        return ("session_lineage_mutation",)
     if isinstance(lock, SessionSeqMutation):
         return (f"session_seq:{lock.project_id}",)
     if isinstance(lock, SessionRecoveryByProject):

@@ -113,6 +113,10 @@ def test_postgres_migration_discovery_finds_all_post_baseline_migrations() -> No
         (314, "memory_graph_retry_state"),
         (315, "session_title_synthesis_digest_hash"),
         (316, "memory_vector_reindex_state"),
+        (317, "sync_tombstones"),
+        (318, "chat_messages_sequence_unique"),
+        (319, "worktree_last_activity"),
+        (320, "projects_active_name_unique"),
     ]
 
 

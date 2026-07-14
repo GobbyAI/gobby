@@ -183,8 +183,10 @@ class AuthStore:
 
     def delete_session(self, token: str) -> bool:
         """Delete a session (logout)."""
-        self.db.execute("DELETE FROM auth_sessions WHERE token_hash = %s", (hash_token(token),))
-        return True
+        cursor = self.db.execute(
+            "DELETE FROM auth_sessions WHERE token_hash = %s", (hash_token(token),)
+        )
+        return cursor.rowcount > 0
 
     def _cleanup_expired(self) -> None:
         """Remove expired sessions."""

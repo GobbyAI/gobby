@@ -23,7 +23,11 @@ from gobby.storage.tasks._artifacts import (
     set_artifact,
     set_artifacts_atomic,
 )
-from gobby.storage.tasks._build_cascade import cascade_build_state_to_subtree
+from gobby.storage.tasks._build_cascade import (
+    CascadeBuildFailure,
+    CascadeBuildResult,
+    cascade_build_state_to_subtree,
+)
 from gobby.storage.tasks._dispatch_mutex import (
     DispatchMutex,
     TaskDispatchMutexManager,
@@ -118,6 +122,8 @@ __all__ = [
     "validate_implementation_domain",
     "normalize_priority",
     "order_tasks_hierarchically",
+    "CascadeBuildFailure",
+    "CascadeBuildResult",
     "cascade_build_state_to_subtree",
     "get_mutex",
     "acquire_mutex",

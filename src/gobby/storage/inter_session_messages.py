@@ -17,7 +17,7 @@ from gobby.utils.datetime import normalize_datetime_model, to_aware_utc, utc_now
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
-from gobby.storage.sql_dialect import is_postgres, json_text_expr
+from gobby.storage.sql_dialect import json_text_expr
 
 MESSAGE_DIRECTION_ALIASES: dict[str, str] = {
     "all": "all",
@@ -236,14 +236,12 @@ class InterSessionMessageManager:
         completion_id_sql = json_text_expr(self.db, "metadata_json", "completion_id")
         run_id_sql = json_text_expr(self.db, "metadata_json", "run_id")
         execution_id_sql = json_text_expr(self.db, "metadata_json", "execution_id")
-        json_valid_sql = "" if is_postgres(self.db) else "AND json_valid(metadata_json)"
         row = self.db.fetchone(
             f"""
             SELECT 1 FROM inter_session_messages
             WHERE to_session = %s
               AND message_type = %s
               AND metadata_json IS NOT NULL
-              {json_valid_sql}
               AND (
                 {completion_id_sql} = %s
                 OR {run_id_sql} = %s

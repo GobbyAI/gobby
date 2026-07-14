@@ -945,8 +945,10 @@ class TestMergeCloneToTarget:
         fetch_call = mock_git_manager.run_git_command.call_args_list[0]
         assert "fetch" in fetch_call[0][0]
         assert "/tmp/clones/test" in fetch_call[0][0]
-        # Should have set cleanup_after on success
-        mock_clone_storage.update.assert_called()
+        mock_clone_storage.mark_merged.assert_called_once_with(
+            "clone-123",
+            cleanup_after=result["cleanup_after"],
+        )
 
     @pytest.mark.asyncio
     async def test_merge_clone_waits_for_checkout_mutation_lock(
@@ -1030,10 +1032,7 @@ class TestMergeCloneToTarget:
             await operation
         await asyncio.wait_for(contender, timeout=2)
         lock.release()
-        mock_clone_storage.update.assert_called_with(
-            "clone-123",
-            status=CloneStatus.ACTIVE.value,
-        )
+        mock_clone_storage.mark_merged.assert_called_once()
         commands = [call.args[0] for call in mock_git_manager.run_git_command.call_args_list]
         assert ["branch", "-D", "clone-merge/feature/test"] in commands
         mock_git_manager.merge_branch.assert_called_once()
@@ -1098,10 +1097,7 @@ class TestMergeCloneToTarget:
         assert ["stash", "pop", "stash@{0}"] in commands
         assert ["branch", "-D", "clone-merge/feature/test"] in commands
         mock_git_manager.merge_branch.assert_called_once()
-        mock_clone_storage.update.assert_called_with(
-            "clone-123",
-            status=CloneStatus.ACTIVE.value,
-        )
+        mock_clone_storage.mark_merged.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_merge_clone_not_found(self, registry: Any, mock_clone_storage: Any) -> None:
@@ -1172,7 +1168,10 @@ class TestMergeCloneToTarget:
             "error": "Fetch timed out after 120 seconds",
             "step": "fetch",
         }
-        mock_clone_storage.update.assert_any_call("clone-123", status="active")
+        mock_clone_storage.update.assert_called_with(
+            "clone-123",
+            status=CloneStatus.ACTIVE.value,
+        )
 
     @pytest.mark.asyncio
     async def test_merge_clone_record_sync_failure_deletes_temp_ref_before_unlock(
@@ -1316,7 +1315,10 @@ class TestMergeCloneToTarget:
             "Failed to delete temporary branch clone-merge/feature/test: "
             "cannot delete temporary branch"
         ]
-        mock_clone_storage.update.assert_any_call("clone-123", status="active")
+        mock_clone_storage.mark_merged.assert_called_once_with(
+            "clone-123",
+            cleanup_after=result["cleanup_after"],
+        )
 
     @pytest.mark.asyncio
     async def test_merge_clone_stash_pop_timeout_warns_without_masking_conflict(
@@ -1491,11 +1493,14 @@ class TestMergeCloneToTarget:
         )
 
         assert result["success"] is True
-        # Verify update was called with cleanup_after set
-        update_calls = mock_clone_storage.update.call_args_list
-        # Check if any call has cleanup_after
-        has_cleanup = any("cleanup_after" in (call.kwargs or {}) for call in update_calls)
-        assert has_cleanup or result.get("cleanup_after") is not None
+        mock_clone_storage.mark_merged.assert_called_once_with(
+            "clone-123",
+            cleanup_after=result["cleanup_after"],
+        )
+        assert not any(
+            call.kwargs.get("status") == CloneStatus.ACTIVE.value
+            for call in mock_clone_storage.update.call_args_list
+        )
 
 
 class TestClaimClone:

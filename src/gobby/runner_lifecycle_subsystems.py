@@ -209,6 +209,25 @@ async def _cleanup_metrics_on_startup(runner: GobbyRunner) -> None:
         logger.warning(f"Metrics cleanup failed: {e}")
 
 
+async def _cleanup_stale_expansion_runs_on_startup(runner: GobbyRunner) -> int:
+    services = getattr(getattr(runner, "http_server", None), "services", None)
+    task_manager = getattr(services, "task_manager", None)
+    if task_manager is None:
+        return 0
+
+    try:
+        from gobby.storage.expansion_runs import LocalExpansionRunManager
+
+        run_manager = LocalExpansionRunManager(task_manager.db)
+        cleaned = int(await _run_db(runner, run_manager.cleanup_stale_runs))
+        if cleaned > 0:
+            logger.info("Startup expansion cleanup: failed %s stale runs", cleaned)
+        return cleaned
+    except Exception as e:
+        logger.warning("Expansion run cleanup failed: %s", e)
+        return 0
+
+
 async def _initialize_vector_store(
     runner: GobbyRunner,
     rebuild_vector_store: Any,
@@ -733,6 +752,7 @@ async def init_subsystems(
     await _check_external_services(runner, tracker)
     await _check_embedding_service(runner, tracker)
     await _cleanup_metrics_on_startup(runner)
+    await _cleanup_stale_expansion_runs_on_startup(runner)
     await _initialize_vector_store(runner, rebuild_vector_store, tracker)
     await _start_core_services(runner, tracker)
     await _check_tmux_health(tracker)

@@ -24,11 +24,13 @@ __all__ = [
     "ReviewLearningPatternMutation",
     "Row",
     "Savepoint",
+    "SessionLineageMutation",
     "SessionRecoveryByProject",
     "SessionRegistration",
     "SessionSeqMutation",
     "SessionVariableMutation",
     "SystemSessionBootstrap",
+    "TaskDependencyMutation",
     "TaskLifecycleMutation",
     "TaskSeqAllocation",
     "TaskSubtreeCascade",
@@ -117,6 +119,17 @@ class ExpansionApplyMutation:
 
 
 @dataclass(frozen=True)
+class TaskDependencyMutation:
+    """Serializes dependency cycle checks and inserts.
+
+    Must stay above ExpansionApplyMutation: apply_run holds that lock while
+    add_dependency acquires this one, and nested priorities must increase.
+    """
+
+    PRIORITY: ClassVar[int] = 275
+
+
+@dataclass(frozen=True)
 class DispatchMutexRow:
     """Serializes read-then-upsert dispatch mutex acquisition."""
 
@@ -168,8 +181,14 @@ class SessionRegistration:
     external_id: str
     machine_id: str
     source: str
-    project_id: str | None
     session_type: str
+
+
+@dataclass(frozen=True)
+class SessionLineageMutation:
+    """Serializes session parent cycle checks and mutations."""
+
+    PRIORITY: ClassVar[int] = 650
 
 
 @dataclass(frozen=True)

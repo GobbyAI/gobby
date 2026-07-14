@@ -272,8 +272,6 @@ class _LifecycleHost(ChatLifecycleMixin):
         self,
         db_session_id: str,
         event_type: HookEventType,
-        *,
-        pending_message_ids: list[str] | None = None,
     ) -> str | None:
         return None
 

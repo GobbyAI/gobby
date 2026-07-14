@@ -43,4 +43,9 @@ class _LifecycleDelegateMixin:
         """Hard-delete old expired zero-message sessions. Delegates to session_lifecycle."""
         from gobby.storage.session_lifecycle import prune_empty_sessions as _prune_empty
 
-        return _prune_empty(self.db, min_age_hours)
+        from ._registration_cache import invalidate_session_caches
+
+        pruned = _prune_empty(self.db, min_age_hours)
+        if pruned:
+            invalidate_session_caches(self)
+        return pruned

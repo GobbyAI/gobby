@@ -35,6 +35,10 @@ class CronRunRejected(RuntimeError):
         self.code = code
 
 
+class _ScheduledRunNotAdmitted(RuntimeError):
+    """Roll back a claimed schedule when run insertion loses admission."""
+
+
 class CronScheduler:
     """Background scheduler that polls for due cron jobs and dispatches them.
 
@@ -145,28 +149,32 @@ class CronScheduler:
         return swept
 
     def _create_scheduled_run(self, job: CronJob) -> CronRun | None:
-        """Create a run and advance its schedule in one database transaction."""
+        """Claim a due schedule and create its run in one database transaction."""
+        if job.next_run_at is None:
+            return None
         next_run = compute_next_run(job)
-        with self.storage.db.transaction_immediate(lock=CronRunAdmission()):
-            if self.storage.count_running() >= self.config.max_concurrent_jobs:
-                return None
-            run = self.storage.create_run(job.id, scheduler_owner=self._scheduler_owner)
-            if run is None:
-                return None
-            if job.schedule_type == "once" and next_run is None:
-                updated = self.storage.update_job(
+        try:
+            with self.storage.db.transaction_immediate(lock=CronRunAdmission()):
+                if self.storage.count_running() >= self.config.max_concurrent_jobs:
+                    return None
+                claimed = self.storage.claim_due_job(
                     job.id,
-                    enabled=False,
-                    next_run_at=None,
+                    expected_next_run_at=job.next_run_at,
+                    next_run_at=next_run,
+                    disable=job.schedule_type == "once" and next_run is None,
                 )
-            else:
-                updated = self._update_job_bookkeeping(
-                    job,
-                    next_run_at=next_run.isoformat() if next_run else None,
+                if not claimed:
+                    return None
+                run = self.storage.create_run(
+                    job.id,
+                    scheduler_owner=self._scheduler_owner,
+                    start_immediately=True,
                 )
-            if updated is None:
-                raise RuntimeError(f"Cron job {job.id} disappeared during dispatch bookkeeping")
-        return run
+                if run is None:
+                    raise _ScheduledRunNotAdmitted
+            return run
+        except _ScheduledRunNotAdmitted:
+            return None
 
     def _resolve_project_context(self, project_id: str) -> dict[str, Any]:
         """Resolve an enriched project context without leaking a worker token."""
@@ -271,8 +279,7 @@ class CronScheduler:
                             )
                             continue
 
-                # Commit run admission and schedule advancement together so a
-                # bookkeeping failure cannot strand a pending run.
+                # Compare-and-set the selected schedule before creating its run.
                 run = await self._run_db(self._create_scheduled_run, job)
                 if run is None:
                     logger.debug(

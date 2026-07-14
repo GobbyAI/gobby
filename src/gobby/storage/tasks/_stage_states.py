@@ -58,7 +58,6 @@ class StageStatesManager:
         self._schema = StageStateSchema(db, self._rows)
         self._manifest = StageStateManifestOps(db, events, self._rows, self._mutexes)
         self._transitions = StageStateTransitions(db, events, self._rows, self._mutexes)
-        self._ensure_phase2_columns()
 
     def list_for_task(self, task_id: str) -> list[StageState]:
         return self._rows.list_for_task(task_id)

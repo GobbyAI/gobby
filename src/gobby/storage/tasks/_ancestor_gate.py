@@ -50,8 +50,9 @@ def find_child_development_ancestor_gate(
 
     row = db.fetchone(
         """
-        WITH RECURSIVE ancestors(id, parent_task_id, seq_num, path_cache, depth) AS (
-            SELECT parent.id, parent.parent_task_id, parent.seq_num, parent.path_cache, 1
+        WITH RECURSIVE ancestors(id, parent_task_id, seq_num, path_cache, depth, path) AS (
+            SELECT parent.id, parent.parent_task_id, parent.seq_num, parent.path_cache, 1,
+                   ARRAY[child.id, parent.id]
               FROM tasks child
               JOIN tasks parent ON parent.id = child.parent_task_id
              WHERE child.id = %s
@@ -60,9 +61,12 @@ def find_child_development_ancestor_gate(
                    parent.parent_task_id,
                    parent.seq_num,
                    parent.path_cache,
-                   ancestors.depth + 1
+                   ancestors.depth + 1,
+                   ancestors.path || parent.id
               FROM tasks parent
               JOIN ancestors ON parent.id = ancestors.parent_task_id
+             WHERE ancestors.depth < 100
+               AND NOT parent.id = ANY(ancestors.path)
         )
         SELECT ancestors.id AS ancestor_task_id,
                ancestors.seq_num AS ancestor_seq_num,

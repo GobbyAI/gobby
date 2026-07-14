@@ -226,8 +226,31 @@ class LocalCloneManager:
     def get_by_task(self, task_id: str) -> Clone | None:
         """Get clone linked to a task."""
         row = self.db.fetchone(
-            "SELECT * FROM clones WHERE task_id = %s AND status != %s",
-            (task_id, CloneStatus.CLEANUP.value),
+            """
+            SELECT * FROM clones
+            WHERE task_id = %s AND status != %s
+            ORDER BY
+                CASE status
+                    WHEN %s THEN 0
+                    WHEN %s THEN 1
+                    WHEN %s THEN 2
+                    WHEN %s THEN 3
+                    WHEN %s THEN 4
+                    ELSE 5
+                END,
+                updated_at DESC,
+                created_at DESC
+            LIMIT 1
+            """,
+            (
+                task_id,
+                CloneStatus.CLEANUP.value,
+                CloneStatus.ACTIVE.value,
+                CloneStatus.SYNCING.value,
+                CloneStatus.STALE.value,
+                CloneStatus.MERGED.value,
+                CloneStatus.DELETING.value,
+            ),
         )
         return Clone.from_row(row) if row else None
 
@@ -425,6 +448,7 @@ class LocalCloneManager:
             clone_id,
             status=CloneStatus.ACTIVE.value,
             last_sync_at=now,
+            cleanup_after=None,
         )
 
     def claim(self, clone_id: str, session_id: str) -> Clone | None:
@@ -441,7 +465,7 @@ class LocalCloneManager:
         cursor = self.db.execute(
             """
             UPDATE clones
-            SET agent_session_id = %s, updated_at = %s
+            SET agent_session_id = %s, cleanup_after = NULL, updated_at = %s
             WHERE id = %s
               AND (agent_session_id IS NULL OR agent_session_id = %s)
               AND status != %s
@@ -494,8 +518,8 @@ class LocalCloneManager:
         """
         Find clones that are stale (no activity for N hours).
 
-        Finds active clones with no agent_session_id and updated_at
-        older than the threshold.
+        Finds active or interrupted-sync clones with no agent_session_id and
+        updated_at older than the threshold.
 
         Args:
             project_id: Project ID (None matches no rows)
@@ -511,13 +535,19 @@ class LocalCloneManager:
             """
             SELECT * FROM clones
             WHERE project_id = %s
-              AND status = %s
+              AND status IN (%s, %s)
               AND agent_session_id IS NULL
               AND updated_at < %s
             ORDER BY updated_at ASC
             LIMIT %s
             """,
-            (project_id, CloneStatus.ACTIVE.value, cutoff, limit),
+            (
+                project_id,
+                CloneStatus.ACTIVE.value,
+                CloneStatus.SYNCING.value,
+                cutoff,
+                limit,
+            ),
         )
         return [Clone.from_row(row) for row in rows]
 
@@ -545,23 +575,27 @@ class LocalCloneManager:
                 """
                 SELECT * FROM clones
                 WHERE project_id = %s
+                  AND status = %s
+                  AND agent_session_id IS NULL
                   AND cleanup_after IS NOT NULL
                   AND cleanup_after < %s
                 ORDER BY cleanup_after ASC
                 LIMIT %s
                 """,
-                (project_id, now, limit),
+                (project_id, CloneStatus.MERGED.value, now, limit),
             )
         else:
             rows = self.db.fetchall(
                 """
                 SELECT * FROM clones
-                WHERE cleanup_after IS NOT NULL
+                WHERE status = %s
+                  AND agent_session_id IS NULL
+                  AND cleanup_after IS NOT NULL
                   AND cleanup_after < %s
                 ORDER BY cleanup_after ASC
                 LIMIT %s
                 """,
-                (now, limit),
+                (CloneStatus.MERGED.value, now, limit),
             )
         return [Clone.from_row(row) for row in rows]
 

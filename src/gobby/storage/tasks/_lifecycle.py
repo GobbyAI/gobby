@@ -8,7 +8,6 @@ This module provides operations for managing task lifecycle:
 - delete_task: Delete a task
 """
 
-import json
 import logging
 from pathlib import Path
 
@@ -18,7 +17,6 @@ from gobby.storage.tasks._models import Task, TaskHasChildrenError, TaskHasDepen
 from gobby.storage.tasks._read import get_task
 from gobby.storage.tasks._transitions import close_task as _close_task_transition
 from gobby.storage.tasks._transitions import reopen_task as _reopen_task_transition
-from gobby.storage.tasks._updates import update_task
 from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
@@ -103,24 +101,36 @@ def reopen_task(
 
 def add_label(db: HubDatabase, task_id: str, label: str) -> Task:
     """Add a label to a task if not present."""
-    task = get_task(db, task_id)
-    labels = task.labels or []
-    if label not in labels:
-        labels.append(label)
-        update_task(db, task_id, labels=labels)
-        return get_task(db, task_id)
-    return task
+    get_task(db, task_id)  # Validate identity without reading mutation state.
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            UPDATE tasks
+               SET labels = COALESCE(labels, '[]'::jsonb) || jsonb_build_array(%s::text),
+                   updated_at = %s
+             WHERE id = %s
+               AND NOT COALESCE(labels, '[]'::jsonb) @> jsonb_build_array(%s::text)
+            """,
+            (label, utc_now(), task_id, label),
+        )
+    return get_task(db, task_id)
 
 
 def remove_label(db: HubDatabase, task_id: str, label: str) -> Task:
     """Remove a label from a task if present."""
-    task = get_task(db, task_id)
-    labels = task.labels or []
-    if label in labels:
-        labels.remove(label)
-        update_task(db, task_id, labels=labels)
-        return get_task(db, task_id)
-    return task
+    get_task(db, task_id)  # Validate identity without reading mutation state.
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            UPDATE tasks
+               SET labels = COALESCE(labels, '[]'::jsonb) - %s::text,
+                   updated_at = %s
+             WHERE id = %s
+               AND COALESCE(labels, '[]'::jsonb) @> jsonb_build_array(%s::text)
+            """,
+            (label, utc_now(), task_id, label),
+        )
+    return get_task(db, task_id)
 
 
 def link_commit(
@@ -150,17 +160,20 @@ def link_commit(
     if not normalized_sha:
         raise ValueError(f"Invalid or unresolved commit SHA: {commit_sha}")
 
-    task = get_task(db, task_id)  # Raises if not found
-    commits = task.commits or []
-    if normalized_sha not in commits:
-        commits.append(normalized_sha)
-        # Update the commits column in the database
-        now = utc_now()
-        with db.transaction() as conn:
-            conn.execute(
-                "UPDATE tasks SET commits = %s, updated_at = %s WHERE id = %s",
-                (json.dumps(commits), now, task_id),
-            )
+    get_task(db, task_id)  # Validate identity without reading mutation state.
+    with db.transaction() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE tasks
+               SET commits = COALESCE(commits, '[]'::jsonb)
+                             || jsonb_build_array(%s::text),
+                   updated_at = %s
+             WHERE id = %s
+               AND NOT COALESCE(commits, '[]'::jsonb) @> jsonb_build_array(%s::text)
+            """,
+            (normalized_sha, utc_now(), task_id, normalized_sha),
+        )
+    if cursor.rowcount > 0:
         return True
     return False
 
@@ -189,28 +202,23 @@ def unlink_commit(
 
     # Normalize SHA to dynamic short format
     normalized_sha = normalize_commit_sha(commit_sha, cwd=cwd)
+    get_task(db, task_id)  # Validate identity without reading mutation state.
 
-    task = get_task(db, task_id)  # Raises if not found
-    commits = task.commits or []
+    if not normalized_sha:
+        return False
 
-    # Find matching commit by exact normalized SHA
-    sha_to_remove = None
-    if normalized_sha:
-        for stored_sha in commits:
-            if stored_sha == normalized_sha:
-                sha_to_remove = stored_sha
-                break
-
-    if sha_to_remove:
-        commits.remove(sha_to_remove)
-        # Update the commits column in the database
-        now = utc_now()
-        commits_json = json.dumps(commits) if commits else None
-        with db.transaction() as conn:
-            conn.execute(
-                "UPDATE tasks SET commits = %s, updated_at = %s WHERE id = %s",
-                (commits_json, now, task_id),
-            )
+    with db.transaction() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE tasks
+               SET commits = NULLIF(commits - %s::text, '[]'::jsonb),
+                   updated_at = %s
+             WHERE id = %s
+               AND COALESCE(commits, '[]'::jsonb) @> jsonb_build_array(%s::text)
+            """,
+            (normalized_sha, utc_now(), task_id, normalized_sha),
+        )
+    if cursor.rowcount > 0:
         return True
     return False
 

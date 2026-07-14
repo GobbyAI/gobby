@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 from inspect import signature
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.storage.expansion_runs import LocalExpansionRunManager
+from gobby.storage.expansion_runs import ExpansionRun, LocalExpansionRunManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.tasks.expansion_service import ExpansionService
+from gobby.utils.datetime import utc_now
 from tests._timing import drain_asyncio_tasks
 from tests.storage.tasks._stage_test_helpers import initialize_manifest, set_stage_state, spec
 
@@ -20,6 +22,16 @@ pytestmark = pytest.mark.unit
 
 def _task(task_manager: LocalTaskManager, sample_project):
     return task_manager.create_task(project_id=sample_project["id"], title="Expand me")
+
+
+def _complete_run(run_manager: LocalExpansionRunManager, run_id: str) -> ExpansionRun:
+    run_manager.db.execute(
+        "UPDATE expansion_runs SET status = 'applying' WHERE id = %s",
+        (run_id,),
+    )
+    result = run_manager.save_apply_result(run_id, task_id_map={}, created_task_ids=[])
+    assert result is not None
+    return result
 
 
 def test_reset_expansion_output_tool_is_registered(temp_db) -> None:
@@ -76,6 +88,45 @@ def test_start_expansion_idempotent(temp_db, sample_project) -> None:
     assert result.run_id == run.id
 
 
+def test_start_expansion_replaces_stale_crashed_run(temp_db, sample_project) -> None:
+    from gobby.mcp_proxy.tools.tasks._expansion import start_expansion_run_impl
+
+    task_manager = LocalTaskManager(temp_db)
+    task = _task(task_manager, sample_project)
+    run_manager = LocalExpansionRunManager(temp_db)
+    crashed = run_manager.create(
+        parent_task_id=task.id,
+        project_id=task.project_id,
+        triggering_session_id=None,
+        input_source="task",
+    )
+    temp_db.execute(
+        "UPDATE expansion_runs SET status = 'running', updated_at = %s WHERE id = %s",
+        (utc_now() - timedelta(minutes=31), crashed.id),
+    )
+
+    def finish_immediately(coro):
+        coro.close()
+        return run_manager.get_latest_for_task(task.id)
+
+    with patch(
+        "gobby.mcp_proxy.tools.tasks._expansion_runtime._run_start_coroutine",
+        side_effect=finish_immediately,
+    ):
+        result = start_expansion_run_impl(
+            task_manager=task_manager,
+            llm_service=MagicMock(),
+            config=MagicMock(),
+            completion_registry=MagicMock(),
+            triggering_session_id=None,
+            task_id=task.id,
+        )
+
+    assert result.reused is False
+    assert result.run_id != crashed.id
+    assert run_manager.get(crashed.id).status == "failed"
+
+
 def test_completion_emits_terminal_event(temp_db, sample_project) -> None:
     from gobby.mcp_proxy.tools.tasks._expansion import start_expansion_run_impl
 
@@ -93,7 +144,7 @@ def test_completion_emits_terminal_event(temp_db, sample_project) -> None:
         suppress_parent_stage_transition: bool = False,
     ):
         _ = self, session_id, auto_apply, suppress_parent_stage_transition
-        return run_manager.save_apply_result(run_id, task_id_map={}, created_task_ids=[])
+        return _complete_run(run_manager, run_id)
 
     with patch(
         "gobby.tasks.expansion_service.ExpansionService.compile_and_apply_run",
@@ -213,7 +264,7 @@ def test_start_expansion_accepts_caller_allocated_run_id(temp_db, sample_project
         suppress_parent_stage_transition: bool = False,
     ):
         _ = self, session_id, auto_apply, suppress_parent_stage_transition
-        return run_manager.save_apply_result(run_id, task_id_map={}, created_task_ids=[])
+        return _complete_run(run_manager, run_id)
 
     with patch(
         "gobby.tasks.expansion_service.ExpansionService.compile_and_apply_run",
@@ -250,7 +301,7 @@ def test_start_expansion_reset_output_calls_reset(temp_db, sample_project) -> No
         suppress_parent_stage_transition: bool = False,
     ):
         _ = self, session_id, auto_apply, suppress_parent_stage_transition
-        return run_manager.save_apply_result(run_id, task_id_map={}, created_task_ids=[])
+        return _complete_run(run_manager, run_id)
 
     with (
         patch(
@@ -296,7 +347,7 @@ def test_synchronous_terminal_emits_event(temp_db, sample_project) -> None:
         suppress_parent_stage_transition: bool = False,
     ):
         _ = self, session_id, auto_apply, suppress_parent_stage_transition
-        return run_manager.save_apply_result(run_id, task_id_map={}, created_task_ids=[])
+        return _complete_run(run_manager, run_id)
 
     with patch(
         "gobby.tasks.expansion_service.ExpansionService.compile_and_apply_run",
@@ -368,7 +419,7 @@ def test_stage_pipeline_mutex_suppresses_expansion_terminal_event(
     ):
         _ = self, session_id, auto_apply
         captured["suppress_parent_stage_transition"] = suppress_parent_stage_transition
-        return run_manager.save_apply_result(run_id, task_id_map={}, created_task_ids=[])
+        return _complete_run(run_manager, run_id)
 
     with patch(
         "gobby.tasks.expansion_service.ExpansionService.compile_and_apply_run",
@@ -413,7 +464,7 @@ async def test_async_start_returns_running_and_emits_later(temp_db, sample_proje
     ):
         _ = self, session_id, auto_apply, suppress_parent_stage_transition
         await drain_asyncio_tasks()
-        return run_manager.save_apply_result(run_id, task_id_map={}, created_task_ids=[])
+        return _complete_run(run_manager, run_id)
 
     with patch(
         "gobby.tasks.expansion_service.ExpansionService.compile_and_apply_run",

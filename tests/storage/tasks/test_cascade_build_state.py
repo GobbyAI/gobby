@@ -4,7 +4,21 @@ from __future__ import annotations
 
 import pytest
 
-from gobby.storage.tasks import Isolation, LocalTaskManager, cascade_build_state_to_subtree
+from gobby.storage.tasks import (
+    Isolation,
+    LocalTaskManager,
+    StageManifestSpec,
+    StageState,
+    cascade_build_state_to_subtree,
+)
+from gobby.storage.tasks._build_cascade import (
+    _remove_pristine_omitted_stages_for_build_cascade,
+)
+from gobby.storage.tasks._runtime_mutex import (
+    DispatchMutexUnavailableError,
+    RuntimeDispatchMutex,
+)
+from gobby.storage.tasks._stage_states import StageStatesManager
 from tests.phase5_contract_helpers import source_text
 
 pytestmark = pytest.mark.unit
@@ -43,6 +57,7 @@ def test_cascade_build_state_updates_subtree_without_agent_or_lifecycle_fields(
         parent_task_id=epic.id,
         category="docs",
     )
+    task_manager.initialize_task_manifest(epic.id, stage_names=["development", "merge"])
 
     kwargs = {
         "isolation": Isolation.clone,
@@ -50,9 +65,10 @@ def test_cascade_build_state_updates_subtree_without_agent_or_lifecycle_fields(
         "allow_automation": True,
     }
 
-    updated_count = cascade_build_state_to_subtree(temp_db, epic.id, **kwargs)
+    result = cascade_build_state_to_subtree(temp_db, epic.id, **kwargs)
 
-    assert updated_count == 4
+    assert result.updated_count == 4
+    assert result.failures == ()
     for task_id in (epic.id, child_epic.id, leaf.id, sibling.id):
         task = task_manager.get_task(task_id)
         assert task.allow_automation is True
@@ -71,6 +87,168 @@ def test_cascade_uses_initialize_manifest() -> None:
     source = source_text("src/gobby/storage/tasks/_build_cascade.py")
 
     assert "initialize_manifest(" in source
+
+
+def test_pristine_stage_prune_holds_dispatch_mutex_against_competing_start(
+    temp_db,
+    sample_project,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Prunable child",
+        category="code",
+    )
+    task_manager.initialize_task_manifest(task.id, stage_names=["development", "merge"])
+    stage_states = task_manager.stage_states
+    competing_stage_states = LocalTaskManager(temp_db).stage_states
+    original_list = stage_states.list_for_task
+    competing_start_refused = False
+
+    def list_while_start_competes(task_id: str) -> list[StageState]:
+        nonlocal competing_start_refused
+        with pytest.raises(DispatchMutexUnavailableError):
+            competing_stage_states.start_stage(
+                task_id,
+                "development",
+                by_session_id="competing-dispatcher",
+            )
+        competing_start_refused = True
+        return original_list(task_id)
+
+    monkeypatch.setattr(stage_states, "list_for_task", list_while_start_competes)
+
+    pruned = _remove_pristine_omitted_stages_for_build_cascade(
+        temp_db,
+        stage_states,
+        task.id,
+        [StageManifestSpec("merge", 0)],
+    )
+
+    assert pruned is True
+    assert competing_start_refused is True
+    assert [row.stage_name for row in original_list(task.id)] == ["merge"]
+
+
+def test_pristine_stage_prune_rechecks_state_after_acquiring_mutex(
+    temp_db,
+    sample_project,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Progressed child",
+        category="code",
+    )
+    task_manager.initialize_task_manifest(task.id, stage_names=["development", "merge"])
+    original_enter = RuntimeDispatchMutex.__enter__
+
+    def enter_after_stage_progresses(mutex: RuntimeDispatchMutex) -> RuntimeDispatchMutex:
+        entered = original_enter(mutex)
+        temp_db.execute(
+            """
+            UPDATE task_stage_states
+               SET state = 'in_progress', work_attempt_count = 1
+             WHERE task_id = %s AND stage_name = 'development'
+            """,
+            (task.id,),
+        )
+        return entered
+
+    monkeypatch.setattr(RuntimeDispatchMutex, "__enter__", enter_after_stage_progresses)
+
+    pruned = _remove_pristine_omitted_stages_for_build_cascade(
+        temp_db,
+        task_manager.stage_states,
+        task.id,
+        [StageManifestSpec("merge", 0)],
+    )
+
+    rows = task_manager.stage_states.list_for_task(task.id)
+    assert pruned is False
+    assert [(row.stage_name, row.state) for row in rows] == [
+        ("development", "in_progress"),
+        ("merge", "ready"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("injected_error", "expected_retryable"),
+    [
+        (DispatchMutexUnavailableError("injected busy child"), True),
+        (RuntimeError("injected manifest failure"), False),
+    ],
+)
+def test_cascade_reports_manifest_failure_without_enabling_failed_child(
+    temp_db,
+    sample_project,
+    monkeypatch: pytest.MonkeyPatch,
+    injected_error: Exception,
+    expected_retryable: bool,
+) -> None:
+    task_manager = LocalTaskManager(temp_db)
+    epic = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Automated epic",
+        task_type="epic",
+        category="planning",
+    )
+    failed_child = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Busy child",
+        parent_task_id=epic.id,
+        category="code",
+    )
+    healthy_child = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Healthy child",
+        parent_task_id=epic.id,
+        category="code",
+    )
+    task_manager.initialize_task_manifest(epic.id, stage_names=["development", "merge"])
+    original_initialize = StageStatesManager.initialize_manifest
+
+    def initialize_with_busy_child(
+        self: StageStatesManager,
+        task_id: str,
+        *args: object,
+        **kwargs: object,
+    ) -> object:
+        if task_id == failed_child.id:
+            raise injected_error
+        return original_initialize(self, task_id, *args, **kwargs)
+
+    monkeypatch.setattr(StageStatesManager, "initialize_manifest", initialize_with_busy_child)
+
+    result = cascade_build_state_to_subtree(
+        temp_db,
+        epic.id,
+        isolation=Isolation.worktree,
+        unattended=True,
+        allow_automation=True,
+    )
+
+    assert result.updated_count == 2
+    assert [(failure.task_id, failure.retryable) for failure in result.failures] == [
+        (failed_child.id, expected_retryable)
+    ]
+    assert task_manager.get_task(failed_child.id).allow_automation is False
+    assert task_manager.stage_states.list_for_task(failed_child.id) == []
+    assert task_manager.get_task(healthy_child.id).allow_automation is True
+    assert task_manager.stage_states.list_for_task(healthy_child.id)
+    invalid_automated = temp_db.fetchone(
+        """
+        SELECT tasks.id
+        FROM tasks
+        LEFT JOIN task_stage_states ON task_stage_states.task_id = tasks.id
+        WHERE tasks.allow_automation = TRUE
+        GROUP BY tasks.id
+        HAVING COUNT(task_stage_states.task_id) = 0
+        """
+    )
+    assert invalid_automated is None
 
 
 def test_cascade_can_force_merge_into_legacy_child_manifest_scope(

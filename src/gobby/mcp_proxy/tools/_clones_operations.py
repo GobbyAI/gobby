@@ -274,6 +274,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
         ctx.clone_storage.mark_syncing(clone_id)
         temp_ref = f"clone-merge/{clone.branch_name}"
         mutation_lock = get_checkout_mutation_lock(git_manager.repo_path)
+        merge_succeeded = False
         await mutation_lock.acquire()
         try:
             if cancellation_requested is not None and cancellation_requested.is_set():
@@ -416,7 +417,11 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                                 }
                         else:
                             cleanup_after = (datetime.now(UTC) + timedelta(days=7)).isoformat()
-                            ctx.clone_storage.update(clone_id, cleanup_after=cleanup_after)
+                            ctx.clone_storage.mark_merged(
+                                clone_id,
+                                cleanup_after=cleanup_after,
+                            )
+                            merge_succeeded = True
                             primary_result = {
                                 "success": True,
                                 "message": (
@@ -504,10 +509,11 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
             return primary_result
         finally:
             try:
-                ctx.clone_storage.update(
-                    clone_id,
-                    status=CloneStatus.ACTIVE.value,
-                )
+                if not merge_succeeded:
+                    ctx.clone_storage.update(
+                        clone_id,
+                        status=CloneStatus.ACTIVE.value,
+                    )
             finally:
                 mutation_lock.release()
 

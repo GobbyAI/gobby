@@ -24,9 +24,9 @@ class TaskCompactor:
         sql = """
             SELECT * FROM tasks
             WHERE closed_at IS NOT NULL
-              AND updated_at < %s
+              AND closed_at < %s
               AND compacted_at IS NULL
-            ORDER BY updated_at ASC
+            ORDER BY closed_at ASC
         """
         rows = self.task_manager.db.fetchall(sql, (cutoff,))
         return [dict(row) for row in rows]
@@ -46,9 +46,13 @@ class TaskCompactor:
                 compacted_at = %s,
                 updated_at = %s
             WHERE id = %s
+              AND closed_at IS NOT NULL
+              AND compacted_at IS NULL
         """
 
-        self.task_manager.db.execute(sql, (summary, now, now, task_id))
+        cursor = self.task_manager.db.execute(sql, (summary, now, now, task_id))
+        if cursor.rowcount == 0:
+            raise ValueError(f"Task {task_id} is open, missing, or already compacted")
         self.task_manager._notify_listeners()
 
     def get_stats(self) -> dict[str, Any]:

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+
 import pytest
 
 pytestmark = pytest.mark.unit
@@ -89,6 +92,71 @@ def test_build_history_start_and_finish_updates_root_and_status(temp_db) -> None
     assert finished.root_task_id == task.id
     assert finished.completed_at is not None
     assert history.latest_run_for_input(project.id, "plan.md").id == run.id
+
+
+def test_update_run_context_merges_concurrent_summary_updates(temp_db, monkeypatch) -> None:
+    from gobby.storage.build_history import BuildHistoryStorage
+    from gobby.storage.projects import LocalProjectManager
+
+    project = LocalProjectManager(temp_db).create(
+        "build-history-concurrent-context",
+        repo_path="/tmp/history-concurrent-context",
+    )
+    history = BuildHistoryStorage(temp_db)
+    run = history.start_run(
+        project_id=project.id,
+        input_ref="plan.md",
+        action="build",
+        summary={"initial": True},
+    )
+    first_history = BuildHistoryStorage(temp_db)
+    second_history = BuildHistoryStorage(temp_db)
+    first_reads = Barrier(2)
+
+    def synchronize_first_lookup(worker_history):
+        original_require_run = worker_history._require_run
+        first_call = True
+
+        def gated_require_run(run_id: str):
+            nonlocal first_call
+            result = original_require_run(run_id)
+            if first_call:
+                first_call = False
+                first_reads.wait(timeout=5)
+            return result
+
+        return gated_require_run
+
+    for worker_history in (first_history, second_history):
+        monkeypatch.setattr(
+            worker_history,
+            "_require_run",
+            synchronize_first_lookup(worker_history),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        updates = (
+            executor.submit(
+                first_history.update_run_context,
+                run.id,
+                summary={"coordinator_session_id": "coordinator"},
+            ),
+            executor.submit(
+                second_history.update_run_context,
+                run.id,
+                summary={"root_task_id": "task-root"},
+            ),
+        )
+        for update in updates:
+            update.result(timeout=10)
+
+    updated = history.get_run(run.id)
+    assert updated is not None
+    assert updated.summary == {
+        "initial": True,
+        "coordinator_session_id": "coordinator",
+        "root_task_id": "task-root",
+    }
 
 
 def test_build_history_finds_latest_coordinated_ancestor_run(temp_db) -> None:

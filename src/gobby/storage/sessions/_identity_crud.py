@@ -9,6 +9,7 @@ from gobby.storage.session_models import Session
 from gobby.storage.session_resolution import is_session_uuid
 from gobby.utils.datetime import utc_now
 
+from ._registration_cache import invalidate_session_caches
 from ._web_chat_crud import _SessionWebChatCRUDMixin
 
 
@@ -82,5 +83,6 @@ class _SessionIdentityCRUDMixin(_SessionWebChatCRUDMixin):
             cursor = self.db.execute("DELETE FROM sessions WHERE id = %s", (session_id,))
         deleted = cursor.rowcount > 0
         if deleted:
+            invalidate_session_caches(self, session_id)
             self._notify_session_change("session_deleted", session_id)
         return deleted

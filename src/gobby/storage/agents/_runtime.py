@@ -12,6 +12,8 @@ from gobby.utils.datetime import utc_now
 from ._helpers import _positive_rowcount
 from ._models import AgentRun
 
+_UNSET: Any = object()
+
 
 class _AgentRunRuntimeHost(Protocol):
     db: HubDatabase
@@ -102,19 +104,19 @@ class _AgentRunRuntimeMixin:
         self: _AgentRunRuntimeHost,
         run_id: str,
         *,
-        pid: int | None = None,
+        pid: int | None = _UNSET,
         tmux_session_name: str | None = None,
         worktree_id: str | None = None,
         clone_id: str | None = None,
     ) -> None:
         """Persist runtime state for an agent run (pid, tmux session, mode, isolation).
 
-        Only updates fields that are provided (non-None).
+        Only updates fields that are provided. Pass ``pid=None`` to clear the PID.
         """
         updates: list[str] = []
         params: list[Any] = []
 
-        if pid is not None:
+        if pid is not _UNSET:
             updates.append("pid = %s")
             params.append(pid)
         if tmux_session_name is not None:
@@ -156,14 +158,6 @@ class _AgentRunRuntimeMixin:
             (now, run_id, tmux_session_name),
         )
         return bool(_positive_rowcount(cursor))
-
-    def list_pending_with_pid(self: _AgentRunRuntimeHost, limit: int = 100) -> list[AgentRun]:
-        """List pending agent runs that have a PID (spawned but not yet marked running)."""
-        return self._fetch_runs_with_live_stats(
-            "WHERE ar.status = 'pending' AND ar.pid IS NOT NULL",
-            order_by="ORDER BY ar.created_at ASC",
-            limit=limit,
-        )
 
     def update_child_session(
         self: _AgentRunRuntimeHost,

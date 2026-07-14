@@ -399,6 +399,24 @@ class TestSearchExecutions:
         assert len(results) == 1
         assert results[0].id == ex1.id
 
+    def test_search_by_step_output(self, manager: LocalPipelineExecutionManager) -> None:
+        """Test searching JSON step output on PostgreSQL."""
+        execution = manager.create_execution(pipeline_name="build")
+        step = manager.create_step_execution(execution_id=execution.id, step_id="compile")
+        manager.update_step_execution(step.id, output_json='{"artifact": "needle-output"}')
+
+        results = manager.search_executions(
+            query="needle-output", search_errors=False, search_outputs=True
+        )
+
+        assert [result.id for result in results] == [execution.id]
+        assert (
+            manager.count_search_executions(
+                query="needle-output", search_errors=False, search_outputs=True
+            )
+            == 1
+        )
+
     def test_search_with_status_filter(self, manager: LocalPipelineExecutionManager) -> None:
         """Test combining search with status filter."""
         ex1 = manager.create_execution(pipeline_name="deploy-prod")

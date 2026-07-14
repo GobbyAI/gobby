@@ -10,6 +10,7 @@ import pytest
 from gobby.storage.clones import Clone, CloneStatus, LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
 
@@ -402,6 +403,54 @@ class TestLocalCloneManagerGetByTask:
 
         assert clone is None
 
+    def test_get_by_task_prefers_status_then_recency(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, object],
+    ) -> None:
+        """Real storage prefers the newest active clone over newer dead clones."""
+        task = LocalTaskManager(temp_db).create_task(
+            project_id=str(sample_project["id"]),
+            title="Clone ordering",
+        )
+        manager = LocalCloneManager(temp_db)
+        older_active = manager.create(
+            project_id=str(sample_project["id"]),
+            branch_name="feature/older-active",
+            clone_path="/tmp/gobby-older-active",
+            task_id=task.id,
+        )
+        newer_active = manager.create(
+            project_id=str(sample_project["id"]),
+            branch_name="feature/newer-active",
+            clone_path="/tmp/gobby-newer-active",
+            task_id=task.id,
+        )
+        stale = manager.create(
+            project_id=str(sample_project["id"]),
+            branch_name="feature/stale",
+            clone_path="/tmp/gobby-stale",
+            task_id=task.id,
+        )
+        manager.mark_stale(stale.id)
+        temp_db.execute(
+            "UPDATE clones SET updated_at = %s WHERE id = %s",
+            (datetime(2026, 1, 1, tzinfo=UTC), older_active.id),
+        )
+        temp_db.execute(
+            "UPDATE clones SET updated_at = %s WHERE id = %s",
+            (datetime(2026, 1, 2, tzinfo=UTC), newer_active.id),
+        )
+        temp_db.execute(
+            "UPDATE clones SET updated_at = %s WHERE id = %s",
+            (datetime(2026, 1, 3, tzinfo=UTC), stale.id),
+        )
+
+        clone = manager.get_by_task(task.id)
+
+        assert clone is not None
+        assert clone.id == newer_active.id
+
 
 class TestLocalCloneManagerList:
     """Tests for LocalCloneManager.list_clones method."""
@@ -756,6 +805,110 @@ class TestLocalCloneManagerClaimAtomicity:
         assert stored.agent_session_id == winners[0]
 
 
+class TestLocalCloneManagerCleanupSafety:
+    """Real-database coverage for clone cleanup eligibility and stale TTL clearing."""
+
+    def test_find_expired_returns_only_merged_unclaimed_clones(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, object],
+        session_manager: SessionManager,
+    ) -> None:
+        manager = LocalCloneManager(temp_db)
+        project_id = str(sample_project["id"])
+        expired_at = datetime(2020, 1, 1, tzinfo=UTC)
+
+        active = manager.create(
+            project_id=project_id,
+            branch_name="feature/expired-active",
+            clone_path="/tmp/clones/expired-active",
+            cleanup_after=expired_at,
+        )
+        syncing = manager.create(
+            project_id=project_id,
+            branch_name="feature/expired-syncing",
+            clone_path="/tmp/clones/expired-syncing",
+            cleanup_after=expired_at,
+        )
+        manager.mark_syncing(syncing.id)
+
+        session = session_manager.register(
+            external_id="expired-claimed-clone",
+            machine_id="expired-claimed-clone-machine",
+            source="codex",
+            project_id=project_id,
+        )
+        claimed = manager.create(
+            project_id=project_id,
+            branch_name="feature/expired-claimed",
+            clone_path="/tmp/clones/expired-claimed",
+        )
+        manager.claim(claimed.id, session.id)
+        manager.update(
+            claimed.id,
+            status=CloneStatus.MERGED.value,
+            cleanup_after=expired_at,
+        )
+
+        merged = manager.create(
+            project_id=project_id,
+            branch_name="feature/expired-merged",
+            clone_path="/tmp/clones/expired-merged",
+        )
+        manager.mark_merged(merged.id, cleanup_after=expired_at)
+
+        expired = manager.find_expired(project_id=project_id)
+
+        assert [clone.id for clone in expired] == [merged.id]
+        assert active.id not in {clone.id for clone in expired}
+
+    def test_record_sync_clears_cleanup_after(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, object],
+    ) -> None:
+        manager = LocalCloneManager(temp_db)
+        clone = manager.create(
+            project_id=str(sample_project["id"]),
+            branch_name="feature/resynced",
+            clone_path="/tmp/clones/resynced",
+            cleanup_after=datetime(2020, 1, 1, tzinfo=UTC),
+        )
+
+        synced = manager.record_sync(clone.id)
+
+        assert synced is not None
+        assert synced.status == CloneStatus.ACTIVE.value
+        assert synced.cleanup_after is None
+
+    def test_claim_clears_cleanup_after(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, object],
+        session_manager: SessionManager,
+    ) -> None:
+        project_id = str(sample_project["id"])
+        session = session_manager.register(
+            external_id="claim-clears-cleanup",
+            machine_id="claim-clears-cleanup-machine",
+            source="codex",
+            project_id=project_id,
+        )
+        manager = LocalCloneManager(temp_db)
+        clone = manager.create(
+            project_id=project_id,
+            branch_name="feature/reclaimed",
+            clone_path="/tmp/clones/reclaimed",
+            cleanup_after=datetime(2020, 1, 1, tzinfo=UTC),
+        )
+
+        claimed = manager.claim(clone.id, session.id)
+
+        assert claimed is not None
+        assert claimed.agent_session_id == session.id
+        assert claimed.cleanup_after is None
+
+
 class TestLocalCloneManagerCountByStatus:
     """Tests for LocalCloneManager.count_by_status method."""
 
@@ -837,10 +990,20 @@ class TestLocalCloneManagerFindStale:
         call_args = mock_db.fetchall.call_args
         query = call_args[0][0]
         assert "project_id = %s" in query
-        assert "status = %s" in query
+        assert "status IN (%s, %s)" in query
         assert "agent_session_id IS NULL" in query
         assert "updated_at < %s" in query
         assert "LIMIT %s" in query
+
+    def test_find_stale_includes_interrupted_syncs(self, manager, mock_db) -> None:
+        """find_stale includes syncing clones older than the threshold."""
+        mock_db.fetchall.return_value = [_clone_row(status="syncing")]
+
+        result = manager.find_stale("proj-abc", hours=24)
+
+        assert result[0].status == "syncing"
+        params = mock_db.fetchall.call_args.args[1]
+        assert params[1:3] == ("active", "syncing")
 
     def test_find_stale_empty(self, manager, mock_db) -> None:
         """find_stale returns empty list when no stale clones."""
@@ -858,11 +1021,11 @@ class TestLocalCloneManagerFindStale:
 
         call_args = mock_db.fetchall.call_args
         params = call_args[0][1]
-        # params: (project_id, status, cutoff, limit)
+        # params: (project_id, active status, syncing status, cutoff, limit)
         assert params[0] == "proj-abc"
         assert params[1] == "active"
-        # cutoff is an ISO timestamp (3rd param)
-        assert params[3] == 5
+        assert params[2] == "syncing"
+        assert params[4] == 5
 
 
 class TestLocalCloneManagerCleanupStale:

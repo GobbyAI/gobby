@@ -143,7 +143,13 @@ async def test_completion_readiness_blocks_without_evidence(
     )
 
     assert response.decision == "block"
-    assert "require-completion-readiness-evidence" in (response.reason or "")
+    reason = response.reason or ""
+    assert "require-completion-readiness-evidence" in reason
+    assert "Run project-appropriate verification commands for the changed work" in reason
+    assert "Recognized successful verification commands are recorded automatically" in reason
+    assert "same verification category succeeds" in reason
+    for language_specific_example in ("pytest", "ruff", "mypy", "npm test"):
+        assert language_specific_example not in reason
 
 
 @pytest.mark.asyncio

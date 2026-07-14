@@ -607,6 +607,50 @@ class TestCheckDeadAgents:
         assert updated.status == "running"
 
     @pytest.mark.asyncio
+    async def test_alive_tmux_cleans_up_reused_pid(
+        self,
+        monitor: AgentLifecycleMonitor,
+        agent_run_manager: LocalAgentRunManager,
+        sample_session: dict,
+    ) -> None:
+        """A live tmux session does not make an unrelated reused PID healthy."""
+        run = _make_terminal_run(
+            agent_run_manager,
+            sample_session,
+            run_id=_rid("run-live-tmux-reused-pid"),
+            tmux_session_name="gobby-live-tmux-reused-pid",
+            pid=999,
+        )
+
+        with (
+            patch.object(monitor._tmux, "has_session", new_callable=AsyncMock, return_value=True),
+            patch(
+                "gobby.agents.agent_health.pid_matches_agent_identity",
+                new_callable=AsyncMock,
+                return_value=False,
+            ) as mock_identity,
+            patch(
+                "gobby.agents.agent_health.kill_agent",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ),
+            patch("gobby.agents.agent_health.os.kill") as mock_kill,
+        ):
+            cleaned = await monitor.check_unhealthy_agents()
+
+        assert cleaned == 1
+        mock_identity.assert_awaited_once_with(
+            999,
+            provider="claude",
+            session_id=sample_session["id"],
+        )
+        mock_kill.assert_not_called()
+        updated = agent_run_manager.get(run.id)
+        assert updated is not None
+        assert updated.status == "error"
+        assert updated.pid is None
+
+    @pytest.mark.asyncio
     async def test_no_tmux_agents_returns_zero(
         self,
         monitor: AgentLifecycleMonitor,

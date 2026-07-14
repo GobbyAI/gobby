@@ -14,9 +14,16 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
 
+from psycopg.errors import UniqueViolation
+
 from gobby.prompts.models import PromptTemplate, VariableSpec
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import normalize_datetime_model, utc_now
+
+
+def _escape_like_pattern(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
 
 # Deterministic id namespace: same (name, scope, project) -> same id, backing
 # the UNIQUE(name, scope, project_id) constraint with id-level stability.
@@ -291,6 +298,8 @@ class LocalPromptManager:
         """
         now = utc_now()
         prompt_id = str(uuid.uuid5(_NS_PROMPTS, f"{name}:{scope}:{project_id or 'none'}"))
+        if self.get_prompt(prompt_id) is not None:
+            prompt_id = str(uuid.uuid4())
 
         variables_json = json.dumps(variables) if variables else None
 
@@ -319,13 +328,11 @@ class LocalPromptManager:
                         now,
                     ),
                 )
-            except Exception as e:
-                if "UNIQUE constraint" in str(e):
-                    raise ValueError(
-                        f"Prompt '{name}' already exists with scope='{scope}'"
-                        + (f" in project {project_id}" if project_id else "")
-                    ) from e
-                raise
+            except UniqueViolation as e:
+                raise ValueError(
+                    f"Prompt '{name}' already exists with scope='{scope}'"
+                    + (f" in project {project_id}" if project_id else "")
+                ) from e
 
         record = self.get_prompt(prompt_id)
         if record is None:
@@ -362,7 +369,8 @@ class LocalPromptManager:
             row = self.db.fetchone(
                 """
                 SELECT * FROM prompts
-                WHERE name = %s AND (project_id = %s OR project_id IS NULL)
+                WHERE name = %s AND enabled = TRUE
+                  AND (project_id = %s OR project_id IS NULL)
                 ORDER BY CASE scope
                     WHEN 'project' THEN 1
                     WHEN 'global' THEN 2
@@ -376,7 +384,7 @@ class LocalPromptManager:
             row = self.db.fetchone(
                 """
                 SELECT * FROM prompts
-                WHERE name = %s AND project_id IS NULL
+                WHERE name = %s AND enabled = TRUE AND project_id IS NULL
                 ORDER BY CASE scope
                     WHEN 'global' THEN 1
                     WHEN 'bundled' THEN 2
@@ -553,8 +561,8 @@ class LocalPromptManager:
             params.append(scope)
 
         if category is not None:
-            query += " AND name LIKE %s"
-            params.append(f"{category}/%")
+            query += " AND name LIKE %s ESCAPE '\\'"
+            params.append(f"{_escape_like_pattern(category)}/%")
 
         if enabled is not None:
             query += " AND enabled = %s"
@@ -596,7 +604,7 @@ class LocalPromptManager:
         limit: int = 20,
     ) -> list[PromptRecord]:
         """Search prompts by name and description."""
-        escaped = query_text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        escaped = _escape_like_pattern(query_text)
         sql = """
             SELECT * FROM prompts
             WHERE (name LIKE %s ESCAPE '\\' OR description LIKE %s ESCAPE '\\')

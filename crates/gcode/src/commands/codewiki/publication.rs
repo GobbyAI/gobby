@@ -16,7 +16,7 @@ use super::lock::CodewikiWriterLock;
 use super::truth_digest::TRUTH_DIGEST_META_PATH;
 use super::{
     AiGenerationSettings, CODEWIKI_META_PATH, CodewikiAiOutcome, CodewikiIndexSnapshot,
-    CodewikiMeta, OWNERSHIP_META_PATH,
+    CodewikiMeta, OWNERSHIP_META_PATH, hash_snapshot_file,
 };
 use crate::index::hasher;
 
@@ -58,8 +58,14 @@ impl PublicationFingerprint {
     ) -> anyhow::Result<Self> {
         let mut source_hashes = BTreeMap::new();
         for source in source_files {
-            let path = project_root.join(source);
-            source_hashes.insert(source.clone(), hasher::file_content_hash(&path)?);
+            // Indexed files can vanish from disk before the run starts (the
+            // index lags external commits that delete sources); skip them like
+            // the snapshot builder does instead of aborting the run (#18248).
+            let Some(hash) = hash_snapshot_file(project_root, source)? else {
+                eprintln!("warning: skipping codewiki source file missing from disk: {source}");
+                continue;
+            };
+            source_hashes.insert(source.clone(), hash);
         }
         let mut normalized_scopes = scopes.to_vec();
         normalized_scopes.sort();
