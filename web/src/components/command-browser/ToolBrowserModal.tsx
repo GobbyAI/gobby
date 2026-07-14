@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useMcp, type McpServer, type McpTool, type McpToolSchema } from '../../hooks/useMcp'
 import { ToolArgumentForm } from './ToolArgumentForm'
 import { Input } from '../chat/ui/Input'
@@ -26,6 +26,7 @@ export function ToolBrowserModal({ filter, onSendMessage, onClose }: ToolBrowser
   const [result, setResult] = useState<{ success: boolean; data?: unknown; error?: string } | null>(null)
   const [collapsedServers, setCollapsedServers] = useState<Set<string>>(new Set())
   const [hasFetched, setHasFetched] = useState(false)
+  const schemaRequestIdRef = useRef(0)
 
   // Lazy fetch on modal open
   useEffect(() => {
@@ -71,6 +72,7 @@ export function ToolBrowserModal({ filter, onSendMessage, onClose }: ToolBrowser
   }, [])
 
   const handleSelectTool = useCallback(async (serverName: string, toolName: string) => {
+    const requestId = ++schemaRequestIdRef.current
     setSelectedServer(serverName)
     setSelectedTool(toolName)
     setSchema(null)
@@ -78,6 +80,7 @@ export function ToolBrowserModal({ filter, onSendMessage, onClose }: ToolBrowser
     setResult(null)
     setSchemaLoading(true)
     const fetched = await fetchToolSchema(serverName, toolName)
+    if (requestId !== schemaRequestIdRef.current) return
     setSchema(fetched)
     setSchemaLoading(false)
   }, [fetchToolSchema])
@@ -104,6 +107,7 @@ export function ToolBrowserModal({ filter, onSendMessage, onClose }: ToolBrowser
   }, [selectedServer, selectedTool, formValues, callTool, onSendMessage])
 
   const handleBack = useCallback(() => {
+    schemaRequestIdRef.current += 1
     setSelectedServer(null)
     setSelectedTool(null)
     setSchema(null)
@@ -181,6 +185,8 @@ export function ToolBrowserModal({ filter, onSendMessage, onClose }: ToolBrowser
                           ? 'bg-accent/15 text-foreground'
                           : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
                       )}
+                      // Ref access occurs inside the click handler, after render.
+                      // eslint-disable-next-line react-hooks/refs
                       onClick={() => handleSelectTool(serverName, tool.name)}
                     >
                       <div className="font-medium text-foreground text-xs">{tool.name}</div>
