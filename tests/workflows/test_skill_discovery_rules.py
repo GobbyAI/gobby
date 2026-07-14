@@ -63,6 +63,7 @@ def _sync_bundled(db: HubDatabase) -> object:
 
 SKILL_DISCOVERY_RULES = {
     "discover-skill-hubs-on-turn-start",
+    "require-bash-skill",
     "require-c-skill",
     "require-cpp-skill",
     "require-csharp-skill",
@@ -2712,6 +2713,133 @@ class TestRequireTypeScriptSkillCondition:
 
     def test_skips_non_edit_write_tool(self) -> None:
         assert self._eval("/project/src/main.ts", canonical_tool_kind="read") is False
+
+    def test_skips_empty_file_path(self) -> None:
+        assert self._eval("") is False
+
+
+# --- require-bash-skill structure ---
+
+
+class TestRequireBashSkillStructure:
+    """Verify require-bash-skill rule structure."""
+
+    def test_is_before_tool_event(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-bash-skill")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert body.when is not None
+        assert "not skill_loaded('bash')" in body.when
+
+    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-bash-skill")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        assert len(body.effects) == 1
+        assert body.effects[0].type == "block"
+        assert body.effects[0].reason == skill_fetch_directive("bash")
+
+
+# --- require-bash-skill condition evaluation ---
+
+
+class TestRequireBashSkillCondition:
+    """Test the require-bash-skill condition evaluates correctly."""
+
+    CONDITION = (
+        "not skill_loaded('bash') "
+        "and event.data.get('canonical_tool_kind') == 'write' "
+        "and ("
+        "event.data.get('canonical_file_path', '').endswith(("
+        "'.sh', '.bash', '.bats', "
+        "'.sh.j2', '.bash.j2', '.sh.tpl', '.bash.tpl', "
+        "'.sh.tmpl', '.bash.tmpl', '.sh.template', '.bash.template'"
+        ")) "
+        "or event.data.get('canonical_file_path', '').rpartition('/')[2] in ("
+        "'.bashrc', '.bash_profile', '.bash_login', '.bash_logout', "
+        "'.bash_aliases', '.bash_completion', '.shellcheckrc', 'Bashfile', 'PKGBUILD'"
+        ")"
+        ")"
+    )
+
+    def _eval(
+        self,
+        file_path: str,
+        *,
+        canonical_tool_kind: str = "write",
+        loaded_skills: list[str] | None = None,
+        injected_skills: list[str] | None = None,
+    ) -> bool:
+        variables = {"loaded_skills": loaded_skills or []}
+        if injected_skills is not None:
+            variables["injected_skills"] = injected_skills
+        context = {
+            "variables": variables,
+            "event": SimpleNamespace(
+                data={
+                    "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_file_path": file_path,
+                }
+            ),
+            "tool_input": {},
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        return evaluator.evaluate(self.CONDITION)
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/scripts/deploy.sh",
+            "/project/scripts/setup.bash",
+            "/project/tests/deploy.bats",
+            "/project/templates/deploy.sh.j2",
+            "/project/templates/setup.bash.tmpl",
+        ],
+    )
+    def test_matches_bash_source_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/.bashrc",
+            "/project/.bash_profile",
+            "/project/.bash_aliases",
+            "/project/.shellcheckrc",
+            "/project/Bashfile",
+            "/project/packages/arch/PKGBUILD",
+        ],
+    )
+    def test_matches_bash_config_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/scripts/deploy.zsh",
+            "/project/scripts/deploy.fish",
+            "/project/scripts/deploy.sh.txt",
+            "/project/.profile",
+            "/project/Makefile",
+            "/project/Dockerfile",
+        ],
+    )
+    def test_skips_non_bash_targets(self, file_path: str) -> None:
+        assert self._eval(file_path) is False
+
+    def test_skips_when_already_loaded(self) -> None:
+        assert self._eval("/project/scripts/deploy.sh", loaded_skills=["bash"]) is False
+
+    def test_does_not_skip_when_legacy_injected(self) -> None:
+        assert self._eval("/project/scripts/deploy.sh", injected_skills=["bash"]) is True
+
+    def test_skips_non_edit_write_tool(self) -> None:
+        assert self._eval("/project/scripts/deploy.sh", canonical_tool_kind="read") is False
 
     def test_skips_empty_file_path(self) -> None:
         assert self._eval("") is False
