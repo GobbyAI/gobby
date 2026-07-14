@@ -13,8 +13,6 @@ from gobby.integrations.linear import LinearIntegration
 from gobby.integrations.linear_graphql import LinearGraphQLClient
 from gobby.storage.secrets import SecretDecryptionError
 from gobby.sync.linear_support import (
-    LinearNotFoundError,
-    LinearRateLimitError,
     LinearSyncError,
     _extract_record,
     _extract_records,
@@ -33,8 +31,6 @@ if TYPE_CHECKING:
 __all__ = [
     "LinearSyncService",
     "LinearSyncError",
-    "LinearRateLimitError",
-    "LinearNotFoundError",
     "create_linear_sync_handler",
 ]
 

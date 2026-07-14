@@ -1783,25 +1783,6 @@ class TestLinearSyncExceptions:
         assert str(error) == "Something went wrong"
         assert isinstance(error, Exception)
 
-    def test_linear_rate_limit_error(self) -> None:
-        """LinearRateLimitError includes rate limit reset time."""
-        from gobby.sync.linear import LinearRateLimitError
-
-        error = LinearRateLimitError("Rate limited", reset_at=1234567890)
-        assert "Rate limited" in str(error)
-        assert error.reset_at == 1234567890
-
-    def test_linear_not_found_error(self) -> None:
-        """LinearNotFoundError indicates missing resource."""
-        from gobby.sync.linear import LinearNotFoundError
-
-        error = LinearNotFoundError(
-            "Issue lin-42 not found", resource="issue", resource_id="lin-42"
-        )
-        assert "Issue lin-42 not found" in str(error)
-        assert error.resource == "issue"
-        assert error.resource_id == "lin-42"
-
 
 class TestLinearSyncErrorHandling:
     """Test error handling in sync operations."""

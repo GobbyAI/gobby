@@ -22,8 +22,6 @@ if TYPE_CHECKING:
 __all__ = [
     "GitHubSyncService",
     "GitHubSyncError",
-    "GitHubRateLimitError",
-    "GitHubNotFoundError",
 ]
 
 logger = logging.getLogger(__name__)
@@ -33,37 +31,6 @@ class GitHubSyncError(Exception):
     """Base exception for GitHub sync errors."""
 
     pass
-
-
-class GitHubRateLimitError(GitHubSyncError):
-    """Raised when GitHub API rate limit is exceeded.
-
-    Attributes:
-        reset_at: Unix timestamp when rate limit resets.
-    """
-
-    def __init__(self, message: str, reset_at: int | None = None) -> None:
-        super().__init__(message)
-        self.reset_at = reset_at
-
-
-class GitHubNotFoundError(GitHubSyncError):
-    """Raised when a GitHub resource is not found.
-
-    Attributes:
-        resource: Type of resource (e.g., "issue", "repo", "pr").
-        resource_id: Identifier of the missing resource.
-    """
-
-    def __init__(
-        self,
-        message: str,
-        resource: str | None = None,
-        resource_id: int | str | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.resource = resource
-        self.resource_id = resource_id
 
 
 class GitHubSyncService:

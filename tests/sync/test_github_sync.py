@@ -739,64 +739,9 @@ class TestGitHubSyncExceptions:
         assert str(error) == "Something went wrong"
         assert isinstance(error, Exception)
 
-    def test_github_rate_limit_error(self) -> None:
-        """GitHubRateLimitError includes rate limit reset time."""
-        from gobby.sync.github import GitHubRateLimitError
-
-        error = GitHubRateLimitError("Rate limited", reset_at=1234567890)
-        assert "Rate limited" in str(error)
-        assert error.reset_at == 1234567890
-
-    def test_github_not_found_error(self) -> None:
-        """GitHubNotFoundError indicates missing resource."""
-        from gobby.sync.github import GitHubNotFoundError
-
-        error = GitHubNotFoundError("Issue #42 not found", resource="issue", resource_id=42)
-        assert "Issue #42 not found" in str(error)
-        assert error.resource == "issue"
-        assert error.resource_id == 42
-
 
 class TestGitHubSyncErrorHandling:
     """Test error handling in sync operations."""
-
-    @pytest.mark.asyncio
-    async def test_import_handles_rate_limit(self, mock_mcp_manager, mock_task_manager):
-        """import_github_issues raises GitHubRateLimitError on rate limit."""
-        from gobby.sync.github import GitHubRateLimitError
-
-        mock_mcp_manager.has_server.return_value = True
-        mock_mcp_manager.health = {"github": MagicMock(state="connected")}
-        # Simulate rate limit response
-        mock_mcp_manager.call_tool.side_effect = Exception("API rate limit exceeded")
-
-        service = GitHubSyncService(
-            mcp_manager=mock_mcp_manager,
-            task_manager=mock_task_manager,
-            project_id="test-project",
-        )
-
-        with pytest.raises((GitHubRateLimitError, Exception)):
-            await service.import_github_issues(repo="owner/repo")
-
-    @pytest.mark.asyncio
-    async def test_import_handles_not_found(self, mock_mcp_manager, mock_task_manager):
-        """import_github_issues raises GitHubNotFoundError for 404."""
-        from gobby.sync.github import GitHubNotFoundError
-
-        mock_mcp_manager.has_server.return_value = True
-        mock_mcp_manager.health = {"github": MagicMock(state="connected")}
-        # Simulate 404 response
-        mock_mcp_manager.call_tool.side_effect = Exception("Not Found")
-
-        service = GitHubSyncService(
-            mcp_manager=mock_mcp_manager,
-            task_manager=mock_task_manager,
-            project_id="test-project",
-        )
-
-        with pytest.raises((GitHubNotFoundError, Exception)):
-            await service.import_github_issues(repo="owner/nonexistent")
 
     @pytest.mark.asyncio
     async def test_sync_validates_response_structure(self, mock_mcp_manager, mock_task_manager):

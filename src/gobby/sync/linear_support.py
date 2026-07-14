@@ -130,28 +130,6 @@ class LinearSyncError(Exception):
     """Base exception for Linear sync errors."""
 
 
-class LinearRateLimitError(LinearSyncError):
-    """Raised when Linear API rate limit is exceeded."""
-
-    def __init__(self, message: str, reset_at: int | None = None) -> None:
-        super().__init__(message)
-        self.reset_at = reset_at
-
-
-class LinearNotFoundError(LinearSyncError):
-    """Raised when a Linear resource is not found."""
-
-    def __init__(
-        self,
-        message: str,
-        resource: str | None = None,
-        resource_id: str | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.resource = resource
-        self.resource_id = resource_id
-
-
 def _parse_linear_mcp_result(result: Any) -> Any:
     try:
         return parse_mcp_tool_result(result)
