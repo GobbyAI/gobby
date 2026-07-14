@@ -38,6 +38,20 @@ class _AgentRunQueryMixin:
         """Get agent run by ID."""
         return self._fetch_run_with_live_stats("WHERE ar.id = %s", (run_id,))
 
+    def find_by_id_prefix(
+        self: _AgentRunQueryHost,
+        prefix: str,
+        *,
+        limit: int = 2,
+    ) -> list[AgentRun]:
+        """Find agent runs by a validated hexadecimal ID prefix."""
+        return self._fetch_runs_with_live_stats(
+            "WHERE ar.id::text LIKE %s",
+            (f"{prefix}%",),
+            order_by="ORDER BY ar.created_at DESC",
+            limit=limit,
+        )
+
     def has_active_run_for_task(self: _AgentRunQueryHost, task_id: str) -> bool:
         """Check if there's already a pending/running agent run for a task."""
         row = self.db.fetchone(
