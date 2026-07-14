@@ -241,6 +241,25 @@ class LocalWorkflowDefinitionManager:
             bump_workflow_definitions_revision()
         return self.get(definition_id)
 
+    def toggle_enabled(self, definition_id: str) -> WorkflowDefinitionRow:
+        """Atomically toggle a workflow definition's enabled state."""
+        if parse_uuid_reference(definition_id) is None:
+            raise ValueError(f"Workflow definition {definition_id} not found") from None
+
+        row = self.db.fetchone(
+            """
+            UPDATE workflow_definitions
+            SET enabled = NOT enabled, updated_at = %s
+            WHERE id = %s AND deleted_at IS NULL
+            RETURNING *
+            """,
+            (utc_now(), definition_id),
+        )
+        if row is None:
+            raise ValueError(f"Workflow definition {definition_id} not found")
+        bump_workflow_definitions_revision()
+        return WorkflowDefinitionRow.from_row(row)
+
     def delete(self, definition_id: str) -> bool:
         """Soft-delete a workflow definition by setting deleted_at."""
         now = utc_now()

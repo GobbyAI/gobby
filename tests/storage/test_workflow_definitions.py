@@ -1,6 +1,7 @@
 """Tests for LocalWorkflowDefinitionManager."""
 
 import json
+import threading
 
 import pytest
 
@@ -309,6 +310,32 @@ def test_update_no_fields(manager: LocalWorkflowDefinitionManager) -> None:
     created = manager.create(name="no-update", definition_json=SAMPLE_DEFINITION)
     result = manager.update(created.id)
     assert result.id == created.id
+
+
+def test_toggle_enabled_is_atomic_under_concurrency(
+    db: HubDatabase, manager: LocalWorkflowDefinitionManager
+) -> None:
+    created = manager.create(name="concurrent-toggle", definition_json=SAMPLE_DEFINITION)
+    barrier = threading.Barrier(2)
+    errors: list[BaseException] = []
+    lock = threading.Lock()
+
+    def _toggle() -> None:
+        try:
+            barrier.wait(timeout=5)
+            LocalWorkflowDefinitionManager(db).toggle_enabled(created.id)
+        except BaseException as exc:  # pragma: no cover - asserted below
+            with lock:
+                errors.append(exc)
+
+    threads = [threading.Thread(target=_toggle) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert manager.get(created.id).enabled is created.enabled
 
 
 # =============================================================================

@@ -259,8 +259,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         """Toggle a workflow definition's enabled status."""
         try:
             manager = _get_manager()
-            row = await server.run_db(manager.get, definition_id)
-            updated = await server.run_db(manager.update, definition_id, enabled=not row.enabled)
+            updated = await server.run_db(manager.toggle_enabled, definition_id)
             await _broadcast_workflow("workflow_updated", definition_id)
             return {"status": "success", "definition": updated.to_dict()}
         except ValueError as e:
