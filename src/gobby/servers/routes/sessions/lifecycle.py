@@ -97,38 +97,6 @@ async def _get_session_stats(
     return stats
 
 
-def _bulk_move_session_rows(
-    db: "HubDatabase",
-    session_manager: Any,
-    session_ids: list[str],
-    target_project_id: str,
-) -> tuple[list[str], list[str]]:
-    """Move session rows in one worker-thread transaction."""
-    moved_ids: list[str] = []
-    errors: list[str] = []
-    with db.transaction() as transaction:
-        for index, session_id in enumerate(session_ids):
-            savepoint = transaction.savepoint(f"bulk_move_session_{index}")
-            try:
-                session = session_manager.get(session_id)
-                if session is None:
-                    errors.append(f"Session {session_id} not found")
-                    savepoint.release()
-                    continue
-                transaction.execute(
-                    "UPDATE sessions SET project_id = %s, updated_at = CURRENT_TIMESTAMP "
-                    "WHERE id = %s",
-                    (target_project_id, session_id),
-                )
-                savepoint.release()
-                moved_ids.append(session_id)
-            except Exception as exc:
-                savepoint.rollback()
-                savepoint.release()
-                errors.append(f"Failed to move {session_id}: {exc}")
-    return moved_ids, errors
-
-
 def register_lifecycle_routes(
     router: APIRouter,
     server: "HTTPServer",
@@ -159,13 +127,21 @@ def register_lifecycle_routes(
             if await server.run_db(project_manager.get, target_project_id) is None:
                 raise HTTPException(status_code=400, detail="Target project not found")
 
-            moved_ids, errors = await server.run_db(
-                _bulk_move_session_rows,
-                db,
-                server.session_manager,
-                session_ids,
-                target_project_id,
-            )
+            def _move_sessions() -> tuple[list[str], list[str]]:
+                moved: list[str] = []
+                move_errors: list[str] = []
+                for sid in session_ids:
+                    try:
+                        session = server.session_manager.move_to_project(sid, target_project_id)
+                        if session is None:
+                            move_errors.append(f"Session {sid} not found")
+                            continue
+                        moved.append(session.id)
+                    except Exception as e:
+                        move_errors.append(f"Failed to move {sid}: {e}")
+                return moved, move_errors
+
+            moved_ids, errors = await server.run_db(_move_sessions)
 
             for sid in moved_ids:
                 await broadcast_session("session_updated", sid)

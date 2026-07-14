@@ -8,7 +8,12 @@ from gobby.storage.session_models import Session
 from gobby.utils.datetime import utc_now
 
 from ._bootstrap import TitleChangeCallback
-from ._constants import SYSTEM_SESSION_ID, ensure_system_session, get_logger
+from ._constants import (
+    SYSTEM_SESSION_ID,
+    ensure_system_session,
+    get_logger,
+    validate_session_status_transition,
+)
 from ._lineage_guard import repair_self_parent_session, sanitize_parent_session_id
 from ._summary_update import _SummaryUpdateMixin
 
@@ -37,6 +42,8 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
         Service-style callers that only need a success flag should use
         SessionManager.update_session_status().
         """
+        current = self.get(session_id)
+        validate_session_status_transition(current.status if current else None, status)
         now = utc_now()
         with self.db.transaction():
             self.db.execute(
@@ -48,6 +55,23 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
             event = "session_expired" if status == "expired" else "session_updated"
             self._notify_session_change(event, session_id)
         return updated
+
+    def expire_if_active(self: _ManagerState, session_id: str) -> Session | None:
+        """Expire an active or paused session without overwriting a newer status."""
+        now = utc_now()
+        with self.db.transaction():
+            cursor = self.db.execute(
+                """
+                UPDATE sessions
+                SET status = 'expired', updated_at = %s
+                WHERE id = %s AND status IN ('active', 'paused')
+                """,
+                (now, session_id),
+            )
+        if cursor.rowcount <= 0:
+            return None
+        self._notify_session_change("session_expired", session_id)
+        return self.get(session_id)
 
     def revive_expired_terminal_session(self: _ManagerState, session_id: str) -> Session | None:
         """Mark an expired terminal session active when fresh activity arrives.
@@ -328,9 +352,9 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
             )
 
     def update_parent_session_id(
-        self: _ManagerState, session_id: str, parent_session_id: str
+        self: _ManagerState, session_id: str, parent_session_id: str | None
     ) -> Session | None:
-        """Update parent session ID."""
+        """Update the parent session ID, using None to clear it."""
         if parent_session_id == SYSTEM_SESSION_ID:
             ensure_system_session(self.db)
         now = utc_now()
@@ -343,7 +367,6 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
             )
             if sanitized_parent_session_id is None:
                 repair_self_parent_session(conn, session_id=session_id, now=now)
-                return self.get(session_id)
 
             conn.execute(
                 "UPDATE sessions SET parent_session_id = %s, updated_at = %s WHERE id = %s",

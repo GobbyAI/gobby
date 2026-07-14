@@ -1,15 +1,20 @@
+import io
+import json
 import logging
+import warnings
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
 
-from gobby.telemetry import shutdown_telemetry
+from gobby.telemetry import init_telemetry, shutdown_telemetry
 from gobby.telemetry.config import TelemetrySettings
 from gobby.telemetry.logging import (
     JsonOTelFormatter,
     OTelTraceFormatter,
+    setup_file_logging,
     setup_otel_logging,
 )
 
@@ -72,14 +77,38 @@ def test_json_otel_formatter_produces_json():
         exc_info=None,
     )
 
-    import json
-
     formatted = formatter.format(record)
     data = json.loads(formatted)
 
     assert data["level"] == "INFO"
     assert data["message"] == "test message"
     assert data["name"] == "gobby.test"
+
+
+def test_json_otel_formatter_serializes_non_json_extra_values():
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(JsonOTelFormatter())
+    logger = logging.getLogger("gobby.test.json.extra")
+    previous_level = logger.level
+    previous_propagate = logger.propagate
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+
+    try:
+        path = Path("/x")
+        created_at = datetime(2026, 7, 14, 12, 30)
+        logger.info("structured message", extra={"path": path, "created_at": created_at})
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous_level)
+        logger.propagate = previous_propagate
+
+    data = json.loads(stream.getvalue())
+    assert data["message"] == "structured message"
+    assert data["path"] == str(path)
+    assert data["created_at"] == str(created_at)
 
 
 def test_setup_otel_logging_creates_files(telemetry_config):
@@ -179,16 +208,50 @@ def test_setup_otel_logging_attaches_otel_handler(telemetry_config):
     assert any(isinstance(h, LoggingHandler) for h in root_logger.handlers)
 
 
+def test_setup_file_logging_does_not_create_otel_provider(telemetry_config):
+    from opentelemetry.sdk._logs import LoggingHandler
+
+    with patch("gobby.telemetry.logging.get_logger_provider") as get_logger_provider:
+        setup_file_logging(telemetry_config)
+
+    get_logger_provider.assert_not_called()
+    root_logger = logging.getLogger("gobby")
+    assert not any(isinstance(h, LoggingHandler) for h in root_logger.handlers)
+
+
 def test_init_telemetry_sets_providers(telemetry_config):
     from opentelemetry import metrics, trace
-
-    from gobby.telemetry.logging import init_telemetry
 
     # Clear providers if possible or just check they are set
     init_telemetry(telemetry_config)
 
     assert trace.get_tracer_provider() is not None
     assert metrics.get_meter_provider() is not None
+
+
+def test_daemon_init_activates_llm_instrumentor(telemetry_config):
+    from gobby.runner_init.storage import init_telemetry as daemon_init_telemetry
+    from gobby.telemetry.instrumentors import _instrumented
+
+    telemetry_config.llm_tracing.enabled = True
+    telemetry_config.llm_tracing.providers = ["anthropic"]
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="'asyncio.iscoroutinefunction' is deprecated.*",
+            category=DeprecationWarning,
+        )
+        from opentelemetry.instrumentation.anthropic import AnthropicInstrumentor
+
+        instrumentor = AnthropicInstrumentor()
+        try:
+            daemon_init_telemetry(telemetry_config)
+
+            assert instrumentor.is_instrumented_by_opentelemetry
+        finally:
+            instrumentor.uninstrument()
+            _instrumented.discard("anthropic")
 
 
 def test_shutdown_telemetry_skips_uninstrument_when_not_instrumented() -> None:

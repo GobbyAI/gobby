@@ -2,12 +2,15 @@
 Tests for TelemetryMetrics instruments.
 """
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock, patch
 
 import pytest
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
+from gobby.telemetry import instruments
 from gobby.telemetry.instruments import TelemetryMetrics
 
 
@@ -23,6 +26,31 @@ def metrics_collector(meter_provider):
     provider, _ = meter_provider
     meter = provider.get_meter("test")
     return TelemetryMetrics(meter)
+
+
+def test_get_telemetry_metrics_creates_one_instance_across_threads():
+    thread_count = 8
+    start = threading.Barrier(thread_count)
+    constructor_delay = threading.Event()
+    instance = MagicMock(spec=TelemetryMetrics)
+
+    def get_metrics() -> TelemetryMetrics:
+        start.wait()
+        return instruments.get_telemetry_metrics()
+
+    def construct_metrics(_meter: object) -> MagicMock:
+        constructor_delay.wait(timeout=0.05)
+        return instance
+
+    with (
+        patch.object(instruments, "_telemetry_metrics", None),
+        patch.object(instruments, "TelemetryMetrics", side_effect=construct_metrics) as constructor,
+        ThreadPoolExecutor(max_workers=thread_count) as executor,
+    ):
+        results = list(executor.map(lambda _: get_metrics(), range(thread_count)))
+
+    assert constructor.call_count == 1
+    assert all(result is instance for result in results)
 
 
 def test_inc_counter(metrics_collector, meter_provider):

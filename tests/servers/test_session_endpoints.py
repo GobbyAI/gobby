@@ -4,7 +4,7 @@ from collections.abc import Iterator
 from datetime import UTC
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 from fastapi.testclient import TestClient
@@ -44,6 +44,94 @@ class TestSessionEndpoints:
         data = response.json()
         assert data["status"] == "success"
         assert data["session"]["external_id"] == "get-test"
+
+    def test_bulk_move_renumbers_and_broadcasts_only_committed_sessions(
+        self,
+        client: TestClient,
+        http_server: HTTPServer,
+        session_storage: SessionManager,
+        test_project: dict[str, Any],
+        tmp_path: Path,
+    ) -> None:
+        destination = LocalProjectManager(session_storage.db).create(
+            name="bulk-move-destination",
+            repo_path=str(tmp_path / "bulk-move-destination"),
+        )
+        for index in range(2):
+            session_storage.register(
+                external_id=f"destination-{index}",
+                machine_id="machine-1",
+                source="codex",
+                project_id=destination.id,
+            )
+        moved_sessions = [
+            session_storage.register(
+                external_id=f"source-{index}",
+                machine_id="machine-1",
+                source="codex",
+                project_id=test_project["id"],
+            )
+            for index in range(2)
+        ]
+        websocket = AsyncMock()
+        http_server.services.websocket_server = websocket
+        session_storage.db.execute(
+            """
+            CREATE OR REPLACE FUNCTION fail_first_bulk_move_fn()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                IF OLD.external_id = 'source-0' THEN
+                    RAISE EXCEPTION 'bulk move boom';
+                END IF;
+                RETURN NEW;
+            END;
+            $$
+            """
+        )
+        session_storage.db.execute(
+            """
+            CREATE TRIGGER fail_first_bulk_move
+            BEFORE UPDATE OF project_id ON sessions
+            FOR EACH ROW
+            EXECUTE FUNCTION fail_first_bulk_move_fn()
+            """
+        )
+        try:
+            response = client.post(
+                "/api/sessions/bulk-move",
+                json={
+                    "session_ids": [
+                        moved_sessions[0].id,
+                        UNKNOWN_SESSION_ID,
+                        moved_sessions[1].id,
+                    ],
+                    "target_project_id": destination.id,
+                },
+            )
+        finally:
+            session_storage.db.execute("DROP TRIGGER IF EXISTS fail_first_bulk_move ON sessions")
+            session_storage.db.execute("DROP FUNCTION IF EXISTS fail_first_bulk_move_fn()")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "success"
+        assert data["moved"] == 1
+        assert data["total"] == 3
+        assert len(data["errors"]) == 2
+        assert data["errors"][0].startswith(
+            f"Failed to move {moved_sessions[0].id}: bulk move boom"
+        )
+        assert data["errors"][1] == f"Session {UNKNOWN_SESSION_ID} not found"
+        reloaded = [session_storage.get(session.id) for session in moved_sessions]
+        assert [(session.project_id, session.seq_num) for session in reloaded if session] == [
+            (test_project["id"], 1),
+            (destination.id, 3),
+        ]
+        assert websocket.broadcast_session_event.await_args_list == [
+            call("session_updated", moved_sessions[1].id),
+        ]
 
     def test_get_session_not_found(self, client: TestClient) -> None:
         """Test getting nonexistent session returns 404."""

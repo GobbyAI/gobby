@@ -54,7 +54,6 @@ def mock_components() -> MagicMock:
     components.session_manager = MagicMock()
     components.session_coordinator = MagicMock()
     components.health_monitor = MagicMock()
-    components.hook_assembler = MagicMock()
     components.event_handlers = MagicMock()
     return components
 

@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import shutil
+from concurrent.futures import CancelledError, Future
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -21,7 +22,8 @@ from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.telemetry.logging import init_telemetry
+from gobby.telemetry import init_telemetry
+from gobby.telemetry.logging import setup_file_logging
 from gobby.utils.machine_id import get_machine_id
 
 if TYPE_CHECKING:
@@ -66,7 +68,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     runner.config = load_config(runner._config_file, resolve_database_url=True)
     runner.verbose = verbose
 
-    init_telemetry(runner.config.telemetry, verbose=verbose)
+    setup_file_logging(runner.config.telemetry, verbose=verbose)
 
     runner.machine_id = get_machine_id()
 
@@ -131,6 +133,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         logger.warning(
             "Failed to migrate legacy web password; run 'gobby auth credentials': %s",
             exc,
+            exc_info=True,
         )
     if secret_migration.migrated:
         logger.info(
@@ -143,6 +146,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         config_store=runner.config_store,
         resolve_database_url=True,
     )
+    init_telemetry(runner.config.telemetry, verbose=verbose)
 
     from gobby.storage.model_costs import ModelCostStore
 
@@ -150,7 +154,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         cost_store = ModelCostStore(runner.database)
         cost_store.populate()
     except Exception as e:
-        logger.warning(f"Failed to populate model metadata: {e}")
+        logger.warning(f"Failed to populate model metadata: {e}", exc_info=True)
 
     runner.session_manager = SessionManager(runner.database)
     runner.task_manager = LocalTaskManager(runner.database)
@@ -163,26 +167,28 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     if runner.config.telemetry and runner.config.telemetry.traces_enabled:
         from gobby.telemetry.providers import add_span_storage_exporter
 
+        broadcast_loop = asyncio.get_running_loop()
+
         def _broadcast_proxy(span: dict[str, Any]) -> None:
             """Proxy for trace event broadcasting via WebSocket."""
             if hasattr(runner, "websocket_server") and runner.websocket_server:
+                broadcast = runner.websocket_server.broadcast_trace_event(span)
                 try:
-                    loop = asyncio.get_running_loop()
-                    task = loop.create_task(runner.websocket_server.broadcast_trace_event(span))
-                    runner._pending_tasks.add(task)
-
-                    def _log_broadcast_result(done_task: asyncio.Task[Any]) -> None:
-                        runner._pending_tasks.discard(done_task)
-                        try:
-                            done_task.result()
-                        except asyncio.CancelledError:
-                            logger.debug("Trace broadcast task cancelled")
-                        except Exception:
-                            logger.exception("Trace broadcast task failed")
-
-                    task.add_done_callback(_log_broadcast_result)
+                    future = asyncio.run_coroutine_threadsafe(broadcast, broadcast_loop)
                 except RuntimeError as e:
-                    logger.debug(f"Trace broadcast skipped (no running loop): {e}")
+                    broadcast.close()
+                    logger.debug(f"Trace broadcast skipped (daemon loop unavailable): {e}")
+                    return
+
+                def _log_broadcast_result(done_future: Future[None]) -> None:
+                    try:
+                        done_future.result()
+                    except CancelledError:
+                        logger.debug("Trace broadcast task cancelled")
+                    except Exception:
+                        logger.exception("Trace broadcast task failed")
+
+                future.add_done_callback(_log_broadcast_result)
 
         add_span_storage_exporter(runner.span_storage, broadcast_callback=_broadcast_proxy)
         logger.debug("Local span storage exporter wired to OTel")
@@ -249,4 +255,4 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         )
         logger.debug(f"HubManager initialized with {len(skills_config.hubs)} hubs")
     except Exception as e:
-        logger.warning(f"Failed to initialize HubManager: {e}")
+        logger.warning(f"Failed to initialize HubManager: {e}", exc_info=True)

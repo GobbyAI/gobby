@@ -11,11 +11,8 @@ import re
 import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
-import zipfile
 from datetime import UTC, datetime
-from io import BytesIO
 from pathlib import Path
 from shutil import copy2
 from typing import Any
@@ -27,6 +24,10 @@ import click
 
 from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
 from gobby.config.postgres_pool import DEFAULT_POSTGRES_POOL_CONFIG
+from gobby.install.bin_freshness_github import SourceUnavailableError
+from gobby.install.bin_freshness_locks import try_acquire_native_bin_lock
+from gobby.install.bin_freshness_promotion import stage_and_promote_release_binary
+from gobby.install.checksums import parse_sha256_digest
 from gobby.install.distribution import (
     HomebrewDistributionError,
     is_homebrew_distribution,
@@ -167,51 +168,23 @@ def _extract_binary_from_release_archive(
     label: str,
 ) -> bool:
     """Extract one binary from a release archive into ``bin_dir``."""
-    dest = bin_dir / binary_name
-    bin_dir.mkdir(parents=True, exist_ok=True)
-
+    lock = try_acquire_native_bin_lock(label, bin_dir=bin_dir)
+    if lock is None:
+        logger.warning("%s: native binary update is already in progress", label)
+        return False
     try:
-        if archive_ext == "zip":
-            with zipfile.ZipFile(BytesIO(archive_bytes)) as archive:
-                for member_name in archive.namelist():
-                    if member_name.endswith(f"/{binary_name}") or member_name == binary_name:
-                        with archive.open(member_name) as fileobj:
-                            dest.write_bytes(fileobj.read())
-                        dest.chmod(0o755)
-                        return True
-        else:
-            with tarfile.open(fileobj=BytesIO(archive_bytes), mode="r:gz") as archive:
-                for member in archive.getmembers():
-                    if member.name.endswith(f"/{binary_name}") or member.name == binary_name:
-                        extracted_file = archive.extractfile(member)
-                        if extracted_file is None:
-                            continue
-                        dest.write_bytes(extracted_file.read())
-                        dest.chmod(0o755)
-                        return True
-    except (OSError, tarfile.TarError, zipfile.BadZipFile) as e:
+        with lock:
+            stage_and_promote_release_binary(
+                archive_bytes,
+                archive_ext=archive_ext,
+                binary_name=binary_name,
+                bin_dir=bin_dir,
+                asset_name=label,
+            )
+        return True
+    except (OSError, SourceUnavailableError) as e:
         logger.warning("%s: failed extracting release archive: %s", label, e)
         return False
-
-    logger.warning("%s binary not found in release archive", label)
-    return False
-
-
-def _parse_sha256_digest(text: str) -> str | None:
-    """Extract a lowercase SHA-256 hex digest from checksum-file text.
-
-    Accepts both a bare digest and the ``sha256sum`` line format
-    (``<digest>  <filename>``). Returns ``None`` when no valid 64-character
-    hex digest is present.
-    """
-    for line in text.splitlines():
-        parts = line.strip().split()
-        if not parts:
-            continue
-        candidate = parts[0].lower()
-        if len(candidate) == 64 and all(c in "0123456789abcdef" for c in candidate):
-            return candidate
-    return None
 
 
 def _fetch_release_checksum(checksum_url: str, *, label: str) -> str | None:
@@ -228,7 +201,7 @@ def _fetch_release_checksum(checksum_url: str, *, label: str) -> str | None:
     except (URLError, OSError, ValueError) as e:
         logger.warning("%s: could not fetch checksum %s: %s", label, checksum_url, e)
         return None
-    return _parse_sha256_digest(text)
+    return parse_sha256_digest(text)
 
 
 def _verify_release_artifact(

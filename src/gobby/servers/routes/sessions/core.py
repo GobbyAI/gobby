@@ -308,7 +308,7 @@ def register_core_routes(
             if request_data.project_path and not git_branch:
                 from gobby.utils.git import get_git_metadata
 
-                git_metadata = get_git_metadata(request_data.project_path)
+                git_metadata = await asyncio.to_thread(get_git_metadata, request_data.project_path)
                 if git_metadata.get("git_branch"):
                     git_branch = git_metadata.get("git_branch")
 

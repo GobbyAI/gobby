@@ -375,3 +375,12 @@ class LocalProjectManager:
             (now, now, project_id),
         )
         return cursor.rowcount > 0
+
+    def restore(self, project_id: str) -> Project | None:
+        """Restore a soft-deleted project."""
+        now = utc_now()
+        self.db.execute(
+            "UPDATE projects SET deleted_at = NULL, updated_at = %s WHERE id = %s",
+            (now, project_id),
+        )
+        return self.get(project_id)

@@ -135,3 +135,36 @@ class TestRenderedBroadcast:
         completed, state = render_incremental([result_msg], state, session_id="s1")
         assert state.pending_tool_calls["tu-1"].status == "completed"
         assert state.pending_tool_calls["tu-1"].result is not None
+
+    async def test_late_tool_result_rebroadcasts_completed_owner(
+        self, processor: SessionMessageProcessor
+    ) -> None:
+        tool_msg = _make_parsed(
+            0,
+            content="",
+            content_type="tool_use",
+            tool_name="Read",
+            tool_use_id="tu-1",
+            tool_input={"file_path": "/tmp/foo"},
+        )
+        next_turn = _make_parsed(1, role="user", content="continue")
+        await processor._render_and_broadcast_messages("sess-1", [tool_msg, next_turn])
+        processor.websocket_server.broadcast.reset_mock()
+
+        result_msg = _make_parsed(
+            2,
+            role="tool",
+            content="file contents",
+            content_type="tool_result",
+            tool_use_id="tu-1",
+            tool_result={"content": "file contents"},
+        )
+        await processor._render_and_broadcast_messages("sess-1", [result_msg])
+
+        payloads = [call.args[0] for call in processor.websocket_server.broadcast.await_args_list]
+        completed = [payload for payload in payloads if payload["complete"]]
+        assert len(completed) == 1
+        tool_call = completed[0]["message"]["content_blocks"][0]["tool_calls"][0]
+        assert tool_call["id"] == "tu-1"
+        assert tool_call["status"] == "completed"
+        assert tool_call["result"]["content"] == {"content": "file contents"}

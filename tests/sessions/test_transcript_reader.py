@@ -513,6 +513,32 @@ class TestTranscriptReaderRendered:
         assert result[1].role == "assistant"
 
     @pytest.mark.asyncio
+    async def test_get_rendered_messages_gzip_replaces_invalid_utf8(self, tmp_path: Path) -> None:
+        archive_dir = tmp_path / "archives"
+        archive_dir.mkdir()
+        archive_path = archive_dir / "invalid-utf8.jsonl.gz"
+        records = [
+            {"type": "user", "message": {"role": "user", "content": "before"}},
+            {"type": "assistant", "message": {"role": "assistant", "content": "after"}},
+        ]
+        with gzip.open(archive_path, "wb") as handle:
+            handle.write(json.dumps(records[0]).encode() + b"\n")
+            handle.write(b'{"invalid": "\xff"}\n')
+            handle.write(json.dumps(records[1]).encode() + b"\n")
+
+        session = MagicMock()
+        session.external_id = "invalid-utf8"
+        session.source = "claude"
+        session.transcript_path = str(tmp_path / "missing.jsonl")
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+        reader = TranscriptReader(session_manager, archive_dir=str(archive_dir))
+
+        result = await reader.get_rendered_messages("sess-1")
+
+        assert [message.content for message in result] == ["before", "after"]
+
+    @pytest.mark.asyncio
     async def test_get_rendered_messages_gzip(self, tmp_path: Path):
         archive_dir = tmp_path / "archives"
         external_id = "ext-123"
@@ -1101,6 +1127,52 @@ class TestTranscriptReaderWindowed:
         assert "msg 4" in result.groups[0].content
         assert "msg 5" in result.groups[1].content
         assert load_gzip_block_index(str(archive_path)) is not None
+
+    @pytest.mark.asyncio
+    async def test_archive_status_and_window_share_transcript_index(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        archive_dir = tmp_path / "archives"
+        external_id = "shared-index"
+        _write_gzip_archive(
+            archive_dir,
+            external_id,
+            [
+                {"type": "user", "message": {"role": "user", "content": f"msg {i}"}}
+                for i in range(3)
+            ],
+        )
+        session = MagicMock()
+        session.external_id = external_id
+        session.source = "claude"
+        session.transcript_path = str(tmp_path / "missing.jsonl")
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+        reader = TranscriptReader(session_manager, archive_dir=str(archive_dir))
+
+        initial_window = await reader.get_rendered_window("sess-1", limit=1, offset=0)
+        assert initial_window.total_groups == 3
+        clear_index_cache()
+
+        from gobby.sessions import transcript_index_sidecar
+
+        persisted_modes: list[str] = []
+        original_persist = transcript_index_sidecar.persist_index_sidecar
+
+        def record_persist(path: str, index) -> None:
+            persisted_modes.append(index.seek_mode)
+            original_persist(path, index)
+
+        monkeypatch.setattr(transcript_index_sidecar, "persist_index_sidecar", record_persist)
+
+        status = await reader.get_transcript_status("sess-1")
+        window = await reader.get_rendered_window("sess-1", limit=1, offset=0)
+        repeated_status = await reader.get_transcript_status("sess-1")
+
+        assert status["parsed_message_count"] == 3
+        assert window.total_groups == 3
+        assert repeated_status["parsed_message_count"] == 3
+        assert persisted_modes == []
 
     @pytest.mark.asyncio
     async def test_window_tail_offset_pages_older(self, tmp_path: Path) -> None:

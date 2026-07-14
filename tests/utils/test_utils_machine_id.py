@@ -1,5 +1,8 @@
 """Tests for src/utils/machine_id.py - Machine ID Utility."""
 
+import os
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -74,11 +77,13 @@ class TestGetOrCreateMachineId:
         """Test returns machine_id from file if present."""
         test_file = tmp_path / "machine_id"
         test_file.write_text("existing-id-from-file")
+        test_file.chmod(0o644)
 
         with patch("gobby.utils.machine_id.MACHINE_ID_FILE", test_file):
             result = _get_or_create_machine_id()
 
         assert result == "existing-id-from-file"
+        assert test_file.stat().st_mode & 0o777 == 0o600
 
     def test_generates_and_saves_new_id_when_file_missing(self, tmp_path) -> None:
         """Test generates new ID and saves to file when missing."""
@@ -93,6 +98,45 @@ class TestGetOrCreateMachineId:
         assert result == "new-generated-id"
         assert test_file.exists()
         assert test_file.read_text() == "new-generated-id"
+
+    def test_concurrent_creation_keeps_generated_id_stable(self, tmp_path) -> None:
+        """Test concurrent creation leaves one stable machine ID."""
+        test_file = tmp_path / "machine_id"
+        first_generate = threading.Event()
+        release_first = threading.Event()
+        second_generate = threading.Event()
+        generation_count = 0
+
+        def generate() -> str:
+            nonlocal generation_count
+            generation_count += 1
+            if generation_count == 1:
+                first_generate.set()
+                assert release_first.wait(timeout=1)
+            else:
+                second_generate.set()
+            return f"generated-id-{generation_count}"
+
+        with (
+            patch("gobby.utils.machine_id.MACHINE_ID_FILE", test_file),
+            patch(
+                "gobby.utils.machine_id._generate_machine_id", side_effect=generate
+            ) as mock_generate,
+            patch("gobby.utils.machine_id.os.replace", wraps=os.replace) as replace,
+            ThreadPoolExecutor(max_workers=2) as executor,
+        ):
+            first = executor.submit(_get_or_create_machine_id)
+            assert first_generate.wait(timeout=1)
+            second = executor.submit(_get_or_create_machine_id)
+            try:
+                assert not second_generate.wait(timeout=0.1)
+            finally:
+                release_first.set()
+
+        assert first.result() == second.result() == "generated-id-1"
+        assert test_file.read_text() == "generated-id-1"
+        mock_generate.assert_called_once()
+        replace.assert_called_once()
 
     def test_creates_parent_directory_if_missing(self, tmp_path) -> None:
         """Test creates parent directory if it doesn't exist."""
@@ -146,19 +190,37 @@ class TestWriteFileSecure:
         """Test overwrites existing file content."""
         test_file = tmp_path / "test_file"
         test_file.write_text("old-content")
+        test_file.chmod(0o644)
 
         _write_file_secure(test_file, "new-content")
 
         assert test_file.read_text() == "new-content"
+        assert test_file.stat().st_mode & 0o777 == 0o600
+
+    def test_failed_replace_preserves_existing_file(self, tmp_path) -> None:
+        """Test replacement failure preserves existing content and removes temp file."""
+        test_file = tmp_path / "test_file"
+        test_file.write_text("old-content")
+
+        with (
+            patch("gobby.utils.machine_id.uuid.uuid4") as uuid4,
+            patch("gobby.utils.machine_id.os.replace", side_effect=OSError("replace failed")),
+            pytest.raises(OSError, match="replace failed"),
+        ):
+            uuid4.return_value.hex = "known"
+            _write_file_secure(test_file, "new-content")
+
+        assert test_file.read_text() == "old-content"
+        assert not (tmp_path / ".test_file.known.tmp").exists()
 
 
 class TestGenerateMachineId:
     """Tests for _generate_machine_id function."""
 
     def test_uses_machineid_library_when_available(self) -> None:
-        """Test uses machineid library if available."""
+        """Test uses an app-scoped machine ID hash if available."""
         mock_machineid = MagicMock()
-        mock_machineid.id.return_value = "hardware-id"
+        mock_machineid.hashed_id.return_value = "hashed-machine-id"
 
         # Remove machineid from sys.modules if cached, so the mock is picked up
         import sys
@@ -170,8 +232,8 @@ class TestGenerateMachineId:
                 result = _generate_machine_id()
 
                 # Should return the mocked value
-                assert result == "hardware-id"
-                mock_machineid.id.assert_called_once()
+                assert result == "hashed-machine-id"
+                mock_machineid.hashed_id.assert_called_once_with("gobby")
         finally:
             # Restore if it was cached
             if cached_module is not None:
@@ -188,9 +250,9 @@ class TestGenerateMachineId:
         assert len(result) == 36  # UUID format
 
     def test_falls_back_to_uuid_when_machineid_raises(self) -> None:
-        """Test falls back to UUID when machineid.id() raises."""
+        """Test falls back to UUID when machineid.hashed_id() raises."""
         mock_machineid = MagicMock()
-        mock_machineid.id.side_effect = Exception("Hardware access failed")
+        mock_machineid.hashed_id.side_effect = Exception("Hardware access failed")
 
         with patch.dict("sys.modules", {"machineid": mock_machineid}):
             result = _generate_machine_id()

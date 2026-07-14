@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from gobby.utils.datetime import normalize_datetime_model, utc_now
+from gobby.utils.datetime import normalize_datetime_model, to_aware_utc, utc_now
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -45,10 +45,7 @@ def normalize_message_direction(direction: str) -> str:
 
 @normalize_datetime_model(
     required=("sent_at",),
-    optional=(
-        "read_at",
-        "delivered_at",
-    ),
+    optional=("delivered_at",),
 )
 @dataclass
 class InterSessionMessage:
@@ -61,7 +58,6 @@ class InterSessionMessage:
         content: Message content
         priority: Message priority (e.g., "normal", "urgent")
         sent_at: Timestamp when message was sent
-        read_at: Timestamp when message was read (None if unread)
     """
 
     id: str
@@ -70,7 +66,6 @@ class InterSessionMessage:
     content: str
     priority: str
     sent_at: datetime
-    read_at: datetime | None
     message_type: str = "message"
     metadata_json: str | None = None
     delivered_at: datetime | None = None
@@ -92,7 +87,6 @@ class InterSessionMessage:
             content=row["content"],
             priority=row["priority"],
             sent_at=row["sent_at"],
-            read_at=row["read_at"],
             message_type=row["message_type"],
             metadata_json=row["metadata_json"],
             delivered_at=row["delivered_at"],
@@ -111,7 +105,6 @@ class InterSessionMessage:
             "content": self.content,
             "priority": self.priority,
             "sent_at": self.sent_at,
-            "read_at": self.read_at,
             "message_type": self.message_type,
             "metadata_json": self.metadata_json,
             "delivered_at": self.delivered_at,
@@ -127,7 +120,6 @@ class InterSessionMessage:
             "priority": self.priority,
             "message_type": self.message_type,
             "sent_at": self.sent_at,
-            "read_at": self.read_at,
         }
 
 
@@ -174,9 +166,9 @@ class InterSessionMessageManager:
         self.db.execute(
             """
             INSERT INTO inter_session_messages
-            (id, from_session, to_session, content, priority, sent_at, read_at,
+            (id, from_session, to_session, content, priority, sent_at,
              message_type, metadata_json)
-            VALUES (%s, %s, %s, %s, %s, %s, NULL, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 message_id,
@@ -197,7 +189,6 @@ class InterSessionMessageManager:
             content=content,
             priority=priority,
             sent_at=sent_at,
-            read_at=None,
             message_type=message_type,
             metadata_json=metadata_json,
         )
@@ -220,23 +211,17 @@ class InterSessionMessageManager:
             return InterSessionMessage.from_row(row)
         return None
 
-    def get_messages(self, to_session: str, unread_only: bool = False) -> list[InterSessionMessage]:
+    def get_messages(self, to_session: str) -> list[InterSessionMessage]:
         """Get messages for a recipient session.
 
         Args:
             to_session: ID of the receiving session
-            unread_only: If True, only return unread messages
-
         Returns:
             List of InterSessionMessage instances
         """
-        if unread_only:
-            query = """
-                SELECT * FROM inter_session_messages
-                WHERE to_session = %s AND read_at IS NULL
-            """
-        else:
-            query = "SELECT * FROM inter_session_messages WHERE to_session = %s"
+        query = """SELECT * FROM inter_session_messages
+                   WHERE to_session = %s
+                   ORDER BY sent_at ASC, id ASC"""
 
         rows = self.db.fetchall(query, (to_session,))
         return [InterSessionMessage.from_row(row) for row in rows]
@@ -270,30 +255,6 @@ class InterSessionMessageManager:
         )
         return row is not None
 
-    def mark_read(self, message_id: str) -> InterSessionMessage:
-        """Mark a message as read.
-
-        Args:
-            message_id: The message ID to mark as read
-
-        Returns:
-            The updated InterSessionMessage
-
-        Raises:
-            ValueError: If message not found
-        """
-        read_at = utc_now()
-
-        self.db.execute(
-            "UPDATE inter_session_messages SET read_at = %s WHERE id = %s",
-            (read_at, message_id),
-        )
-
-        message = self.get_message(message_id)
-        if not message:
-            raise ValueError(f"Message not found: {message_id}")
-        return message
-
     def get_undelivered_messages(self, to_session: str) -> list[InterSessionMessage]:
         """Get messages not yet delivered to a session.
 
@@ -311,11 +272,40 @@ class InterSessionMessageManager:
         )
         return [InterSessionMessage.from_row(row) for row in rows]
 
+    def claim_undelivered_messages(self, to_session: str) -> list[InterSessionMessage]:
+        """Atomically claim every undelivered message for a recipient."""
+        delivered_at = utc_now()
+        rows = self.db.fetchall(
+            """WITH claimed AS (
+                   UPDATE inter_session_messages
+                   SET delivered_at = %s
+                   WHERE to_session = %s AND delivered_at IS NULL
+                   RETURNING *
+               )
+               SELECT * FROM claimed ORDER BY sent_at, id""",
+            (delivered_at, to_session),
+        )
+        return [InterSessionMessage.from_row(row) for row in rows]
+
+    def delete_delivered_before(self, cutoff: datetime, *, limit: int = 500) -> int:
+        """Delete a bounded batch of delivered messages older than a cutoff."""
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """DELETE FROM inter_session_messages
+                   WHERE id IN (
+                       SELECT id FROM inter_session_messages
+                       WHERE delivered_at < %s
+                       ORDER BY delivered_at ASC, id ASC
+                       LIMIT %s
+                   )""",
+                (to_aware_utc(cutoff), limit),
+            )
+            return cursor.rowcount
+
     def list_messages(
         self,
         session_id: str,
         direction: str = "all",
-        unread_only: bool = False,
         undelivered_only: bool = False,
         message_type: str | None = None,
         limit: int = 50,
@@ -328,7 +318,6 @@ class InterSessionMessageManager:
         Args:
             session_id: Session to query messages for
             direction: "inbox"/"received", "sent", or "all"
-            unread_only: If True, only return messages with read_at IS NULL
             undelivered_only: If True, only return messages with delivered_at IS NULL
             message_type: Filter by message_type (e.g. "message", "command_result")
             limit: Max rows to return (default 50)
@@ -352,8 +341,6 @@ class InterSessionMessageManager:
             conditions.append("(from_session = %s OR to_session = %s)")
             params.extend([session_id, session_id])
 
-        if unread_only:
-            conditions.append("read_at IS NULL")
         if undelivered_only:
             conditions.append("delivered_at IS NULL")
         if message_type is not None:
@@ -370,11 +357,12 @@ class InterSessionMessageManager:
         rows = self.db.fetchall(query, tuple(params))
         return [InterSessionMessage.from_row(row) for row in rows]
 
-    def mark_delivered(self, message_id: str) -> InterSessionMessage:
+    def mark_delivered(self, message_id: str, to_session: str) -> InterSessionMessage:
         """Mark a message as delivered.
 
         Args:
             message_id: The message ID to mark as delivered
+            to_session: ID of the receiving session
 
         Returns:
             The updated InterSessionMessage
@@ -384,12 +372,15 @@ class InterSessionMessageManager:
         """
         delivered_at = utc_now()
 
-        self.db.execute(
-            "UPDATE inter_session_messages SET delivered_at = %s WHERE id = %s",
-            (delivered_at, message_id),
+        row = self.db.fetchone(
+            """UPDATE inter_session_messages
+               SET delivered_at = %s
+               WHERE id = %s AND to_session = %s AND delivered_at IS NULL
+               RETURNING *""",
+            (delivered_at, message_id, to_session),
         )
-
-        message = self.get_message(message_id)
-        if not message:
-            raise ValueError(f"Message not found: {message_id}")
-        return message
+        if not row:
+            raise ValueError(
+                f"Undelivered message not found for recipient {to_session}: {message_id}"
+            )
+        return InterSessionMessage.from_row(row)

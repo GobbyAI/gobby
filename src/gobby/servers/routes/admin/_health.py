@@ -104,6 +104,17 @@ def _unavailable_falkordb_memory_status() -> dict[str, Any]:
     }
 
 
+def _get_degraded_services(server: "HTTPServer") -> list[str]:
+    """Return runner initialization degradations in stable display order."""
+    runner = server.get_runner()
+    if runner is None:
+        return []
+    degraded_services = getattr(runner, "degraded_services", None)
+    if not isinstance(degraded_services, (set, list, tuple)):
+        return []
+    return sorted(str(service_name) for service_name in degraded_services)
+
+
 async def _get_falkordb_memory_status(server: "HTTPServer") -> dict[str, Any]:
     """Collect the FalkorDB status payload for the admin memory section."""
     try:
@@ -142,8 +153,10 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
     async def health_check() -> dict[str, Any]:
         """Lightweight health check including local hook-runtime compatibility."""
         hook_runtime = read_ghook_runtime_diagnostic()
+        degraded_services = _get_degraded_services(server)
         return {
-            "status": "degraded" if hook_runtime.is_degraded else "ok",
+            "status": "degraded" if hook_runtime.is_degraded or degraded_services else "ok",
+            "degraded_services": degraded_services,
             "hook_runtime": hook_runtime.to_dict(),
         }
 
@@ -173,6 +186,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
         """
         start_time = time.perf_counter()
         hook_runtime = read_ghook_runtime_diagnostic()
+        degraded_services = _get_degraded_services(server)
 
         # Get server uptime
         uptime_seconds = None
@@ -511,8 +525,11 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
 
         payload: dict[str, Any] = {
             "status": (
-                "healthy" if server._running and not hook_runtime.is_degraded else "degraded"
+                "healthy"
+                if server._running and not hook_runtime.is_degraded and not degraded_services
+                else "degraded"
             ),
+            "degraded_services": degraded_services,
             "dev_mode": getattr(server.services, "dev_mode", False),
             "project_id": getattr(server.services, "project_id", None),
             "server": {

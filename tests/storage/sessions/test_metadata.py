@@ -643,6 +643,18 @@ class TestSessionManagerMetadata:
         assert revisions[0]["summary_markdown"] == "# Summary\nThis is a test."
         assert revisions[0]["metadata_json"] == {"source": "update_summary"}
 
+        cleared = session_manager.update_summary(
+            session.id,
+            summary_path=None,
+            summary_markdown=None,
+        )
+
+        assert cleared is not None
+        assert cleared.summary_path is None
+        assert cleared.summary_markdown is None
+        assert cleared.summary_revision_id is None
+        assert cleared.summary_generation_mode is None
+
     def test_persist_summary_state_updates_revision_and_session_atomically(
         self,
         session_manager: SessionManager,

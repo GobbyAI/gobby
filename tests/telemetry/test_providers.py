@@ -8,6 +8,7 @@ import pytest
 from opentelemetry.sdk._logs import LoggerProvider
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.trace import TracerProvider
+from prometheus_client import generate_latest
 
 import gobby.telemetry.providers as providers
 from gobby.telemetry.config import TelemetrySettings
@@ -27,8 +28,13 @@ def cleanup_providers() -> None:
     shutdown_providers()
 
 
-def test_get_tracer_provider() -> None:
+def test_get_tracer_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test TracerProvider creation and caching."""
+    monkeypatch.setattr(
+        providers,
+        "create_metric_readers",
+        MagicMock(side_effect=AssertionError("tracer provider created metric readers")),
+    )
     config = TelemetrySettings(service_name="test-trace", traces_enabled=True)
     provider1 = get_tracer_provider(config)
     assert isinstance(provider1, TracerProvider)
@@ -62,8 +68,16 @@ def test_add_span_storage_exporter_is_idempotent(monkeypatch: pytest.MonkeyPatch
     assert providers._SPAN_STORAGE_EXPORTER_REGISTERED is False
 
 
-def test_get_meter_provider() -> None:
+def test_get_meter_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """Test MeterProvider creation and caching."""
+    monkeypatch.setattr(
+        providers,
+        "create_span_exporters",
+        MagicMock(side_effect=AssertionError("meter provider created span exporters")),
+    )
     config = TelemetrySettings(service_name="test-metrics", metrics_enabled=True)
     provider1 = get_meter_provider(config)
     assert isinstance(provider1, MeterProvider)
@@ -72,6 +86,9 @@ def test_get_meter_provider() -> None:
 
     provider2 = get_meter_provider(config)
     assert provider1 is provider2
+
+    generate_latest()
+    assert "Cannot call collect on a MetricReader" not in caplog.text
 
 
 def test_get_logger_provider() -> None:

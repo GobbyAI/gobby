@@ -23,6 +23,9 @@ _SESSION_MANAGER_PATCH = "gobby.sessions.lifecycle.SessionManager"
 DROID_FIXTURE_DIR = Path(__file__).parent / "transcripts" / "fixtures" / "droid"
 DROID_FIXTURE_JSONL = DROID_FIXTURE_DIR / "dbf95187-5fa4-43a0-b207-8c24f412baf7.jsonl"
 DROID_FIXTURE_SETTINGS = DROID_FIXTURE_DIR / "dbf95187-5fa4-43a0-b207-8c24f412baf7.settings.json"
+QWEN_FIXTURE_JSON = (
+    Path(__file__).parent.parent / "fixtures" / "transcripts" / "qwen" / "session.json"
+)
 
 
 class EmptyTokenEventStore:
@@ -254,6 +257,65 @@ class TestSessionLifecycleManager:
             manager.session_manager.mark_transcript_processed.assert_called_once_with("s1")
 
     @pytest.mark.asyncio
+    async def test_digestless_crash_uses_refreshed_turn_count(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
+        """Parsed transcript stats decide whether a crash session needs artifacts."""
+        from gobby.sessions.transcripts.base import ParsedMessage
+
+        transcript_path = tmp_path / "transcript.jsonl"
+        transcript_path.write_text('{"type": "message"}\n')
+
+        session = MagicMock(spec=Session)
+        session.id = "s1"
+        session.transcript_path = str(transcript_path)
+        session.external_id = "ext-s1"
+        session.agent_depth = 0
+        session.source = "claude"
+        session.digest_markdown = None
+        session.turn_count = 0
+        session.summary_markdown = "valid summary"
+        session.project_id = None
+        session.context_window = None
+        session.model = None
+        manager.session_manager.get_pending_transcript_sessions.return_value = [session]
+        manager.session_manager.get.return_value = session
+        manager.llm_service = MagicMock()
+
+        messages = []
+        for content in ("First", "Second", "Third"):
+            message = MagicMock(spec=ParsedMessage)
+            message.role = "assistant"
+            message.content_type = "text"
+            message.content = content
+            message.tool_name = None
+            message.model = None
+            message.usage = None
+            messages.append(message)
+
+        def update_stats(_session_id: str, **stats: Any) -> None:
+            session.turn_count = stats["turn_count"]
+
+        manager.session_manager.update_stats.side_effect = update_stats
+
+        with (
+            patch("gobby.sessions.lifecycle.ClaudeTranscriptParser") as mock_parser,
+            patch.object(
+                manager, "_generate_artifacts_if_needed", new_callable=AsyncMock
+            ) as mock_generate,
+            patch("gobby.sessions.lifecycle.rebuild_and_persist_index"),
+            patch("gobby.sessions.lifecycle.backup_transcript", return_value=None),
+            patch("gobby.sessions.lifecycle.is_summary_markdown_valid", return_value=True),
+        ):
+            mock_parser.return_value.parse_lines.return_value = messages
+
+            processed = await manager._process_pending_transcripts()
+
+        manager.session_manager.update_stats.assert_called_once()
+        mock_generate.assert_awaited_once_with("s1")
+        assert processed == 1
+
+    @pytest.mark.asyncio
     async def test_process_pending_transcripts_skips_subagent_sessions(self, tmp_path, manager):
         """Subagent sessions (agent_depth > 0) skip memory extraction and summary generation."""
         session = MagicMock(spec=Session)
@@ -449,10 +511,22 @@ class TestSessionLifecycleManager:
 
         # s1 has no summary (will be deferred), s2 has summary (will be processed)
         s1_refreshed = MagicMock()
+        s1_refreshed.turn_count = 3
         s1_refreshed.summary_markdown = None
         s2_refreshed = MagicMock()
-        s2_refreshed.summary_markdown = "summary content"
-        manager.session_manager.get.side_effect = [s1_refreshed, s2_refreshed]
+        s2_refreshed.turn_count = 3
+        s2_refreshed.summary_markdown = (
+            "## Current State\n\n"
+            "Transcript processing completed and produced a substantive handoff summary for the "
+            "next session.\n\n"
+            "## Next Steps\n\nContinue processing the remaining pending sessions."
+        )
+        manager.session_manager.get.side_effect = [
+            s1_refreshed,
+            s1_refreshed,
+            s2_refreshed,
+            s2_refreshed,
+        ]
 
         # Mock helper methods to isolate loop logic
         with (
@@ -491,6 +565,7 @@ class TestSessionLifecycleManager:
         manager.llm_service = MagicMock()
 
         refreshed = MagicMock()
+        refreshed.turn_count = 3
         refreshed.summary_markdown = "valid summary"
         manager.session_manager.get.return_value = refreshed
 
@@ -528,6 +603,7 @@ class TestSessionLifecycleManager:
         manager.llm_service = MagicMock()
 
         refreshed = MagicMock()
+        refreshed.turn_count = 3
         refreshed.summary_markdown = "valid summary"
         manager.session_manager.get.return_value = refreshed
 
@@ -566,6 +642,7 @@ class TestSessionLifecycleManager:
         manager.llm_service = MagicMock()
 
         refreshed = MagicMock()
+        refreshed.turn_count = 3
         refreshed.summary_markdown = None
         manager.session_manager.get.return_value = refreshed
 
@@ -1237,14 +1314,14 @@ class TestProcessSessionTranscriptParsers:
         assert event.origin == "transcript"
         assert event.model == "claude-3-7-sonnet-latest"
         assert event.input_tokens == 22571
-        assert event.output_tokens == 384
+        assert event.output_tokens == 512
         assert event.cache_creation_tokens == 0
         assert event.cache_read_tokens == 26112
         assert event.metadata == {"content_type": "tool_use"}
         manager.session_manager.update_usage.assert_called_once_with(
             session_id="s1",
             input_tokens=22571,
-            output_tokens=384,
+            output_tokens=512,
             cache_creation_tokens=0,
             cache_read_tokens=26112,
             context_window=None,
@@ -1264,7 +1341,7 @@ class TestProcessSessionTranscriptParsers:
         adjustment = index.post_pass_adjustments[0]
         assert adjustment.field == "usage"
         assert adjustment.value.input_tokens == 22571
-        assert adjustment.value.output_tokens == 384
+        assert adjustment.value.output_tokens == 512
 
     @pytest.mark.asyncio
     async def test_codex_backfill_uses_latest_context_window_for_session_usage(
@@ -1303,13 +1380,13 @@ class TestProcessSessionTranscriptParsers:
 
         event = manager.token_event_store.record.call_args.args[0]
         assert event.input_tokens == 11392
-        assert event.output_tokens == 498
+        assert event.output_tokens == 342
         assert event.cache_read_tokens == 93568
         assert event.context_window == 258400
         manager.session_manager.update_usage.assert_called_once_with(
             session_id="s1",
             input_tokens=11392,
-            output_tokens=498,
+            output_tokens=342,
             cache_creation_tokens=0,
             cache_read_tokens=93568,
             context_window=258400,
@@ -1398,6 +1475,49 @@ class TestProcessSessionTranscriptJsonDispatch:
         await manager._process_session_transcript("s1", str(transcript_path))
         manager.session_manager.update_usage.assert_not_called()
         assert manager.session_manager.update_usage.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_qwen_backfill_records_native_token_usage(self, tmp_path, manager):
+        transcript_path = tmp_path / "qwen-session.json"
+        transcript_path.write_text(QWEN_FIXTURE_JSON.read_text(encoding="utf-8"), encoding="utf-8")
+
+        session = MagicMock()
+        session.source = "qwen"
+        session.project_id = "project-id"
+        session.context_window = None
+        session.model = "qwen3-coder"
+        manager.session_manager.get.return_value = session
+
+        zero_totals = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_creation_tokens": 0,
+            "cache_read_tokens": 0,
+        }
+        manager.token_event_store = MagicMock()
+        manager.token_event_store.get_session_totals.side_effect = [
+            dict(zero_totals),
+            dict(zero_totals),
+        ]
+        manager.token_event_store.record.return_value = True
+
+        await manager._process_session_transcript("s1", str(transcript_path))
+
+        event = manager.token_event_store.record.call_args.args[0]
+        assert event.source == "qwen"
+        assert event.origin == "transcript"
+        assert event.input_tokens == 750
+        assert event.output_tokens == 100
+        assert event.cache_read_tokens == 250
+        manager.session_manager.update_usage.assert_called_once_with(
+            session_id="s1",
+            input_tokens=750,
+            output_tokens=100,
+            cache_creation_tokens=0,
+            cache_read_tokens=250,
+            context_window=None,
+            model="qwen3-coder",
+        )
 
     @pytest.mark.asyncio
     async def test_json_messages_aggregate_tokens(self, tmp_path, manager):

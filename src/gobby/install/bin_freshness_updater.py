@@ -5,12 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import os
-import shutil
-import tarfile
 import tempfile
-import zipfile
 from datetime import UTC, datetime
-from io import BytesIO
 from pathlib import Path
 
 from gobby.config.bin_freshness import BinFreshnessConfig
@@ -31,6 +27,7 @@ from gobby.install.bin_freshness_models import (
     is_at_least_version,
     managed_bin_specs,
 )
+from gobby.install.bin_freshness_promotion import stage_and_promote_release_binary
 from gobby.storage.bin_update_state import BinUpdateRecord, BinUpdateStateStore, BinUpdateStatus
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.native_bin import native_bin_dir
@@ -127,10 +124,10 @@ def update_managed_bin(
                 return _record_state(
                     store,
                     inspection=inspection,
-                    latest_version=inspection.installed_version,
+                    latest_version=None,
                     target=target,
                     status="up_to_date",
-                    error=inspection.sidecar_error,
+                    error=str(exc),
                     source_url=None,
                 )
             return _record_state(
@@ -147,10 +144,10 @@ def update_managed_bin(
                 return _record_state(
                     store,
                     inspection=inspection,
-                    latest_version=inspection.installed_version,
+                    latest_version=None,
                     target=target,
                     status="up_to_date",
-                    error=inspection.sidecar_error,
+                    error=str(exc),
                     source_url=None,
                 )
             return _record_state(
@@ -231,8 +228,6 @@ def update_managed_bin(
 
 
 def _is_up_to_date(inspection: BinInspection, asset: ReleaseAsset) -> bool:
-    if inspection.floor_drift:
-        return False
     comparison = compare_versions(inspection.installed_version, asset.version)
     return comparison is not None and comparison >= 0
 
@@ -248,58 +243,15 @@ def _stage_and_promote(
     bin_dir: Path,
 ) -> None:
     archive_bytes = client.download_asset(asset)
-    staging_dir = Path(tempfile.mkdtemp(prefix=f".{spec.name}-staging-", dir=str(bin_dir)))
-    try:
-        staged_binary = _extract_binary_to_staging(
-            archive_bytes,
-            spec=spec,
-            asset=asset,
-            staging_dir=staging_dir,
-        )
-        os.replace(staged_binary, bin_dir / spec.binary_name)
-        _write_atomic_text(bin_dir / spec.stamp_name, f"{asset.version}\n", mode=0o644)
-        _write_install_sidecar(spec, asset, bin_dir)
-    finally:
-        shutil.rmtree(staging_dir, ignore_errors=True)
-
-
-def _extract_binary_to_staging(
-    archive_bytes: bytes,
-    *,
-    spec: ManagedBinSpec,
-    asset: ReleaseAsset,
-    staging_dir: Path,
-) -> Path:
-    archive_ext = release_archive_extension(asset.target)
-    dest = staging_dir / spec.binary_name
-    try:
-        if archive_ext == "zip":
-            with zipfile.ZipFile(BytesIO(archive_bytes)) as archive:
-                for member_name in archive.namelist():
-                    if (
-                        member_name.endswith(f"/{spec.binary_name}")
-                        or member_name == spec.binary_name
-                    ):
-                        with archive.open(member_name) as fileobj:
-                            dest.write_bytes(fileobj.read())
-                        dest.chmod(0o755)
-                        return dest
-        else:
-            with tarfile.open(fileobj=BytesIO(archive_bytes), mode="r:gz") as archive:
-                for member in archive.getmembers():
-                    if (
-                        member.name.endswith(f"/{spec.binary_name}")
-                        or member.name == spec.binary_name
-                    ):
-                        extracted_file = archive.extractfile(member)
-                        if extracted_file is None:
-                            continue
-                        dest.write_bytes(extracted_file.read())
-                        dest.chmod(0o755)
-                        return dest
-    except (OSError, tarfile.TarError, zipfile.BadZipFile) as exc:
-        raise SourceUnavailableError(f"{asset.asset_name}: extraction failed: {exc}") from exc
-    raise SourceUnavailableError(f"{asset.asset_name}: binary {spec.binary_name} not found")
+    stage_and_promote_release_binary(
+        archive_bytes,
+        archive_ext=release_archive_extension(asset.target),
+        binary_name=spec.binary_name,
+        bin_dir=bin_dir,
+        asset_name=asset.asset_name,
+    )
+    _write_atomic_text(bin_dir / spec.stamp_name, f"{asset.version}\n", mode=0o644)
+    _write_install_sidecar(spec, asset, bin_dir)
 
 
 def _write_install_sidecar(spec: ManagedBinSpec, asset: ReleaseAsset, bin_dir: Path) -> None:

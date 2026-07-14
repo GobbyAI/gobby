@@ -71,7 +71,7 @@ def test_parse_fixture_expands_blocks_and_loads_sidecar_usage() -> None:
     assert messages[1].usage is None
     assert messages[4].usage is not None
     assert messages[4].usage.input_tokens == 22571
-    assert messages[4].usage.output_tokens == 384
+    assert messages[4].usage.output_tokens == 512
     assert messages[4].usage.cache_creation_tokens == 0
     assert messages[4].usage.cache_read_tokens == 26112
     assert not hasattr(messages[4].usage, "thinking_tokens")
@@ -144,6 +144,70 @@ def test_missing_sidecar_is_retried_when_created_later(tmp_path: Path) -> None:
     assert assistant_records[-1].usage is not None
     assert assistant_records[-1].usage.input_tokens == 10
     assert assistant_records[-1].usage.cache_read_tokens == 7
+
+
+def test_null_sidecar_usage_is_retried_and_emits_deltas(tmp_path: Path) -> None:
+    transcript_path = tmp_path / "session.jsonl"
+    sidecar_path = transcript_path.with_suffix(".settings.json")
+    parser = DroidTranscriptParser(transcript_path=transcript_path)
+    sidecar_path.write_text(
+        json.dumps({"model": "claude-3-7-sonnet-latest", "tokenUsage": None}),
+        encoding="utf-8",
+    )
+
+    initial_records = parser.parse_lines(_fixture_lines(), start_index=0)
+    sidecar_path.write_text(
+        json.dumps(
+            {
+                "model": "claude-3-7-sonnet-latest",
+                "tokenUsage": {
+                    "inputTokens": 10,
+                    "outputTokens": 2,
+                    "thinkingTokens": 3,
+                    "cacheCreationTokens": 1,
+                    "cacheReadTokens": 7,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    first_usage_records = parser.parse_lines(_fixture_lines(), start_index=7)
+    sidecar_path.write_text(
+        json.dumps(
+            {
+                "model": "claude-3-7-sonnet-latest",
+                "tokenUsage": {
+                    "inputTokens": 14,
+                    "outputTokens": 5,
+                    "thinkingTokens": 5,
+                    "cacheCreationTokens": 1,
+                    "cacheReadTokens": 9,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    delta_records = parser.parse_lines(_fixture_lines(), start_index=14)
+
+    assert all(
+        record.usage is None for record in initial_records if isinstance(record, ParsedMessage)
+    )
+    first_usage = next(
+        record.usage
+        for record in reversed(first_usage_records)
+        if isinstance(record, ParsedMessage) and record.usage is not None
+    )
+    assert first_usage.input_tokens == 10
+    assert first_usage.output_tokens == 5
+    delta = next(
+        record.usage
+        for record in reversed(delta_records)
+        if isinstance(record, ParsedMessage) and record.usage is not None
+    )
+    assert delta.input_tokens == 4
+    assert delta.output_tokens == 5
+    assert delta.cache_creation_tokens == 0
+    assert delta.cache_read_tokens == 2
 
 
 def test_parse_line_returns_first_expanded_block() -> None:

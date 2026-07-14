@@ -3,6 +3,7 @@
 Handles message listing, transcript status/download, and transcript restoration.
 """
 
+import asyncio
 import logging
 import os
 import time
@@ -216,7 +217,7 @@ def register_message_routes(
         """Restore a transcript from archive to disk for CLI resume."""
         try:
             session_manager = get_session_manager()
-            session: Session | None = session_manager.get(session_id)
+            session: Session | None = await server.run_db(session_manager.get, session_id)
             if not session:
                 raise HTTPException(status_code=404, detail="Session not found")
             external_id = session.external_id
@@ -226,13 +227,17 @@ def register_message_routes(
                     status_code=404,
                     detail="Session missing external_id/transcript_path",
                 )
-            restored = restore_transcript(external_id, transcript_path)
+            restored = await asyncio.to_thread(
+                restore_transcript,
+                external_id,
+                transcript_path,
+            )
             if not restored:
                 raise HTTPException(
                     status_code=404,
                     detail="No transcript archive found or original still exists",
                 )
-            size = os.path.getsize(transcript_path)
+            size = await asyncio.to_thread(os.path.getsize, transcript_path)
             return {
                 "status": "restored",
                 "session_id": session_id,

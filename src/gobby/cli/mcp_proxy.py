@@ -20,7 +20,7 @@ from typing import Any, cast
 import click
 
 from gobby.cli.utils_config import get_daemon_client as _shared_daemon_client
-from gobby.utils.daemon_client import DaemonClient
+from gobby.utils.daemon_client import DaemonClient, DaemonHealthError
 from gobby.utils.json_helpers import json_dumps
 
 
@@ -35,7 +35,7 @@ def check_daemon_running(client: DaemonClient) -> bool:
     """Check if daemon is running and print error if not."""
     is_healthy, error = client.check_health()
     if not is_healthy:
-        if error is None:
+        if error is DaemonHealthError.NOT_RUNNING:
             click.echo("Error: Gobby daemon is not running. Start it with: gobby start", err=True)
         else:
             click.echo(f"Error: Cannot connect to daemon: {error}", err=True)

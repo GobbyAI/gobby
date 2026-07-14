@@ -1,12 +1,14 @@
 """Comprehensive tests for the project_context utilities."""
 
 import json
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.utils.project_context import (
+    IsolationProjectJsonError,
     _build_and_set_project_context,
     _current_project_context,
     ensure_project_json_for_isolation,
@@ -140,6 +142,11 @@ class TestFindProjectRoot:
 
 class TestGetProjectContext:
     """Tests for get_project_context function."""
+
+    @pytest.fixture(autouse=True)
+    def clear_project_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Keep filesystem-resolution tests isolated from the agent environment."""
+        monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
 
     def test_get_project_context_success(self, tmp_path: Path) -> None:
         """Test getting project context with valid project.json."""
@@ -634,6 +641,11 @@ class TestContextVarBehavior:
 class TestEdgeCases:
     """Tests for edge cases and error handling."""
 
+    @pytest.fixture(autouse=True)
+    def clear_project_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Keep filesystem-resolution tests isolated from the agent environment."""
+        monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
+
     def test_project_json_is_directory(self, tmp_path: Path) -> None:
         """Test handling when project.json is a directory instead of file."""
         gobby_dir = tmp_path / ".gobby"
@@ -778,27 +790,59 @@ class TestEnsureProjectJsonForIsolation:
 
         assert not (target / ".gobby" / "project.json").exists()
 
-    def test_handles_errors_gracefully(self, tmp_path: Path) -> None:
-        """Filesystem error during write — logs warning, doesn't raise."""
+    def test_missing_source_id_raises_chained_error(self, tmp_path: Path) -> None:
+        """A malformed source project signals the isolation setup failure."""
+        repo = tmp_path / "repo"
+        (repo / ".gobby").mkdir(parents=True)
+        (repo / ".gobby" / "project.json").write_text('{"name": "missing-id"}')
+
+        target = tmp_path / "worktree"
+        target.mkdir()
+
+        with pytest.raises(IsolationProjectJsonError) as exc_info:
+            ensure_project_json_for_isolation(repo, target)
+
+        assert isinstance(exc_info.value.__cause__, KeyError)
+        assert not (target / ".gobby" / "project.json").exists()
+
+    def test_replaces_target_atomically(self, tmp_path: Path) -> None:
+        """Replacement uses a temporary file in the target directory."""
         repo = tmp_path / "repo"
         (repo / ".gobby").mkdir(parents=True)
         (repo / ".gobby" / "project.json").write_text('{"id": "proj-1"}')
-
-        # Use a path that can't be written to
         target = tmp_path / "worktree"
-        target.mkdir()
-        gobby_dir = target / ".gobby"
-        gobby_dir.mkdir()
-        # Make directory read-only to force write failure
-        gobby_dir.chmod(0o444)
+        (target / ".gobby").mkdir(parents=True)
+        target_project_json = target / ".gobby" / "project.json"
+        target_project_json.write_text('{"id": "old"}')
 
-        try:
-            result = ensure_project_json_for_isolation(repo, target)
-        finally:
-            gobby_dir.chmod(0o755)
+        with patch("gobby.utils.project_context.os.replace", wraps=os.replace) as mock_replace:
+            ensure_project_json_for_isolation(repo, target)
 
-        assert result is None
-        assert not (target / ".gobby" / "project.json").exists()
+        temp_path, replaced_path = mock_replace.call_args.args
+        assert Path(temp_path).parent == target_project_json.parent
+        assert replaced_path == target_project_json
+        assert not Path(temp_path).exists()
+
+    def test_replace_failure_preserves_existing_target(self, tmp_path: Path) -> None:
+        """A failed replace leaves existing metadata intact and signals failure."""
+        repo = tmp_path / "repo"
+        (repo / ".gobby").mkdir(parents=True)
+        (repo / ".gobby" / "project.json").write_text('{"id": "proj-1"}')
+        target = tmp_path / "worktree"
+        (target / ".gobby").mkdir(parents=True)
+        target_project_json = target / ".gobby" / "project.json"
+        original = b'{"id": "old"}'
+        target_project_json.write_bytes(original)
+
+        with (
+            patch("gobby.utils.project_context.os.replace", side_effect=OSError("replace failed")),
+            pytest.raises(IsolationProjectJsonError) as exc_info,
+        ):
+            ensure_project_json_for_isolation(repo, target)
+
+        assert isinstance(exc_info.value.__cause__, OSError)
+        assert target_project_json.read_bytes() == original
+        assert list(target_project_json.parent.glob(".project.json.*")) == []
 
 
 class TestBuildAndSetProjectContext:

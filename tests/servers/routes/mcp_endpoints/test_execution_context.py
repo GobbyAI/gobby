@@ -17,7 +17,7 @@ import pytest
 from gobby.servers.routes.mcp.endpoints.execution import _set_context_for_request
 from gobby.utils.session_context import SeededContextTokens
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 SESSION_UUID = str(uuid.uuid4())
 PROJECT_ID = str(uuid.uuid4())

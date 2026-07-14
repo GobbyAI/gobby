@@ -13,7 +13,11 @@ import shutil
 import subprocess  # nosec B404 # needed for version detection
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
+import psycopg
+
+from gobby.config.bootstrap import BootstrapConfigError
 from gobby.install.version_probe import probe_native_bin_version
 from gobby.utils.native_bin import local_native_bin_path, resolve_native_bin
 
@@ -330,7 +334,8 @@ def get_lmstudio_info() -> dict[str, Any] | None:
     # Check if running based on output or fallback
     running = False
     if output:
-        running = "running" in output.lower()
+        normalized_output = output.lower()
+        running = "running" in normalized_output and "not running" not in normalized_output
     else:
         # Try with stderr too
         try:
@@ -341,9 +346,11 @@ def get_lmstudio_info() -> dict[str, Any] | None:
                 timeout=5,
             )
             combined = (result.stdout + result.stderr).lower()
-            running = result.returncode == 0 and "running" in combined
-        except Exception:
-            pass
+            running = (
+                result.returncode == 0 and "running" in combined and "not running" not in combined
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            logger.debug("Failed to determine LM Studio server status", exc_info=True)
     return {"running": running}
 
 
@@ -377,6 +384,20 @@ def _infer_embedding_provider_from_api_base(api_base: Any) -> str | None:
     return None
 
 
+def _is_openai_cloud_api_base(api_base: Any) -> bool:
+    """Return whether an API base targets OpenAI or Azure OpenAI cloud."""
+    normalized_api_base = _strip_config_string(api_base)
+    if not isinstance(normalized_api_base, str):
+        return False
+    hostname = urlparse(normalized_api_base).hostname
+    if hostname is None:
+        return False
+    hostname = hostname.lower()
+    return hostname == "api.openai.com" or hostname.endswith(
+        (".openai.azure.com", ".services.ai.azure.com")
+    )
+
+
 def _infer_from_config_or_none(*, dim: Any, api_key: Any, model: Any, api_base: Any) -> str | None:
     """Infer provider from configured embedding values, or explicit disabled state."""
     normalized_dim = _strip_config_string(dim)
@@ -391,7 +412,11 @@ def _infer_from_config_or_none(*, dim: Any, api_key: Any, model: Any, api_base: 
             pass
     if dim_int == 0:
         return "none"
-    if normalized_api_base in (None, "") and normalized_api_key:
+    if normalized_api_key:
+        if _is_openai_cloud_api_base(normalized_api_base):
+            return "openai"
+        if normalized_api_base not in (None, ""):
+            return None
         from gobby.ai.embeddings import is_openai_cloud_embedding_model
 
         if isinstance(normalized_model, str) and is_openai_cloud_embedding_model(normalized_model):
@@ -399,30 +424,7 @@ def _infer_from_config_or_none(*, dim: Any, api_key: Any, model: Any, api_base: 
     return None
 
 
-def _is_embedding_config_storage_error(exc: Exception) -> bool:
-    exc_name = type(exc).__name__.lower()
-    if any(
-        name_part in exc_name
-        for name_part in ("database", "operationalerror", "programmingerror", "undefinedtable")
-    ):
-        return True
-    message = str(exc).lower()
-    return any(
-        marker in message
-        for marker in (
-            "runtime hub",
-            "hub database",
-            "database",
-            "config_store",
-            "no such table",
-            "does not exist",
-            "relation",
-            "schema",
-        )
-    )
-
-
-def get_configured_embedding_provider() -> str | None:
+def get_configured_embedding_provider(*, raise_storage_errors: bool = False) -> str | None:
     """Get the configured embeddings provider from persisted config."""
     try:
         from gobby.config.embedding_keys import (
@@ -452,12 +454,12 @@ def get_configured_embedding_provider() -> str | None:
                 return provider
 
             return inferred_from_config
-    except Exception as exc:
-        if not _is_embedding_config_storage_error(exc):
-            raise
+    except (psycopg.Error, BootstrapConfigError, RuntimeError, OSError):
         logger.debug(
             "Failed to resolve configured embeddings provider from persisted config", exc_info=True
         )
+        if raise_storage_errors:
+            raise
     return None
 
 
@@ -524,6 +526,14 @@ def collect_all_deps() -> dict[str, Any]:
         path = local_native_bin_path(name)
         return str(path) if path.exists() else None
 
+    try:
+        embeddings_provider: str | dict[str, str] | None = get_configured_embedding_provider(
+            raise_storage_errors=True
+        )
+    except Exception as exc:
+        logger.debug("Failed to probe embeddings provider for status", exc_info=True)
+        embeddings_provider = {"status": "degraded", "error": type(exc).__name__}
+
     return {
         "gobby": {
             "gobby": get_gobby_version(),
@@ -550,7 +560,7 @@ def collect_all_deps() -> dict[str, Any]:
             "git": get_git_version(),
             "node": get_node_version(),
             "tailscale": get_tailscale_info(),
-            "embeddings_provider": get_configured_embedding_provider(),
+            "embeddings_provider": embeddings_provider,
             "ollama": get_ollama_info(),
             "lmstudio": get_lmstudio_info(),
         },

@@ -63,7 +63,8 @@ def render_transcript(
         observation_tracker = ObservationTracker()
 
     state = RenderState()
-    rendered_messages = []
+    rendered_messages: list[RenderedMessage] = []
+    rendered_message_objects: set[int] = set()
 
     for msg in parsed_messages:
         completed, state = render_incremental(
@@ -74,9 +75,12 @@ def render_transcript(
             source=source or cli_name,
             observation_tracker=observation_tracker,
         )
-        rendered_messages.extend(completed)
+        for message in completed:
+            if id(message) not in rendered_message_objects:
+                rendered_messages.append(message)
+                rendered_message_objects.add(id(message))
 
-    if state.current_message:
+    if state.current_message and id(state.current_message) not in rendered_message_objects:
         rendered_messages.append(state.current_message)
 
     return rendered_messages
@@ -102,7 +106,14 @@ def render_incremental(
     Returns:
         Tuple of (newly completed messages, updated state).
     """
-    completed_messages = []
+    completed_messages: list[RenderedMessage] = []
+    completed_message_ids: set[str] = set()
+
+    def append_completed(message: RenderedMessage) -> None:
+        if message.id not in completed_message_ids:
+            completed_messages.append(message)
+            completed_message_ids.add(message.id)
+
     state = pending_state
     if observation_tracker is None:
         observation_tracker = ObservationTracker()
@@ -117,7 +128,7 @@ def render_incremental(
                 msg,
                 session_id=session_id,
                 source=msg.source or source,
-                block_type=(msg.content or "<missing>"),
+                block_type=(msg.content if isinstance(msg.content, str) else "<missing>"),
             )
             continue
         if msg.content_type in _INTERNAL_CONTENT_TYPES:
@@ -129,6 +140,7 @@ def render_incremental(
         # 2. Tool result pairing (can bypass turn logic if paired)
         is_tool_result = msg.content_type in ["tool_result", "mcp_tool_result"]
         if is_tool_result and msg.tool_use_id in state.pending_tool_calls:
+            owner = state.tool_call_messages.get(msg.tool_use_id)
             _process_message_block(
                 msg,
                 state,
@@ -137,6 +149,8 @@ def render_incremental(
                 source=source,
                 observation_tracker=observation_tracker,
             )
+            if owner is not None and owner is not state.current_message:
+                append_completed(owner)
             continue
 
         # 3. Detect turn boundary
@@ -149,7 +163,7 @@ def render_incremental(
             is_new_turn = True
 
         if is_new_turn and state.current_message:
-            completed_messages.append(state.current_message)
+            append_completed(state.current_message)
             state.current_message = None
             state.seen_content.clear()
 

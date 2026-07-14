@@ -10,7 +10,9 @@ from typing import Any
 
 import pytest
 
+from gobby.sessions.message_stats import compute_message_stats
 from gobby.sessions.transcript_normalization import normalize_transcript_records
+from gobby.sessions.transcript_parsing import _get_parser
 from gobby.sessions.transcript_renderer import render_transcript
 from gobby.sessions.transcripts import PARSER_REGISTRY, get_parser
 from gobby.sessions.transcripts.base import (
@@ -152,6 +154,21 @@ class TestClaudeTranscriptParser:
         assert msg.content_type == "text"
         assert msg.index == 0
 
+    def test_parse_line_uses_current_time_for_non_string_timestamp(self, parser) -> None:
+        before = datetime.now(UTC)
+        line = json.dumps(
+            {
+                "type": "user",
+                "message": {"content": "Hello world"},
+                "timestamp": {"malformed": True},
+            }
+        )
+
+        msg = parser.parse_line(line, 0)
+
+        assert msg is not None
+        assert before <= msg.timestamp <= datetime.now(UTC)
+
     def test_parse_line_assistant_text_blocks(self, parser) -> None:
         line = json.dumps(
             {
@@ -251,7 +268,38 @@ class TestClaudeTranscriptParser:
         assert parser.is_session_boundary(
             {
                 "type": "user",
-                "message": {"content": "blah <command-name>/clear</command-name> blah"},
+                "message": {
+                    "content": (
+                        "<command-name>/clear</command-name>\n"
+                        "<command-message>clear</command-message>"
+                    )
+                },
+            }
+        )
+
+        # Quoted marker without the command-message sibling
+        assert not parser.is_session_boundary(
+            {
+                "type": "user",
+                "message": {"content": "quoted <command-name>/clear</command-name> marker"},
+            }
+        )
+
+        # Tool results may quote the complete command without being a boundary
+        assert not parser.is_session_boundary(
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "content": (
+                                "<command-name>/clear</command-name>\n"
+                                "<command-message>clear</command-message>"
+                            ),
+                        }
+                    ]
+                },
             }
         )
 
@@ -307,7 +355,15 @@ class TestClaudeTranscriptParser:
     def test_extract_turns_since_clear_with_boundary(self, parser) -> None:
         turns = [
             {"type": "user", "message": {"content": "before"}},
-            {"type": "user", "message": {"content": "<command-name>/clear</command-name>"}},
+            {
+                "type": "user",
+                "message": {
+                    "content": (
+                        "<command-name>/clear</command-name>\n"
+                        "<command-message>clear</command-message>"
+                    )
+                },
+            },
             {"type": "user", "message": {"content": "after1"}},
             {"type": "agent", "message": {"content": "after2"}},
         ]
@@ -318,10 +374,23 @@ class TestClaudeTranscriptParser:
 
     def test_extract_turns_since_clear_consecutive(self, parser) -> None:
         turns = [
-            {"type": "user", "message": {"content": "<command-name>/clear</command-name>"}},
             {
                 "type": "user",
-                "message": {"content": "<command-name>/clear</command-name>"},
+                "message": {
+                    "content": (
+                        "<command-name>/clear</command-name>\n"
+                        "<command-message>clear</command-message>"
+                    )
+                },
+            },
+            {
+                "type": "user",
+                "message": {
+                    "content": (
+                        "<command-name>/clear</command-name>\n"
+                        "<command-message>clear</command-message>"
+                    )
+                },
             },  # consecutive
             {"type": "user", "message": {"content": "real start"}},
         ]
@@ -538,8 +607,8 @@ class TestClaudeRecordEnvelopes:
     """Record-level envelope handling: session-metadata records are recognized
     and not surfaced as cards, compaction boundaries are first-classed, and a
     genuinely-unknown record type becomes a non-rendering sentinel
-    (content_type=unmodeled_record) routed to the T2 observation worklist at
-    render time, replacing the parser-error.log stopgap."""
+    (content_type=unmodeled_record) routed to the T2 observation worklist while
+    also being recorded in parser-error.log."""
 
     @pytest.fixture
     def parser(self):
@@ -565,6 +634,54 @@ class TestClaudeRecordEnvelopes:
     )
     def test_known_envelope_records_are_dropped(self, parser, record_type) -> None:
         line = json.dumps({"type": record_type, "foo": "bar", "timestamp": "2024-01-01T12:00:00Z"})
+        assert parser._expand_line(line, 0) == []
+        assert parser.parse_line(line, 0) is None
+
+    def test_queued_command_attachment_emits_user_message(self, parser) -> None:
+        data = {
+            "type": "attachment",
+            "attachment": {
+                "type": "queued_command",
+                "prompt": "I'm going to bed. Just keep the work in Fable please.",
+            },
+            "timestamp": "2024-01-01T12:00:00Z",
+        }
+        line = json.dumps(data)
+
+        messages = parser._expand_line(line, 4)
+        assert len(messages) == 1
+        assert messages[0].role == "user"
+        assert messages[0].content == data["attachment"]["prompt"]
+        assert messages[0].raw_json == data
+
+        message = parser.parse_line(line, 4)
+        assert message is not None
+        assert message.role == "user"
+        assert message.content == data["attachment"]["prompt"]
+
+    def test_queued_command_attachment_is_in_last_messages(self, parser) -> None:
+        turns = [
+            {
+                "type": "attachment",
+                "attachment": {"type": "queued_command", "prompt": "queued instruction"},
+            },
+            {"type": "assistant", "message": {"role": "assistant", "content": "done"}},
+        ]
+
+        assert parser.extract_last_messages(turns, num_pairs=1) == [
+            {"role": "user", "content": "queued instruction"},
+            {"role": "assistant", "content": "done"},
+        ]
+
+    @pytest.mark.parametrize("prompt", [None, "", "   "])
+    def test_empty_queued_command_attachment_is_dropped(self, parser, prompt) -> None:
+        line = json.dumps(
+            {
+                "type": "attachment",
+                "attachment": {"type": "queued_command", "prompt": prompt},
+            }
+        )
+
         assert parser._expand_line(line, 0) == []
         assert parser.parse_line(line, 0) is None
 
@@ -624,12 +741,77 @@ class TestClaudeRecordEnvelopes:
         assert block.content_type == "compaction_summary"
         assert block.content == "Conversation compacted (manual)"
         assert block.tool_use_id == "u1"  # keyed for render dedup
+        assert block.raw_json["compactMetadata"]["preTokens"] == 266101
 
         single = parser.parse_line(line, 0)
         assert single is not None
         assert single.content_type == "compaction_summary"
         assert single.content == "Conversation compacted (manual)"
         assert single.tool_use_id == "u1"
+        assert single.raw_json["compactMetadata"]["preTokens"] == 266101
+
+    @pytest.mark.parametrize("flag", ["isCompactSummary", "isMeta"])
+    def test_synthetic_user_entries_are_dropped(self, parser, flag: str) -> None:
+        line = json.dumps(
+            {
+                "type": "user",
+                flag: True,
+                "message": {"role": "user", "content": "synthetic content"},
+                "timestamp": "2024-01-01T12:00:00Z",
+            }
+        )
+
+        assert parser._expand_line(line, 0) == []
+        assert parser.parse_line(line, 0) is None
+
+    @pytest.mark.parametrize(
+        ("record", "expected_content", "expected_model"),
+        [
+            (
+                {
+                    "type": "system",
+                    "subtype": "api_error",
+                    "error": {"formatted": "429 overloaded"},
+                },
+                "429 overloaded",
+                None,
+            ),
+            (
+                {
+                    "type": "system",
+                    "subtype": "model_refusal_fallback",
+                    "content": "Switching models",
+                    "originalModel": "claude-fable-5",
+                    "fallbackModel": "claude-opus-4-8",
+                },
+                "Switching models",
+                "claude-opus-4-8",
+            ),
+        ],
+    )
+    def test_system_error_and_fallback_records_are_emitted(
+        self,
+        parser,
+        record: dict[str, object],
+        expected_content: str,
+        expected_model: str | None,
+    ) -> None:
+        record["timestamp"] = "2024-01-01T12:00:00Z"
+        line = json.dumps(record)
+
+        expanded = parser._expand_line(line, 0)
+        assert len(expanded) == 1
+        assert expanded[0].role == "system"
+        assert expanded[0].content_type == "text"
+        assert expanded[0].content == expected_content
+        assert expanded[0].model == expected_model
+        assert expanded[0].raw_json["subtype"] == record["subtype"]
+        assert compute_message_stats(expanded)["message_count"] == 1
+
+        single = parser.parse_line(line, 0)
+        assert single is not None
+        assert single.role == "system"
+        assert single.content == expected_content
 
     def test_compact_boundary_without_metadata_uses_default_text(self, parser) -> None:
         line = json.dumps(
@@ -644,10 +826,8 @@ class TestClaudeRecordEnvelopes:
         assert len(msgs) == 1
         assert msgs[0].content == "Conversation compacted"
 
-    def test_unknown_record_type_emits_sentinel_not_logged(self, parser, monkeypatch) -> None:
-        """The genuinely-unknown record becomes a non-rendering sentinel via
-        BOTH _expand_line and parse_line, and is NO LONGER sent to the
-        parser-error.log discovery channel (the T2 worklist replaces it)."""
+    def test_unknown_record_type_emits_sentinel_and_logs(self, parser, monkeypatch) -> None:
+        """Unknown records use both discovery channels and remain non-rendering."""
         calls: list[tuple] = []
         monkeypatch.setattr(
             parser.error_log,
@@ -677,7 +857,8 @@ class TestClaudeRecordEnvelopes:
         assert single.content == "brand-new-envelope"
         assert single.raw_json == data
 
-        assert calls == []  # parser-error.log discovery channel no longer used
+        expected_call = ((0, "probe", "brand-new-envelope", data), {})
+        assert calls == [expected_call, expected_call]
 
     def test_block_level_unknown_content_still_passes_through(self, parser) -> None:
         """Regression guard: record-level changes must not disturb block-level
@@ -762,6 +943,64 @@ class TestClaudeExpandLine:
         assert msgs[0].role == "user"
         assert msgs[0].content == "Hello"
         assert msgs[0].content_type == "text"
+
+    def test_expand_assistant_fallback_block_as_system_record(self, parser) -> None:
+        line = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "model": "claude-opus-4-8",
+                    "content": [
+                        {
+                            "type": "fallback",
+                            "from": {"model": "claude-fable-5"},
+                            "to": {"model": "claude-opus-4-8"},
+                        }
+                    ],
+                },
+                "timestamp": "2024-01-01T12:00:00Z",
+            }
+        )
+
+        expanded = parser._expand_line(line, 0)
+        assert len(expanded) == 1
+        assert expanded[0].role == "system"
+        assert expanded[0].content_type == "text"
+        assert expanded[0].content == "Model fallback: claude-fable-5 -> claude-opus-4-8"
+        assert expanded[0].model == "claude-opus-4-8"
+        assert compute_message_stats(expanded)["message_count"] == 1
+
+        single = parser.parse_line(line, 0)
+        assert single is not None
+        assert single.role == "system"
+        assert single.content == expanded[0].content
+
+    def test_expand_user_image_and_document_blocks(self, parser) -> None:
+        image_source = {"type": "base64", "media_type": "image/png", "data": "abc"}
+        document_source = {"type": "base64", "media_type": "application/pdf", "data": "pdf"}
+        line = json.dumps(
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {"type": "image", "source": image_source},
+                        {"type": "document", "source": document_source, "title": "notes.pdf"},
+                    ]
+                },
+                "timestamp": "2024-01-01T12:00:00Z",
+            }
+        )
+
+        msgs = parser._expand_line(line, 0)
+        rendered = render_transcript(msgs)
+
+        assert [msg.content_type for msg in msgs] == ["image", "document"]
+        assert msgs[0].content == image_source
+        assert msgs[1].content == {**document_source, "name": "notes.pdf"}
+        blocks = [block for message in rendered for block in message.content_blocks]
+        assert [block.type for block in blocks] == ["image", "document"]
+        assert blocks[0].source == image_source
+        assert blocks[1].source == {**document_source, "name": "notes.pdf"}
 
     def test_expand_user_tool_result_blocks(self, parser) -> None:
         """User message with tool_result blocks produces tool_result messages."""
@@ -1005,46 +1244,27 @@ class TestClaudeExpandLine:
         assert msgs[0].tool_name == "Read"
         assert msgs[0].tool_use_id == "toolu_xyz"
 
-    def test_parse_lines_collapses_hook_blocking_error_and_tool_result(self, parser) -> None:
-        """Claude emits hook_blocking_error and tool_result for one denied tool call."""
-        lines = [
-            json.dumps(
-                {
-                    "type": "system",
-                    "subtype": "hook_blocking_error",
-                    "toolUseID": "toolu_blocked",
-                    "content": "Gobby blocked [require-uv]: Use uv instead.",
-                    "timestamp": "2024-01-01T12:00:00Z",
-                }
-            ),
-            json.dumps(
-                {
-                    "type": "user",
-                    "message": {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": "toolu_blocked",
-                                "content": "Gobby blocked [require-uv]: Use uv instead.",
-                                "is_error": True,
-                            }
-                        ],
-                    },
-                    "timestamp": "2024-01-01T12:00:01Z",
-                }
-            ),
-        ]
-
-        msgs = parser.parse_lines(lines)
+    def test_parse_lines_reads_hook_blocking_attachment_fixture(self, parser) -> None:
+        """A scrubbed Claude Code capture emits one hook-block tool result."""
+        fixture = (
+            Path(__file__).parents[1]
+            / "fixtures"
+            / "transcripts"
+            / "claude-hook-blocking-error.jsonl"
+        )
+        msgs = parser.parse_lines(fixture.read_text().splitlines())
 
         assert len(msgs) == 1
         msg = msgs[0]
         assert isinstance(msg, ParsedMessage)
         assert msg.role == "tool"
         assert msg.content_type == "tool_result"
-        assert msg.tool_use_id == "toolu_blocked"
-        assert msg.content == "Gobby blocked [require-uv]: Use uv instead."
+        assert msg.tool_name == "Stop"
+        assert msg.tool_use_id == "33333333-3333-3333-3333-333333333333"
+        assert msg.content == (
+            "Rule enforced by Gobby: [require-task-close]\nTask #16260 is still open."
+        )
+        assert msg.tool_result == {"content": msg.content, "is_error": True}
 
     def test_expand_unknown_record_type_emits_sentinel(self, parser) -> None:
         """An unrecognized record-level type becomes a non-rendering sentinel
@@ -1867,14 +2087,21 @@ class TestCodexTranscriptParser:
         msgs = parser.extract_last_messages(turns, num_pairs=5)
         assert len(msgs) == 2
 
-    def test_extract_last_messages_developer_mapped(self, parser) -> None:
+    def test_extract_last_messages_filters_instruction_dumps(self, parser) -> None:
         turns = [
             json.loads(self._msg("developer", "System instructions")),
+            json.loads(self._msg("system", "System instructions")),
+            json.loads(self._msg("user", "<user_instructions>synthetic dump</user_instructions>")),
+            json.loads(self._msg("user", "AGENTS.md instructions for /tmp/project\n\n# Rules")),
             json.loads(self._msg("user", "hello")),
+            json.loads(self._msg("assistant", "answer")),
         ]
         msgs = parser.extract_last_messages(turns, num_pairs=5)
         assert len(msgs) == 2
-        assert msgs[0]["role"] == "system"
+        assert msgs == [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "answer"},
+        ]
 
     def test_extract_last_messages_empty(self, parser) -> None:
         assert parser.extract_last_messages([], num_pairs=2) == []
@@ -1997,7 +2224,9 @@ class TestCodexTranscriptParser:
         assert msg.usage is not None
         assert msg.usage.input_tokens == 451
         assert msg.usage.cache_read_tokens == 25_984
-        assert msg.usage.output_tokens == 12
+        assert msg.usage.output_tokens == 10
+        assert msg.content_type == "usage"
+        assert render_transcript([msg]) == []
 
 
 class TestQwenTranscriptParser:
@@ -2643,6 +2872,7 @@ class TestParserRegistry:
         assert isinstance(get_parser("qwen"), QwenTranscriptParser)
         assert isinstance(get_parser("codex"), CodexTranscriptParser)
         assert isinstance(get_parser("droid"), DroidTranscriptParser)
+        assert isinstance(_get_parser("claude"), ClaudeTranscriptParser)
 
     def test_get_parser_threads_transcript_path_to_droid(self) -> None:
         """Droid parser construction keeps the transcript path for sidecar lookup."""
@@ -2658,3 +2888,8 @@ class TestParserRegistry:
     def test_get_parser_rejects_unknown_or_empty_source(self, source: str | None) -> None:
         with pytest.raises(ValueError, match="Unsupported transcript source"):
             get_parser(source)
+
+    @pytest.mark.parametrize("source", ["", "   ", "unknown-cli"])
+    def test_legacy_get_parser_rejects_unknown_or_empty_source(self, source: str) -> None:
+        with pytest.raises(ValueError, match="Unsupported transcript source"):
+            _get_parser(source)

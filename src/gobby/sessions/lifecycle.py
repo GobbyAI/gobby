@@ -29,7 +29,6 @@ from gobby.sessions.context_usage import (
 )
 from gobby.sessions.message_stats import MessageProtocol, compute_message_stats
 from gobby.sessions.session_wiki_file import session_wiki_path_is_fresh
-from gobby.sessions.summarize import TURN_PATTERN
 from gobby.sessions.summary_validity import is_summary_markdown_valid
 from gobby.sessions.transcript_archive import backup_transcript
 from gobby.sessions.transcript_index import rebuild_and_persist_index
@@ -470,17 +469,15 @@ class SessionLifecycleManager:
             agent_depth = getattr(session, "agent_depth", 0) or 0
             source = getattr(session, "source", "") or ""
 
-            # Turn count fallback: subagents get 1 turn, short Q&A gets 1-2.
-            # By 3+ turns there's likely something worth remembering.
             digest = getattr(session, "digest_markdown", None)
-            turn_count = len(TURN_PATTERN.findall(digest)) if isinstance(digest, str) else 0
-            skip_llm = agent_depth > 0 or source in ("pipeline", "cron") or turn_count < 3
 
             # Step 1: Process transcript (reads JSONL, stores messages, aggregates usage)
             try:
                 await self._process_session_transcript(session.id, session.transcript_path)
             except Exception as e:
                 logger.error(f"Failed to process transcript for {session.id}: {e}")
+
+            skip_llm = agent_depth > 0 or source in ("pipeline", "cron")
 
             # If the transcript file is gone we can't (re)parse it, but a
             # digest-backed session can still synthesize its summary/wiki from
@@ -504,6 +501,14 @@ class SessionLifecycleManager:
                     f"Transcript gone for {session.id}; regenerating digest-backed "
                     f"artifacts (summary/wiki) from the stored digest"
                 )
+
+            if not skip_llm:
+                # Parsing persists authoritative transcript stats. Refresh before
+                # deciding whether this was only a short Q&A; by 3+ turns there's
+                # likely something worth remembering.
+                refreshed_stats = self.session_manager.get(session.id)
+                turn_count = _session_int(getattr(refreshed_stats, "turn_count", 0))
+                skip_llm = turn_count < 3
 
             # Skip LLM-heavy steps for non-human sessions — subagents, pipelines,
             # and cron sessions are ephemeral and not worth the token cost.
@@ -548,7 +553,6 @@ class SessionLifecycleManager:
                 )
 
             # Step 4: Best-effort backup of the transcript archive
-            # On success, purge DB messages (gzip is now the source of truth).
             # Skipped when the file is already gone — nothing to archive.
             if not transcript_missing and session.transcript_path and session.external_id:
                 try:

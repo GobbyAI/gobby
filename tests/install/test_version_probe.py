@@ -25,9 +25,9 @@ def _runner(returncode: int = 0, stdout: str = "", stderr: str = "") -> MagicMoc
     return runner
 
 
-def test_returns_last_stdout_token(tmp_path: Path) -> None:
+def test_extracts_version_from_decorated_stdout(tmp_path: Path) -> None:
     binary = _binary(tmp_path, "gcode")
-    runner = _runner(stdout="gcode 0.9.9\n")
+    runner = _runner(stdout="gcode 0.9.9 (build abc)\n")
     assert probe_native_bin_version(binary, runner=runner) == "0.9.9"
     # Probes always invoke `<binary> --version`.
     assert runner.call_args[0][0] == [str(binary.resolve()), "--version"]

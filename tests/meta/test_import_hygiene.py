@@ -104,7 +104,6 @@ def test_hook_manager_has_single_session_attribute() -> None:
         session_manager=MagicMock(),
         session_coordinator=MagicMock(),
         health_monitor=MagicMock(),
-        hook_assembler=MagicMock(),
         event_handlers=MagicMock(),
     )
     components.webhook_dispatcher.config = MagicMock()

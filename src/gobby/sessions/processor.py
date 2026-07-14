@@ -12,6 +12,7 @@ Supports two transcript formats:
 import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
+from weakref import WeakValueDictionary
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
@@ -69,9 +70,14 @@ class SessionMessageProcessor(
 
         # Track active sessions: session_id -> transcript_path
         self._active_sessions: dict[str, str] = {}
+        self._processing_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
 
         # Track parsers: session_id -> TranscriptParser
         self._parsers: dict[str, TranscriptParser] = {}
+        self._session_sources: dict[str, str] = {}
+
+        # Track transcript identity and mtime to detect replacement or rollback.
+        self._transcript_file_state: dict[str, tuple[int, int, int]] = {}
 
         # Track last mtime for JSON file sessions (mtime-based change detection)
         self._last_mtime: dict[str, float] = {}

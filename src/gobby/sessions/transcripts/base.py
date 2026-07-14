@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 # correct — only display/flat counters exclude them.
 UNMODELED_RECORD_CONTENT_TYPE = "unmodeled_record"
 # Metadata content types that are plain-skipped at render (no telemetry).
-RENDER_SKIP_CONTENT_TYPES: frozenset[str] = frozenset({"hook_prompt", "session_title"})
+RENDER_SKIP_CONTENT_TYPES: frozenset[str] = frozenset({"hook_prompt", "session_title", "usage"})
 # All "not a conversation message" content types: render-skipped metadata plus
 # the unmodeled-record sentinel (observed for telemetry, then skipped). Excluded
 # from message_count / parsed_message_count / flat output everywhere.
@@ -148,7 +148,7 @@ class ParsedMessage:
 
     index: int
     role: str
-    content: str
+    content: str | dict[str, Any]
     content_type: str  # text, thinking, tool_use, tool_result
     tool_name: str | None
     tool_input: dict[str, Any] | None
@@ -350,6 +350,10 @@ class TranscriptParser(Protocol):
             List of ParsedMessage and/or ParsedToolEvent records, in source order.
         """
         ...
+
+    def snapshot_state(self) -> dict[str, Any]: ...
+
+    def hydrate_state(self, state: Mapping[str, Any]) -> None: ...
 
     def extract_last_messages(
         self, turns: list[dict[str, Any]], num_pairs: int = 2
