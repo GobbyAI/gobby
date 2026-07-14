@@ -16,7 +16,11 @@ def format_review_lesson_guidance(lessons: list[dict[str, Any]]) -> str:
         pattern_id = lesson.get("pattern_id") or "review-lesson"
         lines.append(f"- {path} [{pattern_id}]")
 
-        do_text = lesson.get("do") or lesson.get("prevention") or lesson.get("principle")
+        do_text = (
+            lesson.get("do")
+            if "do" in lesson
+            else lesson.get("prevention") or lesson.get("principle")
+        )
         avoid_text = lesson.get("avoid")
         principle = lesson.get("principle")
 

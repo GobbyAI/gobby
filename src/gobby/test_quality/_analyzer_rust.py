@@ -11,7 +11,12 @@ from gobby.test_quality._analyzer_common import (
     _append_issue,
     _script_suppressed_codes,
 )
-from gobby.test_quality._analyzer_scanner import _find_matching_delimiter
+from gobby.test_quality._analyzer_scanner import (
+    _find_matching_delimiter,
+    _rust_char_literal_end,
+    _rust_lifetime_end,
+    _rust_raw_string_end,
+)
 from gobby.test_quality.models import AuditIssue
 
 _RUST_FN_RE = re.compile(
@@ -96,42 +101,50 @@ def _iter_rust_tests(source: str) -> Iterable[_RustTest]:
     lines = source.splitlines(keepends=True)
     line_offset = 0
     line_index = 0
+    scan_offset = 0
 
     while line_index < len(lines):
         line_number = line_index + 1
         line = lines[line_index]
-        stripped = line.strip()
-        attr_offset_in_line = line.index("#[") if stripped.startswith("#[") else -1
-        if attr_offset_in_line >= 0:
-            attr_offset = line_offset + attr_offset_in_line
+        line_end = line_offset + len(line)
+        cursor = max(line_offset, scan_offset)
+
+        while cursor < line_end and source[cursor] in " \t\r":
+            cursor += 1
+
+        if source.startswith("#[", cursor):
+            attr_offset = cursor
             parsed_attr = _rust_attr_at(source, attr_offset)
             if parsed_attr is not None:
                 attr_text, attr_end = parsed_attr
                 pending_attrs.append((attr_text, line_number, attr_offset))
-                line_index, line_offset = _advance_rust_lines_through_offset(
-                    lines,
-                    line_index,
-                    line_offset,
-                    attr_end,
-                )
+                while attr_end >= line_end and line_index + 1 < len(lines):
+                    line_index += 1
+                    line_offset = line_end
+                    line = lines[line_index]
+                    line_end = line_offset + len(line)
+                cursor = attr_end + 1
+                while cursor < line_end and source[cursor] in " \t\r":
+                    cursor += 1
+                if cursor < line_end and source[cursor] != "\n":
+                    scan_offset = cursor
+                    continue
+                line_index += 1
+                line_offset = line_end
+                scan_offset = line_offset
                 continue
 
-        single_line_attr = _rust_attr_text(stripped)
-        if single_line_attr is not None:
-            pending_attrs.append((single_line_attr, line_number, line_offset + line.index("#[")))
-            line_index += 1
-            line_offset += len(line)
-            continue
-
+        stripped = source[cursor:line_end].strip()
         if not stripped or stripped.startswith("//"):
             line_index += 1
-            line_offset += len(line)
+            line_offset = line_end
+            scan_offset = line_offset
             continue
 
-        fn_match = _RUST_FN_RE.search(line)
+        fn_match = _RUST_FN_RE.search(source, cursor, line_end)
         if fn_match is not None and _rust_attrs_mark_test(tuple(item[0] for item in pending_attrs)):
-            fn_offset = line_offset + fn_match.start()
-            open_brace = source.find("{", line_offset + fn_match.end())
+            fn_offset = fn_match.start()
+            open_brace = source.find("{", fn_match.end())
             close_brace = (
                 _find_matching_delimiter(source, open_brace, "{", "}") if open_brace != -1 else None
             )
@@ -150,22 +163,8 @@ def _iter_rust_tests(source: str) -> Iterable[_RustTest]:
 
         pending_attrs = []
         line_index += 1
-        line_offset += len(line)
-
-
-def _advance_rust_lines_through_offset(
-    lines: Sequence[str],
-    line_index: int,
-    line_offset: int,
-    target_offset: int,
-) -> tuple[int, int]:
-    while line_index < len(lines):
-        next_offset = line_offset + len(lines[line_index])
-        line_index += 1
-        line_offset = next_offset
-        if target_offset < next_offset:
-            break
-    return line_index, line_offset
+        line_offset = line_end
+        scan_offset = line_offset
 
 
 def _rust_attr_at(source: str, attr_offset: int) -> tuple[str, int] | None:
@@ -175,15 +174,6 @@ def _rust_attr_at(source: str, attr_offset: int) -> tuple[str, int] | None:
     if end is None:
         return None
     return source[attr_offset + 2 : end].strip(), end
-
-
-def _rust_attr_text(stripped_line: str) -> str | None:
-    if not stripped_line.startswith("#["):
-        return None
-    end = stripped_line.rfind("]")
-    if end == -1:
-        return None
-    return stripped_line[2:end].strip()
 
 
 def _rust_attr_name(attr: str) -> str:
@@ -231,7 +221,83 @@ def _rust_returns_result(signature: str) -> bool:
 
 
 def _rust_uses_question_mark(body: str) -> bool:
-    return "?" in body
+    delimiter_stack: list[tuple[str, int]] = []
+    matching_openers: dict[int, int] = {}
+    index = 0
+
+    while index < len(body):
+        if body.startswith("//", index):
+            newline = body.find("\n", index + 2)
+            index = len(body) if newline == -1 else newline + 1
+            continue
+        if body.startswith("/*", index):
+            depth = 1
+            index += 2
+            while index < len(body) and depth:
+                if body.startswith("/*", index):
+                    depth += 1
+                    index += 2
+                elif body.startswith("*/", index):
+                    depth -= 1
+                    index += 2
+                else:
+                    index += 1
+            continue
+
+        raw_string_end = _rust_raw_string_end(body, index)
+        if raw_string_end is not None:
+            index = raw_string_end + 1
+            continue
+        if body[index] == "'":
+            char_end = _rust_char_literal_end(body, index)
+            if char_end is not None:
+                index = char_end + 1
+                continue
+            lifetime_end = _rust_lifetime_end(body, index)
+            if lifetime_end is not None:
+                index = lifetime_end
+                continue
+        if body[index] == '"':
+            index += 1
+            while index < len(body):
+                if body[index] == "\\":
+                    index += 2
+                elif body[index] == '"':
+                    index += 1
+                    break
+                else:
+                    index += 1
+            continue
+
+        char = body[index]
+        if char in "([{":
+            delimiter_stack.append((char, index))
+        elif char in ")]}" and delimiter_stack:
+            _, opener = delimiter_stack.pop()
+            matching_openers[index] = opener
+        elif char == "?":
+            following = index + 1
+            while following < len(body) and body[following].isspace():
+                following += 1
+            next_char = body[following : following + 1]
+            previous = index - 1
+            while previous >= 0 and body[previous].isspace():
+                previous -= 1
+            repetition_close = previous
+            if repetition_close not in matching_openers:
+                repetition_close -= 1
+                while repetition_close >= 0 and body[repetition_close].isspace():
+                    repetition_close -= 1
+            macro_repetition = (
+                repetition_close in matching_openers
+                and matching_openers[repetition_close] > 0
+                and body[matching_openers[repetition_close] - 1] == "$"
+            )
+            if next_char != "?" and not next_char.isidentifier() and not macro_repetition:
+                return True
+        index += 1
+
+    return False
 
 
 def _rust_todo_lines(source: str, start_line: int) -> list[int]:

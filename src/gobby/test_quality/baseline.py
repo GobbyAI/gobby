@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from gobby.test_quality.models import AuditIssue, AuditReport, Severity, severity_meets_minimum
 
-BASELINE_SCHEMA_VERSION = 1
+BASELINE_SCHEMA_VERSION = 2
 BASELINE_MISSING_MESSAGE = "Baseline missing; treating current issues as new"
 
 
@@ -18,7 +19,7 @@ class AuditBaseline:
     """Tracked known issues from a previous audit."""
 
     path: str
-    fingerprints: frozenset[str]
+    issue_counts: dict[str, int]
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +27,7 @@ class AuditDiff:
     """Issues that are present in a report and absent from the baseline."""
 
     new_issues: tuple[AuditIssue, ...]
+    known_issues: tuple[AuditIssue, ...]
     min_severity: Severity
     baseline_path: str | None = None
     baseline_status: str = "loaded"
@@ -40,6 +42,14 @@ class AuditDiff:
             if severity_meets_minimum(issue.severity, self.min_severity)
         )
 
+    @property
+    def below_threshold_issues(self) -> tuple[AuditIssue, ...]:
+        return tuple(
+            issue
+            for issue in self.new_issues
+            if not severity_meets_minimum(issue.severity, self.min_severity)
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "baseline": {
@@ -50,8 +60,10 @@ class AuditDiff:
             },
             "min_severity": self.min_severity,
             "new_issue_count": len(self.new_issues),
+            "known_issue_count": len(self.known_issues),
             "failing_issue_count": len(self.failing_issues),
             "new_issues": [issue.to_dict() for issue in self.new_issues],
+            "known_issues": [issue.to_dict() for issue in self.known_issues],
             "failing_issues": [issue.to_dict() for issue in self.failing_issues],
         }
 
@@ -63,20 +75,30 @@ def load_baseline(path: str | Path) -> AuditBaseline:
         msg = f"unsupported test-quality baseline schema: {data.get('schema_version')!r}"
         raise ValueError(msg)
 
-    fingerprints = frozenset(
-        item["fingerprint"]
-        for item in data.get("issues", [])
-        if isinstance(item, dict) and isinstance(item.get("fingerprint"), str)
-    )
-    return AuditBaseline(path=str(baseline_path), fingerprints=fingerprints)
+    issue_counts: Counter[str] = Counter()
+    for item in data.get("issues", []):
+        if not isinstance(item, dict) or not isinstance(item.get("fingerprint"), str):
+            continue
+        occurrences = item.get("occurrences")
+        if type(occurrences) is not int or occurrences < 1:
+            msg = "test-quality baseline issue occurrences must be positive integers"
+            raise ValueError(msg)
+        issue_counts[item["fingerprint"]] += occurrences
+    return AuditBaseline(path=str(baseline_path), issue_counts=dict(issue_counts))
 
 
 def write_baseline(report: AuditReport, path: str | Path) -> None:
     baseline_path = Path(path)
     baseline_path.parent.mkdir(parents=True, exist_ok=True)
+    entries: dict[str, dict[str, Any]] = {}
+    for issue in report.sorted_issues:
+        if issue.fingerprint in entries:
+            entries[issue.fingerprint]["occurrences"] += 1
+            continue
+        entries[issue.fingerprint] = {**issue.to_dict(), "occurrences": 1}
     payload = {
         "schema_version": BASELINE_SCHEMA_VERSION,
-        "issues": [issue.to_dict() for issue in report.sorted_issues],
+        "issues": list(entries.values()),
     }
     baseline_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -90,11 +112,18 @@ def diff_report(
     baseline_mode: str = "diff",
     warning_message: str | None = None,
 ) -> AuditDiff:
-    new_issues = tuple(
-        issue for issue in report.sorted_issues if issue.fingerprint not in baseline.fingerprints
-    )
+    remaining_counts = Counter(baseline.issue_counts)
+    new_issues: list[AuditIssue] = []
+    known_issues: list[AuditIssue] = []
+    for issue in report.sorted_issues:
+        if remaining_counts[issue.fingerprint] > 0:
+            known_issues.append(issue)
+            remaining_counts[issue.fingerprint] -= 1
+        else:
+            new_issues.append(issue)
     return AuditDiff(
-        new_issues=new_issues,
+        new_issues=tuple(new_issues),
+        known_issues=tuple(known_issues),
         min_severity=min_severity,
         baseline_path=baseline.path,
         baseline_status=baseline_status,

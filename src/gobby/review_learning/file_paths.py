@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from gobby.review_learning.fingerprint import short_hash
+from gobby.utils.project_context import find_project_root
 
 _LINE_REF_RE = re.compile(r"^(?P<path>.+?):\d+(?::\d+)?$")
 _PATH_FIELD_NAMES = {
@@ -27,7 +29,7 @@ _PATH_FIELD_NAMES = {
 
 
 def normalize_lesson_file_path(value: Any) -> str:
-    """Normalize a lesson/touched file path for deterministic matching."""
+    """Return a safe repo-relative lesson path for deterministic matching."""
     if value is None:
         return ""
     text = str(value).strip().strip("\"'")
@@ -41,22 +43,38 @@ def normalize_lesson_file_path(value: Any) -> str:
         text = line_match.group("path")
     while text.startswith("./"):
         text = text[2:]
-    return text.strip("/")
+
+    path = PurePosixPath(text)
+    if path.is_absolute():
+        absolute_path = Path(text).resolve(strict=False)
+        project_root = find_project_root(absolute_path)
+        if project_root is None:
+            return ""
+        try:
+            path = PurePosixPath(absolute_path.relative_to(project_root.resolve()).as_posix())
+        except ValueError:
+            return ""
+
+    if ".." in path.parts:
+        return ""
+    return "/".join(part for part in path.parts if part not in {"", "."})
 
 
 def path_tag(value: Any) -> str:
     """Return the bounded review-lesson tag for a normalized file path."""
     normalized = normalize_lesson_file_path(value)
+    if not normalized:
+        return ""
     return f"path:{short_hash(normalized)}"
 
 
 def paths_match(touched_path: Any, lesson_path: Any) -> bool:
-    """Return true when paths are equal or one is a repo-relative suffix of the other."""
+    """Return true when two safe repo-relative paths are exactly equal."""
     touched = normalize_lesson_file_path(touched_path)
     lesson = normalize_lesson_file_path(lesson_path)
     if not touched or not lesson:
         return False
-    return touched == lesson or touched.endswith(f"/{lesson}") or lesson.endswith(f"/{touched}")
+    return touched == lesson
 
 
 def extract_lesson_file_paths(

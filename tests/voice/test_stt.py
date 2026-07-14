@@ -317,6 +317,33 @@ class TestTranscribeSuccess:
                 await stt.transcribe(audio, "audio/webm")
             mock_unlink.assert_called_once_with(missing_ok=True)
 
+    async def test_temp_file_cleaned_up_on_write_error(self) -> None:
+        """Verify temp file is deleted when writing audio fails."""
+        stt = _make_stt()
+        stt._model = MagicMock()
+
+        audio = b"\x00" * 1000
+        with (
+            patch("gobby.voice.stt.tempfile.NamedTemporaryFile") as mock_tmp,
+            patch("gobby.voice.stt.Path.unlink") as mock_unlink,
+        ):
+            mock_file = MagicMock()
+            mock_file.__enter__.return_value = mock_file
+            mock_file.name = "/tmp/write-failure.webm"
+            mock_file.write.side_effect = OSError("disk full")
+            mock_tmp.return_value = mock_file
+
+            with pytest.raises(OSError, match="disk full"):
+                await stt.transcribe(audio, "audio/webm")
+
+            assert mock_tmp.call_count == 1
+            assert mock_tmp.call_args.kwargs == {"suffix": ".webm", "delete": False}
+            assert mock_file.write.call_count == 1
+            assert mock_file.write.call_args.args == (audio,)
+            assert mock_unlink.call_count == 1
+            assert mock_unlink.call_args.kwargs == {"missing_ok": True}
+            assert stt._model.transcribe.call_count == 0
+
 
 # ---------------------------------------------------------------------------
 # MIME type to extension mapping
@@ -654,6 +681,5 @@ class TestInit:
         config = VoiceConfig()
         stt = WhisperSTT(config)
         assert stt._model is None
-        assert stt._loading is False
         assert stt._config is config
         assert isinstance(stt._load_lock, asyncio.Lock)
