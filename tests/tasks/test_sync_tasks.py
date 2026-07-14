@@ -25,8 +25,13 @@ def _session_id(name: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"gobby-sync-test-session:{name}"))
 
 
-def _github_issue_task_id(project_id: str, issue_num: int) -> str:
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{project_id}/github/owner/repo/issues/{issue_num}"))
+def _github_issue_task_id(project_id: str, issue_num: int, github_repo: str = "owner/repo") -> str:
+    return str(
+        uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"{project_id}/github/{github_repo}/issues/{issue_num}",
+        )
+    )
 
 
 def _legacy_normalized_github_issue_task_id(issue_num: int) -> str:
@@ -940,6 +945,63 @@ class TestImportFromGitHubIssues:
         task = sync_manager.task_manager.get_task(_github_issue_task_id(sample_project["id"], 1))
         assert task.github_repo == "owner/repo"
         assert task.github_issue_number == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_same_issue_number_in_different_repositories_creates_distinct_tasks(
+        self, sync_manager: TaskSyncManager, sample_project: dict[str, Any]
+    ) -> None:
+        other_project = LocalProjectManager(sync_manager.db).create(
+            name="other-project",
+            repo_path="/tmp/other-project",
+            github_url="https://github.com/other/repo",
+        )
+        issues_json = json.dumps(
+            [
+                {
+                    "number": 1,
+                    "title": "Issue 1",
+                    "body": "Repository-specific body",
+                    "labels": [],
+                    "createdAt": "2023-01-01T00:00:00Z",
+                }
+            ]
+        )
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = [
+                MagicMock(returncode=0),
+                MagicMock(returncode=0, stdout=issues_json),
+                MagicMock(returncode=0),
+                MagicMock(returncode=0, stdout=issues_json),
+            ]
+            first_result = await sync_manager.import_from_github_issues(
+                "https://github.com/owner/repo",
+                project_id=sample_project["id"],
+            )
+            second_result = await sync_manager.import_from_github_issues(
+                "https://github.com/other/repo",
+                project_id=other_project.id,
+            )
+
+        first_id = _github_issue_task_id(sample_project["id"], 1)
+        second_id = _github_issue_task_id(other_project.id, 1, "other/repo")
+        assert first_result["imported"] == [first_id]
+        assert second_result["imported"] == [second_id]
+        assert first_id != second_id
+
+        first_task = sync_manager.task_manager.get_task(first_id)
+        second_task = sync_manager.task_manager.get_task(second_id)
+        assert first_task.project_id == sample_project["id"]
+        assert first_task.github_repo == "owner/repo"
+        assert first_task.github_issue_number == 1
+        assert first_task.seq_num is not None
+        assert first_task.path_cache is not None
+        assert second_task.project_id == other_project.id
+        assert second_task.github_repo == "other/repo"
+        assert second_task.github_issue_number == 1
+        assert second_task.seq_num is not None
+        assert second_task.path_cache is not None
 
     @pytest.mark.asyncio
     @pytest.mark.integration
