@@ -98,11 +98,13 @@ describe("useChat project and mode controls", () => {
     await loadModule();
     const { result } = renderHook(() => useChat());
     const modeChanges: string[] = [];
+    let sendResult: boolean | undefined;
     act(() => {
       result.current.setOnModeChanged((mode) => modeChanges.push(mode));
-      result.current.sendMode("normal");
+      sendResult = result.current.sendMode("normal");
     });
 
+    expect(sendResult).toBe(false);
     expect(modeChanges).toEqual([]);
   });
 
@@ -119,10 +121,12 @@ describe("useChat project and mode controls", () => {
       ws.readyState = WebSocket.CLOSED;
     });
 
+    let sendResult: boolean | undefined;
     act(() => {
-      result.current.sendMode("normal");
+      sendResult = result.current.sendMode("normal");
     });
 
+    expect(sendResult).toBe(false);
     expect(modeChanges).toEqual([]);
   });
 

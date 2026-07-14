@@ -142,7 +142,7 @@ export type DeleteConversationAction = (
   sessionId?: string,
 ) => boolean;
 
-export type SendModeAction = (mode: ChatMode) => void;
+export type SendModeAction = (mode: ChatMode) => boolean;
 
 export type SendAttachedSessionModeAction = (
   targetSessionId: string,
