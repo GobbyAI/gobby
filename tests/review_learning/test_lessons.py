@@ -75,6 +75,7 @@ def test_normalized_lesson_uses_bounded_tags_and_full_content() -> None:
     assert "source:coderabbit" in lesson.tags
     assert any(tag.startswith("fingerprint:") for tag in lesson.tags)
     assert any(tag.startswith("occurrence:") for tag in lesson.tags)
+    assert not any(tag.startswith("guardrail:") for tag in lesson.tags)
     assert path_tag("src/gobby/storage/example.py") in lesson.tags
     assert "Use psycopg %s placeholders in Gobby storage code" in lesson.content
     assert '"commit": "abc123"' in lesson.content

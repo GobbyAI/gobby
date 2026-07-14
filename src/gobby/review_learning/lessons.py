@@ -181,7 +181,6 @@ def build_tags(
     occurrence_key: str,
     repo: str | None,
     language: str | None,
-    guardrail_status: str = "lesson-only",
 ) -> list[str]:
     tags = [
         "review-lesson",
@@ -192,7 +191,6 @@ def build_tags(
         fingerprint_tag(finding_fingerprint),
         occurrence_tag(occurrence_key),
         f"lesson-type:{identity.lesson_type}",
-        f"guardrail:{guardrail_status}",
     ]
     tags.extend(_optional_tags(finding=finding, repo=repo, language=language))
     tags.extend(

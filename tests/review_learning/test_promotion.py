@@ -8,7 +8,9 @@ import gobby.review_learning.service as service_module
 from gobby.review_learning.lessons import normalize_lesson
 from gobby.review_learning.promotion import (
     PromotionDecision,
+    PromotionMemoryManager,
     _create_or_update_task,
+    _diagnostic_locations,
     resolve_promotion,
 )
 from gobby.review_learning.service import ReviewLearningService
@@ -29,6 +31,15 @@ def _finding(**overrides: str) -> dict[str, str]:
     }
     finding.update(overrides)
     return finding
+
+
+def test_promotion_memory_protocol_only_exposes_used_listing_method() -> None:
+    assert "list_memories" not in PromotionMemoryManager.__dict__
+    assert "alist_memories" in PromotionMemoryManager.__dict__
+
+
+def test_diagnostic_location_ignores_end_line_without_start_line() -> None:
+    assert _diagnostic_locations({"path": "a.py", "end_line": 5}) == "- a.py"
 
 
 @pytest.mark.asyncio
@@ -281,10 +292,14 @@ async def test_third_confirmed_occurrence_updates_existing_task(
     fake_memory_manager, fake_task_manager
 ) -> None:
     service = ReviewLearningService(fake_memory_manager, fake_task_manager)
-    for source_review in ("review-1", "review-2", "review-3"):
+    for source, source_review in (
+        ("Reviewer One", "Review One"),
+        ("Reviewer Two", "Review Two"),
+        ("Reviewer Three", "Review Three"),
+    ):
         result = await service.record(
             source_kind="agent_review",
-            source="code-reviewer",
+            source=source,
             source_review=source_review,
             decision="confirmed",
             finding=_finding(),
@@ -296,6 +311,15 @@ async def test_third_confirmed_occurrence_updates_existing_task(
     assert len(fake_task_manager.updated) == 1
     assert "target:validation" in fake_task_manager.tasks[0].labels
     assert fake_task_manager.tasks[0].category == "code"
+    assert [
+        label for label in fake_task_manager.tasks[0].labels if label.startswith("evidence:")
+    ] == ["evidence:mem-3"]
+    assert [
+        label for label in fake_task_manager.tasks[0].labels if label.startswith("source:")
+    ] == ["source:reviewer-three"]
+    assert [
+        label for label in fake_task_manager.tasks[0].labels if label.startswith("review-lesson:")
+    ] == ["review-lesson:review-three"]
 
 
 @pytest.mark.asyncio
