@@ -18,6 +18,7 @@ from gobby.llm.claude_models import (
 )
 from gobby.servers.websocket.chat._lifecycle import ChatLifecycleMixin
 from gobby.servers.websocket.chat._messaging import ChatMessagingMixin
+from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage import chat_messages
 from gobby.storage.hub.protocol import HubDatabase
@@ -31,6 +32,7 @@ class DummyMessagingMixin(ChatMessagingMixin):
         self.clients: dict = {}
         self._chat_sessions: dict = {}
         self._active_chat_tasks: dict = {}
+        self._session_create_locks: dict[str, asyncio.Lock] = {}
         self._pending_modes: dict = {}
         self._pending_worktree_paths: dict = {}
         self._pending_agents: dict = {}
@@ -40,6 +42,13 @@ class DummyMessagingMixin(ChatMessagingMixin):
         self._created_tts_pipelines = 0
         self._last_tts_pipeline = None
         self.start_voice_warmup = MagicMock()
+
+    def _get_session_create_lock(self, conversation_id: str) -> asyncio.Lock:
+        lock = self._session_create_locks.get(conversation_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._session_create_locks[conversation_id] = lock
+        return lock
 
     async def _send_error(
         self, ws: object, msg: str, request_id: str | None = None, code: str = "ERROR"
@@ -294,6 +303,70 @@ class TestHandleChatMessage:
             assert call_args[0][1] == "c1"
             assert call_args[0][2] == "hi"
             assert call_args[0][3] is None  # model
+
+    @pytest.mark.asyncio
+    async def test_concurrent_messages_leave_one_tracked_cancellable_task(
+        self, mixin: DummyMessagingMixin
+    ) -> None:
+        first_ws = AsyncMock()
+        second_ws = AsyncMock()
+        mixin.clients[first_ws] = {"connected": True}
+        mixin.clients[second_ws] = {"connected": True}
+        registry = WebChatSessionRegistry()
+        mixin.web_chat_session_registry = registry
+        mixin._active_chat_tasks = registry.active_tasks
+
+        first_cancel_started = asyncio.Event()
+        release_first_cancel = asyncio.Event()
+        stream_forever = asyncio.Event()
+        cancel_calls = 0
+        cancelled_tasks: list[asyncio.Task[None]] = []
+
+        async def coordinated_cancel(conversation_id: str) -> None:
+            nonlocal cancel_calls
+            cancel_calls += 1
+            if cancel_calls == 1:
+                first_cancel_started.set()
+                await release_first_cancel.wait()
+
+            active_task = mixin._active_chat_tasks.pop(conversation_id, None)
+            if active_task is not None:
+                cancelled_tasks.append(active_task)
+                active_task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await active_task
+
+        async def blocking_stream(*args: object, **kwargs: object) -> None:
+            await stream_forever.wait()
+
+        with (
+            patch.object(mixin, "_cancel_active_chat", side_effect=coordinated_cancel),
+            patch.object(mixin, "_stream_chat_response", side_effect=blocking_stream),
+        ):
+            first_ingress = asyncio.create_task(
+                mixin._handle_chat_message(
+                    first_ws, {"content": "first", "conversation_id": "shared"}
+                )
+            )
+            await first_cancel_started.wait()
+            second_ingress = asyncio.create_task(
+                mixin._handle_chat_message(
+                    second_ws, {"content": "second", "conversation_id": "shared"}
+                )
+            )
+            await asyncio.sleep(0)
+            release_first_cancel.set()
+            await asyncio.gather(first_ingress, second_ingress)
+
+            tracked_task = registry.active_tasks["shared"]
+            assert cancel_calls == 2
+            assert len(cancelled_tasks) == 1
+            assert cancelled_tasks[0].cancelled()
+            assert not tracked_task.done()
+
+            tracked_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await tracked_task
 
     @pytest.mark.asyncio
     async def test_tts_intent_enabled_arms_voice_before_stream(
