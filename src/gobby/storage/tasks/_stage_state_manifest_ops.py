@@ -304,6 +304,17 @@ class StageStateManifestOps:
         desired_by_name = {spec.stage_name: spec for spec in specs}
         now = _now()
         with self.db.transaction() as conn:
+            temporary_start = min(row.position for row in existing) - len(existing)
+            for offset, row in enumerate(existing):
+                conn.execute(
+                    """
+                    UPDATE task_stage_states
+                       SET position = %s,
+                           updated_at = %s
+                     WHERE task_id = %s AND stage_name = %s
+                    """,
+                    (temporary_start + offset, now, task_id, row.stage_name),
+                )
             for row in sorted(
                 existing,
                 key=lambda item: desired_by_name[item.stage_name].position,

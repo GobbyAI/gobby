@@ -135,6 +135,29 @@ def test_initialize_manifest_updates_caps_without_resetting_active_rows(
     assert rows[1].max_work_attempts is None
 
 
+def test_initialize_manifest_repositions_future_stages_through_disjoint_range(
+    temp_db,
+    sample_project,
+) -> None:
+    task, manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("development", 0), spec("pr", 2), spec("merge", 4)],
+    )
+
+    rows = manager.initialize_manifest(
+        task.id,
+        [spec("development", 0), spec("pr", 1), spec("merge", 2)],
+        by_session_id="session-stage-tests",
+    )
+
+    assert [(row.stage_name, row.position) for row in rows] == [
+        ("development", 0),
+        ("pr", 1),
+        ("merge", 2),
+    ]
+
+
 def test_development_manifest_resolves_docs_reviewer_from_selector(
     temp_db,
     sample_project,

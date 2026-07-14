@@ -280,6 +280,7 @@ def escalate_task(
                SET claimed_by_session_id = NULL,
                    escalated_at = %s,
                    escalation_reason = %s,
+                   is_escalated = TRUE,
                    validation_override_reason = COALESCE(%s, validation_override_reason),
                    updated_at = %s
              WHERE id = %s
