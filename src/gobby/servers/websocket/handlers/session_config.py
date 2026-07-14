@@ -6,6 +6,7 @@ message types.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -86,7 +87,9 @@ async def _set_attached_session_mode(
         db = getattr(session_manager, "db", None) or getattr(mixin, "db", None)
         if db is not None:
             svm = SessionVariableManager(db)
-            svm.merge_variables(
+            await run_db(
+                mixin,
+                svm.merge_variables,
                 target_session_id,
                 {"chat_mode": mode, "mode_level": compute_mode_level(mode)},
             )
@@ -300,7 +303,9 @@ async def handle_set_mode(mixin: SessionControlMixin, websocket: Any, data: dict
                     logger.warning("No database instance available for session variable sync")
                     return
                 svm = SessionVariableManager(db)
-                svm.merge_variables(
+                await run_db(
+                    mixin,
+                    svm.merge_variables,
                     db_sid,
                     {"chat_mode": mode, "mode_level": compute_mode_level(mode)},
                 )
@@ -422,7 +427,7 @@ async def handle_set_worktree(
                 from gobby.storage.worktrees import LocalWorktreeManager
 
                 wm = LocalWorktreeManager(session_manager.db)
-                wt = wm.get(worktree_id)
+                wt = await run_db(mixin, wm.get, worktree_id)
                 if wt:
                     worktree_path = wt.worktree_path
             except Exception as e:
@@ -432,7 +437,7 @@ async def handle_set_worktree(
         await mixin._send_error(websocket, "set_worktree requires worktree_path or worktree_id")
         return
 
-    if not os.path.isdir(worktree_path):
+    if not await asyncio.to_thread(os.path.isdir, worktree_path):
         await mixin._send_error(websocket, f"Worktree path does not exist: {worktree_path}")
         return
 

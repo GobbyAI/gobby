@@ -13,8 +13,10 @@ would silently get None, causing #N resolution failures.
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -25,10 +27,17 @@ from starlette.types import ASGIApp
 from gobby.utils.project_context import (
     reset_project_context,
     set_project_context,
-    set_project_context_from_session,
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def _run_db(request: Request, func: Callable[..., Any], *args: Any) -> Any:
+    """Run a synchronous lookup without blocking the request event loop."""
+    server = getattr(request.app.state, "server", None)
+    if server is not None:
+        return await server.run_db(func, *args)
+    return await asyncio.to_thread(func, *args)
 
 
 class ProjectContextMiddleware(BaseHTTPMiddleware):
@@ -49,14 +58,14 @@ class ProjectContextMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        token = self._set_context(request)
+        token = await self._set_context(request)
         try:
             return await call_next(request)
         finally:
             if token is not None:
                 reset_project_context(token)
 
-    def _set_context(self, request: Request) -> contextvars.Token[Any] | None:
+    async def _set_context(self, request: Request) -> contextvars.Token[Any] | None:
         """Set project ContextVar from request headers.
 
         Returns a ContextVar token for reset, or None if no headers present.
@@ -67,11 +76,29 @@ class ProjectContextMiddleware(BaseHTTPMiddleware):
             try:
                 session_manager = getattr(request.app.state, "session_manager", None)
                 if session_manager:
-                    token = set_project_context_from_session(
-                        session_id, session_manager, session_manager.db
-                    )
-                    if token is not None:
-                        return token
+                    session = await _run_db(request, session_manager.get, session_id)
+                    if session and session.project_id:
+                        try:
+                            from gobby.storage.projects import LocalProjectManager
+
+                            pm = LocalProjectManager(session_manager.db)
+                            project = await _run_db(request, pm.get, session.project_id)
+                        except (ImportError, OSError) as e:
+                            logger.debug(
+                                "Failed to enrich project context for session %s: %s",
+                                session_id,
+                                e,
+                            )
+                            project = None
+                        if project:
+                            return set_project_context(
+                                {
+                                    "id": project.id,
+                                    "name": project.name,
+                                    "project_path": project.repo_path,
+                                }
+                            )
+                        return set_project_context({"id": session.project_id})
             except Exception as e:
                 logger.debug("Failed to set project context from session %s: %s", session_id, e)
 
@@ -84,7 +111,7 @@ class ProjectContextMiddleware(BaseHTTPMiddleware):
                 session_manager = getattr(request.app.state, "session_manager", None)
                 if session_manager:
                     pm = LocalProjectManager(session_manager.db)
-                    project = pm.get(project_id)
+                    project = await _run_db(request, pm.get, project_id)
                     if project:
                         return set_project_context(
                             {
