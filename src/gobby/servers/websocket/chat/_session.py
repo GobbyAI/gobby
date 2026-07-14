@@ -732,7 +732,7 @@ class ChatSessionMixin:
         wt_override = pending_wt.pop(session_key, None)
         if wt_override:
             session.project_path = wt_override
-        self._pending_config_updated_at.pop(session_key, None)
+        getattr(self, "_pending_config_updated_at", {}).pop(session_key, None)
 
         # Persona / agent prompt bootstrap.
         session._pending_agent_name = agent_name

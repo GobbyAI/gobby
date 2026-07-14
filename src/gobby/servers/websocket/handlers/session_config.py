@@ -27,7 +27,11 @@ _SAFE_PERSONA_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 def _mark_pending_config(mixin: SessionControlMixin, conversation_id: str) -> None:
-    mixin._pending_config_updated_at[conversation_id] = datetime.now(UTC)
+    pending_config_updated_at = getattr(mixin, "_pending_config_updated_at", None)
+    if pending_config_updated_at is None:
+        pending_config_updated_at = {}
+        mixin._pending_config_updated_at = pending_config_updated_at
+    pending_config_updated_at[conversation_id] = datetime.now(UTC)
 
 
 async def _set_attached_session_mode(

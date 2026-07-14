@@ -130,9 +130,9 @@ def test_cors_wraps_auth_rejections_and_protected_preflights(temp_db: HubDatabas
     )
     client = TestClient(HTTPServer(services).app)
 
-    rejected = client.get("/api/sessions", headers={"Origin": origin})
+    rejected = client.get("/api/tasks", headers={"Origin": origin})
     preflight = client.options(
-        "/api/sessions",
+        "/api/tasks",
         headers={
             "Origin": origin,
             "Access-Control-Request-Method": "GET",
@@ -155,6 +155,8 @@ def test_public_prefix_matrix() -> None:
         "/api/admin/startup-progress",
         "/api/comms/webhooks/slack",
         "/api/github/webhooks/triage/project",
+        "/api/hooks/session-start",
+        "/api/sessions/current",
         "/assets/index.js",
         "/favicon.ico",
         "/logo.png",
@@ -163,8 +165,6 @@ def test_public_prefix_matrix() -> None:
         "/api/health/details",
         "/api/admin/health/details",
         "/api/admin/startup-progress/details",
-        "/api/hooks/session-start",
-        "/api/sessions/current",
         "/api/mcp",
         "/api/admin/status",
         "/mcp",
