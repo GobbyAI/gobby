@@ -13,9 +13,10 @@ import httpx
 import pytest
 from mcp.types import CallToolResult, TextContent
 
-from gobby.integrations.linear_graphql import LinearGraphQLError
+from gobby.integrations.linear_graphql import LinearGraphQLClient, LinearGraphQLError
 from gobby.mcp_proxy.models import MCPError
 from gobby.storage.cron_models import CronJob
+from gobby.storage.secrets import SecretDecryptionError
 from gobby.sync import linear as linear_module
 from gobby.sync.linear import LinearSyncError, LinearSyncService
 from gobby.sync.linear_support import (
@@ -324,26 +325,77 @@ class TestLinearSyncServiceInit:
 class TestLinearSyncServiceAvailability:
     """Test availability checking."""
 
-    def test_requires_linear_available(self, mock_mcp_manager, mock_task_manager) -> None:
-        """Operations should check Linear availability first."""
+    @pytest.mark.parametrize(
+        ("mcp_available", "graphql_configured", "expected"),
+        [
+            pytest.param(True, False, True, id="mcp-only"),
+            pytest.param(False, True, True, id="graphql-only"),
+            pytest.param(True, True, True, id="both-configured"),
+            pytest.param(False, False, False, id="neither-configured"),
+        ],
+    )
+    def test_is_available_accepts_mcp_or_graphql_configuration(
+        self,
+        mock_mcp_manager,
+        mock_task_manager,
+        mcp_available: bool,
+        graphql_configured: bool,
+        expected: bool,
+    ) -> None:
+        mock_mcp_manager.has_server.return_value = mcp_available
+        mock_mcp_manager.health = {"linear": MagicMock(state="connected")} if mcp_available else {}
+        graphql_client = MagicMock(spec=LinearGraphQLClient) if graphql_configured else None
+
+        with patch(
+            "gobby.sync.linear.LinearGraphQLClient.from_database",
+            return_value=graphql_client,
+        ):
+            service = LinearSyncService(
+                mcp_manager=mock_mcp_manager,
+                task_manager=mock_task_manager,
+                project_id="test-project",
+            )
+
+            assert service.is_available() is expected
+
+    def test_unavailable_reason_reports_missing_graphql_configuration(
+        self, mock_mcp_manager, mock_task_manager
+    ) -> None:
         mock_mcp_manager.has_server.return_value = False
 
-        service = LinearSyncService(
-            mcp_manager=mock_mcp_manager,
-            task_manager=mock_task_manager,
-            project_id="test-project",
-        )
+        with patch("gobby.sync.linear.LinearGraphQLClient.from_database", return_value=None):
+            service = LinearSyncService(
+                mcp_manager=mock_mcp_manager,
+                task_manager=mock_task_manager,
+                project_id="test-project",
+            )
 
-        assert service.linear.is_available() is False
+            reason = service.get_unavailable_reason()
 
-    def test_is_available_proxies_to_integration(self, mock_mcp_manager, mock_task_manager) -> None:
-        """is_available() delegates to LinearIntegration."""
-        service = LinearSyncService(
-            mcp_manager=mock_mcp_manager,
-            task_manager=mock_task_manager,
-            project_id="test-project",
-        )
-        assert service.is_available() == service.linear.is_available()
+        assert reason is not None
+        assert "Linear MCP server 'linear' is not configured" in reason
+        assert "Linear GraphQL API key is not configured" in reason
+
+    def test_invalid_graphql_configuration_is_unavailable(
+        self, mock_mcp_manager, mock_task_manager
+    ) -> None:
+        mock_mcp_manager.has_server.return_value = False
+
+        with patch(
+            "gobby.sync.linear.LinearGraphQLClient.from_database",
+            side_effect=SecretDecryptionError("linear_api_key"),
+        ):
+            service = LinearSyncService(
+                mcp_manager=mock_mcp_manager,
+                task_manager=mock_task_manager,
+                project_id="test-project",
+            )
+
+            assert service.is_available() is False
+            reason = service.get_unavailable_reason()
+
+        assert reason is not None
+        assert "cannot be decrypted" in reason
 
 
 class TestLinearSyncServiceImport:
