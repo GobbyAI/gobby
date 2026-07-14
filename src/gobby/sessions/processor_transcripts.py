@@ -129,7 +129,13 @@ class ProcessorTranscriptMixin:
                 self._render_states.pop(session_id, None)
             raise
 
-    async def _process_session(self: ProcessorHost, session_id: str, transcript_path: str) -> None:
+    async def _process_session(
+        self: ProcessorHost,
+        session_id: str,
+        transcript_path: str,
+        *,
+        at_eof: bool = False,
+    ) -> None:
         """Process a single session."""
         if not await asyncio.to_thread(os.path.exists, transcript_path):
             return
@@ -155,6 +161,10 @@ class ProcessorTranscriptMixin:
                         break
 
                     if raw_line.endswith(b"\n"):
+                        new_lines.append(raw_line.decode("utf-8", errors="replace"))
+                        new_line_offsets.append(line_start)
+                        valid_offset = await f.tell()
+                    elif at_eof:
                         new_lines.append(raw_line.decode("utf-8", errors="replace"))
                         new_line_offsets.append(line_start)
                         valid_offset = await f.tell()

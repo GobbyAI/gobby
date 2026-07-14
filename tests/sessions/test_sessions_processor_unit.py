@@ -154,6 +154,21 @@ class TestSessionRegistration:
         processor.register_session("session-1", str(transcript))
         assert processor._parsers["session-1"] is original_parser  # Not replaced
 
+    def test_register_session_replaces_changed_transcript_path(self, processor, tmp_path) -> None:
+        first_transcript = tmp_path / "first.jsonl"
+        second_transcript = tmp_path / "second.jsonl"
+        first_transcript.touch()
+        second_transcript.touch()
+        processor.register_session("session-1", str(first_transcript))
+        original_parser = processor._parsers["session-1"]
+        processor._byte_offsets["session-1"] = 42
+
+        processor.register_session("session-1", str(second_transcript))
+
+        assert processor._active_sessions["session-1"] == str(second_transcript)
+        assert processor._parsers["session-1"] is not original_parser
+        assert "session-1" not in processor._byte_offsets
+
     def test_register_session_transcript_not_found(self, mock_db, tmp_path, caplog) -> None:
         """Register when the file doesn't exist yet (Codex writes rollout
         shortly after session_start). Must still register — the poll loop's
@@ -486,6 +501,46 @@ class TestProcessSession:
         processor.message_manager.store_messages.assert_not_called()
         assert processor.message_manager.store_messages.call_count == 0
         assert not processor.message_manager.store_messages.called
+
+    @pytest.mark.asyncio
+    async def test_flush_session_processes_unterminated_final_line(self, processor, tmp_path):
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text(_codex_response_message("user", "test").rstrip("\n"))
+        processor.register_session("session-1", str(transcript), source="codex")
+
+        result = await processor.flush_session("session-1")
+
+        assert result.flushed is True
+        assert result.error is None
+        assert processor._stats["session-1"]["message_count"] == 1
+        assert processor._byte_offsets["session-1"] == transcript.stat().st_size
+
+    @pytest.mark.asyncio
+    async def test_flush_session_reports_unregistered_session(self, processor):
+        processor._process_session = AsyncMock()
+
+        result = await processor.flush_session("unknown-session")
+
+        assert result.flushed is False
+        assert result.error == "session is not registered"
+        processor._process_session.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_flush_session_contains_processing_errors(self, processor, tmp_path, caplog):
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.touch()
+        processor.register_session("session-1", str(transcript))
+        processor._process_session = AsyncMock(side_effect=RuntimeError("boom"))
+
+        with caplog.at_level("ERROR"):
+            result = await processor.flush_session("session-1")
+
+        assert result.flushed is False
+        assert result.error == "boom"
+        processor._process_session.assert_awaited_once_with(
+            "session-1", str(transcript), at_eof=True
+        )
+        assert "Failed to flush session transcript" in caplog.text
 
     @pytest.mark.asyncio
     async def test_process_session_no_new_lines(self, processor, tmp_path):

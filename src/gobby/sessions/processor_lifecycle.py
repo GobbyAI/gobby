@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from dataclasses import dataclass
 
 from gobby.sessions.message_stats import MessageStats
 from gobby.sessions.observation_tracker import ObservationTracker
@@ -14,6 +15,14 @@ from gobby.sessions.transcript_index_resume import hydrate_appender_from_index
 from gobby.sessions.transcripts import get_parser
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class SessionFlushResult:
+    """Outcome of an immediate session transcript processing pass."""
+
+    flushed: bool
+    error: str | None = None
 
 
 class ProcessorLifecycleMixin:
@@ -58,8 +67,11 @@ class ProcessorLifecycleMixin:
             transcript_path: Absolute path to the transcript JSONL file
             source: CLI source name (default: "claude")
         """
-        if session_id in self._active_sessions:
+        registered_path = self._active_sessions.get(session_id)
+        if registered_path == transcript_path:
             return
+        if registered_path is not None:
+            self.unregister_session(session_id)
 
         self._active_sessions[session_id] = transcript_path
         self._parsers[session_id] = get_parser(
@@ -91,15 +103,25 @@ class ProcessorLifecycleMixin:
                 transcript_path,
             )
 
-    async def flush_session(self: ProcessorHost, session_id: str) -> None:
+    async def flush_session(self: ProcessorHost, session_id: str) -> SessionFlushResult:
         """Force an immediate processing pass for a single session.
 
         Useful when stats need to be up-to-date before reading them
         (e.g., at SESSION_END before completing an agent run).
         """
         transcript_path = self._active_sessions.get(session_id)
-        if transcript_path:
-            await self._process_session(session_id, transcript_path)
+        if transcript_path is None:
+            return SessionFlushResult(flushed=False, error="session is not registered")
+
+        try:
+            await self._process_session(session_id, transcript_path, at_eof=True)
+        except Exception as exc:
+            logger.exception(
+                "Failed to flush session transcript",
+                extra={"session_id": session_id, "transcript_path": transcript_path},
+            )
+            return SessionFlushResult(flushed=False, error=str(exc))
+        return SessionFlushResult(flushed=True)
 
     def unregister_session(self: ProcessorHost, session_id: str) -> None:
         """Stop monitoring a session."""
