@@ -16,6 +16,7 @@ from gobby.servers.routes.tasks_comment_routes import register_task_comment_rout
 from gobby.servers.routes.tasks_dependency_routes import register_task_dependency_routes
 from gobby.servers.routes.tasks_lifecycle_routes import register_task_lifecycle_routes
 from gobby.servers.routes.tasks_stage_routes import register_task_stage_routes
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks._models import (
     TASK_TYPE_CHOICES,
     VALID_CATEGORIES,
@@ -123,9 +124,10 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
 
     def _resolve_project(project_id: str | None) -> str:
         """Resolve project ID, falling back to server's project context."""
-        if project_id:
-            return project_id
-        return server.resolve_project_id(project_id=None, cwd=None)
+        resolved_project_id = project_id or server.resolve_project_id(project_id=None, cwd=None)
+        if LocalProjectManager(server.task_manager.db).get(resolved_project_id) is None:
+            raise ValueError(f"Project not found: {resolved_project_id}")
+        return resolved_project_id
 
     def _resolve_task(task_id: str, *, project_id: str | None = None) -> "Task":
         """Resolve flexible task refs using project context for seq-num lookups."""
