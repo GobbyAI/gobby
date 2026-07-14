@@ -7,7 +7,7 @@ import pytest
 
 from gobby.config.persistence import MemoryBackupConfig
 from gobby.storage.memories import Memory
-from gobby.sync.memories import MemoryBackupManager, MemoryImportError
+from gobby.sync.memories import MemoryBackupManager, MemoryExportError, MemoryImportError
 
 pytestmark = pytest.mark.unit
 
@@ -391,14 +391,43 @@ def test_export_sync_no_memory_manager(mock_db) -> None:
     assert count == 0
 
 
-def test_export_sync_error(sync_manager, caplog) -> None:
-    """Test export_sync handles errors."""
+def test_export_sync_error(sync_manager) -> None:
+    """Test export_sync surfaces typed errors."""
     sync_manager.memory_manager.list_memories.side_effect = Exception("Export failed")
 
-    count = sync_manager.export_sync()
+    with pytest.raises(MemoryExportError, match="Failed to export memories: Export failed"):
+        sync_manager.export_sync()
 
-    assert count == 0
-    assert "Failed to export memories" in caplog.text
+
+def test_import_sync_ignores_unrelated_database_count(sync_manager, tmp_path) -> None:
+    """A valid backup imports regardless of the total database record count."""
+    mem_file = tmp_path / "memories.jsonl"
+    sync_manager.export_path = mem_file
+    sync_manager.memory_manager.count_memories.return_value = 500
+    mem_file.write_text(json.dumps({"content": "imported memory", "type": "fact"}) + "\n")
+
+    assert sync_manager.import_sync() == 1
+    sync_manager.memory_manager.storage.create_memory.assert_called_once()
+    sync_manager.memory_manager.count_memories.assert_not_called()
+
+
+def test_import_sync_empty_file_is_valid(sync_manager, tmp_path) -> None:
+    """An empty backup is a successful zero-record import."""
+    mem_file = tmp_path / "memories.jsonl"
+    sync_manager.export_path = mem_file
+    mem_file.write_text("\n", encoding="utf-8")
+
+    assert sync_manager.import_sync() == 0
+
+
+def test_import_sync_malformed_file_raises(sync_manager, tmp_path) -> None:
+    """Malformed backup data is distinguishable from an empty import."""
+    mem_file = tmp_path / "memories.jsonl"
+    sync_manager.export_path = mem_file
+    mem_file.write_text("{\n", encoding="utf-8")
+
+    with pytest.raises(MemoryImportError, match="Invalid JSON in memories file on line 1"):
+        sync_manager.import_sync()
 
 
 @pytest.mark.asyncio
@@ -497,14 +526,12 @@ def test_export_memories_sync_no_manager(mock_db, tmp_path) -> None:
     assert count == 0
 
 
-def test_export_memories_sync_error(sync_manager, tmp_path, caplog) -> None:
-    """Test _export_memories_sync handles errors."""
+def test_export_memories_sync_error(sync_manager, tmp_path) -> None:
+    """Test _export_memories_sync surfaces typed errors."""
     sync_manager.memory_manager.list_memories.side_effect = Exception("List failed")
 
-    count = sync_manager._export_memories_sync(tmp_path / "test.jsonl")
-
-    assert count == 0
-    assert "Failed to export memories" in caplog.text
+    with pytest.raises(MemoryExportError, match="Failed to export memories: List failed"):
+        sync_manager._export_memories_sync(tmp_path / "test.jsonl")
 
 
 # =============================================================================
@@ -793,7 +820,7 @@ class TestExportMerge:
         assert contents == {"memory A", "memory B", "memory C", "memory D"}
         assert "Skipped 1 malformed JSONL line(s)" in caplog.text
 
-    def test_export_refuses_to_shrink_without_force(self, mock_db, tmp_path, caplog) -> None:
+    def test_export_refuses_to_shrink_without_force(self, mock_db, tmp_path) -> None:
         mm = MagicMock()
         mm.list_memories = MagicMock(return_value=[])
         manager = MemoryBackupManager(
@@ -807,9 +834,9 @@ class TestExportMerge:
         mem_file.write_text(original, encoding="utf-8")
         manager.export_path = mem_file
 
-        assert manager.backup_sync() == 0
+        with pytest.raises(MemoryExportError, match="Refusing to shrink memory export"):
+            manager.backup_sync()
         assert mem_file.read_text(encoding="utf-8") == original
-        assert "Refusing to shrink memory export from 2 to 1 records without force" in caplog.text
 
         assert manager.backup_sync(force=True) == 1
         assert len(mem_file.read_text(encoding="utf-8").splitlines()) == 1
@@ -823,7 +850,8 @@ class TestExportMerge:
         manager_with_memories.export_path = mem_file
 
         with patch("gobby.sync.jsonl_io.os.replace", side_effect=OSError("interrupted")):
-            assert manager_with_memories.backup_sync() == 0
+            with pytest.raises(MemoryExportError, match="Failed to export memories: interrupted"):
+                manager_with_memories.backup_sync()
 
         assert mem_file.read_bytes() == original
         assert list(tmp_path.glob(".memories.jsonl.*.tmp")) == []

@@ -27,6 +27,7 @@ from typing import Any
 
 __all__ = [
     "MemoryBackupManager",
+    "MemoryExportError",
     "MemoryImportError",
 ]
 
@@ -49,6 +50,10 @@ logger = logging.getLogger(__name__)
 
 class MemoryImportError(RuntimeError):
     """Raised when explicit memory import cannot complete."""
+
+
+class MemoryExportError(RuntimeError):
+    """Raised when a memory backup/export cannot complete."""
 
 
 _MIN_UTC_DATETIME = datetime.min.replace(tzinfo=UTC)
@@ -333,20 +338,23 @@ class MemoryBackupManager:
         try:
             memories_file = self._get_export_path()
             return self._export_to_files_sync(memories_file, project_id=project_id, force=force)
+        except MemoryExportError:
+            raise
         except Exception as e:
-            logger.warning(f"Failed to backup memories: {e}")
-            return 0
+            logger.error(f"Failed to backup memories: {e}", exc_info=True)
+            raise MemoryExportError(f"Failed to backup memories: {e}") from e
 
     # Backward compatibility alias
     export_sync = backup_sync
 
-    def import_sync(self, force: bool = False) -> int:
+    def import_sync(self) -> int:
         """
         Import memories from filesystem synchronously (blocking).
 
         Used by explicit restore/import commands to restore memories from a JSONL file
         (e.g. pulled from git on a new machine) before exporting.
-        Only imports if the JSONL file has more entries than the DB.
+        Existing records are deduplicated by the importer, making repeated
+        restores idempotent.
         """
         if not self.config.enabled or not self.memory_manager:
             return 0
@@ -360,22 +368,7 @@ class MemoryBackupManager:
             with open(memories_file, encoding="utf-8") as f:
                 lines = [line for line in f if line.strip()]
 
-            file_count = len(lines)
-            if file_count == 0:
-                return 0
-
-            # Count memories in DB
-            db_count = self.memory_manager.count_memories()
-
-            if not force and file_count <= db_count:
-                logger.debug(
-                    f"Skipping memory import: DB has {db_count} memories, file has {file_count}"
-                )
-                return 0
-
-            logger.info(
-                f"Importing memories from {memories_file}: file has {file_count}, DB has {db_count}"
-            )
+            logger.info(f"Importing memories from {memories_file}")
             return self._import_memories_from_lines(lines)
         except MemoryImportError:
             raise
@@ -753,13 +746,11 @@ class MemoryBackupManager:
             )
 
             if not force and len(sorted_records) < len(existing_records):
-                logger.warning(
-                    "Refusing to shrink memory export from %d to %d records without force: %s",
-                    len(existing_records),
-                    len(sorted_records),
-                    file_path,
+                raise MemoryExportError(
+                    "Refusing to shrink memory export from "
+                    f"{len(existing_records)} to {len(sorted_records)} records without force: "
+                    f"{file_path}"
                 )
-                return 0
 
             # 4. Build output and skip write if content is unchanged
             new_content = "".join(
@@ -789,6 +780,8 @@ class MemoryBackupManager:
         try:
             with export_file_lock(file_path):
                 return export_locked()
+        except MemoryExportError:
+            raise
         except Exception as e:
             logger.error(f"Failed to export memories: {e}", exc_info=True)
-            return 0
+            raise MemoryExportError(f"Failed to export memories: {e}") from e

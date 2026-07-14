@@ -98,7 +98,7 @@ def backup_memories(ctx: click.Context, output_path: str | None, quiet: bool, fo
         gobby memory backup -o ~/backups/mem.jsonl   # Export to custom path
     """
     from gobby.config.persistence import MemoryBackupConfig
-    from gobby.sync.memories import MemoryBackupManager
+    from gobby.sync.memories import MemoryBackupManager, MemoryExportError
     from gobby.utils.project_context import get_project_context
 
     project_ctx = get_project_context(cwd=Path.cwd())
@@ -128,7 +128,10 @@ def backup_memories(ctx: click.Context, output_path: str | None, quiet: bool, fo
         config=config,
     )
 
-    count = backup_mgr.backup_sync(project_id=project_id, force=force)
+    try:
+        count = backup_mgr.backup_sync(project_id=project_id, force=force)
+    except MemoryExportError as exc:
+        raise click.ClickException(str(exc)) from exc
     if not quiet:
         if count > 0:
             click.echo(f"Backed up {count} memories to {export_path}")
@@ -144,9 +147,8 @@ def backup_memories(ctx: click.Context, output_path: str | None, quiet: bool, fo
     help="Input file path (default: .gobby/memories.jsonl)",
 )
 @click.option("--quiet", "-q", is_flag=True, help="Suppress output")
-@click.option("--force", is_flag=True, help="Import even when the database has as many memories")
 @click.pass_context
-def restore_memories(ctx: click.Context, input_path: str | None, quiet: bool, force: bool) -> None:
+def restore_memories(ctx: click.Context, input_path: str | None, quiet: bool) -> None:
     """Restore memories from a JSONL backup file.
 
     Imports memories from a JSONL file into the database. This runs synchronously
@@ -158,7 +160,6 @@ def restore_memories(ctx: click.Context, input_path: str | None, quiet: bool, fo
 
         gobby memory restore --input ~/backups/mem.jsonl
 
-        gobby memory restore --force
     """
     from gobby.utils.project_context import get_project_context
 
@@ -186,7 +187,7 @@ def restore_memories(ctx: click.Context, input_path: str | None, quiet: bool, fo
     )
 
     try:
-        count = backup_mgr.import_sync(force=force)
+        count = backup_mgr.import_sync()
     except MemoryImportError as exc:
         raise click.ClickException(str(exc)) from exc
     if not quiet:

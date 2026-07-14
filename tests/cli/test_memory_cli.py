@@ -10,7 +10,7 @@ from click.testing import CliRunner
 
 from gobby.cli import cli
 from gobby.cli.memory.main import memory as memory_cli
-from gobby.sync.memories import MemoryImportError
+from gobby.sync.memories import MemoryExportError, MemoryImportError
 
 pytestmark = pytest.mark.unit
 
@@ -645,6 +645,26 @@ class TestMemoryBackupCommand:
         assert result.exit_code == 0
         assert mock_backup_manager.backup_sync.call_args.kwargs["force"] is True
 
+    @patch("gobby.sync.memories.MemoryBackupManager")
+    @patch("gobby.cli.memory.get_memory_manager")
+    def test_backup_export_error_fails(
+        self,
+        mock_get_manager: MagicMock,
+        mock_backup_manager_cls: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        mock_manager = MagicMock()
+        mock_manager.db = MagicMock()
+        mock_get_manager.return_value = mock_manager
+        mock_backup_manager = MagicMock()
+        mock_backup_manager.backup_sync.side_effect = MemoryExportError("backup failed")
+        mock_backup_manager_cls.return_value = mock_backup_manager
+
+        result = runner.invoke(cli, ["memory", "backup", "--output", "memories.jsonl"])
+
+        assert result.exit_code == 1
+        assert "backup failed" in result.output
+
 
 class TestMemoryRestoreCommand:
     """Tests for gobby memory restore command."""
@@ -662,7 +682,7 @@ class TestMemoryRestoreCommand:
         mock_backup_manager_cls: MagicMock,
         runner: CliRunner,
     ) -> None:
-        """Default restore imports from .gobby/memories.jsonl without force."""
+        """Default restore imports from .gobby/memories.jsonl."""
         mock_manager = MagicMock()
         mock_manager.db = MagicMock()
         mock_get_manager.return_value = mock_manager
@@ -679,7 +699,7 @@ class TestMemoryRestoreCommand:
 
         assert result.exit_code == 0
         assert "Restored 3 memories" in result.output
-        mock_backup_manager.import_sync.assert_called_once_with(force=False)
+        mock_backup_manager.import_sync.assert_called_once_with()
         config = mock_backup_manager_cls.call_args.kwargs["config"]
         assert config.export_path == expected_path
 
@@ -711,7 +731,7 @@ class TestMemoryRestoreCommand:
 
         assert result.exit_code == 0
         assert result.output == ""
-        mock_backup_manager.import_sync.assert_called_once_with(force=False)
+        mock_backup_manager.import_sync.assert_called_once_with()
         config = mock_backup_manager_cls.call_args.kwargs["config"]
         assert config.export_path == expected_path
 
