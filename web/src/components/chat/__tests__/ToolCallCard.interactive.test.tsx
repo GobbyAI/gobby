@@ -35,6 +35,7 @@ describe('ToolCallCard interactions', () => {
     expect(screen.getByRole('button', { name: 'Always Approve' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Reject' })).toBeDisabled()
 
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
     fireEvent.click(screen.getByRole('button', { name: 'Reject' }))
     expect(onRespondToApproval).toHaveBeenCalledOnce()
   })
