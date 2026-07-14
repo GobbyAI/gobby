@@ -102,25 +102,60 @@ def update_descendant_paths(db: HubDatabase, task_id: str) -> int:
     Returns:
         Number of tasks updated
     """
-    task_ids: list[str] = []
-    pending: list[tuple[str, int]] = [(task_id, 0)]
-    visited: set[str] = set()
+    with db.transaction() as conn:
+        root_path = compute_path_cache(db, task_id)
+        now = utc_now()
+        row = conn.execute(
+            """
+            WITH RECURSIVE subtree(id, path_cache, depth, traversal_path, cycle) AS (
+                SELECT id, %s::text, 0, ARRAY[id], FALSE
+                FROM tasks
+                WHERE id = %s
+                UNION ALL
+                SELECT child.id,
+                       CASE
+                           WHEN parent.path_cache IS NULL OR child.seq_num IS NULL THEN NULL
+                           ELSE parent.path_cache || '.' || child.seq_num::text
+                       END,
+                       parent.depth + 1,
+                       parent.traversal_path || child.id,
+                       child.id = ANY(parent.traversal_path)
+                FROM tasks child
+                JOIN subtree parent ON child.parent_task_id = parent.id
+                WHERE NOT parent.cycle
+                  AND parent.depth < %s
+            ),
+            updated AS (
+                UPDATE tasks
+                SET path_cache = subtree.path_cache, updated_at = %s
+                FROM subtree
+                WHERE tasks.id = subtree.id
+                  AND subtree.path_cache IS NOT NULL
+                  AND NOT subtree.cycle
+                  AND subtree.depth < %s
+                RETURNING tasks.id
+            )
+            SELECT (SELECT COUNT(*) FROM updated) AS updated_count,
+                   COALESCE(BOOL_OR(cycle), FALSE) AS cycle_detected,
+                   COALESCE(BOOL_OR(depth >= %s), FALSE) AS depth_exceeded
+            FROM subtree
+            """,
+            (
+                root_path,
+                task_id,
+                MAX_TASK_HIERARCHY_DEPTH,
+                now,
+                MAX_TASK_HIERARCHY_DEPTH,
+                MAX_TASK_HIERARCHY_DEPTH,
+            ),
+        ).fetchone()
 
-    while pending:
-        current_id, depth = pending.pop()
-        if current_id in visited:
-            raise ValueError(f"Cycle detected while updating descendant paths at task {current_id}")
-        if depth >= MAX_TASK_HIERARCHY_DEPTH:
+        if row and row["cycle_detected"]:
+            raise ValueError(f"Cycle detected while updating descendant paths at task {task_id}")
+        if row and row["depth_exceeded"]:
             raise ValueError(
                 f"Task hierarchy exceeded max depth ({MAX_TASK_HIERARCHY_DEPTH}) "
                 f"while updating descendants of {task_id}"
             )
-        visited.add(current_id)
-        task_ids.append(current_id)
-        children = db.fetchall(
-            "SELECT id FROM tasks WHERE parent_task_id = %s",
-            (current_id,),
-        )
-        pending.extend((str(child["id"]), depth + 1) for child in children)
 
-    return sum(update_path_cache(db, current_id) is not None for current_id in task_ids)
+        return int(row["updated_count"]) if row else 0

@@ -19,11 +19,6 @@ from gobby.storage.tasks import (
 pytestmark = pytest.mark.unit
 
 
-class _UnboundedLinearHierarchy:
-    def fetchall(self, _query: str, params: tuple[str]) -> list[dict[str, str]]:
-        return [{"id": str(int(params[0]) + 1)}]
-
-
 def test_path_cache_cycle_fails_before_writing(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -48,11 +43,32 @@ def test_path_cache_cycle_fails_before_writing(
     assert {row["path_cache"] for row in rows} == {None}
 
 
-def test_descendant_path_update_enforces_depth_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_descendant_path_update_enforces_depth_cap(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    root = manager.create_task(sample_project["id"], "Depth root")
+    child = manager.create_task(sample_project["id"], "Depth child", parent_task_id=root.id)
+    grandchild = manager.create_task(
+        sample_project["id"], "Depth grandchild", parent_task_id=child.id
+    )
+    task_ids = [root.id, child.id, grandchild.id]
+    temp_db.execute(
+        "UPDATE tasks SET path_cache = NULL WHERE id = ANY(%s::uuid[])",
+        (task_ids,),
+    )
     monkeypatch.setattr(_path_cache, "MAX_TASK_HIERARCHY_DEPTH", 2)
 
     with pytest.raises(ValueError, match=r"exceeded max depth \(2\)"):
-        _path_cache.update_descendant_paths(_UnboundedLinearHierarchy(), "0")
+        manager.update_descendant_paths(root.id)
+
+    rows = temp_db.fetchall(
+        "SELECT path_cache FROM tasks WHERE id = ANY(%s::uuid[])",
+        (task_ids,),
+    )
+    assert {row["path_cache"] for row in rows} == {None}
 
 
 def test_ready_and_blocked_readers_terminate_on_blocker_parent_cycle(
