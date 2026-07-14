@@ -26,7 +26,7 @@ def test_quality() -> None:
 
 
 @test_quality.command("audit")
-@click.argument("paths", nargs=-1, type=click.Path(exists=True, path_type=Path))
+@click.argument("paths", nargs=-1, type=click.Path(path_type=Path))
 @click.option(
     "--format",
     "output_format",
@@ -92,5 +92,6 @@ def audit(
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(rendered, encoding="utf-8")
 
-    if fail_on_new and diff is not None and diff.failing_issues:
+    zero_file_audit = any(warning.code == "NO_ANALYZABLE_FILES" for warning in report.warnings)
+    if fail_on_new and (zero_file_audit or (diff is not None and diff.failing_issues)):
         raise click.exceptions.Exit(1)

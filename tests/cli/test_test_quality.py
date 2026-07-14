@@ -345,3 +345,30 @@ it.each(["has space", "control char"])(
     assert "Files scanned: 1" in result.output
     assert "Tests scanned: 1" in result.output
     assert "Issues: 0" in result.output
+
+
+@pytest.mark.parametrize("requested_path", ["tests/helper.ts", "tests"])
+def test_fail_on_new_rejects_zero_file_audits(requested_path: str) -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem() as cwd:
+        root = Path(cwd)
+        path = root / requested_path
+        if path.suffix:
+            path.parent.mkdir()
+            path.write_text("export const helper = true;\n", encoding="utf-8")
+        baseline_path = root / ".gobby" / "missing-baseline.json"
+
+        result = runner.invoke(
+            quality_command,
+            [
+                "audit",
+                requested_path,
+                "--baseline",
+                str(baseline_path),
+                "--fail-on-new",
+            ],
+        )
+
+    assert result.exit_code == 1
+    assert "Files scanned: 0" in result.output
+    assert "NO_ANALYZABLE_FILES" in result.output

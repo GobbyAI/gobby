@@ -677,3 +677,18 @@ def test_read_error_warns_and_audit_continues(
     assert [(warning.code, warning.path) for warning in report.warnings] == [
         ("PARSE_ERROR", "tests/test_unreadable.py")
     ]
+
+
+@pytest.mark.parametrize("requested_path", ["tests/helper.ts", "tests"])
+def test_zero_file_audit_warns_for_unmatched_paths(tmp_path: Path, requested_path: str) -> None:
+    path = tmp_path / requested_path
+    if path.suffix:
+        path.parent.mkdir()
+        path.write_text("export const helper = true;\n", encoding="utf-8")
+
+    report = audit_paths([path], root=tmp_path)
+
+    assert report.files_scanned == 0
+    assert [(warning.code, warning.path) for warning in report.warnings] == [
+        ("NO_ANALYZABLE_FILES", None)
+    ]

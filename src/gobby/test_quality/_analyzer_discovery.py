@@ -55,6 +55,11 @@ def _discover_files(paths: Sequence[str | Path], *, root: Path) -> _DiscoveryRes
                     elif _is_unsupported_test_file(candidate):
                         warning = _unsupported_language_warning(candidate.resolve(), root)
                         warnings[warning.path or str(candidate)] = warning
+    if not files and not warnings:
+        warnings[""] = AuditWarning(
+            code="NO_ANALYZABLE_FILES",
+            message="No analyzable test files found for the requested paths.",
+        )
     return _DiscoveryResult(
         files=tuple(sorted(files)),
         warnings=tuple(warnings[key] for key in sorted(warnings)),
