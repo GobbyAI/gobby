@@ -596,6 +596,58 @@ class TestStopDaemon:
             result = stop_daemon(quiet=True)
             assert result is True
 
+    def test_reports_lock_survivor_after_stop(self, temp_dir: Path) -> None:
+        """A lock still held after the kill sequence is surfaced loudly."""
+        from gobby.cli.utils_shutdown import _report_lock_survivor
+        from gobby.runner_pid_file import claim_pid_file
+
+        claim = claim_pid_file(temp_dir / "gobby.pid")
+        assert claim is not None
+        deps = MagicMock()
+        deps.get_gobby_home.return_value = temp_dir
+        try:
+            _report_lock_survivor(deps, quiet=False)
+        finally:
+            claim.release()
+
+        deps.logger.warning.assert_called_once()
+        deps._stop_step.assert_called_once()
+        assert str(os.getpid()) in deps._stop_step.call_args.args[0]
+
+    def test_lock_survivor_silent_when_lock_free(self, temp_dir: Path) -> None:
+        from gobby.cli.utils_shutdown import _report_lock_survivor
+
+        deps = MagicMock()
+        deps.get_gobby_home.return_value = temp_dir
+
+        _report_lock_survivor(deps, quiet=False)
+
+        deps.logger.warning.assert_not_called()
+        deps._stop_step.assert_not_called()
+
+    def test_stop_runs_lock_survivor_check(self, temp_dir: Path) -> None:
+        """The SIGTERM-success path probes for a surviving lock owner."""
+        pid_file = temp_dir / "gobby.pid"
+        pid_file.write_text("12345")
+        alive_calls = [True, True, False]
+
+        def mock_is_alive(pid: int) -> bool:
+            return alive_calls.pop(0) if alive_calls else False
+
+        mock_proc = MagicMock()
+        mock_proc.cmdline.return_value = ["python", "-m", "gobby.runner"]
+
+        with (
+            patch("gobby.cli.utils.get_gobby_home", return_value=temp_dir),
+            patch("gobby.cli.utils._is_process_alive", side_effect=mock_is_alive),
+            patch("gobby.cli.utils.psutil.Process", return_value=mock_proc),
+            patch("os.kill"),
+            patch("gobby.cli.utils_shutdown._report_lock_survivor") as mock_report,
+        ):
+            assert stop_daemon(quiet=True) is True
+
+        mock_report.assert_called_once()
+
     def test_stale_pid_file(self, temp_dir: Path) -> None:
         """Test with stale PID file (process not running)."""
         pid_file = temp_dir / "gobby.pid"
