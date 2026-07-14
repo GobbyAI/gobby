@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import threading
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
@@ -57,6 +58,7 @@ def make_recall_signal_sink(
         return None
 
     path = resolve_recall_signal_path(getattr(config, "recall_signal_log_path", None))
+    max_bytes = int(getattr(config, "recall_signal_log_max_mb", 50)) * 1024 * 1024
 
     def sink(snapshot: SearchDebugSnapshot) -> None:
         event = build_recall_signal_event(
@@ -65,7 +67,7 @@ def make_recall_signal_sink(
             weighting=_weighting_snapshot(config, recall_constants),
         )
         if jsonl_enabled:
-            append_recall_signal_events([event], path)
+            append_recall_signal_events([event], path, max_bytes=max_bytes)
         if hub_db is not None:
             try:
                 from gobby.storage.recall_signals import RecallSignalStore
@@ -140,14 +142,25 @@ def build_recall_signal_event(
     }
 
 
-def append_recall_signal_events(events: list[dict[str, Any]], path: Path) -> None:
-    """Append events as parseable JSONL; fail open on all filesystem/encoding errors."""
+def append_recall_signal_events(
+    events: list[dict[str, Any]],
+    path: Path,
+    max_bytes: int | None = None,
+) -> None:
+    """Append events as parseable JSONL; fail open on all filesystem/encoding errors.
+
+    When ``max_bytes`` is set and the live file has reached it, the file rotates
+    first (``.1`` shifts to ``.2``, live becomes ``.1``) so retained size stays
+    bounded at roughly three times the cap.
+    """
     if not events:
         return
 
     try:
         with _WRITE_LOCK:
             path.parent.mkdir(parents=True, exist_ok=True)
+            if max_bytes is not None:
+                _rotate_if_needed(path, max_bytes)
             payload = "".join(
                 json.dumps(event, ensure_ascii=False, allow_nan=False) + "\n" for event in events
             )
@@ -155,6 +168,30 @@ def append_recall_signal_events(events: list[dict[str, Any]], path: Path) -> Non
                 handle.write(payload)
     except Exception:
         logger.debug("Recall signal log append failed", exc_info=True)
+
+
+def rotated_recall_signal_paths(path: Path) -> list[Path]:
+    """Return existing log files for ``path`` oldest-first (``.2``, ``.1``, live)."""
+    candidates = (
+        path.with_name(path.name + ".2"),
+        path.with_name(path.name + ".1"),
+        path,
+    )
+    return [candidate for candidate in candidates if candidate.exists()]
+
+
+def _rotate_if_needed(path: Path, max_bytes: int) -> None:
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return
+    if size < max_bytes:
+        return
+    backup_one = path.with_name(path.name + ".1")
+    backup_two = path.with_name(path.name + ".2")
+    if backup_one.exists():
+        os.replace(backup_one, backup_two)
+    os.replace(path, backup_one)
 
 
 def _weighting_snapshot(
