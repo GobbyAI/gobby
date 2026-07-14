@@ -100,6 +100,13 @@ def build_tool_event_data(
         elif "input" in item_data:
             item_data["tool_input"] = item_data["input"]
 
+    if item_type == "commandExecution":
+        item_data["tool_response"] = {
+            "output": item_data.get("aggregatedOutput"),
+            "exitCode": item_data.get("exitCode"),
+            "status": item_data.get("status"),
+        }
+
     if "tool_response" not in item_data and "tool_result" not in item_data:
         if "output" in item_data:
             item_data["tool_response"] = item_data["output"]

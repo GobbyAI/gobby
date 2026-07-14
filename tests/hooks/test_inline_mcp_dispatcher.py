@@ -69,12 +69,16 @@ async def test_turn_start_delivery_seeds_resolved_caller_context(
     internal_manager = InternalRegistryManager()
     internal_manager.add_registry(registry)
     mcp_manager = MagicMock()
-    mcp_manager.session_manager = session_manager
+    del mcp_manager.session_manager
+    hook_manager = MagicMock()
+    hook_manager._session_manager = session_manager
     proxy = ToolProxyService(
         mcp_manager=mcp_manager,
         internal_manager=internal_manager,
         validate_arguments=True,
+        hook_manager_resolver=lambda: hook_manager,
     )
+    assert proxy.session_manager is session_manager
     dispatcher = HookManagerFactory._build_inline_mcp_dispatcher(lambda: proxy)
     assert dispatcher is not None
 

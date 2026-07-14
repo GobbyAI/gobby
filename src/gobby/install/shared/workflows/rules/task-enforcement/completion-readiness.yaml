@@ -26,11 +26,9 @@ rules:
         reason: |
           Completion readiness requires fresh successful verification evidence.
 
-          Run a validation command such as pytest, `uv run ruff format --check <files>`,
-          `uv run ruff check <files>`, mypy, or npm test.
-          Successful validation commands are recorded automatically.
-          A failed validation command blocks readiness until a later validation
-          command succeeds.
+          Run project-appropriate verification commands for the changed work, such as tests, linters, formatting checks, type checks, builds, or other project-defined checks.
+          Recognized successful verification commands are recorded automatically.
+          A failed command remains unresolved until a command in the same verification category succeeds.
 
           For non-command evidence, call:
           record_verification_evidence(summary="...", evidence_type="...",
