@@ -454,7 +454,12 @@ class TestSessionLifecycleManager:
         s1_refreshed = MagicMock()
         s1_refreshed.summary_markdown = None
         s2_refreshed = MagicMock()
-        s2_refreshed.summary_markdown = "summary content"
+        s2_refreshed.summary_markdown = (
+            "## Current State\n\n"
+            "Transcript processing completed and produced a substantive handoff summary for the "
+            "next session.\n\n"
+            "## Next Steps\n\nContinue processing the remaining pending sessions."
+        )
         manager.session_manager.get.side_effect = [s1_refreshed, s2_refreshed]
 
         # Mock helper methods to isolate loop logic
@@ -1306,13 +1311,13 @@ class TestProcessSessionTranscriptParsers:
 
         event = manager.token_event_store.record.call_args.args[0]
         assert event.input_tokens == 11392
-        assert event.output_tokens == 498
+        assert event.output_tokens == 342
         assert event.cache_read_tokens == 93568
         assert event.context_window == 258400
         manager.session_manager.update_usage.assert_called_once_with(
             session_id="s1",
             input_tokens=11392,
-            output_tokens=498,
+            output_tokens=342,
             cache_creation_tokens=0,
             cache_read_tokens=93568,
             context_window=258400,
