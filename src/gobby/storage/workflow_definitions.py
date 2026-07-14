@@ -27,12 +27,17 @@ _WORKFLOW_DEFINITIONS_REVISION_LOCK = Lock()
 
 
 def compute_definition_hash(definition_json: str) -> str:
-    """Compute a SHA-256 hash of a definition JSON string.
+    """Compute a SHA-256 hash of a canonical definition JSON string.
 
     Used for cheap drift detection between installed definitions
     and their on-disk template files.
     """
-    return hashlib.sha256(definition_json.encode()).hexdigest()
+    canonical_json = json.dumps(
+        json.loads(definition_json),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical_json.encode()).hexdigest()
 
 
 def get_workflow_definitions_revision() -> int:
