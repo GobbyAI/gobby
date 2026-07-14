@@ -6,8 +6,10 @@ Tests cover:
 - InterSessionMessageManager CRUD operations
 """
 
+import threading
 import uuid
-from datetime import UTC, datetime
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -37,7 +39,6 @@ class TestInterSessionMessageDataclass:
             content="Please work on subtask A",
             priority="normal",
             sent_at="2026-01-19T12:00:00Z",
-            read_at=None,
         )
 
         assert msg.id == "msg-123"
@@ -46,7 +47,6 @@ class TestInterSessionMessageDataclass:
         assert msg.content == "Please work on subtask A"
         assert msg.priority == "normal"
         assert msg.sent_at == datetime(2026, 1, 19, 12, tzinfo=UTC)
-        assert msg.read_at is None
 
     def test_from_row_creates_instance(self, temp_db: HubDatabase) -> None:
         """Test that InterSessionMessage.from_row creates instance from DB row."""
@@ -106,7 +106,6 @@ class TestInterSessionMessageDataclass:
             content="Hello child agent",
             priority="urgent",
             sent_at="2026-01-19T12:30:00Z",
-            read_at="2026-01-19T12:35:00Z",
         )
 
         d = msg.to_dict()
@@ -116,7 +115,6 @@ class TestInterSessionMessageDataclass:
         assert d["content"] == "Hello child agent"
         assert d["priority"] == "urgent"
         assert d["sent_at"] == "2026-01-19T12:30:00+00:00"
-        assert d["read_at"] == "2026-01-19T12:35:00+00:00"
 
 
 class TestInterSessionMessageToBrief:
@@ -133,7 +131,6 @@ class TestInterSessionMessageToBrief:
             content="Hello",
             priority="normal",
             sent_at="2026-01-19T12:00:00Z",
-            read_at=None,
             message_type="message",
             metadata_json='{"key": "value"}',
             delivered_at="2026-01-19T12:05:00Z",
@@ -154,7 +151,6 @@ class TestInterSessionMessageToBrief:
             content="Important message",
             priority="urgent",
             sent_at="2026-01-19T12:00:00Z",
-            read_at="2026-01-19T12:05:00Z",
             message_type="command_result",
         )
 
@@ -166,7 +162,6 @@ class TestInterSessionMessageToBrief:
         assert brief["priority"] == "urgent"
         assert brief["message_type"] == "command_result"
         assert brief["sent_at"] == "2026-01-19T12:00:00+00:00"
-        assert brief["read_at"] == "2026-01-19T12:05:00+00:00"
 
     def test_to_brief_excludes_internal_fields(self) -> None:
         """to_brief omits metadata_json and delivered_at."""
@@ -179,7 +174,6 @@ class TestInterSessionMessageToBrief:
             content="Test",
             priority="normal",
             sent_at="2026-01-19T12:00:00Z",
-            read_at=None,
             metadata_json='{"foo": "bar"}',
             delivered_at="2026-01-19T12:01:00Z",
         )
@@ -244,7 +238,6 @@ class TestInterSessionMessageManagerCreateMessage:
         assert msg.to_session == child.id
         assert msg.content == "Work on task X"
         assert msg.priority == "normal"
-        assert msg.read_at is None
 
     def test_create_message_persists_to_database(self, temp_db: HubDatabase) -> None:
         """Test that created message is persisted to database."""
@@ -403,99 +396,6 @@ class TestInterSessionMessageManagerGetMessages:
         assert len(messages) == 1
         assert messages[0].content == "For child 1"
 
-    def test_get_messages_unread_only(self, temp_db: HubDatabase) -> None:
-        """Test that get_messages with unread_only=True filters read messages."""
-        from gobby.storage.inter_session_messages import InterSessionMessageManager
-        from gobby.storage.projects import LocalProjectManager
-        from gobby.storage.sessions import SessionManager
-
-        project_mgr = LocalProjectManager(temp_db)
-        project = project_mgr.create(name="test-project", repo_path="/tmp/test")
-
-        session_mgr = SessionManager(temp_db)
-        parent = session_mgr.register(
-            external_id="parent", machine_id="m1", source="claude", project_id=project.id
-        )
-        child = session_mgr.register(
-            external_id="child", machine_id="m1", source="claude", project_id=project.id
-        )
-
-        manager = InterSessionMessageManager(temp_db)
-        msg1 = manager.create_message(from_session=parent.id, to_session=child.id, content="Unread")
-        msg2 = manager.create_message(
-            from_session=parent.id, to_session=child.id, content="Will be read"
-        )
-
-        # Mark one as read
-        manager.mark_read(msg2.id)
-
-        # Get unread only
-        messages = manager.get_messages(to_session=child.id, unread_only=True)
-        assert len(messages) == 1
-        assert messages[0].id == msg1.id
-
-
-class TestInterSessionMessageManagerMarkRead:
-    """TDD tests for mark_read method."""
-
-    def test_mark_read_sets_read_at(self, temp_db: HubDatabase) -> None:
-        """Test that mark_read sets the read_at timestamp."""
-        from gobby.storage.inter_session_messages import InterSessionMessageManager
-        from gobby.storage.projects import LocalProjectManager
-        from gobby.storage.sessions import SessionManager
-
-        project_mgr = LocalProjectManager(temp_db)
-        project = project_mgr.create(name="test-project", repo_path="/tmp/test")
-
-        session_mgr = SessionManager(temp_db)
-        parent = session_mgr.register(
-            external_id="parent", machine_id="m1", source="claude", project_id=project.id
-        )
-        child = session_mgr.register(
-            external_id="child", machine_id="m1", source="claude", project_id=project.id
-        )
-
-        manager = InterSessionMessageManager(temp_db)
-        msg = manager.create_message(
-            from_session=parent.id, to_session=child.id, content="To be read"
-        )
-        assert msg.read_at is None
-
-        manager.mark_read(msg.id)
-
-        # Verify in database
-        row = temp_db.fetchone(
-            "SELECT read_at FROM inter_session_messages WHERE id = %s", (msg.id,)
-        )
-        assert row["read_at"] is not None
-
-    def test_mark_read_returns_updated_message(self, temp_db: HubDatabase) -> None:
-        """Test that mark_read returns the updated message."""
-        from gobby.storage.inter_session_messages import (
-            InterSessionMessage,
-            InterSessionMessageManager,
-        )
-        from gobby.storage.projects import LocalProjectManager
-        from gobby.storage.sessions import SessionManager
-
-        project_mgr = LocalProjectManager(temp_db)
-        project = project_mgr.create(name="test-project", repo_path="/tmp/test")
-
-        session_mgr = SessionManager(temp_db)
-        parent = session_mgr.register(
-            external_id="parent", machine_id="m1", source="claude", project_id=project.id
-        )
-        child = session_mgr.register(
-            external_id="child", machine_id="m1", source="claude", project_id=project.id
-        )
-
-        manager = InterSessionMessageManager(temp_db)
-        msg = manager.create_message(from_session=parent.id, to_session=child.id, content="Test")
-
-        updated = manager.mark_read(msg.id)
-        assert isinstance(updated, InterSessionMessage)
-        assert updated.read_at is not None
-
 
 class TestInterSessionMessageManagerGetMessage:
     """TDD tests for get_message method."""
@@ -539,6 +439,158 @@ class TestInterSessionMessageManagerGetMessage:
         assert result is None
 
 
+class TestInterSessionMessageManagerDeliveryClaims:
+    """Atomic delivery claims are scoped to one recipient."""
+
+    @pytest.fixture
+    def mailbox(self, temp_db: HubDatabase):
+        from gobby.storage.inter_session_messages import InterSessionMessageManager
+        from gobby.storage.projects import LocalProjectManager
+        from gobby.storage.sessions import SessionManager
+
+        project = LocalProjectManager(temp_db).create(
+            name="delivery-claims",
+            repo_path="/tmp/delivery-claims",
+        )
+        sessions = SessionManager(temp_db)
+        sender = sessions.register(
+            external_id="claim-sender",
+            machine_id="m1",
+            source="claude",
+            project_id=project.id,
+        )
+        recipient = sessions.register(
+            external_id="claim-recipient",
+            machine_id="m1",
+            source="claude",
+            project_id=project.id,
+        )
+        foreign = sessions.register(
+            external_id="claim-foreign",
+            machine_id="m1",
+            source="claude",
+            project_id=project.id,
+        )
+        return InterSessionMessageManager(temp_db), sender, recipient, foreign
+
+    def test_claim_is_recipient_scoped_and_not_redelivered(self, mailbox) -> None:
+        manager, sender, recipient, foreign = mailbox
+        recipient_message = manager.create_message(
+            from_session=sender.id,
+            to_session=recipient.id,
+            content="recipient message",
+        )
+        foreign_message = manager.create_message(
+            from_session=sender.id,
+            to_session=foreign.id,
+            content="foreign message",
+        )
+
+        claimed = manager.claim_undelivered_messages(recipient.id)
+
+        assert [message.id for message in claimed] == [recipient_message.id]
+        assert manager.claim_undelivered_messages(recipient.id) == []
+        assert manager.get_message(foreign_message.id).delivered_at is None
+
+    def test_concurrent_claim_delivers_each_message_once(self, mailbox) -> None:
+        manager, sender, recipient, _foreign = mailbox
+        message = manager.create_message(
+            from_session=sender.id,
+            to_session=recipient.id,
+            content="claim once",
+        )
+        barrier = threading.Barrier(3)
+
+        def claim() -> list[str]:
+            barrier.wait()
+            return [item.id for item in manager.claim_undelivered_messages(recipient.id)]
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            results = list(executor.map(lambda _index: claim(), range(3)))
+
+        assert sum(results, []) == [message.id]
+
+    def test_mark_delivered_requires_matching_undelivered_recipient(self, mailbox) -> None:
+        manager, sender, recipient, foreign = mailbox
+        message = manager.create_message(
+            from_session=sender.id,
+            to_session=recipient.id,
+            content="recipient guard",
+        )
+
+        with pytest.raises(ValueError, match="Undelivered message not found"):
+            manager.mark_delivered(message.id, foreign.id)
+        assert manager.get_message(message.id).delivered_at is None
+
+        delivered = manager.mark_delivered(message.id, recipient.id)
+        assert delivered.delivered_at is not None
+        with pytest.raises(ValueError, match="Undelivered message not found"):
+            manager.mark_delivered(message.id, recipient.id)
+
+    def test_get_messages_is_oldest_first_with_stable_id_tiebreaker(self, mailbox) -> None:
+        manager, sender, recipient, _foreign = mailbox
+        first = manager.create_message(
+            from_session=sender.id,
+            to_session=recipient.id,
+            content="first id",
+        )
+        second = manager.create_message(
+            from_session=sender.id,
+            to_session=recipient.id,
+            content="second id",
+        )
+        older = manager.create_message(
+            from_session=sender.id,
+            to_session=recipient.id,
+            content="older",
+        )
+        tied_at = datetime(2026, 1, 2, tzinfo=UTC)
+        manager.db.execute(
+            "UPDATE inter_session_messages SET sent_at = %s WHERE id IN (%s, %s)",
+            (tied_at, first.id, second.id),
+        )
+        manager.db.execute(
+            "UPDATE inter_session_messages SET sent_at = %s WHERE id = %s",
+            (tied_at - timedelta(days=1), older.id),
+        )
+
+        messages = manager.get_messages(recipient.id)
+
+        assert [message.id for message in messages] == [older.id, *sorted([first.id, second.id])]
+
+    def test_retention_deletes_only_old_delivered_messages(self, mailbox) -> None:
+        manager, sender, recipient, _foreign = mailbox
+        old = manager.create_message(
+            from_session=sender.id,
+            to_session=recipient.id,
+            content="old delivered",
+        )
+        recent = manager.create_message(
+            from_session=sender.id,
+            to_session=recipient.id,
+            content="recent delivered",
+        )
+        undelivered = manager.create_message(
+            from_session=sender.id,
+            to_session=recipient.id,
+            content="old undelivered",
+        )
+        manager.mark_delivered(old.id, recipient.id)
+        manager.mark_delivered(recent.id, recipient.id)
+        cutoff = datetime(2026, 2, 1, tzinfo=UTC)
+        manager.db.execute(
+            "UPDATE inter_session_messages SET delivered_at = %s WHERE id = %s",
+            (cutoff - timedelta(days=1), old.id),
+        )
+
+        deleted = manager.delete_delivered_before(cutoff)
+
+        assert deleted == 1
+        assert manager.get_message(old.id) is None
+        assert manager.get_message(recent.id) is not None
+        assert manager.get_message(undelivered.id) is not None
+
+
 class TestInterSessionMessageManagerListMessages:
     """Tests for list_messages read-only query method."""
 
@@ -573,9 +625,8 @@ class TestInterSessionMessageManagerListMessages:
         # beta → alpha (inbox for alpha, sent for beta)
         m3 = mgr.create_message(from_session=s_beta.id, to_session=s_alpha.id, content="msg-3")
 
-        # Mark m1 as read and delivered
-        mgr.mark_read(m1.id)
-        mgr.mark_delivered(m1.id)
+        # Mark m1 as delivered
+        mgr.mark_delivered(m1.id, s_beta.id)
 
         class Setup:
             alpha = s_alpha
@@ -607,13 +658,6 @@ class TestInterSessionMessageManagerListMessages:
         """direction='all' returns both sent and received."""
         msgs = setup.manager.list_messages(setup.beta.id, direction="all")
         assert len(msgs) == 3
-
-    def test_unread_only(self, setup) -> None:
-        """unread_only=True excludes messages with read_at set."""
-        msgs = setup.manager.list_messages(setup.beta.id, direction="inbox", unread_only=True)
-        # m1 was marked read, m2 is unread
-        assert len(msgs) == 1
-        assert msgs[0].content == "msg-2"
 
     def test_undelivered_only(self, setup) -> None:
         """undelivered_only=True excludes messages with delivered_at set."""

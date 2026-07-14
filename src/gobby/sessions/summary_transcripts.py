@@ -125,11 +125,20 @@ def _format_deterministic_summary(handoff_ctx: Any, digest_markdown: str) -> str
     from gobby.sessions.formatting import format_handoff_as_markdown
 
     base_markdown = format_handoff_as_markdown(handoff_ctx)
-    if not digest_markdown:
-        return base_markdown
+    current_state_parts: list[str] = []
+    if digest_markdown:
+        digest_section = _truncate_markdown(digest_markdown, DIGEST_FALLBACK_MAX_CHARS)
+        current_state_parts.append(f"### Session Digest\n\n{digest_section}")
+    if base_markdown:
+        current_state_parts.append(base_markdown)
+    if not current_state_parts:
+        return ""
 
-    digest_section = _truncate_markdown(digest_markdown, DIGEST_FALLBACK_MAX_CHARS)
-    return f"## Session Digest\n\n{digest_section}\n\n{base_markdown}".strip()
+    current_state = "\n\n".join(current_state_parts)
+    return (
+        f"## Current State\n\n{current_state}\n\n"
+        "## Next Steps\n\nContinue from the captured session state."
+    )
 
 
 async def _read_typed_json_transcript(path: Path) -> list[dict[str, Any]]:

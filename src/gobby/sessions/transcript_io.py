@@ -46,7 +46,7 @@ def _iter_archive_lines(archive_path: str) -> Iterator[str]:
     streaming legacy read and the eager :func:`_read_archive_lines` do.
     """
     try:
-        with gzip.open(archive_path, "rt", encoding="utf-8") as f:
+        with gzip.open(archive_path, "rt", encoding="utf-8", errors="replace") as f:
             yield from f
     except (EOFError, gzip.BadGzipFile, zlib.error) as e:
         raise DecompressionError(f"Truncated or malformed gzip archive {archive_path}: {e}") from e

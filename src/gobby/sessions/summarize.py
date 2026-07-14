@@ -352,8 +352,10 @@ async def generate_session_summaries(
         full_markdown = _format_deterministic_summary(handoff_ctx, digest_markdown)
         generation_mode = "digest_fallback"
 
+    summary_is_valid = is_summary_markdown_valid(full_markdown)
+
     # Persist to database
-    if decision.mode != "noop" and is_summary_markdown_valid(full_markdown):
+    if decision.mode != "noop" and summary_is_valid:
         summary_text = full_markdown if isinstance(full_markdown, str) else ""
         metadata = {
             "reason": decision.reason,
@@ -372,7 +374,7 @@ async def generate_session_summaries(
         )
 
     # Set handoff_ready status
-    if set_handoff_ready:
+    if set_handoff_ready and summary_is_valid:
         await _run_db(db_runner, session_manager.update_status, session_id, "handoff_ready")
 
     # Write files if requested
@@ -409,8 +411,8 @@ async def generate_session_summaries(
         logger.warning(f"Session wiki file write failed for session {session_id}: {e}")
         session_wiki_result = {"written": False, "skipped": "error", "error": str(e)}
 
-    return {
-        "success": True,
+    result = {
+        "success": summary_is_valid,
         "session_id": session_id,
         "compact_length": 0,  # Kept for API compatibility
         "full_length": len(full_markdown) if full_markdown else 0,
@@ -429,3 +431,6 @@ async def generate_session_summaries(
             "has_initial_goal": bool(handoff_ctx.initial_goal),
         },
     }
+    if not summary_is_valid:
+        result["error"] = "Unable to generate a valid session summary"
+    return result

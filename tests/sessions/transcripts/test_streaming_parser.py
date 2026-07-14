@@ -223,7 +223,7 @@ def test_event_offsets_echoed(name: str) -> None:
 
 
 @pytest.mark.unit
-def test_claude_buffered_lookahead_marks_event_not_parser_safe() -> None:
+def test_claude_events_are_parser_safe_without_lookahead() -> None:
     events = list(
         ClaudeTranscriptParser().iter_parse_events(
             _raw_lines_with_offsets(_claude_lines()),
@@ -232,8 +232,8 @@ def test_claude_buffered_lookahead_marks_event_not_parser_safe() -> None:
     )
 
     assert len(events) >= 2
-    assert any(not ev.parser_safe for ev in events[:-1])
-    assert events[-1].parser_safe is True
+    assert ClaudeTranscriptParser.max_lookahead == 0
+    assert all(event.parser_safe for event in events)
 
 
 @pytest.mark.unit

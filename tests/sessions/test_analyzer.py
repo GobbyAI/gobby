@@ -66,7 +66,7 @@ def test_extract_handoff_context_basic(sample_turns) -> None:
     assert ctx.active_gobby_task["id"] == "gt-123"
     assert "/path/to/login.py" in ctx.files_modified
     assert len(ctx.git_commits) == 1
-    assert "git commit -m 'fix login'" in ctx.git_commits[0]["command"]
+    assert ctx.git_commits[0] == {"hash": "", "message": "git commit -m 'fix login'"}
 
 
 def test_extract_handoff_context_empty() -> None:
@@ -75,6 +75,22 @@ def test_extract_handoff_context_empty() -> None:
     assert ctx.initial_goal == ""
     assert not ctx.active_gobby_task
     assert not ctx.files_modified
+
+
+def test_initial_goal_skips_claude_meta_and_compaction_entries() -> None:
+    turns = [
+        {"type": "user", "isMeta": True, "message": {"content": "hook feedback"}},
+        {
+            "type": "user",
+            "isCompactSummary": True,
+            "message": {"content": "compacted transcript"},
+        },
+        {"type": "user", "message": {"content": "actual user goal"}},
+    ]
+
+    ctx = TranscriptAnalyzer().extract_handoff_context(turns)
+
+    assert ctx.initial_goal == "actual user goal"
 
 
 def test_extract_handoff_context_no_task(sample_turns) -> None:
@@ -315,8 +331,11 @@ def test_multiple_git_commits() -> None:
 
     assert len(ctx.git_commits) == 2
     # Commits are in reverse order (latest first) due to reverse iteration
-    assert "second commit" in ctx.git_commits[0]["command"]
-    assert "first commit" in ctx.git_commits[1]["command"]
+    assert ctx.git_commits[0] == {"hash": "", "message": "git commit -m 'second commit'"}
+    assert ctx.git_commits[1] == {
+        "hash": "",
+        "message": "git add . && git commit -m 'first commit'",
+    }
 
 
 def test_large_transcript_max_turns_limits_scanning() -> None:
@@ -442,6 +461,36 @@ def test_mcp_call_tool_gobby_tasks_extracts_task() -> None:
     assert ctx.active_gobby_task is not None
     assert ctx.active_gobby_task["id"] == "gt-abc123"
     assert ctx.active_gobby_task["action"] == "update_task"
+
+
+def test_codex_gobby_call_tool_extracts_task() -> None:
+    """Codex's qualified Gobby tool name should extract the active task."""
+    turns = [
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "name": "mcp__gobby__call_tool",
+                        "input": {
+                            "server_name": "gobby-tasks",
+                            "tool_name": "claim_task",
+                            "arguments": {"task_id": "#16587"},
+                        },
+                    }
+                ]
+            },
+        }
+    ]
+
+    ctx = TranscriptAnalyzer().extract_handoff_context(turns)
+
+    assert ctx.active_gobby_task == {
+        "id": "#16587",
+        "action": "claim_task",
+        "title": "Task #16587",
+    }
 
 
 def test_gobby_tasks_without_task_id() -> None:
@@ -930,7 +979,10 @@ class TestFormatToolDescription:
 
         ctx = analyzer.extract_handoff_context(turns)
         assert len(ctx.git_commits) == 1
-        assert ctx.git_commits[0]["command"] == "git commit -m 'changes'"
+        assert ctx.git_commits[0] == {
+            "hash": "",
+            "message": "git commit -m 'changes'",
+        }
 
     def test_missing_name_graceful(self) -> None:
         """Test graceful handling when name is missing."""

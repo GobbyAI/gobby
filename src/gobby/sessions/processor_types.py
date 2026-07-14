@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import TYPE_CHECKING, Any, Protocol
+from weakref import WeakValueDictionary
 
 from gobby.sessions.message_stats import MessageStats
 from gobby.sessions.transcript_index import TranscriptIndexAppender
@@ -45,7 +46,10 @@ class ProcessorHost(Protocol):
     session_manager: SessionManager | None
     _hook_manager: HookManager | None
     _active_sessions: dict[str, str]
+    _processing_locks: WeakValueDictionary[str, asyncio.Lock]
     _parsers: dict[str, TranscriptParser]
+    _session_sources: dict[str, str]
+    _transcript_file_state: dict[str, tuple[int, int, int]]
     _last_mtime: dict[str, float]
     _byte_offsets: dict[str, int]
     _message_indices: dict[str, int]
@@ -78,13 +82,29 @@ class ProcessorHost(Protocol):
         model: str | None,
     ) -> ContextUsageSnapshot | None: ...
 
-    async def _process_session(self, session_id: str, transcript_path: str) -> None: ...
+    async def _process_session(
+        self,
+        session_id: str,
+        transcript_path: str,
+        *,
+        at_eof: bool = False,
+    ) -> None: ...
+
+    async def _process_session_unlocked(
+        self,
+        session_id: str,
+        transcript_path: str,
+        *,
+        at_eof: bool = False,
+    ) -> None: ...
 
     async def _process_json_session(self, session_id: str, transcript_path: str) -> None: ...
 
     async def _loop(self) -> None: ...
 
     async def _process_all_sessions(self) -> None: ...
+
+    def unregister_session(self, session_id: str) -> None: ...
 
     def _hydrate_registration_from_sidecar(
         self,
@@ -93,6 +113,8 @@ class ProcessorHost(Protocol):
         source: str,
         appender: TranscriptIndexAppender,
     ) -> None: ...
+
+    async def _reset_transcript_state(self, session_id: str, transcript_path: str) -> None: ...
 
     def _persist_appender_snapshot(
         self,
@@ -109,6 +131,10 @@ class ProcessorHost(Protocol):
     def _extract_native_titles(
         self, session_id: str, messages: list[ParsedMessage]
     ) -> list[ParsedMessage]: ...
+
+    async def _process_parsed_batch(
+        self, session_id: str, messages: list[ParsedMessage]
+    ) -> MessageStats: ...
 
     async def _persist_usage_events(
         self,

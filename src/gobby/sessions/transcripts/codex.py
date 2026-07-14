@@ -28,6 +28,10 @@ from collections.abc import Iterable, Iterator, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
+from gobby.sessions.transcript_protocol import (
+    _is_protocol_only_text,
+    _looks_like_system_bootstrap_text,
+)
 from gobby.sessions.transcripts.base import (
     BaseTranscriptParser,
     ParsedMessage,
@@ -44,6 +48,15 @@ logger = logging.getLogger(__name__)
 _ROLE_MAP = {
     "developer": "system",
 }
+
+
+def _is_instruction_dump(content: str) -> bool:
+    stripped = content.strip()
+    return (
+        stripped.casefold().startswith("<user_instructions>")
+        or _is_protocol_only_text(stripped)
+        or _looks_like_system_bootstrap_text(stripped)
+    )
 
 
 def _parse_int_token(value: Any, *, default: int = 0) -> int:
@@ -180,11 +193,12 @@ class CodexTranscriptParser(BaseTranscriptParser):
                 continue
 
             role = payload.get("role", "")
-            role = _ROLE_MAP.get(role, role)
-            if role not in ("user", "assistant", "system"):
+            if role not in ("user", "assistant"):
                 continue
 
             content = _extract_text_from_blocks(payload.get("content", []))
+            if _is_instruction_dump(content):
+                continue
             messages.insert(0, {"role": role, "content": content})
             if len(messages) >= num_pairs * 2:
                 break
@@ -425,11 +439,6 @@ class CodexTranscriptParser(BaseTranscriptParser):
         output_tokens = _parse_int_token(
             usage_data.get("output_tokens") or usage_data.get("outputTokens")
         )
-        reasoning_output_tokens = _parse_int_token(
-            usage_data.get("reasoning_output_tokens")
-            or usage_data.get("reasoningOutputTokens")
-            or 0
-        )
         cache_creation_tokens = _parse_int_token(
             usage_data.get("cache_creation_input_tokens")
             or usage_data.get("cacheCreationInputTokens")
@@ -438,7 +447,7 @@ class CodexTranscriptParser(BaseTranscriptParser):
 
         usage = TokenUsage(
             input_tokens=max(0, input_tokens - cached_input_tokens),
-            output_tokens=output_tokens + reasoning_output_tokens,
+            output_tokens=output_tokens,
             cache_creation_tokens=cache_creation_tokens,
             cache_read_tokens=cached_input_tokens,
         )
@@ -453,7 +462,7 @@ class CodexTranscriptParser(BaseTranscriptParser):
             index=index,
             role="assistant",
             content="",
-            content_type="text",
+            content_type="usage",
             tool_name=None,
             tool_input=None,
             tool_result=None,

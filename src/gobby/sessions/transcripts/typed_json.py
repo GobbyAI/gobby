@@ -530,7 +530,10 @@ class TypedJsonTranscriptParser(BaseTranscriptParser):
                         content_type="tool_result",
                         tool_name=tool_name,
                         tool_input=None,
-                        tool_result={"output": func_response, "status": "success"},
+                        tool_result={
+                            "output": func_response,
+                            "status": tc.get("status", "success"),
+                        },
                         timestamp=timestamp,
                         raw_json=tc,
                         usage=consume_usage(),

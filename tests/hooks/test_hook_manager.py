@@ -316,12 +316,15 @@ class TestHandleSessionStart:
         manager._resolve_project_id = MagicMock(return_value="wrong-project")
         manager._enricher.enrich = MagicMock()
 
-        event = make_event(
-            event_type=HookEventType.SESSION_START,
-            source=SessionSource.CODEX,
-            data={"session_id": "codex-session", "cwd": "/"},
-        )
-        response = manager._handle_internal(event)
+        with patch(
+            "gobby.hooks.project_context._project_id_from_current_context", return_value=None
+        ):
+            event = make_event(
+                event_type=HookEventType.SESSION_START,
+                source=SessionSource.CODEX,
+                data={"session_id": "codex-session", "cwd": "/"},
+            )
+            response = manager._handle_internal(event)
 
         assert response.decision == "allow"
         manager._resolve_project_id.assert_not_called()

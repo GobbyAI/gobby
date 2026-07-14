@@ -31,6 +31,7 @@ from __future__ import annotations
 import bisect
 import logging
 from collections.abc import Iterable, Iterator
+from copy import copy, deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
@@ -48,6 +49,7 @@ from gobby.sessions.transcript_index_sidecar import (
 from gobby.sessions.transcript_index_sidecar import (
     INDEX_CACHE_MAX_ENTRIES,
     clear_index_cache,
+    discard_index_sidecar,
     get_or_build_index,
     load_index_sidecar,
     persist_index_sidecar,
@@ -72,6 +74,7 @@ from gobby.sessions.transcripts.base import (
     NON_MESSAGE_CONTENT_TYPES,
     ParsedMessage,
     RawLine,
+    TokenUsage,
 )
 
 if TYPE_CHECKING:
@@ -95,6 +98,7 @@ __all__ = [
     "build_index_from_lines",
     "build_index_from_raw_lines",
     "clear_index_cache",
+    "discard_index_sidecar",
     "detect_source_bounded",
     "get_or_build_index",
     "load_index_sidecar",
@@ -356,6 +360,15 @@ class TranscriptIndexAppender:
             safe_to_start_event=True,
         )
 
+    def clone(self) -> TranscriptIndexAppender:
+        """Copy mutable indexing state while sharing the observation sink."""
+        cloned = copy(self)
+        cloned._parser = deepcopy(self._parser)
+        cloned._state = deepcopy(self._state)
+        cloned._role_counts = dict(self._role_counts)
+        cloned.index = deepcopy(self.index)
+        return cloned
+
     def append_raw_lines(
         self, raw_lines: Iterable[RawLine], *, mtime_ns: int, size: int
     ) -> TranscriptIndex:
@@ -488,8 +501,11 @@ class TranscriptIndexAppender:
         self.index.next_parser_index = self._next_start_index
         self.index.next_raw_line_no = self._next_raw_line_no
         self.index.safe_to_start_event = self._safe_to_start_event
+        new_adjustments = _resolve_adjustments(self._parser, self.index)
         self.index.parser_state = self._parser.snapshot_state()
-        self.index.post_pass_adjustments = _resolve_adjustments(self._parser, self.index)
+        self.index.post_pass_adjustments = _merge_adjustments(
+            self.index.post_pass_adjustments, new_adjustments
+        )
         return self.index
 
 
@@ -564,6 +580,35 @@ def _resolve_adjustments(
             )
         )
     return resolved
+
+
+def _merge_adjustments(
+    existing: list[RenderedAdjustment], new: list[RenderedAdjustment]
+) -> list[RenderedAdjustment]:
+    merged = list(existing)
+    for adjustment in new:
+        for index, previous in enumerate(merged):
+            if previous.group_index != adjustment.group_index or previous.field != adjustment.field:
+                continue
+            if isinstance(previous.value, TokenUsage) and isinstance(adjustment.value, TokenUsage):
+                merged[index] = RenderedAdjustment(
+                    group_index=adjustment.group_index,
+                    field=adjustment.field,
+                    value=TokenUsage(
+                        input_tokens=previous.value.input_tokens + adjustment.value.input_tokens,
+                        output_tokens=previous.value.output_tokens + adjustment.value.output_tokens,
+                        cache_creation_tokens=previous.value.cache_creation_tokens
+                        + adjustment.value.cache_creation_tokens,
+                        cache_read_tokens=previous.value.cache_read_tokens
+                        + adjustment.value.cache_read_tokens,
+                    ),
+                )
+            else:
+                merged[index] = adjustment
+            break
+        else:
+            merged.append(adjustment)
+    return merged
 
 
 def build_index_from_file(

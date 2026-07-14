@@ -10,6 +10,7 @@ Archive path is deterministic from external_id:
 import gzip
 import logging
 import shutil
+import zlib
 from pathlib import Path
 
 from gobby.sessions.gzip_seek_index import write_blocked_gzip_archive
@@ -62,11 +63,6 @@ def backup_transcript(
         return str(dest)
     except Exception as e:
         logger.warning(f"Failed to backup transcript {transcript_path}: {e}")
-        # Clean up partial file
-        try:
-            dest.unlink(missing_ok=True)
-        except OSError:
-            pass
         return None
 
 
@@ -104,7 +100,7 @@ def restore_transcript(
             shutil.copyfileobj(f_in, f_out)
         logger.info(f"Restored transcript {archive} -> {target}")
         return True
-    except (gzip.BadGzipFile, OSError) as e:
+    except (EOFError, zlib.error, gzip.BadGzipFile, OSError) as e:
         logger.warning(f"Failed to restore transcript for {external_id}: {e}")
         # Clean up partial file
         try:

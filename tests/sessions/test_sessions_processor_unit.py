@@ -5,6 +5,7 @@ Tests edge cases, error handling, and branch coverage not covered
 by integration tests.
 """
 
+import asyncio
 import json
 from collections.abc import Iterable
 from datetime import datetime
@@ -13,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import psycopg
 import pytest
 
+from gobby.sessions.message_stats import MessageStats
 from gobby.sessions.processor import SessionMessageProcessor
 from gobby.sessions.transcript_index import (
     build_index_from_file,
@@ -154,6 +156,21 @@ class TestSessionRegistration:
         processor.register_session("session-1", str(transcript))
         assert processor._parsers["session-1"] is original_parser  # Not replaced
 
+    def test_register_session_replaces_changed_transcript_path(self, processor, tmp_path) -> None:
+        first_transcript = tmp_path / "first.jsonl"
+        second_transcript = tmp_path / "second.jsonl"
+        first_transcript.touch()
+        second_transcript.touch()
+        processor.register_session("session-1", str(first_transcript))
+        original_parser = processor._parsers["session-1"]
+        processor._byte_offsets["session-1"] = 42
+
+        processor.register_session("session-1", str(second_transcript))
+
+        assert processor._active_sessions["session-1"] == str(second_transcript)
+        assert processor._parsers["session-1"] is not original_parser
+        assert "session-1" not in processor._byte_offsets
+
     def test_register_session_transcript_not_found(self, mock_db, tmp_path, caplog) -> None:
         """Register when the file doesn't exist yet (Codex writes rollout
         shortly after session_start). Must still register — the poll loop's
@@ -183,11 +200,11 @@ class TestSessionRegistration:
 
         # Test different source types
         processor.register_session("claude-session", str(transcript), source="claude")
-        processor.register_session("gemini-session", str(transcript), source="gemini")
+        processor.register_session("qwen-session", str(transcript), source="qwen")
         processor.register_session("codex-session", str(transcript), source="codex")
 
         assert "claude-session" in processor._parsers
-        assert "gemini-session" in processor._parsers
+        assert "qwen-session" in processor._parsers
         assert "codex-session" in processor._parsers
 
     def test_register_session_hydrates_matching_sidecar(self, mock_db, tmp_path) -> None:
@@ -205,6 +222,7 @@ class TestSessionRegistration:
         index = build_index_from_file(
             str(transcript), "codex", "sid", mtime_ns=st.st_mtime_ns, size=st.st_size
         )
+        index.parser_state = {"pending_tool_search_use_ids": ["call_resume"]}
         persist_index_sidecar(str(transcript), index)
 
         processor.register_session("sid", str(transcript), source="codex")
@@ -220,6 +238,7 @@ class TestSessionRegistration:
         assert appender._state.current_message is not None
         assert appender._state.current_message.role == "assistant"
         assert "call_1" in appender._state.pending_tool_calls
+        assert processor._parsers["sid"].snapshot_state() == index.parser_state
         session_manager.touch.assert_not_called()
         assert index.session_stats is not None
         session_manager.update_stats.assert_called_once_with(
@@ -488,6 +507,180 @@ class TestProcessSession:
         assert not processor.message_manager.store_messages.called
 
     @pytest.mark.asyncio
+    async def test_flush_session_processes_unterminated_final_line(self, processor, tmp_path):
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text(_codex_response_message("user", "test").rstrip("\n"))
+        processor.register_session("session-1", str(transcript), source="codex")
+
+        result = await processor.flush_session("session-1")
+
+        assert result.flushed is True
+        assert result.error is None
+        assert processor._stats["session-1"]["message_count"] == 1
+        assert processor._byte_offsets["session-1"] == transcript.stat().st_size
+
+    @pytest.mark.asyncio
+    async def test_flush_session_reports_unregistered_session(self, processor):
+        processor._process_session = AsyncMock()
+
+        result = await processor.flush_session("unknown-session")
+
+        assert result.flushed is False
+        assert result.error == "session is not registered"
+        processor._process_session.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_flush_session_contains_processing_errors(self, processor, tmp_path, caplog):
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.touch()
+        processor.register_session("session-1", str(transcript))
+        processor._process_session = AsyncMock(side_effect=RuntimeError("boom"))
+
+        with caplog.at_level("ERROR"):
+            result = await processor.flush_session("session-1")
+
+        assert result.flushed is False
+        assert result.error == "boom"
+        processor._process_session.assert_awaited_once_with(
+            "session-1", str(transcript), at_eof=True
+        )
+        assert "Failed to flush session transcript" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_concurrent_poll_and_flush_do_not_double_process_jsonl(
+        self, processor, tmp_path
+    ) -> None:
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text(_codex_response_message("user", "test"))
+        processor.register_session("session-1", str(transcript), source="codex")
+        batch_entered = asyncio.Event()
+        release_batch = asyncio.Event()
+        second_batch_entered = asyncio.Event()
+        original_process_batch = processor._process_parsed_batch
+        batch_count = 0
+
+        async def blocked_process_batch(
+            session_id: str, messages: list[ParsedMessage]
+        ) -> MessageStats:
+            nonlocal batch_count
+            batch_count += 1
+            if batch_count > 1:
+                second_batch_entered.set()
+            batch_entered.set()
+            await asyncio.wait_for(release_batch.wait(), timeout=1)
+            return await original_process_batch(session_id, messages)
+
+        processor._process_parsed_batch = blocked_process_batch
+
+        async with asyncio.TaskGroup() as tasks:
+            poll_task = tasks.create_task(processor._process_all_sessions())
+            await asyncio.wait_for(batch_entered.wait(), timeout=1)
+            flush_task = tasks.create_task(processor.flush_session("session-1"))
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(second_batch_entered.wait(), timeout=0.05)
+            release_batch.set()
+
+        assert poll_task.result() is None
+        assert flush_task.result().flushed is True
+        assert batch_count == 1
+        assert processor._stats["session-1"]["message_count"] == 1
+        assert processor._message_indices["session-1"] == 0
+        assert processor._index_appenders["session-1"].index.raw_record_count == 1
+
+    @pytest.mark.asyncio
+    async def test_concurrent_poll_and_flush_do_not_double_process_json(
+        self, processor, tmp_path
+    ) -> None:
+        transcript = tmp_path / "session.json"
+        transcript.write_text(
+            json.dumps(
+                {
+                    "sessionId": "abc",
+                    "messages": [
+                        {
+                            "id": "1",
+                            "timestamp": "2024-01-01T10:00:00Z",
+                            "type": "user",
+                            "content": "Hello",
+                        }
+                    ],
+                }
+            )
+        )
+        processor.register_session("session-1", str(transcript), source="qwen")
+        batch_entered = asyncio.Event()
+        release_batch = asyncio.Event()
+        second_batch_entered = asyncio.Event()
+        original_process_batch = processor._process_parsed_batch
+        batch_count = 0
+
+        async def blocked_process_batch(
+            session_id: str, messages: list[ParsedMessage]
+        ) -> MessageStats:
+            nonlocal batch_count
+            batch_count += 1
+            if batch_count > 1:
+                second_batch_entered.set()
+            batch_entered.set()
+            await asyncio.wait_for(release_batch.wait(), timeout=1)
+            return await original_process_batch(session_id, messages)
+
+        processor._process_parsed_batch = blocked_process_batch
+
+        async with asyncio.TaskGroup() as tasks:
+            poll_task = tasks.create_task(processor._process_all_sessions())
+            await asyncio.wait_for(batch_entered.wait(), timeout=1)
+            flush_task = tasks.create_task(processor.flush_session("session-1"))
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(second_batch_entered.wait(), timeout=0.05)
+            release_batch.set()
+
+        assert poll_task.result() is None
+        assert flush_task.result().flushed is True
+        assert batch_count == 1
+        assert processor._stats["session-1"]["message_count"] == 1
+        assert processor._message_indices["session-1"] == 0
+
+    @pytest.mark.asyncio
+    async def test_unregister_during_processing_does_not_resurrect_state(
+        self, processor, tmp_path
+    ) -> None:
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text(_codex_response_message("user", "test"))
+        processor.register_session("session-1", str(transcript), source="codex")
+        batch_entered = asyncio.Event()
+        release_batch = asyncio.Event()
+        original_process_batch = processor._process_parsed_batch
+
+        async def blocked_process_batch(
+            session_id: str, messages: list[ParsedMessage]
+        ) -> MessageStats:
+            batch_entered.set()
+            await asyncio.wait_for(release_batch.wait(), timeout=1)
+            return await original_process_batch(session_id, messages)
+
+        processor._process_parsed_batch = blocked_process_batch
+
+        processing_task = asyncio.create_task(processor._process_all_sessions())
+        await asyncio.wait_for(batch_entered.wait(), timeout=1)
+        processor.unregister_session("session-1")
+        release_batch.set()
+        await asyncio.wait_for(processing_task, timeout=1)
+
+        state_maps = (
+            processor._active_sessions,
+            processor._parsers,
+            processor._last_mtime,
+            processor._stats,
+            processor._byte_offsets,
+            processor._message_indices,
+            processor._index_appenders,
+            processor._render_states,
+            processor._processing_locks,
+        )
+        assert all("session-1" not in state for state in state_maps)
+
+    @pytest.mark.asyncio
     async def test_process_session_no_new_lines(self, processor, tmp_path):
         """Should return early when no new lines to process."""
         transcript = tmp_path / "transcript.jsonl"
@@ -525,6 +718,28 @@ class TestProcessSession:
         assert processor._byte_offsets.get("session-1", 0) > 0
         # Message index should not have been set (no valid messages)
         assert "session-1" not in processor._message_indices
+
+    @pytest.mark.asyncio
+    async def test_process_session_advances_past_malformed_timestamp(self, processor, tmp_path):
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text(
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": "malformed timestamp"},
+                    "timestamp": {"unexpected": "shape"},
+                }
+            )
+            + "\n"
+        )
+        processor.register_session("session-1", str(transcript))
+
+        await processor._process_session("session-1", str(transcript))
+        first_stats = processor._stats["session-1"].copy()
+        await processor._process_session("session-1", str(transcript))
+
+        assert processor._byte_offsets["session-1"] == transcript.stat().st_size
+        assert processor._stats["session-1"] == first_stats
 
     @pytest.mark.asyncio
     async def test_process_session_with_existing_state(self, processor, tmp_path):
@@ -567,6 +782,76 @@ class TestProcessSession:
         assert processor._message_indices["session-1"] == 1
 
     @pytest.mark.asyncio
+    async def test_process_session_resets_state_when_transcript_shrinks(
+        self, processor, tmp_path
+    ) -> None:
+        transcript = tmp_path / "shrinking.jsonl"
+        transcript.write_text(
+            _codex_response_message("user", "first message with extra text")
+            + _codex_response_message("assistant", "old assistant response with extra text"),
+            encoding="utf-8",
+        )
+        processor.register_session("session-1", str(transcript), source="codex")
+        await processor._process_session("session-1", str(transcript))
+        old_parser = processor._parsers["session-1"]
+        old_appender = processor._index_appenders["session-1"]
+
+        replacement = _codex_response_message("user", "new")
+        transcript.write_text(replacement, encoding="utf-8")
+        await processor._process_session("session-1", str(transcript))
+
+        assert processor._parsers["session-1"] is not old_parser
+        assert processor._index_appenders["session-1"] is not old_appender
+        assert processor._byte_offsets["session-1"] == len(replacement.encode())
+        st = transcript.stat()
+        index = load_index_sidecar(
+            str(transcript),
+            "codex",
+            "session-1",
+            seek_mode="byte",
+            mtime_ns=st.st_mtime_ns,
+            size=st.st_size,
+        )
+        assert index is not None
+        assert index.parsed_message_count == 1
+        assert index.boundaries[0].byte_start == 0
+
+    @pytest.mark.asyncio
+    async def test_process_session_resets_sidecar_when_transcript_is_replaced(
+        self, processor, tmp_path
+    ) -> None:
+        transcript = tmp_path / "replaced.jsonl"
+        transcript.write_text(_codex_response_message("user", "old"), encoding="utf-8")
+        processor.register_session("session-1", str(transcript), source="codex")
+        await processor._process_session("session-1", str(transcript))
+        old_parser = processor._parsers["session-1"]
+        old_appender = processor._index_appenders["session-1"]
+
+        replacement_content = _codex_response_message(
+            "user", "replacement content that is longer than old"
+        ) + _codex_response_message("assistant", "replacement assistant response")
+        replacement = tmp_path / "replacement.tmp"
+        replacement.write_text(replacement_content, encoding="utf-8")
+        replacement.replace(transcript)
+        await processor._process_session("session-1", str(transcript))
+
+        assert processor._parsers["session-1"] is not old_parser
+        assert processor._index_appenders["session-1"] is not old_appender
+        assert processor._byte_offsets["session-1"] == len(replacement_content.encode())
+        st = transcript.stat()
+        index = load_index_sidecar(
+            str(transcript),
+            "codex",
+            "session-1",
+            seek_mode="byte",
+            mtime_ns=st.st_mtime_ns,
+            size=st.st_size,
+        )
+        assert index is not None
+        assert index.parsed_message_count == 2
+        assert index.boundaries[0].byte_start == 0
+
+    @pytest.mark.asyncio
     async def test_process_session_records_plain_transcript_observations(
         self, processor, tmp_path
     ) -> None:
@@ -603,6 +888,112 @@ class TestProcessSession:
         )
         assert processor._byte_offsets["session-1"] == len(line)
         assert processor._message_indices["session-1"] == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "failure_method",
+        ["_persist_usage_events", "_render_and_broadcast_messages"],
+    )
+    async def test_process_session_retries_failed_batch_without_desync(
+        self,
+        processor,
+        tmp_path,
+        failure_method: str,
+    ) -> None:
+        transcript = tmp_path / "transcript.jsonl"
+        first_line = '{"type": "unknown", "value": 1}\n'
+        second_line = '{"type": "unknown", "value": 2}\n'
+        third_line = '{"type": "unknown", "value": 3}\n'
+        transcript.write_text(first_line)
+        processor.register_session("session-1", str(transcript))
+        original_appender = processor._index_appenders["session-1"]
+
+        def parse_lines(lines: list[str], *, start_index: int) -> list[ParsedMessage]:
+            return [
+                ParsedMessage(
+                    index=start_index + offset,
+                    role="user",
+                    content=line,
+                    content_type="text",
+                    tool_name=None,
+                    tool_input=None,
+                    tool_result=None,
+                    timestamp=datetime.now(),
+                    raw_json={},
+                    message_id=f"message-{start_index + offset}",
+                )
+                for offset, line in enumerate(lines)
+            ]
+
+        parser = MagicMock()
+        parser.parse_lines.side_effect = parse_lines
+        processor._parsers["session-1"] = parser
+        processor._persist_usage_events = AsyncMock()
+        processor._render_and_broadcast_messages = AsyncMock()
+        failed_call = getattr(processor, failure_method)
+        failed_call.side_effect = RuntimeError("mid-batch failure")
+
+        with pytest.raises(RuntimeError, match="mid-batch failure"):
+            await processor._process_session("session-1", str(transcript))
+
+        assert "session-1" not in processor._byte_offsets
+        assert "session-1" not in processor._message_indices
+        assert "session-1" not in processor._stats
+        assert processor._index_appenders["session-1"] is original_appender
+        assert original_appender.index.raw_record_count == 0
+
+        failed_call.side_effect = None
+        transcript.write_text(first_line + second_line)
+        await processor._process_session("session-1", str(transcript))
+
+        assert processor._byte_offsets["session-1"] == len(first_line + second_line)
+        assert processor._message_indices["session-1"] == 1
+        assert processor._stats["session-1"]["message_count"] == 2
+        assert processor._index_appenders["session-1"].index.raw_record_count == 2
+
+        transcript.write_text(first_line + second_line + third_line)
+        await processor._process_session("session-1", str(transcript))
+
+        assert [call.kwargs["start_index"] for call in parser.parse_lines.call_args_list] == [
+            0,
+            0,
+            2,
+        ]
+        persisted_batches = processor._persist_usage_events.await_args_list[-2:]
+        assert [[message.index for message in call.args[1]] for call in persisted_batches] == [
+            [0, 1],
+            [2],
+        ]
+        assert processor._message_indices["session-1"] == 2
+        assert processor._stats["session-1"]["message_count"] == 3
+
+    @pytest.mark.asyncio
+    async def test_render_failure_does_not_commit_render_state(self, processor) -> None:
+        message = ParsedMessage(
+            index=0,
+            role="user",
+            content="hello",
+            content_type="text",
+            tool_name=None,
+            tool_input=None,
+            tool_result=None,
+            timestamp=datetime.now(),
+            raw_json={},
+        )
+        processor.websocket_server = MagicMock()
+        processor._broadcast_rendered_session_message = AsyncMock(
+            side_effect=RuntimeError("broadcast failed")
+        )
+
+        with pytest.raises(RuntimeError, match="broadcast failed"):
+            await processor._render_and_broadcast_messages("session-1", [message])
+
+        assert "session-1" not in processor._render_states
+
+        processor._broadcast_rendered_session_message.side_effect = None
+        await processor._render_and_broadcast_messages("session-1", [message])
+
+        assert "session-1" in processor._render_states
 
 
 class TestWebSocketBroadcast:
@@ -1298,7 +1689,7 @@ class TestUnregisterCleansMtime:
         transcript = tmp_path / "transcript.json"
         transcript.touch()
 
-        processor.register_session("session-1", str(transcript), source="gemini")
+        processor.register_session("session-1", str(transcript), source="qwen")
         processor._last_mtime["session-1"] = 12345.0
 
         processor.unregister_session("session-1")
@@ -1353,6 +1744,53 @@ class TestProcessJsonSession:
         assert processor._message_indices["session-1"] == 1
 
         # Should track mtime
+        assert "session-1" in processor._last_mtime
+
+    @pytest.mark.asyncio
+    async def test_process_json_session_retry_does_not_double_accumulate_stats(
+        self, mock_db, tmp_path
+    ) -> None:
+        processor = SessionMessageProcessor(mock_db)
+        transcript = tmp_path / "session.json"
+        transcript.write_text(
+            json.dumps(
+                {
+                    "sessionId": "abc",
+                    "messages": [
+                        {
+                            "id": "1",
+                            "timestamp": "2024-01-01T10:00:00Z",
+                            "type": "user",
+                            "content": "Hello",
+                        },
+                        {
+                            "id": "2",
+                            "timestamp": "2024-01-01T10:00:01Z",
+                            "type": "gemini",
+                            "content": "Hi there",
+                        },
+                    ],
+                }
+            )
+        )
+        processor.register_session("session-1", str(transcript), source="qwen")
+        processor._persist_usage_events = AsyncMock()
+        processor._render_and_broadcast_messages = AsyncMock(
+            side_effect=RuntimeError("render failed")
+        )
+
+        with pytest.raises(RuntimeError, match="render failed"):
+            await processor._process_json_session("session-1", str(transcript))
+
+        assert "session-1" not in processor._stats
+        assert "session-1" not in processor._message_indices
+        assert "session-1" not in processor._last_mtime
+
+        processor._render_and_broadcast_messages.side_effect = None
+        await processor._process_json_session("session-1", str(transcript))
+
+        assert processor._stats["session-1"]["message_count"] == 2
+        assert processor._message_indices["session-1"] == 1
         assert "session-1" in processor._last_mtime
 
     @pytest.mark.asyncio

@@ -367,6 +367,7 @@ def render_window(
     tracked = _track_budget(raws, box, start_byte=start_byte, seek_mode=index.seek_mode)
 
     completed: list[RenderedMessage] = []
+    completed_objects: set[int] = set()
     need_completed = g_end - resume_group
     extension_targets: list[RenderedToolCall] | None = None
     budget_exhausted = False
@@ -384,8 +385,10 @@ def render_window(
                 source=source,
                 observation_tracker=tracker,
             )
-            if done:
-                completed.extend(done)
+            for message in done:
+                if id(message) not in completed_objects:
+                    completed.append(message)
+                    completed_objects.add(id(message))
 
         if extension_targets is None:
             # Page phase: the page is materialized once its successor group opens
@@ -406,7 +409,11 @@ def render_window(
     else:
         reached_eof = True
 
-    if reached_eof and state.current_message is not None:
+    if (
+        reached_eof
+        and state.current_message is not None
+        and id(state.current_message) not in completed_objects
+    ):
         completed.append(state.current_message)
 
     groups, by_index = _slice_window(completed, resume_group, g_start, g_end)

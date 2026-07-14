@@ -16,6 +16,7 @@ from gobby.storage.sessions._constants import (
     logger as internal_logger,
 )
 from gobby.storage.sessions._manager import SessionManager as InternalSessionManager
+from gobby.storage.sessions._update_sentinel import UNSET
 
 pytestmark = pytest.mark.unit
 
@@ -42,6 +43,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "sandbox_policy_hash: 'str') -> 'Session'",
     "delete": "(self, session_id: 'str') -> 'bool'",
     "expire_empty_sessions": "(self, timeout_hours: 'int' = 2) -> 'int'",
+    "expire_if_active": "(self, session_id: 'str') -> 'Session | None'",
     "expire_orphaned_handoff_sessions": "(self, timeout_minutes: 'int' = 30) -> 'int'",
     "expire_stale_sessions": "(self, timeout_hours: 'int' = 24) -> 'int'",
     "fetch_task_refs_by_session": "(self, session_ids: 'Sequence[str]') -> "
@@ -89,6 +91,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "mark_had_edits": "(self, session_id: 'str') -> 'Session | None'",
     "mark_session_expired": "(self, session_id: 'str') -> 'bool'",
     "mark_transcript_processed": "(self, session_id: 'str') -> 'Session | None'",
+    "move_to_project": "(self, session_id: 'str', project_id: 'str') -> 'Session | None'",
     "pause_inactive_active_sessions": "(self, timeout_minutes: 'int' = 30) -> 'int'",
     "persist_digest_state": "(self, session_id: 'str', *, last_turn_markdown: "
     "'str', digest_markdown: 'str', last_digest_input_hash: 'str', "
@@ -100,20 +103,20 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "source_digest_turn_count: 'int | None' = None, "
     "previous_revision_id: 'str | None' = None, "
     "metadata_json: 'Mapping[str, Any] | None' = None, "
-    "summary_path: 'str | None' = None) -> 'Session | None'",
+    "summary_path: 'str | None | UnsetType' = UNSET) -> 'Session | None'",
     "prune_empty_sessions": "(self, min_age_hours: 'int' = 1) -> 'int'",
-    "recalculate_stats": "(self, session_id: 'str') -> 'Session | None'",
     "record_skills_used": "(self, session_id: 'str', skill_names: 'list[str]') -> 'int'",
     "register": "(self, external_id: 'str', machine_id: 'str', source: 'str', "
-    "project_id: 'str | None', title: 'str | None' = None, "
-    "transcript_path: 'str | None' = None, git_branch: 'str | None' = None, "
-    "parent_session_id: 'str | None' = None, agent_depth: 'int' = 0, "
+    "project_id: 'str | None', title: 'str | None | UnsetType' = UNSET, "
+    "transcript_path: 'str | None | UnsetType' = UNSET, "
+    "git_branch: 'str | None | UnsetType' = UNSET, "
+    "parent_session_id: 'str | None | UnsetType' = UNSET, agent_depth: 'int' = 0, "
     "spawned_by_agent_id: 'str | None' = None, "
     "terminal_context: 'dict[str, Any] | None' = None, "
     "workflow_name: 'str | None' = None, session_type: 'str' = 'terminal', "
     "is_local: 'bool' = False, sandbox_enabled: 'bool | None' = None, "
     "sandbox_policy_hash: 'str | None' = None, "
-    "title_source: 'str | None' = None) -> 'Session'",
+    "title_source: 'str | None | UnsetType' = UNSET) -> 'Session'",
     "register_session": "(self, external_id: 'str', machine_id: 'str', source: 'str', "
     "project_id: 'str | None', parent_session_id: 'str | None' = None, "
     "transcript_path: 'str | None' = None, title: 'str | None' = None, "
@@ -136,9 +139,11 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "update": "(self, session_id: 'str', *, external_id: 'str | None' = None, "
     "source: 'str | None' = None, model: 'str | None' = None, "
     "chat_mode: 'str | None' = None, session_type: 'str | None' = None, "
-    "transcript_path: 'str | None' = None, status: 'str | None' = None, "
-    "title: 'str | None' = None, title_source: 'str | None' = None, "
-    "git_branch: 'str | None' = None, terminal_context: 'dict[str, Any] | None' = None, "
+    "transcript_path: 'str | None | UnsetType' = UNSET, status: 'str | None' = None, "
+    "title: 'str | None | UnsetType' = UNSET, "
+    "title_source: 'str | None | UnsetType' = UNSET, "
+    "git_branch: 'str | None | UnsetType' = UNSET, "
+    "terminal_context: 'dict[str, Any] | None' = None, "
     "project_id: 'str | None' = None, sandbox_enabled: 'bool | None' = None, "
     "sandbox_policy_hash: 'str | None' = None) -> 'Session | None'",
     "update_approved_tools": "(self, session_id: 'str', tools: 'set[str]') -> 'None'",
@@ -152,15 +157,16 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "update_last_turn_markdown": "(self, session_id: 'str', last_turn_markdown: 'str') "
     "-> 'Session | None'",
     "update_model": "(self, session_id: 'str', model: 'str') -> 'Session | None'",
-    "update_parent_session_id": "(self, session_id: 'str', parent_session_id: 'str') "
+    "update_parent_session_id": "(self, session_id: 'str', parent_session_id: 'str | None') "
     "-> 'Session | None'",
     "update_session_status": "(self, session_id: 'str', status: 'str') -> 'bool'",
     "update_stats": "(self, session_id: 'str', message_count: 'int | None' = None, "
     "turn_count: 'int | None' = None, tool_call_count: 'int | None' = None, "
     "last_assistant_content: 'str | None' = None) -> 'Session | None'",
     "update_status": "(self, session_id: 'str', status: 'str') -> 'Session | None'",
-    "update_summary": "(self, session_id: 'str', summary_path: 'str | None' = None, "
-    "summary_markdown: 'str | None' = None) -> 'Session | None'",
+    "update_summary": "(self, session_id: 'str', "
+    "summary_path: 'str | None | UnsetType' = UNSET, "
+    "summary_markdown: 'str | None | UnsetType' = UNSET) -> 'Session | None'",
     "update_terminal_pickup_metadata": "(self, session_id: 'str', "
     "workflow_name: 'str | None' = None, agent_run_id: 'str | None' = None, "
     "context_injected: 'bool | None' = None, original_prompt: 'str | None' = None) "
@@ -180,7 +186,7 @@ def _normalized_signature(func: object) -> str:
         if parameter.name == "self":
             parameter = parameter.replace(annotation=inspect.Signature.empty)
         parameters.append(parameter)
-    return str(signature.replace(parameters=parameters))
+    return str(signature.replace(parameters=parameters)).replace(repr(UNSET), "UNSET")
 
 
 def test_storage_sessions_public_imports_are_compatible() -> None:

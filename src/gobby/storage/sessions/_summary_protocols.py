@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.storage.session_models import Session
 
+from ._update_sentinel import UNSET, UnsetType
+
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
@@ -26,7 +28,7 @@ class SummaryUpdateHost(Protocol):
         source_digest_turn_count: int | None = None,
         previous_revision_id: str | None = None,
         metadata_json: Mapping[str, Any] | None = None,
-        summary_path: str | None = None,
+        summary_path: str | None | UnsetType = UNSET,
     ) -> Session | None: ...
 
     def _notify_session_change(self, event: str, session_id: str) -> None: ...

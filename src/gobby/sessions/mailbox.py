@@ -155,22 +155,23 @@ class MailboxService:
             broadcast_id = None
 
         messages = []
-        for recipient_id in recipient_ids:
-            metadata_json = self._metadata_json(
-                metadata=metadata,
-                broadcast_id=broadcast_id,
-                resolution=resolution,
-            )
-            messages.append(
-                self._message_manager.create_message(
-                    from_session=from_session_id,
-                    to_session=recipient_id,
-                    content=content,
-                    priority=priority,
-                    message_type=message_type,
-                    metadata_json=metadata_json,
+        with self._db.transaction():
+            for recipient_id in recipient_ids:
+                metadata_json = self._metadata_json(
+                    metadata=metadata,
+                    broadcast_id=broadcast_id,
+                    resolution=resolution,
                 )
-            )
+                messages.append(
+                    self._message_manager.create_message(
+                        from_session=from_session_id,
+                        to_session=recipient_id,
+                        content=content,
+                        priority=priority,
+                        message_type=message_type,
+                        metadata_json=metadata_json,
+                    )
+                )
 
         wake_results: list[dict[str, Any]] = []
         if include_wakeup:
@@ -217,12 +218,17 @@ class MailboxService:
         if normalized_target == "all":
             if clean_target_id is not None:
                 raise ValueError("target_id is not allowed when target='all'")
+            resolved_project_id = self._resolve_project_id(from_session_id, project_id)
             return MailboxTargetResolution(
                 target=normalized_target,
                 target_id=None,
-                recipient_session_ids=self._all_recipient_session_ids(from_session_id),
+                recipient_session_ids=self._all_recipient_session_ids(
+                    from_session_id,
+                    resolved_project_id,
+                ),
                 selector_metadata={
                     "target": "all",
+                    "project_id": resolved_project_id,
                     "session_status": list(DELIVERABLE_SESSION_STATUSES),
                     "exclude_session_id": from_session_id,
                     "exclude_system_session": True,
@@ -458,18 +464,23 @@ class MailboxService:
             self._agent_cross_project_auth_cache.popitem(last=False)
         return allowed
 
-    def _all_recipient_session_ids(self, from_session_id: str) -> list[str]:
+    def _all_recipient_session_ids(
+        self,
+        from_session_id: str,
+        project_id: str,
+    ) -> list[str]:
         status_placeholders = ",".join("%s" for _ in DELIVERABLE_SESSION_STATUSES)
         rows = self._db.fetchall(
             f"""
             SELECT id
               FROM sessions
              WHERE status IN ({status_placeholders})
+               AND project_id = %s
                AND id != %s
                AND id != %s
              ORDER BY created_at ASC, id ASC
             """,
-            (*DELIVERABLE_SESSION_STATUSES, SYSTEM_SESSION_ID, from_session_id),
+            (*DELIVERABLE_SESSION_STATUSES, project_id, SYSTEM_SESSION_ID, from_session_id),
         )
         return self._dedupe([str(row["id"]) for row in rows])
 

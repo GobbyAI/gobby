@@ -110,7 +110,9 @@ class TestPiggybackEventTypes:
 
         assert response.context is not None
         assert "Turn-start message" in response.context
-        enricher._inter_session_msg_manager.mark_delivered.assert_called_once_with("msg-1")
+        enricher._inter_session_msg_manager.mark_delivered.assert_called_once_with(
+            "msg-1", "sess-abc"
+        )
 
     def test_piggyback_skips_session_start(self) -> None:
         """SESSION_START should NOT trigger piggyback delivery."""

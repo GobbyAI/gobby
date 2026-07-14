@@ -34,14 +34,21 @@ async def test_cleanup_comms_messages_loop():
     # Mock asyncio.sleep to not actually sleep
     with patch("asyncio.sleep") as sleep_mock:
         # Run the loop
-        await cleanup_comms_messages_loop(db_mock, is_shutdown, retention_days=30)
+        await cleanup_comms_messages_loop(
+            db_mock,
+            is_shutdown,
+            retention_days=30,
+            startup_delay_seconds=0,
+        )
 
         # Verify sleep was called with 24 hours
         sleep_mock.assert_called_once_with(24 * 60 * 60)
 
         # Verify DB execute was called with correct SQL
-        assert conn_mock.execute.call_count == 1
-        call_args = conn_mock.execute.call_args
-        assert "DELETE FROM comms_messages WHERE created_at < %s" in call_args[0][0]
+        assert conn_mock.execute.call_count == 2
+        comms_call, mailbox_call = conn_mock.execute.call_args_list
+        assert "DELETE FROM comms_messages" in comms_call.args[0]
+        assert "WHERE created_at < %s" in comms_call.args[0]
+        assert "DELETE FROM inter_session_messages" in mailbox_call.args[0]
 
         # Verify attachment cleanup was called

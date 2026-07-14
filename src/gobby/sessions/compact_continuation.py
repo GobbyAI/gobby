@@ -19,6 +19,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_COMPACT_SELF_CONTINUATION_TASKS: set[asyncio.Task[Any]] = set()
+
 COMPACT_SELF_CONTINUE_VARIABLE = "compact_self_continue_pending"
 COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE = "compact_resume_required_skills"
 _COMPACT_SELF_CONTINUE_INTRO = (
@@ -339,7 +341,9 @@ def _schedule_coroutine(coro: Any, *, loop: Any | None = None) -> bool:
     try:
         running_loop = asyncio.get_running_loop()
         # Fire-and-forget: the coroutine logs its own failures and must not block startup.
-        running_loop.create_task(coro)
+        task = running_loop.create_task(coro)
+        _COMPACT_SELF_CONTINUATION_TASKS.add(task)
+        task.add_done_callback(_COMPACT_SELF_CONTINUATION_TASKS.discard)
         return True
     except RuntimeError:
         pass

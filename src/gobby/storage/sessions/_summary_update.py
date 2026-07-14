@@ -11,6 +11,8 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions._summary_protocols import SummaryUpdateHost as _SummaryUpdateHost
 from gobby.utils.datetime import utc_now
 
+from ._update_sentinel import UNSET, UnsetType, is_set
+
 
 def _encode_metadata_json(metadata_json: Mapping[str, Any] | None) -> str:
     return json.dumps(dict(metadata_json or {}), sort_keys=True)
@@ -53,7 +55,7 @@ class _SummaryUpdateMixin:
         source_digest_turn_count: int | None = None,
         previous_revision_id: str | None = None,
         metadata_json: Mapping[str, Any] | None = None,
-        summary_path: str | None = None,
+        summary_path: str | None | UnsetType = UNSET,
     ) -> Session | None:
         """Persist summary markdown, source metadata, and a revision row atomically."""
         if source_digest_turn_count is not None and source_digest_turn_count < 0:
@@ -97,7 +99,7 @@ class _SummaryUpdateMixin:
             conn.execute(
                 """
                 UPDATE sessions
-                SET summary_path = COALESCE(%s, summary_path),
+                SET summary_path = CASE WHEN %s THEN %s ELSE summary_path END,
                     summary_markdown = %s,
                     summary_revision_id = %s,
                     summary_source_context_hash = %s,
@@ -108,7 +110,8 @@ class _SummaryUpdateMixin:
                 WHERE id = %s
                 """,
                 (
-                    summary_path,
+                    is_set(summary_path),
+                    summary_path if is_set(summary_path) else None,
                     summary_markdown,
                     revision_id,
                     source_context_hash,
@@ -128,11 +131,11 @@ class _SummaryUpdateMixin:
     def update_summary(
         self: _SummaryUpdateHost,
         session_id: str,
-        summary_path: str | None = None,
-        summary_markdown: str | None = None,
+        summary_path: str | None | UnsetType = UNSET,
+        summary_markdown: str | None | UnsetType = UNSET,
     ) -> Session | None:
-        """Update session summary."""
-        if summary_markdown is not None:
+        """Update summary fields, preserving omissions and clearing explicit None values."""
+        if is_set(summary_markdown) and summary_markdown is not None:
             return self.persist_summary_state(
                 session_id,
                 summary_markdown=summary_markdown,
@@ -143,17 +146,27 @@ class _SummaryUpdateMixin:
                 summary_path=summary_path,
             )
 
-        now = utc_now()
+        values: dict[str, Any] = {}
+        if is_set(summary_path):
+            values["summary_path"] = summary_path
+        if is_set(summary_markdown):
+            values.update(
+                summary_markdown=summary_markdown,
+                summary_revision_id=None,
+                summary_source_context_hash=None,
+                summary_digest_turn_count=None,
+                summary_generation_mode=None,
+                summary_generated_at=None,
+            )
+        if not values:
+            return self.get(session_id)
+
+        values["updated_at"] = utc_now()
+        assignments = ", ".join(f"{column} = %s" for column in values)
         with self.db.transaction() as conn:
             conn.execute(
-                """
-                UPDATE sessions
-                SET summary_path = COALESCE(%s, summary_path),
-                    summary_markdown = COALESCE(%s, summary_markdown),
-                    updated_at = %s
-                WHERE id = %s
-                """,
-                (summary_path, summary_markdown, now, session_id),
+                f"UPDATE sessions SET {assignments} WHERE id = %s",
+                (*values.values(), session_id),
             )
         updated = self.get(session_id)
         if updated is not None:

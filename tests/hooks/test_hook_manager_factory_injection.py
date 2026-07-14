@@ -42,7 +42,6 @@ def _mock_components(database: object, session_manager: object) -> SimpleNamespa
         session_manager=session_manager,
         session_coordinator=MagicMock(),
         health_monitor=MagicMock(),
-        hook_assembler=MagicMock(),
         event_handlers=MagicMock(),
     )
 
