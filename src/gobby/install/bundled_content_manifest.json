@@ -5,7 +5,7 @@
     "config/bootstrap.yaml": "f638fd623a8f4d5cb64714c634de5f235acba27b800596fbe666f33d87d4de02",
     "config/config.yaml": "784d8aa1c2c99c9380894b49c721e0810c4428db3d7830d0fd43db6d8177dc74",
     "config/tty_config.yaml": "3b70d450cc4cd2788308827cd2485b53d023009ff4e66b5ec4e65076f05a7fdb",
-    "hooks/validate_settings.py": "073b48372967d7996359d3e02352bf324c7d7bf6bfb9dce7f511823ad8c82de1",
+    "hooks/validate_settings.py": "3f1c3c58f5af0931611bbffc6cc3ce090e688ee69b38359e8133f001d8495632",
     "prompts/agent/help-content.md": "79db2d2e74504abccab059d4ef17134a4d5b470341871a6347895fbcc37e971d",
     "prompts/agent/skill-hint.md": "79975a3a40e92f8f9bd9dabc4216756df828c9f8cab6bf9579777e23b3146e72",
     "prompts/agent/skill-not-found.md": "9be76cd58eddd87ce0c3a170a0149a3ef90ab96de6d504bace9233000c18aaca",
