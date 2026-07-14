@@ -400,7 +400,7 @@ export default function App() {
       normalizeChatMode(settings.defaultChatMode);
     updateChatMode(restoredMode);
     sendMode(restoredMode);
-  }, [conversationSwitchKey, sessionCatalog.isLoading, dbSessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [conversationSwitchKey, sessionCatalog.isLoading, dbSessionId, webChatSessions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleInputChange = useCallback(
     (value: string) => {

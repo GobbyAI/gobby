@@ -723,6 +723,37 @@ describe("App wiring", () => {
     expect(sendMode).toHaveBeenCalledWith("plan");
   });
 
+  it("restores the persisted mode when the active session arrives after the initial catalog load", async () => {
+    const sendMode = vi.fn();
+    vi.mocked(useChat).mockReturnValue({
+      ...makeChatHookState(),
+      dbSessionId: "db-session-1",
+      sendMode,
+    } as never);
+
+    const { rerender } = render(<App />);
+
+    expect(sendMode).not.toHaveBeenCalled();
+
+    vi.mocked(useSessionCatalog).mockReturnValue({
+      ...makeSessionCatalogState(),
+      sessions: [
+        {
+          id: "db-session-1",
+          project_id: "repo-project",
+          session_type: "web_chat",
+          chat_mode: "bypass",
+        },
+      ],
+    } as never);
+
+    rerender(<App />);
+
+    await waitFor(() => {
+      expect(sendMode).toHaveBeenCalledWith("bypass");
+    });
+  });
+
   it("shows a header Log out button that signs out when auth is enabled", async () => {
     const logout = vi.fn();
     vi.mocked(useAuth).mockReturnValue({
