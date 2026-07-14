@@ -356,10 +356,13 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             return None
 
         msg_type = data.get("type", "unknown")
-        timestamp_str = data.get("timestamp") or datetime.now(UTC).isoformat()
-        try:
-            timestamp = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
-        except ValueError:
+        timestamp_value = data.get("timestamp")
+        if isinstance(timestamp_value, str) and timestamp_value:
+            try:
+                timestamp = datetime.fromisoformat(timestamp_value.replace("Z", "+00:00"))
+            except ValueError:
+                timestamp = datetime.now(UTC)
+        else:
             timestamp = datetime.now(UTC)
 
         return data, msg_type, timestamp

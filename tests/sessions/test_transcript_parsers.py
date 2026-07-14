@@ -154,6 +154,21 @@ class TestClaudeTranscriptParser:
         assert msg.content_type == "text"
         assert msg.index == 0
 
+    def test_parse_line_uses_current_time_for_non_string_timestamp(self, parser) -> None:
+        before = datetime.now(UTC)
+        line = json.dumps(
+            {
+                "type": "user",
+                "message": {"content": "Hello world"},
+                "timestamp": {"malformed": True},
+            }
+        )
+
+        msg = parser.parse_line(line, 0)
+
+        assert msg is not None
+        assert before <= msg.timestamp <= datetime.now(UTC)
+
     def test_parse_line_assistant_text_blocks(self, parser) -> None:
         line = json.dumps(
             {

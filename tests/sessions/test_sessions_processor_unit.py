@@ -718,6 +718,28 @@ class TestProcessSession:
         assert "session-1" not in processor._message_indices
 
     @pytest.mark.asyncio
+    async def test_process_session_advances_past_malformed_timestamp(self, processor, tmp_path):
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text(
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": "malformed timestamp"},
+                    "timestamp": {"unexpected": "shape"},
+                }
+            )
+            + "\n"
+        )
+        processor.register_session("session-1", str(transcript))
+
+        await processor._process_session("session-1", str(transcript))
+        first_stats = processor._stats["session-1"].copy()
+        await processor._process_session("session-1", str(transcript))
+
+        assert processor._byte_offsets["session-1"] == transcript.stat().st_size
+        assert processor._stats["session-1"] == first_stats
+
+    @pytest.mark.asyncio
     async def test_process_session_with_existing_state(self, processor, tmp_path):
         """Should resume from last byte offset."""
         transcript = tmp_path / "transcript.jsonl"
