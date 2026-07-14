@@ -58,12 +58,13 @@ def _analyze_python_file(
 ) -> tuple[list[AuditIssue], int]:
     tree = ast.parse(source, filename=filename)
     comments = _collect_comments(source)
+    sleep_call_names = _sleep_call_names(tree.body)
 
     issues: list[AuditIssue] = []
     test_nodes = list(_iter_test_nodes(tree))
     for test in test_nodes:
         suppressions = _suppressed_codes(comments, test.start_line, test.end_line)
-        issues.extend(_analyze_test(relative_path, test, comments, suppressions))
+        issues.extend(_analyze_test(relative_path, test, comments, suppressions, sleep_call_names))
     return issues, len(test_nodes)
 
 
@@ -110,8 +111,11 @@ def _analyze_test(
     test: _TestNode,
     comments: Sequence[_Comment],
     suppressions: set[str],
+    module_sleep_call_names: set[str],
 ) -> list[AuditIssue]:
-    facts = _TestBodyVisitor()
+    local_nodes = (node for statement in test.node.body for node in ast.walk(statement))
+    sleep_call_names = module_sleep_call_names | _sleep_call_names(local_nodes)
+    facts = _TestBodyVisitor(sleep_call_names)
     for decorator in test.decorators:
         facts.visit(decorator)
     for statement in test.node.body:
@@ -158,12 +162,13 @@ def _analyze_test(
 
 
 class _TestBodyVisitor(ast.NodeVisitor):
-    def __init__(self) -> None:
+    def __init__(self, sleep_call_names: set[str]) -> None:
         self.strong_assertions = 0
         self.mock_assertions = 0
         self.mock_uses = 0
         self.truthy_assert_lines: list[int] = []
         self.sleep_lines: list[int] = []
+        self.sleep_call_names = sleep_call_names
 
     def visit_Assert(self, node: ast.Assert) -> None:
         if _is_truthy_constant(node.test):
@@ -191,7 +196,7 @@ class _TestBodyVisitor(ast.NodeVisitor):
         if leaf_name == "setattr" and "monkeypatch" in call_name:
             self.mock_uses += 1
 
-        if _is_sleep_call(call_name):
+        if _is_sleep_call(call_name, self.sleep_call_names):
             self.sleep_lines.append(node.lineno)
 
         self.generic_visit(node)
@@ -252,8 +257,22 @@ def _is_mock_assertion(call_name: str) -> bool:
     return call_name.rsplit(".", 1)[-1] in _MOCK_ASSERT_NAMES
 
 
-def _is_sleep_call(call_name: str) -> bool:
-    return call_name in {"sleep", "time.sleep", "asyncio.sleep"} or call_name.endswith(".sleep")
+def _sleep_call_names(nodes: Iterable[ast.AST]) -> set[str]:
+    call_names = {"time.sleep", "asyncio.sleep"}
+    for node in nodes:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in {"time", "asyncio"}:
+                    call_names.add(f"{alias.asname or alias.name}.sleep")
+        elif isinstance(node, ast.ImportFrom) and node.module in {"time", "asyncio"}:
+            for alias in node.names:
+                if alias.name == "sleep":
+                    call_names.add(alias.asname or alias.name)
+    return call_names
+
+
+def _is_sleep_call(call_name: str, sleep_call_names: set[str]) -> bool:
+    return call_name in sleep_call_names
 
 
 def _call_name(node: ast.AST) -> str:

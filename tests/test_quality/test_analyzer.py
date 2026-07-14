@@ -237,6 +237,97 @@ def test_cleanup_no_exception():
     assert {issue.issue_code for issue in report.issues} == {"SLEEP_IN_TEST", "TODO_IN_TEST"}
 
 
+def test_sleep_reports_recognized_timing_apis_and_imported_aliases(tmp_path: Path) -> None:
+    _write_test(
+        tmp_path,
+        """import asyncio
+import asyncio as aio
+import time
+import time as clock
+from asyncio import sleep as async_pause
+from time import sleep as sync_pause
+
+def test_time_sleep():
+    time.sleep(0.01)
+    assert True
+
+def test_asyncio_sleep():
+    asyncio.sleep(0.01)
+    assert True
+
+def test_module_aliases():
+    clock.sleep(0.01)
+    assert True
+
+def test_asyncio_alias():
+    aio.sleep(0.01)
+    assert True
+
+def test_imported_time_alias():
+    sync_pause(0.01)
+    assert True
+
+def test_imported_asyncio_alias():
+    async_pause(0.01)
+    assert True
+
+def test_local_import_alias():
+    from time import sleep as local_pause
+    local_pause(0.01)
+    assert True
+
+def test_local_alias_does_not_leak():
+    local_pause(0.01)
+    assert True
+""",
+    )
+    report = audit_paths([tmp_path / "tests"], root=tmp_path)
+
+    sleep_issues = {
+        issue.test_name: issue.line
+        for issue in report.issues
+        if issue.issue_code == "SLEEP_IN_TEST"
+    }
+    assert sleep_issues == {
+        "test_time_sleep": 9,
+        "test_asyncio_sleep": 13,
+        "test_module_aliases": 17,
+        "test_asyncio_alias": 21,
+        "test_imported_time_alias": 25,
+        "test_imported_asyncio_alias": 29,
+        "test_local_import_alias": 34,
+    }
+
+
+def test_sleep_ignores_unrecognized_methods_and_bare_functions(tmp_path: Path) -> None:
+    codes = _issue_codes(
+        tmp_path,
+        """
+def test_domain_sleep(client):
+    client.sleep()
+    sleep()
+    assert True
+""",
+    )
+
+    assert "SLEEP_IN_TEST" not in codes
+
+
+def test_sleep_suppression_still_applies_to_recognized_alias(tmp_path: Path) -> None:
+    codes = _issue_codes(
+        tmp_path,
+        """from time import sleep as pause
+
+def test_pauses():
+    # test-quality: allow SLEEP_IN_TEST -- timing is the behavior under test
+    pause(0.01)
+    assert True
+""",
+    )
+
+    assert "SLEEP_IN_TEST" not in codes
+
+
 def test_class_decorator_does_not_extend_suppression_across_sibling_tests(
     tmp_path: Path,
 ) -> None:
