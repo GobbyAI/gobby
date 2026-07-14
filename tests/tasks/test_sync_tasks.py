@@ -158,6 +158,36 @@ class TestTaskSyncManager:
         assert len(sync_manager.export_path.read_text().splitlines()) == 2
 
     @pytest.mark.integration
+    def test_jsonl_round_trip_preserves_state_packed_columns(
+        self, sync_manager, task_manager, sample_project
+    ) -> None:
+        task = task_manager.create_task(
+            sample_project["id"],
+            "Routed task",
+            assigned_agent="backend-developer",
+            implementation_domain="backend",
+            additional_skills=["test-driven-development"],
+        )
+        task_manager.update_task(
+            task.id,
+            allow_automation=True,
+            unattended=True,
+            isolation="clone",
+        )
+
+        sync_manager.export_to_jsonl()
+        task_manager.db.execute("DELETE FROM tasks WHERE id = %s", (task.id,))
+        sync_manager.import_from_jsonl()
+
+        imported = task_manager.get_task(task.id)
+        assert imported.allow_automation is True
+        assert imported.unattended is True
+        assert imported.isolation == "clone"
+        assert imported.assigned_agent == "backend-developer"
+        assert imported.implementation_domain == "backend"
+        assert imported.additional_skills == ["test-driven-development"]
+
+    @pytest.mark.integration
     def test_import_from_jsonl(self, sync_manager, task_manager, sample_project) -> None:
         """Test importing tasks from JSONL."""
         # Create JSONL file content

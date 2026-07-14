@@ -571,6 +571,17 @@ class TaskSyncManager:
                             "validation_criteria": validation_criteria,
                             "validation_override_reason": validation_override_reason,
                             "category": data.get("category"),
+                            # Preserve automation and routing policy packed into state on export.
+                            "allow_automation": state.get("allow_automation", False),
+                            "unattended": state.get("unattended", False),
+                            "isolation": state.get("isolation", "worktree"),
+                            "assigned_agent": state.get("assigned_agent"),
+                            "implementation_domain": state.get("implementation_domain"),
+                            "additional_skills": (
+                                json.dumps(state["additional_skills"])
+                                if state.get("additional_skills") is not None
+                                else None
+                            ),
                             "github_issue_number": data.get("github_issue_number"),
                             "github_pr_number": data.get("github_pr_number"),
                             "github_repo": data.get("github_repo"),
