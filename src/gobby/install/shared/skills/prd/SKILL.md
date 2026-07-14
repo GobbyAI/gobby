@@ -7,8 +7,7 @@ internal: true
 triggers: prd, product requirements, acceptance criteria
 metadata:
   gobby:
-    audience: agent
-    depth: 0
+    audience: all
 ---
 
 # prd - Product Reference Document Methodology

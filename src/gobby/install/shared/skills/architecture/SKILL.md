@@ -7,8 +7,7 @@ internal: true
 triggers: architecture brief, technical design, interfaces, test architecture, test strategy, coverage risks
 metadata:
   gobby:
-    audience: agent
-    depth: 0
+    audience: all
 ---
 
 # architecture - Architecture Brief & Test Strategy Methodology

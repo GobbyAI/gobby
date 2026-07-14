@@ -7,8 +7,7 @@ internal: true
 triggers: research findings, evidence gathering, domain context
 metadata:
   gobby:
-    audience: agent
-    depth: 0
+    audience: all
 ---
 
 # research - Research Findings Methodology

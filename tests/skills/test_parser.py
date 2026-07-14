@@ -295,6 +295,23 @@ Content
         assert skill.audience_config is not None
         assert skill.audience_config.sources == ["claude"]
 
+    def test_invalid_audience_raises_error(self) -> None:
+        text = """---
+name: bad-audience
+description: Skill with an unsupported audience
+metadata:
+  gobby:
+    audience: agent
+---
+# Bad audience
+"""
+
+        with pytest.raises(
+            SkillParseError,
+            match="metadata.gobby.audience must be one of",
+        ):
+            parse_skill_text(text)
+
     def test_missing_name_raises_error(self) -> None:
         """Test that missing name raises error."""
         text = """---

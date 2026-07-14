@@ -7,8 +7,7 @@ internal: true
 triggers: wiki research, research question, standing query, research pipeline
 metadata:
   gobby:
-    audience: agent
-    depth: 1
+    audience: all
 ---
 
 # wiki-research — One Research Pass Into the Vault
