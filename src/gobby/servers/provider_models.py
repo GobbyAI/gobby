@@ -331,7 +331,9 @@ class ProviderModelCatalog:
             if resolved is not None:
                 return resolved
             for underlying_provider in self._droid_underlying_providers(model):
-                resolved = self._get_provider_context_window(underlying_provider, model)
+                resolved = self._get_provider_context_window(
+                    underlying_provider, model, include_static=False
+                )
                 if resolved is not None:
                     return resolved
             return self._get_provider_context_window(normalized_provider, model)

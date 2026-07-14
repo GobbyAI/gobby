@@ -348,6 +348,16 @@ class TestProviderModelCatalog:
         assert catalog.get_context_window("droid", "z-ai/glm-5") == 128_000
         assert catalog.get_context_window("droid", "custom/byok-model") is None
 
+    def test_droid_catalog_precedes_underlying_static_default(self, temp_dir: Path) -> None:
+        catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
+        catalog._providers = {"droid": {"models": []}, "codex": {"models": []}}
+
+        resolved = catalog.get_context_window_with_source("droid", "gpt-5.4")
+
+        assert resolved is not None
+        assert resolved.value == 200_000
+        assert resolved.source == "provider_catalog"
+
     def test_live_snapshot_order_and_metadata_are_preserved(self, temp_dir: Path) -> None:
         """Live discovery owns catalog model order and metadata."""
         catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
@@ -764,6 +774,16 @@ class TestProviderModelCatalog:
         }
         assert "minimal" in by_id["gemini-3-flash-preview"]["reasoning"]["supported_efforts"]
         assert by_id["minimax-m2.7"]["reasoning"]["supported_efforts"] == ["high"]
+        assert {
+            model_id: by_id[model_id]["context_length"]
+            for model_id in ("minimax-m2.7", "minimax-m2.5", "kimi-k2.6", "kimi-k2.5")
+        } == {
+            "minimax-m2.7": 204_800,
+            "minimax-m2.5": 204_800,
+            "kimi-k2.6": 262_144,
+            "kimi-k2.5": 262_144,
+        }
+        assert all(model.get("context_length") is not None for model in models)
         for model_id in ("glm-5.1", "glm-5", "glm-4.7"):
             assert by_id[model_id].get("reasoning", {}).get("supported_efforts", []) == []
 
