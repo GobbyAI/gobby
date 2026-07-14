@@ -210,20 +210,15 @@ class ChatterboxTurboProvider(BaseTTSProvider):
             self._runtime_primed = True
             logger.info("Chatterbox Turbo synthesis runtime primed successfully")
 
-    def unload(self) -> None:
-        """Release the model to reclaim memory.
-
-        Safe to call from sync contexts: ``synthesize_stream`` captures the
-        model in a local variable, so clearing ``self._model`` cannot affect
-        an in-flight synthesis. Python attribute assignment is GIL-atomic.
-        """
-        if self._model is not None and hasattr(self._model, "conds"):
-            self._model.conds = None
-        self._model = None
-        self._token_cap_decoder = None
-        self._token_cap_inference = None
-        self._conditioning_ready = False
-        self._runtime_primed = False
+    async def unload(self) -> None:
+        """Release the model after active loading and synthesis complete."""
+        async with self._load_lock:
+            async with self._synthesis_lock:
+                self._model = None
+                self._token_cap_decoder = None
+                self._token_cap_inference = None
+                self._conditioning_ready = False
+                self._runtime_primed = False
 
     def _prepare_reference_conditioning(self, model: Any) -> None:
         _prepare_turbo_conditionals(

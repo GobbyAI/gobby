@@ -387,6 +387,12 @@ class VoiceWarmupMixin:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
 
+        active_tts_pipelines: dict[str, Any] = getattr(self, "_active_tts_pipelines", {})
+        pipelines = list(active_tts_pipelines.values())
+        active_tts_pipelines.clear()
+        if pipelines:
+            await asyncio.gather(*(pipeline.cancel() for pipeline in pipelines))
+
         unloaded: list[str] = []
 
         if self._whisper_stt is not None:
@@ -395,7 +401,7 @@ class VoiceWarmupMixin:
             unloaded.append("STT")
 
         if self._tts_provider is not None:
-            self._tts_provider.unload()
+            await self._tts_provider.unload()
             self._tts_provider = None
             unloaded.append("TTS")
 

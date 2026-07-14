@@ -78,7 +78,7 @@ class TTSProvider(Protocol):
         """Preload model state needed for synthesis."""
         ...  # pragma: no cover
 
-    def unload(self) -> None:
+    async def unload(self) -> None:
         """Release provider state and reclaim memory."""
         ...  # pragma: no cover
 
@@ -136,7 +136,7 @@ class BaseTTSProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def unload(self) -> None:
+    async def unload(self) -> None:
         """Release provider state and reclaim memory."""
         raise NotImplementedError
 

@@ -336,6 +336,64 @@ class TestChatterboxTurboProvider:
         mock_prepare.assert_called_once_with(provider._model)
         mock_prime.assert_called_once_with(provider._model)
 
+    async def test_unload_waits_for_model_work_and_preserves_conditioning(
+        self, voice_config: VoiceConfig
+    ) -> None:
+        from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
+
+        class ObservedLock(asyncio.Lock):
+            def __init__(self, signal_on_attempt: int) -> None:
+                super().__init__()
+                self._attempts = 0
+                self.attempted = asyncio.Event()
+                self._signal_on_attempt = signal_on_attempt
+
+            async def acquire(self) -> bool:
+                self._attempts += 1
+                if self._attempts == self._signal_on_attempt:
+                    self.attempted.set()
+                return await super().acquire()
+
+        provider = ChatterboxTurboProvider(voice_config)
+        load_lock = ObservedLock(signal_on_attempt=2)
+        synthesis_lock = ObservedLock(signal_on_attempt=2)
+        provider._load_lock = load_lock
+        provider._synthesis_lock = synthesis_lock
+
+        conditioning = object()
+        model = MagicMock(sr=24000)
+        model.conds = conditioning
+        provider._model = model
+        conditioning_started = asyncio.Event()
+        allow_conditioning = asyncio.Event()
+
+        async def run_conditioning(func: Any, *args: Any) -> Any:
+            conditioning_started.set()
+            await allow_conditioning.wait()
+            return func(*args)
+
+        await synthesis_lock.acquire()
+        try:
+            with patch("gobby.voice.tts_chatterbox.asyncio.to_thread", new=run_conditioning):
+                with patch.object(provider, "_prepare_reference_conditioning"):
+                    ensure_task = asyncio.create_task(provider._ensure_model())
+                    await conditioning_started.wait()
+                    unload_task = asyncio.create_task(provider.unload())
+                    await load_lock.attempted.wait()
+                    assert not unload_task.done()
+
+                    allow_conditioning.set()
+                    assert await ensure_task is model
+                    await synthesis_lock.attempted.wait()
+                    assert not unload_task.done()
+        finally:
+            synthesis_lock.release()
+
+        await unload_task
+        assert model.conds is conditioning
+        assert provider._model is None
+        assert not (provider._conditioning_ready and provider._model is None)
+
     @pytest.mark.asyncio
     async def test_warmup_raises_when_reference_preparation_fails(
         self, voice_config: VoiceConfig
