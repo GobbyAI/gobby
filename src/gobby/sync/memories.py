@@ -27,12 +27,21 @@ from typing import Any
 
 __all__ = [
     "MemoryBackupManager",
+    "MemoryExportError",
     "MemoryImportError",
 ]
 
 from gobby.config.persistence import MemoryBackupConfig
 from gobby.memory.manager import MemoryManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.sync.jsonl_io import atomic_write_text, export_file_lock
+from gobby.sync.tombstones import (
+    apply_tombstone,
+    is_tombstone,
+    load_tombstones,
+    newer_record,
+    record_timestamp,
+)
 from gobby.utils.datetime import datetime_to_iso, parse_stored_datetime, utc_now
 from gobby.utils.json_helpers import json_dumps
 
@@ -41,6 +50,10 @@ logger = logging.getLogger(__name__)
 
 class MemoryImportError(RuntimeError):
     """Raised when explicit memory import cannot complete."""
+
+
+class MemoryExportError(RuntimeError):
+    """Raised when a memory backup/export cannot complete."""
 
 
 _MIN_UTC_DATETIME = datetime.min.replace(tzinfo=UTC)
@@ -186,6 +199,8 @@ def _record_tags(record: Mapping[str, Any]) -> list[str]:
 
 def _merge_memory_records(existing: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
     """Merge duplicate JSONL records while preserving durable provenance fields."""
+    if is_tombstone(existing) or is_tombstone(candidate):
+        return newer_record(existing, candidate)
     latest = (
         candidate
         if _parse_updated_at(candidate.get("updated_at"))
@@ -303,7 +318,7 @@ class MemoryBackupManager:
 
         return await asyncio.to_thread(self._import_memories_sync, memories_file)
 
-    def backup_sync(self, project_id: str | None = None) -> int:
+    def backup_sync(self, project_id: str | None = None, *, force: bool = False) -> int:
         """
         Backup memories to filesystem synchronously (blocking).
 
@@ -312,6 +327,7 @@ class MemoryBackupManager:
 
         Args:
             project_id: Optional project to scope export to.
+            force: Allow replacing an existing file with fewer merged records.
         """
         if not self.config.enabled:
             return 0
@@ -321,21 +337,24 @@ class MemoryBackupManager:
 
         try:
             memories_file = self._get_export_path()
-            return self._export_to_files_sync(memories_file, project_id=project_id)
+            return self._export_to_files_sync(memories_file, project_id=project_id, force=force)
+        except MemoryExportError:
+            raise
         except Exception as e:
-            logger.warning(f"Failed to backup memories: {e}")
-            return 0
+            logger.error(f"Failed to backup memories: {e}", exc_info=True)
+            raise MemoryExportError(f"Failed to backup memories: {e}") from e
 
     # Backward compatibility alias
     export_sync = backup_sync
 
-    def import_sync(self, force: bool = False) -> int:
+    def import_sync(self) -> int:
         """
         Import memories from filesystem synchronously (blocking).
 
         Used by explicit restore/import commands to restore memories from a JSONL file
         (e.g. pulled from git on a new machine) before exporting.
-        Only imports if the JSONL file has more entries than the DB.
+        Existing records are deduplicated by the importer, making repeated
+        restores idempotent.
         """
         if not self.config.enabled or not self.memory_manager:
             return 0
@@ -349,22 +368,7 @@ class MemoryBackupManager:
             with open(memories_file, encoding="utf-8") as f:
                 lines = [line for line in f if line.strip()]
 
-            file_count = len(lines)
-            if file_count == 0:
-                return 0
-
-            # Count memories in DB
-            db_count = self.memory_manager.count_memories()
-
-            if not force and file_count <= db_count:
-                logger.debug(
-                    f"Skipping memory import: DB has {db_count} memories, file has {file_count}"
-                )
-                return 0
-
-            logger.info(
-                f"Importing memories from {memories_file}: file has {file_count}, DB has {db_count}"
-            )
+            logger.info(f"Importing memories from {memories_file}")
             return self._import_memories_from_lines(lines)
         except MemoryImportError:
             raise
@@ -372,7 +376,7 @@ class MemoryBackupManager:
             logger.warning(f"Failed to import memories: {e}")
             raise MemoryImportError(f"Failed to import memories: {e}") from e
 
-    async def export_to_files(self, project_id: str | None = None) -> int:
+    async def export_to_files(self, project_id: str | None = None, *, force: bool = False) -> int:
         """
         Backup memories to filesystem as JSONL.
 
@@ -381,6 +385,7 @@ class MemoryBackupManager:
 
         Args:
             project_id: Optional project to scope export to.
+            force: Allow replacing an existing file with fewer merged records.
 
         Returns:
             Count of backed up memories
@@ -393,12 +398,21 @@ class MemoryBackupManager:
 
         memories_file = self._get_export_path()
         return await asyncio.to_thread(
-            self._export_to_files_sync, memories_file, project_id=project_id
+            self._export_to_files_sync,
+            memories_file,
+            project_id=project_id,
+            force=force,
         )
 
-    def _export_to_files_sync(self, memories_file: Path, project_id: str | None = None) -> int:
+    def _export_to_files_sync(
+        self,
+        memories_file: Path,
+        project_id: str | None = None,
+        *,
+        force: bool = False,
+    ) -> int:
         """Synchronous implementation of export."""
-        return self._export_memories_sync(memories_file, project_id=project_id)
+        return self._export_memories_sync(memories_file, project_id=project_id, force=force)
 
     def _import_memories_sync(self, file_path: Path) -> int:
         """Import memories from JSONL file (sync)."""
@@ -424,6 +438,13 @@ class MemoryBackupManager:
             for line_num, line in enumerate(lines, 1):
                 try:
                     data = json.loads(line)
+
+                    if is_tombstone(data):
+                        if not isinstance(data.get("id"), str) or record_timestamp(data) is None:
+                            skipped += 1
+                            continue
+                        parsed_records.append(data)
+                        continue
 
                     if not self._validate_memory_record(data, line_num):
                         skipped += 1
@@ -451,8 +472,18 @@ class MemoryBackupManager:
             raise
 
         for data in self._deduplicate_records_by_id(parsed_records):
+            if is_tombstone(data):
+                deleted_at = record_timestamp(data)
+                if deleted_at is None:
+                    skipped += 1
+                    continue
+                with self.db.transaction() as conn:
+                    if apply_tombstone(conn, "memory", data["id"], deleted_at):
+                        count += 1
+                continue
+
             content = data.get("content", "")
-            if self.memory_manager.content_exists(content):
+            if not data.get("id") and self.memory_manager.content_exists(content):
                 skipped += 1
                 continue
 
@@ -611,7 +642,13 @@ class MemoryBackupManager:
                     seen_content[normalized] = memory
         return list(seen_content.values())
 
-    def _export_memories_sync(self, file_path: Path, project_id: str | None = None) -> int:
+    def _export_memories_sync(
+        self,
+        file_path: Path,
+        project_id: str | None = None,
+        *,
+        force: bool = False,
+    ) -> int:
         """Export memories to JSONL file (sync) with merge, deduplication, and path sanitization.
 
         Merges DB records with existing file records so that memories from other
@@ -623,37 +660,43 @@ class MemoryBackupManager:
             project_id: Optional project to scope export to. When set, only
                 memories for this project (plus global memories) are exported,
                 and file records from other projects are dropped.
+            force: Allow replacing an existing file with fewer merged records.
         """
-        if not self.memory_manager:
+        memory_manager = self.memory_manager
+        if not memory_manager:
             return 0
 
-        try:
+        def export_locked() -> int:
             # 1. Read existing file records (preserves records from other machines)
             existing_records: list[dict[str, Any]] = []
+            malformed_count = 0
             if file_path.exists():
-                try:
-                    with open(file_path, encoding="utf-8") as f:
-                        for line in f:
-                            line = line.strip()
-                            if not line:
-                                continue
-                            try:
-                                data = json.loads(line)
-                                if data.get("id") or data.get("content", "").strip():
-                                    if not is_ephemeral_implementation_note(data):
-                                        existing_records.append(data)
-                            except json.JSONDecodeError as e:
-                                logger.debug(f"Skipping malformed JSONL line in {file_path}: {e}")
-                                continue
-                except OSError as e:
-                    logger.debug(f"Cannot read memories file {file_path}: {e}")
+                with open(file_path, encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            data = json.loads(line)
+                        except json.JSONDecodeError:
+                            malformed_count += 1
+                            continue
+                        if data.get("id") or data.get("content", "").strip():
+                            if not is_ephemeral_implementation_note(data):
+                                existing_records.append(data)
+            if malformed_count:
+                logger.warning(
+                    "Skipped %d malformed JSONL line(s) while exporting memories from %s",
+                    malformed_count,
+                    file_path,
+                )
 
             # 2. Build DB records (authoritative for local content)
             memories: list[Any] = []
             page_size = 1000
             offset = 0
             while True:
-                page = self.memory_manager.list_memories(
+                page = memory_manager.list_memories(
                     limit=page_size, offset=offset, project_id=project_id
                 )
                 memories.extend(page)
@@ -691,10 +734,23 @@ class MemoryBackupManager:
                 ]
             else:
                 filtered_existing = existing_records
+            tombstones = load_tombstones(
+                self.db,
+                "memory",
+                project_id,
+                include_global=True,
+            )
             sorted_records = sorted(
-                self._deduplicate_records_by_id([*filtered_existing, *db_records]),
+                self._deduplicate_records_by_id([*filtered_existing, *db_records, *tombstones]),
                 key=lambda record: record.get("id") or record.get("content", ""),
             )
+
+            if not force and len(sorted_records) < len(existing_records):
+                raise MemoryExportError(
+                    "Refusing to shrink memory export from "
+                    f"{len(existing_records)} to {len(sorted_records)} records without force: "
+                    f"{file_path}"
+                )
 
             # 4. Build output and skip write if content is unchanged
             new_content = "".join(
@@ -717,10 +773,15 @@ class MemoryBackupManager:
                 except OSError:
                     pass  # File unreadable — overwrite it
 
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            file_path.write_text(new_content, encoding="utf-8")
+            atomic_write_text(file_path, new_content)
 
             return len(sorted_records)
+
+        try:
+            with export_file_lock(file_path):
+                return export_locked()
+        except MemoryExportError:
+            raise
         except Exception as e:
             logger.error(f"Failed to export memories: {e}", exc_info=True)
-            return 0
+            raise MemoryExportError(f"Failed to export memories: {e}") from e

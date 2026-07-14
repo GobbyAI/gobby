@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import httpx
 
+from gobby.integrations.mcp_result import MCPToolResultError, parse_mcp_tool_result
 from gobby.tasks.state_semantics import current_stage_state, is_task_closed, is_task_escalated
 
 logger = logging.getLogger("gobby.sync.linear")
@@ -129,29 +130,16 @@ class LinearSyncError(Exception):
     """Base exception for Linear sync errors."""
 
 
-class LinearRateLimitError(LinearSyncError):
-    """Raised when Linear API rate limit is exceeded."""
-
-    def __init__(self, message: str, reset_at: int | None = None) -> None:
-        super().__init__(message)
-        self.reset_at = reset_at
-
-
-class LinearNotFoundError(LinearSyncError):
-    """Raised when a Linear resource is not found."""
-
-    def __init__(
-        self,
-        message: str,
-        resource: str | None = None,
-        resource_id: str | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.resource = resource
-        self.resource_id = resource_id
+def _parse_linear_mcp_result(result: Any) -> Any:
+    try:
+        return parse_mcp_tool_result(result)
+    except MCPToolResultError as exc:
+        raise LinearSyncError(f"Linear MCP tool failed: {exc.detail}") from exc
 
 
 def _extract_records(result: Any, key: str = "issues") -> list[dict[str, Any]]:
+    result = _parse_linear_mcp_result(result)
+
     if isinstance(result, list):
         if not all(isinstance(item, dict) for item in result):
             raise LinearSyncError(f"Invalid Linear MCP response: {key} contains non-object items")
@@ -199,6 +187,8 @@ def _extract_records(result: Any, key: str = "issues") -> list[dict[str, Any]]:
 
 
 def _extract_record(result: Any, key: str) -> dict[str, Any]:
+    result = _parse_linear_mcp_result(result)
+
     if isinstance(result, dict):
         value = result.get(key)
         if isinstance(value, dict):

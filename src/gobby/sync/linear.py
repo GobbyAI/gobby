@@ -10,9 +10,9 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from gobby.integrations.linear import LinearIntegration
+from gobby.integrations.linear_graphql import LinearGraphQLClient
+from gobby.storage.secrets import SecretDecryptionError
 from gobby.sync.linear_support import (
-    LinearNotFoundError,
-    LinearRateLimitError,
     LinearSyncError,
     _extract_record,
     _extract_records,
@@ -31,8 +31,6 @@ if TYPE_CHECKING:
 __all__ = [
     "LinearSyncService",
     "LinearSyncError",
-    "LinearRateLimitError",
-    "LinearNotFoundError",
     "create_linear_sync_handler",
 ]
 
@@ -69,9 +67,39 @@ class LinearSyncService(LinearTaskOpsMixin):
         self.linear = LinearIntegration(mcp_manager)
         self._project_manager = project_manager
 
+    def _graphql_availability(self) -> tuple[bool, str | None]:
+        """Return whether stored Linear GraphQL credentials are usable."""
+        try:
+            client = LinearGraphQLClient.from_database(self.task_manager.db)
+        except SecretDecryptionError:
+            return False, "Linear GraphQL API key is configured but cannot be decrypted."
+
+        if client is None:
+            return (
+                False,
+                "Linear GraphQL API key is not configured. "
+                "Set it with `gobby secrets set linear_api_key`.",
+            )
+        return True, None
+
     def is_available(self) -> bool:
-        """Check if Linear MCP server is available."""
-        return self.linear.is_available()
+        """Check whether either Linear MCP or GraphQL access is available."""
+        if self.linear.is_available():
+            return True
+        graphql_available, _ = self._graphql_availability()
+        return graphql_available
+
+    def get_unavailable_reason(self) -> str | None:
+        """Explain why neither Linear integration path is available."""
+        if self.linear.is_available():
+            return None
+
+        graphql_available, graphql_reason = self._graphql_availability()
+        if graphql_available:
+            return None
+
+        mcp_reason = self.linear.get_unavailable_reason()
+        return " ".join(reason for reason in (mcp_reason, graphql_reason) if reason)
 
 
 def create_linear_sync_handler(
@@ -94,7 +122,8 @@ def create_linear_sync_handler(
         )
 
         if not service.is_available():
-            return "Linear MCP server unavailable, skipping sync"
+            reason = service.get_unavailable_reason() or "Linear integration unavailable"
+            return f"{reason} Skipping sync."
 
         try:
             result = await service.sync_all(team_id=team_id)

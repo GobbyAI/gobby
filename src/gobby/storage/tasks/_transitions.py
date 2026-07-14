@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from gobby.plans.bootstrap_ledger import bootstrap_ledger_path_for_task, verify_bootstrap_ledger
 from gobby.storage.agents import LocalAgentRunManager
@@ -26,7 +26,7 @@ from gobby.storage.tasks._stage_types import NoCurrentStageError
 from gobby.storage.tasks._stage_utils import _close_task_in_txn
 from gobby.storage.tasks._updates import update_task
 from gobby.tasks.state_semantics import is_task_closed
-from gobby.utils.datetime import utc_now
+from gobby.utils.datetime import parse_stored_datetime, utc_now
 
 _WORK_ATTEMPT_ESCALATION_SUFFIXES = ("_work_failed:max", "_max_work_attempts")
 
@@ -816,6 +816,36 @@ def reconcile_task_state(
     that need to update synced fields without exposing raw ownership mutation
     through LocalTaskManager.update_task().
     """
+    current = get_task(db, task_id)
+    values = {
+        "title": title,
+        "description": description,
+        "priority": priority,
+        "closed_reason": closed_reason,
+        "closed_at": closed_at,
+        "closed_in_session_id": closed_in_session_id,
+        "closed_commit_sha": closed_commit_sha,
+        "escalated_at": escalated_at,
+        "escalation_reason": escalation_reason,
+    }
+    timestamp_fields = {"closed_at", "escalated_at"}
+    unchanged = True
+    for field, value in values.items():
+        if value is UNSET:
+            continue
+        current_value = getattr(current, field)
+        if field in timestamp_fields:
+            matches = parse_stored_datetime(current_value) == parse_stored_datetime(
+                cast(datetime | str | None, value)
+            )
+        else:
+            matches = current_value == value
+        if not matches:
+            unchanged = False
+            break
+    if unchanged:
+        return current
+
     update_task(
         db,
         task_id,

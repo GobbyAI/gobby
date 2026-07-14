@@ -435,9 +435,18 @@ def linear_setup(
 @click.argument("team_id", required=False)
 @click.option("--state", help="Issue state filter (e.g., 'Todo', 'In Progress')")
 @click.option("--labels", help="Comma-separated labels to filter issues")
+@click.option(
+    "--allow-team-wide",
+    is_flag=True,
+    help="Import every matching issue in the team when no Linear project is bound.",
+)
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def linear_import(
-    team_id: str | None, state: str | None, labels: str | None, json_format: bool
+    team_id: str | None,
+    state: str | None,
+    labels: str | None,
+    allow_team_wide: bool,
+    json_format: bool,
 ) -> None:
     """Import Linear issues as gobby tasks.
 
@@ -468,7 +477,12 @@ def linear_import(
         # Run async import
         label_list = labels.split(",") if labels else None
         tasks = asyncio.run(
-            service.import_linear_issues(team_id=team_id, state=state, labels=label_list)
+            service.import_linear_issues(
+                team_id=team_id,
+                state=state,
+                labels=label_list,
+                allow_team_wide=allow_team_wide,
+            )
         )
 
         if json_format:

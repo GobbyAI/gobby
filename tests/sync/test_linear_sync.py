@@ -5,14 +5,18 @@ and Linear via the official Linear MCP server.
 """
 
 import logging
+import threading
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from mcp.types import CallToolResult, TextContent
 
-from gobby.integrations.linear_graphql import LinearGraphQLError
+from gobby.integrations.linear_graphql import LinearGraphQLClient, LinearGraphQLError
 from gobby.mcp_proxy.models import MCPError
 from gobby.storage.cron_models import CronJob
+from gobby.storage.secrets import SecretDecryptionError
 from gobby.sync import linear as linear_module
 from gobby.sync.linear import LinearSyncError, LinearSyncService
 from gobby.sync.linear_support import (
@@ -20,8 +24,34 @@ from gobby.sync.linear_support import (
     is_transient_linear_fetch_error,
     linear_issue_title,
 )
+from gobby.sync.linear_task_ops import (
+    _gobby_priority_to_linear,
+    _linear_priority_to_gobby,
+)
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    ("gobby_priority", "linear_priority"),
+    [(0, 1), (1, 2), (2, 3), (3, 4), (4, 0)],
+)
+def test_gobby_priority_to_linear(gobby_priority: int, linear_priority: int) -> None:
+    assert _gobby_priority_to_linear(gobby_priority) == linear_priority
+
+
+@pytest.mark.parametrize(
+    ("linear_priority", "gobby_priority"),
+    [(0, 4), (1, 0), (2, 1), (3, 2), (4, 3)],
+)
+def test_linear_priority_to_gobby(linear_priority: int, gobby_priority: int) -> None:
+    assert _linear_priority_to_gobby(linear_priority) == gobby_priority
+
+
+def test_unknown_priorities_use_unprioritized_fallbacks() -> None:
+    assert _gobby_priority_to_linear(99) == 0
+    assert _linear_priority_to_gobby(99) == 4
+    assert _linear_priority_to_gobby(None) == 4
 
 
 @pytest.fixture(autouse=True)
@@ -295,26 +325,77 @@ class TestLinearSyncServiceInit:
 class TestLinearSyncServiceAvailability:
     """Test availability checking."""
 
-    def test_requires_linear_available(self, mock_mcp_manager, mock_task_manager) -> None:
-        """Operations should check Linear availability first."""
+    @pytest.mark.parametrize(
+        ("mcp_available", "graphql_configured", "expected"),
+        [
+            pytest.param(True, False, True, id="mcp-only"),
+            pytest.param(False, True, True, id="graphql-only"),
+            pytest.param(True, True, True, id="both-configured"),
+            pytest.param(False, False, False, id="neither-configured"),
+        ],
+    )
+    def test_is_available_accepts_mcp_or_graphql_configuration(
+        self,
+        mock_mcp_manager,
+        mock_task_manager,
+        mcp_available: bool,
+        graphql_configured: bool,
+        expected: bool,
+    ) -> None:
+        mock_mcp_manager.has_server.return_value = mcp_available
+        mock_mcp_manager.health = {"linear": MagicMock(state="connected")} if mcp_available else {}
+        graphql_client = MagicMock(spec=LinearGraphQLClient) if graphql_configured else None
+
+        with patch(
+            "gobby.sync.linear.LinearGraphQLClient.from_database",
+            return_value=graphql_client,
+        ):
+            service = LinearSyncService(
+                mcp_manager=mock_mcp_manager,
+                task_manager=mock_task_manager,
+                project_id="test-project",
+            )
+
+            assert service.is_available() is expected
+
+    def test_unavailable_reason_reports_missing_graphql_configuration(
+        self, mock_mcp_manager, mock_task_manager
+    ) -> None:
         mock_mcp_manager.has_server.return_value = False
 
-        service = LinearSyncService(
-            mcp_manager=mock_mcp_manager,
-            task_manager=mock_task_manager,
-            project_id="test-project",
-        )
+        with patch("gobby.sync.linear.LinearGraphQLClient.from_database", return_value=None):
+            service = LinearSyncService(
+                mcp_manager=mock_mcp_manager,
+                task_manager=mock_task_manager,
+                project_id="test-project",
+            )
 
-        assert service.linear.is_available() is False
+            reason = service.get_unavailable_reason()
 
-    def test_is_available_proxies_to_integration(self, mock_mcp_manager, mock_task_manager) -> None:
-        """is_available() delegates to LinearIntegration."""
-        service = LinearSyncService(
-            mcp_manager=mock_mcp_manager,
-            task_manager=mock_task_manager,
-            project_id="test-project",
-        )
-        assert service.is_available() == service.linear.is_available()
+        assert reason is not None
+        assert "Linear MCP server 'linear' is not configured" in reason
+        assert "Linear GraphQL API key is not configured" in reason
+
+    def test_invalid_graphql_configuration_is_unavailable(
+        self, mock_mcp_manager, mock_task_manager
+    ) -> None:
+        mock_mcp_manager.has_server.return_value = False
+
+        with patch(
+            "gobby.sync.linear.LinearGraphQLClient.from_database",
+            side_effect=SecretDecryptionError("linear_api_key"),
+        ):
+            service = LinearSyncService(
+                mcp_manager=mock_mcp_manager,
+                task_manager=mock_task_manager,
+                project_id="test-project",
+            )
+
+            assert service.is_available() is False
+            reason = service.get_unavailable_reason()
+
+        assert reason is not None
+        assert "cannot be decrypted" in reason
 
 
 class TestLinearSyncServiceImport:
@@ -346,16 +427,23 @@ class TestLinearSyncServiceImport:
         self, sync_service, mock_mcp_manager, mock_task_manager
     ):
         """import_linear_issues creates gobby tasks from Linear issues."""
-        mock_mcp_manager.call_tool.return_value = {
-            "issues": [
-                {"id": "issue-1", "title": "Issue 1", "description": "Description 1"},
-                {"id": "issue-2", "title": "Issue 2", "description": "Description 2"},
-            ]
-        }
+        mock_mcp_manager.call_tool.return_value = CallToolResult(
+            content=[],
+            structuredContent={
+                "issues": [
+                    {"id": "issue-1", "title": "Issue 1", "description": "Description 1"},
+                    {"id": "issue-2", "title": "Issue 2", "description": "Description 2"},
+                ]
+            },
+            isError=False,
+        )
 
         await sync_service.import_linear_issues()
 
         assert mock_task_manager.create_task.call_count >= 2
+        assert all(
+            call.kwargs["priority"] == 4 for call in mock_task_manager.create_task.call_args_list
+        )
 
     @pytest.mark.asyncio
     async def test_import_issues_links_linear_fields(
@@ -379,6 +467,139 @@ class TestLinearSyncServiceImport:
         all_args = {**args_dict, **kwargs}
 
         assert all_args.get("linear_issue_id") == "lin-42" or "linear_issue_id" in str(create_call)
+
+    @pytest.mark.asyncio
+    async def test_import_done_issue_creates_closed_task(
+        self, sync_service, mock_mcp_manager, mock_task_manager
+    ) -> None:
+        mock_mcp_manager.call_tool.return_value = {
+            "issues": [
+                {
+                    "id": "lin-done",
+                    "title": "Finished feature",
+                    "state": {"name": "Done"},
+                    "updatedAt": "2026-02-11T12:34:56Z",
+                }
+            ]
+        }
+        created = MagicMock()
+        created.id = "task-done"
+        created.to_dict.return_value = {"id": "task-done"}
+        closed = MagicMock()
+        closed.to_dict.return_value = {"id": "task-done", "closed_reason": "linear_sync"}
+        mock_task_manager.create_task.return_value = created
+        mock_task_manager.reconcile_task_state.return_value = closed
+
+        imported = await sync_service.import_linear_issues()
+
+        mock_task_manager.reconcile_task_state.assert_called_once_with(
+            "task-done",
+            closed_at="2026-02-11T12:34:56+00:00",
+            closed_reason="linear_sync",
+            closed_in_session_id=None,
+            closed_commit_sha=None,
+            escalated_at=None,
+            escalation_reason=None,
+        )
+        assert imported == [{"id": "task-done", "closed_reason": "linear_sync"}]
+
+    @pytest.mark.asyncio
+    async def test_import_canceled_issue_reconciles_existing_task(
+        self, sync_service, mock_mcp_manager, mock_task_manager
+    ) -> None:
+        mock_mcp_manager.call_tool.return_value = {
+            "issues": [
+                {
+                    "id": "lin-canceled",
+                    "title": "Canceled feature",
+                    "state": {"name": "Canceled"},
+                    "updatedAt": "2026-02-12T09:30:00Z",
+                }
+            ]
+        }
+        existing = MagicMock()
+        existing.to_dict.return_value = {"id": "task-canceled"}
+        mock_task_manager.db.fetchone.return_value = {"id": "task-canceled"}
+        mock_task_manager.get_task.return_value = existing
+
+        imported = await sync_service.import_linear_issues()
+
+        mock_task_manager.reconcile_task_state.assert_called_once_with(
+            "task-canceled",
+            title="Canceled feature",
+            description="",
+            priority=4,
+            closed_at=None,
+            closed_reason=None,
+            closed_in_session_id=None,
+            closed_commit_sha=None,
+            escalated_at="2026-02-12T09:30:00+00:00",
+            escalation_reason="Linear state: Canceled",
+        )
+        assert imported == [{"id": "task-canceled"}]
+
+    @pytest.mark.asyncio
+    async def test_import_preserves_newer_local_fields(
+        self, sync_service, mock_mcp_manager, mock_task_manager
+    ) -> None:
+        mock_mcp_manager.call_tool.return_value = {
+            "issues": [
+                {
+                    "id": "lin-stale",
+                    "title": "Stale remote title",
+                    "description": "Stale remote body",
+                    "updatedAt": "2026-02-11T12:00:00Z",
+                }
+            ]
+        }
+        mock_task_manager.db.fetchone.return_value = {
+            "id": "task-stale",
+            "updated_at": "2026-02-12T12:00:00Z",
+        }
+        existing = MagicMock()
+        existing.to_dict.return_value = {
+            "id": "task-stale",
+            "title": "Newer local title",
+            "description": "Newer local body",
+        }
+        mock_task_manager.get_task.return_value = existing
+
+        imported = await sync_service.import_linear_issues()
+
+        mock_task_manager.reconcile_task_state.assert_not_called()
+        assert imported == [existing.to_dict.return_value]
+
+    @pytest.mark.asyncio
+    async def test_import_applies_newer_remote_fields(
+        self, sync_service, mock_mcp_manager, mock_task_manager
+    ) -> None:
+        mock_mcp_manager.call_tool.return_value = {
+            "issues": [
+                {
+                    "id": "lin-newer",
+                    "title": "Newer remote title",
+                    "description": "Newer remote body",
+                    "updatedAt": "2026-02-12T12:00:00Z",
+                }
+            ]
+        }
+        mock_task_manager.db.fetchone.return_value = {
+            "id": "task-newer",
+            "updated_at": "2026-02-11T12:00:00Z",
+        }
+        existing = MagicMock()
+        existing.to_dict.return_value = {"id": "task-newer"}
+        mock_task_manager.get_task.return_value = existing
+
+        imported = await sync_service.import_linear_issues()
+
+        mock_task_manager.reconcile_task_state.assert_called_once_with(
+            "task-newer",
+            title="Newer remote title",
+            description="Newer remote body",
+            priority=4,
+        )
+        assert imported == [{"id": "task-newer"}]
 
     @pytest.mark.asyncio
     async def test_import_links_existing_task_by_gobby_ref_title(
@@ -412,13 +633,21 @@ class TestLinearSyncServiceImport:
             "task-42",
             title="Existing Feature",
             description="Test body",
-            priority=2,
+            priority=4,
         )
         assert mock_task_manager.reconcile_task_state.call_count >= 1
         assert mock_task_manager.reconcile_task_state.call_args is not None
         mock_task_manager.create_task.assert_not_called()
         assert mock_task_manager.create_task.call_count == 0
         assert not mock_task_manager.create_task.called
+        assert any(
+            call.args
+            == (
+                "SELECT id, updated_at FROM tasks WHERE project_id = %s AND seq_num = %s",
+                ("test-project-id", 42),
+            )
+            for call in mock_task_manager.db.fetchone.call_args_list
+        )
 
     @pytest.mark.asyncio
     async def test_import_issues_raises_when_unavailable(self, mock_mcp_manager, mock_task_manager):
@@ -470,6 +699,94 @@ class TestLinearSyncServiceImport:
         call = mock_mcp_manager.call_tool.call_args
         assert call.kwargs["arguments"]["teamId"] == "team-123"
         assert call.kwargs["arguments"]["projectId"] == "lin-proj"
+        assert call.kwargs["arguments"]["limit"] == 100
+
+    async def test_import_issues_requires_linear_project_binding(
+        self, mock_mcp_manager, mock_task_manager
+    ):
+        service = LinearSyncService(
+            mcp_manager=mock_mcp_manager,
+            task_manager=mock_task_manager,
+            project_id="test-project",
+            linear_team_id="team-123",
+        )
+
+        with pytest.raises(ValueError, match="gobby linear setup --bootstrap"):
+            await service.import_linear_issues()
+
+        mock_mcp_manager.call_tool.assert_not_called()
+
+    async def test_import_issues_allows_explicit_team_wide_override(
+        self, mock_mcp_manager, mock_task_manager
+    ):
+        mock_mcp_manager.call_tool.return_value = {"issues": []}
+        service = LinearSyncService(
+            mcp_manager=mock_mcp_manager,
+            task_manager=mock_task_manager,
+            project_id="test-project",
+            linear_team_id="team-123",
+        )
+
+        await service.import_linear_issues(allow_team_wide=True)
+
+        call = mock_mcp_manager.call_tool.call_args
+        assert call.kwargs["arguments"]["teamId"] == "team-123"
+        assert "projectId" not in call.kwargs["arguments"]
+
+    @pytest.mark.asyncio
+    async def test_linear_mcp_issue_listing_fetches_every_cursor_page(
+        self, sync_service: LinearSyncService, mock_mcp_manager
+    ) -> None:
+        first_page = [{"id": f"issue-{index}"} for index in range(100)]
+        second_page = [{"id": f"issue-{index}"} for index in range(100, 125)]
+        mock_mcp_manager.call_tool.side_effect = [
+            {"issues": first_page, "hasNextPage": True, "cursor": "cursor-100"},
+            {"issues": second_page, "hasNextPage": False, "cursor": None},
+        ]
+
+        issues = await sync_service._list_issues_via_mcp("team-123")
+
+        assert [issue["id"] for issue in issues] == [f"issue-{index}" for index in range(125)]
+        calls = mock_mcp_manager.call_tool.await_args_list
+        assert calls[0].kwargs["arguments"] == {
+            "teamId": "team-123",
+            "limit": 100,
+            "projectId": "lin-proj",
+        }
+        assert calls[1].kwargs["arguments"] == {
+            "teamId": "team-123",
+            "limit": 100,
+            "projectId": "lin-proj",
+            "cursor": "cursor-100",
+        }
+
+    @pytest.mark.asyncio
+    async def test_sync_all_preserves_cursor_when_linked_issue_is_missing(
+        self,
+        sync_service: LinearSyncService,
+        mock_mcp_manager,
+        mock_task_manager,
+    ) -> None:
+        mock_task_manager.db.fetchall.return_value = [
+            {"id": "task-1", "linear_issue_id": "missing-issue"}
+        ]
+        mock_mcp_manager.call_tool.return_value = {"issues": []}
+        sync_service._get_project_synced_at = MagicMock(return_value="old-cursor")
+        sync_service._update_synced_at = MagicMock()
+        sync_service.push_dirty_tasks = AsyncMock()
+
+        result = await sync_service.sync_all(team_id="team-123")
+
+        assert result["pull"] == {
+            "updated": 0,
+            "skipped": 0,
+            "errors": 1,
+            "deferred": 0,
+        }
+        assert result["cursor_updated"] is False
+        assert result["synced_at"] == "old-cursor"
+        sync_service.push_dirty_tasks.assert_not_awaited()
+        sync_service._update_synced_at.assert_not_called()
 
 
 class TestLinearSyncServiceSync:
@@ -494,6 +811,7 @@ class TestLinearSyncServiceSync:
         mock_mcp_manager.call_tool.assert_called()
         assert mock_mcp_manager.call_tool.call_count >= 1
         assert mock_mcp_manager.call_tool.call_args is not None
+        assert mock_mcp_manager.call_tool.call_args.kwargs["arguments"]["priority"] == 3
 
     @pytest.mark.asyncio
     async def test_sync_task_graphql_resolves_linear_state_id(self, sync_service, mock_mcp_manager):
@@ -528,7 +846,7 @@ class TestLinearSyncServiceSync:
             issue_id="lin-42",
             title="#42: Updated Title",
             description="Updated description",
-            priority=2,
+            priority=3,
             state_id="state-progress",
         )
         assert client.update_issue.await_count == 1
@@ -599,7 +917,7 @@ class TestLinearSyncServiceSync:
             "task-1",
             title="Finished feature",
             description="Ready to close",
-            priority=1,
+            priority=0,
             closed_at="2026-02-11T12:34:56+00:00",
             closed_reason="linear_sync",
             closed_in_session_id=None,
@@ -607,6 +925,82 @@ class TestLinearSyncServiceSync:
             escalated_at=None,
             escalation_reason=None,
         )
+
+    @pytest.mark.asyncio
+    async def test_pull_updates_preserves_newer_local_changes(
+        self, sync_service: LinearSyncService, mock_mcp_manager, mock_task_manager
+    ) -> None:
+        mock_task_manager.db.fetchall.return_value = [
+            {
+                "id": "task-1",
+                "linear_issue_id": "issue-1",
+                "title": "New local title",
+                "description": "Description",
+                "priority": 2,
+                "updated_at": datetime(2026, 2, 12, 12, 34, 56, tzinfo=UTC),
+                "closed_at": None,
+                "closed_reason": None,
+                "closed_in_session_id": None,
+                "closed_commit_sha": None,
+                "escalated_at": None,
+                "escalation_reason": None,
+            }
+        ]
+        mock_mcp_manager.call_tool.return_value = {
+            "issues": [
+                {
+                    "id": "issue-1",
+                    "title": "Older Linear title",
+                    "description": "Description",
+                    "priority": 3,
+                    "state": {"name": "Todo"},
+                    "updatedAt": "2026-02-11T12:34:56Z",
+                }
+            ]
+        }
+
+        result = await sync_service.pull_linear_updates()
+
+        assert result == {"updated": 0, "skipped": 1, "errors": 1, "deferred": 0}
+        mock_task_manager.reconcile_task_state.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_pull_updates_skips_unchanged_task_without_touching_updated_at(
+        self, sync_service: LinearSyncService, mock_mcp_manager, mock_task_manager
+    ) -> None:
+        mock_task_manager.db.fetchall.return_value = [
+            {
+                "id": "task-1",
+                "linear_issue_id": "issue-1",
+                "title": "Same title",
+                "description": None,
+                "priority": 2,
+                "updated_at": "2026-02-10T12:34:56Z",
+                "closed_at": None,
+                "closed_reason": None,
+                "closed_in_session_id": None,
+                "closed_commit_sha": None,
+                "escalated_at": None,
+                "escalation_reason": None,
+            }
+        ]
+        mock_mcp_manager.call_tool.return_value = {
+            "issues": [
+                {
+                    "id": "issue-1",
+                    "title": "Same title",
+                    "description": "",
+                    "priority": 3,
+                    "state": {"name": "Todo"},
+                    "updatedAt": "2026-02-11T12:34:56Z",
+                }
+            ]
+        }
+
+        result = await sync_service.pull_linear_updates()
+
+        assert result == {"updated": 0, "skipped": 1, "errors": 0, "deferred": 0}
+        mock_task_manager.reconcile_task_state.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_pull_updates_rate_limits_repeated_linear_fetch_failures(
@@ -721,9 +1115,9 @@ class TestLinearSyncServiceSync:
             if record.levelno >= logging.WARNING
             and "Deferred Linear issue fetch" in record.getMessage()
         ]
-        assert recovered["errors"] == 0
+        assert recovered["errors"] == 1
         assert recovered["deferred"] == 0
-        assert recovered["skipped"] == 1
+        assert recovered["skipped"] == 0
         assert len(warning_records) == 2
         assert any(
             "Linear issue fetch recovered after 1 suppressed repeat(s)" in record.getMessage()
@@ -841,6 +1235,47 @@ class TestLinearSyncServiceSync:
         assert isinstance(result["synced_at"], str)
         sync_service._update_synced_at.assert_called_once_with(result["synced_at"])
 
+    async def test_sync_all_next_run_sees_edit_created_during_sync(
+        self, sync_service: LinearSyncService
+    ) -> None:
+        """The cursor precedes edits created inside the sync window."""
+        sync_started_at = datetime(2026, 7, 14, 12, 0, tzinfo=UTC)
+        edit_created_at = datetime(2026, 7, 14, 12, 1, tzinfo=UTC)
+        clock = {"now": sync_started_at}
+        state: dict[str, datetime | str | None] = {"cursor": None, "edit": None}
+
+        async def pull_updates(*, team_id: str | None = None) -> dict[str, int]:
+            del team_id
+            cursor = state["cursor"]
+            edit = state["edit"]
+            updated = int(
+                isinstance(cursor, str)
+                and isinstance(edit, datetime)
+                and edit > datetime.fromisoformat(cursor)
+            )
+            return {"updated": updated, "skipped": 1 - updated, "errors": 0, "deferred": 0}
+
+        async def push_tasks() -> dict[str, int]:
+            if state["edit"] is None:
+                clock["now"] = edit_created_at
+                state["edit"] = edit_created_at
+            return {"pushed": 0, "skipped": 1, "errors": 0, "deferred": 0}
+
+        sync_service.pull_linear_updates = AsyncMock(side_effect=pull_updates)
+        sync_service.push_dirty_tasks = AsyncMock(side_effect=push_tasks)
+        sync_service._get_project_synced_at = MagicMock(side_effect=lambda: state["cursor"])
+        sync_service._update_synced_at = MagicMock(
+            side_effect=lambda synced_at: state.update(cursor=synced_at)
+        )
+
+        with patch("gobby.sync.linear_task_ops.datetime") as mock_datetime:
+            mock_datetime.now.side_effect = lambda timezone: clock["now"]
+            first = await sync_service.sync_all(team_id="team-123")
+            second = await sync_service.sync_all(team_id="team-123")
+
+        assert first["synced_at"] == sync_started_at.isoformat()
+        assert second["pull"]["updated"] == 1
+
 
 class TestLinearSyncServiceCreate:
     """Test create_issue_for_task method."""
@@ -857,10 +1292,15 @@ class TestLinearSyncServiceCreate:
         mock_task.seq_num = 42
 
         sync_service.task_manager.get_task.return_value = mock_task
-        mock_mcp_manager.call_tool.return_value = {
-            "id": "lin-123",
-            "title": "#42: Feature: Add new thing",
-        }
+        mock_mcp_manager.call_tool.return_value = CallToolResult(
+            content=[
+                TextContent(
+                    type="text",
+                    text='{"id":"lin-123","title":"#42: Feature: Add new thing"}',
+                )
+            ],
+            isError=False,
+        )
 
         result = await sync_service.create_issue_for_task(task_id="test-task-id")
 
@@ -868,6 +1308,7 @@ class TestLinearSyncServiceCreate:
         assert mock_mcp_manager.call_tool.call_args.kwargs["arguments"]["title"] == (
             "#42: Feature: Add new thing"
         )
+        assert mock_mcp_manager.call_tool.call_args.kwargs["arguments"]["priority"] == 3
         assert result["gobby_ref"] == "#42"
         assert result["gobby_task_id"] == "test-task-id"
         assert result["linear_issue_id"] == "lin-123"
@@ -1120,7 +1561,8 @@ class TestLinearSyncServiceCreate:
     async def test_push_active_tasks_filters_closed_tasks(self, sync_service, mock_task_manager):
         """push_active_tasks only pushes linked non-closed tasks."""
         mock_task_manager.db.fetchall.return_value = [{"id": "task-1"}, {"id": "task-2"}]
-        sync_service.sync_task_to_linear = AsyncMock()
+        sync_service._get_graphql_client = AsyncMock(return_value=None)
+        sync_service._sync_task_to_linear = AsyncMock()
 
         result = await sync_service.push_active_tasks()
 
@@ -1128,7 +1570,60 @@ class TestLinearSyncServiceCreate:
         assert "linear_issue_id IS NOT NULL" in sql
         assert "closed_at IS NULL" in sql
         assert result == {"pushed": 2, "skipped": 0, "errors": 0, "deferred": 0}
-        assert sync_service.sync_task_to_linear.await_count == 2
+        assert sync_service._sync_task_to_linear.await_count == 2
+
+    async def test_push_active_tasks_reuses_graphql_client_and_team_states(
+        self, sync_service, mock_task_manager
+    ) -> None:
+        """One push run shares GraphQL setup and state metadata across task updates."""
+        loop_thread = threading.get_ident()
+        storage_threads: list[int] = []
+
+        tasks = {}
+        for task_id, state in (("task-1", "ready"), ("task-2", "in_progress")):
+            task = MagicMock()
+            task.id = task_id
+            task.seq_num = 1 if task_id == "task-1" else 2
+            task.linear_issue_id = f"lin-{task_id}"
+            task.linear_team_id = "team-123"
+            task.title = f"Title {task_id}"
+            task.description = f"Description {task_id}"
+            task.priority = 2
+            _set_task_state(task, state)
+            tasks[task_id] = task
+
+        def fetch_rows(*_args):
+            storage_threads.append(threading.get_ident())
+            return [{"id": "task-1"}, {"id": "task-2"}]
+
+        def get_task(task_id):
+            storage_threads.append(threading.get_ident())
+            return tasks[task_id]
+
+        mock_task_manager.db.fetchall.side_effect = fetch_rows
+        mock_task_manager.get_task.side_effect = get_task
+
+        client = MagicMock()
+        client.list_team_states = AsyncMock(
+            return_value=[
+                {"id": "state-todo", "name": "Todo"},
+                {"id": "state-progress", "name": "In Progress"},
+            ]
+        )
+        client.update_issue = AsyncMock(side_effect=[{"id": "lin-task-1"}, {"id": "lin-task-2"}])
+        sync_service._get_graphql_client = AsyncMock(return_value=client)
+
+        result = await sync_service.push_active_tasks()
+
+        assert result == {"pushed": 2, "skipped": 0, "errors": 0, "deferred": 0}
+        sync_service._get_graphql_client.assert_awaited_once_with()
+        client.list_team_states.assert_awaited_once_with("team-123")
+        assert [call.kwargs["state_id"] for call in client.update_issue.await_args_list] == [
+            "state-todo",
+            "state-progress",
+        ]
+        assert len(storage_threads) == 3
+        assert all(thread_id != loop_thread for thread_id in storage_threads)
 
 
 class TestLinearProjectBinding:
@@ -1246,6 +1741,7 @@ class TestLinearSyncIntegration:
             task_manager=mock_task_manager,
             project_id="test-project",
             linear_team_id="team-123",
+            linear_project_id="lin-proj",
         )
 
         imported = await service.import_linear_issues()
@@ -1268,6 +1764,7 @@ class TestLinearSyncIntegration:
             task_manager=mock_task_manager,
             project_id="test-project",
             linear_team_id="team-123",
+            linear_project_id="lin-proj",
         )
 
         result = await service.import_linear_issues()
@@ -1285,25 +1782,6 @@ class TestLinearSyncExceptions:
         error = LinearSyncError("Something went wrong")
         assert str(error) == "Something went wrong"
         assert isinstance(error, Exception)
-
-    def test_linear_rate_limit_error(self) -> None:
-        """LinearRateLimitError includes rate limit reset time."""
-        from gobby.sync.linear import LinearRateLimitError
-
-        error = LinearRateLimitError("Rate limited", reset_at=1234567890)
-        assert "Rate limited" in str(error)
-        assert error.reset_at == 1234567890
-
-    def test_linear_not_found_error(self) -> None:
-        """LinearNotFoundError indicates missing resource."""
-        from gobby.sync.linear import LinearNotFoundError
-
-        error = LinearNotFoundError(
-            "Issue lin-42 not found", resource="issue", resource_id="lin-42"
-        )
-        assert "Issue lin-42 not found" in str(error)
-        assert error.resource == "issue"
-        assert error.resource_id == "lin-42"
 
 
 class TestLinearSyncErrorHandling:
@@ -1348,6 +1826,7 @@ class TestLinearSyncErrorHandling:
             task_manager=mock_task_manager,
             project_id="test-project",
             linear_team_id="team-123",
+            linear_project_id="lin-proj",
         )
 
         with pytest.raises(Exception, match="Network error"):

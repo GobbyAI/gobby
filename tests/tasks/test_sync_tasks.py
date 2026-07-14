@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.dispatch.context import reload_candidate
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
@@ -25,8 +26,13 @@ def _session_id(name: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"gobby-sync-test-session:{name}"))
 
 
-def _github_issue_task_id(project_id: str, issue_num: int) -> str:
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{project_id}/github/owner/repo/issues/{issue_num}"))
+def _github_issue_task_id(project_id: str, issue_num: int, github_repo: str = "owner/repo") -> str:
+    return str(
+        uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"{project_id}/github/{github_repo}/issues/{issue_num}",
+        )
+    )
 
 
 def _legacy_normalized_github_issue_task_id(issue_num: int) -> str:
@@ -135,6 +141,52 @@ class TestTaskSyncManager:
         assert task2_data["state"]["is_closed"] is False
         assert "status" not in task2_data
 
+    def test_export_to_jsonl_fetches_all_pages(
+        self, sync_manager, task_manager, sample_project
+    ) -> None:
+        task_manager.create_task(sample_project["id"], "Task 1")
+        task_manager.create_task(sample_project["id"], "Task 2")
+
+        list_tasks = sync_manager.task_manager.list_tasks
+        with (
+            patch("gobby.sync.tasks.TASK_EXPORT_PAGE_SIZE", 1),
+            patch.object(sync_manager.task_manager, "list_tasks", wraps=list_tasks) as mock_list,
+        ):
+            sync_manager.export_to_jsonl()
+
+        assert [call.kwargs["offset"] for call in mock_list.call_args_list] == [0, 1, 2]
+        assert len(sync_manager.export_path.read_text().splitlines()) == 2
+
+    @pytest.mark.integration
+    def test_jsonl_round_trip_preserves_state_packed_columns(
+        self, sync_manager, task_manager, sample_project
+    ) -> None:
+        task = task_manager.create_task(
+            sample_project["id"],
+            "Routed task",
+            assigned_agent="backend-developer",
+            implementation_domain="backend",
+            additional_skills=["test-driven-development"],
+        )
+        task_manager.update_task(
+            task.id,
+            allow_automation=True,
+            unattended=True,
+            isolation="clone",
+        )
+
+        sync_manager.export_to_jsonl()
+        task_manager.db.execute("DELETE FROM tasks WHERE id = %s", (task.id,))
+        sync_manager.import_from_jsonl()
+
+        imported = task_manager.get_task(task.id)
+        assert imported.allow_automation is True
+        assert imported.unattended is True
+        assert imported.isolation == "clone"
+        assert imported.assigned_agent == "backend-developer"
+        assert imported.implementation_domain == "backend"
+        assert imported.additional_skills == ["test-driven-development"]
+
     @pytest.mark.integration
     def test_import_from_jsonl(self, sync_manager, task_manager, sample_project) -> None:
         """Test importing tasks from JSONL."""
@@ -199,6 +251,54 @@ class TestTaskSyncManager:
         assert deps[0]["depends_on"] == t1.id
 
     @pytest.mark.integration
+    def test_import_skips_dependency_with_missing_endpoint(
+        self, sync_manager, task_manager, sample_project, caplog
+    ) -> None:
+        task_id = _task_id("task-with-dangling-dependency")
+        other_task_id = _task_id("independent-imported-task")
+        missing_id = _task_id("missing-dependency")
+        records = [
+            {
+                "id": task_id,
+                "title": "Task with dangling dependency",
+                "created_at": "2023-01-02T00:00:00+00:00",
+                "updated_at": "2023-01-02T00:00:00+00:00",
+                "project_id": sample_project["id"],
+                "parent_id": None,
+                "deps_on": [missing_id],
+            },
+            {
+                "id": other_task_id,
+                "title": "Independent imported task",
+                "created_at": "2023-01-02T00:00:00+00:00",
+                "updated_at": "2023-01-02T00:00:00+00:00",
+                "project_id": sample_project["id"],
+                "parent_id": None,
+                "deps_on": [],
+            },
+        ]
+        sync_manager.export_path.parent.mkdir(parents=True, exist_ok=True)
+        sync_manager.export_path.write_text(
+            "".join(json.dumps(record) + "\n" for record in records)
+        )
+
+        with caplog.at_level("WARNING", logger="gobby.sync.tasks"):
+            sync_manager.import_from_jsonl()
+
+        assert task_manager.get_task(task_id) is not None
+        assert task_manager.get_task(other_task_id) is not None
+        assert (
+            sync_manager.db.fetchall(
+                "SELECT * FROM task_dependencies WHERE task_id = %s", (task_id,)
+            )
+            == []
+        )
+        assert (
+            f"Skipping dependency {task_id} -> {missing_id}: endpoint missing after import"
+            in caplog.messages
+        )
+
+    @pytest.mark.integration
     def test_import_conflict_resolution(self, sync_manager, task_manager, sample_project) -> None:
         """Test LWW conflict resolution during import."""
         # 1. Local Task is NEWER (should keep local)
@@ -258,12 +358,108 @@ class TestTaskSyncManager:
         t2_fresh = task_manager.get_task(t2.id)
         assert t2_fresh.title == "File Newer"
 
+    def test_import_lww_snapshot_is_loaded_inside_transaction(
+        self, sync_manager, task_manager, sample_project, monkeypatch
+    ) -> None:
+        task = task_manager.create_task(sample_project["id"], "Local Older")
+        local_old = "2020-01-01T00:00:00+00:00"
+        file_time = "2022-01-01T00:00:00+00:00"
+        concurrent_new = "2025-01-01T00:00:00+00:00"
+        task_manager.db.execute(
+            "UPDATE tasks SET updated_at = %s WHERE id = %s", (local_old, task.id)
+        )
+
+        file_data = {
+            "id": task.id,
+            "title": "File Version",
+            "description": "",
+            "created_at": local_old,
+            "updated_at": file_time,
+            "project_id": sample_project["id"],
+            "parent_id": None,
+            "deps_on": [],
+        }
+        sync_manager.export_path.parent.mkdir(parents=True, exist_ok=True)
+        sync_manager.export_path.write_text(json.dumps(file_data) + "\n")
+
+        original_fetchall = sync_manager.db.fetchall
+        update_applied = False
+
+        def fetchall_then_concurrent_update(sql: str, params: Any = ()) -> Any:
+            nonlocal update_applied
+            rows = original_fetchall(sql, params)
+            if not update_applied and "FROM tasks" in sql:
+                update_applied = True
+                task_manager.db.execute(
+                    "UPDATE tasks SET title = %s, updated_at = %s WHERE id = %s",
+                    ("Concurrent Local", concurrent_new, task.id),
+                )
+            return rows
+
+        monkeypatch.setattr(sync_manager.db, "fetchall", fetchall_then_concurrent_update)
+
+        sync_manager.import_from_jsonl()
+
+        imported = task_manager.get_task(task.id)
+        assert imported.title == "Concurrent Local"
+        assert imported.updated_at == datetime.fromisoformat(concurrent_new)
+
+    def test_import_ignores_same_id_inserted_after_snapshot(
+        self, sync_manager, task_manager, sample_project, monkeypatch
+    ) -> None:
+        task_id = _task_id("concurrent-insert")
+        file_time = "2022-01-01T00:00:00+00:00"
+        file_data = {
+            "id": task_id,
+            "title": "File Version",
+            "created_at": file_time,
+            "updated_at": file_time,
+            "project_id": sample_project["id"],
+            "parent_id": None,
+            "deps_on": [],
+        }
+        sync_manager.export_path.parent.mkdir(parents=True, exist_ok=True)
+        sync_manager.export_path.write_text(json.dumps(file_data) + "\n")
+
+        original_fetchall = sync_manager.db.fetchall
+        insert_applied = False
+
+        def fetchall_then_concurrent_insert(sql: str, params: Any = ()) -> Any:
+            nonlocal insert_applied
+            rows = original_fetchall(sql, params)
+            if not insert_applied and "FROM tasks" in sql:
+                insert_applied = True
+                task_manager.db.execute(
+                    """
+                    INSERT INTO tasks (
+                        id, project_id, title, created_at, updated_at, seq_num, path_cache
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        task_id,
+                        sample_project["id"],
+                        "Concurrent Local",
+                        datetime.fromisoformat(file_time),
+                        datetime.fromisoformat(file_time),
+                        999_999,
+                        "999999",
+                    ),
+                )
+            return rows
+
+        monkeypatch.setattr(sync_manager.db, "fetchall", fetchall_then_concurrent_insert)
+
+        sync_manager.import_from_jsonl()
+
+        imported = task_manager.get_task(task_id)
+        assert imported.title == "Concurrent Local"
+
     @pytest.mark.integration
     def test_export_always_writes_fresh_content(
         self, sync_manager, task_manager, sample_project
     ) -> None:
         """Test that export always writes correct content, even if file was externally modified."""
-        task_manager.create_task(sample_project["id"], "Task 1")
+        task = task_manager.create_task(sample_project["id"], "Task 1")
         sync_manager.export_to_jsonl()
 
         # Read correct content
@@ -271,12 +467,133 @@ class TestTaskSyncManager:
         assert "Task 1" in correct_content
 
         # Externally overwrite the file (simulates git checkout/merge)
-        sync_manager.export_path.write_text('{"id": "stale", "title": "Stale data"}\n')
+        sync_manager.export_path.write_text(
+            json.dumps(
+                {
+                    "id": task.id,
+                    "title": "Stale data",
+                    "updated_at": "2000-01-01T00:00:00Z",
+                }
+            )
+            + "\n"
+        )
 
         # Export again — should restore correct content
         sync_manager.export_to_jsonl()
         restored_content = sync_manager.export_path.read_text()
         assert restored_content == correct_content
+
+    def test_export_merges_existing_records_by_updated_at(
+        self, sync_manager, task_manager, sample_project
+    ) -> None:
+        local_task = task_manager.create_task(sample_project["id"], "Local task")
+        remote_task_id = _task_id("remote-only")
+        newer_file_record = {
+            "id": local_task.id,
+            "title": "Updated on another machine",
+            "updated_at": "2099-01-01T00:00:00Z",
+        }
+        file_only_record = {
+            "id": remote_task_id,
+            "title": "Remote-only task",
+            "updated_at": "2099-01-02T00:00:00Z",
+        }
+        sync_manager.export_path.parent.mkdir(parents=True, exist_ok=True)
+        sync_manager.export_path.write_text(
+            json.dumps(file_only_record) + "\n" + json.dumps(newer_file_record) + "\n"
+        )
+
+        sync_manager.export_to_jsonl()
+
+        records = [json.loads(line) for line in sync_manager.export_path.read_text().splitlines()]
+        assert [record["id"] for record in records] == sorted([local_task.id, remote_task_id])
+        assert next(record for record in records if record["id"] == local_task.id) == (
+            newer_file_record
+        )
+        assert next(record for record in records if record["id"] == remote_task_id) == (
+            file_only_record
+        )
+
+    def test_deleted_task_exports_tombstone_and_import_deletes_peer(
+        self, sync_manager, task_manager, sample_project
+    ) -> None:
+        task = task_manager.create_task(sample_project["id"], "Delete everywhere")
+        sync_manager.export_to_jsonl()
+
+        assert task_manager.delete_task(task.id)
+        sync_manager.export_to_jsonl()
+
+        tombstone = json.loads(sync_manager.export_path.read_text())
+        assert tombstone["id"] == task.id
+        assert tombstone["_deleted"] is True
+        assert tombstone["deleted_at"]
+
+        sync_manager.db.execute(
+            """
+            INSERT INTO tasks (id, project_id, title, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (
+                task.id,
+                sample_project["id"],
+                "Stale peer copy",
+                "2020-01-01T00:00:00+00:00",
+                "2020-01-01T00:00:00+00:00",
+            ),
+        )
+
+        sync_manager.import_from_jsonl()
+
+        assert sync_manager.db.fetchone("SELECT id FROM tasks WHERE id = %s", (task.id,)) is None
+
+    def test_import_replaces_removed_dependencies(
+        self, sync_manager, task_manager, sample_project
+    ) -> None:
+        blocker = task_manager.create_task(sample_project["id"], "Blocker")
+        task = task_manager.create_task(sample_project["id"], "Dependent")
+        sync_manager.db.execute(
+            """
+            INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at)
+            VALUES (%s, %s, 'blocks', %s)
+            """,
+            (task.id, blocker.id, "2020-01-01T00:00:00+00:00"),
+        )
+        record = {
+            "id": task.id,
+            "title": task.title,
+            "created_at": "2020-01-01T00:00:00+00:00",
+            "updated_at": "2099-01-01T00:00:00+00:00",
+            "project_id": sample_project["id"],
+            "parent_id": None,
+            "deps_on": [],
+        }
+        sync_manager.export_path.parent.mkdir(parents=True, exist_ok=True)
+        sync_manager.export_path.write_text(json.dumps(record) + "\n")
+
+        sync_manager.import_from_jsonl()
+
+        dependencies = sync_manager.db.fetchall(
+            "SELECT depends_on FROM task_dependencies WHERE task_id = %s", (task.id,)
+        )
+        assert dependencies == []
+
+    @pytest.mark.integration
+    def test_export_replace_failure_preserves_existing_file(
+        self, sync_manager, task_manager, sample_project
+    ) -> None:
+        sync_manager.export_path.parent.mkdir(parents=True, exist_ok=True)
+        original = b'{"id": "existing"}\n'
+        sync_manager.export_path.write_bytes(original)
+        task_manager.create_task(sample_project["id"], "Task 1")
+
+        with (
+            patch("gobby.sync.jsonl_io.os.replace", side_effect=OSError("interrupted")),
+            pytest.raises(OSError, match="interrupted"),
+        ):
+            sync_manager.export_to_jsonl()
+
+        assert sync_manager.export_path.read_bytes() == original
+        assert list(sync_manager.export_path.parent.glob(".tasks.jsonl.*.tmp")) == []
 
 
 class TestGetSyncStatus:
@@ -943,6 +1260,63 @@ class TestImportFromGitHubIssues:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_same_issue_number_in_different_repositories_creates_distinct_tasks(
+        self, sync_manager: TaskSyncManager, sample_project: dict[str, Any]
+    ) -> None:
+        other_project = LocalProjectManager(sync_manager.db).create(
+            name="other-project",
+            repo_path="/tmp/other-project",
+            github_url="https://github.com/other/repo",
+        )
+        issues_json = json.dumps(
+            [
+                {
+                    "number": 1,
+                    "title": "Issue 1",
+                    "body": "Repository-specific body",
+                    "labels": [],
+                    "createdAt": "2023-01-01T00:00:00Z",
+                }
+            ]
+        )
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = [
+                MagicMock(returncode=0),
+                MagicMock(returncode=0, stdout=issues_json),
+                MagicMock(returncode=0),
+                MagicMock(returncode=0, stdout=issues_json),
+            ]
+            first_result = await sync_manager.import_from_github_issues(
+                "https://github.com/owner/repo",
+                project_id=sample_project["id"],
+            )
+            second_result = await sync_manager.import_from_github_issues(
+                "https://github.com/other/repo",
+                project_id=other_project.id,
+            )
+
+        first_id = _github_issue_task_id(sample_project["id"], 1)
+        second_id = _github_issue_task_id(other_project.id, 1, "other/repo")
+        assert first_result["imported"] == [first_id]
+        assert second_result["imported"] == [second_id]
+        assert first_id != second_id
+
+        first_task = sync_manager.task_manager.get_task(first_id)
+        second_task = sync_manager.task_manager.get_task(second_id)
+        assert first_task.project_id == sample_project["id"]
+        assert first_task.github_repo == "owner/repo"
+        assert first_task.github_issue_number == 1
+        assert first_task.seq_num is not None
+        assert first_task.path_cache is not None
+        assert second_task.project_id == other_project.id
+        assert second_task.github_repo == "other/repo"
+        assert second_task.github_issue_number == 1
+        assert second_task.seq_num is not None
+        assert second_task.path_cache is not None
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_import_issues_updates_existing(
         self, sync_manager: TaskSyncManager, sample_project: dict[str, Any]
     ) -> None:
@@ -1449,6 +1823,49 @@ class TestImportSeqNumPreservation:
         assert task.seq_num > 5
 
     @pytest.mark.integration
+    def test_import_update_keeps_local_sequence_metadata_on_collision(
+        self, sync_manager, task_manager, sample_project
+    ) -> None:
+        """Updating a task keeps its local sequence metadata when the JSONL seq is occupied."""
+        task = task_manager.create_task(sample_project["id"], "Task to update")
+        occupant = task_manager.create_task(sample_project["id"], "Sequence occupant")
+        sync_manager.db.execute(
+            "UPDATE tasks SET seq_num = 5, path_cache = '5', "
+            "updated_at = '2020-01-01T00:00:00+00:00' WHERE id = %s",
+            (task.id,),
+        )
+        sync_manager.db.execute(
+            "UPDATE tasks SET seq_num = 100, path_cache = '100' WHERE id = %s",
+            (occupant.id,),
+        )
+
+        task_data = {
+            "id": task.id,
+            "title": "Updated task",
+            "description": "Desc",
+            "status": "open",
+            "created_at": task.created_at.isoformat(),
+            "updated_at": "2023-01-02T00:00:00+00:00",
+            "project_id": sample_project["id"],
+            "parent_id": None,
+            "deps_on": [],
+            "seq_num": 100,
+            "path_cache": "100",
+        }
+
+        sync_manager.export_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(sync_manager.export_path, "w") as f:
+            f.write(json.dumps(task_data) + "\n")
+
+        sync_manager.import_from_jsonl()
+
+        updated = task_manager.get_task(task.id)
+        assert updated is not None
+        assert updated.title == "Updated task"
+        assert updated.seq_num == 5
+        assert updated.path_cache == "5"
+
+    @pytest.mark.integration
     def test_import_batch_dedup(self, sync_manager, task_manager, sample_project) -> None:
         """Two JSONL tasks with same seq_num → first wins, second gets fresh."""
         now = "2023-01-02T00:00:00+00:00"
@@ -1527,10 +1944,10 @@ class TestImportSeqNumPreservation:
         assert task.path_cache is not None
 
     @pytest.mark.integration
-    def test_path_cache_reflects_preserved_seq(
+    def test_path_cache_is_order_independent(
         self, sync_manager, task_manager, sample_project
     ) -> None:
-        """Parent+child both preserve seq_nums, path_cache is correct."""
+        """Child imported before its parent still gets the complete path_cache."""
         now = "2023-01-02T00:00:00+00:00"
 
         parent = {
@@ -1560,11 +1977,11 @@ class TestImportSeqNumPreservation:
             "path_cache": "50.51",
         }
 
-        # Write parent first so it exists when child's path_cache is built
+        # UUID-sorted exports can place a child before its parent.
         sync_manager.export_path.parent.mkdir(parents=True, exist_ok=True)
         with open(sync_manager.export_path, "w") as f:
-            f.write(json.dumps(parent) + "\n")
             f.write(json.dumps(child) + "\n")
+            f.write(json.dumps(parent) + "\n")
 
         sync_manager.import_from_jsonl()
 
@@ -1576,6 +1993,14 @@ class TestImportSeqNumPreservation:
         assert c.seq_num == 51
         assert p.path_cache == "50"
         assert c.path_cache == "50.51"
+
+        resolved = reload_candidate(
+            "50.51",
+            db=sync_manager.db,
+            project_id=sample_project["id"],
+        )
+        assert resolved is not None
+        assert resolved.id == c.id
 
     @pytest.mark.integration
     def test_import_path_cache_ignores_parent_from_other_project(
