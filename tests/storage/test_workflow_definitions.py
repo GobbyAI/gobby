@@ -574,7 +574,8 @@ def test_duplicate(manager: LocalWorkflowDefinitionManager) -> None:
         definition_json=SAMPLE_DEFINITION,
         description="Original description",
         priority=25,
-        tags=["production"],
+        source="installed",
+        tags=["gobby", "production"],
         sources=["claude"],
     )
 
@@ -585,9 +586,9 @@ def test_duplicate(manager: LocalWorkflowDefinitionManager) -> None:
     assert duplicate.description == original.description
     assert duplicate.priority == original.priority
     assert duplicate.workflow_type == original.workflow_type
-    assert duplicate.tags == original.tags
+    assert duplicate.tags == ["production"]
     assert duplicate.sources == original.sources
-    assert duplicate.source == "installed"
+    assert duplicate.source == "custom"
 
     # Verify definition_json has updated name
     data = json.loads(duplicate.definition_json)

@@ -32,7 +32,7 @@ class CreateWorkflowRequest(BaseModel):
     priority: int = 100
     sources: list[str] | None = None
     canvas_json: str | None = None
-    source: Literal["installed", "agent", "project", "custom"] = "installed"
+    source: Literal["installed", "agent", "project", "custom"] = "custom"
     tags: list[str] | None = None
 
 
@@ -210,7 +210,11 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
                 sources=request.sources,
                 canvas_json=request.canvas_json,
                 source=request.source,
-                tags=request.tags,
+                tags=(
+                    None
+                    if request.tags is None
+                    else [tag for tag in request.tags if tag != "gobby"]
+                ),
             )
             await _broadcast_workflow("workflow_created", row.id)
             return {"status": "success", "definition": row.to_dict()}

@@ -156,6 +156,7 @@ def test_create_workflow(client: TestClient) -> None:
             "workflow_type": "workflow",
             "description": "A new workflow",
             "priority": 50,
+            "tags": ["gobby", "user-tag"],
         },
     )
     assert resp.status_code == 200
@@ -164,6 +165,8 @@ def test_create_workflow(client: TestClient) -> None:
     assert data["definition"]["name"] == "new-workflow"
     assert data["definition"]["priority"] == 50
     assert data["definition"]["description"] == "A new workflow"
+    assert data["definition"]["source"] == "custom"
+    assert data["definition"]["tags"] == ["user-tag"]
 
 
 def test_create_pipeline(client: TestClient) -> None:

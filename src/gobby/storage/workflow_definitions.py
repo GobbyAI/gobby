@@ -447,8 +447,8 @@ class LocalWorkflowDefinitionManager:
             priority=original.priority,
             sources=original.sources,
             canvas_json=original.canvas_json,
-            source="installed",
-            tags=original.tags,
+            source="custom",
+            tags=[tag for tag in (original.tags or []) if tag != "gobby"],
         )
 
     def move_to_project(self, definition_id: str, project_id: str) -> WorkflowDefinitionRow:

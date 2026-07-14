@@ -272,7 +272,7 @@ def sync_bundled_pipelines(db: HubDatabase) -> dict[str, Any]:
     orphan_rows = db.fetchall(
         "SELECT id, name FROM workflow_definitions "
         "WHERE workflow_type = 'pipeline' "
-        f"AND {tag_condition} AND deleted_at IS NULL",
+        f"AND {tag_condition} AND source = 'installed' AND deleted_at IS NULL",
         tag_params,
     )
     result["orphaned"] = 0
