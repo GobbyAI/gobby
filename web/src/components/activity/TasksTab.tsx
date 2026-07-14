@@ -309,7 +309,7 @@ export const TasksTab = memo(function TasksTab({
       .then((data) => {
         if (selectedTaskIdRef.current !== selectedTaskId) return;
         const raw = extractTaskPayload(data);
-        const cached = tasks.find((task) => task.id === selectedTaskId) ?? null;
+        const cached = tasksRef.current.find((task) => task.id === selectedTaskId) ?? null;
         setTaskDetail(raw ? (normalizeActivityTask(raw, cached) as GobbyTaskDetail) : null);
       })
       .catch((err) => {
@@ -319,7 +319,7 @@ export const TasksTab = memo(function TasksTab({
         if (!controller.signal.aborted) setDetailLoading(false);
       });
     return () => controller.abort();
-  }, [selectedTaskId, tasks]);
+  }, [selectedTaskId]);
 
   // Fetch dependencies + subtasks alongside the detail. Each call uses its own
   // controller so a stale response from a previous selection can't overwrite
@@ -598,7 +598,7 @@ export const TasksTab = memo(function TasksTab({
 
   const showDetail = selectedTaskId !== null;
 
-  if (loading) {
+  if (loading && tasks.length === 0) {
     return <ActivityPanelEmpty body="Loading tasks…" />;
   }
 

@@ -203,6 +203,55 @@ describe("TasksTab — events and row actions", () => {
     });
   });
 
+  it("keeps the focused detail draft mounted during a WebSocket refetch", async () => {
+    render(<TasksTab projectId="proj-1" />);
+
+    fireEvent.click(await screen.findByText("Review approved task"));
+    const description = (await screen.findByLabelText(
+      "Description",
+    )) as HTMLTextAreaElement;
+    fireEvent.change(description, { target: { value: "Unsaved draft" } });
+    description.focus();
+
+    const originalFetch = mockFetch.fn.getMockImplementation();
+    let resolveListFetch!: (response: Response) => void;
+    const pendingListFetch = new Promise<Response>((resolve) => {
+      resolveListFetch = resolve;
+    });
+    mockFetch.fn.mockImplementation((input: RequestInfo | URL) => {
+      if (String(input).includes("/api/tasks?")) return pendingListFetch;
+      return originalFetch?.(input);
+    });
+
+    act(() => {
+      wsHandler?.({
+        type: "task_event",
+        event: "task_updated",
+        task_id: "task-1",
+        task: { id: "task-1", title: "Updated during refetch" },
+      });
+    });
+
+    await waitFor(
+      () => expect(screen.getByTestId("task-tree")).toHaveAttribute("aria-busy", "true"),
+      { timeout: 1_000 },
+    );
+    expect(screen.getByLabelText("Description")).toBe(description);
+    expect(description.value).toBe("Unsaved draft");
+    expect(document.activeElement).toBe(description);
+    expect(screen.queryByText("Loading tasks…")).toBeNull();
+
+    resolveListFetch(
+      new Response(JSON.stringify({ tasks: taskList }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("task-tree")).toHaveAttribute("aria-busy", "false"),
+    );
+  });
+
   it("ignores WebSocket events for other projects", async () => {
     render(<TasksTab projectId="proj-1" />);
 
