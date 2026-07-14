@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.skills import LocalSkillManager
+from gobby.storage.skills import LocalSkillManager, SkillScopeConflictError
 
 pytestmark = pytest.mark.unit
 
@@ -528,6 +528,18 @@ class TestSourceTaxonomy:
         assert moved.source == "project"
         assert moved.project_id == project_id
 
+    def test_move_to_project_rejects_soft_deleted_name_collision(
+        self, storage: LocalSkillManager, project_id: str
+    ) -> None:
+        target = storage.create_skill(
+            name="collision", description="Target", content="# Target", project_id=project_id
+        )
+        storage.delete_skill(target.id)
+        source = storage.create_skill(name="collision", description="Source", content="# Source")
+
+        with pytest.raises(SkillScopeConflictError, match="already exists in project"):
+            storage.move_to_project(source.id, project_id)
+
     def test_move_to_installed(self, storage: LocalSkillManager, project_id: str) -> None:
         """move_to_installed changes source back to 'installed'."""
         skill = storage.create_skill(
@@ -541,6 +553,18 @@ class TestSourceTaxonomy:
         moved = storage.move_to_installed(skill.id)
         assert moved.source == "installed"
         assert moved.project_id is None
+
+    def test_move_to_installed_rejects_soft_deleted_name_collision(
+        self, storage: LocalSkillManager, project_id: str
+    ) -> None:
+        target = storage.create_skill(name="collision", description="Target", content="# Target")
+        storage.delete_skill(target.id)
+        source = storage.create_skill(
+            name="collision", description="Source", content="# Source", project_id=project_id
+        )
+
+        with pytest.raises(SkillScopeConflictError, match="already exists globally"):
+            storage.move_to_installed(source.id)
 
     def test_list_skills_source_filter(self, storage: LocalSkillManager, project_id: str) -> None:
         """list_skills source param filters by exact source value."""

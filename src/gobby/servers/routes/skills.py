@@ -17,6 +17,8 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from gobby.storage.skills import SkillScopeConflictError
+
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
     from gobby.skills.parser import ParsedSkill
@@ -602,6 +604,8 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             skill = server.skill_manager.move_to_project(skill_id, project_id)
             await _broadcast_skill("skill_updated", skill_id)
             return {"moved": True, "skill": skill.to_dict()}
+        except SkillScopeConflictError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
@@ -615,6 +619,8 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             skill = server.skill_manager.move_to_installed(skill_id)
             await _broadcast_skill("skill_updated", skill_id)
             return {"moved": True, "skill": skill.to_dict()}
+        except SkillScopeConflictError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:

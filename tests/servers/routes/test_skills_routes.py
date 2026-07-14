@@ -12,6 +12,7 @@ from gobby.config.app import DaemonConfig
 from gobby.servers.http import HTTPServer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager, Project
+from gobby.storage.skills import SkillScopeConflictError
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -710,6 +711,12 @@ class TestMoveToProject:
         response = client.post("/api/skills/1/move-to-project?project_id=2")
         assert response.status_code == 400
 
+    def test_move_to_project_conflict(self, client: TestClient, skill_manager) -> None:
+        skill_manager.move_to_project.side_effect = SkillScopeConflictError("collision")
+        response = client.post("/api/skills/1/move-to-project?project_id=2")
+        assert response.status_code == 409
+        assert response.json()["detail"] == "collision"
+
     def test_move_to_project_err(self, client: TestClient, skill_manager) -> None:
         skill_manager.move_to_project.side_effect = Exception("E")
         response = client.post("/api/skills/1/move-to-project?project_id=2")
@@ -729,6 +736,12 @@ class TestMoveToInstalled:
         skill_manager.move_to_installed.side_effect = ValueError("E")
         response = client.post("/api/skills/1/move-to-installed")
         assert response.status_code == 400
+
+    def test_move_to_installed_conflict(self, client: TestClient, skill_manager) -> None:
+        skill_manager.move_to_installed.side_effect = SkillScopeConflictError("collision")
+        response = client.post("/api/skills/1/move-to-installed")
+        assert response.status_code == 409
+        assert response.json()["detail"] == "collision"
 
     def test_move_to_installed_err(self, client: TestClient, skill_manager) -> None:
         skill_manager.move_to_installed.side_effect = Exception("E")

@@ -12,6 +12,7 @@ from gobby.storage.skills._bundled import (
     BUNDLED_TEMPLATE_PROJECT_SKILL_ERROR,
     is_bundled_template_path,
 )
+from gobby.storage.skills._errors import SkillScopeConflictError
 from gobby.storage.skills._models import Skill, SkillSourceType
 from gobby.storage.sql_dialect import json_text_expr
 from gobby.utils.datetime import utc_now
@@ -533,6 +534,17 @@ class SkillMetadataMixin:
         skill = self.get_skill(skill_id)
         if is_bundled_template_path(skill.source_path):
             raise ValueError(f"Skill '{skill.name}': {BUNDLED_TEMPLATE_PROJECT_SKILL_ERROR}")
+        existing = self.get_by_name(
+            skill.name,
+            project_id=project_id,
+            include_global=False,
+            include_deleted=True,
+            source="project",
+        )
+        if existing is not None and existing.id != skill.id:
+            raise SkillScopeConflictError(
+                f"Skill '{skill.name}' already exists in project {project_id}"
+            )
         return self.update_skill(skill_id, source="project", project_id=project_id)
 
     def purge_bundled_template_project_skills(self) -> list[Skill]:
@@ -576,7 +588,15 @@ class SkillMetadataMixin:
         Raises:
             ValueError: If skill not found.
         """
-        self.get_skill(skill_id)
+        skill = self.get_skill(skill_id)
+        existing = self.get_by_name(
+            skill.name,
+            project_id=None,
+            include_deleted=True,
+            source="installed",
+        )
+        if existing is not None and existing.id != skill.id:
+            raise SkillScopeConflictError(f"Skill '{skill.name}' already exists globally")
         return self.update_skill(skill_id, source="installed", project_id=None)
 
     def list_skills(
