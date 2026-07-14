@@ -1685,6 +1685,16 @@ class TestLocalTaskManager:
         assert len(tasks) == 1
         assert tasks[0].task_type == "bug"
 
+    def test_list_tasks_with_critical_priority_filter(self, task_manager, project_id) -> None:
+        """Test filtering tasks by critical priority."""
+        task_manager.create_task(project_id, "Critical Priority", priority=0)
+        task_manager.create_task(project_id, "Low Priority", priority=3)
+
+        tasks = task_manager.list_tasks(project_id=project_id, priority=0)
+
+        assert len(tasks) == 1
+        assert tasks[0].priority == 0
+
     # =========================================================================
     # List Ready Tasks Filter Tests
     # =========================================================================
@@ -1703,13 +1713,13 @@ class TestLocalTaskManager:
 
     def test_list_ready_tasks_with_priority_filter(self, task_manager, project_id) -> None:
         """Test filtering ready tasks by priority."""
-        task_manager.create_task(project_id, "High Priority", priority=1)
+        task_manager.create_task(project_id, "Critical Priority", priority=0)
         task_manager.create_task(project_id, "Low Priority", priority=3)
 
-        tasks = task_manager.list_ready_tasks(project_id=project_id, priority=1)
+        tasks = task_manager.list_ready_tasks(project_id=project_id, priority=0)
 
         assert len(tasks) == 1
-        assert tasks[0].priority == 1
+        assert tasks[0].priority == 0
 
     def test_list_ready_tasks_with_parent_filter(self, task_manager, project_id) -> None:
         """Test filtering ready tasks by parent."""

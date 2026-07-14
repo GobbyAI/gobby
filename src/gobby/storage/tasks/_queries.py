@@ -304,7 +304,7 @@ def list_ready_tasks(
     if project_id:
         query += " AND t.project_id = %s"
         params.append(project_id)
-    if priority:
+    if priority is not None:
         query += " AND t.priority = %s"
         params.append(priority)
     if task_type:
