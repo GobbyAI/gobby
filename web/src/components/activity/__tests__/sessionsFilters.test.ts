@@ -269,6 +269,19 @@ describe("matchesSessionsFilters", () => {
     expect(matchesSessionsFilters(makeSession(), f, NOW)).toBe(false);
   });
 
+  it("task ref range defaults to the claimed role when no roles are selected", () => {
+    const f = defaultSessionsFilters();
+    f.taskRefMin = 1000;
+    f.taskRefMax = 2000;
+
+    expect(
+      matchesSessionsFilters(makeSession({ claimed_task_refs: [1500] }), f, NOW),
+    ).toBe(true);
+    expect(
+      matchesSessionsFilters(makeSession({ created_task_refs: [1500] }), f, NOW),
+    ).toBe(false);
+  });
+
   it("status filter narrows to selected statuses", () => {
     const f = defaultSessionsFilters();
     f.statuses = new Set(["expired"]);

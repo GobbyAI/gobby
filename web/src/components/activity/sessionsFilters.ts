@@ -156,8 +156,10 @@ export function matchesSessionsFilters(
       created: session.created_task_refs ?? [],
       closed: session.closed_task_refs ?? [],
     };
+    const roles: ReadonlySet<TaskRefRole> | readonly TaskRefRole[] =
+      filters.taskRefRoles.size > 0 ? filters.taskRefRoles : ["claimed"];
     let anyMatch = false;
-    for (const role of filters.taskRefRoles) {
+    for (const role of roles) {
       if (roleColumns[role].some((ref) => ref >= min && ref <= max)) {
         anyMatch = true;
         break;
