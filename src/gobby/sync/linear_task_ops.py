@@ -264,7 +264,8 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
 
             with self.task_manager.db.transaction():
                 existing = self.task_manager.db.fetchone(
-                    "SELECT id FROM tasks WHERE linear_issue_id = %s AND project_id = %s",
+                    "SELECT id, updated_at FROM tasks "
+                    "WHERE linear_issue_id = %s AND project_id = %s",
                     (issue_id, self.project_id),
                 )
 
@@ -272,7 +273,8 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
                     ref_seq = _gobby_seq_from_linear_title(title)
                     if ref_seq is not None:
                         existing = self.task_manager.db.fetchone(
-                            "SELECT id FROM tasks WHERE project_id = %s AND seq_num = %s",
+                            "SELECT id, updated_at FROM tasks "
+                            "WHERE project_id = %s AND seq_num = %s",
                             (self.project_id, ref_seq),
                         )
                         if existing:
@@ -283,13 +285,18 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
                             )
 
                 if existing:
-                    self.task_manager.reconcile_task_state(
-                        existing["id"],
-                        title=local_title,
-                        description=description,
-                        priority=priority_val,
-                        **lifecycle_updates,
+                    local_updated = _parse_linear_timestamp(existing.get("updated_at"))
+                    is_stale = bool(
+                        local_updated and linear_updated and local_updated > linear_updated
                     )
+                    if not is_stale:
+                        self.task_manager.reconcile_task_state(
+                            existing["id"],
+                            title=local_title,
+                            description=description,
+                            priority=priority_val,
+                            **lifecycle_updates,
+                        )
                     task = self.task_manager.get_task(existing["id"])
                     result_tasks.append(task.to_dict())
                 else:

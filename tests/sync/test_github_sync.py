@@ -152,7 +152,13 @@ class TestGitHubSyncServiceAvailability:
         assert await service.import_github_issues("owner/repo") == []
         session.call_tool.assert_awaited_once_with(
             "list_issues",
-            {"owner": "owner", "repo": "repo", "state": "open"},
+            {
+                "owner": "owner",
+                "repo": "repo",
+                "state": "open",
+                "page": 1,
+                "per_page": 100,
+            },
         )
 
 
@@ -304,6 +310,10 @@ class TestGitHubSyncServiceDedup:
 
         existing_task = MagicMock()
         existing_task.id = "existing-task-id"
+        existing_task.title = "Original Title"
+        existing_task.description = "Original body"
+        existing_task.labels = []
+        existing_task.updated_at = None
         existing_task.to_dict.return_value = {"id": "existing-task-id", "title": "Updated Title"}
         mock_task_manager.get_task.return_value = existing_task
 
@@ -313,6 +323,80 @@ class TestGitHubSyncServiceDedup:
         mock_task_manager.update_task.assert_called_once()
         mock_task_manager.create_task.assert_not_called()
         assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_import_preserves_newer_local_fields_and_labels(
+        self, sync_service, mock_mcp_manager, mock_task_manager
+    ) -> None:
+        mock_mcp_manager.call_tool.return_value = {
+            "issues": [
+                {
+                    "number": 1,
+                    "title": "Stale remote title",
+                    "body": "Stale remote body",
+                    "labels": [],
+                    "state": "closed",
+                    "updated_at": "2026-02-11T12:00:00Z",
+                }
+            ]
+        }
+        mock_task_manager.db.execute.return_value.fetchone.return_value = {"id": "existing-task-id"}
+        existing_task = MagicMock(
+            id="existing-task-id",
+            title="Newer local title",
+            description="Newer local body",
+            labels=["local-only"],
+            updated_at="2026-02-12T12:00:00Z",
+        )
+        existing_task.to_dict.return_value = {
+            "id": "existing-task-id",
+            "title": "Newer local title",
+            "labels": ["local-only"],
+        }
+        mock_task_manager.get_task.return_value = existing_task
+
+        result = await sync_service.import_github_issues(repo="owner/repo")
+
+        mock_task_manager.update_task.assert_not_called()
+        mock_task_manager.reconcile_task_state.assert_not_called()
+        assert result == [existing_task.to_dict.return_value]
+
+    @pytest.mark.asyncio
+    async def test_import_applies_newer_remote_fields_and_merges_labels(
+        self, sync_service, mock_mcp_manager, mock_task_manager
+    ) -> None:
+        mock_mcp_manager.call_tool.return_value = {
+            "issues": [
+                {
+                    "number": 1,
+                    "title": "Newer remote title",
+                    "body": "Newer remote body",
+                    "labels": [{"name": "remote"}],
+                    "updated_at": "2026-02-12T12:00:00Z",
+                }
+            ]
+        }
+        mock_task_manager.db.execute.return_value.fetchone.return_value = {"id": "existing-task-id"}
+        existing_task = MagicMock(
+            id="existing-task-id",
+            title="Old local title",
+            description="Old local body",
+            labels=["local-only"],
+            updated_at="2026-02-11T12:00:00Z",
+        )
+        existing_task.to_dict.return_value = {"id": "existing-task-id"}
+        mock_task_manager.get_task.return_value = existing_task
+
+        result = await sync_service.import_github_issues(repo="owner/repo")
+
+        mock_task_manager.update_task.assert_called_once_with(
+            "existing-task-id",
+            title="Newer remote title",
+            description="Newer remote body",
+            labels=["local-only", "remote"],
+        )
+        mock_task_manager.create_task.assert_not_called()
+        assert result == [{"id": "existing-task-id"}]
 
     @pytest.mark.asyncio
     async def test_import_open_issue_reopens_existing_task(

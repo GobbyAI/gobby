@@ -539,6 +539,69 @@ class TestLinearSyncServiceImport:
         assert imported == [{"id": "task-canceled"}]
 
     @pytest.mark.asyncio
+    async def test_import_preserves_newer_local_fields(
+        self, sync_service, mock_mcp_manager, mock_task_manager
+    ) -> None:
+        mock_mcp_manager.call_tool.return_value = {
+            "issues": [
+                {
+                    "id": "lin-stale",
+                    "title": "Stale remote title",
+                    "description": "Stale remote body",
+                    "updatedAt": "2026-02-11T12:00:00Z",
+                }
+            ]
+        }
+        mock_task_manager.db.fetchone.return_value = {
+            "id": "task-stale",
+            "updated_at": "2026-02-12T12:00:00Z",
+        }
+        existing = MagicMock()
+        existing.to_dict.return_value = {
+            "id": "task-stale",
+            "title": "Newer local title",
+            "description": "Newer local body",
+        }
+        mock_task_manager.get_task.return_value = existing
+
+        imported = await sync_service.import_linear_issues()
+
+        mock_task_manager.reconcile_task_state.assert_not_called()
+        assert imported == [existing.to_dict.return_value]
+
+    @pytest.mark.asyncio
+    async def test_import_applies_newer_remote_fields(
+        self, sync_service, mock_mcp_manager, mock_task_manager
+    ) -> None:
+        mock_mcp_manager.call_tool.return_value = {
+            "issues": [
+                {
+                    "id": "lin-newer",
+                    "title": "Newer remote title",
+                    "description": "Newer remote body",
+                    "updatedAt": "2026-02-12T12:00:00Z",
+                }
+            ]
+        }
+        mock_task_manager.db.fetchone.return_value = {
+            "id": "task-newer",
+            "updated_at": "2026-02-11T12:00:00Z",
+        }
+        existing = MagicMock()
+        existing.to_dict.return_value = {"id": "task-newer"}
+        mock_task_manager.get_task.return_value = existing
+
+        imported = await sync_service.import_linear_issues()
+
+        mock_task_manager.reconcile_task_state.assert_called_once_with(
+            "task-newer",
+            title="Newer remote title",
+            description="Newer remote body",
+            priority=4,
+        )
+        assert imported == [{"id": "task-newer"}]
+
+    @pytest.mark.asyncio
     async def test_import_links_existing_task_by_gobby_ref_title(
         self, sync_service, mock_mcp_manager, mock_task_manager
     ):

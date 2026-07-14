@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, cast
 from gobby.integrations.github import GitHubIntegration
 from gobby.integrations.github_helper import parse_github_mcp_result, parse_github_repo
 from gobby.tasks.state_semantics import is_task_closed
+from gobby.utils.datetime import parse_stored_datetime
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.manager import MCPClientManager
@@ -208,14 +209,35 @@ class GitHubSyncService:
             # Dedup: check if task already exists for this repo + issue number
             existing = self._find_task_by_github_issue(repo, issue_number)
             if existing:
-                self.task_manager.update_task(
-                    existing.id,
-                    title=title,
-                    description=description,
-                    labels=mapped_labels or None,
+                local_updated_value = getattr(existing, "updated_at", None)
+                local_updated = (
+                    parse_stored_datetime(local_updated_value)
+                    if isinstance(local_updated_value, (datetime, str))
+                    else None
                 )
-                if lifecycle_updates:
-                    self.task_manager.reconcile_task_state(existing.id, **lifecycle_updates)
+                remote_updated = parse_stored_datetime(issue.get("updated_at"))
+                is_stale = bool(local_updated and remote_updated and local_updated > remote_updated)
+
+                if not is_stale:
+                    metadata_updates: dict[str, Any] = {}
+                    if getattr(existing, "title", None) != title:
+                        metadata_updates["title"] = title
+                    if (getattr(existing, "description", None) or "") != description:
+                        metadata_updates["description"] = description
+
+                    existing_label_value = getattr(existing, "labels", None)
+                    existing_labels = (
+                        list(existing_label_value) if isinstance(existing_label_value, list) else []
+                    )
+                    if mapped_labels:
+                        merged_labels = list(dict.fromkeys([*existing_labels, *mapped_labels]))
+                        if merged_labels != existing_labels:
+                            metadata_updates["labels"] = merged_labels
+
+                    if metadata_updates:
+                        self.task_manager.update_task(existing.id, **metadata_updates)
+                    if lifecycle_updates:
+                        self.task_manager.reconcile_task_state(existing.id, **lifecycle_updates)
                 refreshed = self.task_manager.get_task(existing.id)
                 if refreshed:
                     updated.append(refreshed.to_dict())
