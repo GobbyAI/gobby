@@ -49,9 +49,79 @@ class _RecallMemoryManager:
         return self.lessons if kwargs.get("tags_all") else self.ordinary
 
 
+class _CandidateMemoryManager:
+    def __init__(
+        self,
+        *,
+        tagged_batches: list[list[_Memory]],
+        legacy: list[_Memory],
+    ) -> None:
+        self.db = cast(HubDatabase, object())
+        self.tagged_batches = iter(tagged_batches)
+        self.legacy = legacy
+        self.list_calls: list[dict[str, Any]] = []
+
+    async def alist_memories(self, **kwargs: Any) -> list[_Memory]:
+        self.list_calls.append(kwargs)
+        if len(kwargs["tags_all"]) == 3:
+            return next(self.tagged_batches)
+        return self.legacy
+
+
 def _memory_manager() -> tuple[_RecallMemoryManager, ReviewLearningMemoryManager]:
     manager = _RecallMemoryManager()
     return manager, cast(ReviewLearningMemoryManager, manager)
+
+
+@pytest.mark.asyncio
+async def test_candidate_lessons_skip_legacy_scan_when_tagged_candidates_satisfy_limit() -> None:
+    first = _Memory(id="first", content="first", tags=[])
+    second = _Memory(id="second", content="second", tags=[])
+    manager = _CandidateMemoryManager(
+        tagged_batches=[[first], [first, second]],
+        legacy=[],
+    )
+    service = ReviewLearningService(
+        cast(ReviewLearningMemoryManager, manager),
+        cast(PromotionTaskManager, object()),
+    )
+
+    candidates = await service._candidate_lesson_memories(
+        project_id="project",
+        touched_paths=["src/first.py", "src/second.py"],
+        limit=2,
+    )
+
+    assert [memory.id for memory, _ in candidates] == ["first", "second"]
+    assert len(manager.list_calls) == 2
+    assert all(len(call["tags_all"]) == 3 for call in manager.list_calls)
+
+
+@pytest.mark.asyncio
+async def test_candidate_lessons_scan_legacy_when_tagged_candidates_are_insufficient() -> None:
+    tagged = _Memory(id="tagged", content="tagged", tags=[])
+    legacy = _Memory(id="legacy", content="legacy", tags=[])
+    manager = _CandidateMemoryManager(
+        tagged_batches=[[tagged]],
+        legacy=[legacy],
+    )
+    service = ReviewLearningService(
+        cast(ReviewLearningMemoryManager, manager),
+        cast(PromotionTaskManager, object()),
+    )
+
+    candidates = await service._candidate_lesson_memories(
+        project_id="project",
+        touched_paths=["src/tagged.py"],
+        limit=2,
+    )
+
+    assert [(memory.id, path) for memory, path in candidates] == [
+        ("tagged", "src/tagged.py"),
+        ("legacy", None),
+    ]
+    assert len(manager.list_calls) == 2
+    assert len(manager.list_calls[-1]["tags_all"]) == 2
 
 
 @pytest.mark.asyncio

@@ -432,6 +432,9 @@ class ReviewLearningService:
                 seen.add(memory_id)
                 candidates.append((memory, touched_path))
 
+        if len(candidates) >= limit:
+            return candidates
+
         legacy_memories = await self.memory_manager.alist_memories(
             project_id=project_id,
             memory_type="pattern",
