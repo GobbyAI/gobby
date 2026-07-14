@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from gobby.autonomous.progress_tracker import ProgressTracker
 from gobby.autonomous.stop_registry import StopRegistry
@@ -362,6 +362,14 @@ class HookManagerFactory:
                 _logger.warning("inline_mcp_dispatcher: tool_proxy_getter returned None")
                 return {"success": False, "error": "tool_proxy_getter returned None"}
 
+            from gobby.utils.session_context import (
+                SeededContextTokens,
+                reset_seeded_contexts,
+                resolve_and_seed_contexts,
+            )
+
+            session_id_is_explicit = "session_id" in arguments
+            tokens: SeededContextTokens | None = None
             try:
                 # Inject event context (mirrors dispatch_mcp_calls behavior)
                 args = dict(arguments)
@@ -376,10 +384,32 @@ class HookManagerFactory:
                     if "query" not in args and args.get("prompt_text"):
                         args["query"] = args["prompt_text"]
 
+                session_ref = args.get("session_id") or None
+                session_ref_origin: Literal["explicit", "ambient"] = (
+                    "explicit" if session_id_is_explicit else "ambient"
+                )
+                session_manager = proxy.session_manager
+                tokens = await resolve_and_seed_contexts(
+                    session_ref=session_ref,
+                    session_manager=session_manager,
+                    project_ref=event.project_id if event else None,
+                    session_ref_origin=session_ref_origin,
+                    project_ref_is_fallback=True,
+                    db=(session_manager.db if session_manager else None),
+                )
+
+                if not args.get("project_path"):
+                    from gobby.utils.project_context import _current_project_context
+
+                    project_context = _current_project_context.get()
+                    if project_context and project_context.get("project_path"):
+                        args["project_path"] = project_context["project_path"]
+
                 result = await proxy.call_tool(
                     server,
                     tool,
                     args,
+                    session_id=tokens.resolved_session_id,
                     strip_unknown=True,
                     enforce_workflow=False,
                 )
@@ -395,6 +425,9 @@ class HookManagerFactory:
                     exc_info=True,
                 )
                 return {"success": False, "error": str(exc)}
+            finally:
+                if tokens is not None:
+                    reset_seeded_contexts(tokens)
 
         return dispatcher
 
