@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import shutil
+from concurrent.futures import CancelledError, Future
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -162,26 +163,28 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     if runner.config.telemetry and runner.config.telemetry.traces_enabled:
         from gobby.telemetry.providers import add_span_storage_exporter
 
+        broadcast_loop = asyncio.get_running_loop()
+
         def _broadcast_proxy(span: dict[str, Any]) -> None:
             """Proxy for trace event broadcasting via WebSocket."""
             if hasattr(runner, "websocket_server") and runner.websocket_server:
+                broadcast = runner.websocket_server.broadcast_trace_event(span)
                 try:
-                    loop = asyncio.get_running_loop()
-                    task = loop.create_task(runner.websocket_server.broadcast_trace_event(span))
-                    runner._pending_tasks.add(task)
-
-                    def _log_broadcast_result(done_task: asyncio.Task[Any]) -> None:
-                        runner._pending_tasks.discard(done_task)
-                        try:
-                            done_task.result()
-                        except asyncio.CancelledError:
-                            logger.debug("Trace broadcast task cancelled")
-                        except Exception:
-                            logger.exception("Trace broadcast task failed")
-
-                    task.add_done_callback(_log_broadcast_result)
+                    future = asyncio.run_coroutine_threadsafe(broadcast, broadcast_loop)
                 except RuntimeError as e:
-                    logger.debug(f"Trace broadcast skipped (no running loop): {e}")
+                    broadcast.close()
+                    logger.debug(f"Trace broadcast skipped (daemon loop unavailable): {e}")
+                    return
+
+                def _log_broadcast_result(done_future: Future[None]) -> None:
+                    try:
+                        done_future.result()
+                    except CancelledError:
+                        logger.debug("Trace broadcast task cancelled")
+                    except Exception:
+                        logger.exception("Trace broadcast task failed")
+
+                future.add_done_callback(_log_broadcast_result)
 
         add_span_storage_exporter(runner.span_storage, broadcast_callback=_broadcast_proxy)
         logger.debug("Local span storage exporter wired to OTel")

@@ -27,6 +27,9 @@ def apply_safe_runner_config_defaults(config: MagicMock) -> MagicMock:
     if getattr(config, "websocket", None) is None:
         config.websocket = None
 
+    config.telemetry = getattr(config, "telemetry", MagicMock())
+    config.telemetry.traces_enabled = False
+
     config.session_lifecycle = getattr(config, "session_lifecycle", MagicMock())
     config.message_tracking = getattr(config, "message_tracking", None)
     config.memory_sync = getattr(config, "memory_sync", MagicMock())

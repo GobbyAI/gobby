@@ -1,5 +1,6 @@
 """Initialization and configuration tests for GobbyRunner."""
 
+import asyncio
 import json
 from contextlib import ExitStack
 from types import SimpleNamespace
@@ -13,6 +14,7 @@ from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.config.tasks import GobbyTasksConfig, TaskExpansionConfig, TaskValidationConfig
 from gobby.runner import GobbyRunner
 from gobby.runner_init.orchestration import _send_tmux_pane_wake, _send_tmux_session_wake
+from gobby.telemetry.span_store import GobbySpanExporter
 from tests.runner_helpers import create_base_patches, set_mock_default
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_window")]
@@ -62,6 +64,45 @@ class TestGobbyRunnerInit:
             assert runner._shutdown_requested is False
             mock_http_cls.assert_called_once()
             mock_ws_cls.assert_called_once()
+
+    async def test_trace_export_broadcasts_from_worker_thread(
+        self, mock_config_with_websocket
+    ) -> None:
+        """Trace exports schedule WebSocket broadcasts on the daemon loop."""
+        websocket_server = MagicMock()
+        broadcast_complete = asyncio.Event()
+        daemon_loop = asyncio.get_running_loop()
+
+        async def broadcast_trace_event(event: dict[str, Any]) -> None:
+            assert asyncio.get_running_loop() is daemon_loop
+            assert event["type"] == "trace_event"
+            broadcast_complete.set()
+
+        websocket_server.broadcast_trace_event = AsyncMock(side_effect=broadcast_trace_event)
+        patches = create_base_patches(
+            mock_config=mock_config_with_websocket,
+            mock_ws_server=websocket_server,
+        )
+        mock_config_with_websocket.telemetry.traces_enabled = True
+
+        with ExitStack() as stack:
+            for patch_context in patches:
+                stack.enter_context(patch_context)
+            add_exporter = stack.enter_context(
+                patch("gobby.telemetry.providers.add_span_storage_exporter")
+            )
+
+            runner = GobbyRunner()
+            callback = add_exporter.call_args.kwargs["broadcast_callback"]
+            exporter = GobbySpanExporter(MagicMock(), broadcast_callback=callback)
+
+            with patch.object(exporter, "_span_to_dict", return_value={"trace_id": "trace-1"}):
+                await asyncio.to_thread(exporter.export, [MagicMock()])
+
+            await asyncio.wait_for(broadcast_complete.wait(), timeout=1)
+
+        websocket_server.broadcast_trace_event.assert_awaited_once()
+        assert runner._pending_tasks == set()
 
     def test_required_secret_migration_failure_aborts_startup(self) -> None:
         """Required legacy secret migration errors must not be swallowed by config load."""
