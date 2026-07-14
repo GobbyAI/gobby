@@ -6,6 +6,7 @@ claude-plugins.dev REST API for skill search, listing, and download functionalit
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import tempfile
 from pathlib import Path
@@ -16,6 +17,11 @@ import httpx
 from gobby.skills.hubs.base import DownloadResult, HubProvider, HubSkillDetails, HubSkillInfo
 
 logger = logging.getLogger(__name__)
+
+_ALLOWED_RAW_FILE_HOSTS = frozenset({"raw.githubusercontent.com"})
+_MAX_RAW_FILE_BYTES = 1024 * 1024
+_MAX_REDIRECTS = 5
+_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 
 
 class ClaudePluginsProvider(HubProvider):
@@ -80,6 +86,76 @@ class ClaudePluginsProvider(HubProvider):
             headers["Authorization"] = f"Bearer {self.auth_token}"
 
         return headers
+
+    @staticmethod
+    def _validate_raw_file_url(value: object) -> httpx.URL:
+        if not isinstance(value, str):
+            raise RuntimeError("Invalid skill download URL")
+
+        try:
+            url = httpx.URL(value)
+        except (TypeError, httpx.InvalidURL) as e:
+            raise RuntimeError("Invalid skill download URL") from e
+
+        if url.scheme != "https":
+            raise RuntimeError("Skill download URL must use HTTPS")
+
+        host = url.host
+        if not host:
+            raise RuntimeError("Skill download URL has no host")
+
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            address = None
+        if address is not None and not address.is_global:
+            raise RuntimeError("Skill download URL targets a non-public IP address")
+        if host not in _ALLOWED_RAW_FILE_HOSTS:
+            raise RuntimeError(f"Skill download host is not allowed: {host}")
+
+        return url
+
+    async def _download_raw_file(self, raw_url: object) -> str:
+        url = self._validate_raw_file_url(raw_url)
+
+        async with httpx.AsyncClient() as client:
+            for redirect_count in range(_MAX_REDIRECTS + 1):
+                async with client.stream(
+                    "GET",
+                    url,
+                    timeout=30.0,
+                    follow_redirects=False,
+                ) as response:
+                    if response.status_code in _REDIRECT_STATUSES:
+                        location = response.headers.get("location")
+                        if location is None:
+                            raise RuntimeError("Skill download redirect has no location")
+                        if redirect_count == _MAX_REDIRECTS:
+                            raise RuntimeError("Skill download exceeded redirect limit")
+                        url = self._validate_raw_file_url(str(response.url.join(location)))
+                        continue
+
+                    response.raise_for_status()
+                    content_length = response.headers.get("content-length")
+                    if content_length is not None:
+                        try:
+                            declared_size = int(content_length)
+                        except ValueError as e:
+                            raise RuntimeError("Invalid skill download content length") from e
+                        if declared_size > _MAX_RAW_FILE_BYTES:
+                            raise RuntimeError("Skill download exceeds size limit")
+
+                    content = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        content.extend(chunk)
+                        if len(content) > _MAX_RAW_FILE_BYTES:
+                            raise RuntimeError("Skill download exceeds size limit")
+                    try:
+                        return content.decode("utf-8")
+                    except UnicodeDecodeError as e:
+                        raise RuntimeError("Skill download is not valid UTF-8") from e
+
+        raise RuntimeError("Skill download failed")
 
     async def _make_request(
         self,
@@ -291,11 +367,7 @@ class ClaudePluginsProvider(HubProvider):
                     error="No download URL available for this skill",
                 )
 
-            # Download the SKILL.md content
-            async with httpx.AsyncClient() as client:
-                response = await client.get(raw_url, timeout=30.0, follow_redirects=True)
-                response.raise_for_status()
-                content = response.text
+            content = await self._download_raw_file(raw_url)
 
             # Determine target directory
             if target_dir:
