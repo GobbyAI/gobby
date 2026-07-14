@@ -121,7 +121,27 @@ class TestSpawnAgent:
         data = response.json()
         assert data["success"] is True
         assert "conversation_id" in data
+        assert data["prompt"].startswith(f"## Task #{task.seq_num}: Chat task")
         assert session_manager.get(data["conversation_id"]) is not None
+
+    def test_spawn_web_chat_returns_explicit_prompt(
+        self,
+        client: TestClient,
+        task_manager: LocalTaskManager,
+        test_project,
+    ) -> None:
+        task = _create_task(task_manager, test_project.id, "Chat task")
+        with patch(
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": test_project.id},
+        ):
+            response = client.post(
+                "/api/agents/spawn",
+                json={"task_id": task.id, "web_chat": True, "prompt": "Custom prompt"},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["prompt"] == "Custom prompt"
 
     def test_spawn_terminal_no_runner(
         self, client: TestClient, task_manager: LocalTaskManager, test_project

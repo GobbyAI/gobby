@@ -67,6 +67,7 @@ class AgentSpawnResponse(BaseModel):
     run_id: str | None = None
     child_session_id: str | None = None
     conversation_id: str | None = None
+    prompt: str | None = None
     isolation: str | None = None
     branch_name: str | None = None
     pid: int | None = None
@@ -280,7 +281,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             return AgentSpawnResponse(
                 success=True,
                 conversation_id=conversation_id,
-                # Store the prompt so the frontend can send it as the first message
+                prompt=prompt,
             )
 
         # Spawn agent via tmux

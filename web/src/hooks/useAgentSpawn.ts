@@ -26,6 +26,7 @@ export interface SpawnResult {
   run_id?: string
   child_session_id?: string
   conversation_id?: string
+  prompt?: string
   isolation?: string
   branch_name?: string
   pid?: number
