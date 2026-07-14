@@ -530,6 +530,8 @@ class _PostgresTransaction:
     def acquire_additional_lock(self, lock: LockTarget) -> None:
         if not self.is_immediate:
             raise RuntimeError("additional locks require an immediate transaction")
+        if lock in self._locks:
+            return
 
         _acquire_lock(self._locks, lock)
         try:

@@ -112,7 +112,7 @@ class TaskSeqAllocation:
 class TaskDependencyMutation:
     """Serializes dependency cycle checks and inserts."""
 
-    PRIORITY: ClassVar[int] = 200
+    PRIORITY: ClassVar[int] = 250
 
 
 @dataclass(frozen=True)

@@ -51,6 +51,7 @@ def test_apply_run_rolls_back_partial_writes_on_failure(
         ],
         "dependencies": [],
     }
+    run_manager.start(run.id)
     run_manager.save_compiled_spec(run.id, compiled_spec)
 
     with patch.object(service, "_add_dependency", side_effect=RuntimeError("boom")):

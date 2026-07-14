@@ -284,14 +284,17 @@ class LocalExpansionRunManager:
     def start(self, run_id: str) -> ExpansionRun | None:
         """Mark a run as running."""
         now = utc_now()
-        self.db.execute(
+        cursor = self.db.execute(
             """
             UPDATE expansion_runs
             SET status = 'running', started_at = COALESCE(started_at, %s), updated_at = %s, error = NULL
             WHERE id = %s
+              AND status = 'pending'
             """,
             (now, now, run_id),
         )
+        if cursor.rowcount == 0:
+            return None
         return self.get(run_id)
 
     def save_compiled_spec(
@@ -303,7 +306,7 @@ class LocalExpansionRunManager:
     ) -> ExpansionRun | None:
         """Persist a compiled expansion spec and mark the run compiled."""
         now = utc_now()
-        self.db.execute(
+        cursor = self.db.execute(
             """
             UPDATE expansion_runs
             SET status = 'compiled',
@@ -311,6 +314,7 @@ class LocalExpansionRunManager:
                 checkpoints_json = COALESCE(%s, checkpoints_json),
                 updated_at = %s
             WHERE id = %s
+              AND status = 'running'
             """,
             (
                 json.dumps(compiled_spec),
@@ -319,15 +323,24 @@ class LocalExpansionRunManager:
                 run_id,
             ),
         )
+        if cursor.rowcount == 0:
+            return None
         return self.get(run_id)
 
     def mark_applying(self, run_id: str) -> ExpansionRun | None:
         """Mark a run as applying."""
         now = utc_now()
-        self.db.execute(
-            "UPDATE expansion_runs SET status = 'applying', updated_at = %s WHERE id = %s",
+        cursor = self.db.execute(
+            """
+            UPDATE expansion_runs
+            SET status = 'applying', updated_at = %s
+            WHERE id = %s
+              AND status = 'compiled'
+            """,
             (now, run_id),
         )
+        if cursor.rowcount == 0:
+            return None
         return self.get(run_id)
 
     def save_apply_result(
@@ -342,7 +355,7 @@ class LocalExpansionRunManager:
         """Persist apply results and optionally mark the run completed."""
         now = utc_now()
         status: ExpansionRunStatus = "completed" if completed else "applying"
-        self.db.execute(
+        cursor = self.db.execute(
             """
             UPDATE expansion_runs
             SET status = %s,
@@ -352,6 +365,7 @@ class LocalExpansionRunManager:
                 completed_at = CASE WHEN %s THEN %s ELSE completed_at END,
                 updated_at = %s
             WHERE id = %s
+              AND status = 'applying'
             """,
             (
                 status,
@@ -364,6 +378,8 @@ class LocalExpansionRunManager:
                 run_id,
             ),
         )
+        if cursor.rowcount == 0:
+            return None
         return self.get(run_id)
 
     def save_qa_result(self, run_id: str, qa_result: dict[str, Any]) -> ExpansionRun | None:
@@ -428,21 +444,24 @@ class LocalExpansionRunManager:
     def fail(self, run_id: str, error: str) -> ExpansionRun | None:
         """Mark a run failed."""
         now = utc_now()
-        self.db.execute(
+        cursor = self.db.execute(
             """
             UPDATE expansion_runs
             SET status = 'failed', error = %s, completed_at = %s, updated_at = %s
             WHERE id = %s
+              AND status = ANY(%s)
             """,
-            (error, now, now, run_id),
+            (error, now, now, run_id, list(self._ACTIVE_STATUSES)),
         )
+        if cursor.rowcount == 0:
+            return None
         logger.warning("Expansion run %s failed: %s", run_id, error)
         return self.get(run_id)
 
     def cancel(self, run_id: str, error: str | None = None) -> ExpansionRun | None:
         """Mark an active run cancelled without overwriting terminal state."""
         now = utc_now()
-        self.db.execute(
+        cursor = self.db.execute(
             """
             UPDATE expansion_runs
             SET status = 'cancelled', error = %s, completed_at = %s, updated_at = %s
@@ -451,4 +470,6 @@ class LocalExpansionRunManager:
             """,
             (error, now, now, run_id, list(self._ACTIVE_STATUSES)),
         )
+        if cursor.rowcount == 0:
+            return None
         return self.get(run_id)

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.storage.expansion_runs import LocalExpansionRunManager
+from gobby.storage.expansion_runs import ExpansionRun, LocalExpansionRunManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.tasks.expansion_service import ExpansionService
@@ -22,6 +22,16 @@ pytestmark = pytest.mark.unit
 
 def _task(task_manager: LocalTaskManager, sample_project):
     return task_manager.create_task(project_id=sample_project["id"], title="Expand me")
+
+
+def _complete_run(run_manager: LocalExpansionRunManager, run_id: str) -> ExpansionRun:
+    run_manager.db.execute(
+        "UPDATE expansion_runs SET status = 'applying' WHERE id = %s",
+        (run_id,),
+    )
+    result = run_manager.save_apply_result(run_id, task_id_map={}, created_task_ids=[])
+    assert result is not None
+    return result
 
 
 def test_reset_expansion_output_tool_is_registered(temp_db) -> None:
@@ -134,7 +144,7 @@ def test_completion_emits_terminal_event(temp_db, sample_project) -> None:
         suppress_parent_stage_transition: bool = False,
     ):
         _ = self, session_id, auto_apply, suppress_parent_stage_transition
-        return run_manager.save_apply_result(run_id, task_id_map={}, created_task_ids=[])
+        return _complete_run(run_manager, run_id)
 
     with patch(
         "gobby.tasks.expansion_service.ExpansionService.compile_and_apply_run",
@@ -254,7 +264,7 @@ def test_start_expansion_accepts_caller_allocated_run_id(temp_db, sample_project
         suppress_parent_stage_transition: bool = False,
     ):
         _ = self, session_id, auto_apply, suppress_parent_stage_transition
-        return run_manager.save_apply_result(run_id, task_id_map={}, created_task_ids=[])
+        return _complete_run(run_manager, run_id)
 
     with patch(
         "gobby.tasks.expansion_service.ExpansionService.compile_and_apply_run",
@@ -291,7 +301,7 @@ def test_start_expansion_reset_output_calls_reset(temp_db, sample_project) -> No
         suppress_parent_stage_transition: bool = False,
     ):
         _ = self, session_id, auto_apply, suppress_parent_stage_transition
-        return run_manager.save_apply_result(run_id, task_id_map={}, created_task_ids=[])
+        return _complete_run(run_manager, run_id)
 
     with (
         patch(
@@ -337,7 +347,7 @@ def test_synchronous_terminal_emits_event(temp_db, sample_project) -> None:
         suppress_parent_stage_transition: bool = False,
     ):
         _ = self, session_id, auto_apply, suppress_parent_stage_transition
-        return run_manager.save_apply_result(run_id, task_id_map={}, created_task_ids=[])
+        return _complete_run(run_manager, run_id)
 
     with patch(
         "gobby.tasks.expansion_service.ExpansionService.compile_and_apply_run",
@@ -409,7 +419,7 @@ def test_stage_pipeline_mutex_suppresses_expansion_terminal_event(
     ):
         _ = self, session_id, auto_apply
         captured["suppress_parent_stage_transition"] = suppress_parent_stage_transition
-        return run_manager.save_apply_result(run_id, task_id_map={}, created_task_ids=[])
+        return _complete_run(run_manager, run_id)
 
     with patch(
         "gobby.tasks.expansion_service.ExpansionService.compile_and_apply_run",
@@ -454,7 +464,7 @@ async def test_async_start_returns_running_and_emits_later(temp_db, sample_proje
     ):
         _ = self, session_id, auto_apply, suppress_parent_stage_transition
         await drain_asyncio_tasks()
-        return run_manager.save_apply_result(run_id, task_id_map={}, created_task_ids=[])
+        return _complete_run(run_manager, run_id)
 
     with patch(
         "gobby.tasks.expansion_service.ExpansionService.compile_and_apply_run",
