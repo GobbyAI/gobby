@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 from inspect import signature
 from unittest.mock import MagicMock, patch
 
@@ -12,6 +13,7 @@ from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.tasks.expansion_service import ExpansionService
+from gobby.utils.datetime import utc_now
 from tests._timing import drain_asyncio_tasks
 from tests.storage.tasks._stage_test_helpers import initialize_manifest, set_stage_state, spec
 
@@ -74,6 +76,45 @@ def test_start_expansion_idempotent(temp_db, sample_project) -> None:
 
     assert result.reused is True
     assert result.run_id == run.id
+
+
+def test_start_expansion_replaces_stale_crashed_run(temp_db, sample_project) -> None:
+    from gobby.mcp_proxy.tools.tasks._expansion import start_expansion_run_impl
+
+    task_manager = LocalTaskManager(temp_db)
+    task = _task(task_manager, sample_project)
+    run_manager = LocalExpansionRunManager(temp_db)
+    crashed = run_manager.create(
+        parent_task_id=task.id,
+        project_id=task.project_id,
+        triggering_session_id=None,
+        input_source="task",
+    )
+    temp_db.execute(
+        "UPDATE expansion_runs SET status = 'running', updated_at = %s WHERE id = %s",
+        (utc_now() - timedelta(minutes=31), crashed.id),
+    )
+
+    def finish_immediately(coro):
+        coro.close()
+        return run_manager.get_latest_for_task(task.id)
+
+    with patch(
+        "gobby.mcp_proxy.tools.tasks._expansion_runtime._run_start_coroutine",
+        side_effect=finish_immediately,
+    ):
+        result = start_expansion_run_impl(
+            task_manager=task_manager,
+            llm_service=MagicMock(),
+            config=MagicMock(),
+            completion_registry=MagicMock(),
+            triggering_session_id=None,
+            task_id=task.id,
+        )
+
+    assert result.reused is False
+    assert result.run_id != crashed.id
+    assert run_manager.get(crashed.id).status == "failed"
 
 
 def test_completion_emits_terminal_event(temp_db, sample_project) -> None:

@@ -816,6 +816,40 @@ class TestInitSubsystems:
         assert tracker.done is True
         assert services.startup_ready is True
 
+    async def test_cleanup_stale_expansion_runs_on_startup_uses_db_executor(
+        self, temp_db, sample_project
+    ) -> None:
+        from datetime import timedelta
+
+        from gobby.storage.expansion_runs import LocalExpansionRunManager
+        from gobby.storage.tasks import LocalTaskManager
+        from gobby.utils.datetime import utc_now
+
+        task_manager = LocalTaskManager(temp_db)
+        task = task_manager.create_task(project_id=sample_project["id"], title="Expand me")
+        run_manager = LocalExpansionRunManager(temp_db)
+        run = run_manager.create(
+            parent_task_id=task.id,
+            project_id=task.project_id,
+            triggering_session_id=None,
+            input_source="task",
+        )
+        temp_db.execute(
+            "UPDATE expansion_runs SET status = 'running', updated_at = %s WHERE id = %s",
+            (utc_now() - timedelta(minutes=31), run.id),
+        )
+        run_db = AsyncMock(side_effect=lambda operation: operation())
+        runner = SimpleNamespace(
+            db_executor=SimpleNamespace(run=run_db),
+            http_server=SimpleNamespace(services=SimpleNamespace(task_manager=task_manager)),
+        )
+
+        cleaned = await runner_lifecycle_subsystems._cleanup_stale_expansion_runs_on_startup(runner)
+
+        assert cleaned == 1
+        assert run_manager.get(run.id).status == "failed"
+        run_db.assert_awaited_once()
+
     async def test_automation_start_failure_is_tracked_without_raising(self) -> None:
         tracker = runner_lifecycle.StartupTracker()
         runner = SimpleNamespace(

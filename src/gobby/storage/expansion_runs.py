@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sql_dialect import older_than_now_expr
 from gobby.utils.datetime import datetime_to_required_iso, normalize_datetime_model, utc_now
 
 logger = logging.getLogger(__name__)
@@ -227,6 +228,40 @@ class LocalExpansionRunManager:
             (task_id, list(self._ACTIVE_STATUSES)),
         )
         return ExpansionRun.from_row(row) if row else None
+
+    def cleanup_stale_runs(
+        self,
+        timeout_minutes: int = 30,
+        *,
+        parent_task_id: str | None = None,
+    ) -> int:
+        """Fail stale in-flight runs left behind by an interrupted daemon."""
+        now = utc_now()
+        stale_sql = older_than_now_expr(self.db, "updated_at", "%s", "minute")
+        task_filter = " AND parent_task_id = %s" if parent_task_id is not None else ""
+        params: list[Any] = [
+            f"Expansion run exceeded stale timeout ({timeout_minutes}m)",
+            now,
+            now,
+            ["running", "applying"],
+            timeout_minutes,
+        ]
+        if parent_task_id is not None:
+            params.append(parent_task_id)
+        cursor = self.db.execute(
+            f"""
+            UPDATE expansion_runs
+            SET status = 'failed', error = %s, completed_at = %s, updated_at = %s
+            WHERE status = ANY(%s)
+              AND {stale_sql}
+              {task_filter}
+            """,  # nosec B608 # timeout expression and optional clause are internal constants.
+            tuple(params),
+        )
+        count = cursor.rowcount or 0
+        if count > 0:
+            logger.warning("Failed %s stale expansion runs", count)
+        return count
 
     def list_for_task(
         self,

@@ -1,5 +1,6 @@
 import inspect
 import uuid
+from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
@@ -8,6 +9,7 @@ import gobby.storage.expansion_runs as expansion_runs_module
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
+from gobby.utils.datetime import utc_now
 
 pytestmark = pytest.mark.unit
 
@@ -129,3 +131,57 @@ def test_cancel_is_idempotent_after_first_transition(run_manager, parent_task) -
     assert second.status == "cancelled"
     assert second.error == "first cancellation"
     assert second.completed_at == first.completed_at
+
+
+@pytest.mark.parametrize("status", ["running", "applying"])
+def test_cleanup_stale_runs_fails_in_flight_run(run_manager, parent_task, status: str) -> None:
+    run = run_manager.create(
+        parent_task_id=parent_task.id,
+        project_id=parent_task.project_id,
+        triggering_session_id=None,
+        input_source="task",
+    )
+    stale_at = utc_now() - timedelta(minutes=31)
+    run_manager.db.execute(
+        "UPDATE expansion_runs SET status = %s, updated_at = %s WHERE id = %s",
+        (status, stale_at, run.id),
+    )
+
+    assert run_manager.cleanup_stale_runs(timeout_minutes=30) == 1
+
+    cleaned = run_manager.get(run.id)
+    assert cleaned is not None
+    assert cleaned.status == "failed"
+    assert cleaned.completed_at is not None
+    assert cleaned.error == "Expansion run exceeded stale timeout (30m)"
+
+
+def test_cleanup_stale_runs_preserves_recent_and_other_task_runs(
+    run_manager, task_manager, parent_task
+) -> None:
+    other_task = task_manager.create_task(project_id=PROJECT_ID, title="Other expansion task")
+    recent = run_manager.create(
+        parent_task_id=parent_task.id,
+        project_id=parent_task.project_id,
+        triggering_session_id=None,
+        input_source="task",
+    )
+    other = run_manager.create(
+        parent_task_id=other_task.id,
+        project_id=other_task.project_id,
+        triggering_session_id=None,
+        input_source="task",
+    )
+    stale_at = utc_now() - timedelta(minutes=31)
+    run_manager.db.execute(
+        "UPDATE expansion_runs SET status = 'running' WHERE id = %s",
+        (recent.id,),
+    )
+    run_manager.db.execute(
+        "UPDATE expansion_runs SET status = 'running', updated_at = %s WHERE id = %s",
+        (stale_at, other.id),
+    )
+
+    assert run_manager.cleanup_stale_runs(parent_task_id=parent_task.id) == 0
+    assert run_manager.get(recent.id).status == "running"
+    assert run_manager.get(other.id).status == "running"
