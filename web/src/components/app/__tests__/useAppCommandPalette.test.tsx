@@ -2,6 +2,7 @@ import { act, renderHook } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { RESTART_TIMEOUT_MS } from '../../../lib/api'
+import { ACTIVITY_PANEL_TABS } from '../../activity/ActivityPanelTabs'
 import { useAppCommandPalette } from '../useAppCommandPalette'
 
 function makeHookArgs(addSystemMessage = vi.fn()) {
@@ -94,19 +95,21 @@ describe('useAppCommandPalette', () => {
     expect(args.setActiveModal).not.toHaveBeenCalledWith('mcp')
   })
 
-  it('does not include MCP as an app navigation action', () => {
-    const { result } = renderHook(() => useAppCommandPalette(makeHookArgs()))
+  it('derives activity navigation actions from the activity tab registry', () => {
+    const args = makeHookArgs()
+    const { result } = renderHook(() => useAppCommandPalette(args))
+    const navigationActions = result.current.commandPaletteActions.filter(
+      (action) => action.category === 'navigate',
+    )
 
-    expect(result.current.commandPaletteActions.map((action) => action.id))
-      .not.toContain('nav-mcp')
-  })
+    expect(navigationActions.map(({ id, label }) => ({ id, label }))).toEqual(
+      ACTIVITY_PANEL_TABS.map(({ id, label }) => ({ id: `nav-${id}`, label })),
+    )
 
-  it('does not include retired pages as app navigation actions', () => {
-    const { result } = renderHook(() => useAppCommandPalette(makeHookArgs()))
-    const actionIds = result.current.commandPaletteActions.map((action) => action.id)
+    act(() => {
+      navigationActions.find((action) => action.id === 'nav-integrations')?.onSelect()
+    })
 
-    for (const actionId of ['nav-projects', 'nav-cron', 'nav-reports', 'nav-traces']) {
-      expect(actionIds).not.toContain(actionId)
-    }
+    expect(args.openActivityTab).toHaveBeenCalledWith('integrations')
   })
 })
