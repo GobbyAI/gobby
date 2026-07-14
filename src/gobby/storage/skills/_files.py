@@ -10,7 +10,7 @@ from gobby.storage.skills._models import SkillFile
 from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
-    from gobby.storage.hub.protocol import HubDatabase
+    from gobby.storage.hub.protocol import HubDatabase, Transaction
 
 logger = logging.getLogger(__name__)
 
@@ -40,95 +40,95 @@ class SkillFilesMixin:
         Returns:
             Number of files created or updated
         """
+        with self.db.transaction() as conn:
+            return self._set_skill_files(conn, skill_id, files)
+
+    def _set_skill_files(self, conn: Transaction, skill_id: str, files: list[SkillFile]) -> int:
+        """Synchronize skill files using an existing transaction."""
         now = utc_now()
         changed = 0
 
-        with self.db.transaction() as conn:
-            # Get existing files for this skill (including soft-deleted)
-            existing_rows = conn.execute(
-                "SELECT id, path, content_hash, deleted_at FROM skill_files WHERE skill_id = %s",
-                (skill_id,),
-            ).fetchall()
-            existing_by_path: dict[str, dict[str, Any]] = {
-                row["path"]: {
-                    "id": row["id"],
-                    "hash": row["content_hash"],
-                    "deleted": row["deleted_at"],
-                }
-                for row in existing_rows
+        # Get existing files for this skill (including soft-deleted)
+        existing_rows = conn.execute(
+            "SELECT id, path, content_hash, deleted_at FROM skill_files WHERE skill_id = %s",
+            (skill_id,),
+        ).fetchall()
+        existing_by_path: dict[str, dict[str, Any]] = {
+            row["path"]: {
+                "id": row["id"],
+                "hash": row["content_hash"],
+                "deleted": row["deleted_at"],
             }
+            for row in existing_rows
+        }
 
-            incoming_paths: set[str] = set()
+        incoming_paths: set[str] = set()
 
-            for f in files:
-                incoming_paths.add(f.path)
-                existing = existing_by_path.get(f.path)
+        for f in files:
+            incoming_paths.add(f.path)
+            existing = existing_by_path.get(f.path)
 
-                if existing:
-                    if existing["deleted"]:
-                        # Restore and update
-                        conn.execute(
-                            """UPDATE skill_files
-                               SET content = %s, content_hash = %s, size_bytes = %s,
-                                   file_type = %s, deleted_at = NULL, updated_at = %s
-                               WHERE id = %s""",
-                            (
-                                f.content,
-                                f.content_hash,
-                                f.size_bytes,
-                                f.file_type,
-                                now,
-                                existing["id"],
-                            ),
-                        )
-                        changed += 1
-                    elif existing["hash"] != f.content_hash:
-                        # Content changed — update
-                        conn.execute(
-                            """UPDATE skill_files
-                               SET content = %s, content_hash = %s, size_bytes = %s,
-                                   file_type = %s, updated_at = %s
-                               WHERE id = %s""",
-                            (
-                                f.content,
-                                f.content_hash,
-                                f.size_bytes,
-                                f.file_type,
-                                now,
-                                existing["id"],
-                            ),
-                        )
-                        changed += 1
-                    # else: hash matches, skip
-                else:
-                    # New file — insert
-                    file_id = str(uuid.uuid5(_NS_SKILL_FILES, f"{skill_id}:{f.path}"))
+            if existing:
+                if existing["deleted"]:
                     conn.execute(
-                        """INSERT INTO skill_files
-                           (id, skill_id, path, file_type, content, content_hash,
-                            size_bytes, created_at, updated_at)
-                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                        """UPDATE skill_files
+                           SET content = %s, content_hash = %s, size_bytes = %s,
+                               file_type = %s, deleted_at = NULL, updated_at = %s
+                           WHERE id = %s""",
                         (
-                            file_id,
-                            skill_id,
-                            f.path,
-                            f.file_type,
                             f.content,
                             f.content_hash,
                             f.size_bytes,
+                            f.file_type,
                             now,
-                            now,
+                            existing["id"],
                         ),
                     )
                     changed += 1
-
-            # Soft-delete orphan paths (files removed from disk)
-            for path, info in existing_by_path.items():
-                if path not in incoming_paths and not info["deleted"]:
+                elif existing["hash"] != f.content_hash:
                     conn.execute(
-                        "UPDATE skill_files SET deleted_at = %s, updated_at = %s WHERE id = %s",
-                        (now, now, info["id"]),
+                        """UPDATE skill_files
+                           SET content = %s, content_hash = %s, size_bytes = %s,
+                               file_type = %s, updated_at = %s
+                           WHERE id = %s""",
+                        (
+                            f.content,
+                            f.content_hash,
+                            f.size_bytes,
+                            f.file_type,
+                            now,
+                            existing["id"],
+                        ),
                     )
+                    changed += 1
+            else:
+                file_id = str(uuid.uuid5(_NS_SKILL_FILES, f"{skill_id}:{f.path}"))
+                conn.execute(
+                    """INSERT INTO skill_files
+                       (id, skill_id, path, file_type, content, content_hash,
+                        size_bytes, created_at, updated_at)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                    (
+                        file_id,
+                        skill_id,
+                        f.path,
+                        f.file_type,
+                        f.content,
+                        f.content_hash,
+                        f.size_bytes,
+                        now,
+                        now,
+                    ),
+                )
+                changed += 1
+
+        # Soft-delete orphan paths (files removed from disk)
+        for path, info in existing_by_path.items():
+            if path not in incoming_paths and not info["deleted"]:
+                conn.execute(
+                    "UPDATE skill_files SET deleted_at = %s, updated_at = %s WHERE id = %s",
+                    (now, now, info["id"]),
+                )
 
         return changed
 

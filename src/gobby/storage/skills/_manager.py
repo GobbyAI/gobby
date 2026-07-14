@@ -5,14 +5,18 @@ All public methods are inherited; see individual modules for details:
 
 - ``_metadata.py`` — create, get, list, update, delete, search, count
 - ``_files.py`` — set_skill_files, get_skill_files, delete/restore files
+- ``LocalSkillManager`` — atomic metadata and file updates
 """
 
+import json
 import logging
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.skills._files import SkillFilesMixin
 from gobby.storage.skills._metadata import SkillMetadataMixin
+from gobby.storage.skills._models import Skill, SkillFile
+from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +44,48 @@ class LocalSkillManager(SkillMetadataMixin, SkillFilesMixin):
         """
         self.db = db
         self._notifier = notifier
+
+    def update_skill_with_files(
+        self,
+        skill_id: str,
+        *,
+        description: str,
+        content: str,
+        version: str | None,
+        license: str | None,
+        compatibility: str | None,
+        allowed_tools: list[str] | None,
+        metadata: dict[str, Any] | None,
+        files: list[SkillFile] | None,
+    ) -> Skill:
+        """Atomically replace updater-managed metadata and optional files."""
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """UPDATE skills
+                   SET description = %s, content = %s, version = %s, license = %s,
+                       compatibility = %s, allowed_tools = %s, metadata = %s,
+                       updated_at = %s
+                   WHERE id = %s""",
+                (
+                    description,
+                    content,
+                    version,
+                    license,
+                    compatibility,
+                    json.dumps(allowed_tools) if allowed_tools else None,
+                    json.dumps(metadata) if metadata else None,
+                    utc_now(),
+                    skill_id,
+                ),
+            )
+            if cursor.rowcount == 0:
+                raise ValueError(f"Skill {skill_id} not found")
+            if files is not None:
+                self._set_skill_files(conn, skill_id, files)
+
+        skill = self.get_skill(skill_id)
+        self._notify_change("update", skill_id, skill.name)
+        return skill
 
     def _notify_change(
         self,

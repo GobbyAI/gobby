@@ -433,18 +433,7 @@ class SkillUpdater:
 
     def _apply_update(self, skill: Skill, parsed: ParsedSkill) -> None:
         """Apply parsed skill data to storage."""
-        self._storage.update_skill(
-            skill_id=skill.id,
-            description=parsed.description,
-            content=parsed.content,
-            version=parsed.version,
-            license=parsed.license,
-            compatibility=parsed.compatibility,
-            allowed_tools=parsed.allowed_tools,
-            metadata=parsed.metadata,
-        )
-
-        # Update files if loader provided them
+        skill_files = None
         if parsed.loaded_files:
             from gobby.storage.skills import SkillFile
 
@@ -460,4 +449,15 @@ class SkillUpdater:
                 )
                 for lf in parsed.loaded_files
             ]
-            self._storage.set_skill_files(skill.id, skill_files)
+
+        self._storage.update_skill_with_files(
+            skill_id=skill.id,
+            description=parsed.description,
+            content=parsed.content,
+            version=parsed.version,
+            license=parsed.license,
+            compatibility=parsed.compatibility,
+            allowed_tools=parsed.allowed_tools,
+            metadata=parsed.metadata,
+            files=skill_files,
+        )

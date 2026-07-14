@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.skills import LocalSkillManager, Skill, SkillFile
 
 # ---------------------------------------------------------------------------
@@ -164,6 +164,52 @@ class TestSkillFileCRUD:
 
         changed = storage.set_skill_files(sample_skill.id, files)
         assert changed == 1
+
+    def test_update_skill_with_files_rolls_back_metadata_and_files(
+        self,
+        storage: LocalSkillManager,
+        sample_skill: Skill,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        original_files = _build_skill_files(sample_skill.id)
+        storage.set_skill_files(sample_skill.id, original_files)
+        skill_before = storage.get_skill(sample_skill.id)
+        files_before = storage.get_skill_files(
+            sample_skill.id, include_content=True, exclude_license=False
+        )
+        updated_files = _build_skill_files(sample_skill.id)
+        updated_files[0].content = "# Updated API docs"
+        updated_files[0].content_hash = _hash(updated_files[0].content)
+
+        original_write = storage._set_skill_files
+
+        def fail_after_partial_write(
+            conn: Transaction, skill_id: str, files: list[SkillFile]
+        ) -> int:
+            original_write(conn, skill_id, [files[0]])
+            raise RuntimeError("injected file write failure")
+
+        monkeypatch.setattr(storage, "_set_skill_files", fail_after_partial_write)
+
+        with pytest.raises(RuntimeError, match="injected file write failure"):
+            storage.update_skill_with_files(
+                sample_skill.id,
+                description="Updated description",
+                content="# Updated",
+                version="2.0.0",
+                license=None,
+                compatibility=None,
+                allowed_tools=None,
+                metadata={"updated": True},
+                files=updated_files,
+            )
+
+        stored_skill = storage.get_skill(sample_skill.id)
+        stored_files = storage.get_skill_files(
+            sample_skill.id, include_content=True, exclude_license=False
+        )
+        assert stored_skill == skill_before
+        assert stored_files == files_before
 
     def test_set_skill_files_soft_deletes_orphans(
         self, storage: LocalSkillManager, sample_skill: Skill
