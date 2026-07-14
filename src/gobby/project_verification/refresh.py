@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -11,7 +12,7 @@ from difflib import unified_diff
 from pathlib import Path
 from typing import Any, Literal
 
-from gobby.ai.text_generation import TextGenerationService
+from gobby.ai.text_generation import FeatureGenerationUnavailableError, TextGenerateJSONAdapter
 from gobby.config.features import ProjectVerificationSynthesisConfig
 from gobby.project_verification.candidates import (
     CommandCandidate,
@@ -102,10 +103,10 @@ async def refresh_project_verification(
     fix: bool = False,
     ai_mode: AIMode = "auto",
     synthesis_config: ProjectVerificationSynthesisConfig | None = None,
-    text_generation_service: TextGenerationService | None = None,
+    text_generation_service: TextGenerateJSONAdapter | None = None,
 ) -> RefreshResult:
     """Refresh verification commands with optional AI synthesis."""
-    bundle = collect_evidence(root)
+    bundle = await asyncio.to_thread(collect_evidence, root)
     candidates = generate_candidates(bundle)
     selected = select_best_candidates(candidates)
     ai_error: str | None = None
@@ -126,9 +127,7 @@ async def refresh_project_verification(
                     bundle,
                     candidates,
                 )
-            except Exception as exc:
-                if isinstance(exc, MemoryError):
-                    raise
+            except (FeatureGenerationUnavailableError, ValueError) as exc:
                 ai_error = str(exc)
                 if ai_mode == "on":
                     raise ProjectVerificationAIError(
@@ -158,7 +157,7 @@ async def refresh_project_verification(
     )
     result.changed = result.changed or not bundle.existing_project_json_intact
     if fix and result.changed:
-        _write_verification(result.project_json_path, after)
+        await asyncio.to_thread(_write_verification, result.project_json_path, after)
         result.written = True
     return result
 

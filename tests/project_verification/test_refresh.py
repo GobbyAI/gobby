@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from gobby.ai.text_generation import TextGenerationRequest
+from gobby.ai.text_generation import FeatureGenerationUnavailableError, TextGenerationRequest
 from gobby.config.features import ProjectVerificationSynthesisConfig
+from gobby.project_verification import refresh as refresh_module
 from gobby.project_verification.candidates import (
     _is_frontend_command,
     _package_script_command,
@@ -21,11 +24,14 @@ from gobby.project_verification.candidates import (
 from gobby.project_verification.evidence import (
     FRONTEND_SUBDIRS,
     MAX_FILE_BYTES,
+    EvidenceBundle,
     _split_run_commands,
     collect_evidence,
 )
 from gobby.project_verification.refresh import (
+    ProjectVerificationAIError,
     ProjectVerificationReadError,
+    refresh_project_verification,
     refresh_project_verification_deterministic,
 )
 from gobby.project_verification.synthesis import synthesize_verification_commands
@@ -368,6 +374,106 @@ class FakeJSONService:
     async def generate_json(self, request: TextGenerationRequest) -> dict[str, Any]:
         self.request = request
         return self.payload
+
+
+class FailingJSONService:
+    def __init__(self, error: BaseException) -> None:
+        self.error = error
+
+    async def generate_json(self, request: TextGenerationRequest) -> dict[str, Any]:
+        raise self.error
+
+
+class UnexpectedSynthesisFailure(BaseException):
+    pass
+
+
+@pytest.mark.asyncio
+async def test_async_refresh_offloads_evidence_collection_and_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_project_json(tmp_path, {})
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='example'\n", encoding="utf-8")
+    event_loop_thread = threading.get_ident()
+    evidence_threads: list[int] = []
+    write_threads: list[int] = []
+    collect_evidence_original = refresh_module.collect_evidence
+    write_verification_original = refresh_module._write_verification
+
+    def collect_evidence_recording(root: Path) -> EvidenceBundle:
+        evidence_threads.append(threading.get_ident())
+        return collect_evidence_original(root)
+
+    def write_verification_recording(path: Path, verification: dict[str, Any]) -> None:
+        write_threads.append(threading.get_ident())
+        write_verification_original(path, verification)
+
+    monkeypatch.setattr(refresh_module, "collect_evidence", collect_evidence_recording)
+    monkeypatch.setattr(refresh_module, "_write_verification", write_verification_recording)
+
+    result = await refresh_project_verification(tmp_path, fix=True, ai_mode="off")
+
+    assert result.written is True
+    assert evidence_threads and evidence_threads[0] != event_loop_thread
+    assert write_threads and write_threads[0] != event_loop_thread
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [FeatureGenerationUnavailableError("service unavailable"), ValueError("invalid JSON")],
+)
+async def test_async_refresh_auto_falls_back_for_expected_synthesis_errors(
+    tmp_path: Path, error: Exception
+) -> None:
+    write_project_json(tmp_path, {})
+
+    result = await refresh_project_verification(
+        tmp_path,
+        ai_mode="auto",
+        text_generation_service=FailingJSONService(error),
+    )
+
+    assert result.ai_error == str(error)
+    assert result.ai_used is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [FeatureGenerationUnavailableError("service unavailable"), ValueError("invalid JSON")],
+)
+async def test_async_refresh_ai_on_wraps_expected_synthesis_errors(
+    tmp_path: Path, error: Exception
+) -> None:
+    write_project_json(tmp_path, {})
+
+    with pytest.raises(ProjectVerificationAIError, match="AI verification synthesis failed"):
+        await refresh_project_verification(
+            tmp_path,
+            ai_mode="on",
+            text_generation_service=FailingJSONService(error),
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error_type", [asyncio.CancelledError, TypeError, UnexpectedSynthesisFailure]
+)
+async def test_async_refresh_propagates_unexpected_synthesis_failures(
+    tmp_path: Path, error_type: type[BaseException]
+) -> None:
+    write_project_json(tmp_path, {})
+    error = error_type("unexpected")
+
+    with pytest.raises(error_type) as caught:
+        await refresh_project_verification(
+            tmp_path,
+            ai_mode="auto",
+            text_generation_service=FailingJSONService(error),
+        )
+
+    assert caught.value is error
 
 
 @pytest.mark.asyncio
