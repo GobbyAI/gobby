@@ -171,16 +171,12 @@ def is_doc_only_diff(diff: str) -> bool:
     if not diff:
         return False
 
-    # Find all file paths in the diff
-    file_pattern = r"^diff --git a/(.+?) b/"
-    matches = re.findall(file_pattern, diff, re.MULTILINE)
-
-    if not matches:
+    files = _parse_diff_files(diff)
+    if not files:
         return False
 
-    # Check if all files are doc files
-    for file_path in matches:
-        ext = Path(file_path).suffix.lower()
+    for file in files:
+        ext = Path(file.path).suffix.lower()
         if ext not in DOC_EXTENSIONS:
             return False
 

@@ -793,6 +793,20 @@ diff --git a/src/main.py b/src/main.py
 """
         assert is_doc_only_diff(diff) is False
 
+    def test_returns_false_when_doc_is_renamed_to_code(self) -> None:
+        diff = """diff --git a/notes.md b/notes.py
+similarity index 100%
+rename from notes.md
+rename to notes.py
+"""
+        assert is_doc_only_diff(diff) is False
+
+    def test_returns_true_for_quoted_doc_paths(self) -> None:
+        diff = """diff --git "a/docs/user guide.md" "b/docs/user guide.md"
++content
+"""
+        assert is_doc_only_diff(diff) is True
+
     def test_returns_false_for_empty_diff(self) -> None:
         """Test that returns False for empty diff."""
         assert is_doc_only_diff("") is False
