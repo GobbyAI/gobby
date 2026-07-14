@@ -6,7 +6,7 @@ from collections import defaultdict
 from typing import Any, cast
 
 from gobby.storage.expansion_runs import ExpansionRun
-from gobby.storage.hub.protocol import TaskSeqAllocation
+from gobby.storage.hub.protocol import ExpansionApplyMutation, TaskSeqAllocation
 from gobby.storage.tasks import Task
 from gobby.storage.tasks._creation import _create_task_in_transaction
 from gobby.storage.tasks._stage_manifest import derive_child_manifest_specs
@@ -106,13 +106,6 @@ def apply_run(
     if not validation["valid"]:
         errors = "; ".join(validation["errors"])
         raise ValueError(f"Cannot apply invalid compiled spec: {errors}")
-    existing_output = self.find_apply_blocking_expansion_output(task.id)
-    if existing_output is not None:
-        raise ValueError(
-            "Expansion output already exists for this task. "
-            "Reset expansion output before applying a new run."
-        )
-
     phase_list = spec["phases"]
     tasks = spec["tasks"]
     dependency_edges = spec["dependencies"]
@@ -139,6 +132,14 @@ def apply_run(
         task_label_map[task_item["id"]] = labels or None
 
     with self.db.transaction_immediate(TaskSeqAllocation(project_id=task.project_id)) as conn:
+        conn.acquire_additional_lock(ExpansionApplyMutation(parent_task_id=task.id))
+        existing_output = self.find_apply_blocking_expansion_output(task.id)
+        if existing_output is not None:
+            raise ValueError(
+                "Expansion output already exists for this task. "
+                "Reset expansion output before applying a new run."
+            )
+
         self.run_manager.mark_applying(run_id)
         self.run_manager.append_log(run_id, level="info", message="Applying compiled expansion")
 

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock
 
 import pytest
 
 from gobby.storage.expansion_runs import LocalExpansionRunManager
+from gobby.storage.hub._ambient import ambient_transaction
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.expansion_service import ExpansionService
 
@@ -366,6 +369,61 @@ def test_apply_refuses_duplicate_output_without_reset(temp_db, sample_project) -
 
     with pytest.raises(ValueError, match="Reset expansion output"):
         service.apply_run(second.id, session_id=None)
+
+
+def test_concurrent_apply_creates_one_subtask_tree(temp_db, sample_project) -> None:
+    service = _service(temp_db)
+    parent = service.task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Concurrent parent",
+        task_type="epic",
+    )
+    spec = {
+        "phases": [{"id": "phase-1", "title": "Phase 1", "task_ids": ["leaf"]}],
+        "tasks": [
+            {
+                "id": "leaf",
+                "phase_id": "phase-1",
+                "title": "Concurrent leaf",
+                "category": "code",
+            }
+        ],
+        "dependencies": [],
+    }
+    runs = [_save_run(service, parent, sample_project, spec) for _ in range(2)]
+    original_check = service.find_apply_blocking_expansion_output
+    outside_transaction_checks = threading.Barrier(2)
+
+    def synchronized_check(parent_task_id: str):
+        result = original_check(parent_task_id)
+        if ambient_transaction(temp_db) is None:
+            outside_transaction_checks.wait(timeout=5)
+        return result
+
+    service.find_apply_blocking_expansion_output = synchronized_check
+    start = threading.Barrier(2)
+
+    def apply(run_id: str):
+        start.wait(timeout=5)
+        return service.apply_run(run_id, session_id=None)
+
+    applied = []
+    errors = []
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(apply, run.id) for run in runs]
+        for future in futures:
+            try:
+                applied.append(future.result(timeout=10))
+            except ValueError as exc:
+                errors.append(str(exc))
+
+    assert len(applied) == 1
+    assert errors == [
+        "Expansion output already exists for this task. "
+        "Reset expansion output before applying a new run."
+    ]
+    children = service.task_manager.list_tasks(parent_task_id=parent.id)
+    assert [child.title for child in children] == ["Concurrent leaf"]
 
 
 def test_apply_ignores_closed_obsolete_historical_output(temp_db, sample_project) -> None:
