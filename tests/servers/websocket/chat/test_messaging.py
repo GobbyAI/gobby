@@ -18,7 +18,11 @@ from gobby.llm.claude_models import (
 )
 from gobby.servers.websocket.chat._lifecycle import ChatLifecycleMixin
 from gobby.servers.websocket.chat._messaging import ChatMessagingMixin
+from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
 from gobby.skills.formatting import skill_fetch_directive
+from gobby.storage import chat_messages
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
@@ -28,6 +32,7 @@ class DummyMessagingMixin(ChatMessagingMixin):
         self.clients: dict = {}
         self._chat_sessions: dict = {}
         self._active_chat_tasks: dict = {}
+        self._session_create_locks: dict[str, asyncio.Lock] = {}
         self._pending_modes: dict = {}
         self._pending_worktree_paths: dict = {}
         self._pending_agents: dict = {}
@@ -37,6 +42,13 @@ class DummyMessagingMixin(ChatMessagingMixin):
         self._created_tts_pipelines = 0
         self._last_tts_pipeline = None
         self.start_voice_warmup = MagicMock()
+
+    def _get_session_create_lock(self, conversation_id: str) -> asyncio.Lock:
+        lock = self._session_create_locks.get(conversation_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._session_create_locks[conversation_id] = lock
+        return lock
 
     async def _send_error(
         self, ws: object, msg: str, request_id: str | None = None, code: str = "ERROR"
@@ -87,7 +99,16 @@ class DummyLifecycleMixin(ChatLifecycleMixin):
         self.workflow_handler = SimpleNamespace(evaluate=lambda event: HookResponse())
         self.inter_session_msg_manager = None
 
-    def _inject_pending_messages(self, db_session_id: str, event_type: HookEventType) -> None:
+    def _inject_pending_messages(
+        self,
+        db_session_id: str,
+        event_type: HookEventType,
+        *,
+        pending_message_ids: list[str] | None = None,
+    ) -> None:
+        return None
+
+    def _mark_pending_messages_delivered(self, message_ids: list[str]) -> None:
         return None
 
 
@@ -103,10 +124,14 @@ def ws() -> AsyncMock:
 
 class TestClassifyChatError:
     def test_classify(self, mixin: DummyMessagingMixin):
-        msg, code = mixin._classify_chat_error(ValueError("429 rate_limit exceeded"))
+        rate_limit = RuntimeError("provider rejected request")
+        rate_limit.status_code = 429  # type: ignore[attr-defined]
+        msg, code = mixin._classify_chat_error(rate_limit)
         assert code == "RATE_LIMITED"
 
-        msg, code = mixin._classify_chat_error(RuntimeError("auth failed 401"))
+        auth_error = RuntimeError("provider rejected request")
+        auth_error.status_code = 401  # type: ignore[attr-defined]
+        msg, code = mixin._classify_chat_error(auth_error)
         assert code == "AUTH_ERROR"
 
         msg, code = mixin._classify_chat_error(TimeoutError("oops"))
@@ -145,13 +170,23 @@ class TestInjectPendingMessages:
 
         mixin.inter_session_msg_manager.get_undelivered_messages.return_value = [msg1, msg2]
 
-        res = mixin._inject_pending_messages("sid", HookEventType.BEFORE_AGENT)
+        pending_message_ids: list[str] = []
+        res = mixin._inject_pending_messages(
+            "sid",
+            HookEventType.BEFORE_AGENT,
+            pending_message_ids=pending_message_ids,
+        )
 
         assert res is not None
         assert "Pending messages from web chat user" in res
         assert "- Session 12345678: hello" in res
         assert "Pending P2P messages from other sessions" in res
         assert "- [URGENT] help me" in res
+
+        assert pending_message_ids == ["1", "2"]
+        mixin.inter_session_msg_manager.mark_delivered.assert_not_called()
+
+        mixin._mark_pending_messages_delivered(pending_message_ids)
 
         mixin.inter_session_msg_manager.mark_delivered.assert_any_call("1")
         mixin.inter_session_msg_manager.mark_delivered.assert_any_call("2")
@@ -274,6 +309,69 @@ class TestHandleChatMessage:
             assert call_args[0][3] is None  # model
 
     @pytest.mark.asyncio
+    async def test_concurrent_messages_leave_one_tracked_cancellable_task(
+        self, mixin: DummyMessagingMixin
+    ) -> None:
+        first_ws = AsyncMock()
+        second_ws = AsyncMock()
+        mixin.clients[first_ws] = {"connected": True}
+        mixin.clients[second_ws] = {"connected": True}
+        registry = WebChatSessionRegistry()
+        mixin.web_chat_session_registry = registry
+        mixin._active_chat_tasks = registry.active_tasks
+
+        first_cancel_started = asyncio.Event()
+        release_first_cancel = asyncio.Event()
+        stream_forever = asyncio.Event()
+        cancel_calls = 0
+        cancelled_tasks: list[asyncio.Task[None]] = []
+
+        async def coordinated_cancel(conversation_id: str) -> None:
+            nonlocal cancel_calls
+            cancel_calls += 1
+            if cancel_calls == 1:
+                first_cancel_started.set()
+                await release_first_cancel.wait()
+
+            active_task = mixin._active_chat_tasks.pop(conversation_id, None)
+            if active_task is not None:
+                cancelled_tasks.append(active_task)
+                active_task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await active_task
+
+        async def blocking_stream(*args: object, **kwargs: object) -> None:
+            await stream_forever.wait()
+
+        with (
+            patch.object(mixin, "_cancel_active_chat", side_effect=coordinated_cancel),
+            patch.object(mixin, "_stream_chat_response", side_effect=blocking_stream),
+        ):
+            first_ingress = asyncio.create_task(
+                mixin._handle_chat_message(
+                    first_ws, {"content": "first", "conversation_id": "shared"}
+                )
+            )
+            await first_cancel_started.wait()
+            second_ingress = asyncio.create_task(
+                mixin._handle_chat_message(
+                    second_ws, {"content": "second", "conversation_id": "shared"}
+                )
+            )
+            asyncio.get_running_loop().call_soon(release_first_cancel.set)
+            await asyncio.gather(first_ingress, second_ingress)
+
+            tracked_task = registry.active_tasks["shared"]
+            assert cancel_calls == 2
+            assert len(cancelled_tasks) == 1
+            assert cancelled_tasks[0].cancelled()
+            assert not tracked_task.done()
+
+            tracked_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await tracked_task
+
+    @pytest.mark.asyncio
     async def test_tts_intent_enabled_arms_voice_before_stream(
         self, mixin: DummyMessagingMixin, ws: AsyncMock
     ):
@@ -392,6 +490,23 @@ class TestFireLifecycle:
         assert result is not None
         assert captured_event is not None
         assert captured_event.source is SessionSource.UNKNOWN
+
+
+class TestHeartbeatScope:
+    async def test_rebinds_connection_to_server_owned_project(
+        self,
+        mixin: DummyMessagingMixin,
+        ws: AsyncMock,
+    ) -> None:
+        mixin.clients[ws] = {"conversation_id": "stale", "project_id": "stale-project"}
+        session = MagicMock()
+        session.project_id = "project-1"
+        mixin._chat_sessions["c1"] = session
+
+        await mixin._handle_heartbeat(ws, {"conversation_id": "c1"})
+
+        assert mixin.clients[ws]["conversation_id"] == "c1"
+        assert mixin.clients[ws]["project_id"] == "project-1"
 
 
 class TestStreamChatResponse:
@@ -565,6 +680,7 @@ class TestStreamChatResponse:
 
         mock_create.assert_not_awaited()
         assert session.project_id == "project-original"
+        assert mixin.clients[ws]["project_id"] == "project-original"
 
     @pytest.mark.asyncio
     async def test_stream_cancellation_safely(self, mixin: DummyMessagingMixin, ws: AsyncMock):
@@ -585,6 +701,48 @@ class TestStreamChatResponse:
         done_msg = [m for m in msgs if m.get("done") is True]
         assert len(done_msg) == 1
         assert done_msg[0]["interrupted"] is True
+
+    @pytest.mark.parametrize("exit_mode", ["cancel", "error", "disconnect"])
+    async def test_abnormal_stream_exit_persists_partial_message_and_pauses_session(
+        self,
+        mixin: DummyMessagingMixin,
+        ws: AsyncMock,
+        temp_db: HubDatabase,
+        exit_mode: str,
+    ) -> None:
+        mixin.clients[ws] = {"conversation_id": "c1"}
+        session_manager = SessionManager(temp_db)
+        stored_session = session_manager.register(
+            external_id="stream-cancellation",
+            machine_id="test-machine",
+            source=SessionSource.CLAUDE.value,
+            project_id=None,
+        )
+        mixin.session_manager = session_manager
+
+        session = AsyncMock()
+        session.db_session_id = stored_session.id
+        mixin._chat_sessions["c1"] = session
+
+        async def interrupted_stream(content):
+            yield TextChunk(content="partial response")
+            if exit_mode == "cancel":
+                raise asyncio.CancelledError()
+            if exit_mode == "error":
+                raise RuntimeError("stream failed")
+
+        session.send_message = lambda content: interrupted_stream(content)
+        if exit_mode == "disconnect":
+            ws.send.side_effect = ConnectionClosed(None, None)
+
+        await mixin._stream_chat_response(ws, "c1", "hi", None)
+
+        messages = chat_messages.get_messages(temp_db, stored_session.id)
+        assert [(message["role"], message["content"]) for message in messages] == [
+            ("user", "hi"),
+            ("assistant", "partial response"),
+        ]
+        assert session_manager.get(stored_session.id).status == "paused"
 
     @pytest.mark.asyncio
     async def test_stream_client_disconnect(self, mixin: DummyMessagingMixin, ws: AsyncMock):

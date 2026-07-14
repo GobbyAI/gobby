@@ -68,7 +68,9 @@ async def test_request_changes_then_revised_plan_rebroadcasts_with_feedback() ->
     session.chat_mode = "plan"
     session._connected = True
 
-    async def _on_plan_ready(content: str | None, input_data: dict[str, Any]) -> None:
+    async def _on_plan_ready(
+        content: str | None, input_data: dict[str, Any], tool_use_id: str | None
+    ) -> None:
         broadcasts.append((content, input_data))
 
     session._on_plan_ready = _on_plan_ready
@@ -130,7 +132,9 @@ async def test_longer_plan_supersedes_short_preamble_within_cycle() -> None:
     session.chat_mode = "plan"
     session._connected = True
 
-    async def _on_plan_ready(content: str | None, input_data: dict[str, Any]) -> None:
+    async def _on_plan_ready(
+        content: str | None, input_data: dict[str, Any], tool_use_id: str | None
+    ) -> None:
         broadcasts.append((content, input_data))
 
     session._on_plan_ready = _on_plan_ready

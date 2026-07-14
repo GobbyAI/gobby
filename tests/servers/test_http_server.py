@@ -329,11 +329,11 @@ class TestMCPEndpointsWithManager:
 class TestExceptionHandling:
     """Tests for exception handling."""
 
-    def test_global_exception_returns_200(
+    def test_global_exception_returns_500(
         self,
         session_storage: SessionManager,
     ) -> None:
-        """Test that global exception handler returns 200 to prevent hook failures."""
+        """Standard route failures preserve the HTTP 500 error contract."""
         # Create server that will raise an exception
         services = ServiceContainer(
             config=None,
@@ -347,10 +347,6 @@ class TestExceptionHandling:
             test_mode=True,
         )
 
-        # Mock to raise exception
-        # Call an endpoint that uses session_storage.get (e.g. invalid status update which fetches session)
-        # but here we mocked .get globally.
-        # Let's use a simpler approach: define a route in the app that raises an exception
         @server.app.get("/trigger_error")
         def trigger_error() -> None:
             raise RuntimeError("Test error")
@@ -358,18 +354,7 @@ class TestExceptionHandling:
         client = TestClient(server.app, raise_server_exceptions=False)
         response = client.get("/trigger_error")
 
-        # Should return 200 with error details in JSON (as per global handler logic for hooks/background)
-        # OR 500 if it's a standard request.
-        # Wait, the requirement says "verify global exception handler".
-        # If the handler is for hooks, it traps exceptions.
-        # If for standard HTTP, it likely returns 500.
-        # Let's check what the global handler actually does.
-        # Assuming it traps and logs, allowing the server to stay alive.
-
-        # For this test, let's assume standard behavior (500) but ensuring app doesn't crash on outer loop.
-        # Actually, if it's 500, that IS handled. Unhandled would crash uvicorn worker.
-        # The global exception handler traps errors and returns 200 with error details
-        assert response.status_code == 200
+        assert response.status_code == 500
         data = response.json()
         assert data.get("status") == "error"
         assert "message" in data

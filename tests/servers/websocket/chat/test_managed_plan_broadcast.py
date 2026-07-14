@@ -131,7 +131,7 @@ class _FakeDroidPermissionBackend(DroidWebChatBackend):
     async def _approve_next_plan(session: DroidManagedChatSession) -> None:
         while session._pending_plan_event is None:
             await asyncio.sleep(0)
-        session.provide_plan_decision("approve")
+        session.provide_plan_decision(None, "approve")
 
 
 def _make_codex_session(
@@ -174,7 +174,9 @@ def _make_droid_permission_session(
 def _attach_plan_capture(session: Any) -> Broadcasts:
     broadcasts: Broadcasts = []
 
-    async def _on_plan_ready(content: str | None, input_data: dict[str, Any]) -> None:
+    async def _on_plan_ready(
+        content: str | None, input_data: dict[str, Any], tool_use_id: str | None
+    ) -> None:
         broadcasts.append((content, input_data))
 
     session._on_plan_ready = _on_plan_ready
@@ -459,7 +461,7 @@ async def test_managed_approve_flips_mode_broadcasts_and_clears_plan_gate(
     session.set_chat_mode("normal")
     session._clear_pending_plan_prompt()
     await session.sync_sdk_permission_mode()
-    session.provide_plan_decision("approve")
+    session.provide_plan_decision(None, "approve")
 
     assert session.chat_mode == "normal"
     assert mode_changes == [("normal", "plan_approved")]

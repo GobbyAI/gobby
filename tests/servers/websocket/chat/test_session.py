@@ -216,7 +216,7 @@ class TestCreateChatSessionInner:
             assert "accept_edits" in call_args
 
             # Check that plan ready is broadcast
-            await session._on_plan_ready("plan data", {"allowedPrompts": ["y"]})
+            await session._on_plan_ready("plan data", {"allowedPrompts": ["y"]}, "plan-tool")
             call_args_plan = mock_ws.send.call_args[0][0]
             assert "plan_pending_approval" in call_args_plan
             assert session._pending_plan_content == "plan data"

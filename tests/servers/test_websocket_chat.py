@@ -67,7 +67,7 @@ class TestHandleAskUserResponse:
 
         await host._handle_ask_user_response(websocket, data)
 
-        session.provide_answer.assert_called_once_with({"Which auth?": "OAuth"})
+        session.provide_answer.assert_called_once_with("tool-abc", {"Which auth?": "OAuth"})
         assert session.provide_answer.call_count == 1
         assert session.provide_answer.call_args is not None
 

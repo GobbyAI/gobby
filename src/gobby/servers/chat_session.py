@@ -63,12 +63,12 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     _model: str | None = field(default=None, repr=False)
     reasoning_effort: str | None = field(default=None, repr=False)
-    _pending_question: dict[str, Any] | None = field(default=None, repr=False)
-    _pending_answer_event: asyncio.Event | None = field(default=None, repr=False)
-    _pending_answers: dict[str, str] | None = field(default=None, repr=False)
-    _pending_approval: PendingApproval | None = field(default=None, repr=False)
-    _pending_approval_event: asyncio.Event | None = field(default=None, repr=False)
-    _pending_approval_decision: str | None = field(default=None, repr=False)
+    _pending_questions: dict[str, dict[str, Any]] = field(default_factory=dict, repr=False)
+    _pending_answer_events: dict[str, asyncio.Event] = field(default_factory=dict, repr=False)
+    _pending_answers: dict[str, dict[str, str]] = field(default_factory=dict, repr=False)
+    _pending_approvals: dict[str, PendingApproval] = field(default_factory=dict, repr=False)
+    _pending_approval_events: dict[str, asyncio.Event] = field(default_factory=dict, repr=False)
+    _pending_approval_decisions: dict[str, str] = field(default_factory=dict, repr=False)
     _approved_tools: set[str] = field(default_factory=set, repr=False)
     chat_mode: str = field(default="plan", repr=False)
     _plan_approved: bool = field(default=False, repr=False)
@@ -79,11 +79,11 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
     _pending_plan_content: str | None = field(default=None, repr=False)
     _pending_plan_allowed_prompts: list[str] | None = field(default=None, repr=False)
     _pending_post_plan_mode: str | None = field(default=None, repr=False)
-    _pending_plan_event: asyncio.Event | None = field(default=None, repr=False)
-    _pending_plan_decision: str | None = field(default=None, repr=False)
+    _pending_plan_events: dict[str, asyncio.Event] = field(default_factory=dict, repr=False)
+    _pending_plan_decisions: dict[str, str] = field(default_factory=dict, repr=False)
     _plan_broadcast_sent: bool = field(default=False, repr=False)
-    _on_plan_ready: Callable[[str | None, dict[str, Any]], Awaitable[None]] | None = field(
-        default=None, repr=False
+    _on_plan_ready: Callable[[str | None, dict[str, Any], str | None], Awaitable[None]] | None = (
+        field(default=None, repr=False)
     )
     _config: Any | None = field(default=None, repr=False)
     _tool_approval_config: Any | None = field(default=None, repr=False)
@@ -298,6 +298,7 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
 
     async def stop(self) -> None:
         """Disconnect the ClaudeSDKClient and clean up."""
+        self._abort_pending_interactions()
         if self._client:
             try:
                 await self._client.disconnect()

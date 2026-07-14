@@ -40,7 +40,7 @@ async def test_approve_flips_mode_broadcasts_and_clears_plan_gate() -> None:
     session.set_chat_mode("normal")
     session._clear_pending_plan_prompt()
     await session.sync_sdk_permission_mode()
-    session.provide_plan_decision("approve")
+    session.provide_plan_decision(None, "approve")
 
     assert session.chat_mode == "normal"
     assert mode_changes == [("normal", "plan_approved")]

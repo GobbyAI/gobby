@@ -509,3 +509,25 @@ async def test_ensure_raises_actionable_error_on_lm_studio_401(
     assert "disable API-key auth" in message
     # No model-load attempt once auth fails.
     assert all(call[0] != "POST" for call in fake_client.calls)
+
+
+@pytest.mark.asyncio
+async def test_ensure_resolves_qwen_settings_off_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[Any, tuple[Any, ...], dict[str, Any]]] = []
+
+    async def fake_to_thread(func: Any, *args: Any, **kwargs: Any) -> None:
+        calls.append((func, args, kwargs))
+
+    monkeypatch.setattr(warmup.asyncio, "to_thread", fake_to_thread)
+
+    await warmup.ensure_qwen_local_openai_model_ready("qwen-local", project_path="/tmp/project")
+
+    assert calls == [
+        (
+            warmup.resolve_qwen_local_openai_target,
+            ("qwen-local",),
+            {"project_path": "/tmp/project", "local_generation_endpoints": None},
+        )
+    ]

@@ -3,6 +3,7 @@
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
+from uuid import uuid4
 
 from claude_agent_sdk import HookContext, HookMatcher, PermissionResultDeny
 from claude_agent_sdk.types import HookInput as SDKHookInput
@@ -41,7 +42,7 @@ class ChatSessionHooksMixin:
     _on_stop: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
     _on_subagent_start: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
     _on_subagent_stop: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
-    _on_plan_ready: Callable[[str | None, dict[str, Any]], Awaitable[None]] | None
+    _on_plan_ready: Callable[[str | None, dict[str, Any], str | None], Awaitable[None]] | None
 
     def _build_sdk_hooks(self) -> dict[str, list[HookMatcher]] | None:
         """Build SDK hook matchers from lifecycle callbacks."""
@@ -157,6 +158,11 @@ class ChatSessionHooksMixin:
                 permission = await session._resolve_tool_permission(
                     tool_name,
                     effective_input,
+                    tool_use_id=(
+                        tool_use_id
+                        if isinstance(tool_use_id, str) and tool_use_id
+                        else f"tool-{uuid4().hex}"
+                    ),
                     invoke_pre_tool_callback=False,
                 )
 
@@ -207,7 +213,7 @@ class ChatSessionHooksMixin:
                                 content=plan_content,
                                 allowed_prompts=tool_input.get("allowedPrompts"),
                             )
-                            await self._on_plan_ready(plan_content, tool_input)
+                            await self._on_plan_ready(plan_content, tool_input, tool_use_id)
                             self._plan_broadcast_sent = True
                             logger.info(
                                 "Plan file %s, broadcast plan_pending_approval for %s",

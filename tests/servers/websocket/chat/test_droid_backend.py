@@ -253,6 +253,39 @@ def test_parse_stream_json_normalizes_content_blocks() -> None:
     assert events[1].data["kind"] == "tool_result"
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"type": "permission_request", "kind": "untrusted", "id": "perm-1"},
+        {
+            "type": "message",
+            "role": "assistant",
+            "message": {
+                "content": [{"type": "permission_request", "kind": "untrusted", "id": "perm-1"}]
+            },
+        },
+    ],
+)
+def test_parse_stream_json_strips_permission_request_kind(payload: dict[str, Any]) -> None:
+    events = parse_droid_stream_line(json.dumps(payload))
+
+    assert len(events) == 1
+    assert events[0].event_type == "content_delta"
+    assert events[0].data == {"kind": "permission_request", "id": "perm-1"}
+
+
+@pytest.mark.parametrize("exception_type", [TypeError, KeyError, AttributeError, ValueError])
+def test_parse_stream_json_skips_record_conversion_errors(
+    exception_type: type[Exception], caplog: pytest.LogCaptureFixture
+) -> None:
+    target = "gobby.servers.websocket.chat.backends.droid_stream._stream_events_from_droid_record"
+    with patch(target, side_effect=exception_type("bad record")):
+        events = parse_droid_stream_line('{"type": "message"}')
+
+    assert events == []
+    assert "Skipping malformed Droid stream-json record" in caplog.text
+
+
 @pytest.mark.asyncio
 async def test_managed_session_translates_text_thinking_and_done() -> None:
     backend = DroidWebChatBackend()
@@ -274,6 +307,28 @@ async def test_managed_session_translates_text_thinking_and_done() -> None:
     assert [event.content for event in events if isinstance(event, TextChunk)] == ["Done"]
     assert isinstance(events[-1], DoneEvent)
     assert events[-1].context_window == 200_000
+
+
+@pytest.mark.parametrize(
+    "error_type",
+    [asyncio.CancelledError, RuntimeError],
+    ids=["cancelled", "programming-error"],
+)
+async def test_managed_session_propagates_stream_errors(
+    error_type: type[BaseException],
+) -> None:
+    backend = DroidWebChatBackend()
+    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session._connected = True
+
+    async def failing_send_message(_session: Any, _prompt: str):
+        raise error_type("boom")
+        yield
+
+    backend.send_message = failing_send_message
+
+    with pytest.raises(error_type):
+        _ = [event async for event in session.send_message("hello")]
 
 
 @pytest.mark.asyncio
@@ -306,7 +361,7 @@ async def test_send_message_streams_fixture_and_writes_prompt() -> None:
     process = _FakeProcess(_fixture_lines("text_response.jsonl"))
     backend = DroidWebChatBackend()
     session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
-    session.project_path = "/tmp/project"
+    session.project_path = str(Path.cwd())
 
     with (
         patch(
@@ -334,7 +389,7 @@ async def test_send_message_streams_fixture_and_writes_prompt() -> None:
     assert process.stdin.writes
     writes = [json.loads(write.decode("utf-8")) for write in process.stdin.writes]
     assert writes[0]["method"] == "droid.initialize_session"
-    assert writes[0]["params"]["cwd"] == "/tmp/project"
+    assert writes[0]["params"]["cwd"] == str(Path.cwd())
     assert writes[1]["method"] == "droid.add_user_message"
     assert writes[1]["params"]["text"].endswith("hello")
     assert [event.content for event in events if isinstance(event, TextChunk)] == [
@@ -355,7 +410,7 @@ async def test_send_message_answers_auto_allowed_permission_request() -> None:
     )
     backend = DroidWebChatBackend()
     session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
-    session.project_path = "/tmp/project"
+    session.project_path = str(Path.cwd())
 
     with (
         patch(
@@ -395,7 +450,7 @@ async def test_send_message_cancels_permission_when_pre_tool_blocks() -> None:
     )
     backend = DroidWebChatBackend()
     session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
-    session.project_path = "/tmp/project"
+    session.project_path = str(Path.cwd())
     pre_tool_calls: list[dict[str, Any]] = []
 
     async def block_pre_tool(payload: dict[str, Any]) -> dict[str, Any]:
@@ -443,13 +498,13 @@ async def test_send_message_waits_for_user_permission_approval() -> None:
     )
     backend = DroidWebChatBackend()
     session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
-    session.project_path = "/tmp/project"
+    session.project_path = str(Path.cwd())
     session.chat_mode = "auto"
     approval_calls: list[tuple[str, dict[str, Any]]] = []
 
-    async def approve_tool(tool_name: str, arguments: dict[str, Any]) -> None:
+    async def approve_tool(tool_use_id: str, tool_name: str, arguments: dict[str, Any]) -> None:
         approval_calls.append((tool_name, arguments))
-        session.provide_approval("approve")
+        session.provide_approval(tool_use_id, "approve")
 
     session._tool_approval_callback = approve_tool
 
@@ -496,22 +551,24 @@ async def test_plan_mode_cancels_unapproved_tool_and_broadcasts_plan() -> None:
     )
     backend = DroidWebChatBackend()
     session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
-    session.project_path = "/tmp/project"
+    session.project_path = str(Path.cwd())
     session.chat_mode = "plan"
 
     # If plan mode ever falls through to interactive approval, this callback
     # records it (and the assertion below fails) instead of hanging the test.
     approval_calls: list[tuple[str, dict[str, Any]]] = []
 
-    async def approve_tool(tool_name: str, arguments: dict[str, Any]) -> None:
+    async def approve_tool(tool_use_id: str, tool_name: str, arguments: dict[str, Any]) -> None:
         approval_calls.append((tool_name, arguments))
-        session.provide_approval("approve")
+        session.provide_approval(tool_use_id, "approve")
 
     session._tool_approval_callback = approve_tool
 
     broadcasts: list[str | None] = []
 
-    async def on_plan_ready(content: str | None, input_data: dict[str, Any]) -> None:
+    async def on_plan_ready(
+        content: str | None, input_data: dict[str, Any], tool_use_id: str | None
+    ) -> None:
         broadcasts.append(content)
 
     session._on_plan_ready = on_plan_ready
@@ -576,11 +633,13 @@ def _exit_spec_session(
 ) -> tuple[DroidManagedChatSession, list[str | None]]:
     """A plan-mode Droid session wired to capture plan broadcasts."""
     session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
-    session.project_path = "/tmp/project"
+    session.project_path = str(Path.cwd())
     session.chat_mode = "plan"
     broadcasts: list[str | None] = []
 
-    async def on_plan_ready(content: str | None, input_data: dict[str, Any]) -> None:
+    async def on_plan_ready(
+        content: str | None, input_data: dict[str, Any], tool_use_id: str | None
+    ) -> None:
         broadcasts.append(content)
 
     session._on_plan_ready = on_plan_ready
@@ -620,7 +679,7 @@ async def test_exit_spec_mode_broadcasts_and_blocks_then_approve_proceeds() -> N
     assert session._plan_exit_blocked_this_turn is True
 
     # (c) approve releases with proceed_once.
-    session.provide_plan_decision("approve")
+    session.provide_plan_decision(None, "approve")
     result = await asyncio.wait_for(resolve, timeout=1.0)
     assert result == "proceed_once"
     assert session._plan_approved is True
@@ -641,7 +700,7 @@ async def test_exit_spec_mode_request_changes_cancels_and_queues_feedback() -> N
     await _park_on_plan_gate(session)
 
     session.set_plan_feedback("tighten step 1")
-    session.provide_plan_decision("request_changes")
+    session.provide_plan_decision(None, "request_changes")
     result = await asyncio.wait_for(resolve, timeout=1.0)
 
     assert result == "cancel"
@@ -728,7 +787,7 @@ async def test_send_message_supports_multiple_turns_on_same_process() -> None:
     )
     backend = DroidWebChatBackend()
     session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
-    session.project_path = "/tmp/project"
+    session.project_path = str(Path.cwd())
 
     with (
         patch(
@@ -762,7 +821,7 @@ async def test_send_message_reattaches_dead_process_before_next_turn() -> None:
     ]
     backend = DroidWebChatBackend()
     session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
-    session.project_path = "/tmp/project"
+    session.project_path = str(Path.cwd())
 
     with (
         patch(
@@ -865,12 +924,59 @@ async def test_health_reports_missing_droid() -> None:
     assert health.startup_error == "droid CLI not found in PATH"
 
 
+@pytest.mark.asyncio
+async def test_attach_session_rejects_missing_cwd(tmp_path: Path) -> None:
+    backend = DroidWebChatBackend()
+    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session.project_path = str(tmp_path / "missing")
+
+    with (
+        patch(
+            "gobby.servers.websocket.chat.backends.droid.shutil.which", return_value="/bin/droid"
+        ),
+        pytest.raises(ValueError, match="working directory does not exist"),
+    ):
+        await backend.attach_session(session)
+
+
+@pytest.mark.parametrize(
+    ("model", "reasoning_effort", "message"),
+    [
+        ("--help", None, "Invalid Droid model"),
+        ("gpt-5.4", "--help", "Invalid Droid reasoning effort"),
+        ("gpt-5.4", "extreme", "Unsupported Droid reasoning effort"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_attach_session_rejects_invalid_option_values(
+    tmp_path: Path,
+    model: str,
+    reasoning_effort: str | None,
+    message: str,
+) -> None:
+    backend = DroidWebChatBackend()
+    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session.project_path = str(tmp_path)
+    session.reasoning_effort = reasoning_effort
+
+    with (
+        patch(
+            "gobby.servers.websocket.chat.backends.droid.shutil.which", return_value="/bin/droid"
+        ),
+        pytest.raises(ValueError, match=message),
+    ):
+        await backend.attach_session(session, model=model)
+
+
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_real_droid_exec_binary_starts(tmp_path: Path) -> None:
+async def test_real_droid_exec_binary_starts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     droid = shutil.which("droid")
     if droid is None:
         pytest.skip("droid CLI not installed")
+    monkeypatch.setenv("HOME", str(tmp_path))
 
     backend = DroidWebChatBackend()
     session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)

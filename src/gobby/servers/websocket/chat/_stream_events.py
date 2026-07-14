@@ -36,7 +36,8 @@ class ChatStreamEventState:
     accumulated_text: str = ""
     after_tool_call: bool = False
     has_sent_text: bool = False
-    pending_approval_id: str | None = None
+    completed: bool = False
+    pending_approval_ids: list[str] = field(default_factory=list)
     pending_tool_calls: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Tool results whose ToolCallEvent has not arrived yet (out-of-order ACP
     # delivery). Buffered here and reconciled once the matching call lands so the UI
@@ -68,14 +69,15 @@ class ChatStreamEventHandler:
         self.state = state
         self.tts_pipeline = tts_pipeline
 
-    async def emit_pending_approval(self, tool_name: str, arguments: dict[str, Any]) -> None:
+    async def emit_pending_approval(
+        self, tool_use_id: str, tool_name: str, arguments: dict[str, Any]
+    ) -> None:
         """Emit pending_approval tool_status to the client."""
-        approval_id = f"approval-{uuid4().hex[:8]}"
-        self.state.pending_approval_id = approval_id
+        self.state.pending_approval_ids.append(tool_use_id)
         await self.transport.safe_send(
             self._msg(
                 type="tool_status",
-                tool_call_id=approval_id,
+                tool_call_id=tool_use_id,
                 status="pending_approval",
                 tool_name=tool_name,
                 arguments=arguments,
@@ -243,18 +245,23 @@ class ChatStreamEventHandler:
         return True
 
     async def _handle_tool_call(self, event: ToolCallEvent) -> bool:
-        if self.state.pending_approval_id is not None:
+        if self.state.pending_approval_ids:
+            approval_id = (
+                event.tool_call_id
+                if event.tool_call_id in self.state.pending_approval_ids
+                else self.state.pending_approval_ids[0]
+            )
             await self.transport.safe_send(
                 self._msg(
                     type="tool_status",
-                    tool_call_id=self.state.pending_approval_id,
+                    tool_call_id=approval_id,
                     status="calling",
                     tool_name=event.tool_name,
                     server_name=event.server_name,
                     arguments=event.arguments,
                 )
             )
-            self.state.pending_approval_id = None
+            self.state.pending_approval_ids.remove(approval_id)
 
         self.state.pending_tool_calls[event.tool_call_id] = {
             "tool_name": event.tool_name,
@@ -443,6 +450,7 @@ class ChatStreamEventHandler:
         await self.persistence.persist_sdk_session_id(session, sdk_sid)
         await self.transport.safe_send(done_msg)
         await self.persistence.persist_done_metadata(session, event)
+        self.state.completed = True
         return True
 
 

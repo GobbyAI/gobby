@@ -117,6 +117,8 @@ export function handlePlanPendingApproval(
       // revised plan does not inherit a stale "approved" state (#15681).
       ctx.setPlanApproved(false);
       ctx.planContentRef.current = planContent;
+      ctx.planToolCallIdRef.current =
+        typeof data.tool_call_id === "string" ? data.tool_call_id : null;
       if (planContent !== previousPlanContent) {
         ctx.onPlanReadyRef.current?.(planContent);
       }
@@ -144,6 +146,7 @@ export function handleModeChanged(
         // Authoritative approval signal for the Plans panel (#15681).
         ctx.setPlanApproved(true);
         ctx.planContentRef.current = null;
+        ctx.planToolCallIdRef.current = null;
       }
       if (
         reason === "plan_changes_requested" &&

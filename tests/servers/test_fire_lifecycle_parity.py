@@ -428,6 +428,35 @@ class TestFireLifecycleMessagePiggyback:
         assert result["decision"] == "allow"
 
     @pytest.mark.asyncio
+    async def test_lifecycle_failure_leaves_piggyback_message_pending(
+        self, host: ChatMixinHost
+    ) -> None:
+        """Messages remain pending when lifecycle processing fails after injection."""
+        host._chat_sessions["conv-1"] = _make_session()
+        host.workflow_handler = _make_workflow_handler()
+
+        msg = MagicMock(
+            id="msg-retry",
+            content="Retry this message",
+            message_type="message",
+            from_session="eeee5555-0000-0000-0000-000000000000",
+            priority="normal",
+        )
+        mgr = MagicMock()
+        mgr.get_undelivered_messages.return_value = [msg]
+        host.inter_session_msg_manager = mgr
+        host._dispatch_non_blocking_webhooks = AsyncMock(
+            side_effect=RuntimeError("dispatch failed")
+        )
+
+        result = await host._fire_lifecycle(
+            "conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"}
+        )
+
+        assert result is None
+        mgr.mark_delivered.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_no_manager_proceeds(self, host: ChatMixinHost) -> None:
         """Without inter_session_msg_manager, processing continues normally."""
         host._chat_sessions["conv-1"] = _make_session()

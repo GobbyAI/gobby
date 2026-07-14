@@ -136,7 +136,11 @@ class BroadcastMixin:
         if not self.clients:
             return
 
-        message_str = json_dumps(message)
+        try:
+            message_str = json_dumps(message)
+        except (TypeError, ValueError) as exc:
+            logger.warning("Broadcast payload is not JSON serializable: %s", exc)
+            return
         recipients = []
         failed_count = 0
         for websocket in list(self.clients):

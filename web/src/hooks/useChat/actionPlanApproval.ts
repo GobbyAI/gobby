@@ -16,6 +16,7 @@ export function usePlanApprovalActions(
     conversationIdRef,
     pendingPlanFeedbackRef,
     planContentRef,
+    planToolCallIdRef,
     sessionInteractionModeRef,
     setPlanPendingApproval,
     wsRef,
@@ -52,6 +53,7 @@ export function usePlanApprovalActions(
       JSON.stringify({
         type: "plan_approval_response",
         conversation_id: conversationIdRef.current,
+        tool_call_id: planToolCallIdRef.current,
         decision: "approve",
         ...(option?.id ? { option_id: option.id } : {}),
       }),
@@ -85,10 +87,12 @@ export function usePlanApprovalActions(
         JSON.stringify({
           type: "plan_approval_response",
           conversation_id: conversationIdRef.current,
+          tool_call_id: planToolCallIdRef.current,
           decision: "request_changes",
           feedback,
         }),
       );
+      planToolCallIdRef.current = null;
     },
     [isAttachedProxyTerminal],
   );

@@ -183,3 +183,29 @@ async def test_hmr_proxy_preserves_requested_websocket_subprotocol(
         ("ws://localhost:5173/__vite_hmr?token=hmr-token", ["vite-hmr", "extra"])
     ]
     assert websocket.accepted_subprotocol == "vite-hmr"
+
+
+@pytest.mark.asyncio
+async def test_proxy_does_not_close_unaccepted_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import websockets
+
+    class FakeWebSocket:
+        headers = Headers()
+
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        async def close(self, code: int = 1000) -> None:
+            self.close_calls += 1
+
+    def fail_connect(*_args: object, **_kwargs: object) -> None:
+        raise OSError("backend unavailable")
+
+    monkeypatch.setattr(websockets, "connect", fail_connect)
+    websocket = FakeWebSocket()
+
+    await app_factory._proxy_websocket(websocket, "ws://localhost:5173/__vite_hmr")  # type: ignore[arg-type]
+
+    assert websocket.close_calls == 0
