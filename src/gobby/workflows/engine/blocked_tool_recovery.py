@@ -95,7 +95,7 @@ def log_block(
     reason: str,
 ) -> None:
     """Emit structured block log for observability and downstream debugging."""
-    logger.info(
+    logger.debug(
         "BLOCK session=%s event=%s tool=%s source=%s rule=%s reason=%s",
         session_id,
         _event_value(event_type),

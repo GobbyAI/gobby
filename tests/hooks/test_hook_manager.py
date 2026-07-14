@@ -326,8 +326,12 @@ class TestHandleSessionStart:
             )
             response = manager._handle_internal(event)
 
-        assert response.decision == "allow"
+        assert response == HookResponse(decision="allow")
+        assert event.project_id is None
+        assert event.metadata == {}
         manager._resolve_project_id.assert_not_called()
+        manager._enricher.enrich.assert_not_called()
+        manager._event_handlers.get_handler.assert_not_called()
         handler.assert_not_called()
 
 
@@ -1036,16 +1040,18 @@ class TestEvaluateWorkflowRules:
         info_message = manager.logger.info.call_args[0][0]
         assert "decision=allow" in info_message
 
-    def test_block_logs_at_info_once(
+    @pytest.mark.parametrize("decision", ["block", "deny", "ask"])
+    def test_routine_blocking_decisions_log_at_debug_once(
         self,
         manager_with_mocks: HookManager,
         make_event: Callable,
+        decision: str,
     ) -> None:
-        """Blocked workflow outcomes log once at info level."""
+        """Routine blocking workflow outcomes log once at debug level."""
         manager = manager_with_mocks
         manager.logger = MagicMock()
         manager._workflow_handler.handle.return_value = HookResponse(
-            decision="block",
+            decision=decision,
             reason="Blocked by rule",
         )
         manager._dispatch_mcp_calls = MagicMock(return_value=[])
@@ -1056,12 +1062,12 @@ class TestEvaluateWorkflowRules:
         context, blocking = manager._evaluate_workflow_rules(event)
 
         assert context is None
-        assert blocking == HookResponse(decision="block", reason="Blocked by rule")
-        manager.logger.debug.assert_not_called()
-        manager.logger.info.assert_called_once()
-        info_message = manager.logger.info.call_args[0][0]
-        assert "decision=block" in info_message
-        assert "reason=Blocked by rule" in info_message
+        assert blocking == HookResponse(decision=decision, reason="Blocked by rule")
+        manager.logger.info.assert_not_called()
+        manager.logger.debug.assert_called_once()
+        debug_message = manager.logger.debug.call_args[0][0]
+        assert f"decision={decision}" in debug_message
+        assert "reason=Blocked by rule" in debug_message
 
     def test_workflow_evaluation_exception_fails_open(
         self,

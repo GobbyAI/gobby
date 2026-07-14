@@ -155,8 +155,30 @@ def _setup_step_workflow(
     instance_mgr.save_instance(instance)
 
 
-def _block_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
-    return [record.getMessage() for record in caplog.records if "BLOCK " in record.getMessage()]
+def _assert_block_records(
+    caplog: pytest.LogCaptureFixture,
+    *,
+    expected_block: str,
+    expected_fallback: str | None = None,
+) -> None:
+    block_records = [
+        record for record in caplog.records if record.getMessage().startswith("BLOCK session=")
+    ]
+    assert len(block_records) == 1
+    assert block_records[0].getMessage() == expected_block
+    assert block_records[0].levelno == logging.DEBUG
+    assert not any(record.levelno == logging.INFO for record in block_records)
+
+    fallback_records = [
+        record for record in caplog.records if record.getMessage().startswith("BLOCK fallback ")
+    ]
+    if expected_fallback is None:
+        assert not fallback_records
+        return
+
+    assert len(fallback_records) == 1
+    assert fallback_records[0].getMessage() == expected_fallback
+    assert fallback_records[0].levelno == logging.WARNING
 
 
 class ChatLifecycleHost(ChatMixin):
@@ -197,22 +219,23 @@ async def test_rule_block_reason_and_log_are_structured(
     _insert_block_rule(db, name="test-empty-block-reason", event="stop", reason="")
     event = _make_event(event_type=HookEventType.STOP)
 
-    with caplog.at_level(logging.INFO):
+    with caplog.at_level(logging.DEBUG):
         response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
 
     assert response.decision == "block"
     assert response.reason
     assert "Blocked by rule" not in response.reason
     assert "Rule enforced by Gobby: [test-empty-block-reason]" in response.reason
-    assert any(
-        f"BLOCK session={SESSION_ID} event=stop tool=- source=rule "
-        "rule=test-empty-block-reason reason=Rule enforced by Gobby: "
-        "[test-empty-block-reason]" in message
-        for message in _block_messages(caplog)
-    )
-    assert any(
-        "detail=rule block effect omitted a reason" in message
-        for message in _block_messages(caplog)
+    _assert_block_records(
+        caplog,
+        expected_block=(
+            f"BLOCK session={SESSION_ID} event=stop tool=- source=rule "
+            f"rule=test-empty-block-reason reason={response.reason}"
+        ),
+        expected_fallback=(
+            f"BLOCK fallback session={SESSION_ID} event=stop tool=- source=rule "
+            "rule=test-empty-block-reason detail=rule block effect omitted a reason"
+        ),
     )
 
 
@@ -230,15 +253,17 @@ async def test_step_enforcement_block_logs_structured_reason(
         data={"tool_name": "Write"},
     )
 
-    with caplog.at_level(logging.INFO):
+    with caplog.at_level(logging.DEBUG):
         response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
 
     assert response.decision == "block"
     assert response.reason
-    assert any(
-        f"BLOCK session={SESSION_ID} event=before_tool tool=Write "
-        "source=step-enforcement rule=step-tool-enforcement" in message
-        for message in _block_messages(caplog)
+    _assert_block_records(
+        caplog,
+        expected_block=(
+            f"BLOCK session={SESSION_ID} event=before_tool tool=Write "
+            f"source=step-enforcement rule=step-tool-enforcement reason={response.reason}"
+        ),
     )
 
 
@@ -256,7 +281,7 @@ def test_webhook_block_reason_and_log_are_structured(
         "gobby.hooks.dispatchers.webhook.dispatch_webhooks_sync",
         return_value=[MagicMock()],
     ):
-        with caplog.at_level(logging.INFO):
+        with caplog.at_level(logging.DEBUG):
             response = evaluate_blocking_webhooks(
                 event,
                 dispatcher,
@@ -268,13 +293,16 @@ def test_webhook_block_reason_and_log_are_structured(
     assert response.decision == "block"
     assert response.reason
     assert response.reason != "Blocked by webhook"
-    assert any(
-        f"BLOCK session={SESSION_ID} event=before_tool tool=Read "
-        "source=webhook rule=webhook-dispatch" in message
-        for message in _block_messages(caplog)
-    )
-    assert any(
-        "detail=blocking webhook omitted reason" in message for message in _block_messages(caplog)
+    _assert_block_records(
+        caplog,
+        expected_block=(
+            f"BLOCK session={SESSION_ID} event=before_tool tool=Read source=webhook "
+            f"rule=webhook-dispatch reason={response.reason}"
+        ),
+        expected_fallback=(
+            f"BLOCK fallback session={SESSION_ID} event=before_tool tool=Read source=webhook "
+            "rule=webhook-dispatch detail=blocking webhook omitted reason"
+        ),
     )
 
 
@@ -288,20 +316,23 @@ async def test_session_lifecycle_block_reason_and_log_are_structured(
     session._plan_approved = False
     session._on_pre_tool = AsyncMock(return_value={"decision": "block"})
 
-    with caplog.at_level(logging.INFO):
+    with caplog.at_level(logging.DEBUG):
         result = await session._can_use_tool("Read", {}, ToolPermissionContext())
 
     assert isinstance(result, PermissionResultDeny)
     assert result.message
     assert result.message != "Blocked by session lifecycle"
-    assert any(
-        "BLOCK session=conv-observability event=before_tool tool=Read "
-        "source=session-lifecycle rule=pre-tool-callback" in message
-        for message in _block_messages(caplog)
-    )
-    assert any(
-        "detail=pre-tool lifecycle callback omitted reason" in message
-        for message in _block_messages(caplog)
+    _assert_block_records(
+        caplog,
+        expected_block=(
+            "BLOCK session=conv-observability event=before_tool tool=Read "
+            f"source=session-lifecycle rule=pre-tool-callback reason={result.message}"
+        ),
+        expected_fallback=(
+            "BLOCK fallback session=conv-observability event=before_tool tool=Read "
+            "source=session-lifecycle rule=pre-tool-callback "
+            "detail=pre-tool lifecycle callback omitted reason"
+        ),
     )
 
 
@@ -325,18 +356,21 @@ async def test_websocket_chat_webhook_block_reason_and_log_are_structured(
         data={"tool_name": "Read"},
     )
 
-    with caplog.at_level(logging.INFO):
+    with caplog.at_level(logging.DEBUG):
         response = await host._evaluate_blocking_webhooks(event)
 
     assert response is not None
     assert response["decision"] == "block"
     assert response["reason"]
     assert response["reason"] != "Blocked by webhook"
-    assert any(
-        "BLOCK session=web-chat-session event=before_tool tool=Read "
-        "source=webhook rule=webhook-dispatch" in message
-        for message in _block_messages(caplog)
-    )
-    assert any(
-        "detail=blocking webhook omitted reason" in message for message in _block_messages(caplog)
+    _assert_block_records(
+        caplog,
+        expected_block=(
+            "BLOCK session=web-chat-session event=before_tool tool=Read source=webhook "
+            f"rule=webhook-dispatch reason={response['reason']}"
+        ),
+        expected_fallback=(
+            "BLOCK fallback session=web-chat-session event=before_tool tool=Read source=webhook "
+            "rule=webhook-dispatch detail=blocking webhook omitted reason"
+        ),
     )

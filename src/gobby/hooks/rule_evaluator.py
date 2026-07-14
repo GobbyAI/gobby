@@ -232,11 +232,7 @@ class WorkflowRuleEvaluator:
             parts.append(f"reason={workflow_response.reason}")
 
         message = ", ".join(parts)
-        if (
-            workflow_response.decision in ("block", "deny", "ask")
-            or has_captured_or_blocking_mcp_call
-            or has_user_visible_response
-        ):
+        if has_captured_or_blocking_mcp_call or has_user_visible_response:
             self.logger.info(message)
         else:
             self.logger.debug(message)
