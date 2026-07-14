@@ -124,6 +124,35 @@ def test_uses_fixture(test_project):
     assert codes == set()
 
 
+def test_nested_test_classes_and_unittest_cases_are_analyzed(tmp_path: Path) -> None:
+    path = _write_test(
+        tmp_path,
+        """
+import unittest
+
+
+class TestOuter:
+    class TestNested:
+        def test_nested(self):
+            pass
+
+
+class LegacyTests(unittest.TestCase):
+    def test_legacy(self):
+        pass
+""",
+    )
+
+    report = audit_paths([path], root=tmp_path)
+
+    assert report.tests_scanned == 2
+    assert {issue.test_name for issue in report.issues} == {
+        "TestOuter.TestNested.test_nested",
+        "LegacyTests.test_legacy",
+    }
+    assert {issue.issue_code for issue in report.issues} == {"NO_ASSERTION"}
+
+
 def test_assert_true_is_reported(tmp_path: Path) -> None:
     codes = _issue_codes(
         tmp_path,
@@ -416,6 +445,33 @@ it("handles \\"quoted\\" names", () => {
 
     assert report.tests_scanned == 1
     assert report.issues == ()
+
+
+def test_script_chained_modifiers_and_todo_declarations(tmp_path: Path) -> None:
+    tests_dir = tmp_path / "web" / "src" / "__tests__"
+    tests_dir.mkdir(parents=True)
+    path = tests_dir / "sample.test.ts"
+    path.write_text(
+        """
+import { it, test, expect } from 'vitest'
+
+it.concurrent.skip("skipped", () => {
+  expect(true).toBe(true)
+})
+it.todo("it todo")
+test.todo("test todo")
+test.fixme("test fixme")
+""",
+        encoding="utf-8",
+    )
+
+    report = audit_paths([path], root=tmp_path)
+
+    assert report.tests_scanned == 4
+    codes = [issue.issue_code for issue in report.issues]
+    assert codes.count("UNCONDITIONAL_SKIP") == 1
+    assert codes.count("TODO_IN_TEST") == 3
+    assert "NO_ASSERTION" not in codes
 
 
 def test_script_delimiter_scanner_ignores_apostrophes_in_comments(tmp_path: Path) -> None:

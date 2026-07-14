@@ -76,15 +76,35 @@ def _iter_test_nodes(tree: ast.Module) -> Iterable[_TestNode]:
             if _has_pytest_fixture_decorator(node.decorator_list):
                 continue
             yield _make_test_node(node.name, node, ())
-        elif isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
-            class_decorators = tuple(node.decorator_list)
-            for child in node.body:
-                if isinstance(
-                    child, (ast.FunctionDef, ast.AsyncFunctionDef)
-                ) and child.name.startswith("test_"):
-                    if _has_pytest_fixture_decorator(child.decorator_list):
-                        continue
-                    yield _make_test_node(f"{node.name}.{child.name}", child, class_decorators)
+        elif isinstance(node, ast.ClassDef) and _is_test_class(node):
+            yield from _iter_class_test_nodes(node, node.name, ())
+
+
+def _iter_class_test_nodes(
+    node: ast.ClassDef,
+    name: str,
+    inherited_decorators: tuple[ast.expr, ...],
+) -> Iterable[_TestNode]:
+    class_decorators = inherited_decorators + tuple(node.decorator_list)
+    for child in node.body:
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and child.name.startswith(
+            "test_"
+        ):
+            if _has_pytest_fixture_decorator(child.decorator_list):
+                continue
+            yield _make_test_node(f"{name}.{child.name}", child, class_decorators)
+        elif isinstance(child, ast.ClassDef) and _is_test_class(child):
+            yield from _iter_class_test_nodes(
+                child,
+                f"{name}.{child.name}",
+                class_decorators,
+            )
+
+
+def _is_test_class(node: ast.ClassDef) -> bool:
+    return node.name.startswith("Test") or any(
+        _call_name(base).endswith("TestCase") for base in node.bases
+    )
 
 
 def _make_test_node(
