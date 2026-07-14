@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -16,6 +17,14 @@ if TYPE_CHECKING:
     from gobby.communications.manager import CommunicationsManager
 
 logger = logging.getLogger(__name__)
+
+
+def _integration_secret_name(channel_type: str, key: str, channel_name: str) -> str:
+    parts = (channel_type, key, channel_name)
+    normalized = (re.sub(r"[^A-Za-z0-9_]", "_", part).upper() for part in parts)
+    return "COMMS_" + "_".join(normalized)
+
+
 _DEFAULT_CHANNEL_SECRET_REFS = {
     "discord": ("$secret:DISCORD_BOT_TOKEN",),
     "email": ("$secret:EMAIL_PASSWORD",),
@@ -161,7 +170,7 @@ class AdapterLifecycleOperations:
             for key, value in secrets.items():
                 if not value:
                     continue
-                secret_name = f"COMMS_{channel_type.upper()}_{key.upper()}_{name.upper()}"
+                secret_name = _integration_secret_name(channel_type, key, name)
                 await asyncio.to_thread(
                     manager._secret_store.set,
                     name=secret_name,
@@ -250,9 +259,29 @@ class AdapterLifecycleOperations:
             adapter.set_broadcast(broadcast)
             logger.info("GobbyChatAdapter wired to WebSocket broadcast")
 
-    async def update_channel(self, channel: ChannelConfig) -> ChannelConfig:
+    async def update_channel(
+        self, channel: ChannelConfig, secrets: dict[str, Any] | None = None
+    ) -> ChannelConfig:
         """Update channel config and reconcile runtime adapter state."""
         manager = self._manager
+        if secrets:
+            for key, value in secrets.items():
+                if not value:
+                    continue
+                secret_name = _integration_secret_name(channel.channel_type, key, channel.name)
+                await asyncio.to_thread(
+                    manager._secret_store.set,
+                    name=secret_name,
+                    plaintext_value=str(value),
+                    category="integration",
+                    description=f"{channel.channel_type} channel '{channel.name}': {key}",
+                )
+                secret_ref = f"$secret:{secret_name}"
+                if key == "webhook_secret":
+                    channel.webhook_secret = secret_ref
+                else:
+                    channel.config_json[key] = secret_ref
+
         channel.updated_at = datetime.now(UTC)
         updated = await asyncio.to_thread(manager._store.update_channel, channel)
 

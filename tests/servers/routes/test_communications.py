@@ -224,9 +224,57 @@ def test_update_channel(client, comms_manager):
     assert response.status_code == 200
     assert response.json()["id"] == "ch1"
     assert "webhook_secret" not in response.json()
-    comms_manager.update_channel.assert_called_once_with(ch)
+    comms_manager.update_channel.assert_called_once_with(ch, secrets=None)
     assert ch.config_json == {"foo": "baz"}
     assert ch.enabled is False
+
+
+def test_update_channel_preserves_secret_refs_when_editing_non_secret_config(client, comms_manager):
+    ch = ChannelConfig(
+        id="ch1",
+        channel_type="slack",
+        name="myslack",
+        enabled=True,
+        config_json={
+            "channel_id": "C123",
+            "bot_token": "$secret:COMMS_SLACK_BOT_TOKEN_MYSLACK",
+        },
+        created_at="2023-01-01T00:00:00Z",
+        updated_at="2023-01-01T00:00:00Z",
+    )
+    comms_manager.get_channel.return_value = ch
+    comms_manager.update_channel.return_value = ch
+
+    response = client.put(
+        "/api/comms/channels/ch1",
+        json={"config": {"channel_id": "C999"}},
+    )
+
+    assert response.status_code == 200
+    assert ch.config_json == {
+        "channel_id": "C999",
+        "bot_token": "$secret:COMMS_SLACK_BOT_TOKEN_MYSLACK",
+    }
+    comms_manager.update_channel.assert_called_once_with(ch, secrets=None)
+
+
+def test_update_channel_forwards_secret_changes(client, comms_manager):
+    ch = ChannelConfig(
+        id="ch1",
+        channel_type="slack",
+        name="myslack",
+        enabled=True,
+        config_json={},
+        created_at="2023-01-01T00:00:00Z",
+        updated_at="2023-01-01T00:00:00Z",
+    )
+    comms_manager.get_channel.return_value = ch
+    comms_manager.update_channel.return_value = ch
+
+    response = client.put("/api/comms/channels/ch1", json={"secrets": {"bot_token": "new-token"}})
+
+    assert response.status_code == 200
+    comms_manager.update_channel.assert_called_once_with(ch, secrets={"bot_token": "new-token"})
 
 
 def test_update_channel_partial_config_only(client, comms_manager):
