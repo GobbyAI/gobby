@@ -257,6 +257,65 @@ class TestSessionLifecycleManager:
             manager.session_manager.mark_transcript_processed.assert_called_once_with("s1")
 
     @pytest.mark.asyncio
+    async def test_digestless_crash_uses_refreshed_turn_count(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
+        """Parsed transcript stats decide whether a crash session needs artifacts."""
+        from gobby.sessions.transcripts.base import ParsedMessage
+
+        transcript_path = tmp_path / "transcript.jsonl"
+        transcript_path.write_text('{"type": "message"}\n')
+
+        session = MagicMock(spec=Session)
+        session.id = "s1"
+        session.transcript_path = str(transcript_path)
+        session.external_id = "ext-s1"
+        session.agent_depth = 0
+        session.source = "claude"
+        session.digest_markdown = None
+        session.turn_count = 0
+        session.summary_markdown = "valid summary"
+        session.project_id = None
+        session.context_window = None
+        session.model = None
+        manager.session_manager.get_pending_transcript_sessions.return_value = [session]
+        manager.session_manager.get.return_value = session
+        manager.llm_service = MagicMock()
+
+        messages = []
+        for content in ("First", "Second", "Third"):
+            message = MagicMock(spec=ParsedMessage)
+            message.role = "assistant"
+            message.content_type = "text"
+            message.content = content
+            message.tool_name = None
+            message.model = None
+            message.usage = None
+            messages.append(message)
+
+        def update_stats(_session_id: str, **stats: Any) -> None:
+            session.turn_count = stats["turn_count"]
+
+        manager.session_manager.update_stats.side_effect = update_stats
+
+        with (
+            patch("gobby.sessions.lifecycle.ClaudeTranscriptParser") as mock_parser,
+            patch.object(
+                manager, "_generate_artifacts_if_needed", new_callable=AsyncMock
+            ) as mock_generate,
+            patch("gobby.sessions.lifecycle.rebuild_and_persist_index"),
+            patch("gobby.sessions.lifecycle.backup_transcript", return_value=None),
+            patch("gobby.sessions.lifecycle.is_summary_markdown_valid", return_value=True),
+        ):
+            mock_parser.return_value.parse_lines.return_value = messages
+
+            processed = await manager._process_pending_transcripts()
+
+        manager.session_manager.update_stats.assert_called_once()
+        mock_generate.assert_awaited_once_with("s1")
+        assert processed == 1
+
+    @pytest.mark.asyncio
     async def test_process_pending_transcripts_skips_subagent_sessions(self, tmp_path, manager):
         """Subagent sessions (agent_depth > 0) skip memory extraction and summary generation."""
         session = MagicMock(spec=Session)
@@ -452,15 +511,22 @@ class TestSessionLifecycleManager:
 
         # s1 has no summary (will be deferred), s2 has summary (will be processed)
         s1_refreshed = MagicMock()
+        s1_refreshed.turn_count = 3
         s1_refreshed.summary_markdown = None
         s2_refreshed = MagicMock()
+        s2_refreshed.turn_count = 3
         s2_refreshed.summary_markdown = (
             "## Current State\n\n"
             "Transcript processing completed and produced a substantive handoff summary for the "
             "next session.\n\n"
             "## Next Steps\n\nContinue processing the remaining pending sessions."
         )
-        manager.session_manager.get.side_effect = [s1_refreshed, s2_refreshed]
+        manager.session_manager.get.side_effect = [
+            s1_refreshed,
+            s1_refreshed,
+            s2_refreshed,
+            s2_refreshed,
+        ]
 
         # Mock helper methods to isolate loop logic
         with (
@@ -499,6 +565,7 @@ class TestSessionLifecycleManager:
         manager.llm_service = MagicMock()
 
         refreshed = MagicMock()
+        refreshed.turn_count = 3
         refreshed.summary_markdown = "valid summary"
         manager.session_manager.get.return_value = refreshed
 
@@ -536,6 +603,7 @@ class TestSessionLifecycleManager:
         manager.llm_service = MagicMock()
 
         refreshed = MagicMock()
+        refreshed.turn_count = 3
         refreshed.summary_markdown = "valid summary"
         manager.session_manager.get.return_value = refreshed
 
@@ -574,6 +642,7 @@ class TestSessionLifecycleManager:
         manager.llm_service = MagicMock()
 
         refreshed = MagicMock()
+        refreshed.turn_count = 3
         refreshed.summary_markdown = None
         manager.session_manager.get.return_value = refreshed
 
