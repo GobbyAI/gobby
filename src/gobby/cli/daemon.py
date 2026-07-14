@@ -18,6 +18,7 @@ import httpx
 import psutil
 
 from gobby.agents.spawners.auth_env import has_auth_env
+from gobby.runner_pid_file import probe_daemon_lock
 from gobby.utils.status import fetch_rich_status, format_startup_summary, format_status_message
 
 from .installers.service import (
@@ -415,26 +416,17 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
 
     should_kill_existing_daemons = False
 
-    # Check for a live daemon before any global cleanup. A valid gobby.runner PID
-    # means start should fail without tearing down active work.
+    # The flock-based daemon lock is authoritative: a held lock means a live
+    # daemon (flock dies with its owner), so start must fail without tearing
+    # down active work; a free lock means any leftover pid file is stale.
+    lock_owner = probe_daemon_lock(pid_file)
+    if lock_owner is not None:
+        _step(f"Daemon already running (PID: {lock_owner or 'unknown'})", error=True)
+        sys.exit(1)
+
     if pid_file.exists():
-        try:
-            with open(pid_file) as f:
-                pid = int(f.read().strip())
-            if _is_process_alive(pid):
-                try:
-                    proc = psutil.Process(pid)
-                    cmdline_lower = " ".join(proc.cmdline()).lower()
-                    if "gobby.runner" in cmdline_lower or "gobby_client.runner" in cmdline_lower:
-                        _step(f"Daemon already running (PID: {pid})", error=True)
-                        sys.exit(1)
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass
-            pid_file.unlink(missing_ok=True)
-            should_kill_existing_daemons = True
-        except Exception:
-            pid_file.unlink(missing_ok=True)
-            should_kill_existing_daemons = True
+        pid_file.unlink(missing_ok=True)
+        should_kill_existing_daemons = True
 
     if should_kill_existing_daemons:
         killed_count = kill_all_gobby_daemons()
