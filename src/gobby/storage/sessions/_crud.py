@@ -22,6 +22,7 @@ from gobby.utils.datetime import utc_now
 
 from ._constants import SYSTEM_SESSION_ID, ensure_system_session, get_logger
 from ._lineage_guard import repair_self_parent_session, sanitize_parent_session_id
+from ._registration_cache import invalidate_session_caches
 from ._title_defaults import PROVISIONAL_TITLE_SOURCE, format_provisional_session_title
 from ._upsert import is_session_unique_conflict, update_existing_session
 from ._web_chat_crud import _SessionWebChatCRUDMixin
@@ -421,5 +422,6 @@ class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
             cursor = self.db.execute("DELETE FROM sessions WHERE id = %s", (session_id,))
         deleted = cursor.rowcount > 0
         if deleted:
+            invalidate_session_caches(self, session_id)
             self._notify_session_change("session_deleted", session_id)
         return deleted

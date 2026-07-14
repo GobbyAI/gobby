@@ -107,7 +107,14 @@ class SkillFilesMixin:
                     """INSERT INTO skill_files
                        (id, skill_id, path, file_type, content, content_hash,
                         size_bytes, created_at, updated_at)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                       ON CONFLICT (skill_id, path) DO UPDATE SET
+                           content = excluded.content,
+                           content_hash = excluded.content_hash,
+                           size_bytes = excluded.size_bytes,
+                           file_type = excluded.file_type,
+                           deleted_at = NULL,
+                           updated_at = excluded.updated_at""",
                     (
                         file_id,
                         skill_id,

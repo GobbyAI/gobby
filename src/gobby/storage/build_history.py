@@ -445,7 +445,11 @@ def _json_obj(value: Any) -> dict[str, Any] | None:
         return dict(value)
     if not isinstance(value, str) or not value:
         return None
-    loaded = json.loads(value)
+    try:
+        loaded = json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("Invalid build history JSON object", exc_info=True)
+        return None
     return loaded if isinstance(loaded, dict) else None
 
 

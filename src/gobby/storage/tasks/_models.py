@@ -87,12 +87,20 @@ def validate_category(category: str | None) -> str | None:
         category: Category string to validate (case-insensitive)
 
     Returns:
-        Normalized lowercase category if valid, None otherwise
+        Normalized lowercase category, or None when no category is provided.
+
+    Raises:
+        ValueError: If the category is not a supported string value.
     """
     if category is None:
         return None
+    if not isinstance(category, str):
+        raise ValueError("category must be a string")
     normalized = category.lower().strip()
-    return normalized if normalized in VALID_CATEGORIES else None
+    if normalized not in VALID_CATEGORIES:
+        allowed = ", ".join(sorted(VALID_CATEGORIES))
+        raise ValueError(f"Invalid category '{category}'. Expected one of: {allowed}.")
+    return normalized
 
 
 def validate_implementation_domain(value: str | None) -> str | None:

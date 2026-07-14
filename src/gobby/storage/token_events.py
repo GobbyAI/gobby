@@ -52,6 +52,7 @@ def canonicalize_event_timestamp(value: datetime | str | None) -> datetime:
         try:
             dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
         except ValueError:
+            logger.warning("Invalid token event timestamp %r; using ingestion time", value)
             dt = datetime.now(UTC)
     else:
         dt = datetime.now(UTC)

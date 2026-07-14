@@ -47,17 +47,10 @@ class StageStateSchema:
             for column, sql in additions.items():
                 if column not in columns:
                     conn.execute(sql)
-            if "attempt_count" in columns and "work_attempt_count" not in columns:
-                conn.execute(
-                    """
-                    UPDATE task_stage_states
-                       SET work_attempt_count = COALESCE(attempt_count, 0)
-                    """
-                )
 
     def rebuild_stage_states_table(self) -> None:
-        rows = [dict(row) for row in self.db.fetchall("SELECT * FROM task_stage_states")]
         with self.db.transaction() as conn:
+            rows = [dict(row) for row in conn.execute("SELECT * FROM task_stage_states").fetchall()]
             conn.execute("DROP INDEX IF EXISTS idx_task_stage_states_position")
             conn.execute("DROP INDEX IF EXISTS idx_task_stage_states_state")
             conn.execute("DROP INDEX IF EXISTS idx_task_stage_states_open")

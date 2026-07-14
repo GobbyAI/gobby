@@ -1,6 +1,7 @@
 """Skill data models."""
 
 import json
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -10,6 +11,8 @@ from gobby.utils.datetime import normalize_datetime_model, utc_now
 
 SkillSourceType = Literal["local", "github", "url", "zip", "filesystem", "hub"]
 SkillScope = Literal["installed", "project"]
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,12 +118,14 @@ class Skill:
         try:
             allowed_tools = json.loads(allowed_tools_json) if allowed_tools_json else None
         except json.JSONDecodeError:
+            logger.warning("Invalid allowed_tools JSON for skill %s", row["id"], exc_info=True)
             allowed_tools = None
 
         metadata_json = row["metadata"]
         try:
             metadata = json.loads(metadata_json) if metadata_json else None
         except json.JSONDecodeError:
+            logger.warning("Invalid metadata JSON for skill %s", row["id"], exc_info=True)
             metadata = None
 
         row_keys = set(row.keys())

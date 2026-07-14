@@ -59,7 +59,7 @@ def cascade_build_state_to_subtree(
     if unattended is None:
         unattended = bool(yolo)
     normalized_isolation = Isolation(isolation).value
-    _ = tuple(skip_stages)
+    skipped_stages = set(skip_stages)
     now = utc_now()
 
     root_row = db.fetchone("SELECT project_id FROM tasks WHERE id = %s", (epic_id,))
@@ -92,11 +92,13 @@ def cascade_build_state_to_subtree(
             raise ValueError(f"Task {epic_id} not found")
 
     stage_states = StageStatesManager(db, TaskLifecycleEventManager(db))
-    parent_specs = (
+    parent_specs: list[Any] = (
         list(parent_manifest_specs)
         if parent_manifest_specs is not None
         else stage_states.list_for_task(epic_id)
     )
+    if skipped_stages:
+        parent_specs = [spec for spec in parent_specs if spec.stage_name not in skipped_stages]
     ready_task_ids: list[str] = []
     failures: list[CascadeBuildFailure] = []
     for row in rows:

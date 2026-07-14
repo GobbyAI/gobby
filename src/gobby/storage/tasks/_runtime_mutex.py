@@ -139,7 +139,7 @@ class RuntimeDispatchMutex:
 
     def release(self) -> bool:
         """Release this context's lease if it is still held by this holder."""
-        if self.borrowed_run_id is not None:
+        if self.borrowed_run_id is not None or self._run_id is not None:
             return False
         if not self._acquired or self._released:
             return False

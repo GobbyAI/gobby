@@ -683,7 +683,17 @@ class SkillMetadataMixin:
             )"""  # nosec B608 # JSON expressions are generated from static keys.
             params.extend([category, category])
 
-        query += " ORDER BY name ASC"
+        if project_id and include_global:
+            query = f"""
+                SELECT * FROM (
+                    SELECT DISTINCT ON (name) *
+                    FROM ({query}) AS visible_skills
+                    ORDER BY name, (project_id IS NOT NULL) DESC
+                ) AS deduped_skills
+                ORDER BY name ASC
+            """  # nosec B608 - inner query contains only fixed clauses.
+        else:
+            query += " ORDER BY name ASC"
         if limit >= 0:
             query += " LIMIT %s OFFSET %s"
             params.extend([limit, offset])
@@ -692,19 +702,7 @@ class SkillMetadataMixin:
             params.append(offset)
 
         rows = self._fetchall(query, tuple(params))
-        skills = [Skill.from_row(row) for row in rows]
-
-        # Deduplicate when include_global is True: a skill may exist both
-        # globally (project_id IS NULL) and per-project.  Prefer the
-        # project-scoped version when both are present.
-        if project_id and include_global:
-            seen: dict[str, Skill] = {}
-            for skill in skills:
-                if skill.name not in seen or skill.project_id is not None:
-                    seen[skill.name] = skill
-            skills = list(seen.values())
-
-        return skills
+        return [Skill.from_row(row) for row in rows]
 
     def get_skill_usage_stats(self, skill_names: list[str]) -> dict[str, SkillUsageStats]:
         """Return session load count and latest use for each requested skill name."""
@@ -837,7 +835,8 @@ class SkillMetadataMixin:
         Returns:
             Number of matching skills
         """
-        query = "SELECT COUNT(*) as count FROM skills WHERE 1=1"
+        count_expression = "COUNT(DISTINCT name)" if project_id and include_global else "COUNT(*)"
+        query = f"SELECT {count_expression} as count FROM skills WHERE 1=1"  # nosec B608
         params: list[Any] = []
 
         if not include_deleted:

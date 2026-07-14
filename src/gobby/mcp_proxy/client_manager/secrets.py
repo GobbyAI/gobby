@@ -23,7 +23,8 @@ def resolve_secrets_in_config(
         return config
 
     try:
-        from gobby.storage.secrets import SECRET_REF_PATTERN, SecretStore
+        from gobby.storage.secret_names import SECRET_REF_PATTERN
+        from gobby.storage.secrets import SecretStore
 
         has_refs = False
         for values in (config.headers, config.env):

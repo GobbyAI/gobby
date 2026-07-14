@@ -306,7 +306,7 @@ def test_system_row_constants_and_sentinel_exist() -> None:
     assert repr(UNSET) == "UNSET"
 
 
-def test_delete_removed_automation_jobs_deletes_only_system_duplicates(
+def test_delete_removed_automation_jobs_deletes_only_removed_system_jobs(
     cron_storage: CronJobStorage,
 ) -> None:
     system_one = cron_storage.create_job(
@@ -320,7 +320,7 @@ def test_delete_removed_automation_jobs_deletes_only_system_duplicates(
     )
     system_two = cron_storage.create_job(
         project_id=PROJECT_ID,
-        name="gobby:dispatcher",
+        name="gobby:pipeline-heartbeat",
         schedule_type="interval",
         action_type="handler",
         action_config={"handler": "duplicate.dispatcher"},
@@ -329,7 +329,7 @@ def test_delete_removed_automation_jobs_deletes_only_system_duplicates(
     )
     operator = cron_storage.create_job(
         project_id=PROJECT_ID,
-        name="gobby:dispatcher",
+        name="gobby:operator-dispatcher",
         schedule_type="interval",
         action_type="handler",
         action_config={"handler": "operator.dispatcher"},

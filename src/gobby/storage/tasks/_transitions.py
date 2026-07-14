@@ -639,14 +639,17 @@ def reject_review(
         # Only attempt the in-place replacement for round-scoped headings; the
         # generic "## Review Rejection" heading is used for one-off rejections
         # without a round number and is allowed to stack.
-        if normalized_round is not None and heading in existing:
+        if normalized_round is not None:
             import re
 
             pattern = re.compile(
-                rf"^{re.escape(heading)}.*?(?=^## Adversary Findings — Round |\Z)",
+                rf"^{re.escape(heading)}$.*?(?=^## |\Z)",
                 re.DOTALL | re.MULTILINE,
             )
-            description = pattern.sub(section.rstrip() + "\n\n", existing).rstrip() or section
+            if pattern.search(existing):
+                description = pattern.sub(section.rstrip() + "\n\n", existing).rstrip() or section
+            else:
+                description = f"{existing}\n\n{section}" if existing else section
         else:
             description = f"{existing}\n\n{section}" if existing else section
 

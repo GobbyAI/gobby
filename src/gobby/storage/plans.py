@@ -16,6 +16,7 @@ from gobby.plans.coverage_manifest import coverage_manifest_path, write_manifest
 from gobby.plans.parser import PlanKind, parse_plan
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.tasks._id import resolve_task_reference
 from gobby.utils.datetime import normalize_datetime_model
 
 PlanState = Literal["active", "archived"]
@@ -88,6 +89,7 @@ class LocalPlanManager:
         doc = parse_plan(
             project_root / relative_path, plan_kind=PlanKind(plan_kind), parse_mode="draft"
         )
+        resolve_task_reference(self.db, root_task_ref, project_id)
         now = _now()
         record_id = str(uuid.uuid4())
 
@@ -109,7 +111,7 @@ class LocalPlanManager:
                     archived_at = NULL
                 WHERE plans.root_task_ref = excluded.root_task_ref
                   AND (plans.state != 'archived' OR %s)
-                RETURNING state
+                RETURNING *
                 """,
                 (
                     record_id,
@@ -124,7 +126,8 @@ class LocalPlanManager:
                     reactivate,
                 ),
             )
-            if cursor.fetchone() is None:
+            row = cursor.fetchone()
+            if row is None:
                 existing = conn.execute(
                     """
                     SELECT state, root_task_ref
@@ -143,11 +146,10 @@ class LocalPlanManager:
                 raise ValueError(
                     f"plan {plan_id} is archived; pass reactivate=True to reactivate it"
                 )
-
-        record = self.get_plan(plan_id, project_id=project_id)
-        if _plan_carries_coverage_manifest(record.plan_kind):
-            self._generate_coverage_manifest(record)
-        return record
+            record = PlanRecord.from_row(row)
+            if _plan_carries_coverage_manifest(record.plan_kind):
+                self._generate_coverage_manifest(record)
+            return record
 
     def get_plan(self, plan_id_or_ref: str, *, project_id: str | None = None) -> PlanRecord:
         row = self._find_plan(plan_id_or_ref, project_id=project_id)

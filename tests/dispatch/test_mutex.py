@@ -35,7 +35,10 @@ def test_acquire_link_release_round_trip(temp_db, sample_project) -> None:
         mutex.attach("ac314d27-4314-5fe3-a0ab-01645086e137")
         assert storage.get_mutex(task.id).run_id == "ac314d27-4314-5fe3-a0ab-01645086e137"
 
-    assert storage.get_mutex(task.id) is None
+    attached = storage.get_mutex(task.id)
+    assert attached is not None
+    assert attached.run_id == "ac314d27-4314-5fe3-a0ab-01645086e137"
+    assert RuntimeDispatchMutex.force_release_for_run(storage, attached.run_id) == 1
 
 
 def test_detach_on_terminal_no_leak(temp_db, sample_project) -> None:

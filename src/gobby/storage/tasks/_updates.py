@@ -10,6 +10,7 @@ from gobby.storage.tasks._models import (
     UNSET,
     Isolation,
     MaybeUnset,
+    validate_category,
     validate_implementation_domain,
     validate_task_type,
 )
@@ -134,7 +135,7 @@ def update_task(
         params.append(validation_feedback)
     if category is not UNSET:
         updates.append("category = %s")
-        params.append(category)
+        params.append(validate_category(cast(str | None, category)))
     if validation_criteria is not UNSET:
         updates.append("validation_criteria = %s")
         params.append(validation_criteria)

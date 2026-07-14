@@ -276,7 +276,7 @@ class TestLocalAgentRunManager:
         sample_session: dict,
     ) -> None:
         """Test that create logs debug message."""
-        with patch("gobby.storage.agents.logger") as mock_logger:
+        with patch("gobby.storage.agents._lifecycle.logger") as mock_logger:
             agent_run = agent_manager.create(
                 parent_session_id=sample_session["id"],
                 provider="claude",
@@ -1277,27 +1277,6 @@ class TestLocalAgentRunManager:
         counts = agent_manager.count_by_session(sample_session["id"])
         assert counts == {}
 
-    def test_delete_agent_run(
-        self,
-        agent_manager: LocalAgentRunManager,
-        sample_session: dict,
-    ) -> None:
-        """Test deleting an agent run."""
-        agent_run = agent_manager.create(
-            parent_session_id=sample_session["id"],
-            provider="claude",
-            prompt="Delete me",
-        )
-
-        result = agent_manager.delete(agent_run.id)
-        assert result is True
-        assert agent_manager.get(agent_run.id) is None
-
-    def test_delete_nonexistent(self, agent_manager: LocalAgentRunManager) -> None:
-        """Test deleting nonexistent run returns False."""
-        result = agent_manager.delete("00000000-0000-0000-0000-0000000000ff")
-        assert result is False
-
     def test_cleanup_stale_runs(
         self,
         agent_manager: LocalAgentRunManager,
@@ -1447,7 +1426,7 @@ class TestLocalAgentRunManager:
             (run.id,),
         )
 
-        with patch("gobby.storage.agents.logger") as mock_logger:
+        with patch("gobby.storage.agents._cleanup.logger") as mock_logger:
             count = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
             assert count == 1
             mock_logger.info.assert_called_once_with(
@@ -1583,7 +1562,7 @@ class TestLocalAgentRunManager:
             (pending.id,),
         )
 
-        with patch("gobby.storage.agents.logger") as mock_logger:
+        with patch("gobby.storage.agents._cleanup.logger") as mock_logger:
             count = agent_manager.cleanup_stale_pending_runs(timeout_minutes=60)
             assert count == 1
             mock_logger.info.assert_called_once()
@@ -1878,19 +1857,6 @@ class TestAgentRunEdgeCases:
         retrieved = agent_manager.get(agent_run.id)
         assert retrieved.tool_calls_count == 999999
         assert retrieved.turns_used == 50000
-
-    def test_delete_cursor_rowcount_none(
-        self,
-        agent_manager: LocalAgentRunManager,
-    ) -> None:
-        """Test delete handles cursor with None rowcount."""
-        # Mock execute to return cursor with None rowcount
-        mock_cursor = MagicMock()
-        mock_cursor.rowcount = None
-
-        with patch.object(agent_manager.db, "execute", return_value=mock_cursor):
-            result = agent_manager.delete("00000000-0000-0000-0000-0000000000ff")
-            assert result is False
 
     def test_cleanup_stale_runs_cursor_rowcount_none(
         self,

@@ -8,7 +8,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import elapsed_seconds_greater_than_expr, older_than_now_expr
 from gobby.utils.datetime import utc_now
 
-from ._constants import get_logger
+from ._constants import logger
 from ._helpers import _positive_rowcount
 from ._models import AgentRun
 
@@ -107,7 +107,7 @@ class _AgentRunCleanupMixin:
                 default_count += 1
 
         if timed_out:
-            get_logger().info(
+            logger.info(
                 "Timed out %s stale agent runs (%s explicit, %s default)",
                 timed_out,
                 explicit_count,
@@ -152,7 +152,7 @@ class _AgentRunCleanupMixin:
             )
         count = _positive_rowcount(cursor)
         if count > 0:
-            get_logger().info(
+            logger.info(
                 "Failed %s stale pending agent runs (>%sm; tmux >%sm)",
                 count,
                 timeout_minutes,

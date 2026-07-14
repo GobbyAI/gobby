@@ -11,12 +11,18 @@ from gobby.plans.coverage_manifest import coverage_manifest_path
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
 
 
 def _project(temp_db: HubDatabase, root: Path) -> str:
     return LocalProjectManager(temp_db).create(name="plans-red", repo_path=str(root)).id
+
+
+def _root_task_ref(temp_db: HubDatabase, project_id: str) -> str:
+    task = LocalTaskManager(temp_db).create_task(project_id=project_id, title="Plan root")
+    return f"#{task.seq_num}"
 
 
 def _write_plan(root: Path) -> Path:
@@ -47,17 +53,18 @@ def _write_plan(root: Path) -> Path:
 def test_update_plan_hash_regenerates_manifest(temp_db: HubDatabase, tmp_path: Path) -> None:
     manager = LocalPlanManager(temp_db)
     project_id = _project(temp_db, tmp_path)
+    root_task_ref = _root_task_ref(temp_db, project_id)
     plan = _write_plan(tmp_path)
     record = manager.create_plan(
         project_id=project_id,
         plan_id="task-200-red",
         plan_path=plan,
-        root_task_ref="#200",
+        root_task_ref=root_task_ref,
     )
     manifest = coverage_manifest_path(
         tmp_path,
         project_id=project_id,
-        root_task_ref="#200",
+        root_task_ref=root_task_ref,
         plan_id="task-200-red",
     )
     first_mtime = manifest.stat().st_mtime_ns
@@ -73,17 +80,18 @@ def test_update_plan_hash_regenerates_manifest(temp_db: HubDatabase, tmp_path: P
 def test_archive_removes_coverage_manifest(temp_db: HubDatabase, tmp_path: Path) -> None:
     manager = LocalPlanManager(temp_db)
     project_id = _project(temp_db, tmp_path)
+    root_task_ref = _root_task_ref(temp_db, project_id)
     plan = _write_plan(tmp_path)
     manager.create_plan(
         project_id=project_id,
         plan_id="task-200-red",
         plan_path=plan,
-        root_task_ref="#200",
+        root_task_ref=root_task_ref,
     )
     manifest = coverage_manifest_path(
         tmp_path,
         project_id=project_id,
-        root_task_ref="#200",
+        root_task_ref=root_task_ref,
         plan_id="task-200-red",
     )
     ledger = tmp_path / ".gobby" / "plans" / "task-200-red.coverage-ledger.yaml"
@@ -124,18 +132,19 @@ def test_strategy_plan_registers_without_coverage_manifest(
 ) -> None:
     manager = LocalPlanManager(temp_db)
     project_id = _project(temp_db, tmp_path)
+    root_task_ref = _root_task_ref(temp_db, project_id)
     plan = _write_strategy_plan(tmp_path)
     record = manager.create_plan(
         project_id=project_id,
         plan_id="strategy-300",
         plan_path=plan,
         plan_kind="strategy",
-        root_task_ref="#300",
+        root_task_ref=root_task_ref,
     )
     manifest = coverage_manifest_path(
         tmp_path,
         project_id=project_id,
-        root_task_ref="#300",
+        root_task_ref=root_task_ref,
         plan_id="strategy-300",
     )
 

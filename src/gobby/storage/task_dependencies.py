@@ -76,7 +76,9 @@ class TaskDependencyManager:
                 """
                 INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at)
                 VALUES (%s, %s, %s, %s)
-                RETURNING id
+                ON CONFLICT (task_id, depends_on, dep_type)
+                DO UPDATE SET dep_type = excluded.dep_type
+                RETURNING id, created_at
                 """,
                 (task_id, depends_on, dep_type, now),
             ).fetchone()
@@ -85,15 +87,17 @@ class TaskDependencyManager:
                 raise ValueError("Failed to retrieve dependency ID")
 
             conn.execute("UPDATE tasks SET updated_at = %s WHERE id = %s", (now, task_id))
-            dep_id = int(row["id"])
-            return TaskDependency(dep_id, task_id, depends_on, dep_type, now)
+            return TaskDependency(int(row["id"]), task_id, depends_on, dep_type, row["created_at"])
 
-    def remove_dependency(self, task_id: str, depends_on: str) -> bool:
+    def remove_dependency(
+        self, task_id: str, depends_on: str, dep_type: DependencyType = "blocks"
+    ) -> bool:
         """Remove a dependency."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "DELETE FROM task_dependencies WHERE task_id = %s AND depends_on = %s",
-                (task_id, depends_on),
+                """DELETE FROM task_dependencies
+                   WHERE task_id = %s AND depends_on = %s AND dep_type = %s""",
+                (task_id, depends_on, dep_type),
             )
             deleted: bool = cursor.rowcount > 0
             if deleted:

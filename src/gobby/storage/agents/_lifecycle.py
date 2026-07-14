@@ -10,7 +10,7 @@ from gobby.agents.resume_metadata import dump_resume_metadata
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import utc_now
 
-from ._constants import TERMINAL_AGENT_RUN_STATUSES, AgentRunTerminalReason, get_logger
+from ._constants import TERMINAL_AGENT_RUN_STATUSES, AgentRunTerminalReason, logger
 from ._helpers import _positive_rowcount
 from ._models import AgentRun
 
@@ -104,7 +104,7 @@ class _AgentRunLifecycleMixin:
             ),
         )
 
-        get_logger().debug(
+        logger.debug(
             "Created agent run %s for session %s",
             run_id,
             parent_session_id,

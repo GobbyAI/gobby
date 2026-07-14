@@ -759,7 +759,7 @@ class TestLocalTaskManager:
             priority=5,
             task_type="chore",
             labels=["l1"],
-            category="strat",
+            category="test",
             validation_criteria="crit",
             validation_fail_count=2,
             validation_status="valid",
@@ -770,7 +770,7 @@ class TestLocalTaskManager:
         assert updated.priority == 5
         assert updated.task_type == "chore"
         assert updated.labels == ["l1"]
-        assert updated.category == "strat"
+        assert updated.category == "test"
         assert updated.validation_criteria == "crit"
         assert updated.validation_fail_count == 2
         assert updated.validation_status == "valid"
@@ -1189,7 +1189,11 @@ class TestLocalTaskManager:
             source="codex",
             project_id=project_id,
         )
-        task = task_manager.create_task(project_id, "Dedup me")
+        task = task_manager.create_task(
+            project_id,
+            "Dedup me",
+            description="## Adversary Findings — Round 70\n\nfuture findings",
+        )
         task_manager.claim_task(task.id, session.id)
         _start_current_stage(task_manager, task.id, session.id)
         task_manager.submit_for_review(task.id, review_notes="Ready")
@@ -1198,7 +1202,7 @@ class TestLocalTaskManager:
         first = task_manager.reject_review(
             task.id, rejection_notes="initial findings", round_number=7
         )
-        assert (first.description or "").count("## Adversary Findings — Round 7") == 1
+        assert (first.description or "").splitlines().count("## Adversary Findings — Round 7") == 1
         assert "initial findings" in (first.description or "")
 
         # Re-claim and reject the same round again with different notes.
@@ -1210,9 +1214,10 @@ class TestLocalTaskManager:
         )
 
         # Exactly one Round 7 section, with the NEW body, and the old body gone.
-        assert (second.description or "").count("## Adversary Findings — Round 7") == 1
+        assert (second.description or "").splitlines().count("## Adversary Findings — Round 7") == 1
         assert "updated findings" in (second.description or "")
         assert "initial findings" not in (second.description or "")
+        assert "## Adversary Findings — Round 70\n\nfuture findings" in (second.description or "")
 
     def test_record_plan_enhancement_suggestions_route_back_to_ready(
         self, task_manager, project_id, session_manager
@@ -2044,7 +2049,7 @@ class TestLocalTaskManager:
             task_type="feature",
             claimed_by_session_id=session.id,
             labels=["important"],
-            category="Unit tests",
+            category="TEST",
             validation_criteria="All tests pass",
         )
 
@@ -2055,7 +2060,7 @@ class TestLocalTaskManager:
         assert task.task_type == "feature"
         assert task.claimed_by_session_id == session.id
         assert task.labels == ["important"]
-        assert task.category == "Unit tests"
+        assert task.category == "test"
         assert task.validation_criteria == "All tests pass"
         # Validation status should be pending when criteria is set
         assert task.validation_status == "pending"
@@ -2196,7 +2201,7 @@ class TestCreateTaskWithDecomposition:
             priority=1,
             task_type="feature",
             labels=["backend", "urgent"],
-            category="unit",
+            category="test",
             validation_criteria="Tests must pass",
         )
 
@@ -2204,7 +2209,17 @@ class TestCreateTaskWithDecomposition:
         assert result["task"]["title"] == "Full Task"
         assert result["task"]["priority"] == 1
         assert result["task"]["task_type"] == "feature"
-        assert result["task"]["category"] == "unit"
+        assert result["task"]["category"] == "test"
+
+    def test_create_task_rejects_invalid_category(self, task_manager, project_id) -> None:
+        with pytest.raises(ValueError, match="Invalid category"):
+            task_manager.create_task(project_id, "Invalid category", category="unit")
+
+    def test_update_task_rejects_invalid_category(self, task_manager, project_id) -> None:
+        task = task_manager.create_task(project_id, "Valid category", category="code")
+
+        with pytest.raises(ValueError, match="Invalid category"):
+            task_manager.update_task(task.id, category="strategy")
 
     def test_create_task_rejects_unexpected_decomposition_fields(
         self, task_manager, project_id
@@ -2219,29 +2234,6 @@ class TestCreateTaskWithDecomposition:
                 title="Unexpected Field",
                 unknown_field="ignored",
             )
-
-
-@pytest.mark.integration
-class TestUpdateTaskWithResult:
-    """Test update_task_with_result returns task dict."""
-
-    def test_update_description(self, task_manager, project_id) -> None:
-        """Test updating task description."""
-        task = task_manager.create_task(project_id, "Task")
-
-        result = task_manager.update_task_with_result(task.id, description="Updated description")
-
-        assert "task" in result
-        assert result["task"]["description"] == "Updated description"
-
-    def test_update_with_none_description(self, task_manager, project_id) -> None:
-        """Test updating with None description clears it."""
-        task = task_manager.create_task(project_id, "Task", description="Original")
-
-        result = task_manager.update_task_with_result(task.id, description=None)
-
-        assert "task" in result
-        assert result["task"]["description"] is None
 
 
 @pytest.mark.integration

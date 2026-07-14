@@ -111,7 +111,7 @@ class StageStateTransitions:
 
             now = _now()
             artifact_json = (
-                json.dumps(dict(artifact_updates), sort_keys=True)
+                json.dumps({**(row.artifact_refs or {}), **artifact_updates}, sort_keys=True)
                 if artifact_updates is not None
                 else (
                     json.dumps(row.artifact_refs, sort_keys=True)

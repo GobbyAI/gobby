@@ -159,14 +159,6 @@ class _AgentRunRuntimeMixin:
         )
         return bool(_positive_rowcount(cursor))
 
-    def list_pending_with_pid(self: _AgentRunRuntimeHost, limit: int = 100) -> list[AgentRun]:
-        """List pending agent runs that have a PID (spawned but not yet marked running)."""
-        return self._fetch_runs_with_live_stats(
-            "WHERE ar.status = 'pending' AND ar.pid IS NOT NULL",
-            order_by="ORDER BY ar.created_at ASC",
-            limit=limit,
-        )
-
     def update_child_session(
         self: _AgentRunRuntimeHost,
         run_id: str,

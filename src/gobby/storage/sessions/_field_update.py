@@ -344,10 +344,11 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
             )
             if sanitized_parent_session_id is None:
                 repair_self_parent_session(conn, session_id=session_id, now=now)
-                return self.get(session_id)
-
-            conn.execute(
-                "UPDATE sessions SET parent_session_id = %s, updated_at = %s WHERE id = %s",
-                (sanitized_parent_session_id, now, session_id),
-            )
-        return self.get(session_id)
+            else:
+                conn.execute(
+                    "UPDATE sessions SET parent_session_id = %s, updated_at = %s WHERE id = %s",
+                    (sanitized_parent_session_id, now, session_id),
+                )
+        updated = self.get(session_id)
+        self._notify_session_change("session_updated", session_id)
+        return updated

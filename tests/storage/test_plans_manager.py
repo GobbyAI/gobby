@@ -10,9 +10,9 @@ import yaml
 
 from gobby.plans.coverage_manifest import coverage_manifest_path
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.plans import LocalPlanManager
+from gobby.storage.plans import LocalPlanManager, PlanNotFoundError
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks import LocalTaskManager, TaskNotFoundError
 
 pytestmark = pytest.mark.unit
 
@@ -45,7 +45,50 @@ def _write_plan(root: Path, name: str = "task-100-demo.md") -> Path:
 
 
 def _project(temp_db: HubDatabase, root: Path) -> str:
-    return LocalProjectManager(temp_db).create(name="plans", repo_path=str(root)).id
+    project_id = LocalProjectManager(temp_db).create(name="plans", repo_path=str(root)).id
+    tasks = LocalTaskManager(temp_db)
+    first = tasks.create_task(project_id=project_id, title="Plan root 100")
+    second = tasks.create_task(project_id=project_id, title="Plan root 101")
+    temp_db.execute("UPDATE tasks SET seq_num = 100 WHERE id = %s", (first.id,))
+    temp_db.execute("UPDATE tasks SET seq_num = 101 WHERE id = %s", (second.id,))
+    return project_id
+
+
+def test_create_plan_rejects_missing_root_task(temp_db: HubDatabase, tmp_path: Path) -> None:
+    project_id = _project(temp_db, tmp_path)
+    plan_path = _write_plan(tmp_path)
+
+    with pytest.raises(TaskNotFoundError, match="Task #999 not found"):
+        LocalPlanManager(temp_db).create_plan(
+            project_id=project_id,
+            plan_id="missing-root",
+            plan_path=plan_path,
+            root_task_ref="#999",
+        )
+
+
+def test_create_plan_rolls_back_when_manifest_generation_fails(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_id = _project(temp_db, tmp_path)
+    manager = LocalPlanManager(temp_db)
+    plan_path = _write_plan(tmp_path)
+
+    def fail_manifest(_record: object) -> None:
+        raise OSError("manifest write failed")
+
+    monkeypatch.setattr(manager, "_generate_coverage_manifest", fail_manifest)
+
+    with pytest.raises(OSError, match="manifest write failed"):
+        manager.create_plan(
+            project_id=project_id,
+            plan_id="manifest-failure",
+            plan_path=plan_path,
+            root_task_ref="#100",
+        )
+
+    with pytest.raises(PlanNotFoundError, match="plan not found"):
+        manager.get_plan("manifest-failure", project_id=project_id)
 
 
 def test_create_plan_emits_initial_manifest(temp_db: HubDatabase, tmp_path: Path) -> None:
@@ -123,7 +166,7 @@ def test_create_plan_refuses_root_task_reassignment(temp_db: HubDatabase, tmp_pa
             project_id=project_id,
             plan_id="task-100-demo",
             plan_path=plan_path,
-            root_task_ref="#999",
+            root_task_ref="#101",
         )
 
     assert manager.get_plan("task-100-demo", project_id=project_id).root_task_ref == "#100"

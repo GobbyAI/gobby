@@ -199,7 +199,7 @@ class WorkflowAuditManager:
         Returns:
             Row ID or None.
         """
-        ctx = context or {}
+        ctx = dict(context or {})
         ctx["from_step"] = from_step
         ctx["to_step"] = to_step
         return self.log(
@@ -265,7 +265,7 @@ class WorkflowAuditManager:
         Returns:
             Row ID or None.
         """
-        ctx = context or {}
+        ctx = dict(context or {})
         if condition_id:
             ctx["condition_id"] = condition_id
         if prompt:

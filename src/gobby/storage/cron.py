@@ -670,37 +670,24 @@ class CronJobStorage(CronRunStorageMixin):
 
     def toggle_job(self, job_id: str) -> CronJob | None:
         """Toggle a cron job's enabled state."""
-        job = self.get_job(job_id)
-        if not job:
-            return None
+        from dataclasses import replace
 
-        new_enabled = not job.enabled
-        updates: dict[str, Any] = {"enabled": bool(new_enabled)}
-
-        # Recompute next_run when enabling
-        if new_enabled:
-            from dataclasses import replace
-
-            enabled_job = replace(job, enabled=True)
-            next_run = compute_next_run(enabled_job)
-            updates["next_run_at"] = next_run
-        else:
-            updates["next_run_at"] = None
-
-        if job.is_system:
-            updated = self._update_job_fields(
-                job_id,
-                enabled=updates["enabled"],
-                updated_at=utc_now(),
-            )
-            if updated is None:
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                "SELECT * FROM cron_jobs WHERE id = %s FOR UPDATE", (job_id,)
+            ).fetchone()
+            if row is None:
                 return None
-            return self.update_system_job_bookkeeping(
-                job_id,
-                next_run_at=updates["next_run_at"],
+            job = CronJob.from_row(row)
+            new_enabled = not job.enabled
+            next_run = compute_next_run(replace(job, enabled=True)) if new_enabled else None
+            conn.execute(
+                """UPDATE cron_jobs
+                   SET enabled = %s, next_run_at = %s, updated_at = %s
+                   WHERE id = %s""",
+                (new_enabled, next_run, utc_now(), job_id),
             )
-
-        return self.update_job(job_id, **updates)
+        return self.get_job(job_id)
 
     def get_due_jobs(self) -> list[CronJob]:
         """Get enabled jobs whose next_run_at has passed."""

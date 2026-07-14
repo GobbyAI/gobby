@@ -170,73 +170,29 @@ def _put_session_mapping(
         state._session_mapping_timestamps[key] = now
 
 
+def invalidate_session_caches(state: Any, session_id: str | None = None) -> None:
+    """Remove cached registration data for one session, or clear all entries."""
+    with state._session_mapping_lock:
+        if session_id is None:
+            state._session_mapping.clear()
+            state._session_mapping_timestamps.clear()
+        else:
+            keys = [
+                key
+                for key, cached_session_id in state._session_mapping.items()
+                if cached_session_id == session_id
+            ]
+            for key in keys:
+                state._session_mapping.pop(key, None)
+                state._session_mapping_timestamps.pop(key, None)
+    with state._session_metadata_lock:
+        if session_id is None:
+            state._session_metadata.clear()
+        else:
+            state._session_metadata.pop(session_id, None)
+
+
 class _RegistrationCacheMixin:
-    def find_parent_session(
-        self: _ManagerState,
-        machine_id: str,
-        source: str,
-        project_id: str,
-        max_attempts: int = 30,
-    ) -> tuple[str, str | None] | None:
-        """
-        Find parent session marked as 'handoff_ready' for this machine and project.
-
-        Polls for up to max_attempts seconds waiting for the session-end hook to mark the
-        previous session as handoff_ready.
-
-        Args:
-            machine_id: Machine identifier
-            source: CLI source identifier (e.g., "claude", "qwen", "codex") - REQUIRED
-            project_id: Project ID (required for matching)
-            max_attempts: Maximum polling attempts (1 per second)
-
-        Returns:
-            Tuple of (parent_session_id, summary_markdown) or None if not found
-        """
-        attempt = 0
-
-        while attempt < max_attempts:
-            try:
-                session = self.find_parent(
-                    machine_id=machine_id,
-                    source=source,
-                    project_id=project_id,
-                )
-
-                if session:
-                    self.logger.debug(
-                        "Found parent session %s (attempt %s/%s)",
-                        session.id,
-                        attempt + 1,
-                        max_attempts,
-                    )
-                    return (session.id, session.summary_markdown)
-
-                attempt += 1
-                if attempt < max_attempts:
-                    self.logger.debug(
-                        "No handoff_ready session yet, retrying in 1s (attempt %s/%s)",
-                        attempt,
-                        max_attempts,
-                    )
-                    time.sleep(1)
-
-            except Exception as e:
-                self.logger.warning(
-                    "Error polling for parent session (attempt %s): %s",
-                    attempt + 1,
-                    e,
-                )
-                attempt += 1
-                if attempt < max_attempts:
-                    time.sleep(1)
-                else:
-                    self.logger.error("Exhausted retries finding parent session: %s", e)
-                    return None
-
-        self.logger.debug("No handoff_ready session found after %s attempts", max_attempts)
-        return None
-
     def mark_session_expired(self: _ManagerState, session_id: str) -> bool:
         """
         Mark a session as 'expired' after successful handoff.

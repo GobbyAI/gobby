@@ -21,6 +21,7 @@ from gobby.storage.tasks._aggregates import (
     count_tasks as _count_tasks,
 )
 from gobby.storage.tasks._artifacts import TaskArtifactManager
+from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._build_cascade import (
     CascadeBuildResult,
 )
@@ -87,6 +88,7 @@ from gobby.storage.tasks._read import (
     get_task as _get_task,
 )
 from gobby.storage.tasks._search import TaskSearchBackend
+from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
 from gobby.storage.tasks._stage_manifest import initialize_task_manifest_for_task
 from gobby.storage.tasks._stage_registry import StageRegistryManager
 from gobby.storage.tasks._stage_states import StageStatesManager
@@ -706,16 +708,17 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         if not search_results:
             return []
 
-        # Batch-fetch tasks for the result set
-        results: list[tuple[Task, float]] = []
-        for task_id, score in search_results:
-            try:
-                task = self.get_task(task_id)
-            except (ValueError, TaskNotFoundError):
-                continue
-            results.append((task, score))
-
-        return results
+        task_ids = [task_id for task_id, _ in search_results]
+        rows = self.db.fetchall("SELECT * FROM tasks WHERE id = ANY(%s)", (task_ids,))
+        tasks = [Task.from_row(row) for row in rows]
+        hydrate_task_stage_state(self.db, tasks)
+        hydrate_task_blocking_state(self.db, tasks)
+        task_by_id = {task.id: task for task in tasks}
+        return [
+            (task_by_id[task_id], score)
+            for task_id, score in search_results
+            if task_id in task_by_id
+        ]
 
     def reindex_search(self, project_id: str | None = None) -> dict[str, Any]:
         """Return task search index statistics.

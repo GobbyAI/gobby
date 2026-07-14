@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import logging
-import sys
-from typing import Literal, cast
+from typing import Literal
 
 AgentRunStatus = Literal["pending", "running", "success", "error", "timeout", "cancelled"]
 AgentRunTerminalReason = Literal["user_cancelled", "daemon_stop"]
@@ -26,13 +25,3 @@ TERMINAL_AGENT_RUN_STATUSES: tuple[AgentRunStatus, ...] = (
 )
 
 logger = logging.getLogger("gobby.storage.agents")
-
-
-def get_logger() -> logging.Logger:
-    """Return the package logger, respecting tests that patch the public attribute."""
-    package = sys.modules.get("gobby.storage.agents")
-    if package is not None:
-        public_logger = getattr(package, "logger", None)
-        if public_logger is not None:
-            return cast(logging.Logger, public_logger)
-    return logger

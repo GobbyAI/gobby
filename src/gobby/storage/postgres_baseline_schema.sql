@@ -1096,7 +1096,7 @@ CREATE UNIQUE INDEX idx_clones_path ON clones(clone_path);
 CREATE TABLE cron_jobs (
     id UUID PRIMARY KEY,
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
-    name TEXT NOT NULL,
+    name TEXT NOT NULL UNIQUE,
     description TEXT,
     schedule_type TEXT NOT NULL,
     cron_expr TEXT,

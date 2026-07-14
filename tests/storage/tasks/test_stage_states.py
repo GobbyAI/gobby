@@ -325,6 +325,27 @@ def test_empty_artifact_refs_survive_subsequent_stage_transition(
     assert restarted.state == "in_progress"
 
 
+def test_artifact_updates_merge_with_existing_refs(temp_db, sample_project) -> None:
+    task, manager = make_task_with_manifest(temp_db, sample_project, [spec("development", 0)])
+    manager.start_stage(task.id, "development", by_session_id="dev-session")
+    temp_db.execute(
+        "UPDATE task_stage_states SET artifact_refs = %s WHERE task_id = %s AND stage_name = %s",
+        ('{"plan": "plan.md", "commit": "first"}', task.id, "development"),
+    )
+    manager.complete_stage(
+        task.id,
+        "development",
+        by_session_id="dev-session",
+        artifact_updates={"commit": "second"},
+        validation_override_reason="artifact merge test",
+    )
+
+    assert manager.get(task.id, "development").artifact_refs == {
+        "plan": "plan.md",
+        "commit": "second",
+    }
+
+
 def test_recover_abandoned_stage_restores_attempt_without_escalating(
     temp_db,
     sample_project,

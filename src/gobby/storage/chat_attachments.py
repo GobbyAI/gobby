@@ -16,59 +16,6 @@ from gobby.utils.datetime import (
     utc_now,
 )
 
-CHAT_ATTACHMENTS_SCHEMA = """
-CREATE TABLE IF NOT EXISTS chat_attachments (
-    id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    -- Client/display identifiers intentionally do not reference server tables.
-    draft_id TEXT,
-    conversation_id TEXT,
-    message_id TEXT,
-    target_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
-    filename TEXT NOT NULL,
-    mime_type TEXT NOT NULL,
-    size_bytes INTEGER NOT NULL CHECK(size_bytes >= 0),
-    local_path TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    bound_at TEXT -- Set once when an attachment is first bound to a message/session.
-);
-
-CREATE INDEX IF NOT EXISTS idx_chat_attachments_project
-    ON chat_attachments(project_id);
-
-CREATE INDEX IF NOT EXISTS idx_chat_attachments_draft
-    ON chat_attachments(draft_id);
-
-CREATE INDEX IF NOT EXISTS idx_chat_attachments_conversation
-    ON chat_attachments(conversation_id);
-
-CREATE INDEX IF NOT EXISTS idx_chat_attachments_message
-    ON chat_attachments(message_id);
-
-CREATE INDEX IF NOT EXISTS idx_chat_attachments_target_session
-    ON chat_attachments(target_session_id);
-
-CREATE INDEX IF NOT EXISTS idx_chat_attachments_local_path
-    ON chat_attachments(local_path);
-
-CREATE TRIGGER IF NOT EXISTS trg_chat_attachments_bound_at_write_once
-BEFORE UPDATE OF bound_at ON chat_attachments
-WHEN OLD.bound_at IS NOT NULL AND NEW.bound_at IS NOT OLD.bound_at
-BEGIN
-    SELECT RAISE(ABORT, 'chat_attachments.bound_at is write-once');
-END;
-
-CREATE TRIGGER IF NOT EXISTS trg_chat_attachments_updated_at_touch
-AFTER UPDATE ON chat_attachments
-WHEN NEW.updated_at IS OLD.updated_at
-BEGIN
-    UPDATE chat_attachments
-       SET updated_at = CURRENT_TIMESTAMP
-     WHERE id = NEW.id;
-END;
-"""
-
 
 @normalize_datetime_model(
     required=(

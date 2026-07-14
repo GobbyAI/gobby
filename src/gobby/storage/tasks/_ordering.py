@@ -94,7 +94,8 @@ def order_tasks_hierarchically(tasks: list[Task]) -> list[Task]:
         # Check for cycles (remaining nodes with >0 in-degree)
         if len(sorted_siblings) < len(siblings):
             # Cycle detected. Append remaining nodes sorted by priority.
-            remaining = [t for t in siblings if t not in sorted_siblings]
+            sorted_ids = {task.id for task in sorted_siblings}
+            remaining = [task for task in siblings if task.id not in sorted_ids]
             remaining.sort(key=lambda t: (normalize_priority(t.priority), t.created_at))
             sorted_siblings.extend(remaining)
 
