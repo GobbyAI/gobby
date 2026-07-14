@@ -142,13 +142,16 @@ export function WikiQuickOpen({ scope, pages, nodeIndex, onOpen, onClose }: Wiki
   return (
     <div
       className="absolute inset-0 z-20 flex items-start justify-center bg-background/60 pt-10"
-      onClick={onClose}
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.button === 0) onClose()
+      }}
     >
       <div
         role="dialog"
         aria-label="Quick open"
         className="w-full max-w-md rounded-lg border border-border bg-background shadow-lg"
-        onClick={(event) => event.stopPropagation()}
+        onMouseDown={(event) => event.stopPropagation()}
       >
         <input
           ref={inputRef}
@@ -187,7 +190,9 @@ export function WikiQuickOpen({ scope, pages, nodeIndex, onOpen, onClose }: Wiki
                 index === clampedIndex ? "bg-muted text-foreground" : "text-foreground"
               } hover:bg-muted`}
               onMouseEnter={() => setActiveIndex(index)}
-              onClick={() => open(match.path)}
+              onMouseDown={(event) => {
+                if (event.button === 0) open(match.path)
+              }}
             >
               <span className="truncate">{match.title}</span>
               <span className="ml-auto truncate pl-2 font-mono text-2xs text-muted-foreground">

@@ -182,6 +182,13 @@ describe("Memory activity tab", () => {
     expect(screen.getByRole("searchbox", { name: "Search memories" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Refresh memories" })).toBeInTheDocument();
 
+    const paletteMemory = screen.getByRole("button", {
+      name: "Select Use a quiet palette for dashboards",
+    });
+    paletteMemory.focus();
+    await user.keyboard(" ");
+    expect(paletteMemory.parentElement).toHaveClass("activity-list-row--selected");
+
     await user.click(screen.getByRole("button", { name: "Filter memories" }));
     await user.click(screen.getByRole("checkbox", { name: "Last 24 hours" }));
     expect(screen.queryByText("Use a quiet palette for dashboards")).not.toBeInTheDocument();

@@ -7,6 +7,7 @@ import { undo, redo } from '@codemirror/commands'
 import type { EditorView } from '@codemirror/view'
 import type { FileEntry, OpenFile, Project, GitStatus } from '../hooks/useFiles'
 import { cn } from '../lib/utils'
+import { activateOnKeyboard } from '../lib/keyboard'
 
 const PAGE_CLS = 'flex flex-1 overflow-hidden'
 
@@ -247,14 +248,20 @@ export function FilesPage({
 
       <div className={MAIN_CLS}>
         {openFiles.length > 0 && (
-          <div className={TABS_CLS}>
+          <div className={TABS_CLS} role="tablist" aria-label="Open files">
             {openFiles.map((file, i) => {
               const isActive = i === activeFileIndex
               return (
                 <div
                   key={`${file.projectId}:${file.path}`}
                   className={cn(TAB_CLS, isActive && TAB_ACTIVE_CLS)}
+                  role="tab"
+                  aria-selected={isActive}
+                  tabIndex={0}
                   onClick={() => onSetActiveFile(i)}
+                  onKeyDown={(event) =>
+                    activateOnKeyboard(event, () => onSetActiveFile(i))
+                  }
                 >
                   <FileIcon extension={file.name.split('.').pop() || ''} size={14} />
                   <span className={TAB_NAME_CLS}>{file.dirty ? `${file.name} ●` : file.name}</span>
@@ -374,7 +381,13 @@ export function FilesPage({
         </div>
 
         {showCancelConfirm && (
-          <div className={CONFIRM_OVERLAY_CLS} onClick={() => setShowCancelConfirm(false)}>
+          <div
+            className={CONFIRM_OVERLAY_CLS}
+            role="presentation"
+            onMouseDown={(event) => {
+              if (event.button === 0) setShowCancelConfirm(false)
+            }}
+          >
             <div
               className={cn(CONFIRM_DIALOG_CLS, CONFIRM_DIALOG_QUERY_CLS)}
               role="dialog"
@@ -382,7 +395,7 @@ export function FilesPage({
               aria-labelledby="cancel-dialog-title"
               aria-describedby="cancel-dialog-desc"
               tabIndex={-1}
-              onClick={e => e.stopPropagation()}
+              onMouseDown={e => e.stopPropagation()}
             >
               <p className={CONFIRM_TITLE_CLS} id="cancel-dialog-title">Discard unsaved changes?</p>
               <p className={CONFIRM_MESSAGE_CLS} id="cancel-dialog-desc">Your changes to this file will be lost.</p>
@@ -493,7 +506,13 @@ function TreeEntry({ entry, projectId, depth, expandedDirs, loadingDirs, gitFile
         <div
           className={TREE_ITEM_CLS}
           style={{ paddingLeft: `${depth * 16 + 4}px` }}
+          role="button"
+          tabIndex={0}
+          aria-expanded={isExpanded}
           onClick={() => onExpandDir(projectId, entry.path)}
+          onKeyDown={(event) =>
+            activateOnKeyboard(event, () => onExpandDir(projectId, entry.path))
+          }
         >
           <span className={TREE_ARROW_CLS}>{isExpanded ? '▾' : '▸'}</span>
           <FolderIcon open={isExpanded} />
@@ -530,7 +549,12 @@ function TreeEntry({ entry, projectId, depth, expandedDirs, loadingDirs, gitFile
     <div
       className={TREE_ITEM_CLS}
       style={{ paddingLeft: `${depth * 16 + 20}px` }}
+      role="button"
+      tabIndex={0}
       onClick={() => onOpenFile(projectId, entry.path, entry.name)}
+      onKeyDown={(event) =>
+        activateOnKeyboard(event, () => onOpenFile(projectId, entry.path, entry.name))
+      }
     >
       <FileIcon extension={entry.extension?.replace('.', '') || ''} size={14} />
       <span className={cn(TREE_NAME_CLS, gitClass)}>{entry.name}</span>

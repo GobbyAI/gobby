@@ -182,6 +182,11 @@ describe("Skills activity Installed segment", () => {
     expect(screen.getAllByText("INSTALLED").length).toBeGreaterThan(0);
     expect(screen.getByText("hub")).toBeInTheDocument();
 
+    const hubSkill = screen.getByRole("button", { name: "Select Hub curator" });
+    hubSkill.focus();
+    await user.keyboard("{Enter}");
+    expect(hubSkill.parentElement).toHaveClass("activity-list-row--selected");
+
     await user.selectOptions(screen.getByLabelText("Skill source"), "project");
     expect(screen.getAllByText("Bridge pack").length).toBeGreaterThan(0);
     expect(screen.queryByText("Code navigator")).not.toBeInTheDocument();

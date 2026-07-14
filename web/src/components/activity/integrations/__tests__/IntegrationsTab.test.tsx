@@ -215,6 +215,11 @@ describe("Integrations activity tab", () => {
       "integration-status-filter",
     );
 
+    const incident = screen.getByRole("button", { name: "Select Incident bridge" });
+    incident.focus();
+    await user.keyboard("{Enter}");
+    expect(incident.parentElement).toHaveClass("activity-list-row--selected");
+
     await user.selectOptions(screen.getByRole("combobox", { name: "Platform filter" }), "telegram");
     expect(screen.queryByText("Release alerts")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Select Incident bridge" })).toBeInTheDocument();

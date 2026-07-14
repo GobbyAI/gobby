@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { OpenFile } from '../../hooks/useFiles'
+import type { FileEntry, OpenFile, Project } from '../../hooks/useFiles'
 import { FilesPage } from '../FilesPage'
 
 vi.mock('../shared/CodeMirrorEditor', () => ({
@@ -73,5 +73,58 @@ describe('FilesPage save errors', () => {
 
     await user.click(screen.getByRole('button', { name: 'Dismiss save error' }))
     expect(onClearSaveError).toHaveBeenCalledWith(0)
+  })
+})
+
+describe('FilesPage keyboard operation', () => {
+  it('activates open-file tabs and tree rows with Enter and Space', async () => {
+    const user = userEvent.setup()
+    const onSetActiveFile = vi.fn()
+    const onExpandDir = vi.fn()
+    const project: Project = { id: 'project-1', name: 'Gobby', repo_path: '/tmp/gobby' }
+    const rootEntries: FileEntry[] = [
+      { name: 'src', path: 'src', is_dir: true },
+      { name: 'README.md', path: 'README.md', is_dir: false, extension: '.md' },
+    ]
+    const secondFile: OpenFile = {
+      ...FAILED_FILE,
+      path: 'other.txt',
+      name: 'other.txt',
+      dirty: false,
+    }
+
+    render(
+      <FilesPage
+        projects={[project]}
+        expandedDirs={new Map([[`${project.id}:`, rootEntries]])}
+        expandedProjects={new Set([project.id])}
+        openFiles={[FAILED_FILE, secondFile]}
+        activeFileIndex={0}
+        loadingDirs={new Set()}
+        onExpandProject={vi.fn()}
+        onExpandDir={onExpandDir}
+        onOpenFile={vi.fn()}
+        onCloseFile={vi.fn()}
+        onSetActiveFile={onSetActiveFile}
+        getImageUrl={vi.fn(() => '')}
+        onToggleEditing={vi.fn()}
+        onCancelEditing={vi.fn()}
+        onUpdateEditContent={vi.fn()}
+        onClearSaveError={vi.fn()}
+        onSaveFile={vi.fn()}
+        gitStatuses={new Map()}
+        onFetchDiff={vi.fn(async () => '')}
+      />,
+    )
+
+    const tab = screen.getByRole('tab', { name: /other\.txt/i })
+    tab.focus()
+    await user.keyboard('{Enter}')
+    expect(onSetActiveFile).toHaveBeenCalledWith(1)
+
+    const directory = screen.getByRole('button', { name: /src/i })
+    directory.focus()
+    await user.keyboard(' ')
+    expect(onExpandDir).toHaveBeenCalledWith('project-1', 'src')
   })
 })

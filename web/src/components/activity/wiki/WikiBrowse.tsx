@@ -280,6 +280,8 @@ export function WikiBrowse({
   );
 
   return (
+    // This container scopes shortcuts while focus remains in the wiki surface.
+    // eslint-disable-next-line jsx-a11y/no-static-element-interactions
     <div
       className="relative flex min-h-0 flex-1 flex-col"
       onKeyDown={handleKeyDown}

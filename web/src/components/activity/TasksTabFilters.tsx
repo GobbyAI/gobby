@@ -71,7 +71,13 @@ export function TasksTabFilters({
 
   return (
     <>
-      <div className="fixed inset-0 z-[99]" onClick={onClose} />
+      <div
+        className="fixed inset-0 z-[99]"
+        role="presentation"
+        onMouseDown={(event) => {
+          if (event.button === 0) onClose()
+        }}
+      />
       <div
         className="absolute top-full right-2 z-[100] border border-border rounded-md shadow-xl flex flex-col w-[min(24rem,calc(100vw-1.5rem))]"
         style={{ background: 'var(--bg-secondary)' }}
