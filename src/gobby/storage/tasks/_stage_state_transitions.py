@@ -113,7 +113,11 @@ class StageStateTransitions:
             artifact_json = (
                 json.dumps(dict(artifact_updates), sort_keys=True)
                 if artifact_updates is not None
-                else row.artifact_refs and json.dumps(row.artifact_refs, sort_keys=True)
+                else (
+                    json.dumps(row.artifact_refs, sort_keys=True)
+                    if row.artifact_refs is not None
+                    else None
+                )
             )
             with self.db.transaction() as conn:
                 conn.execute(

@@ -281,6 +281,27 @@ def test_start_stage_increments_work_attempts_only_and_emits_event(
     }
 
 
+def test_empty_artifact_refs_survive_subsequent_stage_transition(
+    temp_db,
+    sample_project,
+) -> None:
+    task, manager = make_task_with_manifest(temp_db, sample_project, [spec("development", 0)])
+    manager.start_stage(task.id, "development", by_session_id="dev-session")
+
+    manager._transition(
+        task.id,
+        "development",
+        "fail_stage",
+        by_session_id="dev-session",
+        reason="retry",
+        artifact_updates={},
+    )
+
+    assert manager.get(task.id, "development").artifact_refs == {}
+    restarted = manager.start_stage(task.id, "development", by_session_id="dev-session")
+    assert restarted.state == "in_progress"
+
+
 def test_recover_abandoned_stage_restores_attempt_without_escalating(
     temp_db,
     sample_project,
