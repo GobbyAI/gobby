@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import json
 import subprocess
-from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -132,6 +133,51 @@ class TestCheckSessions:
         mock_dispatch_fn.assert_called_once_with("s1", False, None)
         mock_session_storage.update_status.assert_called_once_with("s1", "expired")
         assert "s1" in monitor._recently_handled
+
+    @pytest.mark.asyncio
+    async def test_offloads_db_tmux_and_touch_work(
+        self,
+        monitor,
+        mock_session_storage,
+        monkeypatch,
+    ):
+        record = SimpleNamespace(
+            session_id="sess-tmux",
+            source="claude",
+            parent_pid=None,
+            tmux_pane="%1",
+            tmux_socket_path=None,
+        )
+
+        def get_active_terminal_sessions():
+            return [record]
+
+        def get_live_tmux_panes_by_socket(records):
+            assert records == [record]
+            return {None: {"%1"}}
+
+        monkeypatch.setattr(monitor, "_get_active_terminal_sessions", get_active_terminal_sessions)
+        monkeypatch.setattr(
+            monitor,
+            "_get_live_tmux_panes_by_socket",
+            get_live_tmux_panes_by_socket,
+        )
+
+        async def run_in_place(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        with patch(
+            "gobby.sessions.liveness_monitor.asyncio.to_thread",
+            new=AsyncMock(side_effect=run_in_place),
+        ) as to_thread:
+            await monitor._check_sessions()
+
+        assert to_thread.await_args_list == [
+            call(get_active_terminal_sessions),
+            call(get_live_tmux_panes_by_socket, [record]),
+            call(mock_session_storage.touch, "sess-tmux"),
+        ]
+        mock_session_storage.touch.assert_called_once_with("sess-tmux")
 
     @pytest.mark.asyncio
     async def test_ignores_alive_pid(self, monitor, mock_session_storage, mock_dispatch_fn):

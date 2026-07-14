@@ -138,11 +138,14 @@ class SessionLivenessMonitor:
             del self._recently_handled[sid]
 
         # 2. Query active sessions with terminal_context
-        active_sessions = self._get_active_terminal_sessions()
+        active_sessions = await asyncio.to_thread(self._get_active_terminal_sessions)
         if not active_sessions:
             return
 
-        live_panes_by_socket = self._get_live_tmux_panes_by_socket(active_sessions)
+        live_panes_by_socket = await asyncio.to_thread(
+            self._get_live_tmux_panes_by_socket,
+            active_sessions,
+        )
 
         # 3. A live tmux pane is authoritative. Parent PIDs can change under tmux
         # while the interactive session remains attached to the same pane.
@@ -171,7 +174,7 @@ class SessionLivenessMonitor:
                         f"{record.tmux_pane} and no parent PID - refreshing",
                     )
                     try:
-                        self._session_manager.touch(record.session_id)
+                        await asyncio.to_thread(self._session_manager.touch, record.session_id)
                     except Exception:
                         logger.warning(
                             f"SessionLivenessMonitor: failed to touch session {record.session_id}",
@@ -186,7 +189,7 @@ class SessionLivenessMonitor:
                             f"{record.parent_pid} - refreshing",
                         )
                         try:
-                            self._session_manager.touch(record.session_id)
+                            await asyncio.to_thread(self._session_manager.touch, record.session_id)
                         except Exception:
                             logger.warning(
                                 "SessionLivenessMonitor: failed to touch session "
@@ -403,7 +406,7 @@ class SessionLivenessMonitor:
 
         # 2. Mark session as expired
         try:
-            self._session_manager.update_status(session_id, "expired")
+            await asyncio.to_thread(self._session_manager.update_status, session_id, "expired")
         except Exception:
             logger.warning(
                 f"SessionLivenessMonitor: failed to expire session {session_id}",
