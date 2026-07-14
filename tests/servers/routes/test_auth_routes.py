@@ -177,6 +177,47 @@ class TestAuthLogin:
         resp = client.post("/api/auth/login", json={"username": "wrong", "password": "mypassword"})
         assert resp.status_code == 401
 
+    def test_repeated_failed_logins_are_locked_out(
+        self, temp_db, config_with_auth, task_manager
+    ) -> None:
+        _setup_auth_password(temp_db, "mypassword")
+        server = create_http_server(
+            config=config_with_auth, database=temp_db, task_manager=task_manager
+        )
+        client = TestClient(server.app)
+        credentials = {"username": "testuser", "password": "wrong"}
+
+        for _ in range(5):
+            assert client.post("/api/auth/login", json=credentials).status_code == 401
+
+        response = client.post("/api/auth/login", json=credentials)
+
+        assert response.status_code == 429
+        assert response.headers["Retry-After"] == "60"
+        assert response.json() == {"ok": False, "error": "Too many failed login attempts"}
+
+    def test_successful_login_resets_failed_attempts(
+        self, temp_db, config_with_auth, task_manager
+    ) -> None:
+        _setup_auth_password(temp_db, "mypassword")
+        server = create_http_server(
+            config=config_with_auth, database=temp_db, task_manager=task_manager
+        )
+        client = TestClient(server.app)
+        wrong_credentials = {"username": "testuser", "password": "wrong"}
+
+        for _ in range(4):
+            assert client.post("/api/auth/login", json=wrong_credentials).status_code == 401
+
+        response = client.post(
+            "/api/auth/login",
+            json={"username": "testuser", "password": "mypassword"},
+        )
+        assert response.status_code == 200
+
+        for _ in range(5):
+            assert client.post("/api/auth/login", json=wrong_credentials).status_code == 401
+
     def test_login_when_not_configured(self, temp_db, config_no_auth, task_manager) -> None:
         server = create_http_server(
             config=config_no_auth, database=temp_db, task_manager=task_manager
