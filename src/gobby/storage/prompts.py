@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
 
+from psycopg.errors import UniqueViolation
+
 from gobby.prompts.models import PromptTemplate, VariableSpec
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import normalize_datetime_model, utc_now
@@ -291,6 +293,8 @@ class LocalPromptManager:
         """
         now = utc_now()
         prompt_id = str(uuid.uuid5(_NS_PROMPTS, f"{name}:{scope}:{project_id or 'none'}"))
+        if self.get_prompt(prompt_id) is not None:
+            prompt_id = str(uuid.uuid4())
 
         variables_json = json.dumps(variables) if variables else None
 
@@ -319,13 +323,11 @@ class LocalPromptManager:
                         now,
                     ),
                 )
-            except Exception as e:
-                if "UNIQUE constraint" in str(e):
-                    raise ValueError(
-                        f"Prompt '{name}' already exists with scope='{scope}'"
-                        + (f" in project {project_id}" if project_id else "")
-                    ) from e
-                raise
+            except UniqueViolation as e:
+                raise ValueError(
+                    f"Prompt '{name}' already exists with scope='{scope}'"
+                    + (f" in project {project_id}" if project_id else "")
+                ) from e
 
         record = self.get_prompt(prompt_id)
         if record is None:

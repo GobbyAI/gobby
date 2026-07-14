@@ -8,6 +8,8 @@ import uuid
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
+from psycopg.errors import UniqueViolation
+
 from gobby.storage.skills._bundled import (
     BUNDLED_TEMPLATE_PROJECT_SKILL_ERROR,
     is_bundled_template_path,
@@ -136,57 +138,55 @@ class SkillMetadataMixin:
 
         now = utc_now()
         skill_id = str(uuid.uuid5(_NS_SKILLS, f"{name}:{project_id or 'global'}:{source}"))
-
-        # Check if skill already exists in this project scope with same source
-        existing = self.get_by_name(
-            name, project_id=project_id, source=source, include_deleted=True
-        )
-        if existing:
-            raise ValueError(
-                f"Skill '{name}' (source={source}) already exists"
-                + (f" in project {project_id}" if project_id else " globally")
-            )
+        if self.skill_exists(skill_id, include_deleted=True):
+            skill_id = str(uuid.uuid4())
 
         # Serialize JSON fields
         allowed_tools_json = json.dumps(allowed_tools) if allowed_tools else None
         metadata_json = json.dumps(metadata) if metadata else None
 
         with self.db.transaction() as conn:
-            conn.execute(
-                """
-                INSERT INTO skills (
-                    id, name, description, content, version, license,
-                    compatibility, allowed_tools, metadata, source_path,
-                    source_type, source_ref, hub_name, hub_slug, hub_version,
-                    enabled, always_apply, injection_format, project_id,
-                    source, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    skill_id,
-                    name,
-                    description,
-                    content,
-                    version,
-                    license,
-                    compatibility,
-                    allowed_tools_json,
-                    metadata_json,
-                    source_path,
-                    source_type,
-                    source_ref,
-                    hub_name,
-                    hub_slug,
-                    hub_version,
-                    enabled,
-                    always_apply,
-                    injection_format,
-                    project_id,
-                    source,
-                    now,
-                    now,
-                ),
-            )
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO skills (
+                        id, name, description, content, version, license,
+                        compatibility, allowed_tools, metadata, source_path,
+                        source_type, source_ref, hub_name, hub_slug, hub_version,
+                        enabled, always_apply, injection_format, project_id,
+                        source, created_at, updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        skill_id,
+                        name,
+                        description,
+                        content,
+                        version,
+                        license,
+                        compatibility,
+                        allowed_tools_json,
+                        metadata_json,
+                        source_path,
+                        source_type,
+                        source_ref,
+                        hub_name,
+                        hub_slug,
+                        hub_version,
+                        enabled,
+                        always_apply,
+                        injection_format,
+                        project_id,
+                        source,
+                        now,
+                        now,
+                    ),
+                )
+            except UniqueViolation as e:
+                raise ValueError(
+                    f"Skill '{name}' (source={source}) already exists"
+                    + (f" in project {project_id}" if project_id else " globally")
+                ) from e
 
         skill = self.get_skill(skill_id)
         self._host()._notify_change("create", skill_id, name)

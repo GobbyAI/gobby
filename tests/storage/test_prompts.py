@@ -100,6 +100,21 @@ class TestLocalPromptManagerCRUD:
         assert record.content == "Hello world"
         assert record.scope == "bundled"
 
+    def test_create_prompt_duplicate_fails(self, manager) -> None:
+        manager.create_prompt(name="test/duplicate", content="First", scope="global")
+
+        with pytest.raises(ValueError, match="already exists"):
+            manager.create_prompt(name="test/duplicate", content="Second", scope="global")
+
+    def test_rename_then_recreate_prompt(self, manager) -> None:
+        original = manager.create_prompt(name="test/original", content="First", scope="global")
+        manager.update_prompt(original.id, name="test/renamed")
+
+        recreated = manager.create_prompt(name="test/original", content="Second", scope="global")
+
+        assert recreated.id != original.id
+        assert recreated.name == "test/original"
+
     def test_get_prompt(self, manager) -> None:
         """Test retrieving a prompt by ID."""
         created = manager.create_prompt(
