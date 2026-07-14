@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 
+import gobby.review_learning.service as service_module
 from gobby.review_learning.lessons import normalize_lesson
 from gobby.review_learning.promotion import (
     PromotionDecision,
@@ -325,6 +326,55 @@ async def test_duplicate_occurrence_preflight_skips_new_memory(
 
 
 @pytest.mark.asyncio
+async def test_duplicate_occurrence_retries_promotion_after_partial_failure(
+    fake_memory_manager,
+    fake_task_manager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ReviewLearningService(fake_memory_manager, fake_task_manager)
+    await service.record(
+        source_kind="agent_review",
+        source="code-reviewer",
+        source_review="review-1",
+        decision="confirmed",
+        finding=_finding(),
+        evidence={"commit": "abc"},
+    )
+
+    real_promote_lesson = service_module.promote_lesson
+
+    async def fail_promotion(**_: object) -> dict[str, object]:
+        raise RuntimeError("promotion unavailable")
+
+    monkeypatch.setattr(service_module, "promote_lesson", fail_promotion)
+    with pytest.raises(RuntimeError, match="promotion unavailable"):
+        await service.record(
+            source_kind="agent_review",
+            source="code-reviewer",
+            source_review="review-2",
+            decision="confirmed",
+            finding=_finding(),
+            evidence={"commit": "def"},
+        )
+
+    monkeypatch.setattr(service_module, "promote_lesson", real_promote_lesson)
+    retry = await service.record(
+        source_kind="agent_review",
+        source="code-reviewer",
+        source_review="review-2",
+        decision="confirmed",
+        finding=_finding(),
+        evidence={"commit": "def"},
+    )
+
+    assert retry["skipped_reason"] == "duplicate_occurrence"
+    assert retry["guardrail_target"] == "test"
+    assert retry["task_ref"] == "#1"
+    assert len(fake_memory_manager.memories) == 2
+    assert len(fake_task_manager.created) == 1
+
+
+@pytest.mark.asyncio
 async def test_distinct_findings_with_formerly_colliding_identity_are_both_recorded(
     fake_memory_manager,
     fake_task_manager,
@@ -386,7 +436,7 @@ async def test_concurrent_same_occurrence_creates_one_memory_and_guardrail_task(
     assert len(fake_memory_manager.memories) == 2
     assert len(fake_task_manager.tasks) == 1
     assert sum(result.get("skipped_reason") == "duplicate_occurrence" for result in results) == 1
-    assert sum(result.get("task_ref") == "#1" for result in results) == 1
+    assert sum(result.get("task_ref") == "#1" for result in results) == 2
 
 
 @pytest.mark.asyncio

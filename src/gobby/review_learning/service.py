@@ -238,6 +238,14 @@ class ReviewLearningService:
             )
             if existing:
                 memory = existing[0]
+                promotion = await promote_lesson(
+                    lesson=normalized,
+                    evidence_memory_id=memory.id,
+                    memory_manager=self.memory_manager,
+                    task_manager=self.task_manager,
+                    project_id=project_id,
+                    source_session_id=source_session_id,
+                )
                 return {
                     "lesson_id": getattr(memory, "id", None),
                     "pattern_id": normalized.identity.pattern_id,
@@ -245,6 +253,7 @@ class ReviewLearningService:
                     "occurrence_key": occurrence_key,
                     "decision": validated_decision,
                     "promotable": normalized.identity.promotable,
+                    **promotion,
                     "skipped_reason": "duplicate_occurrence",
                 }
 
