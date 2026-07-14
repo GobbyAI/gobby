@@ -356,11 +356,11 @@ describe('ChatInput', () => {
 
   it('renders mode selector when onModeChange provided', () => {
     const { container } = render(
-      <ChatInput {...defaultProps} onModeChange={vi.fn()} mode="accept_edits" />,
+      <ChatInput {...defaultProps} onModeChange={vi.fn()} mode="normal" />,
     )
 
     expect(screen.getByTestId('mode-selector')).toBeTruthy()
-    expect(screen.getByText('accept_edits')).toBeTruthy()
+    expect(screen.getByText('normal')).toBeTruthy()
 
     // ModeSelector always lives in toolbar__left as the first child; the
     // mode-row variant was removed in favor of a single 3-row layout that

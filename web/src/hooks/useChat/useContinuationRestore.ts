@@ -7,7 +7,7 @@ import type {
   ToolCall,
   ToolResult,
 } from "../../types/chat";
-import { normalizeChatMode } from "../../types/chat";
+import { CHAT_MODES, normalizeChatMode } from "../../types/chat";
 import {
   saveConversationId,
   saveDbSessionId,
@@ -18,12 +18,9 @@ import type { ContinuationRollbackSnapshot } from "./sessionRecords";
 
 type Setter<T> = (value: T) => void;
 
-const RESTORABLE_CHAT_MODES = new Set<ChatMode>([
-  "accept_edits",
-  "bypass",
-  "normal",
-  "plan",
-]);
+export const RESTORABLE_CHAT_MODES = new Set<ChatMode>(
+  CHAT_MODES.map(({ id }) => id),
+);
 const RESTORABLE_INTERACTION_MODES = new Set(["none", "observe", "proxy"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -46,8 +43,10 @@ function validDate(value: unknown): Date | null {
   return Number.isNaN(date.valueOf()) ? null : date;
 }
 
-function isRestorableChatMode(value: unknown): value is ChatMode {
-  return RESTORABLE_CHAT_MODES.has(value as ChatMode);
+function normalizeRestorableChatMode(value: unknown): ChatMode {
+  if (typeof value !== "string") return "plan";
+  const normalized = normalizeChatMode(value);
+  return RESTORABLE_CHAT_MODES.has(normalized) ? normalized : "plan";
 }
 
 function isRestorableInteractionMode(
@@ -244,9 +243,7 @@ function normalizeContinuationSnapshot(
   const messages = normalizeMessages(snapshot.messages);
   if (!messages) return null;
 
-  const currentMode = isRestorableChatMode(snapshot.currentMode)
-    ? snapshot.currentMode
-    : "plan";
+  const currentMode = normalizeRestorableChatMode(snapshot.currentMode);
   const sessionInteractionMode = isRestorableInteractionMode(snapshot.sessionInteractionMode)
     ? snapshot.sessionInteractionMode
     : "none";

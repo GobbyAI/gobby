@@ -1,7 +1,7 @@
 import type { GobbySession } from "./sessions";
 import type { PaletteItem } from "../hooks/useColonAutocomplete";
 
-export type ChatMode = "accept_edits" | "bypass" | "normal" | "plan";
+export type ChatMode = "bypass" | "normal" | "plan";
 
 export interface ChatModeInfo {
   id: ChatMode;
