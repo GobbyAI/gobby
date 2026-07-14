@@ -404,9 +404,9 @@ class SessionLivenessMonitor:
                     exc_info=True,
                 )
 
-        # 2. Mark session as expired
+        # 2. Mark session as expired if no newer terminal state won the race
         try:
-            await asyncio.to_thread(self._session_manager.update_status, session_id, "expired")
+            await asyncio.to_thread(self._session_manager.expire_if_active, session_id)
         except Exception:
             logger.warning(
                 f"SessionLivenessMonitor: failed to expire session {session_id}",

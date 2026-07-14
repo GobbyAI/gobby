@@ -56,6 +56,23 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
             self._notify_session_change(event, session_id)
         return updated
 
+    def expire_if_active(self: _ManagerState, session_id: str) -> Session | None:
+        """Expire an active or paused session without overwriting a newer status."""
+        now = utc_now()
+        with self.db.transaction():
+            cursor = self.db.execute(
+                """
+                UPDATE sessions
+                SET status = 'expired', updated_at = %s
+                WHERE id = %s AND status IN ('active', 'paused')
+                """,
+                (now, session_id),
+            )
+        if cursor.rowcount <= 0:
+            return None
+        self._notify_session_change("session_expired", session_id)
+        return self.get(session_id)
+
     def revive_expired_terminal_session(self: _ManagerState, session_id: str) -> Session | None:
         """Mark an expired terminal session active when fresh activity arrives.
 

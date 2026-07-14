@@ -31,10 +31,10 @@ class _RecordingStorage:
         self.status_updates: list[tuple[str, str]] = []
         self.update_error = update_error
 
-    def update_status(self, session_id: str, status: str) -> None:
+    def expire_if_active(self, session_id: str) -> None:
         if self.update_error is not None:
             raise self.update_error
-        self.status_updates.append((session_id, status))
+        self.status_updates.append((session_id, "expired"))
 
 
 class _RecordingProcessor:
@@ -131,7 +131,7 @@ class TestCheckSessions:
             await monitor._check_sessions()
 
         mock_dispatch_fn.assert_called_once_with("s1", False, None)
-        mock_session_storage.update_status.assert_called_once_with("s1", "expired")
+        mock_session_storage.expire_if_active.assert_called_once_with("s1")
         assert "s1" in monitor._recently_handled
 
     @pytest.mark.asyncio
@@ -259,7 +259,7 @@ class TestCheckSessions:
             await monitor._check_sessions()
 
         mock_dispatch_fn.assert_called_once_with("dead", False, None)
-        mock_session_storage.update_status.assert_called_once_with("dead", "expired")
+        mock_session_storage.expire_if_active.assert_called_once_with("dead")
         assert set(monitor._recently_handled) == {"dead"}
 
     @pytest.mark.asyncio
@@ -360,7 +360,7 @@ class TestCheckSessions:
             await monitor._check_sessions()
 
         mock_dispatch_fn.assert_called_once_with("s1", False, None)
-        mock_session_storage.update_status.assert_called_once_with("s1", "expired")
+        mock_session_storage.expire_if_active.assert_called_once_with("s1")
         assert "s1" in monitor._recently_handled
 
     @pytest.mark.asyncio
@@ -386,7 +386,7 @@ class TestCheckSessions:
             await monitor._check_sessions()
 
         mock_dispatch_fn.assert_called_once_with("s1", False, None)
-        mock_session_storage.update_status.assert_called_once_with("s1", "expired")
+        mock_session_storage.expire_if_active.assert_called_once_with("s1")
         assert set(monitor._recently_handled) == {"s1"}
 
     @pytest.mark.asyncio
@@ -433,7 +433,7 @@ class TestCheckSessions:
             await monitor._check_sessions()
 
         mock_dispatch_fn.assert_called_once_with("s1", False, None)
-        mock_session_storage.update_status.assert_called_once_with("s1", "expired")
+        mock_session_storage.expire_if_active.assert_called_once_with("s1")
         assert set(monitor._recently_handled) == {"s1"}
 
     @pytest.mark.asyncio
@@ -501,7 +501,7 @@ class TestCheckSessions:
             await monitor._check_sessions()
 
         mock_dispatch_fn.assert_called_once_with("s1", False, None)
-        mock_session_storage.update_status.assert_called_once_with("s1", "expired")
+        mock_session_storage.expire_if_active.assert_called_once_with("s1")
         mock_session_storage.touch.assert_not_called()
         assert set(monitor._recently_handled) == {"s1"}
 

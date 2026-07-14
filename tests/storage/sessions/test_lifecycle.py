@@ -32,6 +32,41 @@ class TestSessionManagerLifecycle:
         assert updated is not None
         assert updated.status == "paused"
 
+    def test_expire_if_active_does_not_overwrite_handoff_ready(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        session = session_manager.register(
+            external_id="conditional-expiry-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        session_manager.update_status(session.id, "handoff_ready")
+
+        assert session_manager.expire_if_active(session.id) is None
+        preserved = session_manager.get(session.id)
+        assert preserved is not None
+        assert preserved.status == "handoff_ready"
+
+    def test_expire_if_active_updates_active_session(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        session = session_manager.register(
+            external_id="active-expiry-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        expired = session_manager.expire_if_active(session.id)
+
+        assert expired is not None
+        assert expired.status == "expired"
+
     @pytest.mark.parametrize("bulk", [False, True])
     def test_status_updates_reject_unknown_values(
         self,

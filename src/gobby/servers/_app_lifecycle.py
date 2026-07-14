@@ -306,6 +306,7 @@ def create_lifespan(
                 message_processor=getattr(app.state.hook_manager, "_message_processor", None),
             )
             app.state.liveness_monitor = liveness_monitor
+            app.state.hook_manager.event_handlers.set_liveness_monitor(liveness_monitor)
             await liveness_monitor.start()
             logger.debug("SessionLivenessMonitor started")
         except Exception as e:
