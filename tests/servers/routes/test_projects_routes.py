@@ -154,6 +154,8 @@ class TestProjectRoutes:
         data = response.json()
         assert data["id"] == real_project["id"]
         assert data["name"] == "my-project"
+        assert data["created_at"] == real_project["created_at"]
+        assert data["updated_at"] == real_project["updated_at"]
         assert data["display_name"] == "my-project"
         assert "session_count" in data
         assert data["approval_rules"] == []

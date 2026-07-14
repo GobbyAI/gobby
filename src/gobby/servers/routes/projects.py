@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, HTTPException
+from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field, ValidationError
 
 from gobby.config.validation_detection import (
@@ -91,7 +92,7 @@ def _get_project_stats(server: HTTPServer, project_id: str) -> dict[str, Any]:
 
 
 def _project_to_response(server: HTTPServer, project: Project) -> dict[str, Any]:
-    data = project.to_dict()
+    data = cast(dict[str, Any], jsonable_encoder(project.to_dict()))
     data["display_name"] = "Personal" if project.name == "_personal" else project.name
     data.update(_get_project_stats(server, project.id))
     data["approval_rules"] = (
