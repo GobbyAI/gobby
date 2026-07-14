@@ -460,15 +460,24 @@ def _build_file_context(self: Any, task: Task, repo_path: Path | None) -> str:
     }
     mentioned_files = extract_mentioned_files(task_payload)
 
-    unique_files: list[str] = []
+    repo_root = repo_path.resolve()
+    unique_files: list[tuple[str, Path]] = []
     seen: set[str] = set()
     for file_path in mentioned_files:
+        if ".." in Path(file_path).parts:
+            continue
         normalized = file_path.lstrip("./")
+        relative_path = Path(normalized)
         if normalized in seen:
             continue
-        absolute = repo_path / normalized
+        try:
+            absolute = (repo_root / relative_path).resolve()
+        except (OSError, RuntimeError):
+            continue
+        if not absolute.is_relative_to(repo_root):
+            continue
         if absolute.exists() and absolute.is_file():
-            unique_files.append(normalized)
+            unique_files.append((normalized, absolute))
             seen.add(normalized)
         if len(unique_files) >= 8:
             break
@@ -477,8 +486,8 @@ def _build_file_context(self: Any, task: Task, repo_path: Path | None) -> str:
         return ""
 
     sections: list[str] = []
-    for file_path in unique_files:
-        content = _read_text_if_exists(repo_path / file_path, max_chars=3500)
+    for file_path, absolute in unique_files:
+        content = _read_text_if_exists(absolute, max_chars=3500)
         if content:
             sections.append(f"### {file_path}\n{content}")
     return "\n\n".join(sections)
