@@ -189,6 +189,26 @@ class TestStatuslineEndpoint:
             model=None,
         )
 
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "input_tokens",
+            "output_tokens",
+            "cache_creation_tokens",
+            "cache_read_tokens",
+            "context_window_size",
+        ],
+    )
+    def test_rejects_invalid_usage_values(self, client, mock_server, field: str) -> None:
+        response = client.post(
+            "/api/sessions/statusline",
+            json={"session_id": "ext-123", field: "invalid"},
+        )
+
+        assert response.status_code == 422
+        mock_server.session_manager.find_active_by_external_id.assert_not_called()
+        mock_server.session_manager.update_usage.assert_not_called()
+
     def test_does_not_log_usage_gap_for_routine_updates(
         self, client, mock_server, caplog, enable_log_propagation
     ) -> None:

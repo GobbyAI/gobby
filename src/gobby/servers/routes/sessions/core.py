@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import ValidationError
 from starlette.requests import ClientDisconnect
 
 from gobby.agents.sandbox import (
@@ -19,7 +20,11 @@ from gobby.agents.sandbox import (
     web_chat_sandbox_config,
     web_chat_sandbox_policy_hash,
 )
-from gobby.servers.models import SessionRegisterRequest, WebChatSessionRequest
+from gobby.servers.models import (
+    SessionRegisterRequest,
+    StatuslineUpdateRequest,
+    WebChatSessionRequest,
+)
 from gobby.servers.routes.sessions.statusline_activity import (
     STATUSLINE_GAP_OBSERVATION_THRESHOLD_MS,
     STATUSLINE_GAP_WARNING_THRESHOLD_MS,
@@ -372,7 +377,12 @@ def register_core_routes(
         except (ValueError, json.JSONDecodeError):
             raise HTTPException(status_code=400, detail="Invalid JSON") from None
 
-        external_id = body.get("session_id")
+        try:
+            update = StatuslineUpdateRequest.model_validate(body)
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.errors()) from None
+
+        external_id = update.session_id
         if not external_id:
             raise HTTPException(status_code=400, detail="Missing session_id") from None
 
@@ -429,12 +439,12 @@ def register_core_routes(
 
         sm.update_usage(
             session_id=session.id,
-            input_tokens=body.get("input_tokens", 0),
-            output_tokens=body.get("output_tokens", 0),
-            cache_creation_tokens=body.get("cache_creation_tokens", 0),
-            cache_read_tokens=body.get("cache_read_tokens", 0),
-            context_window=body.get("context_window_size"),
-            model=body.get("model_id"),
+            input_tokens=update.input_tokens,
+            output_tokens=update.output_tokens,
+            cache_creation_tokens=update.cache_creation_tokens,
+            cache_read_tokens=update.cache_read_tokens,
+            context_window=update.context_window_size,
+            model=update.model_id,
         )
         inc_counter("statusline_posts_succeeded_total", attributes={"source": "claude"})
 
@@ -444,17 +454,13 @@ def register_core_routes(
                 build_session_usage_payload(
                     session_id=session.id,
                     project_id=session.project_id,
-                    model=body.get("model_id") if isinstance(body.get("model_id"), str) else None,
-                    context_window=(
-                        body.get("context_window_size")
-                        if isinstance(body.get("context_window_size"), int)
-                        else None
-                    ),
+                    model=update.model_id,
+                    context_window=update.context_window_size,
                     totals={
-                        "input_tokens": int(body.get("input_tokens", 0) or 0),
-                        "output_tokens": int(body.get("output_tokens", 0) or 0),
-                        "cache_creation_tokens": int(body.get("cache_creation_tokens", 0) or 0),
-                        "cache_read_tokens": int(body.get("cache_read_tokens", 0) or 0),
+                        "input_tokens": update.input_tokens,
+                        "output_tokens": update.output_tokens,
+                        "cache_creation_tokens": update.cache_creation_tokens,
+                        "cache_read_tokens": update.cache_read_tokens,
                     },
                     updated_at=now,
                 )
