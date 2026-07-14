@@ -487,10 +487,6 @@ class VoiceMixin(VoiceWarmupMixin):
 
     async def _cleanup_voice(self) -> None:
         """Clean up voice state. Called from stop()."""
-        # Cancel all active TTS pipelines
-        for conv_id in list(self._active_tts_pipelines):
-            await self._cancel_tts(conv_id)
-
         await self.stop_voice_warmup()
 
         # Cancel any in-flight background tasks (dep installs, etc.)

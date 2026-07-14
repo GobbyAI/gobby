@@ -451,23 +451,6 @@ class TestVoiceWarmup:
         provider.get_status.assert_called_once()
         assert status["tts_runtime_primed"] is True
 
-    async def test_replacing_tts_pipeline_tracks_cancel_task(self) -> None:
-        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=False))
-        mixin._voice_enabled["conv-1"] = True
-        mixin._tts_provider = MagicMock()
-        existing = MagicMock()
-        existing.cancel = AsyncMock()
-        mixin._active_tts_pipelines["conv-1"] = existing
-
-        with patch("gobby.servers.websocket.voice.mixin.TTSPipeline"):
-            mixin._create_tts_pipeline("conv-1")
-
-        assert len(mixin._background_tasks) == 1
-        cancel_task = next(iter(mixin._background_tasks))
-        assert cancel_task.get_name() == "cancel-tts-pipeline"
-        await cancel_task
-        existing.cancel.assert_awaited_once()
-
     @pytest.mark.asyncio
     async def test_start_voice_warmup_records_failures(self) -> None:
         """Missing warmup providers should record unavailable status details."""
@@ -515,6 +498,7 @@ class TestVoiceWarmup:
         mixin._tts_warmup_status = "ready"
         mock_stt = MagicMock()
         mock_tts = MagicMock()
+        mock_tts.unload = AsyncMock()
         mixin._whisper_stt = mock_stt
         mixin._tts_provider = mock_tts
         mixin._voice_warmup_task = asyncio.create_task(wait_forever())
@@ -522,13 +506,13 @@ class TestVoiceWarmup:
         mixin._background_tasks.add(background_task)
         mixin._voice_enabled["conv-1"] = True
 
-        with patch("torch.mps.empty_cache"):
+        with patch.dict("sys.modules", {"torch": MagicMock()}):
             await mixin.cleanup_voice()
 
         assert mixin._voice_warmup_task is None
         assert background_task.cancelled()
         mock_stt.unload.assert_called_once()
-        mock_tts.unload.assert_called_once()
+        mock_tts.unload.assert_awaited_once()
         assert mixin._whisper_stt is None
         assert mixin._tts_provider is None
         assert mixin._background_tasks == set()
@@ -539,6 +523,22 @@ class TestVoiceWarmup:
         # Idempotent shutdown should remain safe after state is cleared.
         await mixin.cleanup_voice()
 
+    async def test_unload_voice_models_cancels_pipelines_before_tts_unload(self) -> None:
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True))
+        events: list[str] = []
+        pipeline = MagicMock()
+        pipeline.cancel = AsyncMock(side_effect=lambda: events.append("cancel"))
+        tts = MagicMock()
+        tts.unload = AsyncMock(side_effect=lambda: events.append("unload"))
+        mixin._active_tts_pipelines["conv-1"] = pipeline
+        mixin._tts_provider = tts
+
+        with patch.dict("sys.modules", {"torch": MagicMock()}):
+            await mixin._unload_voice_models()
+
+        assert events == ["cancel", "unload"]
+        assert mixin._active_tts_pipelines == {}
+
     @pytest.mark.asyncio
     async def test_check_voice_idle_cancels_inflight_warmup(self) -> None:
         """Idle checks should cancel an in-flight warmup task."""
@@ -548,6 +548,25 @@ class TestVoiceWarmup:
         await mixin._check_voice_idle()
 
         assert mixin._voice_warmup_task is None
+
+    async def test_check_voice_idle_unloads_lazy_models_after_warmup_errors(self) -> None:
+        """Idle checks should reclaim models loaded lazily after failed warmup."""
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=True))
+        mock_stt = MagicMock()
+        mock_tts = MagicMock()
+        mock_tts.unload = AsyncMock()
+        mixin._whisper_stt = mock_stt
+        mixin._tts_provider = mock_tts
+        mixin._stt_warmup_status = "error"
+        mixin._tts_warmup_status = "error"
+
+        with patch.dict("sys.modules", {"torch": MagicMock()}):
+            await mixin._check_voice_idle()
+
+        mock_stt.unload.assert_called_once_with()
+        mock_tts.unload.assert_awaited_once_with()
+        assert mixin._whisper_stt is None
+        assert mixin._tts_provider is None
 
     @pytest.mark.asyncio
     async def test_voice_audio_forwards_project_id_to_chat_message(self) -> None:

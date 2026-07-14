@@ -3,7 +3,11 @@ from typing import Any, Literal
 
 from gobby.storage.memories_base import MemoryStoreBase
 from gobby.storage.memories_models import Memory
-from gobby.storage.sql_dialect import older_than_now_expr
+from gobby.storage.sql_dialect import (
+    json_array_contains_condition,
+    json_empty_array_coalesce_expr,
+    older_than_now_expr,
+)
 from gobby.utils.datetime import parse_stored_datetime, utc_now
 
 
@@ -133,8 +137,10 @@ class MemoryDreamMixin(MemoryStoreBase):
 
         Selects visible rows (``deleted_at IS NULL``) that have either never been
         dreamed or were last dreamed before ``redream_cutoff`` (the cooldown
-        boundary, ``run_started_at - redream_after_hours``). Project/global and
-        memory-type scoping is applied in SQL, mirroring ``_in_scope``: a
+        boundary, ``run_started_at - redream_after_hours``). Review-lesson
+        memories are protected from dream mutations and excluded before paging.
+        Project/global and memory-type scoping is applied in SQL, mirroring
+        ``_in_scope``: a
         global-only run matches only NULL-scoped rows; otherwise, a ``project_id``
         with ``include_global`` also matches global rows; without it only that
         project's rows match; a ``None`` ``project_id`` sweeps every row. Ordered
@@ -149,6 +155,13 @@ class MemoryDreamMixin(MemoryStoreBase):
         if cutoff is None:
             raise ValueError("redream_cutoff is required")
         params: list[Any] = [cutoff]
+        review_lesson_condition, review_lesson_params = json_array_contains_condition(
+            self.db,
+            json_empty_array_coalesce_expr(self.db, "tags"),
+            "review-lesson",
+        )
+        clauses.append(f"NOT ({review_lesson_condition})")
+        params.extend(review_lesson_params)
         if global_only:
             clauses.append("project_id IS NULL")
         elif project_id is not None:

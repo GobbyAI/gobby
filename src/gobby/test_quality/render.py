@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from gobby.test_quality.baseline import AuditDiff
-from gobby.test_quality.models import AuditReport, AuditWarning
+from gobby.test_quality.models import AuditIssue, AuditReport, AuditWarning
 
 
 def render_json(report: AuditReport, diff: AuditDiff | None = None) -> str:
@@ -35,6 +35,7 @@ def render_text(report: AuditReport, diff: AuditDiff | None = None) -> str:
         if diff.warning_message:
             lines.append(diff.warning_message)
         lines.append(f"New issues: {len(diff.new_issues)}")
+        lines.append(f"Known baseline issues: {len(diff.known_issues)}")
         lines.append(f"Failing new issues >= {diff.min_severity}: {len(diff.failing_issues)}")
 
     if report.warnings:
@@ -51,20 +52,26 @@ def render_text(report: AuditReport, diff: AuditDiff | None = None) -> str:
             codes = ", ".join(item.issue_codes)
             lines.append(f"  {item.score:>3} {item.identifier} [{codes}]")
 
-    issues = (
-        diff.failing_issues if diff is not None and diff.failing_issues else report.sorted_issues
-    )
-    if issues:
-        heading = "Failing issues:" if diff is not None and diff.failing_issues else "Issues:"
-        lines.append("")
-        lines.append(heading)
-        for issue in issues:
-            lines.append(
-                f"  {issue.severity.upper()} {issue.issue_code} "
-                f"{issue.path}::{issue.test_name}:{issue.line} - {issue.message}"
-            )
+    if diff is None:
+        _append_issues(lines, "Issues:", report.sorted_issues)
+    else:
+        _append_issues(lines, "Failing new issues:", diff.failing_issues)
+        _append_issues(lines, "New issues below threshold:", diff.below_threshold_issues)
+        _append_issues(lines, "Known baseline issues:", diff.known_issues)
 
     return "\n".join(lines) + "\n"
+
+
+def _append_issues(lines: list[str], heading: str, issues: tuple[AuditIssue, ...]) -> None:
+    if not issues:
+        return
+    lines.append("")
+    lines.append(heading)
+    for issue in issues:
+        lines.append(
+            f"  {issue.severity.upper()} {issue.issue_code} "
+            f"{issue.path}::{issue.test_name}:{issue.line} - {issue.message}"
+        )
 
 
 def _format_counts(label: str, counts: dict[str, int]) -> str:

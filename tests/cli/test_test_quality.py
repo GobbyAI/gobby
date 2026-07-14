@@ -116,6 +116,123 @@ def test_no_assertion():
     assert payload["issues"][0]["fingerprint"] == (
         "tests/test_sample.py::test_no_assertion::NO_ASSERTION"
     )
+    assert payload["issues"][0]["occurrences"] == 1
+
+
+def test_baseline_detects_additional_occurrence_of_same_issue() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem() as cwd:
+        root = Path(cwd)
+        test_path = _write_test(
+            root,
+            """
+def test_repeated_issue():
+    assert True
+""",
+        )
+        baseline_path = root / ".gobby" / "test-quality-baseline.json"
+        write_result = runner.invoke(
+            quality_command,
+            ["audit", "tests", "--write-baseline", str(baseline_path)],
+        )
+        test_path.write_text(
+            """
+def test_repeated_issue():
+    assert True
+    assert True
+""",
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(
+            quality_command,
+            [
+                "audit",
+                "tests",
+                "--baseline",
+                str(baseline_path),
+                "--fail-on-new",
+                "--min-severity",
+                "high",
+            ],
+        )
+
+    assert write_result.exit_code == 0
+    assert result.exit_code == 1
+    assert "New issues: 1" in result.output
+    assert "Known baseline issues: 1" in result.output
+    assert "test_repeated_issue:4" in result.output
+
+
+def test_failing_audit_refuses_to_rewrite_baseline_without_override() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem() as cwd:
+        root = Path(cwd)
+        _write_test(
+            root,
+            """
+def test_no_assertion():
+    cleanup()
+""",
+        )
+        baseline_path = root / ".gobby" / "test-quality-baseline.json"
+        baseline_path.parent.mkdir()
+        original = '{"schema_version": 2, "issues": []}\n'
+        baseline_path.write_text(original, encoding="utf-8")
+
+        result = runner.invoke(
+            quality_command,
+            [
+                "audit",
+                "tests",
+                "--baseline",
+                str(baseline_path),
+                "--fail-on-new",
+                "--write-baseline",
+                str(baseline_path),
+            ],
+        )
+        persisted = baseline_path.read_text(encoding="utf-8")
+
+    assert result.exit_code == 1
+    assert "Failing new issues:" in result.output
+    assert "refusing to write a baseline from a failing audit" in result.output
+    assert "--allow-failing-baseline" in result.output
+    assert persisted == original
+
+
+def test_failing_audit_writes_baseline_with_explicit_override() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem() as cwd:
+        root = Path(cwd)
+        _write_test(
+            root,
+            """
+def test_no_assertion():
+    cleanup()
+""",
+        )
+        baseline_path = root / ".gobby" / "test-quality-baseline.json"
+        baseline_path.parent.mkdir()
+        baseline_path.write_text('{"schema_version": 2, "issues": []}\n', encoding="utf-8")
+
+        result = runner.invoke(
+            quality_command,
+            [
+                "audit",
+                "tests",
+                "--baseline",
+                str(baseline_path),
+                "--fail-on-new",
+                "--write-baseline",
+                str(baseline_path),
+                "--allow-failing-baseline",
+            ],
+        )
+        payload = json.loads(baseline_path.read_text(encoding="utf-8"))
+
+    assert result.exit_code == 1
+    assert payload["issues"][0]["issue_code"] == "NO_ASSERTION"
 
 
 def test_fail_on_new_reports_synthetic_no_assertion() -> None:
@@ -131,7 +248,7 @@ def test_no_assertion():
         )
         baseline_path = root / ".gobby" / "test-quality-baseline.json"
         baseline_path.parent.mkdir()
-        baseline_path.write_text('{"schema_version": 1, "issues": []}\n', encoding="utf-8")
+        baseline_path.write_text('{"schema_version": 2, "issues": []}\n', encoding="utf-8")
 
         result = runner.invoke(
             quality_command,
@@ -149,6 +266,53 @@ def test_no_assertion():
     assert result.exit_code == 1
     assert "NO_ASSERTION" in result.output
     assert "Failing new issues >= high: 1" in result.output
+
+
+def test_text_output_separates_below_threshold_new_issues_from_known_issues() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem() as cwd:
+        root = Path(cwd)
+        test_path = _write_test(
+            root,
+            """
+def test_mixed_severity():
+    assert True
+""",
+        )
+        baseline_path = root / ".gobby" / "test-quality-baseline.json"
+        runner.invoke(
+            quality_command,
+            ["audit", "tests", "--write-baseline", str(baseline_path)],
+        )
+        test_path.write_text(
+            """
+import time
+
+def test_mixed_severity():
+    time.sleep(0.01)
+    assert True
+""",
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(
+            quality_command,
+            [
+                "audit",
+                "tests",
+                "--baseline",
+                str(baseline_path),
+                "--fail-on-new",
+                "--min-severity",
+                "high",
+            ],
+        )
+
+    assert result.exit_code == 0
+    assert "New issues below threshold:" in result.output
+    assert "MEDIUM SLEEP_IN_TEST" in result.output
+    assert "Known baseline issues:" in result.output
+    assert "HIGH ASSERT_TRUE" in result.output
 
 
 def test_fail_on_new_missing_baseline_treats_current_issues_as_new() -> None:
@@ -345,3 +509,30 @@ it.each(["has space", "control char"])(
     assert "Files scanned: 1" in result.output
     assert "Tests scanned: 1" in result.output
     assert "Issues: 0" in result.output
+
+
+@pytest.mark.parametrize("requested_path", ["tests/helper.ts", "tests"])
+def test_fail_on_new_rejects_zero_file_audits(requested_path: str) -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem() as cwd:
+        root = Path(cwd)
+        path = root / requested_path
+        if path.suffix:
+            path.parent.mkdir()
+            path.write_text("export const helper = true;\n", encoding="utf-8")
+        baseline_path = root / ".gobby" / "missing-baseline.json"
+
+        result = runner.invoke(
+            quality_command,
+            [
+                "audit",
+                requested_path,
+                "--baseline",
+                str(baseline_path),
+                "--fail-on-new",
+            ],
+        )
+
+    assert result.exit_code == 1
+    assert "Files scanned: 0" in result.output
+    assert "NO_ANALYZABLE_FILES" in result.output

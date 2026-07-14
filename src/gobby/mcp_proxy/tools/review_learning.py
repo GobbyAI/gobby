@@ -6,7 +6,11 @@ from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.review_learning.promotion import PromotionTaskManager
-from gobby.review_learning.service import ReviewLearningMemoryManager, ReviewLearningService
+from gobby.review_learning.service import (
+    MAX_RECALL_FINDINGS,
+    ReviewLearningMemoryManager,
+    ReviewLearningService,
+)
 
 _FINDING_OBJECT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -34,7 +38,10 @@ _RECALL_REVIEW_CONTEXT_SCHEMA: dict[str, Any] = {
     "properties": {
         "findings": {
             "type": "array",
-            "description": "Review findings as structured objects or plain finding text.",
+            "description": (
+                f"Up to {MAX_RECALL_FINDINGS} review findings as structured objects or plain text."
+            ),
+            "maxItems": MAX_RECALL_FINDINGS,
             "items": {
                 "oneOf": [
                     _FINDING_OBJECT_SCHEMA,

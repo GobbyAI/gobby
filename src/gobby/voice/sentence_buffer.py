@@ -1,8 +1,7 @@
 """Sentence buffer for streaming TTS.
 
-Accumulates streaming text chunks and emits complete sentences
-for TTS synthesis. Prevents synthesizing partial words or sentences
-which would produce unnatural speech.
+Accumulates streaming text chunks and prefers complete sentences for TTS
+synthesis while bounding boundary-free streams such as logs and code blocks.
 """
 
 from __future__ import annotations
@@ -21,10 +20,11 @@ _MIN_SENTENCE_LEN = 4
 _CLAUSE_END = re.compile(r"([,;:\u2014\u2013])(?:\s+|$)")
 
 _DEFAULT_MAX_CHUNK_CHARS = 180
+_MAX_BUFFER_MULTIPLIER = 4
 
 
 class SentenceBuffer:
-    """Accumulates streaming text, yields complete sentences for TTS."""
+    """Accumulates streaming text and yields bounded speech chunks for TTS."""
 
     def __init__(
         self,
@@ -36,32 +36,39 @@ class SentenceBuffer:
         self._max_chunk_chars = max_chunk_chars
 
     def feed(self, chunk: str) -> list[str]:
-        """Feed a text chunk, return any complete sentences ready for TTS.
+        """Feed text and return complete sentences or a forced bounded prefix.
 
         Args:
             chunk: Partial text from the LLM stream.
 
         Returns:
-            List of complete sentences (may be empty if no boundary found).
+            Speech chunks, or an empty list while the pending buffer remains bounded.
         """
-        self._buffer += chunk
-
-        # Split on sentence boundaries
-        parts = _SENTENCE_END.split(self._buffer)
-
-        if len(parts) <= 1:
-            # No sentence boundary found yet
+        if not chunk:
             return []
 
-        # All parts except the last are complete sentences.
-        # The last part is the incomplete remainder.
+        previous_length = len(self._buffer)
+        self._buffer += chunk
+
+        # The existing buffer was fully scanned by earlier feed calls. Include
+        # its last character only so punctuation at the old/new boundary can
+        # pair with whitespace at the start of this chunk.
+        scan_start = max(0, previous_length - 1)
         sentences: list[str] = []
-        for part in parts[:-1]:
+        remainder_start = 0
+        found_boundary = False
+        for match in _SENTENCE_END.finditer(self._buffer, scan_start):
+            found_boundary = True
+            part = self._buffer[remainder_start : match.start()]
             stripped = part.strip()
             if stripped:
                 sentences.append(stripped)
+            remainder_start = match.end()
 
-        self._buffer = parts[-1]
+        if not found_boundary:
+            return self._force_emit_prefix()
+
+        self._buffer = self._buffer[remainder_start:]
 
         # If any sentence is too short, merge it with the next one
         merged: list[str] = []
@@ -78,7 +85,7 @@ class SentenceBuffer:
             # Short leftover — push back to buffer
             self._buffer = f"{carry} {self._buffer}".strip() if self._buffer else carry
 
-        return self._split_chunks(merged)
+        return [*self._split_chunks(merged), *self._force_emit_prefix()]
 
     def flush(self) -> list[str]:
         """Flush remaining buffer content (call at end of stream).
@@ -101,6 +108,29 @@ class SentenceBuffer:
         for chunk in chunks:
             split.extend(self._split_text(chunk))
         return split
+
+    def _force_emit_prefix(self) -> list[str]:
+        """Emit the oldest text when a boundary-free stream exceeds its ceiling."""
+        max_buffer_chars = self._max_chunk_chars * _MAX_BUFFER_MULTIPLIER
+        if len(self._buffer) <= max_buffer_chars:
+            return []
+
+        prefix_chars = max(
+            self._max_chunk_chars,
+            len(self._buffer) - max_buffer_chars,
+        )
+        search_end = min(len(self._buffer), prefix_chars + self._max_chunk_chars)
+        split_at = next(
+            (
+                index + 1
+                for index in range(prefix_chars, search_end)
+                if self._buffer[index].isspace()
+            ),
+            prefix_chars,
+        )
+        prefix = self._buffer[:split_at]
+        self._buffer = self._buffer[split_at:].lstrip()
+        return self._split_text(prefix)
 
     def _split_text(self, text: str) -> list[str]:
         stripped = text.strip()

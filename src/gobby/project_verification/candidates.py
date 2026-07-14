@@ -6,17 +6,49 @@ import shlex
 from dataclasses import dataclass
 from typing import Any
 
-from gobby.project_verification.evidence import STANDARD_SLOTS, EvidenceBundle, EvidenceItem
+from gobby.project_verification.evidence import (
+    FRONTEND_SUBDIRS,
+    STANDARD_SLOTS,
+    EvidenceBundle,
+    EvidenceItem,
+    existing_command_confidence,
+)
 
-GENERIC_EXISTING_COMMANDS = {
-    "cargo test",
-    "cargo clippy",
-    "go test ./...",
-    "go vet ./...",
-    "npm test",
-    "pytest",
-    "uv run pytest",
-}
+SHELL_CONTROL_CHARACTERS = frozenset(";&|<>")
+VALIDATION_EXECUTABLES = frozenset(
+    {
+        "bandit",
+        "bun",
+        "cargo",
+        "deno",
+        "eslint",
+        "go",
+        "hatch",
+        "just",
+        "make",
+        "mypy",
+        "nox",
+        "npm",
+        "npx",
+        "pdm",
+        "pipenv",
+        "pnpm",
+        "poetry",
+        "prettier",
+        "pytest",
+        "python",
+        "python3",
+        "ruff",
+        "safety",
+        "semgrep",
+        "task",
+        "tox",
+        "tsc",
+        "uv",
+        "vitest",
+        "yarn",
+    }
+)
 
 SOURCE_RANK = {
     "ai": 7,
@@ -85,7 +117,11 @@ def generate_candidates(bundle: EvidenceBundle) -> list[CommandCandidate]:
             if candidate:
                 candidates.append(candidate)
 
-    return [candidate for candidate in candidates if is_safe_validation_command(candidate.command)]
+    return [
+        candidate
+        for candidate in candidates
+        if is_safe_validation_command(candidate.command, candidate.slot)
+    ]
 
 
 def select_best_candidates(candidates: list[CommandCandidate]) -> dict[str, CommandCandidate]:
@@ -145,8 +181,11 @@ def classify_command(command: str) -> str | None:
 
 def is_safe_validation_command(command: str, slot: str | None = None) -> bool:
     """Reject mutating forms that are inappropriate for verification."""
+    invocation = _validation_invocation(command)
+    if not invocation:
+        return False
     lowered = command.lower()
-    tokens = _command_tokens(lowered)
+    tokens = [token.lower() for token in invocation]
     if _has_mutating_option(tokens):
         return False
     if _has_token_sequence(tokens, ("npm", "run", "format")):
@@ -162,6 +201,55 @@ def is_safe_validation_command(command: str, slot: str | None = None) -> bool:
     return True
 
 
+def _validation_invocation(command: str) -> list[str] | None:
+    if any(marker in command for marker in ("`", "$(", "\n", "\r")):
+        return None
+
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|<>")
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return None
+    if not tokens:
+        return None
+
+    contains_control_character = not SHELL_CONTROL_CHARACTERS.isdisjoint(command)
+    control_positions = [
+        index for index, token in enumerate(tokens) if _is_shell_control_token(token)
+    ]
+    if control_positions:
+        if control_positions != [2] or tokens[:1] != ["cd"] or tokens[2] != "&&":
+            return None
+        if len(tokens) < 4 or not _is_safe_subdir(tokens[1]):
+            return None
+        tokens = tokens[3:]
+    elif contains_control_character:
+        return None
+
+    while tokens and _is_environment_assignment(tokens[0]):
+        tokens = tokens[1:]
+    if not tokens or tokens[0].lower() not in VALIDATION_EXECUTABLES:
+        return None
+    return tokens
+
+
+def _is_safe_subdir(subdir: str) -> bool:
+    if not subdir or subdir.startswith(("/", "~", "-")):
+        return False
+    return ".." not in subdir.replace("\\", "/").split("/")
+
+
+def _is_shell_control_token(token: str) -> bool:
+    return bool(token) and set(token) <= SHELL_CONTROL_CHARACTERS
+
+
+def _is_environment_assignment(token: str) -> bool:
+    name, separator, _value = token.partition("=")
+    return bool(separator and name and name.replace("_", "a").isalnum() and not name[0].isdigit())
+
+
 def _command_tokens(command: str) -> list[str]:
     try:
         return shlex.split(command)
@@ -171,7 +259,11 @@ def _command_tokens(command: str) -> list[str]:
 
 def _has_mutating_option(tokens: list[str]) -> bool:
     return any(
-        token in {"--fix", "--write"} or token.startswith(("--fix=", "--write="))
+        token.startswith("--")
+        and any(
+            part.startswith(("fix", "write"))
+            for part in token.removeprefix("--").partition("=")[0].split("-")
+        )
         for token in tokens
     )
 
@@ -202,7 +294,7 @@ def _existing_candidates(bundle: EvidenceBundle) -> list[CommandCandidate]:
                             name=str(custom_name),
                             slot=classify_command(command) or "custom",
                             command=command,
-                            confidence=_existing_confidence(command, custom=True),
+                            confidence=existing_command_confidence(command, custom=True),
                             source=".gobby/project.json",
                             source_kind="existing",
                             rationale="Existing custom verification command",
@@ -216,7 +308,7 @@ def _existing_candidates(bundle: EvidenceBundle) -> list[CommandCandidate]:
                     name=name,
                     slot=name,
                     command=value,
-                    confidence=_existing_confidence(value, custom=False),
+                    confidence=existing_command_confidence(value, custom=False),
                     source=".gobby/project.json",
                     source_kind="existing",
                     rationale="Existing project verification command",
@@ -230,31 +322,46 @@ def _python_candidates(bundle: EvidenceBundle, *, custom: bool) -> list[CommandC
     if not python:
         return []
     target = "src/" if python.has_src else "."
+    runner = {
+        "uv": "uv run ",
+        "poetry": "poetry run ",
+        "pdm": "pdm run ",
+    }.get(python.package_manager or "", "")
+    test_prefix = (
+        "GOBBY_TEST_PROTECT=1 "
+        if python.project_name and python.project_name.strip().casefold() == "gobby"
+        else ""
+    )
     candidates: list[CommandCandidate] = []
     if python.has_tests or python.has_pytest_config:
         candidates.append(
             _candidate(
                 "unit_tests",
-                "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v",
+                f"{test_prefix}{runner}pytest tests/ -v",
                 0.58,
                 "pyproject.toml",
                 "manifest",
             )
         )
-    type_command = f"uv run mypy {target}"
+    type_command = f"{runner}mypy {target}"
     if python.mypy_strict:
         type_command = f"{type_command} --no-incremental --strict"
     candidates.append(_candidate("type_check", type_command, 0.68, "pyproject.toml", "manifest"))
     candidates.append(
-        _candidate("lint", f"uv run ruff check {target}", 0.64, "pyproject.toml", "manifest")
+        _candidate("lint", f"{runner}ruff check {target}", 0.64, "pyproject.toml", "manifest")
     )
     candidates.append(
         _candidate(
-            "format", f"uv run ruff format --check {target}", 0.64, "pyproject.toml", "manifest"
+            "format", f"{runner}ruff format --check {target}", 0.64, "pyproject.toml", "manifest"
         )
     )
     if python.has_build_system:
-        candidates.append(_candidate("build", "uv build", 0.56, "pyproject.toml", "manifest"))
+        build_command = {
+            "uv": "uv build",
+            "poetry": "poetry build",
+            "pdm": "pdm build",
+        }.get(python.package_manager or "", "python -m build")
+        candidates.append(_candidate("build", build_command, 0.56, "pyproject.toml", "manifest"))
     if custom:
         return [_as_custom(candidate, f"python_{candidate.name}") for candidate in candidates]
     return candidates
@@ -377,7 +484,7 @@ def _ordered_scripts(scripts: dict[str, str]) -> list[str]:
 
 
 def _package_script_command(subdir: str, script: str) -> str:
-    command = "npm test" if script == "test" else f"npm run {script}"
+    command = "npm test" if script == "test" else f"npm run {shlex.quote(script)}"
     return command if subdir == "." else f"cd {shlex.quote(subdir)} && {command}"
 
 
@@ -430,17 +537,6 @@ def _as_custom(candidate: CommandCandidate, name: str) -> CommandCandidate:
     )
 
 
-def _existing_confidence(command: str, *, custom: bool) -> float:
-    normalized = " ".join(command.split())
-    if normalized in GENERIC_EXISTING_COMMANDS:
-        return 0.62
-    if any(token in normalized for token in ("--workspace", "--strict", "nextest", " --", "cd ")):
-        return 0.9 if custom else 0.88
-    if len(normalized.split()) >= 4:
-        return 0.86 if custom else 0.84
-    return 0.76 if custom else 0.74
-
-
 def _is_better(candidate: CommandCandidate, current: CommandCandidate) -> bool:
     if candidate.confidence > current.confidence + 0.001:
         return True
@@ -460,6 +556,10 @@ def _is_format_check(lowered: str) -> bool:
 def _is_build_command(lowered: str) -> bool:
     build_prefixes = (
         "uv build",
+        "poetry build",
+        "pdm build",
+        "python -m build",
+        "python3 -m build",
         "go build",
         "cargo build",
         "npm run build",
@@ -473,6 +573,9 @@ def _is_build_command(lowered: str) -> bool:
         token in lowered
         for token in (
             "&& uv build",
+            "&& poetry build",
+            "&& pdm build",
+            "&& python -m build",
             "&& go build",
             "&& cargo build",
             "&& npm run build",
@@ -484,4 +587,11 @@ def _is_build_command(lowered: str) -> bool:
 
 def _is_frontend_command(command: str) -> bool:
     lowered = command.lower()
-    return lowered.startswith("cd web &&") or " npm " in f" {lowered} " or " npx " in f" {lowered} "
+    tokens = _command_tokens(lowered)
+    frontend_subdir = (
+        len(tokens) >= 3
+        and tokens[0] == "cd"
+        and tokens[1] in FRONTEND_SUBDIRS
+        and tokens[2] == "&&"
+    )
+    return frontend_subdir or " npm " in f" {lowered} " or " npx " in f" {lowered} "

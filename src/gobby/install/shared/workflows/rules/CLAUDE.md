@@ -23,6 +23,7 @@ This directory contains bundled rule groups. These are **templates** — they ar
 | `brevity` | `brevity/` | 6 | Load brevity on turn start, opt-out phrases, drift detection and next-turn feedback, per-turn reinforcement |
 | `restraint` | `restraint/` | 3 | Block first code write/edit until restraint is loaded, opt-out phrases, per-turn reinforcement |
 | `context7` | `context7/` | 1 | Block first code file write/edit with optional context7 docs nudge |
+| `review-learning` | `review-learning/` | 1 | Inject confirmed review lessons before edits to matching touched files |
 | `deprecated/` | `deprecated/` | — | Old rules excluded from sync |
 
 ## File Convention

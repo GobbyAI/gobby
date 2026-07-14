@@ -1,9 +1,18 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
+import gobby.review_learning.service as service_module
 from gobby.review_learning.lessons import normalize_lesson
-from gobby.review_learning.promotion import PromotionDecision, _create_or_update_task
+from gobby.review_learning.promotion import (
+    PromotionDecision,
+    PromotionMemoryManager,
+    _create_or_update_task,
+    _diagnostic_locations,
+    resolve_promotion,
+)
 from gobby.review_learning.service import ReviewLearningService
 from tests.review_learning.conftest import FakeTaskManager
 
@@ -22,6 +31,15 @@ def _finding(**overrides: str) -> dict[str, str]:
     }
     finding.update(overrides)
     return finding
+
+
+def test_promotion_memory_protocol_only_exposes_used_listing_method() -> None:
+    assert "list_memories" not in PromotionMemoryManager.__dict__
+    assert "alist_memories" in PromotionMemoryManager.__dict__
+
+
+def test_diagnostic_location_ignores_end_line_without_start_line() -> None:
+    assert _diagnostic_locations({"path": "a.py", "end_line": 5}) == "- a.py"
 
 
 @pytest.mark.asyncio
@@ -192,6 +210,40 @@ async def test_confirmed_second_occurrence_creates_test_guardrail_task(
     assert "repeated review-learning pattern" not in fake_task_manager.tasks[0].description
 
 
+@pytest.mark.parametrize(
+    "occurrence_count, expected_tier",
+    [
+        pytest.param(2, "confirmed-2", id="second-occurrence"),
+        pytest.param(3, "confirmed-3", id="third-occurrence"),
+        pytest.param(5, "confirmed-3", id="later-occurrence"),
+    ],
+)
+def test_confirmed_thresholds_preserve_explicit_tool_config_target(
+    occurrence_count: int,
+    expected_tier: str,
+) -> None:
+    lesson = normalize_lesson(
+        source_kind="agent_review",
+        source="code-reviewer",
+        source_review="review-1",
+        decision="confirmed",
+        finding=_finding(guardrail_target="tool-config"),
+        evidence={"commit": "abc"},
+        finding_fingerprint="fingerprint",
+        occurrence_key="occurrence",
+        repo=None,
+        language=None,
+        risk="medium",
+    )
+
+    decision = resolve_promotion(lesson, occurrence_count)
+
+    assert decision.tier == expected_tier
+    assert decision.guardrail_target == "tool-config"
+    assert decision.category == "config"
+    assert decision.should_create_task is True
+
+
 @pytest.mark.asyncio
 async def test_repeated_weak_confirmed_lessons_wait_for_actionable_occurrence(
     fake_memory_manager,
@@ -240,10 +292,14 @@ async def test_third_confirmed_occurrence_updates_existing_task(
     fake_memory_manager, fake_task_manager
 ) -> None:
     service = ReviewLearningService(fake_memory_manager, fake_task_manager)
-    for source_review in ("review-1", "review-2", "review-3"):
+    for source, source_review in (
+        ("Reviewer One", "Review One"),
+        ("Reviewer Two", "Review Two"),
+        ("Reviewer Three", "Review Three"),
+    ):
         result = await service.record(
             source_kind="agent_review",
-            source="code-reviewer",
+            source=source,
             source_review=source_review,
             decision="confirmed",
             finding=_finding(),
@@ -255,6 +311,15 @@ async def test_third_confirmed_occurrence_updates_existing_task(
     assert len(fake_task_manager.updated) == 1
     assert "target:validation" in fake_task_manager.tasks[0].labels
     assert fake_task_manager.tasks[0].category == "code"
+    assert [
+        label for label in fake_task_manager.tasks[0].labels if label.startswith("evidence:")
+    ] == ["evidence:mem-3"]
+    assert [
+        label for label in fake_task_manager.tasks[0].labels if label.startswith("source:")
+    ] == ["source:reviewer-three"]
+    assert [
+        label for label in fake_task_manager.tasks[0].labels if label.startswith("review-lesson:")
+    ] == ["review-lesson:review-three"]
 
 
 @pytest.mark.asyncio
@@ -285,6 +350,120 @@ async def test_duplicate_occurrence_preflight_skips_new_memory(
 
 
 @pytest.mark.asyncio
+async def test_duplicate_occurrence_retries_promotion_after_partial_failure(
+    fake_memory_manager,
+    fake_task_manager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ReviewLearningService(fake_memory_manager, fake_task_manager)
+    await service.record(
+        source_kind="agent_review",
+        source="code-reviewer",
+        source_review="review-1",
+        decision="confirmed",
+        finding=_finding(),
+        evidence={"commit": "abc"},
+    )
+
+    real_promote_lesson = service_module.promote_lesson
+
+    async def fail_promotion(**_: object) -> dict[str, object]:
+        raise RuntimeError("promotion unavailable")
+
+    monkeypatch.setattr(service_module, "promote_lesson", fail_promotion)
+    with pytest.raises(RuntimeError, match="promotion unavailable"):
+        await service.record(
+            source_kind="agent_review",
+            source="code-reviewer",
+            source_review="review-2",
+            decision="confirmed",
+            finding=_finding(),
+            evidence={"commit": "def"},
+        )
+
+    monkeypatch.setattr(service_module, "promote_lesson", real_promote_lesson)
+    retry = await service.record(
+        source_kind="agent_review",
+        source="code-reviewer",
+        source_review="review-2",
+        decision="confirmed",
+        finding=_finding(),
+        evidence={"commit": "def"},
+    )
+
+    assert retry["skipped_reason"] == "duplicate_occurrence"
+    assert retry["guardrail_target"] == "test"
+    assert retry["task_ref"] == "#1"
+    assert len(fake_memory_manager.memories) == 2
+    assert len(fake_task_manager.created) == 1
+
+
+@pytest.mark.asyncio
+async def test_distinct_findings_with_formerly_colliding_identity_are_both_recorded(
+    fake_memory_manager,
+    fake_task_manager,
+) -> None:
+    service = ReviewLearningService(fake_memory_manager, fake_task_manager)
+
+    rule_result = await service.record(
+        source_kind="agent_review",
+        source="code-reviewer",
+        source_review="review-1",
+        decision="confirmed",
+        finding=_finding(rule_id="X", principle=""),
+        evidence={"commit": "abc"},
+    )
+    principle_result = await service.record(
+        source_kind="agent_review",
+        source="code-reviewer",
+        source_review="review-1",
+        decision="confirmed",
+        finding=_finding(rule_id="", principle="X"),
+        evidence={"commit": "abc"},
+    )
+
+    assert rule_result["finding_fingerprint"] != principle_result["finding_fingerprint"]
+    assert rule_result["occurrence_key"] != principle_result["occurrence_key"]
+    assert principle_result.get("skipped_reason") != "duplicate_occurrence"
+    assert len(fake_memory_manager.memories) == 2
+
+
+@pytest.mark.asyncio
+async def test_concurrent_same_occurrence_creates_one_memory_and_guardrail_task(
+    fake_memory_manager,
+    fake_task_manager,
+) -> None:
+    service = ReviewLearningService(fake_memory_manager, fake_task_manager)
+    await service.record(
+        source_kind="agent_review",
+        source="code-reviewer",
+        source_review="review-1",
+        decision="confirmed",
+        finding=_finding(),
+        evidence={"commit": "abc"},
+    )
+
+    results = await asyncio.gather(
+        *(
+            service.record(
+                source_kind="agent_review",
+                source="code-reviewer",
+                source_review="review-2",
+                decision="confirmed",
+                finding=_finding(),
+                evidence={"commit": "def"},
+            )
+            for _ in range(2)
+        )
+    )
+
+    assert len(fake_memory_manager.memories) == 2
+    assert len(fake_task_manager.tasks) == 1
+    assert sum(result.get("skipped_reason") == "duplicate_occurrence" for result in results) == 1
+    assert sum(result.get("task_ref") == "#1" for result in results) == 2
+
+
+@pytest.mark.asyncio
 async def test_no_fix_policy_only_promotes_to_checklist(
     fake_memory_manager, fake_task_manager
 ) -> None:
@@ -301,6 +480,43 @@ async def test_no_fix_policy_only_promotes_to_checklist(
 
     assert result["guardrail_target"] == "checklist"
     assert fake_task_manager.created[0]["category"] == "docs"
+
+
+async def test_no_fix_policy_promotion_preserves_confirmed_guardrail_task(
+    fake_memory_manager, fake_task_manager
+) -> None:
+    service = ReviewLearningService(fake_memory_manager, fake_task_manager)
+    for index in range(1, 4):
+        await service.record(
+            source_kind="agent_review",
+            source="code-reviewer",
+            source_review=f"confirmed-{index}",
+            decision="confirmed",
+            finding=_finding(),
+            evidence={"commit": f"confirmed-{index}"},
+        )
+
+    confirmed_task = fake_task_manager.tasks[0]
+    for index in range(1, 4):
+        await service.record(
+            source_kind="review_comment",
+            source="coderabbit",
+            source_review=f"policy-{index}",
+            decision="no-fix-policy",
+            finding=_finding(),
+            evidence={"reason": f"policy-{index}"},
+        )
+
+    assert len(fake_task_manager.created) == 2
+    assert confirmed_task.category == "code"
+    assert "target:validation" in confirmed_task.labels
+    assert "decision:confirmed" in confirmed_task.labels
+    policy_task = fake_task_manager.tasks[1]
+    assert policy_task.category == "docs"
+    assert "target:checklist" in policy_task.labels
+    assert "decision:no-fix-policy" in policy_task.labels
+    assert "implementation_domain" not in fake_task_manager.created[1]
+    assert "implementation_domain" not in fake_task_manager.updated[-1]
 
 
 @pytest.mark.asyncio

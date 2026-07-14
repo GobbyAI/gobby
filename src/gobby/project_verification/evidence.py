@@ -37,6 +37,16 @@ MAX_FILE_BYTES = 64 * 1024
 MAX_DOC_COMMANDS = 80
 MAX_CI_COMMANDS = 120
 
+GENERIC_EXISTING_COMMANDS = {
+    "cargo test",
+    "cargo clippy",
+    "go test ./...",
+    "go vet ./...",
+    "npm test",
+    "pytest",
+    "uv run pytest",
+}
+
 COMMAND_LINE_RE = re.compile(
     r"\b("
     r"uv run|pytest|ruff|mypy|cargo|nextest|clippy|go test|go vet|go build|"
@@ -50,6 +60,18 @@ DOC_COMMAND_START_RE = re.compile(
     r")\b"
 )
 INLINE_CODE_RE = re.compile(r"`([^`]+)`")
+
+
+def existing_command_confidence(command: str, *, custom: bool) -> float:
+    """Score existing commands while preserving deliberate CI-strength commands."""
+    normalized = " ".join(command.split())
+    if normalized in GENERIC_EXISTING_COMMANDS:
+        return 0.62
+    if any(token in normalized for token in ("--workspace", "--strict", "nextest", " --", "cd ")):
+        return 0.9 if custom else 0.88
+    if len(normalized.split()) >= 4:
+        return 0.86 if custom else 0.84
+    return 0.84 if custom else 0.82
 
 
 @dataclass(frozen=True)
@@ -95,6 +117,8 @@ class PythonEvidence:
     has_ruff_config: bool
     has_mypy_config: bool
     mypy_strict: bool
+    package_manager: str | None
+    project_name: str | None
 
 
 @dataclass(frozen=True)
@@ -112,6 +136,8 @@ class EvidenceBundle:
 
     root: Path
     existing_verification: dict[str, Any] = field(default_factory=dict)
+    existing_project_json_intact: bool = True
+    warnings: list[str] = field(default_factory=list)
     items: list[EvidenceItem] = field(default_factory=list)
     python: PythonEvidence | None = None
     packages: list[PackageScripts] = field(default_factory=list)
@@ -129,6 +155,7 @@ class EvidenceBundle:
         return {
             "project_root_name": self.root.name,
             "existing_verification": self.existing_verification,
+            "warnings": list(self.warnings),
             "items": [item.to_prompt_dict() for item in self.items],
             "manifests": {
                 "python": asdict(self.python) if self.python else None,
@@ -158,9 +185,19 @@ def _collect_existing_project_json(bundle: EvidenceBundle) -> None:
     project_file = bundle.project_json_path
     if not project_file.exists():
         return
+    text = _read_structured_text(bundle, project_file)
+    if text is None:
+        bundle.existing_project_json_intact = False
+        return
     try:
-        data = json.loads(_read_text(project_file))
-    except (json.JSONDecodeError, OSError):
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        bundle.existing_project_json_intact = False
+        _warn_structured_skip(bundle, project_file, f"invalid JSON ({exc})")
+        return
+    if not isinstance(data, dict):
+        bundle.existing_project_json_intact = False
+        _warn_structured_skip(bundle, project_file, "top-level JSON value is not an object")
         return
     verification = data.get("verification")
     if not isinstance(verification, dict):
@@ -176,7 +213,7 @@ def _collect_existing_project_json(bundle: EvidenceBundle) -> None:
                             kind="existing",
                             command=custom_command,
                             name=str(custom_name),
-                            confidence=0.75,
+                            confidence=existing_command_confidence(custom_command, custom=True),
                         )
                     )
             continue
@@ -188,7 +225,7 @@ def _collect_existing_project_json(bundle: EvidenceBundle) -> None:
                     command=command,
                     slot=name,
                     name=name,
-                    confidence=0.75,
+                    confidence=existing_command_confidence(command, custom=False),
                 )
             )
 
@@ -197,13 +234,28 @@ def _collect_pyproject(bundle: EvidenceBundle) -> None:
     path = bundle.root / "pyproject.toml"
     if not path.exists():
         return
+    text = _read_structured_text(bundle, path)
+    if text is None:
+        return
     try:
-        data = tomllib.loads(_read_text(path))
-    except (tomllib.TOMLDecodeError, OSError):
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        _warn_structured_skip(bundle, path, f"invalid TOML ({exc})")
         return
     tool = data.get("tool", {})
     if not isinstance(tool, dict):
         tool = {}
+    project = data.get("project", {})
+    if not isinstance(project, dict):
+        project = {}
+    project_name = project.get("name")
+    poetry = tool.get("poetry", {})
+    if not isinstance(poetry, dict):
+        poetry = {}
+    if not isinstance(project_name, str):
+        project_name = poetry.get("name")
+    if not isinstance(project_name, str):
+        project_name = None
     mypy = tool.get("mypy", {})
     pytest_cfg = tool.get("pytest")
     bundle.python = PythonEvidence(
@@ -215,6 +267,8 @@ def _collect_pyproject(bundle: EvidenceBundle) -> None:
         has_ruff_config=isinstance(tool.get("ruff"), dict),
         has_mypy_config=isinstance(mypy, dict),
         mypy_strict=isinstance(mypy, dict) and mypy.get("strict") is True,
+        package_manager=_python_package_manager(bundle.root),
+        project_name=project_name,
     )
     bundle.items.append(
         EvidenceItem(
@@ -229,9 +283,16 @@ def _collect_pyproject(bundle: EvidenceBundle) -> None:
 def _collect_package_jsons(bundle: EvidenceBundle) -> None:
     for package_dir, subdir in _find_frontend_dirs(bundle.root):
         path = package_dir / "package.json"
+        text = _read_structured_text(bundle, path)
+        if text is None:
+            continue
         try:
-            data = json.loads(_read_text(path))
-        except (json.JSONDecodeError, OSError):
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            _warn_structured_skip(bundle, path, f"invalid JSON ({exc})")
+            continue
+        if not isinstance(data, dict):
+            _warn_structured_skip(bundle, path, "top-level JSON value is not an object")
             continue
         scripts = data.get("scripts", {})
         if not isinstance(scripts, dict):
@@ -283,9 +344,13 @@ def _collect_ci_commands(bundle: EvidenceBundle) -> None:
     for path in sorted((*workflows_dir.glob("*.yml"), *workflows_dir.glob("*.yaml"))):
         if count >= MAX_CI_COMMANDS:
             return
+        text = _read_structured_text(bundle, path)
+        if text is None:
+            continue
         try:
-            data = yaml.safe_load(_read_text(path)) or {}
-        except (OSError, yaml.YAMLError):
+            data = yaml.safe_load(text) or {}
+        except yaml.YAMLError as exc:
+            _warn_structured_skip(bundle, path, f"invalid YAML ({exc})")
             continue
         rel = _rel(bundle.root, path)
         for command, step_name in _workflow_commands(data):
@@ -305,11 +370,16 @@ def _collect_ci_commands(bundle: EvidenceBundle) -> None:
 
 
 def _collect_make_like_commands(bundle: EvidenceBundle) -> None:
-    for filename in ("Makefile", "makefile", "justfile", "Justfile"):
-        path = bundle.root / filename
-        if not path.exists():
+    for path in _existing_unique_files(
+        bundle.root,
+        ("Makefile", "makefile", "justfile", "Justfile"),
+    ):
+        filename = path.name
+        try:
+            recipe_text = _read_text(path)
+        except OSError:
             continue
-        for target, command in _parse_indented_recipes(_read_text(path)):
+        for target, command in _parse_indented_recipes(recipe_text):
             if _script_name_is_relevant(target) and _looks_like_command(command):
                 bundle.items.append(
                     EvidenceItem(
@@ -321,13 +391,18 @@ def _collect_make_like_commands(bundle: EvidenceBundle) -> None:
                     )
                 )
 
-    for filename in ("Taskfile.yml", "Taskfile.yaml", "taskfile.yml", "taskfile.yaml"):
-        path = bundle.root / filename
-        if not path.exists():
+    for path in _existing_unique_files(
+        bundle.root,
+        ("Taskfile.yml", "Taskfile.yaml", "taskfile.yml", "taskfile.yaml"),
+    ):
+        filename = path.name
+        text = _read_structured_text(bundle, path)
+        if text is None:
             continue
         try:
-            data = yaml.safe_load(_read_text(path)) or {}
-        except (OSError, yaml.YAMLError):
+            data = yaml.safe_load(text) or {}
+        except yaml.YAMLError as exc:
+            _warn_structured_skip(bundle, path, f"invalid YAML ({exc})")
             continue
         tasks = data.get("tasks", {}) if isinstance(data, dict) else {}
         if not isinstance(tasks, dict):
@@ -406,13 +481,32 @@ def _workflow_commands(data: Any) -> list[tuple[str, str]]:
 
 def _split_run_commands(run: str) -> list[str]:
     commands: list[str] = []
+    continued = ""
+    awaiting_continuation = False
+    rejected_trailing_backslash = False
     for raw_line in run.splitlines():
         line = raw_line.strip()
-        if not line or line.startswith("#"):
+        if awaiting_continuation:
+            line = f"{continued} {line}".strip()
+            awaiting_continuation = False
+        elif not line:
+            continue
+
+        trailing_backslashes = len(line) - len(line.rstrip("\\"))
+        if trailing_backslashes % 2 == 1:
+            continued = line[:-1].rstrip()
+            awaiting_continuation = True
+            continue
+        if line.endswith("\\"):
+            rejected_trailing_backslash = True
+            continue
+        if line.startswith("#"):
             continue
         if line.startswith(("set ", "export ", "echo ")):
             continue
         commands.append(line)
+    if awaiting_continuation or rejected_trailing_backslash:
+        return commands
     if commands:
         return commands
     folded = run.strip()
@@ -531,7 +625,64 @@ def _looks_like_doc_command(command: str) -> bool:
 
 
 def _read_text(path: Path) -> str:
-    return path.read_text(encoding="utf-8", errors="replace")[:MAX_FILE_BYTES]
+    with path.open("rb") as handle:
+        return handle.read(MAX_FILE_BYTES).decode("utf-8", errors="replace")
+
+
+def _python_package_manager(root: Path) -> str | None:
+    """Detect the Python runner with deterministic lockfile precedence."""
+    for lockfile, manager in (
+        ("uv.lock", "uv"),
+        ("poetry.lock", "poetry"),
+        ("pdm.lock", "pdm"),
+    ):
+        if (root / lockfile).is_file():
+            return manager
+    return None
+
+
+def _existing_unique_files(root: Path, filenames: tuple[str, ...]) -> list[Path]:
+    """Return existing candidate files once per physical filesystem entry."""
+    paths: list[Path] = []
+    seen: set[tuple[int, int]] = set()
+    for filename in filenames:
+        path = root / filename
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        identity = (stat.st_dev, stat.st_ino)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        paths.append(path)
+    return paths
+
+
+def _read_structured_text(bundle: EvidenceBundle, path: Path) -> str | None:
+    """Read a structured evidence file only when its complete contents fit."""
+    try:
+        with path.open("rb") as handle:
+            raw = handle.read(MAX_FILE_BYTES + 1)
+    except OSError as exc:
+        _warn_structured_skip(bundle, path, f"could not read file ({exc})")
+        return None
+    if len(raw) > MAX_FILE_BYTES:
+        _warn_structured_skip(
+            bundle,
+            path,
+            f"file exceeds MAX_FILE_BYTES ({MAX_FILE_BYTES} bytes)",
+        )
+        return None
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        _warn_structured_skip(bundle, path, f"file is not valid UTF-8 ({exc})")
+        return None
+
+
+def _warn_structured_skip(bundle: EvidenceBundle, path: Path, reason: str) -> None:
+    bundle.warnings.append(f"Skipped structured evidence {_rel(bundle.root, path)}: {reason}.")
 
 
 def _rel(root: Path, path: Path) -> str:
