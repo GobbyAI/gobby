@@ -255,6 +255,26 @@ class TestVerifyBundledIntegrity:
         assert len(result.dirty_files) == 0
         assert len(result.untracked_files) == 0
 
+    def test_git_diff_failure_marks_check_unavailable(self, tmp_path: Path) -> None:
+        """A failed git diff is not treated as a clean integrity check."""
+        shared = tmp_path / "shared"
+        shared.mkdir()
+
+        def mock_git(cmd: list[str], cwd: str | Path, **kwargs: object) -> str | None:
+            if "rev-parse" in cmd and "--show-toplevel" in cmd:
+                return str(tmp_path)
+            if "diff" in cmd and "--cached" not in cmd:
+                return None
+            return ""
+
+        with patch("gobby.sync.integrity.run_git_command", side_effect=mock_git):
+            result = verify_bundled_integrity(tmp_path)
+
+        assert result.git_available is True
+        assert result.checked is False
+        assert result.source == "git"
+        assert result.errors == ["Git integrity check failed while checking unstaged changes"]
+
     def test_dirty_files_detected(self, tmp_path: Path) -> None:
         """Detects modified tracked files."""
         shared = tmp_path / "shared"
