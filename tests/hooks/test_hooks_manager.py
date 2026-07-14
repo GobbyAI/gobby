@@ -400,10 +400,12 @@ class TestHookManagerSessionEnd:
             summary_markdown=None,
             git_branch=None,
             parent_session_id=None,
-            created_at="2026-01-04T00:00:00+00:00",
-            updated_at="2026-01-04T00:00:00+00:00",
+            created_at=datetime(2026, 1, 4, tzinfo=UTC),
+            updated_at=datetime(2026, 1, 4, tzinfo=UTC),
         )
 
+        mock_project = MagicMock()
+        mock_project.name = "session-project"
         # Mock auto_link_commits to verify it's called
         mock_result = AutoLinkResult(
             linked_tasks={"gt-123abc": ["abc1234", "def5678"]},
@@ -420,10 +422,12 @@ class TestHookManagerSessionEnd:
             patch.object(
                 hook_manager_with_mocks._session_manager, "get", return_value=mock_session
             ),
+            patch("gobby.storage.projects.LocalProjectManager") as project_manager_cls,
             patch(
                 "gobby.tasks.commits.auto_link_commits", return_value=mock_result
             ) as mock_auto_link,
         ):
+            project_manager_cls.return_value.get.return_value = mock_project
             end_event = HookEvent(
                 event_type=HookEventType.SESSION_END,
                 session_id="test-external-id-123",
@@ -444,6 +448,8 @@ class TestHookManagerSessionEnd:
             assert "task_manager" in call_kwargs
             assert call_kwargs["since"] == "2026-01-04T00:00:00+00:00"
             assert call_kwargs["cwd"] == str(temp_dir)
+            assert call_kwargs["project_id"] == mock_session.project_id
+            assert call_kwargs["project_name"] == "session-project"
 
 
 class TestHookManagerBeforeAgent:

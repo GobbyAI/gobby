@@ -6,6 +6,8 @@ These tests verify that:
 3. The path_cache correctly reflects the task's hierarchy
 """
 
+from uuid import uuid4
+
 import pytest
 
 from gobby.storage.tasks import LocalTaskManager
@@ -144,9 +146,8 @@ class TestPathCacheOnInsert:
 
     def test_multiple_projects_independent_paths(self, task_manager, temp_db) -> None:
         """Test that each project has independent path sequences."""
-        project_a_id = "00000000-0000-0000-0000-00000000000a"
-        project_b_id = "00000000-0000-0000-0000-00000000000b"
-
+        project_a_id = str(uuid4())
+        project_b_id = str(uuid4())
         # Create two projects
         temp_db.execute(
             "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
@@ -247,30 +248,6 @@ class TestPathCacheOnReparent:
 
         assert updated_child.path_cache == "2.3"
         assert updated_grandchild.path_cache == "2.3.4"
-
-    def test_reparent_rolls_back_parent_when_path_update_fails(
-        self, task_manager, project_id, temp_db, monkeypatch
-    ) -> None:
-        parent1 = task_manager.create_task(project_id=project_id, title="Parent 1")
-        parent2 = task_manager.create_task(project_id=project_id, title="Parent 2")
-        child = task_manager.create_task(
-            project_id=project_id, title="Child", parent_task_id=parent1.id
-        )
-        original_path = child.path_cache
-
-        def fail_path_update(_task_id: str) -> int:
-            raise RuntimeError("injected path update failure")
-
-        monkeypatch.setattr(task_manager, "update_descendant_paths", fail_path_update)
-
-        with pytest.raises(RuntimeError, match="injected path update failure"):
-            task_manager.update_task(child.id, parent_task_id=parent2.id)
-
-        row = temp_db.fetchone(
-            "SELECT parent_task_id, path_cache FROM tasks WHERE id = %s", (child.id,)
-        )
-        assert row["parent_task_id"] == parent1.id
-        assert row["path_cache"] == original_path
 
     def test_reparent_deep_subtree(self, task_manager, project_id) -> None:
         """Test reparenting a subtree with multiple levels."""

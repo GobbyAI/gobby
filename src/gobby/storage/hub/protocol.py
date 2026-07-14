@@ -15,6 +15,7 @@ __all__ = [
     "ChatAttachmentMutation",
     "CronRunAdmission",
     "DispatchMutexRow",
+    "ExpansionApplyMutation",
     "HubDatabase",
     "GitHubIssueTriageMutation",
     "IntegrationWorkspaceMutex",
@@ -109,10 +110,22 @@ class TaskSeqAllocation:
 
 
 @dataclass(frozen=True)
-class TaskDependencyMutation:
-    """Serializes dependency cycle checks and inserts."""
+class ExpansionApplyMutation:
+    """Serializes expansion apply for one parent task."""
 
     PRIORITY: ClassVar[int] = 250
+    parent_task_id: str
+
+
+@dataclass(frozen=True)
+class TaskDependencyMutation:
+    """Serializes dependency cycle checks and inserts.
+
+    Must stay above ExpansionApplyMutation: apply_run holds that lock while
+    add_dependency acquires this one, and nested priorities must increase.
+    """
+
+    PRIORITY: ClassVar[int] = 275
 
 
 @dataclass(frozen=True)

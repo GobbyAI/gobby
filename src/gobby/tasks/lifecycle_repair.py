@@ -171,6 +171,8 @@ class LifecycleRepair:
         force: bool,
         diagnostics: list[LifecycleRepairDiagnostic],
     ) -> LifecycleRepairCandidate | None:
+        if _has_terminal_state(task):
+            return None
         plan_file_candidate = self._plan_file_candidate(
             task,
             task_scoped=task_scoped,
@@ -326,15 +328,11 @@ class LifecycleRepair:
             )
             for item in candidate.desired_manifest
         ]
-        if force:
-            self.task_manager.db.execute(
-                "DELETE FROM task_stage_states WHERE task_id = %s",
-                (candidate.task_id,),
-            )
         self.task_manager.stage_states.initialize_manifest(
             candidate.task_id,
             specs,
             by_session_id=None,
+            replace_existing=force,
         )
         reason = (
             "repair-lifecycle:reseed-plan-file-manifest"
@@ -390,7 +388,7 @@ def _has_non_manifest_lifecycle_event(task_manager: LocalTaskManager, task_id: s
 
 
 def _is_metadata_only(task_manager: LocalTaskManager, task: Task) -> bool:
-    if task.claimed_by_session_id or task.closed_at or task.escalated_at or task.is_escalated:
+    if task.claimed_by_session_id or _has_terminal_state(task):
         return False
     if _has_non_manifest_lifecycle_event(task_manager, task.id):
         return False
@@ -409,6 +407,10 @@ def _is_metadata_only(task_manager: LocalTaskManager, task: Task) -> bool:
             artifacts.expansion_attempts,
         )
     )
+
+
+def _has_terminal_state(task: Task) -> bool:
+    return task.closed_at is not None or task.escalated_at is not None or task.is_escalated
 
 
 def _is_pristine_manifest(rows: list[StageState]) -> bool:

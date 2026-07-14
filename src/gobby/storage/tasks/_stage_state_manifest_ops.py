@@ -43,6 +43,7 @@ class StageStateManifestOps:
         specs: Sequence[StageManifestSpec],
         *,
         by_session_id: str | None,
+        replace_existing: bool = False,
     ) -> list[StageState]:
         self.rows.validate_specs(specs)
         holder = by_session_id or "system"
@@ -70,7 +71,7 @@ class StageStateManifestOps:
                     return self._update_stage_caps(task_id, specs)
                 if self._can_insert_future_stages(task_id, existing, specs):
                     return self._insert_future_stages(task_id, existing, specs, holder)
-                if not all(
+                if not replace_existing and not all(
                     row.state == "ready"
                     and row.entered_at is None
                     and row.completed_at is None

@@ -51,15 +51,22 @@ class SessionEndMixin(EventHandlersBase):
                 self.logger.warning(f"Failed to fetch session {session_id}: {e}")
 
         # Auto-link commits made during this session to tasks
-        if session and self._task_manager:
+        if session and self._task_manager and self._session_manager:
             try:
                 cwd = event.data.get("cwd")
+                from gobby.storage.projects import LocalProjectManager
                 from gobby.utils.datetime import datetime_to_required_iso
+
+                project = LocalProjectManager(self._session_manager.db).get(session.project_id)
+                if project is None:
+                    raise ValueError(f"Project {session.project_id} not found")
 
                 link_result = auto_link_commits(
                     task_manager=self._task_manager,
                     since=datetime_to_required_iso(session.created_at),
                     cwd=cwd,
+                    project_name=project.name,
+                    project_id=session.project_id,
                 )
                 if link_result.total_linked > 0:
                     self.logger.info(

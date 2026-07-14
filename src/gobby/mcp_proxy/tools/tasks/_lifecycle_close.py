@@ -317,11 +317,16 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                     err_response.update(parent_result.extra)
                 return err_response
 
-            # Check for leaf task with validation criteria
+            # Code leaves must pass LLM validation even when criteria are absent;
+            # TaskValidator falls back to the task description in that case.
             children = ctx.task_manager.list_tasks(parent_task_id=resolved_id, limit=1)
             is_leaf = len(children) == 0
 
-            if is_leaf and ctx.task_validator and task.validation_criteria:
+            if (
+                is_leaf
+                and ctx.task_validator
+                and (task.validation_criteria or task.category == "code")
+            ):
                 # Gather validation context
                 validation_evidence = gather_validation_context(
                     task, changes_summary, repo_path, ctx.task_manager

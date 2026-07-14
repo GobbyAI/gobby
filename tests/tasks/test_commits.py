@@ -8,6 +8,7 @@ import pytest
 
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.commits import (
+    TASK_DIFF_MAX_CHARS,
     AutoLinkResult,
     TaskDiffResult,
     auto_link_commits,
@@ -319,6 +320,22 @@ diff --git a/file2.py b/file2.py
 
             assert result.file_count == 2
 
+    def test_caps_large_combined_diff_with_explicit_marker(self, mock_task_manager) -> None:
+        mock_task = MagicMock()
+        mock_task.commits = ["abc123", "def456"]
+        mock_task_manager.get_task.return_value = mock_task
+
+        with patch("gobby.tasks.commits.run_git_command") as mock_git:
+            mock_git.return_value = "diff --git a/file.py b/file.py\n" + (
+                "+large payload\n" * TASK_DIFF_MAX_CHARS
+            )
+
+            result = get_task_diff("gt-test123", mock_task_manager)
+
+        assert len(result.diff) <= TASK_DIFF_MAX_CHARS
+        assert result.diff.endswith("... [task diff truncated] ...")
+        assert result.file_count == 1
+
 
 class TestExtractTaskIdsFromMessage:
     """Tests for task ID extraction from commit messages.
@@ -448,6 +465,13 @@ Also refs gobby-#43 for related work.
         assert "#1" in result
         assert "#2" in result
 
+    @pytest.mark.parametrize("project_name", ["gobby-pro", "gobby pro"])
+    def test_project_names_with_separators_in_all_formats(self, project_name: str) -> None:
+        """Test task references for project names containing hyphens or spaces."""
+        message = f"[{project_name}-#7]\n{project_name}-#8\nFixes {project_name}-#9"
+        result = extract_task_ids_from_message(message, project_name=project_name)
+        assert set(result) == {"#7", "#8", "#9"}
+
     def test_project_name_filtering(self) -> None:
         """Test filtering by project name."""
         message = "[gobby-#1] Also refs myapp-#2"
@@ -485,7 +509,8 @@ class TestAutoLinkCommits:
         manager = MagicMock()
         return manager
 
-    def test_links_commits_matching_task_id(self, mock_task_manager) -> None:
+    @pytest.mark.parametrize("project_name", ["gobby", "gobby-pro"])
+    def test_links_commits_matching_task_id(self, mock_task_manager, project_name: str) -> None:
         """Test that commits mentioning task IDs are linked."""
         # Mock task exists
         mock_task = MagicMock()
@@ -495,9 +520,11 @@ class TestAutoLinkCommits:
 
         with patch("gobby.tasks.commits.run_git_command") as mock_git:
             # Mock git log output with commit mentioning task
-            mock_git.return_value = "abc123|Fix bug [gobby-#1]\ndef456|Unrelated commit\n"
+            mock_git.return_value = f"abc123|Fix bug [{project_name}-#1]\ndef456|Unrelated commit\n"
 
-            result = auto_link_commits(mock_task_manager, cwd="/tmp/repo", project_name="gobby")
+            result = auto_link_commits(
+                mock_task_manager, cwd="/tmp/repo", project_name=project_name
+            )
 
             assert isinstance(result, AutoLinkResult)
             assert "#1" in result.linked_tasks
@@ -765,6 +792,20 @@ diff --git a/src/main.py b/src/main.py
 +code content
 """
         assert is_doc_only_diff(diff) is False
+
+    def test_returns_false_when_doc_is_renamed_to_code(self) -> None:
+        diff = """diff --git a/notes.md b/notes.py
+similarity index 100%
+rename from notes.md
+rename to notes.py
+"""
+        assert is_doc_only_diff(diff) is False
+
+    def test_returns_true_for_quoted_doc_paths(self) -> None:
+        diff = """diff --git "a/docs/user guide.md" "b/docs/user guide.md"
++content
+"""
+        assert is_doc_only_diff(diff) is True
 
     def test_returns_false_for_empty_diff(self) -> None:
         """Test that returns False for empty diff."""
