@@ -413,7 +413,7 @@ class ReviewLearningService:
         touched_paths: list[str],
         limit: int,
     ) -> list[tuple[Any, str | None]]:
-        tagged_paths = {path_tag(path): path for path in touched_paths}
+        tagged_paths = {tag: path for path in touched_paths if (tag := path_tag(path))}
         candidates: list[tuple[Any, str | None]] = []
         seen: set[str] = set()
 

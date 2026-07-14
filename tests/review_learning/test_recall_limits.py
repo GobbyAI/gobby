@@ -8,6 +8,7 @@ from typing import Any, cast
 import pytest
 
 from gobby.mcp_proxy.tools.review_learning import create_review_learning_registry
+from gobby.review_learning.file_paths import path_tag
 from gobby.review_learning.promotion import PromotionTaskManager
 from gobby.review_learning.service import (
     MAX_RECALL_FINDINGS,
@@ -121,6 +122,29 @@ async def test_candidate_lessons_scan_legacy_when_tagged_candidates_are_insuffic
         ("legacy", None),
     ]
     assert len(manager.list_calls) == 2
+    assert len(manager.list_calls[-1]["tags_all"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_candidate_lessons_skip_empty_path_tags() -> None:
+    tagged = _Memory(id="tagged", content="tagged", tags=[])
+    manager = _CandidateMemoryManager(
+        tagged_batches=[[tagged]],
+        legacy=[],
+    )
+    service = ReviewLearningService(
+        cast(ReviewLearningMemoryManager, manager),
+        cast(PromotionTaskManager, object()),
+    )
+
+    await service._candidate_lesson_memories(
+        project_id="project",
+        touched_paths=["", "../outside.py", "src/tagged.py"],
+        limit=2,
+    )
+
+    assert len(manager.list_calls) == 2
+    assert manager.list_calls[0]["tags_all"][-1] == path_tag("src/tagged.py")
     assert len(manager.list_calls[-1]["tags_all"]) == 2
 
 

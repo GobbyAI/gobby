@@ -63,6 +63,8 @@ def normalize_lesson_file_path(value: Any) -> str:
 def path_tag(value: Any) -> str:
     """Return the bounded review-lesson tag for a normalized file path."""
     normalized = normalize_lesson_file_path(value)
+    if not normalized:
+        return ""
     return f"path:{short_hash(normalized)}"
 
 

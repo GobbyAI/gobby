@@ -35,6 +35,13 @@ def test_non_promotable_fallback_when_pattern_is_underivable() -> None:
     assert identity.pattern_id.startswith("non-promotable:")
 
 
+def test_non_promotable_fallback_is_independent_of_finding_key_order() -> None:
+    first = derive_lesson_identity({"risk": "medium", "decision": "confirmed"})
+    reordered = derive_lesson_identity({"decision": "confirmed", "risk": "medium"})
+
+    assert first == reordered
+
+
 def test_normalized_lesson_uses_bounded_tags_and_full_content() -> None:
     finding = {
         "title": "Wrong placeholder",

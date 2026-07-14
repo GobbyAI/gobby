@@ -8,6 +8,7 @@ from gobby.review_learning.file_paths import (
     extract_file_paths_from_mapping,
     extract_lesson_file_paths,
     normalize_lesson_file_path,
+    path_tag,
     paths_match,
 )
 
@@ -33,6 +34,11 @@ pytestmark = pytest.mark.unit
 )
 def test_normalize_lesson_file_path_matrix(value: object, expected: str) -> None:
     assert normalize_lesson_file_path(value) == expected
+
+
+@pytest.mark.parametrize("value", [None, "", "../outside/review.py", "/not/a/gobby/project.py"])
+def test_path_tag_rejects_empty_normalized_paths(value: object) -> None:
+    assert path_tag(value) == ""
 
 
 def test_normalize_lesson_file_path_relativizes_main_and_worktree_roots(tmp_path: Path) -> None:
