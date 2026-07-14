@@ -591,7 +591,7 @@ def _build_file_lesson(
         "evidence_path": evidence_path or matched_path,
         "principle": principle,
         "prevention": prevention,
-        "do": do_text or prevention or principle,
+        "do": do_text if do_text or avoid else prevention or principle,
         "avoid": avoid,
     }
 
@@ -618,10 +618,10 @@ def _parse_lesson_content(content: str) -> tuple[dict[str, str], list[str]]:
 
 
 def _parse_evidence(content: str) -> Any | None:
-    marker = "## Evidence"
-    if marker not in content:
+    matches = list(re.finditer(r"(?m)^## Evidence[ \t]*\r?$", content))
+    if not matches:
         return None
-    raw = content.split(marker, 1)[1].strip()
+    raw = content[matches[-1].end() :].strip()
     if not raw:
         return None
     try:
@@ -653,8 +653,11 @@ def _pattern_id_from_tags(tags: list[str]) -> str:
 
 
 def _extract_do_text(prevention: str) -> str:
-    if "; avoid " in prevention.lower():
-        index = prevention.lower().find("; avoid ")
+    lower = prevention.lower()
+    if lower.startswith("avoid "):
+        return ""
+    if "; avoid " in lower:
+        index = lower.find("; avoid ")
         return prevention[:index].strip(" ;.")
     return prevention
 

@@ -334,6 +334,40 @@ async def test_recall_review_lessons_for_files_matches_legacy_evidence_paths() -
     assert "## Provenance" not in result["message"]
 
 
+async def test_recall_uses_anchored_evidence_and_renders_avoid_only_guidance() -> None:
+    memory_manager = FakeMemoryManager()
+    await memory_manager.create_memory(
+        """# Review Lesson: Finding mentions ## Evidence inline
+
+## Identity
+- pattern_id: avoid-bare-except
+
+## Lesson
+- principle: Exception handlers should preserve actionable failures.
+- prevention: Avoid using bare except.
+
+## Evidence
+{"changed_files": ["src/gobby/review_learning/service.py"]}
+""",
+        tags=["review-lesson", "confirmed", "pattern:avoid-bare-except"],
+        project_id="_personal",
+    )
+    registry = create_review_learning_registry(memory_manager, FakeTaskManager())
+
+    result = await registry.call(
+        "recall_review_lessons_for_files",
+        {
+            "file_paths": ["src/gobby/review_learning/service.py"],
+            "project_id": "_personal",
+        },
+    )
+
+    assert result["count"] == 1
+    assert result["lessons"][0]["evidence_path"] == "src/gobby/review_learning/service.py"
+    assert "  Avoid: using bare except" in result["message"]
+    assert "  Do:" not in result["message"]
+
+
 @pytest.mark.asyncio
 async def test_recall_review_lessons_for_files_excludes_global_review_lessons() -> None:
     memory_manager = FakeMemoryManager()
