@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from unittest.mock import AsyncMock, MagicMock
 
@@ -57,6 +58,23 @@ def mock_mcp_manager() -> MagicMock:
 @pytest.fixture
 def server(mock_config: MagicMock, mock_mcp_manager: MagicMock) -> WebSocketServer:
     return WebSocketServer(mock_config, mock_mcp_manager)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message", ["5", "[]"])
+async def test_handle_message_rejects_non_object_json(
+    server: WebSocketServer, message: str
+) -> None:
+    websocket = IteratingWebSocket()
+
+    await server._handle_message(websocket, message)
+
+    assert len(websocket.sent_messages) == 1
+    assert json.loads(websocket.sent_messages[0]) == {
+        "type": "error",
+        "code": "ERROR",
+        "message": "Message must be a JSON object",
+    }
 
 
 class TestHandleConnectionDisconnects:

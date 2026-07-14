@@ -266,6 +266,11 @@ class WebSocketServer(
             message: JSON string message
         """
         data = json.loads(message)
+        if not isinstance(data, dict):
+            await self._send_error(websocket, "Message must be a JSON object")
+            return
+
+        data = cast(dict[str, Any], data)
         msg_type = data.get("type")
 
         # Lazily initialize dispatch table
@@ -306,7 +311,7 @@ class WebSocketServer(
                 "heartbeat": self._handle_heartbeat,
             }
 
-        handler = self._dispatch_table.get(msg_type)
+        handler = self._dispatch_table.get(cast(str, msg_type))
         if handler:
             await handler(websocket, data)
         else:
