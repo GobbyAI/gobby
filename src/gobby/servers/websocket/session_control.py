@@ -36,6 +36,7 @@ class SessionControlMixin:
     - ``self._active_chat_tasks: dict[str, asyncio.Task[None]]``
     - ``self._pending_modes: dict[str, str]``
     - ``self._cancel_active_chat(...)`` (from ChatMixin)
+    - ``self._cleanup_attached_tts(...)`` (from VoiceMixin)
     - ``self._send_error(...)`` (from HandlerMixin)
     - ``self._create_chat_session(...)`` (from ChatMixin)
     """
@@ -56,6 +57,8 @@ class SessionControlMixin:
     if TYPE_CHECKING:
 
         async def _cancel_active_chat(self, conversation_id: str) -> None: ...
+
+        async def _cleanup_attached_tts(self, session_id: str) -> None: ...
 
         async def _fire_session_end(self, conversation_id: str) -> None: ...
 

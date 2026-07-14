@@ -1473,6 +1473,27 @@ class TestContinueInChatTerminalKill:
         assert ws.send.await_count == 0
         assert ws.send.await_args is None
 
+    async def test_detach_from_session_cleans_attached_tts(self) -> None:
+        from gobby.servers.websocket.session_control import SessionControlMixin
+
+        ws = MagicMock()
+        ws.send = AsyncMock()
+        ws.subscriptions = {"session:source-uuid", "other"}
+
+        host = self._make_host()
+        host.clients = {ws: {"attached_session_id": "source-uuid"}}
+        host._cleanup_attached_tts = AsyncMock()
+
+        await SessionControlMixin._handle_detach_from_session(
+            host,
+            ws,
+            {"session_id": "source-uuid"},
+        )
+
+        host._cleanup_attached_tts.assert_awaited_once_with("source-uuid")
+        assert host.clients[ws] == {}
+        assert ws.subscriptions == {"other"}
+
     @pytest.mark.asyncio
     async def test_send_to_cli_session_rejects_web_chat_sessions(self) -> None:
         """CLI proxy send should reject non-terminal targets."""

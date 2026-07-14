@@ -246,7 +246,10 @@ class WebSocketServer(
             # Clean up tmux bridges owned by this client
             await self._cleanup_tmux_client(websocket)
             # Always cleanup client state (but NOT chat sessions — they persist)
-            self.clients.pop(websocket, None)
+            metadata = self.clients.pop(websocket, None)
+            attached_session_id = metadata.get("attached_session_id") if metadata else None
+            if isinstance(attached_session_id, str):
+                await self._cleanup_attached_tts(attached_session_id)
             logger.debug(f"Client {client_id} cleaned up. Remaining clients: {len(self.clients)}")
 
     async def _handle_message(self, websocket: Any, message: str) -> None:

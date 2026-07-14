@@ -391,6 +391,8 @@ async def handle_detach_from_session(
     if metadata:
         metadata.pop("attached_session_id", None)
 
+    await mixin._cleanup_attached_tts(session_id)
+
     await websocket.send(
         json_dumps(
             {
