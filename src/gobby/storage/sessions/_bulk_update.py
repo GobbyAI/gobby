@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
+from gobby.storage.hub.protocol import SessionSeqMutation
 from gobby.storage.session_models import Session
 from gobby.utils.datetime import utc_now
 
@@ -118,8 +119,19 @@ class _BulkUpdateMixin:
         values["updated_at"] = utc_now()
 
         try:
-            with self.db.transaction():
-                self.db.safe_update("sessions", values, "id = %s", (session_id,))
+            if current is not None and project_id is not None and current.project_id != project_id:
+                with self.db.transaction_immediate(
+                    SessionSeqMutation(project_id=project_id)
+                ) as conn:
+                    max_seq_row = conn.execute(
+                        "SELECT MAX(seq_num) AS max_seq FROM sessions WHERE project_id = %s",
+                        (project_id,),
+                    ).fetchone()
+                    values["seq_num"] = ((max_seq_row["max_seq"] if max_seq_row else None) or 0) + 1
+                    self.db.safe_update("sessions", values, "id = %s", (session_id,))
+            else:
+                with self.db.transaction():
+                    self.db.safe_update("sessions", values, "id = %s", (session_id,))
         except Exception as exc:
             if current is None or not is_session_unique_conflict(exc):
                 raise

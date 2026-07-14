@@ -164,9 +164,19 @@ class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
                         session_type=session_type,
                     )
                     if existing and existing.project_id != project_id:
+                        conn.acquire_additional_lock(SessionSeqMutation(project_id=project_id))
+                        max_seq_row = conn.execute(
+                            "SELECT MAX(seq_num) AS max_seq FROM sessions WHERE project_id = %s",
+                            (project_id,),
+                        ).fetchone()
+                        next_seq_num = ((max_seq_row["max_seq"] if max_seq_row else None) or 0) + 1
                         conn.execute(
-                            "UPDATE sessions SET project_id = %s, updated_at = %s WHERE id = %s",
-                            (project_id, now, existing.id),
+                            """
+                            UPDATE sessions
+                            SET project_id = %s, seq_num = %s, updated_at = %s
+                            WHERE id = %s
+                            """,
+                            (project_id, next_seq_num, now, existing.id),
                         )
                         get_logger().info(
                             "Recovered session %s: project_id %s -> %s",
