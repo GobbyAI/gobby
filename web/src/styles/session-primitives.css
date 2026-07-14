@@ -183,8 +183,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 1.25rem;
-  height: 1.25rem;
+  width: 1.5rem;
+  height: 1.5rem;
   background: transparent;
   border: none;
   color: var(--text-muted);
@@ -206,9 +206,15 @@
   background: var(--color-error-soft);
 }
 
-.session-delete-btn:focus,
 .session-delete-btn:focus-visible {
   opacity: 1;
+}
+
+@media (pointer: coarse) {
+  .session-delete-btn {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
 }
 
 .session-item.deleting {

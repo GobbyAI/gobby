@@ -457,4 +457,23 @@ describe('mobile chrome CSS', () => {
       'padding-inline': '0.75rem 0.5rem',
     })
   })
+
+  it('keeps session delete controls discoverable and touch-sized', () => {
+    const sessionCss = parseCss('src/styles/session-primitives.css')
+
+    expect(findRule(sessionCss, '.session-delete-btn:focus-visible').selector).toBe(
+      '.session-delete-btn:focus-visible',
+    )
+    expectDeclarations(sessionCss, '.session-delete-btn', {
+      width: '1.5rem',
+      height: '1.5rem',
+    })
+    expectDeclarations(sessionCss, '.session-delete-btn:focus-visible', { opacity: '1' })
+    expectDeclarations(
+      sessionCss,
+      '.session-delete-btn',
+      { width: '2.75rem', height: '2.75rem' },
+      '(pointer: coarse)',
+    )
+  })
 })
