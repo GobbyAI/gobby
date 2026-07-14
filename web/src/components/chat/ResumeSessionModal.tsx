@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
-import { Dialog, DialogContent } from "./ui/Dialog";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { Dialog, DialogContent, DialogDescription } from "./ui/Dialog";
 import type { GobbySession } from "../../types/sessions";
 import { formatRelativeTime } from "../../utils/formatTime";
 import { getSessionTitleText } from "../../lib/sessionTitle";
@@ -23,34 +23,11 @@ export function ResumeSessionModal({
   const [showSubagents, setShowSubagents] = useState(false);
   const [resumableSessions, setResumableSessions] = useState<GobbySession[]>([]);
   const [loading, setLoading] = useState(false);
+  const sessionsRef = useRef(sessions);
 
-  // Fetch resumable sessions when modal opens
-  const fetchResumable = useCallback(async () => {
-    if (!isOpen) return;
-    setLoading(true);
-    try {
-      const params = new URLSearchParams({
-        limit: "200",
-        include_resumability: "true",
-      });
-      if (!showSubagents) params.set("exclude_subagents", "true");
-
-      const response = await fetch(`/api/sessions?${params}`);
-      if (response.ok) {
-        const data = await response.json();
-        setResumableSessions(Array.isArray(data.sessions) ? data.sessions : []);
-      } else {
-        console.error("Failed to fetch resumable sessions:", response.status, response.statusText);
-        setResumableSessions(sessions);
-      }
-    } catch (e) {
-      console.error("Failed to fetch resumable sessions:", e);
-      // Fall back to passed-in sessions
-      setResumableSessions(sessions);
-    } finally {
-      setLoading(false);
-    }
-  }, [isOpen, showSubagents, sessions]);
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
 
   // Reset search when modal opens
   useEffect(() => {
@@ -61,10 +38,46 @@ export function ResumeSessionModal({
 
   // Fetch resumable sessions when modal opens or subagent toggle changes
   useEffect(() => {
-    if (isOpen) {
-      fetchResumable();
+    if (!isOpen) return;
+
+    const controller = new AbortController();
+
+    async function fetchResumable() {
+      setLoading(true);
+      try {
+        const params = new URLSearchParams({
+          limit: "200",
+          include_resumability: "true",
+        });
+        if (!showSubagents) params.set("exclude_subagents", "true");
+
+        const response = await fetch(`/api/sessions?${params}`, {
+          signal: controller.signal,
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (!controller.signal.aborted) {
+            setResumableSessions(Array.isArray(data.sessions) ? data.sessions : []);
+          }
+        } else if (!controller.signal.aborted) {
+          console.error("Failed to fetch resumable sessions:", response.status, response.statusText);
+          setResumableSessions(sessionsRef.current);
+        }
+      } catch (e) {
+        if (!controller.signal.aborted) {
+          console.error("Failed to fetch resumable sessions:", e);
+          setResumableSessions(sessionsRef.current);
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
+      }
     }
-  }, [isOpen, fetchResumable]);
+
+    void fetchResumable();
+    return () => controller.abort();
+  }, [isOpen, showSubagents]);
 
   // Filter and sort sessions
   const filteredSessions = useMemo(() => {
@@ -92,9 +105,9 @@ export function ResumeSessionModal({
           <Heading level={2} variant="modal">
             Resume Session
           </Heading>
-          <p style={{ margin: "4px 0 12px", fontSize: "13px", color: "var(--text-muted)" }}>
+          <DialogDescription style={{ margin: "4px 0 12px", fontSize: "13px", color: "var(--text-muted)" }}>
             Pick a session to resume in web chat with full conversation context.
-          </p>
+          </DialogDescription>
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
             <input
               type="text"
