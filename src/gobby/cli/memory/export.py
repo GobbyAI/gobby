@@ -79,8 +79,13 @@ def export_memories(
     help="Output file path (default: .gobby/memories.jsonl)",
 )
 @click.option("--quiet", "-q", is_flag=True, help="Suppress output")
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Allow replacing an existing backup with fewer merged records",
+)
 @click.pass_context
-def backup_memories(ctx: click.Context, output_path: str | None, quiet: bool) -> None:
+def backup_memories(ctx: click.Context, output_path: str | None, quiet: bool, force: bool) -> None:
     """Backup memories to JSONL file.
 
     Exports project-scoped memories to a JSONL file for backup/disaster recovery.
@@ -123,7 +128,7 @@ def backup_memories(ctx: click.Context, output_path: str | None, quiet: bool) ->
         config=config,
     )
 
-    count = backup_mgr.backup_sync(project_id=project_id)
+    count = backup_mgr.backup_sync(project_id=project_id, force=force)
     if not quiet:
         if count > 0:
             click.echo(f"Backed up {count} memories to {export_path}")

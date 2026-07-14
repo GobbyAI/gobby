@@ -622,6 +622,29 @@ class TestMemoryBackupCommand:
         assert "Backed up 4 memories" in result.output
         mock_backup_manager.backup_sync.assert_called_once()
 
+    @patch("gobby.sync.memories.MemoryBackupManager")
+    @patch("gobby.cli.memory.get_memory_manager")
+    def test_backup_force_is_passed_to_manager(
+        self,
+        mock_get_manager: MagicMock,
+        mock_backup_manager_cls: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        mock_manager = MagicMock()
+        mock_manager.db = MagicMock()
+        mock_get_manager.return_value = mock_manager
+        mock_backup_manager = MagicMock()
+        mock_backup_manager.backup_sync.return_value = 1
+        mock_backup_manager_cls.return_value = mock_backup_manager
+
+        result = runner.invoke(
+            cli,
+            ["memory", "backup", "--output", "memories.jsonl", "--force"],
+        )
+
+        assert result.exit_code == 0
+        assert mock_backup_manager.backup_sync.call_args.kwargs["force"] is True
+
 
 class TestMemoryRestoreCommand:
     """Tests for gobby memory restore command."""

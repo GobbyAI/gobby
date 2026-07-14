@@ -283,6 +283,24 @@ class TestTaskSyncManager:
         restored_content = sync_manager.export_path.read_text()
         assert restored_content == correct_content
 
+    @pytest.mark.integration
+    def test_export_replace_failure_preserves_existing_file(
+        self, sync_manager, task_manager, sample_project
+    ) -> None:
+        sync_manager.export_path.parent.mkdir(parents=True, exist_ok=True)
+        original = b'{"id": "existing"}\n'
+        sync_manager.export_path.write_bytes(original)
+        task_manager.create_task(sample_project["id"], "Task 1")
+
+        with (
+            patch("gobby.sync.jsonl_io.os.replace", side_effect=OSError("interrupted")),
+            pytest.raises(OSError, match="interrupted"),
+        ):
+            sync_manager.export_to_jsonl()
+
+        assert sync_manager.export_path.read_bytes() == original
+        assert list(sync_manager.export_path.parent.glob(".tasks.jsonl.*.tmp")) == []
+
 
 class TestGetSyncStatus:
     """Tests for the get_sync_status method."""

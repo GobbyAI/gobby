@@ -706,7 +706,9 @@ class TestExportMerge:
         assert "remote memory X" in contents
         assert "remote memory Y" in contents
 
-    def test_export_handles_corrupt_file_lines(self, manager_with_memories, tmp_path) -> None:
+    def test_export_handles_corrupt_file_lines(
+        self, manager_with_memories, tmp_path, caplog
+    ) -> None:
         """Corrupt JSON lines in existing file are skipped, valid lines preserved."""
         mem_file = tmp_path / "memories.jsonl"
         with open(mem_file, "w") as f:
@@ -723,3 +725,39 @@ class TestExportMerge:
         with open(mem_file) as f:
             contents = {json.loads(line)["content"].strip() for line in f}
         assert contents == {"memory A", "memory B", "memory C", "memory D"}
+        assert "Skipped 1 malformed JSONL line(s)" in caplog.text
+
+    def test_export_refuses_to_shrink_without_force(self, mock_db, tmp_path, caplog) -> None:
+        mm = MagicMock()
+        mm.list_memories = MagicMock(return_value=[])
+        manager = MemoryBackupManager(
+            mock_db, mm, MemoryBackupConfig(enabled=True, export_debounce=0.1)
+        )
+        mem_file = tmp_path / "memories.jsonl"
+        original = (
+            '{"id":"old","content":"shared memory","updated_at":"2023-01-01T00:00:00Z"}\n'
+            '{"id":"new","content":"shared memory","updated_at":"2023-01-02T00:00:00Z"}\n'
+        )
+        mem_file.write_text(original, encoding="utf-8")
+        manager.export_path = mem_file
+
+        assert manager.backup_sync() == 0
+        assert mem_file.read_text(encoding="utf-8") == original
+        assert "Refusing to shrink memory export from 2 to 1 records without force" in caplog.text
+
+        assert manager.backup_sync(force=True) == 1
+        assert len(mem_file.read_text(encoding="utf-8").splitlines()) == 1
+
+    def test_export_replace_failure_preserves_existing_file(
+        self, manager_with_memories, tmp_path
+    ) -> None:
+        mem_file = tmp_path / "memories.jsonl"
+        original = b'{"id":"m-a","content":"memory A"}\n'
+        mem_file.write_bytes(original)
+        manager_with_memories.export_path = mem_file
+
+        with patch("gobby.sync.jsonl_io.os.replace", side_effect=OSError("interrupted")):
+            assert manager_with_memories.backup_sync() == 0
+
+        assert mem_file.read_bytes() == original
+        assert list(tmp_path.glob(".memories.jsonl.*.tmp")) == []

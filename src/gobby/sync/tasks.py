@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from gobby.storage.tasks import LocalTaskManager
+from gobby.sync.jsonl_io import atomic_write_text, export_file_lock
 from gobby.tasks.state_semantics import serialize_task_state
 from gobby.utils.json_helpers import json_dumps
 
@@ -320,12 +321,9 @@ class TaskSyncManager:
                 }
                 export_data.append(task_dict)
 
-            # Write JSONL file
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-
-            with open(target_path, "w", encoding="utf-8") as f:
-                for item in export_data:
-                    f.write(json_dumps(item) + "\n")
+            content = "".join(json_dumps(item) + "\n" for item in export_data)
+            with export_file_lock(target_path):
+                atomic_write_text(target_path, content)
 
             logger.info(f"Exported {len(tasks)} tasks to {target_path}")
 
