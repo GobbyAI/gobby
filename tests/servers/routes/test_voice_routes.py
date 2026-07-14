@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import gobby.servers.routes.voice as voice_module
-from gobby.ai.audio import AudioCapabilityOutput, AudioSegment
+from gobby.ai.audio import AudioCapabilityOutput, AudioProviderUnavailableError, AudioSegment
 from gobby.config.app import DaemonConfig
 from gobby.config.voice import OpenAICompatibleAudioBindingConfig, VoiceConfig
 from gobby.servers.routes.voice import create_voice_router
@@ -392,7 +392,7 @@ class TestVoiceRoutes:
             "/api/voice/transcribe",
             files={"file": ("test.webm", b"fake audio data", "audio/webm")},
         )
-        assert response.status_code == 200
+        assert response.status_code == 400
         data = response.json()
         assert data["code"] == "capability_unavailable"
         assert data["capability"] == "audio_transcribe"
@@ -407,7 +407,7 @@ class TestVoiceRoutes:
             "/api/voice/transcribe",
             files={"file": ("test.webm", b"fake audio data", "audio/webm")},
         )
-        assert response.status_code == 200
+        assert response.status_code == 503
         data = response.json()
         assert data["error"] == "Voice not enabled"
         assert data["text"] == ""
@@ -422,7 +422,7 @@ class TestVoiceRoutes:
             "/api/voice/transcribe",
             files={"file": ("test.webm", b"audio", "audio/webm")},
         )
-        assert response.status_code == 200
+        assert response.status_code == 503
         data = response.json()
         assert data["error"] == "Voice not enabled"
 
@@ -435,7 +435,7 @@ class TestVoiceRoutes:
             "/api/voice/transcribe",
             files={"file": ("test.webm", b"fake audio data", "audio/webm")},
         )
-        assert response.status_code == 200
+        assert response.status_code == 400
         data = response.json()
         assert data["code"] == "capability_unavailable"
         assert data["capability"] == "audio_transcribe"
@@ -456,7 +456,7 @@ class TestVoiceRoutes:
                 "/api/voice/transcribe",
                 files={"file": ("test.webm", b"audio data", "audio/webm")},
             )
-        assert response.status_code == 200
+        assert response.status_code == 400
         data = response.json()
         assert "faster-whisper" in data["error"]
         assert data["text"] == ""
@@ -612,7 +612,7 @@ class TestVoiceRoutes:
             files={"file": ("test.webm", b"audio data here", "audio/webm")},
         )
 
-        assert response.status_code == 200
+        assert response.status_code == 400
         data = response.json()
         assert data["code"] == "capability_unavailable"
         assert data["capability"] == "audio_translate"
@@ -620,6 +620,33 @@ class TestVoiceRoutes:
         assert data["model"] is None
         assert "audio_translate is disabled" in data["reason"]
         assert data["text"] == ""
+
+    def test_transcribe_provider_unavailable_returns_service_unavailable(
+        self, client: TestClient, server_with_voice: MagicMock
+    ) -> None:
+        server_with_voice.config.voice = VoiceConfig(enabled=True)
+        service = MagicMock()
+        service.execute = AsyncMock(
+            side_effect=AudioProviderUnavailableError("remote-stt is unavailable")
+        )
+
+        with patch.object(voice_module, "build_daemon_audio_service", return_value=service):
+            response = client.post(
+                "/api/voice/transcribe",
+                data={"provider": "remote-stt", "model": "whisper-large-v3"},
+                files={"file": ("test.webm", b"audio data here", "audio/webm")},
+            )
+
+        assert response.status_code == 503
+        assert response.json() == {
+            "error": "remote-stt is unavailable",
+            "text": "",
+            "code": "provider_unavailable",
+            "capability": "audio_transcribe",
+            "provider": "remote-stt",
+            "model": "whisper-large-v3",
+            "reason": "remote-stt is unavailable",
+        }
 
     def test_transcribe_default_content_type(
         self, client: TestClient, server_with_voice: MagicMock
@@ -656,7 +683,7 @@ class TestVoiceRoutes:
                 "/api/voice/transcribe",
                 files={"file": ("test.webm", b"audio", "audio/webm")},
             )
-        assert response.status_code == 200
+        assert response.status_code == 500
         data = response.json()
         assert data["error"] == "Transcription failed"
         assert data["text"] == ""
@@ -676,7 +703,7 @@ class TestVoiceRoutes:
                 "/api/voice/transcribe",
                 files={"file": ("test.webm", b"audio", "audio/webm")},
             )
-        assert response.status_code == 200
+        assert response.status_code == 400
         data = response.json()
         assert data["error"] == "Unsupported audio"
         assert data["text"] == ""
@@ -696,7 +723,7 @@ class TestVoiceRoutes:
                 "/api/voice/transcribe",
                 files={"file": ("test.webm", b"audio", "audio/webm")},
             )
-        assert response.status_code == 200
+        assert response.status_code == 504
         data = response.json()
         assert data["error"] == "Transcription timed out"
         assert data["text"] == ""
