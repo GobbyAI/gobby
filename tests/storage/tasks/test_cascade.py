@@ -11,11 +11,13 @@ pytestmark = pytest.mark.unit
 
 
 def test_cascade_uses_unattended_field(temp_db, sample_project) -> None:
-    task = LocalTaskManager(temp_db).create_task(
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
         project_id=sample_project["id"],
         title="Cascade unattended",
         task_type="epic",
     )
+    manager.initialize_task_manifest(task.id, stage_names=["development"])
 
     cascade_build_state_to_subtree(
         temp_db,

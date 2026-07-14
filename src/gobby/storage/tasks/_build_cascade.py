@@ -2,7 +2,7 @@
 
 import logging
 from collections.abc import Iterable
-from datetime import datetime
+from dataclasses import dataclass
 from typing import Any, cast
 
 from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES
@@ -18,6 +18,24 @@ from gobby.utils.datetime import utc_now
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class CascadeBuildFailure:
+    """A task whose manifest could not be prepared for automation."""
+
+    task_id: str
+    error_type: str
+    message: str
+    retryable: bool
+
+
+@dataclass(frozen=True)
+class CascadeBuildResult:
+    """Outcome of applying build dispatch state to a task subtree."""
+
+    updated_count: int
+    failures: tuple[CascadeBuildFailure, ...] = ()
+
+
 def cascade_build_state_to_subtree(
     db: HubDatabase,
     epic_id: str,
@@ -29,14 +47,14 @@ def cascade_build_state_to_subtree(
     yolo: bool | None = None,
     parent_manifest_specs: Iterable[StageManifestSpec] | None = None,
     include_merge_stage: bool = False,
-) -> int:
+) -> CascadeBuildResult:
     """Apply build dispatch state to an epic and every descendant task.
 
     The cascade intentionally only touches dispatch controls and child manifest
     shape. Agent assignment, additional skills, and lifecycle fields remain
     task-local decisions.
 
-    Returns the number of tasks updated, including the root epic.
+    Returns the updated task count and any children that could not be prepared.
     """
     if unattended is None:
         unattended = bool(yolo)
@@ -73,21 +91,96 @@ def cascade_build_state_to_subtree(
         if not rows:
             raise ValueError(f"Task {epic_id} not found")
 
-        update_params: list[tuple[bool, bool, str, datetime, str]] = []
-        for row in rows:
-            task_id = cast(str, row["id"])
-            if task_id != epic_id and row["closed_at"] is not None:
-                continue
-            update_params.append(
-                (
-                    bool(allow_automation),
-                    bool(unattended),
-                    normalized_isolation,
-                    now,
-                    task_id,
-                )
-            )
+    stage_states = StageStatesManager(db, TaskLifecycleEventManager(db))
+    parent_specs = (
+        list(parent_manifest_specs)
+        if parent_manifest_specs is not None
+        else stage_states.list_for_task(epic_id)
+    )
+    ready_task_ids: list[str] = []
+    failures: list[CascadeBuildFailure] = []
+    for row in rows:
+        task_id = cast(str, row["id"])
+        if task_id != epic_id and row["closed_at"] is not None:
+            continue
 
+        if allow_automation and task_id == epic_id:
+            if not stage_states.list_for_task(epic_id):
+                failures.append(
+                    CascadeBuildFailure(
+                        task_id=task_id,
+                        error_type="ManifestUnavailableError",
+                        message="root task has no stage manifest",
+                        retryable=False,
+                    )
+                )
+                continue
+        elif allow_automation:
+            try:
+                specs = derive_child_manifest_specs(
+                    parent_specs,
+                    include_holistic_qa=cast(str, row["task_type"]) == "epic",
+                    include_merge_stage=include_merge_stage,
+                )
+                if not specs:
+                    raise ValueError("no child manifest stages were derived")
+                stage_states.initialize_manifest(task_id, specs, by_session_id=None)
+            except DispatchMutexUnavailableError as exc:
+                failures.append(
+                    CascadeBuildFailure(
+                        task_id=task_id,
+                        error_type=type(exc).__name__,
+                        message=str(exc),
+                        retryable=True,
+                    )
+                )
+                logger.warning("Build cascade could not acquire task %s: %s", task_id, exc)
+                continue
+            except ManifestAlreadyInitializedError:
+                try:
+                    if not _remove_pristine_omitted_stages_for_build_cascade(
+                        db,
+                        stage_states,
+                        task_id,
+                        specs,
+                    ):
+                        logger.info("Keeping progressed task %s during build cascade", task_id)
+                except Exception as exc:
+                    failures.append(
+                        CascadeBuildFailure(
+                            task_id=task_id,
+                            error_type=type(exc).__name__,
+                            message=str(exc),
+                            retryable=False,
+                        )
+                    )
+                    logger.exception("Build cascade failed to reconcile task %s", task_id)
+                    continue
+            except Exception as exc:
+                failures.append(
+                    CascadeBuildFailure(
+                        task_id=task_id,
+                        error_type=type(exc).__name__,
+                        message=str(exc),
+                        retryable=False,
+                    )
+                )
+                logger.exception("Build cascade failed to prepare task %s", task_id)
+                continue
+
+        ready_task_ids.append(task_id)
+
+    update_params = [
+        (
+            bool(allow_automation),
+            bool(unattended),
+            normalized_isolation,
+            now,
+            task_id,
+        )
+        for task_id in ready_task_ids
+    ]
+    with db.transaction_immediate(TaskSubtreeCascade(project_id=project_id)) as conn:
         conn.executemany(
             """
             UPDATE tasks
@@ -100,38 +193,7 @@ def cascade_build_state_to_subtree(
             update_params,
         )
 
-    stage_states = StageStatesManager(db, TaskLifecycleEventManager(db))
-    parent_specs = (
-        list(parent_manifest_specs)
-        if parent_manifest_specs is not None
-        else stage_states.list_for_task(epic_id)
-    )
-    for row in rows:
-        task_id = cast(str, row["id"])
-        if task_id == epic_id:
-            continue
-        if row["closed_at"] is not None:
-            continue
-        specs = derive_child_manifest_specs(
-            parent_specs,
-            include_holistic_qa=cast(str, row["task_type"]) == "epic",
-            include_merge_stage=include_merge_stage,
-        )
-        if specs:
-            try:
-                stage_states.initialize_manifest(task_id, specs, by_session_id=None)
-            except DispatchMutexUnavailableError:
-                logger.info("Skipping busy task %s during build cascade", task_id)
-            except ManifestAlreadyInitializedError:
-                if not _remove_pristine_omitted_stages_for_build_cascade(
-                    db,
-                    stage_states,
-                    task_id,
-                    specs,
-                ):
-                    logger.info("Skipping progressed task %s during build cascade", task_id)
-
-    return len(update_params)
+    return CascadeBuildResult(updated_count=len(update_params), failures=tuple(failures))
 
 
 def _remove_pristine_omitted_stages_for_build_cascade(

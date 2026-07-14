@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 
 from gobby.storage.tasks import Isolation, LocalTaskManager, cascade_build_state_to_subtree
+from gobby.storage.tasks._runtime_mutex import DispatchMutexUnavailableError
+from gobby.storage.tasks._stage_states import StageStatesManager
 from tests.phase5_contract_helpers import source_text
 
 pytestmark = pytest.mark.unit
@@ -43,6 +45,7 @@ def test_cascade_build_state_updates_subtree_without_agent_or_lifecycle_fields(
         parent_task_id=epic.id,
         category="docs",
     )
+    task_manager.initialize_task_manifest(epic.id, stage_names=["development", "merge"])
 
     kwargs = {
         "isolation": Isolation.clone,
@@ -50,9 +53,10 @@ def test_cascade_build_state_updates_subtree_without_agent_or_lifecycle_fields(
         "allow_automation": True,
     }
 
-    updated_count = cascade_build_state_to_subtree(temp_db, epic.id, **kwargs)
+    result = cascade_build_state_to_subtree(temp_db, epic.id, **kwargs)
 
-    assert updated_count == 4
+    assert result.updated_count == 4
+    assert result.failures == ()
     for task_id in (epic.id, child_epic.id, leaf.id, sibling.id):
         task = task_manager.get_task(task_id)
         assert task.allow_automation is True
@@ -71,6 +75,83 @@ def test_cascade_uses_initialize_manifest() -> None:
     source = source_text("src/gobby/storage/tasks/_build_cascade.py")
 
     assert "initialize_manifest(" in source
+
+
+@pytest.mark.parametrize(
+    ("injected_error", "expected_retryable"),
+    [
+        (DispatchMutexUnavailableError("injected busy child"), True),
+        (RuntimeError("injected manifest failure"), False),
+    ],
+)
+def test_cascade_reports_manifest_failure_without_enabling_failed_child(
+    temp_db,
+    sample_project,
+    monkeypatch: pytest.MonkeyPatch,
+    injected_error: Exception,
+    expected_retryable: bool,
+) -> None:
+    task_manager = LocalTaskManager(temp_db)
+    epic = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Automated epic",
+        task_type="epic",
+        category="planning",
+    )
+    failed_child = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Busy child",
+        parent_task_id=epic.id,
+        category="code",
+    )
+    healthy_child = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Healthy child",
+        parent_task_id=epic.id,
+        category="code",
+    )
+    task_manager.initialize_task_manifest(epic.id, stage_names=["development", "merge"])
+    original_initialize = StageStatesManager.initialize_manifest
+
+    def initialize_with_busy_child(
+        self: StageStatesManager,
+        task_id: str,
+        *args: object,
+        **kwargs: object,
+    ) -> object:
+        if task_id == failed_child.id:
+            raise injected_error
+        return original_initialize(self, task_id, *args, **kwargs)
+
+    monkeypatch.setattr(StageStatesManager, "initialize_manifest", initialize_with_busy_child)
+
+    result = cascade_build_state_to_subtree(
+        temp_db,
+        epic.id,
+        isolation=Isolation.worktree,
+        unattended=True,
+        allow_automation=True,
+    )
+
+    assert result.updated_count == 2
+    assert [(failure.task_id, failure.retryable) for failure in result.failures] == [
+        (failed_child.id, expected_retryable)
+    ]
+    assert task_manager.get_task(failed_child.id).allow_automation is False
+    assert task_manager.stage_states.list_for_task(failed_child.id) == []
+    assert task_manager.get_task(healthy_child.id).allow_automation is True
+    assert task_manager.stage_states.list_for_task(healthy_child.id)
+    invalid_automated = temp_db.fetchone(
+        """
+        SELECT tasks.id
+        FROM tasks
+        LEFT JOIN task_stage_states ON task_stage_states.task_id = tasks.id
+        WHERE tasks.allow_automation = TRUE
+        GROUP BY tasks.id
+        HAVING COUNT(task_stage_states.task_id) = 0
+        """
+    )
+    assert invalid_automated is None
 
 
 def test_cascade_can_force_merge_into_legacy_child_manifest_scope(

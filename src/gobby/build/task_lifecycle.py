@@ -144,7 +144,7 @@ async def build_epic(
         else specs
     )
     if not opts.dry_run:
-        task_manager.cascade_build_state_to_subtree(
+        cascade_result = task_manager.cascade_build_state_to_subtree(
             task.id,
             isolation=opts.isolation,
             unattended=opts.unattended,
@@ -152,6 +152,10 @@ async def build_epic(
             allow_automation=True,
             parent_manifest_specs=cascade_specs,
             include_merge_stage=opts.isolation in {"worktree", "clone"} and not opts.no_merge,
+        )
+        warnings.extend(
+            f"Build cascade skipped task {failure.task_id}: {failure.error_type}: {failure.message}"
+            for failure in cascade_result.failures
         )
     if opts.isolation == "none":
         _cascade_target_branch_to_subtree(task_manager, task.id, target_branch)

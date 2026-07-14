@@ -86,6 +86,7 @@ def test_build_subtree_readers_and_cascade_bound_cycles(
     manager = LocalTaskManager(temp_db)
     root = manager.create_task(sample_project["id"], "Build root", task_type="epic")
     child = manager.create_task(sample_project["id"], "Build child", parent_task_id=root.id)
+    manager.initialize_task_manifest(root.id, stage_names=["development"])
     temp_db.execute("UPDATE tasks SET parent_task_id = %s WHERE id = %s", (child.id, root.id))
 
     subtree = _subtree_tasks(manager, manager.get_task(root.id))
@@ -98,6 +99,6 @@ def test_build_subtree_readers_and_cascade_bound_cycles(
     )
 
     assert {task.id for task in subtree} == {root.id, child.id}
-    assert updated == 2
+    assert updated.updated_count == 2
     assert manager.get_task(root.id).allow_automation is True
     assert manager.get_task(child.id).allow_automation is True

@@ -222,11 +222,11 @@ def test_subtree_cascade_serializes_overlapping_subtrees(
             root_task_id,
             "worktree",
             unattended=False,
-            allow_automation=True,
+            allow_automation=False,
             parent_manifest_specs=[],
         )
 
-        assert updated == 2
+        assert updated.updated_count == 2
         assert isinstance(seen_locks[0], TaskSubtreeCascade)
         assert seen_locks[0].project_id == project_id
     finally:

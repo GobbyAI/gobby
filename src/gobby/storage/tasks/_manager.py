@@ -22,6 +22,9 @@ from gobby.storage.tasks._aggregates import (
 )
 from gobby.storage.tasks._artifacts import TaskArtifactManager
 from gobby.storage.tasks._build_cascade import (
+    CascadeBuildResult,
+)
+from gobby.storage.tasks._build_cascade import (
     cascade_build_state_to_subtree as _cascade_build_state_to_subtree,
 )
 from gobby.storage.tasks._creation import (
@@ -423,11 +426,11 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         yolo: bool | None = None,
         parent_manifest_specs: Iterable[Any] | None = None,
         include_merge_stage: bool = False,
-    ) -> int:
+    ) -> CascadeBuildResult:
         """Apply build dispatch state to an epic and every descendant task."""
         if unattended is None:
             unattended = bool(yolo)
-        updated_count = _cascade_build_state_to_subtree(
+        result = _cascade_build_state_to_subtree(
             self.db,
             epic_id=epic_id,
             isolation=isolation,
@@ -438,7 +441,7 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
             include_merge_stage=include_merge_stage,
         )
         self._notify_listeners()
-        return updated_count
+        return result
 
     def add_label(self, task_id: str, label: str) -> Task:
         """Add a label to a task if not present."""
