@@ -23,8 +23,8 @@ def mock_git_manager():
     manager = MagicMock()
     manager.repo_path = "/tmp/repo"
     manager.run_git_command.side_effect = (
-        lambda args, cwd=None, timeout=30, check=False: manager._run_git(
-            args, cwd=cwd, timeout=timeout, check=check
+        lambda args, cwd=None, timeout=30, check=False, env=None: manager._run_git(
+            args, cwd=cwd, timeout=timeout, check=check, env=env
         )
     )
 
@@ -57,7 +57,7 @@ def _local_merge_git_side_effect(
     current = current_branch or target
     stash_list_calls = 0
 
-    def _run_git(args, cwd=None, timeout=30, check=False):
+    def _run_git(args, cwd=None, timeout=30, check=False, env=None):
         nonlocal stash_list_calls
         if args == ["show-ref", "--verify", "--quiet", f"refs/heads/{target}"]:
             return MagicMock(returncode=0, stdout="", stderr="")
@@ -1356,7 +1356,7 @@ async def test_merge_worktree_does_not_mark_merged_when_target_lacks_source(
     )
     mock_worktree_storage.get.return_value = wt
 
-    def _run_git_side_effect(args, cwd=None, timeout=30, check=False):
+    def _run_git_side_effect(args, cwd=None, timeout=30, check=False, env=None):
         if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
             return MagicMock(returncode=0, stdout="main", stderr="")
         if args[:2] == ["merge-base", "--is-ancestor"]:
@@ -1395,7 +1395,7 @@ async def test_merge_worktree_custom_refs_do_not_mark_unmerged_worktree_branch(
     mock_worktree_storage.get.return_value = wt
     custom_merge = _local_merge_git_side_effect(source="release/source", target="release/target")
 
-    def _run_git_side_effect(args, cwd=None, timeout=30, check=False):
+    def _run_git_side_effect(args, cwd=None, timeout=30, check=False, env=None):
         if args == [
             "merge-base",
             "--is-ancestor",
@@ -1565,7 +1565,7 @@ async def test_merge_worktree_conflict(registry, mock_worktree_storage, mock_git
     )
     mock_worktree_storage.get.return_value = wt
 
-    def _run_git_side_effect(args, cwd=None, timeout=30, check=False):
+    def _run_git_side_effect(args, cwd=None, timeout=30, check=False, env=None):
         if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
             return MagicMock(returncode=0, stdout="main", stderr="")
         if args[0] == "fetch":
@@ -1618,7 +1618,7 @@ async def test_merge_worktree_non_conflict_failure(
     )
     mock_worktree_storage.get.return_value = wt
 
-    def _run_git_side_effect(args, cwd=None, timeout=30, check=False):
+    def _run_git_side_effect(args, cwd=None, timeout=30, check=False, env=None):
         if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
             return MagicMock(returncode=0, stdout="main", stderr="")
         if args[0] == "fetch":
