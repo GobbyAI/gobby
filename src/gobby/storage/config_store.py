@@ -148,20 +148,21 @@ class ConfigStore:
             _reject_plaintext_secret_value(key, value)
         now = utc_now()
         count = 0
-        for key, value in entries.items():
-            json_value = json.dumps(value)
-            is_secret = _is_canonical_secret_reference(key, value)
-            self.db.execute(
-                """INSERT INTO config_store (key, value, source, is_secret, updated_at)
-                   VALUES (%s, %s, %s, %s, %s)
-                   ON CONFLICT(key) DO UPDATE SET
-                       value = excluded.value,
-                       source = excluded.source,
-                       is_secret = excluded.is_secret,
-                       updated_at = excluded.updated_at""",
-                (key, json_value, source, is_secret, now),
-            )
-            count += 1
+        with self.db.transaction():
+            for key, value in entries.items():
+                json_value = json.dumps(value)
+                is_secret = _is_canonical_secret_reference(key, value)
+                self.db.execute(
+                    """INSERT INTO config_store (key, value, source, is_secret, updated_at)
+                       VALUES (%s, %s, %s, %s, %s)
+                       ON CONFLICT(key) DO UPDATE SET
+                           value = excluded.value,
+                           source = excluded.source,
+                           is_secret = excluded.is_secret,
+                           updated_at = excluded.updated_at""",
+                    (key, json_value, source, is_secret, now),
+                )
+                count += 1
         return count
 
     def delete(self, key: str) -> bool:
