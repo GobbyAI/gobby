@@ -416,6 +416,8 @@ function markLatestToolCallError(assistant: ChatMessage, content: string): boole
   if (!assistant.toolCalls?.length) return false
 
   const lastTc = assistant.toolCalls[assistant.toolCalls.length - 1]
+  if (lastTc.status !== 'calling') return false
+
   lastTc.error = content
   lastTc.status = 'error'
   if (assistant.contentBlocks) {

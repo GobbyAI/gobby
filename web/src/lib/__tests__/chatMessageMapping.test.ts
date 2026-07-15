@@ -338,6 +338,56 @@ Stay concise and direct.`
     })
   })
 
+  it('preserves a completed tool call when hook feedback arrives later', () => {
+    const [assistant, feedback] = mapApiMessages([
+      {
+        id: 'call-1',
+        role: 'assistant',
+        content: '',
+        content_type: 'tool_use',
+        tool_name: 'Read',
+        tool_use_id: 'tool-a',
+        timestamp: '2026-05-30T00:00:00.000Z',
+      },
+      {
+        id: 'result-1',
+        role: 'user',
+        content: '{"content":{"ok":true},"kind":"json","truncated":false}',
+        content_type: 'tool_result',
+        tool_use_id: 'tool-a',
+        timestamp: '2026-05-30T00:00:01.000Z',
+      },
+      {
+        id: 'feedback-1',
+        role: 'user',
+        content: 'Stop hook feedback: follow-up warning',
+        timestamp: '2026-05-30T00:00:02.000Z',
+      },
+    ])
+
+    expect(assistant.toolCalls?.[0]).toEqual(
+      expect.objectContaining({
+        result: {
+          content: { ok: true },
+          kind: 'json',
+          truncated: false,
+        },
+        status: 'completed',
+      }),
+    )
+    expect(assistant.contentBlocks?.[0]).toEqual({
+      type: 'tool_chain',
+      tool_calls: [expect.objectContaining({ status: 'completed' })],
+    })
+    expect(feedback).toEqual(
+      expect.objectContaining({
+        id: 'feedback-1',
+        role: 'system',
+        content: 'Stop hook feedback: follow-up warning',
+      }),
+    )
+  })
+
   it('renders orphan hook feedback as a system message', () => {
     const [message] = mapApiMessages([
       {
