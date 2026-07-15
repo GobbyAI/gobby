@@ -26,6 +26,17 @@ from gobby.workflows.summary_actions import (
 
 pytestmark = pytest.mark.unit
 
+VALID_SUMMARY_CONTENT = """# Session Summary
+
+## Current State
+
+The implementation is complete and the focused workflow tests pass with the expected behavior.
+
+## Next Steps
+
+Continue with the remaining task validation and lifecycle handoff steps.
+"""
+
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -42,7 +53,7 @@ def mock_session_manager() -> MagicMock:
 def mock_llm_service() -> MagicMock:
     """Create a mock LLM service."""
     service = MagicMock()
-    service.call_feature = AsyncMock(return_value="Generated Summary Content")
+    service.call_feature = AsyncMock(return_value=VALID_SUMMARY_CONTENT)
     return service
 
 
@@ -1038,8 +1049,47 @@ class TestGenerateSummary:
 
         assert result is not None
         assert result["summary_generated"] is True
-        assert result["summary_length"] == len("Generated Summary Content")
+        assert result["summary_length"] == len(VALID_SUMMARY_CONTENT)
         mock_session_manager.update_summary.assert_called_once()
+
+    @pytest.mark.parametrize("llm_output", ["", "   \n"])
+    async def test_generate_summary_rejects_invalid_llm_output(
+        self,
+        llm_output: str,
+        mock_session_manager,
+        mock_llm_service,
+        mock_transcript_processor,
+        summary_config,
+        tmp_path: Path,
+    ) -> None:
+        """Invalid LLM output must not replace an existing summary."""
+        transcript_file = tmp_path / "transcript.jsonl"
+        transcript_file.write_text(
+            json.dumps({"message": {"role": "user", "content": "Help me"}}) + "\n"
+        )
+
+        session = MagicMock()
+        session.transcript_path = str(transcript_file)
+        session.summary_markdown = "Existing good summary"
+        mock_session_manager.get.return_value = session
+        mock_llm_service.call_feature.return_value = llm_output
+
+        with (
+            patch("gobby.workflows.summary_actions.get_git_status", return_value="clean"),
+            patch("gobby.workflows.summary_actions.get_file_changes", return_value="No changes"),
+            patch("gobby.workflows.summary_actions.get_git_diff_summary", return_value=""),
+        ):
+            result = await generate_summary(
+                session_manager=mock_session_manager,
+                session_id="test-session",
+                llm_service=mock_llm_service,
+                transcript_processor=mock_transcript_processor,
+                session_summary_config=summary_config,
+            )
+
+        assert result == {"error": "LLM returned invalid summary"}
+        mock_session_manager.update_summary.assert_not_called()
+        assert session.summary_markdown == "Existing good summary"
 
     @pytest.mark.asyncio
     async def test_generate_summary_invalid_mode(

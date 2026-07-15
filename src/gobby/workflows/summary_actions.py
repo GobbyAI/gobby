@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import aiofiles
 
 from gobby.memory.title_heuristics import normalize_title_candidate
+from gobby.sessions.summary_validity import is_summary_markdown_valid
 from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
 from gobby.workflows.git_utils import (
     get_file_changes,
@@ -748,6 +749,10 @@ async def generate_summary(
     except Exception as e:
         logger.error(f"LLM generation failed: {e}")
         return {"error": f"LLM error: {e}"}
+
+    if not is_summary_markdown_valid(summary_content):
+        logger.warning("LLM returned invalid summary for session %s", session_id)
+        return {"error": "LLM returned invalid summary"}
 
     # 4. Save to session
     session_manager.update_summary(session_id, summary_markdown=summary_content)
