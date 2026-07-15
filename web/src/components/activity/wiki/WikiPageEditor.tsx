@@ -255,7 +255,7 @@ export function WikiPageEditor({ scope, intent, actions, onClose, onSaved }: Wik
             />
           </div>
           {formError ? (
-            <p role="alert" className="text-xs text-destructive">
+            <p role="alert" className="text-xs text-destructive-foreground">
               {formError}
             </p>
           ) : null}

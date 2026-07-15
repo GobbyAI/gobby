@@ -453,6 +453,7 @@ export function createChat(overrides: Partial<ChatState> = {}): ChatState {
     isReconnecting: false,
     contextUsage: undefined,
     onSend: vi.fn(),
+    addSystemMessage: vi.fn(),
     onStop: vi.fn(),
     onRespondToQuestion: vi.fn(),
     onRespondToApproval: vi.fn(),

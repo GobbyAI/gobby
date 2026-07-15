@@ -90,6 +90,39 @@ function Harness({
   );
 }
 
+function WindowedHarness() {
+  const items = useMemo<TreeNavItem[]>(
+    () => [
+      { id: "a", depth: 0, isExpandable: false, isExpanded: false },
+      { id: "b", depth: 0, isExpandable: false, isExpanded: false },
+    ],
+    [],
+  );
+  const [selectedId, setSelectedId] = useState<string | null>("a");
+  const [mountedId, setMountedId] = useState("a");
+  const { setRowRef, handleKeyDown, getTabIndex } = useTreeKeyboardNavigation({
+    items,
+    selectedId,
+    onSelect: setSelectedId,
+    onToggle: () => {},
+    onFocusRequest: setMountedId,
+  });
+
+  return (
+    <div role="tree" aria-label="Windowed tree">
+      <div
+        data-testid={`windowed-row-${mountedId}`}
+        ref={(node) => setRowRef(mountedId, node)}
+        role="treeitem"
+        tabIndex={getTabIndex(mountedId)}
+        onKeyDown={(event) => handleKeyDown(mountedId, event)}
+      >
+        {mountedId}
+      </div>
+    </div>
+  );
+}
+
 describe("useTreeKeyboardNavigation", () => {
   it("makes the first row the tab entry point when nothing is selected", () => {
     render(<Harness />);
@@ -164,6 +197,17 @@ describe("useTreeKeyboardNavigation", () => {
     fireEvent.keyDown(screen.getByTestId("row-a"), { key: "ArrowDown" });
     expect(screen.getByTestId("row-b")).toHaveAttribute("tabindex", "0");
     expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("focuses a virtualized row after the focus request mounts it", () => {
+    render(<WindowedHarness />);
+    const firstRow = screen.getByTestId("windowed-row-a");
+    firstRow.focus();
+
+    fireEvent.keyDown(firstRow, { key: "ArrowDown" });
+
+    expect(screen.queryByTestId("windowed-row-a")).toBeNull();
+    expect(screen.getByTestId("windowed-row-b")).toHaveFocus();
   });
 
   it("ignores key events bubbling from nested controls", () => {

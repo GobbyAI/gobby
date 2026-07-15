@@ -149,8 +149,9 @@ export function useTaskInlineEdit({
         if (generationRef.current.get(pendingKey) !== generation) return;
         applyRawTaskUpdate(taskId, serverRaw);
       } catch (error) {
-        if (generationRef.current.get(pendingKey) !== generation) return;
-        rollback(taskId, snapshot);
+        if (generationRef.current.get(pendingKey) === generation) {
+          rollback(taskId, snapshot);
+        }
         setErrors((prev) => ({
           ...prev,
           [taskId]:

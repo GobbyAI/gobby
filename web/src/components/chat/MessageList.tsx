@@ -213,20 +213,17 @@ export const MessageList = memo(
       scrollScrollerToBottom,
     ]);
 
+    const lastMessageRole = messages[messages.length - 1]?.role;
     const Footer = useCallback(
       () => (
         <>
           {isThinking &&
-            (messages.length === 0 ||
-              messages[messages.length - 1].role === "user") && (
+            (messages.length === 0 || lastMessageRole === "user") && (
               <ThinkingIndicator />
             )}
         </>
       ),
-      [
-        isThinking,
-        messages,
-      ],
+      [isThinking, lastMessageRole, messages.length],
     );
 
     // Stable reference for itemContent to avoid Virtuoso re-renders
@@ -305,6 +302,7 @@ export const MessageList = memo(
         ref={virtuosoRef}
         className="chat-scaled flex-1 min-h-0 overflow-x-hidden overscroll-contain [overflow-anchor:none] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border [scrollbar-width:thin] [scrollbar-color:var(--border)_transparent]"
         data={messages}
+        computeItemKey={(_, message) => message.id}
         itemContent={itemContent}
         followOutput={() => {
           // Layout effects keep the scroller pinned before paint; disabling

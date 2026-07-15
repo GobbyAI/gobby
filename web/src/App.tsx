@@ -533,6 +533,7 @@ export default function App() {
                   isReconnecting,
                   contextUsage,
                   onSend: handleSendMessage,
+                  addSystemMessage,
                   onStop: stopStreaming,
                   onRespondToQuestion: respondToQuestion,
                   onRespondToApproval: respondToApproval,

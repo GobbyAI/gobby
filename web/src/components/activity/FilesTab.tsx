@@ -118,7 +118,7 @@ function XIcon() {
   )
 }
 
-export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout = 'stack' }: FilesTabProps) {
+const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, layout = 'stack' }: FilesTabProps) {
   const isMobile = useIsMobile()
   const useHorizontal = layout === 'responsive-split' && !isMobile
   const [rootEntries, setRootEntries] = useState<FileEntry[]>([])
@@ -141,23 +141,41 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
     }
   }, [layout, leftWidth])
   const [fileContent, setFileContent] = useState<string | null>(null)
+  const [fileError, setFileError] = useState<string | null>(null)
   const [fileLoading, setFileLoading] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [editContent, setEditContent] = useState<string>('')
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null)
+  const ctxMenuRef = useRef<HTMLDivElement>(null)
   const [renaming, setRenaming] = useState<{ path: string; name: string } | null>(null)
   const [gitStatus, setGitStatus] = useState<Record<string, string>>({})
   const renameInputRef = useRef<HTMLInputElement>(null)
+  const childRequestControllers = useRef(new Set<AbortController>())
+  const openFileController = useRef<AbortController | null>(null)
   const { confirm, ConfirmDialogElement } = useConfirmDialog()
+
+  useEffect(() => () => {
+    childRequestControllers.current.forEach((controller) => controller.abort())
+    childRequestControllers.current.clear()
+    openFileController.current?.abort()
+  }, [])
 
   // Fetch git status
   useEffect(() => {
     if (!projectId) return
     const baseUrl = getBaseUrl()
-    fetch(`${baseUrl}/api/files/git-status?project_id=${encodeURIComponent(projectId)}`)
+    const controller = new AbortController()
+    fetch(`${baseUrl}/api/files/git-status?project_id=${encodeURIComponent(projectId)}`, {
+      signal: controller.signal,
+    })
       .then((res) => (res.ok ? res.json() : { files: {} }))
-      .then((data) => setGitStatus(data.files ?? {}))
-      .catch(() => setGitStatus({}))
+      .then((data) => {
+        if (!controller.signal.aborted) setGitStatus(data.files ?? {})
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setGitStatus({})
+      })
+    return () => controller.abort()
   }, [projectId])
 
   // Fetch root directory
@@ -165,19 +183,38 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
     if (!projectId) { setRootEntries([]); setLoading(false); return }
     setLoading(true)
     const baseUrl = getBaseUrl()
-    fetch(`${baseUrl}/api/files/tree?project_id=${encodeURIComponent(projectId)}&path=`)
+    const controller = new AbortController()
+    fetch(`${baseUrl}/api/files/tree?project_id=${encodeURIComponent(projectId)}&path=`, {
+      signal: controller.signal,
+    })
       .then((res) => (res.ok ? res.json() : []))
-      .then((data) => setRootEntries(Array.isArray(data) ? data : []))
-      .catch(() => setRootEntries([]))
-      .finally(() => setLoading(false))
+      .then((data) => {
+        if (!controller.signal.aborted) setRootEntries(Array.isArray(data) ? data : [])
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setRootEntries([])
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false)
+      })
+    return () => controller.abort()
   }, [projectId])
 
   const loadChildren = useCallback((dirPath: string) => {
     if (!projectId || childrenMap.has(dirPath)) return
     const baseUrl = getBaseUrl()
-    fetch(`${baseUrl}/api/files/tree?project_id=${encodeURIComponent(projectId)}&path=${encodeURIComponent(dirPath)}`)
+    const controller = new AbortController()
+    childRequestControllers.current.add(controller)
+    fetch(`${baseUrl}/api/files/tree?project_id=${encodeURIComponent(projectId)}&path=${encodeURIComponent(dirPath)}`, {
+      signal: controller.signal,
+    })
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => {
+        if (controller.signal.aborted) return
+        if (dirPath === '') {
+          setRootEntries(Array.isArray(data) ? data : [])
+          return
+        }
         setChildrenMap((prev) => {
           const next = new Map(prev)
           next.set(dirPath, Array.isArray(data) ? data : [])
@@ -185,8 +222,10 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
         })
       })
       .catch(() => {
+        if (controller.signal.aborted) return
         setChildrenMap((prev) => { const next = new Map(prev); next.set(dirPath, []); return next })
       })
+      .finally(() => childRequestControllers.current.delete(controller))
   }, [projectId, childrenMap])
 
   const toggleDir = useCallback((path: string) => {
@@ -202,17 +241,37 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
     setSelectedFile(path)
     setFileLoading(true)
     setFileContent(null)
+    setFileError(null)
+    setEditContent('')
     setIsEditing(false)
     const baseUrl = getBaseUrl()
-    fetch(`${baseUrl}/api/files/read?project_id=${encodeURIComponent(projectId)}&path=${encodeURIComponent(path)}`)
-      .then((res) => (res.ok ? res.json() : { content: 'Failed to load file' }))
+    openFileController.current?.abort()
+    const controller = new AbortController()
+    openFileController.current = controller
+    fetch(`${baseUrl}/api/files/read?project_id=${encodeURIComponent(projectId)}&path=${encodeURIComponent(path)}`, {
+      signal: controller.signal,
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        return res.json()
+      })
       .then((data) => {
-        const content = data.content ?? data.error ?? 'No content'
+        if (controller.signal.aborted) return
+        if (typeof data.content !== 'string') throw new Error('File response has no content')
+        const content = data.content
         setFileContent(content)
         setEditContent(content)
       })
-      .catch(() => setFileContent('Error loading file'))
-      .finally(() => setFileLoading(false))
+      .catch(() => {
+        if (controller.signal.aborted) return
+        setFileContent(null)
+        setEditContent('')
+        setFileError('Failed to load file')
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setFileLoading(false)
+        if (openFileController.current === controller) openFileController.current = null
+      })
   }, [projectId])
 
   // Context menu actions
@@ -220,6 +279,12 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
     e.preventDefault()
     e.stopPropagation()
     setCtxMenu({ x: e.clientX, y: e.clientY, entry })
+  }, [])
+
+  const handleActionsMenu = useCallback((e: React.MouseEvent<HTMLButtonElement>, entry: FileEntry) => {
+    e.stopPropagation()
+    const rect = e.currentTarget.getBoundingClientRect()
+    setCtxMenu({ x: rect.left, y: rect.bottom, entry })
   }, [])
 
   const closeCtxMenu = useCallback(() => setCtxMenu(null), [])
@@ -324,7 +389,7 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
   }, [projectId, closeCtxMenu, loadChildren])
 
   const handleSaveEdit = useCallback(async () => {
-    if (!projectId || !selectedFile) return
+    if (!projectId || !selectedFile || fileError) return
     const baseUrl = getBaseUrl()
     const response = await fetch(`${baseUrl}/api/files/write`, {
       method: 'POST',
@@ -337,7 +402,7 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
     }
     setFileContent(editContent)
     setIsEditing(false)
-  }, [projectId, selectedFile, editContent])
+  }, [projectId, selectedFile, editContent, fileError])
 
   // Close context menu on outside click
   useEffect(() => {
@@ -345,6 +410,10 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
     const handler = () => setCtxMenu(null)
     window.addEventListener('click', handler)
     return () => window.removeEventListener('click', handler)
+  }, [ctxMenu])
+
+  useEffect(() => {
+    ctxMenuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus()
   }, [ctxMenu])
 
   // Hooks must be declared before any early returns (rules-of-hooks).
@@ -374,7 +443,16 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
           <div
             className={`files-tree-item${isSelected ? ' file-tree-entry--active' : ''}`}
             style={{ paddingLeft: `calc(0.75rem + ${depth} * 1rem)` }}
+            role="treeitem"
+            tabIndex={0}
+            aria-level={depth + 1}
+            aria-expanded={isExpanded}
             onClick={() => toggleDir(entry.path)}
+            onKeyDown={(e) => {
+              if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return
+              e.preventDefault()
+              toggleDir(entry.path)
+            }}
             onContextMenu={(e) => handleContextMenu(e, entry)}
           >
             <FolderIcon open={isExpanded} />
@@ -393,6 +471,18 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
             ) : (
               <span className={`files-tree-name${getDirStatus(entry.path) ? ' files-tree-name--modified' : ''}`}>{entry.name}</span>
             )}
+            {!isRenaming && (
+              <button
+                type="button"
+                className="files-tree-actions"
+                aria-label={`Actions for ${entry.name}`}
+                aria-haspopup="menu"
+                aria-expanded={ctxMenu?.entry.path === entry.path}
+                onClick={(e) => handleActionsMenu(e, entry)}
+              >
+                <span aria-hidden="true">⋯</span>
+              </button>
+            )}
           </div>
           {isExpanded && children?.map((c) => renderEntry(c, depth + 1))}
           {isExpanded && !children && (
@@ -407,7 +497,16 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
         <div
           className={`files-tree-item files-tree-file${isSelected ? ' file-tree-entry--active' : ''}`}
           style={{ paddingLeft: `calc(0.75rem + ${depth} * 1rem)` }}
+          role="treeitem"
+          tabIndex={0}
+          aria-level={depth + 1}
+          aria-selected={isSelected}
           onClick={() => openFile(entry.path)}
+          onKeyDown={(e) => {
+            if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return
+            e.preventDefault()
+            openFile(entry.path)
+          }}
           onContextMenu={(e) => handleContextMenu(e, entry)}
           draggable
           onDragStart={(e) => {
@@ -436,6 +535,18 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
             if (status) return <GitStatusBadge status={status} />
             return null
           })()}
+          {!isRenaming && (
+            <button
+              type="button"
+              className="files-tree-actions"
+              aria-label={`Actions for ${entry.name}`}
+              aria-haspopup="menu"
+              aria-expanded={ctxMenu?.entry.path === entry.path}
+              onClick={(e) => handleActionsMenu(e, entry)}
+            >
+              <span aria-hidden="true">⋯</span>
+            </button>
+          )}
         </div>
       </div>
     )
@@ -468,7 +579,9 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
             body="Project files appear here once a project is loaded"
           />
         ) : (
-          rootEntries.map((e) => renderEntry(e, 0))
+          <div role="tree" aria-label="Project files">
+            {rootEntries.map((e) => renderEntry(e, 0))}
+          </div>
         )}
       </div>
 
@@ -490,6 +603,7 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
                   <button
                     className="btn btn-accent btn-sm file-viewer-btn"
                     onClick={handleSaveEdit}
+                    disabled={Boolean(fileError)}
                     aria-label="Save"
                     title="Save"
                   >
@@ -510,6 +624,7 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
                 <button
                   className="btn btn-accent btn-sm file-viewer-btn"
                   onClick={() => { setIsEditing(true); setEditContent(fileContent ?? '') }}
+                  disabled={fileLoading || Boolean(fileError)}
                   aria-label="Edit"
                   title="Edit"
                 >
@@ -522,6 +637,8 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
           <div className="files-code-viewer">
             {fileLoading ? (
               <div className="p-3 text-xs text-muted-foreground">Loading...</div>
+            ) : fileError ? (
+              <div className="p-3 text-xs text-destructive-foreground" role="alert">{fileError}</div>
             ) : isEditing ? (
               <CodeMirrorEditor
                 content={editContent}
@@ -558,24 +675,37 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
       {ctxMenu && (
         <>
           <div className="file-ctx-backdrop" onClick={closeCtxMenu} />
-          <div className="file-ctx-menu" style={{ position: 'fixed', left: ctxMenu.x, top: ctxMenu.y }}>
+          <div
+            ref={ctxMenuRef}
+            className="file-ctx-menu"
+            role="menu"
+            aria-label={`Actions for ${ctxMenu.entry.name}`}
+            style={{ position: 'fixed', left: ctxMenu.x, top: ctxMenu.y }}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') closeCtxMenu()
+            }}
+          >
             {onAddToChat && !ctxMenu.entry.is_dir && (
-              <button className="file-ctx-item" onClick={() => { onAddToChat(ctxMenu.entry.path); closeCtxMenu() }}>
+              <button role="menuitem" className="file-ctx-item" onClick={() => { onAddToChat(ctxMenu.entry.path); closeCtxMenu() }}>
                 Add to chat
               </button>
             )}
             {!ctxMenu.entry.is_dir && (
-              <button className="file-ctx-item" onClick={() => handleDuplicate(ctxMenu.entry)}>Duplicate</button>
+              <button role="menuitem" className="file-ctx-item" onClick={() => handleDuplicate(ctxMenu.entry)}>Duplicate</button>
             )}
-            <button className="file-ctx-item" onClick={() => handleRename(ctxMenu.entry)}>Rename</button>
-            <button className="file-ctx-item" onClick={() => handleMove(ctxMenu.entry)}>Move</button>
-            <button className="file-ctx-item file-ctx-item--danger" onClick={() => handleDelete(ctxMenu.entry)}>Delete</button>
+            <button role="menuitem" className="file-ctx-item" onClick={() => handleRename(ctxMenu.entry)}>Rename</button>
+            <button role="menuitem" className="file-ctx-item" onClick={() => handleMove(ctxMenu.entry)}>Move</button>
+            <button role="menuitem" className="file-ctx-item file-ctx-item--danger" onClick={() => handleDelete(ctxMenu.entry)}>Delete</button>
           </div>
         </>
       )}
       {ConfirmDialogElement}
     </div>
   )
+})
+
+export const FilesTab = memo(function FilesTab(props: FilesTabProps) {
+  return <FilesTabProject key={props.projectId ?? 'no-project'} {...props} />
 })
 
 function GitStatusBadge({ status }: { status: string }) {

@@ -61,11 +61,21 @@ function getBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || "";
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function getStringField(value: unknown, field: string): string | undefined {
+  return isRecord(value) && typeof value[field] === "string"
+    ? value[field]
+    : undefined;
+}
+
 async function callTool(
   serverName: string,
   toolName: string,
   args: Record<string, unknown>,
-): Promise<any> {
+): Promise<unknown> {
   const baseUrl = getBaseUrl();
   const response = await fetch(`${baseUrl}/api/mcp/tools/call`, {
     method: "POST",
@@ -79,8 +89,12 @@ async function callTool(
   if (!response.ok) {
     let detail = response.statusText;
     try {
-      const body = await response.json();
-      detail = body.error || body.message || body.detail || JSON.stringify(body);
+      const body: unknown = await response.json();
+      detail =
+        getStringField(body, "error") ??
+        getStringField(body, "message") ??
+        getStringField(body, "detail") ??
+        JSON.stringify(body);
     } catch {
       try {
         detail = await response.text();
@@ -107,6 +121,7 @@ export function SessionInteractionModal({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const paneRequestRef = useRef(0);
 
   // Focus input when modal opens
   useEffect(() => {
@@ -116,6 +131,7 @@ export function SessionInteractionModal({
   }, [open, mode]);
 
   const fetchPane = useCallback(async () => {
+    const requestId = ++paneRequestRef.current;
     setPaneLoading(true);
     setError(null);
     try {
@@ -123,17 +139,26 @@ export function SessionInteractionModal({
         session_id: entry.id,
         lines: 80,
       });
-      if (result?.success) {
-        setPaneOutput(result.output ?? result.result?.output ?? "");
+      if (requestId !== paneRequestRef.current) return;
+      const inner = isRecord(result) ? result.result : undefined;
+      if (isRecord(result) && result.success === true) {
+        setPaneOutput(
+          getStringField(result, "output") ?? getStringField(inner, "output") ?? "",
+        );
       } else {
         setError(
-          result?.error ?? result?.result?.error ?? "Failed to capture pane",
+          getStringField(result, "error") ??
+            getStringField(inner, "error") ??
+            "Failed to capture pane",
         );
       }
     } catch (err) {
+      if (requestId !== paneRequestRef.current) return;
       setError(err instanceof Error ? err.message : "Failed to capture pane");
     } finally {
-      setPaneLoading(false);
+      if (requestId === paneRequestRef.current) {
+        setPaneLoading(false);
+      }
     }
   }, [entry.id]);
 
@@ -149,6 +174,9 @@ export function SessionInteractionModal({
         fetchPane();
       }
     }
+    return () => {
+      paneRequestRef.current += 1;
+    };
   }, [open, mode, fetchPane]);
 
   const handleSend = useCallback(async () => {
@@ -156,10 +184,10 @@ export function SessionInteractionModal({
     setSending(true);
     setError(null);
     try {
-      let result: any;
+      let result: unknown;
       if (mode === "context") {
         result = await callTool("gobby-agents", "send_message", {
-          from_session: fromSessionId ?? "",
+          ...(fromSessionId ? { from_session: fromSessionId } : {}),
           target: "session",
           target_id: entry.id,
           content: text,

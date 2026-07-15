@@ -247,6 +247,18 @@ describe('ChatInput', () => {
     })
   })
 
+  it('does not send while an IME composition is in progress', async () => {
+    const onSend = vi.fn()
+    render(<ChatInput {...defaultProps} onSend={onSend} />)
+
+    const textarea = screen.getByRole('textbox')
+    await userEvent.type(textarea, 'Composing')
+    fireEvent.keyDown(textarea, { key: 'Enter', isComposing: true })
+
+    expect(onSend).not.toHaveBeenCalled()
+    expect(textarea).toHaveValue('Composing')
+  })
+
   it('sends selected ACP slash commands as prompt text', async () => {
     const onSend = vi.fn()
     const onPaletteSelect = vi.fn()
@@ -441,7 +453,7 @@ describe('ChatInput', () => {
     expect(screen.queryByLabelText('Start push to talk')).toBeNull()
   })
 
-  it('short tap latches recording and second tap stops it', () => {
+  it('short tap latches recording and keeps the stop affordance after typing', () => {
     vi.useFakeTimers()
     const onStopRecording = vi.fn()
     render(<PTTHarness onStopRecording={onStopRecording} />)
@@ -451,6 +463,8 @@ describe('ChatInput', () => {
 
     fireEvent.pointerDown(button, { pointerId: 1, button: 0 })
     fireEvent.pointerUp(button, { pointerId: 1 })
+
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'hello' } })
 
     const recordingButton = screen.getByLabelText('Push to talk recording') as HTMLButtonElement
     installPointerHelpers(recordingButton)
@@ -558,6 +572,24 @@ describe('ChatInput', () => {
     fireEvent.keyDown(window, { key: 'Escape' })
 
     expect(onCancelRecording).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses the semantic error token for the recording ring', () => {
+    render(
+      <ChatInput
+        {...defaultProps}
+        sttEnabled={true}
+        voiceInputMode="ptt"
+        isRecording={true}
+        startRecording={vi.fn(async () => {})}
+        stopRecording={vi.fn(async () => {})}
+        cancelRecording={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByLabelText('Push to talk recording')).toHaveClass(
+      'ring-[var(--color-error)]/70',
+    )
   })
 
   it('enables PTT from the toolbar mic without starting recording', async () => {
@@ -703,16 +735,28 @@ describe('ChatInput', () => {
 
   it('clears input after sending', async () => {
     const onSend = vi.fn()
-    render(<ChatInput {...defaultProps} onSend={onSend} />)
+    const onInputChange = vi.fn()
+    render(
+      <ChatInput
+        {...defaultProps}
+        onSend={onSend}
+        onInputChange={onInputChange}
+      />,
+    )
 
     const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
     await userEvent.type(textarea, 'Hello')
     await userEvent.keyboard('{Enter}')
 
     expect(textarea.value).toBe('')
+    expect(onInputChange).toHaveBeenLastCalledWith('')
   })
 
   it('shows command palette when input starts with /', async () => {
+    Object.defineProperty(Element.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: vi.fn(),
+    })
     const items = [
       { kind: 'command' as const, name: 'help', description: 'Show help', action: 'help' },
       { kind: 'command' as const, name: 'clear', description: 'Clear chat', action: 'clear' },
@@ -723,9 +767,22 @@ describe('ChatInput', () => {
     const textarea = screen.getByRole('textbox')
     await userEvent.type(textarea, '/')
 
+    const combobox = screen.getByRole('combobox')
+    const listbox = screen.getByRole('listbox', { name: 'Chat commands' })
+    const options = screen.getAllByRole('option')
+
+    expect(combobox).toHaveAttribute('aria-controls', listbox.id)
+    expect(combobox).toHaveAttribute('aria-activedescendant', options[0].id)
+    expect(options[0]).toHaveAttribute('aria-selected', 'true')
+    expect(options[1]).toHaveAttribute('aria-selected', 'false')
+
+    await userEvent.keyboard('{ArrowDown}')
+
+    expect(combobox).toHaveAttribute('aria-activedescendant', options[1].id)
+    expect(options[1]).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByText('/help')).toBeTruthy()
     expect(screen.getByText('/clear')).toBeTruthy()
-    expect(screen.getByRole('button', { name: /\/help/ })).toHaveAttribute('type', 'button')
+    expect(screen.getByRole('option', { name: /\/help/ })).toHaveAttribute('type', 'button')
   })
 
   it('on mobile, Shift+Enter sends', async () => {
@@ -835,6 +892,34 @@ describe('ChatInput', () => {
       action: 'restart_daemon',
     })
     expect(onSend).not.toHaveBeenCalled()
+  })
+
+  it('does not activate a palette item while an IME composition is in progress', async () => {
+    const onSend = vi.fn()
+    const onPaletteSelect = vi.fn()
+    render(
+      <ChatInput
+        {...defaultProps}
+        onSend={onSend}
+        onPaletteSelect={onPaletteSelect}
+        paletteItems={[
+          {
+            kind: 'command' as const,
+            name: 'restart',
+            description: 'Restart the Gobby daemon',
+            action: 'restart_daemon',
+          },
+        ]}
+      />,
+    )
+
+    const textarea = screen.getByRole('textbox')
+    await userEvent.type(textarea, '/restart')
+    fireEvent.keyDown(textarea, { key: 'Enter', isComposing: true })
+
+    expect(onPaletteSelect).not.toHaveBeenCalled()
+    expect(onSend).not.toHaveBeenCalled()
+    expect(textarea).toHaveValue('/restart')
   })
 
   it('renders the observe overlay and calls attach', async () => {

@@ -296,6 +296,7 @@ export interface ChatState {
     files?: QueuedFile[],
     options?: ChatSendOptions,
   ) => void;
+  addSystemMessage: (content: string) => void;
   onStop: () => void;
   onRespondToQuestion: (
     toolCallId: string,

@@ -5,6 +5,7 @@ import { FilterCheckboxRow, FilterSection } from "./FilterPrimitives";
 import { SegmentedControl } from "../ui/SegmentedControl";
 import { inputFocusCls } from "../shared/focusStyles";
 import { getProviderDisplayName } from "../../lib/providerModels";
+import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { useIsMobile } from "../../hooks/useIsMobile";
 import {
   countActiveFilters,
@@ -84,6 +85,7 @@ export function SessionsFilterDropdown({
   const [showCustomDate, setShowCustomDate] = useState(filters.datePreset === "custom");
   const panelRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
+  useDialogFocus({ ref: panelRef, isOpen: isMobile, onClose });
   const sortedProviderOptions = useMemo(
     () =>
       [...providerOptions].sort((left, right) =>
@@ -96,7 +98,7 @@ export function SessionsFilterDropdown({
   // pattern, which leaves Esc as a browser-default no-op.
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape" && !event.defaultPrevented) onClose();
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -223,7 +225,7 @@ export function SessionsFilterDropdown({
                 {TASK_REF_ROLES.map((role) => (
                   <label
                     key={role.value}
-                    className="flex min-w-0 items-center gap-1.5 text-[length:var(--text-md)] text-muted-foreground cursor-pointer"
+                    className="flex min-w-0 items-center gap-1.5 text-[length:var(--text-md)] text-muted-foreground cursor-pointer pointer-coarse:min-h-11 pointer-coarse:min-w-11"
                   >
                     <input
                       type="checkbox"

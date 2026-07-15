@@ -37,7 +37,7 @@ export function ChatInputQueuedFiles({
               <span className="max-w-[100px] truncate">{queuedFile.file.name}</span>
             </div>
           )}
-          <div className="px-2 pb-1 text-[10px] text-muted-foreground">
+          <div className="px-2 pb-1 text-[length:var(--text-2xs)] text-muted-foreground">
             <div className="truncate">
               {formatAttachmentSize(queuedFile.attachment?.size_bytes ?? queuedFile.file.size)}
             </div>
@@ -51,7 +51,7 @@ export function ChatInputQueuedFiles({
             {queuedFile.status === 'error' && (
               <button
                 type="button"
-                className="text-destructive underline"
+                className="text-destructive-foreground underline"
                 onClick={() => onRetry(queuedFile.id)}
                 title={queuedFile.error ?? 'Upload failed'}
               >
@@ -62,7 +62,7 @@ export function ChatInputQueuedFiles({
           <button
             type="button"
             aria-label={`Remove ${queuedFile.file.name}`}
-            className="absolute top-0 right-0 bg-[var(--surface-scrim)] rounded-bl text-foreground w-4 h-4 flex items-center justify-center text-xs"
+            className="absolute top-0 right-0 bg-[var(--surface-scrim)] rounded-bl text-foreground w-4 h-4 flex items-center justify-center text-xs pointer-coarse:h-11 pointer-coarse:w-11"
             onClick={() => onRemove(queuedFile.id)}
           >
             &times;

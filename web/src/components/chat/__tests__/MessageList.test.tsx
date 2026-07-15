@@ -9,6 +9,7 @@ const { scrollToIndexMock, virtuosoProps } = vi.hoisted(() => ({
   scrollToIndexMock: vi.fn(),
   virtuosoProps: [] as Array<{
     className?: string;
+    computeItemKey?: (index: number, message: ChatMessage) => React.Key;
     followOutput?: () => "auto" | "smooth" | false;
   }>,
 }));
@@ -21,12 +22,14 @@ vi.mock("react-virtuoso", async () => {
       (
         {
           className,
+          computeItemKey,
           data,
           followOutput,
           itemContent,
           components,
         }: {
           className?: string;
+          computeItemKey?: (index: number, message: ChatMessage) => React.Key;
           data: ChatMessage[];
           followOutput?: () => "auto" | "smooth" | false;
           itemContent: (index: number, message: ChatMessage) => React.ReactNode;
@@ -49,7 +52,7 @@ vi.mock("react-virtuoso", async () => {
           }),
           [],
         );
-        virtuosoProps.push({ className, followOutput });
+        virtuosoProps.push({ className, computeItemKey, followOutput });
         const Scroller = components?.Scroller ?? "div";
         const Footer = components?.Footer;
         return (
@@ -164,5 +167,19 @@ describe("MessageList", () => {
       overflowAnchor: "none",
       overscrollBehavior: "contain",
     });
+  });
+
+  it("keys virtualized messages by message id", () => {
+    const firstMessage = message("m1");
+    render(
+      <MessageList
+        messages={[firstMessage]}
+        isStreaming={false}
+        isThinking={false}
+      />,
+    );
+
+    const latestProps = virtuosoProps[virtuosoProps.length - 1];
+    expect(latestProps?.computeItemKey?.(0, firstMessage)).toBe("m1");
   });
 });

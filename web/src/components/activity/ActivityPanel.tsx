@@ -139,7 +139,6 @@ function ActivityDropdown({
         type="button"
         className="activity-panel-mobile-trigger"
         onClick={onToggle}
-        aria-haspopup="menu"
         aria-expanded={isOpen}
       >
         <span className="activity-panel-mobile-trigger__value">
@@ -164,13 +163,12 @@ function ActivityDropdown({
         </span>
       </button>
       {isOpen && (
-        <div className="activity-panel-mobile-menu" role="menu">
+        <div className="activity-panel-mobile-menu">
           {tabs.map((tab) => (
             <button
               key={tab.id}
               type="button"
-              role="menuitemradio"
-              aria-checked={activeTab === tab.id}
+              aria-current={activeTab === tab.id ? "page" : undefined}
               className={`activity-panel-mobile-menu__item${activeTab === tab.id ? " active" : ""}`}
               onClick={() => onSelect(tab.id)}
             >

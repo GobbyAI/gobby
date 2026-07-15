@@ -10,9 +10,20 @@ import {
   createVoice,
 } from "./chatPageTestSetup";
 import { useChatPageArtifacts } from "../useChatPageArtifacts";
+import { useChatPageCommandPalette } from "../useChatPageCommandPalette";
 import { useChatPageProviderState } from "../useChatPageProviderState";
 import { useChatPageSessionRouting } from "../useChatPageSessionRouting";
 import { useChatPageVoiceStatus } from "../useChatPageVoiceStatus";
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
 
 function makeSession(overrides: Partial<GobbySession>): GobbySession {
   return {
@@ -120,6 +131,61 @@ function stubProviderFetch() {
   );
 }
 
+describe("useChatPageCommandPalette", () => {
+  function renderPaletteHook(
+    confirm: (options: {
+      title: string;
+      description?: string;
+      confirmLabel?: string;
+      destructive?: boolean;
+    }) => Promise<boolean>,
+    onDeleteSession: (session: GobbySession) => void,
+  ) {
+    return renderHook(() =>
+      useChatPageCommandPalette({
+        allProjectSessions: [],
+        activityPanelChatSessionId: null,
+        conversations: {
+          ...createConversations(),
+          onDeleteSession,
+        },
+        confirm,
+        handleSwapSession: vi.fn(),
+        toggleFromChat: vi.fn(),
+        toggleFromPanel: vi.fn(),
+      }),
+    );
+  }
+
+  it("does not delete a session when confirmation is declined", async () => {
+    const confirm = vi.fn(async () => false);
+    const onDeleteSession = vi.fn();
+    const { result } = renderPaletteHook(confirm, onDeleteSession);
+    const session = makeSession({ ref: "#42" });
+
+    await result.current.handleCommandPaletteDeleteSession(session);
+
+    expect(confirm).toHaveBeenCalledWith({
+      title: "Delete session?",
+      description: "This will permanently delete #42.",
+      confirmLabel: "Delete",
+      destructive: true,
+    });
+    expect(onDeleteSession).not.toHaveBeenCalled();
+  });
+
+  it("deletes a session after confirmation", async () => {
+    const confirm = vi.fn(async () => true);
+    const onDeleteSession = vi.fn();
+    const { result } = renderPaletteHook(confirm, onDeleteSession);
+    const session = makeSession({ ref: "#42" });
+
+    await result.current.handleCommandPaletteDeleteSession(session);
+
+    expect(onDeleteSession).toHaveBeenCalledWith(session);
+  });
+});
+
 describe("useChatPageSessionRouting", () => {
   it("swaps to a web chat by selecting the target session and parking the current chat", () => {
     const showTab = vi.fn();
@@ -151,6 +217,44 @@ describe("useChatPageSessionRouting", () => {
     expect(conversations.onSelectSession).toHaveBeenCalledWith(targetSession);
     expect(result.current.focusSessionId).toBe("db-session-1");
     expect(dismissOnMobile).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a missing web chat target without parking the current chat", () => {
+    const showTab = vi.fn();
+    const dismissOnMobile = vi.fn();
+    const addSystemMessage = vi.fn();
+    const conversations = {
+      ...createConversations(),
+      sessions: [],
+      onSelectSession: vi.fn(),
+    };
+    const { result } = renderHook(() =>
+      useChatPageSessionRouting({
+        chat: createChat({
+          dbSessionId: "db-session-1",
+          addSystemMessage,
+        }),
+        conversations,
+        showTab,
+        dismissOnMobile,
+      }),
+    );
+
+    act(() => {
+      result.current.handleSwapSession({
+        sessionId: "missing-web-chat",
+        sessionType: "web_chat",
+        agentRunId: null,
+      });
+    });
+
+    expect(addSystemMessage).toHaveBeenCalledWith(
+      "This chat session is no longer available.",
+    );
+    expect(showTab).not.toHaveBeenCalled();
+    expect(conversations.onSelectSession).not.toHaveBeenCalled();
+    expect(dismissOnMobile).not.toHaveBeenCalled();
+    expect(result.current.focusSessionId).toBeNull();
   });
 
   it("swaps terminal targets into observe mode", () => {
@@ -430,8 +534,11 @@ describe("useChatPageProviderState", () => {
 
   it("confirms provider changes before resuming attachable viewed terminals", async () => {
     const confirm = vi.fn(async () => true);
-    const continueSessionInChat = vi.fn(async () => "continued-session");
+    const continuation = deferred<string>();
+    const continueSessionInChat = vi.fn(() => continuation.promise);
     const onProviderChange = vi.fn();
+    const onModelChange = vi.fn();
+    const onReasoningPreferenceChange = vi.fn();
     const { result } = renderHook(() =>
       useChatPageProviderState({
         chat: createChat({
@@ -444,10 +551,76 @@ describe("useChatPageProviderState", () => {
         mainSessionMeta: null,
         currentModel: "sonnet",
         reasoningPreferences: {},
-        onModelChange: vi.fn(),
-        onReasoningPreferenceChange: vi.fn(),
+        onModelChange,
+        onReasoningPreferenceChange,
         projectId: "proj-1",
         confirm,
+      }),
+    );
+
+    let selectionPromise!: Promise<void>;
+    await act(async () => {
+      selectionPromise = result.current.handleSwappedSessionProviderSelection(
+        "claude",
+        "sonnet",
+        "medium",
+      );
+      await Promise.resolve();
+    });
+
+    expect(confirm).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Change provider?", destructive: true }),
+    );
+    expect(continueSessionInChat).toHaveBeenCalledWith("terminal-2", "proj-1", {
+      provider: "claude",
+      model: "sonnet",
+      reasoningEffort: "medium",
+      chatMode: null,
+      fallbackContext: "auto",
+    });
+    expect(onProviderChange).not.toHaveBeenCalled();
+    expect(onModelChange).not.toHaveBeenCalled();
+    expect(onReasoningPreferenceChange).not.toHaveBeenCalled();
+
+    continuation.resolve("continued-session");
+    await act(async () => selectionPromise);
+
+    expect(onProviderChange).toHaveBeenCalledWith("claude");
+    expect(onModelChange).toHaveBeenCalledWith("sonnet");
+    expect(onReasoningPreferenceChange).toHaveBeenCalledWith(
+      "claude",
+      "sonnet",
+      "medium",
+    );
+  });
+
+  it("reports provider resume failures without committing preferences", async () => {
+    const failure = new Error("daemon unavailable");
+    const continueSessionInChat = vi.fn(async () => {
+      throw failure;
+    });
+    const addSystemMessage = vi.fn();
+    const onProviderChange = vi.fn();
+    const onModelChange = vi.fn();
+    const onReasoningPreferenceChange = vi.fn();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { result } = renderHook(() =>
+      useChatPageProviderState({
+        chat: createChat({
+          viewingSessionId: "terminal-2",
+          viewingSessionMeta: terminalMeta(),
+          sessionInteractionMode: "observe",
+          continueSessionInChat,
+          addSystemMessage,
+          onProviderChange,
+        }),
+        mainSessionMeta: null,
+        currentModel: "sonnet",
+        reasoningPreferences: {},
+        onModelChange,
+        onReasoningPreferenceChange,
+        projectId: "proj-1",
+        confirm: vi.fn(async () => true),
       }),
     );
 
@@ -459,15 +632,118 @@ describe("useChatPageProviderState", () => {
       );
     });
 
-    expect(confirm).toHaveBeenCalledWith(
-      expect.objectContaining({ title: "Change provider?", destructive: true }),
+    expect(errorSpy).toHaveBeenCalledWith(
+      "Failed to change provider for viewed session:",
+      failure,
     );
-    expect(onProviderChange).toHaveBeenCalledWith("claude");
+    expect(addSystemMessage).toHaveBeenCalledWith(
+      "Failed to change provider. The terminal session is still running.",
+    );
+    expect(onProviderChange).not.toHaveBeenCalled();
+    expect(onModelChange).not.toHaveBeenCalled();
+    expect(onReasoningPreferenceChange).not.toHaveBeenCalled();
+  });
+
+  it("revalidates the viewed session after provider confirmation", async () => {
+    const confirmation = deferred<boolean>();
+    const confirm = vi.fn(() => confirmation.promise);
+    const continueSessionInChat = vi.fn(async () => "continued-session");
+    const onProviderChange = vi.fn();
+    const onModelChange = vi.fn();
+    const onReasoningPreferenceChange = vi.fn();
+    let chat = createChat({
+      viewingSessionId: "terminal-2",
+      viewingSessionMeta: terminalMeta({ canProxyAttach: true }),
+      sessionInteractionMode: "observe",
+      continueSessionInChat,
+      onProviderChange,
+    });
+    const { result, rerender } = renderHook(() =>
+      useChatPageProviderState({
+        chat,
+        mainSessionMeta: null,
+        currentModel: "sonnet",
+        reasoningPreferences: {},
+        onModelChange,
+        onReasoningPreferenceChange,
+        projectId: "proj-1",
+        confirm,
+      }),
+    );
+
+    let selectionPromise!: Promise<void>;
+    act(() => {
+      selectionPromise = result.current.handleSwappedSessionProviderSelection(
+        "claude",
+        "sonnet",
+        "medium",
+      );
+    });
+    chat = createChat({
+      viewingSessionId: "terminal-3",
+      viewingSessionMeta: terminalMeta({ chatMode: "bypass" }),
+      sessionInteractionMode: "observe",
+      continueSessionInChat,
+      onProviderChange,
+    });
+    rerender();
+
+    confirmation.resolve(true);
+    await act(async () => selectionPromise);
+
+    expect(continueSessionInChat).not.toHaveBeenCalled();
+    expect(onProviderChange).not.toHaveBeenCalled();
+    expect(onModelChange).not.toHaveBeenCalled();
+    expect(onReasoningPreferenceChange).not.toHaveBeenCalled();
+  });
+
+  it("uses refreshed viewed-session metadata after provider confirmation", async () => {
+    const confirmation = deferred<boolean>();
+    const continueSessionInChat = vi.fn(async () => "continued-session");
+    let chat = createChat({
+      viewingSessionId: "terminal-2",
+      viewingSessionMeta: terminalMeta({
+        canProxyAttach: true,
+        chatMode: "plan",
+      }),
+      sessionInteractionMode: "observe",
+      continueSessionInChat,
+    });
+    const { result, rerender } = renderHook(() =>
+      useChatPageProviderState({
+        chat,
+        mainSessionMeta: null,
+        currentModel: "sonnet",
+        reasoningPreferences: {},
+        projectId: "proj-1",
+        confirm: vi.fn(() => confirmation.promise),
+      }),
+    );
+
+    let selectionPromise!: Promise<void>;
+    act(() => {
+      selectionPromise = result.current.handleSwappedSessionProviderSelection(
+        "claude",
+        "sonnet",
+        "medium",
+      );
+    });
+    chat = createChat({
+      viewingSessionId: "terminal-2",
+      viewingSessionMeta: terminalMeta({ chatMode: "bypass" }),
+      sessionInteractionMode: "observe",
+      continueSessionInChat,
+    });
+    rerender();
+
+    confirmation.resolve(true);
+    await act(async () => selectionPromise);
+
     expect(continueSessionInChat).toHaveBeenCalledWith("terminal-2", "proj-1", {
       provider: "claude",
       model: "sonnet",
       reasoningEffort: "medium",
-      chatMode: null,
+      chatMode: "bypass",
       fallbackContext: "auto",
     });
   });

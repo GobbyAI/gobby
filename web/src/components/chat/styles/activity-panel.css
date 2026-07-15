@@ -373,8 +373,9 @@
   text-align: left;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 768px), (pointer: coarse) {
   .activity-panel-mobile-menu__item {
+    min-width: 2.75rem;
     min-height: 2.75rem;
   }
 }
@@ -438,8 +439,12 @@
 }
 
 .activity-panel-search:focus {
-  outline: none;
   border-color: var(--accent);
+}
+
+.activity-panel-search:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .activity-panel-search::placeholder {

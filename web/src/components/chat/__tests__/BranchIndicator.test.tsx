@@ -116,7 +116,9 @@ describe('BranchIndicator', () => {
 
     await user.click(screen.getByRole('option', { name: /feature/i }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('dirty worktree')
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('dirty worktree')
+    expect(alert).toHaveClass('text-destructive-foreground')
     expect(screen.getByRole('listbox')).toBeInTheDocument()
     expect(onWorktreeChange).not.toHaveBeenCalled()
   })

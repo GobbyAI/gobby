@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -398,6 +398,39 @@ describe("ActivityMcpTab", () => {
       );
     });
     expect(screen.getByText(/"ok": true/)).toBeInTheDocument();
+  });
+
+  it("discards a tool result after selecting another tool", async () => {
+    const user = userEvent.setup();
+    let resolveCall: ((value: { success: boolean; result: unknown }) => void) | null =
+      null;
+    const callTool = vi.fn(
+      () =>
+        new Promise<{ success: boolean; result: unknown }>((resolve) => {
+          resolveCall = resolve;
+        }),
+    );
+    renderMcp(makeProps({ callTool }));
+
+    await screen.findByText("gobby-tasks");
+    await user.click(
+      within(treeItemFor("gobby-tasks")).getByRole("button", {
+        name: "Expand gobby-tasks tools",
+      }),
+    );
+    await user.click(await screen.findByText("create_task"));
+    await screen.findByText("create_task schema");
+    await user.type(screen.getByRole("textbox", { name: /title/ }), "Fix docs");
+    await user.click(screen.getByRole("button", { name: "Call tool" }));
+    await waitFor(() => expect(callTool).toHaveBeenCalledOnce());
+
+    await user.click(screen.getByText("list_tasks"));
+    await screen.findByText("list_tasks schema");
+    await act(async () => {
+      resolveCall?.({ success: true, result: { stale: true } });
+    });
+
+    expect(screen.queryByText(/"stale": true/)).toBeNull();
   });
 
   it("refreshes MCP tools from the shared header", async () => {

@@ -41,7 +41,7 @@
 .message-model-switch {
   background: var(--bg-tertiary);
   border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
-  font-size: calc(var(--font-size-base) * 0.8);
+  font-size: var(--text-md);
   font-style: italic;
   color: var(--text-secondary);
 }
@@ -51,7 +51,7 @@
   align-items: center;
   gap: 0.5rem;
   margin-bottom: 0.5rem;
-  font-size: calc(var(--font-size-base) * 0.8);
+  font-size: var(--text-md);
 }
 
 .message-role {
@@ -79,11 +79,11 @@
    Tailwind's text-sm/text-xs use rem (absolute), so we override them
    to scale proportionally with --font-size-base. */
 .chat-scaled .text-sm {
-  font-size: calc(var(--font-size-base) * 0.875);
+  font-size: var(--text-base);
 }
 
 .chat-scaled .text-xs {
-  font-size: calc(var(--font-size-base) * 0.75);
+  font-size: var(--text-sm);
 }
 
 /* ============================================
@@ -123,7 +123,7 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    font-size: calc(var(--font-size-base) * 0.875);
+    font-size: var(--text-base);
     font-weight: 500;
     color: var(--text-primary);
   }
@@ -144,7 +144,7 @@
     border: none;
     border-bottom: 1px solid var(--border);
     color: var(--accent);
-    font-size: calc(var(--font-size-base) * 0.85);
+    font-size: var(--text-base);
     font-weight: 500;
     cursor: pointer;
     text-align: left;
@@ -359,7 +359,7 @@
   border: none;
   outline: none;
   color: var(--text-primary);
-  font-size: calc(var(--font-size-base) * 0.9);
+  font-size: var(--text-base);
   font-family: inherit;
 }
 
@@ -369,7 +369,7 @@
 
 .command-palette-kbd {
   font-family: var(--font-mono);
-  font-size: calc(var(--font-size-base) * 0.65);
+  font-size: var(--text-2xs);
   padding: 0.125rem 0.375rem;
   border: 1px solid var(--border);
   border-radius: 0.25rem;
@@ -386,7 +386,7 @@
 
 .command-palette-group-label {
   padding: 0.5rem 0.75rem 0.25rem;
-  font-size: calc(var(--font-size-base) * 0.7);
+  font-size: var(--text-xs);
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -400,7 +400,7 @@
   padding: 0.5rem 0.75rem;
   cursor: pointer;
   transition: background 0.05s;
-  font-size: calc(var(--font-size-base) * 0.85);
+  font-size: var(--text-base);
 }
 
 .command-palette-item:hover,
@@ -432,7 +432,7 @@
 
 .command-palette-item-ref {
   color: var(--accent);
-  font-size: calc(var(--font-size-base) * 0.8);
+  font-size: var(--text-md);
   flex-shrink: 0;
 }
 
@@ -453,7 +453,7 @@
 }
 
 .command-palette-item-time {
-  font-size: calc(var(--font-size-base) * 0.75);
+  font-size: var(--text-sm);
   color: var(--text-muted);
   flex-shrink: 0;
 }
@@ -464,7 +464,7 @@
   gap: 1rem;
   padding: 0.5rem 0.75rem;
   border-top: 1px solid var(--border);
-  font-size: calc(var(--font-size-base) * 0.7);
+  font-size: var(--text-xs);
   color: var(--text-muted);
 }
 

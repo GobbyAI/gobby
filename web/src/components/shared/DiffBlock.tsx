@@ -35,7 +35,7 @@ export type DiffBlockProps = {
 const TOOL_RESULT_DIFF_STYLE: React.CSSProperties = {
   margin: 0,
   padding: '0.75rem',
-  fontSize: '0.75rem',
+  fontSize: 'var(--text-sm)',
   borderRadius: '0.25rem',
   maxHeight: '24rem',
   overflowY: 'auto',
@@ -47,7 +47,7 @@ const TOOL_RESULT_DIFF_STYLE: React.CSSProperties = {
 const FULL_HEIGHT_DIFF_STYLE: React.CSSProperties = {
   margin: 0,
   padding: 0,
-  fontSize: '0.75rem',
+  fontSize: 'var(--text-sm)',
   borderRadius: 0,
   height: '100%',
   overflow: 'auto',

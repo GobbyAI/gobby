@@ -141,9 +141,36 @@
 }
 
 .files-tree-name {
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.files-tree-actions {
+  flex-shrink: 0;
+  width: 1.5rem;
+  height: 1.5rem;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.files-tree-item:hover .files-tree-actions,
+.files-tree-item:focus-within .files-tree-actions,
+.files-tree-actions[aria-expanded="true"] {
+  opacity: 1;
+}
+
+.files-tree-actions:hover,
+.files-tree-actions:focus-visible {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
 }
 
 .files-tree-loading {

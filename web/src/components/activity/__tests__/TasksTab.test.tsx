@@ -80,6 +80,30 @@ describe("TasksTab", () => {
     expect(screen.queryByLabelText("Board view")).toBeNull();
   });
 
+  it("keeps the current tasks and selection when a refresh fails", async () => {
+    render(<TasksTab projectId="proj-1" />);
+
+    const selectedTask = await screen.findByText("Open task 2");
+    fireEvent.click(selectedTask);
+    const selectedRow = selectedTask.closest('[role="treeitem"]');
+    expect(selectedRow).toHaveAttribute("aria-selected", "true");
+
+    mockFetch.resetRoutes();
+    mockFetch.mockErrorResponse(/\/api\/tasks\?/, 500);
+
+    fireEvent.click(screen.getByTitle("Filter by task state"));
+    fireEvent.click(screen.getByLabelText("Closed"));
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Failed to refresh tasks",
+      );
+    });
+    expect(screen.getByText("Open task 2")).toBeTruthy();
+    expect(selectedRow).toHaveAttribute("aria-selected", "true");
+  });
+
   it("checks all stage filters by default and narrows by deselection", async () => {
     render(<TasksTab projectId="proj-1" />);
 
@@ -707,6 +731,26 @@ describe("TasksTab", () => {
       expect(screen.queryByText("Task not found")).toBeNull();
       expect(screen.queryByText("Close")).toBeNull();
     });
+  });
+
+  it("shows the selected task ref while its detail is loading", async () => {
+    render(<TasksTab projectId="proj-1" />);
+
+    fireEvent.click(await screen.findByText("Review approved task"));
+    await screen.findByText("Review approved task detail");
+    expect(screen.getByText("Task #401")).toBeInTheDocument();
+
+    const originalFetch = mockFetch.fn.getMockImplementation();
+    const pendingDetail = new Promise<Response>(() => {});
+    mockFetch.fn.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/api/tasks/task-2")) return pendingDetail;
+      return originalFetch?.(input, init);
+    });
+
+    fireEvent.click(screen.getByText("Open task 2"));
+
+    expect(screen.getByText("Task #411")).toBeInTheDocument();
+    expect(screen.queryByText("Task #401")).toBeNull();
   });
 
   it("renders detail metadata in the lower pane without the old inline summary line", async () => {

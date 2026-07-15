@@ -72,6 +72,34 @@ describe('ToolCallCard rendering', () => {
     expect(screen.queryByText('null')).toBeNull()
   })
 
+  it('renders malformed file_path payloads without crashing', () => {
+    renderWithProviders(
+      <ToolCallCards
+        toolCalls={[
+          makeCall({
+            id: 'tool-read-malformed-path',
+            tool_name: 'Read',
+            status: 'completed',
+            arguments: { file_path: { path: '/src/main.ts' } },
+            result: { kind: 'text', content: '1→const value = true', truncated: false },
+          }),
+          makeCall({
+            id: 'tool-write-malformed-path',
+            tool_name: 'Write',
+            status: 'calling',
+            arguments: { file_path: ['/src/out.ts'], content: 'export {}' },
+          }),
+        ]}
+      />,
+    )
+
+    fireEvent.click(screen.getByText('Read'))
+
+    expect(screen.getAllByText('Arguments')).toHaveLength(2)
+    expect(screen.getByText('Result')).toBeInTheDocument()
+    expect(screen.getByText('const value = true')).toBeInTheDocument()
+  })
+
   it('renders 3+ same-tool runs through the quieter ToolCallGroupHeader (canonical Bash name)', () => {
     const { container } = renderWithProviders(
       <ToolCallCards
@@ -212,6 +240,35 @@ describe('ToolCallCard rendering', () => {
     expect(code).toContain('"success": true')
     expect(code).toContain('"response_time_ms": 42')
     expect(code).not.toContain('"result":')
+  })
+
+  it('renders all MCP text blocks and indicates additional content blocks', () => {
+    const { container } = renderWithProviders(
+      <ToolCallCards
+        toolCalls={[
+          makeCall({
+            id: 'tool-mcp-content',
+            tool_name: 'mcp__gobby__call_tool',
+            result: {
+              content: {
+                content: [
+                  { type: 'text', text: 'first result' },
+                  { type: 'image', data: 'base64-image-data', mimeType: 'image/png' },
+                  { type: 'text', text: 'second result' },
+                ],
+                is_error: false,
+              },
+              kind: 'json',
+              truncated: false,
+            },
+          }),
+        ]}
+      />,
+    )
+
+    expect(container.textContent).toContain('first result')
+    expect(container.textContent).toContain('second result')
+    expect(screen.getByText('+1 more blocks')).toBeInTheDocument()
   })
 
   it('renders Codex image output tool results inline', () => {

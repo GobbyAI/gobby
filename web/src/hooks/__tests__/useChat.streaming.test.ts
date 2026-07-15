@@ -203,7 +203,6 @@ describe("useChat streaming and event handling", () => {
         status: "calling",
         tool_name: "read_file",
         server_name: "gobby",
-        arguments: { path: "/tmp/test" },
         tool_kind: "read",
         locations: [{ uri: "file:///tmp/test", line: 1 }],
         content_blocks: [{ type: "terminal", terminal_id: "term-1" }],
@@ -220,6 +219,7 @@ describe("useChat streaming and event handling", () => {
     expect(msg.toolCalls?.length).toBeGreaterThanOrEqual(1);
     expect(msg.toolCalls?.[0].tool_name).toBe("read_file");
     expect(msg.toolCalls?.[0].tool_type).toBe("read");
+    expect(msg.toolCalls?.[0].arguments).toBeUndefined();
     expect(msg.toolCalls?.[0].tool_kind).toBe("read");
     expect(msg.toolCalls?.[0].locations).toEqual([{ uri: "file:///tmp/test", line: 1 }]);
     expect(msg.toolCalls?.[0].content_blocks).toEqual([
@@ -239,6 +239,7 @@ describe("useChat streaming and event handling", () => {
         request_id: requestId,
         tool_call_id: "tc-1",
         status: "completed",
+        arguments: { path: "/tmp/test" },
         content_blocks: [
           {
             type: "diff",
@@ -262,6 +263,26 @@ describe("useChat streaming and event handling", () => {
       },
     ]);
     expect(updated.toolCalls?.[0].raw_output).toEqual({ stdout: "ok" });
+    expect(updated.toolCalls?.[0].arguments).toEqual({ path: "/tmp/test" });
+    expect(
+      updated.contentBlocks?.[1].type === "tool_chain"
+        ? updated.contentBlocks[1].tool_calls[0].arguments
+        : undefined,
+    ).toEqual({ path: "/tmp/test" });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "tool_status",
+        message_id: "msg-1",
+        request_id: requestId,
+        tool_call_id: "tc-1",
+        status: "completed",
+        result: "final",
+      });
+    });
+
+    const final = result.current.messages.filter((m) => m.role === "assistant")[0];
+    expect(final.toolCalls?.[0].arguments).toEqual({ path: "/tmp/test" });
   });
 
   it("stopStreaming stops streaming", async () => {

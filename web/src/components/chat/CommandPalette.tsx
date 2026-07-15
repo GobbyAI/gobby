@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import { useState, useCallback, useEffect, useId, useRef, useMemo } from 'react'
 import type { GobbySession } from '../../types/sessions'
 import { useNow } from '../../hooks/useNow'
 import { formatRelativeTime } from '../../utils/formatTime'
@@ -38,20 +38,39 @@ export function CommandPalette({
   const [selectedIndex, setSelectedIndex] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  const invokerRef = useRef<HTMLElement | null>(null)
+  const listboxId = useId()
+  const optionIdPrefix = useId()
   const now = useNow()
 
   // Reset on open
   useEffect(() => {
     if (isOpen) {
+      invokerRef.current = document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null
       setQuery('')
       setSelectedIndex(0)
       // Focus input after animation frame
-      requestAnimationFrame(() => inputRef.current?.focus())
+      const frame = requestAnimationFrame(() => inputRef.current?.focus())
+      return () => {
+        cancelAnimationFrame(frame)
+        invokerRef.current?.focus()
+        invokerRef.current = null
+      }
     }
   }, [isOpen])
 
   // Filter items based on query
-  const { filteredSessions, filteredActions, allItems } = useMemo(() => {
+  const {
+    filteredActions,
+    allItems,
+    sessionIndexMap,
+    actionIndexMap,
+    todaySessions,
+    weekSessions,
+    olderSessions,
+  } = useMemo(() => {
     const q = query.toLowerCase().trim()
     const showOnlySessions = q.startsWith('#')
     const showOnlyActions = q.startsWith('>')
@@ -80,13 +99,40 @@ export function CommandPalette({
     const actionItems = filteredActions.filter((a) => a.category === 'action')
     const navItems = filteredActions.filter((a) => a.category === 'navigate')
 
+    const todaySessions: GobbySession[] = []
+    const weekSessions: GobbySession[] = []
+    const olderSessions: GobbySession[] = []
+    for (const session of filteredSessions) {
+      const age = now - new Date(session.updated_at).getTime()
+      if (age < 86400000) todaySessions.push(session)
+      else if (age < 604800000) weekSessions.push(session)
+      else olderSessions.push(session)
+    }
+
     const allItems: Array<{ type: 'session'; session: GobbySession } | { type: 'action'; action: CommandPaletteAction }> = []
-    for (const s of filteredSessions) allItems.push({ type: 'session', session: s })
+    for (const session of todaySessions) allItems.push({ type: 'session', session })
+    for (const session of weekSessions) allItems.push({ type: 'session', session })
+    for (const session of olderSessions) allItems.push({ type: 'session', session })
     for (const a of actionItems) allItems.push({ type: 'action', action: a })
     for (const a of navItems) allItems.push({ type: 'action', action: a })
 
-    return { filteredSessions, filteredActions, allItems }
-  }, [query, sessions, actions])
+    const sessionIndexMap = new Map<string, number>()
+    const actionIndexMap = new Map<string, number>()
+    allItems.forEach((item, index) => {
+      if (item.type === 'session') sessionIndexMap.set(item.session.id, index)
+      else actionIndexMap.set(item.action.id, index)
+    })
+
+    return {
+      filteredActions,
+      allItems,
+      sessionIndexMap,
+      actionIndexMap,
+      todaySessions,
+      weekSessions,
+      olderSessions,
+    }
+  }, [query, sessions, actions, now])
 
   // Clamp selection
   useEffect(() => {
@@ -131,6 +177,9 @@ export function CommandPalette({
       } else if (e.key === 'Escape') {
         e.preventDefault()
         onClose()
+      } else if (e.key === 'Tab') {
+        e.preventDefault()
+        inputRef.current?.focus()
       } else if (e.key === 'Backspace' && query === '' && allItems[selectedIndex]?.type === 'session') {
         // Delete session with backspace when query is empty
         const session = allItems[selectedIndex].session
@@ -143,35 +192,17 @@ export function CommandPalette({
     [allItems, selectedIndex, handleSelect, onClose, query, onDeleteSession],
   )
 
-  // Group sessions by recency + precompute index maps (must be above early return to avoid hook ordering issues)
-  const { sessionIndexMap, actionIndexMap, todaySessions, weekSessions, olderSessions } = useMemo(() => {
-    const todaySessions: GobbySession[] = []
-    const weekSessions: GobbySession[] = []
-    const olderSessions: GobbySession[] = []
-    for (const s of filteredSessions) {
-      const age = now - new Date(s.updated_at).getTime()
-      if (age < 86400000) todaySessions.push(s)
-      else if (age < 604800000) weekSessions.push(s)
-      else olderSessions.push(s)
-    }
-
-    const sessionIndexMap = new Map<string, number>()
-    const actionIndexMap = new Map<string, number>()
-    let idx = 0
-    for (const s of todaySessions) sessionIndexMap.set(s.id, idx++)
-    for (const s of weekSessions) sessionIndexMap.set(s.id, idx++)
-    for (const s of olderSessions) sessionIndexMap.set(s.id, idx++)
-    for (const a of filteredActions.filter((a) => a.category === 'action')) actionIndexMap.set(a.id, idx++)
-    for (const a of filteredActions.filter((a) => a.category === 'navigate')) actionIndexMap.set(a.id, idx++)
-    return { sessionIndexMap, actionIndexMap, todaySessions, weekSessions, olderSessions }
-  }, [filteredSessions, filteredActions, now])
-
   if (!isOpen) return null
 
   return (
     <>
       <div className="command-palette-overlay" onClick={onClose} />
-      <div className="command-palette-container" role="dialog" aria-label="Command palette">
+      <div
+        className="command-palette-container"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Command palette"
+      >
         <div className="command-palette-input-wrap">
           <SearchIcon />
           <input
@@ -181,13 +212,26 @@ export function CommandPalette({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
+            role="combobox"
+            aria-expanded="true"
+            aria-controls={listboxId}
+            aria-activedescendant={
+              allItems.length > 0 ? `${optionIdPrefix}-${selectedIndex}` : undefined
+            }
+            aria-autocomplete="list"
             autoComplete="off"
             spellCheck={false}
           />
           <kbd className="command-palette-kbd">Esc</kbd>
         </div>
 
-        <div className="command-palette-list" ref={listRef}>
+        <div
+          className="command-palette-list"
+          ref={listRef}
+          id={listboxId}
+          role="listbox"
+          aria-label="Command palette results"
+        >
           {allItems.length === 0 && (
             <div className="command-palette-empty">No results</div>
           )}
@@ -201,6 +245,7 @@ export function CommandPalette({
                 return (
                   <SessionItem
                     key={s.id}
+                    id={`${optionIdPrefix}-${idx}`}
                     session={s}
                     isActive={s.id === activeSessionId}
                     isSelected={idx === selectedIndex}
@@ -219,6 +264,7 @@ export function CommandPalette({
                 return (
                   <SessionItem
                     key={s.id}
+                    id={`${optionIdPrefix}-${idx}`}
                     session={s}
                     isActive={s.id === activeSessionId}
                     isSelected={idx === selectedIndex}
@@ -237,6 +283,7 @@ export function CommandPalette({
                 return (
                   <SessionItem
                     key={s.id}
+                    id={`${optionIdPrefix}-${idx}`}
                     session={s}
                     isActive={s.id === activeSessionId}
                     isSelected={idx === selectedIndex}
@@ -259,6 +306,7 @@ export function CommandPalette({
                   return (
                     <ActionItem
                       key={a.id}
+                      id={`${optionIdPrefix}-${idx}`}
                       action={a}
                       isSelected={idx === selectedIndex}
                       onSelect={() => handleSelect(idx)}
@@ -280,6 +328,7 @@ export function CommandPalette({
                   return (
                     <ActionItem
                       key={a.id}
+                      id={`${optionIdPrefix}-${idx}`}
                       action={a}
                       isSelected={idx === selectedIndex}
                       onSelect={() => handleSelect(idx)}
@@ -303,12 +352,14 @@ export function CommandPalette({
 }
 
 function SessionItem({
+  id,
   session,
   isActive,
   isSelected,
   onSelect,
   onHover,
 }: {
+  id: string
   session: GobbySession
   isActive: boolean
   isSelected: boolean
@@ -320,6 +371,7 @@ function SessionItem({
 
   return (
     <div
+      id={id}
       className={`command-palette-item${isSelected ? ' selected' : ''}${isActive ? ' active' : ''}`}
       onClick={onSelect}
       onMouseEnter={onHover}
@@ -336,11 +388,13 @@ function SessionItem({
 }
 
 function ActionItem({
+  id,
   action,
   isSelected,
   onSelect,
   onHover,
 }: {
+  id: string
   action: CommandPaletteAction
   isSelected: boolean
   onSelect: () => void
@@ -348,6 +402,7 @@ function ActionItem({
 }) {
   return (
     <div
+      id={id}
       className={`command-palette-item${isSelected ? ' selected' : ''}`}
       onClick={onSelect}
       onMouseEnter={onHover}

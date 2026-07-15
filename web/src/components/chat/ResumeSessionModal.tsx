@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
-import { Dialog, DialogContent } from "./ui/Dialog";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./ui/Dialog";
 import type { GobbySession } from "../../types/sessions";
 import { formatRelativeTime } from "../../utils/formatTime";
 import { getSessionTitleText } from "../../lib/sessionTitle";
@@ -23,34 +23,11 @@ export function ResumeSessionModal({
   const [showSubagents, setShowSubagents] = useState(false);
   const [resumableSessions, setResumableSessions] = useState<GobbySession[]>([]);
   const [loading, setLoading] = useState(false);
+  const sessionsRef = useRef(sessions);
 
-  // Fetch resumable sessions when modal opens
-  const fetchResumable = useCallback(async () => {
-    if (!isOpen) return;
-    setLoading(true);
-    try {
-      const params = new URLSearchParams({
-        limit: "200",
-        include_resumability: "true",
-      });
-      if (!showSubagents) params.set("exclude_subagents", "true");
-
-      const response = await fetch(`/api/sessions?${params}`);
-      if (response.ok) {
-        const data = await response.json();
-        setResumableSessions(Array.isArray(data.sessions) ? data.sessions : []);
-      } else {
-        console.error("Failed to fetch resumable sessions:", response.status, response.statusText);
-        setResumableSessions(sessions);
-      }
-    } catch (e) {
-      console.error("Failed to fetch resumable sessions:", e);
-      // Fall back to passed-in sessions
-      setResumableSessions(sessions);
-    } finally {
-      setLoading(false);
-    }
-  }, [isOpen, showSubagents, sessions]);
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
 
   // Reset search when modal opens
   useEffect(() => {
@@ -61,10 +38,46 @@ export function ResumeSessionModal({
 
   // Fetch resumable sessions when modal opens or subagent toggle changes
   useEffect(() => {
-    if (isOpen) {
-      fetchResumable();
+    if (!isOpen) return;
+
+    const controller = new AbortController();
+
+    async function fetchResumable() {
+      setLoading(true);
+      try {
+        const params = new URLSearchParams({
+          limit: "200",
+          include_resumability: "true",
+        });
+        if (!showSubagents) params.set("exclude_subagents", "true");
+
+        const response = await fetch(`/api/sessions?${params}`, {
+          signal: controller.signal,
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (!controller.signal.aborted) {
+            setResumableSessions(Array.isArray(data.sessions) ? data.sessions : []);
+          }
+        } else if (!controller.signal.aborted) {
+          console.error("Failed to fetch resumable sessions:", response.status, response.statusText);
+          setResumableSessions(sessionsRef.current);
+        }
+      } catch (e) {
+        if (!controller.signal.aborted) {
+          console.error("Failed to fetch resumable sessions:", e);
+          setResumableSessions(sessionsRef.current);
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
+      }
     }
-  }, [isOpen, fetchResumable]);
+
+    void fetchResumable();
+    return () => controller.abort();
+  }, [isOpen, showSubagents]);
 
   // Filter and sort sessions
   const filteredSessions = useMemo(() => {
@@ -89,12 +102,14 @@ export function ResumeSessionModal({
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="max-w-2xl h-[70vh] p-0 overflow-hidden flex flex-col">
         <div style={{ padding: "16px 20px 12px", borderBottom: "1px solid var(--border)" }}>
-          <Heading level={2} variant="modal">
-            Resume Session
-          </Heading>
-          <p style={{ margin: "4px 0 12px", fontSize: "13px", color: "var(--text-muted)" }}>
+          <DialogTitle asChild>
+            <Heading level={2} variant="modal">
+              Resume Session
+            </Heading>
+          </DialogTitle>
+          <DialogDescription style={{ margin: "4px 0 12px", fontSize: "var(--text-md)", color: "var(--text-muted)" }}>
             Pick a session to resume in web chat with full conversation context.
-          </p>
+          </DialogDescription>
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
             <input
               type="text"
@@ -109,7 +124,7 @@ export function ResumeSessionModal({
                 borderRadius: "6px",
                 background: "var(--bg-secondary)",
                 color: "var(--text-primary)",
-                fontSize: "14px",
+                fontSize: "var(--text-base)",
                 outline: "none",
               }}
             />
@@ -118,7 +133,7 @@ export function ResumeSessionModal({
                 display: "flex",
                 alignItems: "center",
                 gap: "4px",
-                fontSize: "12px",
+                fontSize: "var(--text-sm)",
                 color: "var(--text-muted)",
                 cursor: "pointer",
                 whiteSpace: "nowrap",
@@ -137,11 +152,11 @@ export function ResumeSessionModal({
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px" }}>
           {loading ? (
-            <p style={{ textAlign: "center", color: "var(--text-muted)", padding: "24px 0", fontSize: "14px" }}>
+            <p style={{ textAlign: "center", color: "var(--text-muted)", padding: "24px 0", fontSize: "var(--text-base)" }}>
               Loading...
             </p>
           ) : filteredSessions.length === 0 ? (
-            <p style={{ textAlign: "center", color: "var(--text-muted)", padding: "24px 0", fontSize: "14px" }}>
+            <p style={{ textAlign: "center", color: "var(--text-muted)", padding: "24px 0", fontSize: "var(--text-base)" }}>
               {search ? "No matching sessions" : "No resumable sessions"}
             </p>
           ) : (
@@ -164,7 +179,7 @@ export function ResumeSessionModal({
                   color: "var(--text-primary)",
                   cursor: "pointer",
                   textAlign: "left",
-                  fontSize: "14px",
+                  fontSize: "var(--text-base)",
                 }}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.background = "var(--bg-tertiary)";
@@ -187,7 +202,7 @@ export function ResumeSessionModal({
                   <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {session.seq_num != null ? `#${session.seq_num}: ` : ''}{getSessionTitleText(session.title)}
                   </div>
-                  <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "2px" }}>
+                  <div style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)", marginTop: "2px" }}>
                     {SOURCE_LABELS[session.source] ?? session.source}
                     {" · "}
                     {formatRelativeTime(session.updated_at)}

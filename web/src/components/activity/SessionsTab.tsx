@@ -126,18 +126,13 @@ export const SessionsTab = memo(function SessionsTab({
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [contentMode, setContentMode] = useState<WatchingContentMode>("transcript");
-  const [persistedWatchingSessionId, setPersistedWatchingSessionId] = useState<
-    string | null
-  >(() => {
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(() => {
     try {
       return localStorage.getItem(WATCHING_SESSION_ID_KEY);
     } catch {
       return null;
     }
   });
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
-    persistedWatchingSessionId,
-  );
   const [topHeight, setTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT);
   const [expiringIds, setExpiringIds] = useState<Set<string>>(new Set());
   const [ctxMenu, setCtxMenu] = useState<SessionContextMenu | null>(null);
@@ -241,16 +236,6 @@ export const SessionsTab = memo(function SessionsTab({
     } catch {
       /* ignore */
     }
-    setPersistedWatchingSessionId(id);
-  }, []);
-
-  const clearPersistedWatchingSessionId = useCallback(() => {
-    try {
-      localStorage.removeItem(WATCHING_SESSION_ID_KEY);
-    } catch {
-      /* ignore */
-    }
-    setPersistedWatchingSessionId(null);
   }, []);
 
   useEffect(() => {
@@ -260,25 +245,11 @@ export const SessionsTab = memo(function SessionsTab({
       }
 
       if (entries.length === 0) {
-        selectionClearedRef.current = false;
-        if (persistedWatchingSessionId !== null) {
-          clearPersistedWatchingSessionId();
-        }
-        if (selectedSessionId !== null) {
-          setSelectedSessionId(null);
-        }
         return;
       }
 
       const hasFocusedEntry =
         focusSessionId != null && entries.some((entry) => entry.id === focusSessionId);
-      const persistedStillPresent =
-        persistedWatchingSessionId != null &&
-        entries.some((entry) => entry.id === persistedWatchingSessionId);
-
-      if (persistedWatchingSessionId !== null && !persistedStillPresent) {
-        clearPersistedWatchingSessionId();
-      }
 
       if (!initialSelectionAppliedRef.current) {
         initialSelectionAppliedRef.current = true;
@@ -332,18 +303,15 @@ export const SessionsTab = memo(function SessionsTab({
           return;
         }
         selectionClearedRef.current = false;
-        setSelectedSessionId(entries[0].id);
       }
     }, 0);
     return () => window.clearTimeout(timeout);
   }, [
     chatSessionId,
-    clearPersistedWatchingSessionId,
     entries,
     focusSessionId,
     isLoading,
     onFocusHandled,
-    persistedWatchingSessionId,
     selectedSessionId,
   ]);
 
@@ -391,11 +359,8 @@ export const SessionsTab = memo(function SessionsTab({
   }, [persistWatchingSessionId]);
 
   const handleResumeSession = useCallback(
-    (sessionId: string) => {
-      persistWatchingSessionId(sessionId);
-      return onResumeSession?.(sessionId);
-    },
-    [onResumeSession, persistWatchingSessionId],
+    (sessionId: string) => onResumeSession?.(sessionId),
+    [onResumeSession],
   );
 
   const transcriptEmptyStateMessage = useMemo(() => {
@@ -507,20 +472,19 @@ export const SessionsTab = memo(function SessionsTab({
     (event: React.MouseEvent<HTMLButtonElement>, entry: WatchingSessionEntry) => {
       event.stopPropagation();
       const rect = event.currentTarget.getBoundingClientRect();
-      const menuWidth = 160;
-      setCtxMenu({ x: rect.left - menuWidth, y: rect.top, entry });
+      setCtxMenu({
+        x: rect.left,
+        y: rect.top,
+        width: rect.width,
+        height: rect.height,
+        entry,
+        trigger: event.currentTarget,
+      });
     },
     [],
   );
 
   const closeCtxMenu = useCallback(() => setCtxMenu(null), []);
-
-  useEffect(() => {
-    if (!ctxMenu) return;
-    const handler = () => setCtxMenu(null);
-    window.addEventListener("click", handler);
-    return () => window.removeEventListener("click", handler);
-  }, [ctxMenu]);
 
   const openModal = useCallback(
     (mode: InteractionMode, entry: WatchingSessionEntry) => {
@@ -539,7 +503,6 @@ export const SessionsTab = memo(function SessionsTab({
   const handleSwapSelectedSession = useCallback(() => {
     if (!selectedSessionId || !selectedEntry) return;
     setContentMode("transcript");
-    persistWatchingSessionId(selectedSessionId);
     onSwapSession?.({
       sessionId: selectedSessionId,
       sessionType: selectedEntry.sessionType ?? null,
@@ -547,7 +510,6 @@ export const SessionsTab = memo(function SessionsTab({
     });
   }, [
     onSwapSession,
-    persistWatchingSessionId,
     selectedEntry,
     selectedSessionId,
   ]);
@@ -631,6 +593,7 @@ export const SessionsTab = memo(function SessionsTab({
       )}
 
       <SessionsContextMenu
+        chatSessionId={chatSessionId}
         closeCtxMenu={closeCtxMenu}
         ctxMenu={ctxMenu}
         handleClose={handleClose}

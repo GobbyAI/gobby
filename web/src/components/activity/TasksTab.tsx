@@ -109,6 +109,7 @@ export const TasksTab = memo(function TasksTab({
   const [taskDependencies, setTaskDependencies] = useState<DependencyTree | null>(null);
   const [taskSubtasks, setTaskSubtasks] = useState<GobbyTask[]>([]);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -118,7 +119,6 @@ export const TasksTab = memo(function TasksTab({
   const abortRef = useRef<AbortController | null>(null);
   const debouncedRefetchRef = useRef<number | null>(null);
   const selectedTaskIdRef = useRef<string | null>(null);
-  const userSelectedRef = useRef(false);
   // Abort any in-flight WebSocket-triggered detail fetch when a newer one
   // arrives or when the component unmounts.
   const detailFetchControllerRef = useRef<AbortController | null>(null);
@@ -151,7 +151,9 @@ export const TasksTab = memo(function TasksTab({
       const response = await fetch(`${baseUrl}/api/tasks?${params}`, {
         signal: controller.signal,
       });
-      if (!response.ok) return [];
+      if (!response.ok) {
+        throw new Error(`Failed to refresh tasks (${response.status})`);
+      }
       const data = await response.json();
       return normalizeTaskPayloads(data.tasks ?? []) as GobbyTask[];
     };
@@ -167,10 +169,15 @@ export const TasksTab = memo(function TasksTab({
         taskList,
         controller.signal,
       );
-      if (!controller.signal.aborted) setTasks(tasksWithAncestors);
+      if (!controller.signal.aborted) {
+        setTasks(tasksWithAncestors);
+        setFetchError(null);
+      }
     })()
       .catch((err) => {
-        if (err.name !== "AbortError") setTasks([]);
+        if (!(err instanceof Error && err.name === "AbortError")) {
+          setFetchError("Failed to refresh tasks");
+        }
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
@@ -215,7 +222,6 @@ export const TasksTab = memo(function TasksTab({
       if (event === "task_deleted") {
         setTasks((prev) => prev.filter((t) => t.id !== taskId));
         if (taskId === selectedTaskIdRef.current) {
-          userSelectedRef.current = false;
           setSelectedTaskId(null);
         }
       } else if (event === "task_created") {
@@ -309,7 +315,7 @@ export const TasksTab = memo(function TasksTab({
       .then((data) => {
         if (selectedTaskIdRef.current !== selectedTaskId) return;
         const raw = extractTaskPayload(data);
-        const cached = tasks.find((task) => task.id === selectedTaskId) ?? null;
+        const cached = tasksRef.current.find((task) => task.id === selectedTaskId) ?? null;
         setTaskDetail(raw ? (normalizeActivityTask(raw, cached) as GobbyTaskDetail) : null);
       })
       .catch((err) => {
@@ -319,7 +325,7 @@ export const TasksTab = memo(function TasksTab({
         if (!controller.signal.aborted) setDetailLoading(false);
       });
     return () => controller.abort();
-  }, [selectedTaskId, tasks]);
+  }, [selectedTaskId]);
 
   // Fetch dependencies + subtasks alongside the detail. Each call uses its own
   // controller so a stale response from a previous selection can't overwrite
@@ -458,7 +464,7 @@ export const TasksTab = memo(function TasksTab({
         : null,
     [selectedTaskId, tasks],
   );
-  const headerRef = taskDetail?.ref ?? selectedTaskSummary?.ref ?? null;
+  const headerRef = selectedTaskSummary?.ref ?? taskDetail?.ref ?? null;
   let parentTask: ParentTaskRef | null = null;
   if (taskDetail?.parent_task_id) {
     const parent = tasks.find((t) => t.id === taskDetail.parent_task_id);
@@ -476,7 +482,6 @@ export const TasksTab = memo(function TasksTab({
       if (selectedTaskIdRef.current !== null) {
         setSelectedTaskId(null);
       }
-      userSelectedRef.current = false;
       return;
     }
 
@@ -484,7 +489,6 @@ export const TasksTab = memo(function TasksTab({
       (row) => row.node.task.id === selectedTaskIdRef.current,
     );
     if (!hasVisibleSelection) {
-      userSelectedRef.current = false;
       if (selectedTaskIdRef.current !== null) {
         setSelectedTaskId(null);
         return;
@@ -591,14 +595,13 @@ export const TasksTab = memo(function TasksTab({
   }, []);
 
   const handleSelectTask = useCallback((taskId: string) => {
-    userSelectedRef.current = true;
     setActionError(null);
     setSelectedTaskId(taskId);
   }, []);
 
   const showDetail = selectedTaskId !== null;
 
-  if (loading) {
+  if (loading && tasks.length === 0) {
     return <ActivityPanelEmpty body="Loading tasks…" />;
   }
 
@@ -623,6 +626,15 @@ export const TasksTab = memo(function TasksTab({
           style={{ color: "var(--color-error)" }}
         >
           {actionError}
+        </div>
+      )}
+      {fetchError && (
+        <div
+          className="px-2.5 py-1.5 border-b border-border text-xs"
+          role="alert"
+          style={{ color: "var(--color-error)" }}
+        >
+          {fetchError}
         </div>
       )}
 
@@ -661,7 +673,7 @@ export const TasksTab = memo(function TasksTab({
               Task {headerRef ?? "—"}
             </span>
           </div>
-          {detailLoading ? (
+          {detailLoading && taskDetail === null ? (
             <p className="activity-task-detail-loading">
               Loading...
             </p>

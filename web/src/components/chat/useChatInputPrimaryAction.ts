@@ -44,7 +44,7 @@ export function useChatInputPrimaryAction({
 
   const primaryButtonKind: ChatInputPrimaryButtonKind = isStreaming
     ? 'stop'
-    : pttEnabled && !hasInput
+    : pttEnabled && (isRecording || !hasInput)
       ? isRecording
         ? 'mic-recording'
         : 'mic-idle'
@@ -250,12 +250,12 @@ export function useChatInputPrimaryAction({
           : 'Start push to talk'
 
   const primaryButtonClassName = cn(
-    'chat-input-primary-button inline-flex h-[36px] w-[36px] self-end items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50',
+    'chat-input-primary-button inline-flex h-[36px] w-[36px] self-end items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 pointer-coarse:h-11 pointer-coarse:w-11',
     primaryButtonKind === 'stop'
       ? 'border border-border bg-transparent text-foreground hover:bg-muted'
       : 'bg-accent text-accent-foreground hover:bg-accent-hover',
     primaryButtonKind === 'mic-recording' &&
-      'ring-2 ring-red-500/70 ring-offset-2 ring-offset-background animate-pulse motion-reduce:animate-none',
+      'ring-2 ring-[var(--color-error)]/70 ring-offset-2 ring-offset-background animate-pulse motion-reduce:animate-none',
   )
 
   return {

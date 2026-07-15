@@ -79,7 +79,6 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [topHeight, setTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT)
   const [detailExec, setDetailExec] = useState<PipelineExecution | null>(null)
-  const [offset, setOffset] = useState(0)
   const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [definitions, setDefinitions] = useState<PipelineDefinition[]>([])
@@ -91,6 +90,8 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
     useState<PipelineDefinitionViewMode>('detail')
   const [busyDefinitionId, setBusyDefinitionId] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const listRequestIdRef = useRef(0)
+  const detailRequestIdRef = useRef(0)
   const selectedIdRef = useRef<string | null>(null)
   const definitionConfirmLeaveRef = useRef<(next: () => void) => void>((next) => next())
   const PAGE_SIZE = 50
@@ -104,60 +105,79 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
   }, [segment])
 
   // Fetch executions
-  const fetchExecutions = useCallback((appendOffset?: number, signal?: AbortSignal) => {
+  const fetchExecutions = useCallback((options: {
+    appendOffset?: number
+    limit?: number
+    preserveHasMore?: boolean
+    signal?: AbortSignal
+  } = {}) => {
+    const { appendOffset, limit = PAGE_SIZE, preserveHasMore = false, signal } = options
+    const requestId = ++listRequestIdRef.current
     const baseUrl = getBaseUrl()
     const params = new URLSearchParams()
     if (projectId) params.set('project_id', projectId)
     if (statusFilter !== 'all') params.set('status', statusFilter)
-    params.set('limit', String(PAGE_SIZE))
-    if (appendOffset) params.set('offset', String(appendOffset))
+    params.set('limit', String(limit))
+    if (appendOffset !== undefined) params.set('offset', String(appendOffset))
     return fetch(`${baseUrl}/api/pipelines/executions?${params}`, { signal })
       .then((res) => (res.ok ? res.json() : { executions: [] }))
       .then((data) => {
+        if (signal?.aborted || requestId !== listRequestIdRef.current) return false
         const fetched = data.executions ?? []
-        if (appendOffset) {
+        if (appendOffset !== undefined) {
           setExecutions((prev) => [...prev, ...fetched])
         } else {
           setExecutions(fetched)
         }
-        setHasMore(fetched.length === PAGE_SIZE)
+        if (!preserveHasMore) setHasMore(fetched.length === limit)
+        return true
       })
       .catch((err) => {
-        if (err instanceof DOMException && err.name === 'AbortError') return
-        if (!appendOffset) setExecutions([])
+        if (signal?.aborted || requestId !== listRequestIdRef.current) return false
+        if (err instanceof DOMException && err.name === 'AbortError') return false
+        if (appendOffset === undefined && !preserveHasMore) setExecutions([])
+        return false
       })
   }, [projectId, statusFilter])
 
   // Reset offset and reload when filter changes
   useEffect(() => {
     const controller = new AbortController()
-    setOffset(0)
     setLoading(true)
-    fetchExecutions(undefined, controller.signal).finally(() => {
+    fetchExecutions({ signal: controller.signal }).finally(() => {
       if (!controller.signal.aborted) setLoading(false)
     })
     return () => controller.abort()
   }, [fetchExecutions])
 
   const handleLoadMore = useCallback(() => {
-    const nextOffset = offset + PAGE_SIZE
+    const nextOffset = executions.length
     setLoadingMore(true)
-    fetchExecutions(nextOffset).finally(() => {
-      setOffset(nextOffset)
+    fetchExecutions({ appendOffset: nextOffset }).finally(() => {
       setLoadingMore(false)
     })
-  }, [offset, fetchExecutions])
+  }, [executions.length, fetchExecutions])
 
   // Fetch detail for selected execution
   const fetchDetail = useCallback((id: string) => {
+    const requestId = ++detailRequestIdRef.current
     const baseUrl = getBaseUrl()
     fetch(`${baseUrl}/api/pipelines/${id}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (data?.execution) setDetailExec(data.execution)
-        else if (data?.id) setDetailExec(data)
+        const execution = data?.execution ?? data
+        if (
+          requestId === detailRequestIdRef.current
+          && execution?.id === selectedIdRef.current
+        ) {
+          setDetailExec(execution)
+        }
       })
-      .catch((err) => { console.error('Failed to fetch pipeline detail:', err) })
+      .catch((err) => {
+        if (requestId === detailRequestIdRef.current) {
+          console.error('Failed to fetch pipeline detail:', err)
+        }
+      })
   }, [])
 
   // Poll running executions
@@ -165,7 +185,7 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
     const hasRunning = executions.some((e) => e.status === 'running')
     if (hasRunning || (selectedId && detailExec?.status === 'running')) {
       pollRef.current = setInterval(() => {
-        fetchExecutions()
+        fetchExecutions({ limit: executions.length || PAGE_SIZE, preserveHasMore: true })
         if (selectedId) fetchDetail(selectedId)
       }, 3000)
     }
@@ -173,12 +193,10 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
   }, [executions, selectedId, detailExec?.status, fetchExecutions, fetchDetail])
 
   const handleSelect = useCallback((id: string) => {
+    selectedIdRef.current = id
     setSelectedId(id)
     fetchDetail(id)
   }, [fetchDetail])
-  useEffect(() => {
-    selectedIdRef.current = selectedId
-  }, [selectedId])
 
   useEffect(() => {
     if (executions.length === 0) {

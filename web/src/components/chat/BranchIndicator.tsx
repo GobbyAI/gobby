@@ -207,7 +207,7 @@ export function BranchIndicator({
           aria-label="Switch branch or worktree"
         >
           {checkoutError && (
-            <div role="alert" className="border-b border-border px-3 py-1.5 text-xs text-destructive">
+            <div role="alert" className="border-b border-border px-3 py-1.5 text-xs text-destructive-foreground">
               {checkoutError}
             </div>
           )}
@@ -215,7 +215,7 @@ export function BranchIndicator({
           {/* Worktrees */}
           {worktrees.length > 0 && (
             <>
-              <div className="px-3 py-1 text-[10px] uppercase tracking-wider text-muted-foreground/50 border-b border-border">Worktrees</div>
+              <div className="px-3 py-1 text-[length:var(--text-2xs)] uppercase tracking-wider text-muted-foreground/50 border-b border-border">Worktrees</div>
               {worktrees.map((wt) => {
                 const isActive = worktreePath === wt.worktree_path
                 return (
@@ -232,7 +232,7 @@ export function BranchIndicator({
                     <WorktreeIcon />
                     <div className="min-w-0">
                       <div className="font-medium truncate">{wt.branch_name}</div>
-                      <div className="text-muted-foreground/60 truncate text-[10px]">{wt.worktree_path}</div>
+                      <div className="text-muted-foreground/60 truncate text-[length:var(--text-2xs)]">{wt.worktree_path}</div>
                     </div>
                   </button>
                 )
@@ -243,7 +243,7 @@ export function BranchIndicator({
           {/* Branches */}
           {standaloneBranches.length > 0 && (
             <>
-              <div className="px-3 py-1 text-[10px] uppercase tracking-wider text-muted-foreground/50 border-b border-border">Branches</div>
+              <div className="px-3 py-1 text-[length:var(--text-2xs)] uppercase tracking-wider text-muted-foreground/50 border-b border-border">Branches</div>
               {standaloneBranches.map((b) => (
                 <button
                   key={b.name}

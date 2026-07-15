@@ -13,6 +13,12 @@ interface UseChatPageCommandPaletteArgs {
   allProjectSessions: GobbySession[];
   activityPanelChatSessionId: string | null;
   conversations: ConversationState;
+  confirm: (options: {
+    title: string;
+    description?: string;
+    confirmLabel?: string;
+    destructive?: boolean;
+  }) => Promise<boolean>;
   onPaletteSelect?: (item: PaletteItem) => void;
   handleSwapSession: (target: SwappedSessionTarget) => void;
   toggleFromChat: () => void;
@@ -25,7 +31,7 @@ export interface UseChatPageCommandPaletteResult {
   commandPaletteSessions: GobbySession[];
   activeCommandPaletteSessionId: string | null;
   handleCommandPaletteSelectSession: (session: GobbySession) => void;
-  handleCommandPaletteDeleteSession: (session: GobbySession) => void;
+  handleCommandPaletteDeleteSession: (session: GobbySession) => Promise<void>;
   handlePaletteSelect: (item: PaletteItem) => void;
 }
 
@@ -34,6 +40,7 @@ export function useChatPageCommandPalette({
   allProjectSessions,
   activityPanelChatSessionId,
   conversations,
+  confirm,
   onPaletteSelect,
   handleSwapSession,
   toggleFromChat,
@@ -56,12 +63,20 @@ export function useChatPageCommandPalette({
   );
 
   const handleCommandPaletteDeleteSession = useCallback(
-    (session: GobbySession) => {
-      if (session.session_type === "web_chat") {
+    async (session: GobbySession) => {
+      if (session.session_type !== "web_chat") return;
+
+      const confirmed = await confirm({
+        title: "Delete session?",
+        description: `This will permanently delete ${session.ref ?? session.title ?? "this session"}.`,
+        confirmLabel: "Delete",
+        destructive: true,
+      });
+      if (confirmed) {
         conversations.onDeleteSession?.(session);
       }
     },
-    [conversations],
+    [confirm, conversations],
   );
 
   const handlePaletteSelect = useCallback(

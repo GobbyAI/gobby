@@ -109,6 +109,26 @@ function setupTaskRoutes(tasks: Array<Record<string, unknown>>): void {
   });
 }
 
+function holdTaskListRefetch(tasks: Array<Record<string, unknown>>): () => void {
+  const originalFetch = mockFetch.fn.getMockImplementation();
+  let resolveListFetch!: (response: Response) => void;
+  const pendingListFetch = new Promise<Response>((resolve) => {
+    resolveListFetch = resolve;
+  });
+  mockFetch.fn.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).includes("/api/tasks?")) return pendingListFetch;
+    return originalFetch?.(input, init);
+  });
+  return () => {
+    resolveListFetch(
+      new Response(JSON.stringify({ tasks }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+  };
+}
+
 describe("TasksTab — events and row actions", () => {
   beforeEach(() => {
     mockFetch = createMockFetch();
@@ -118,6 +138,7 @@ describe("TasksTab — events and row actions", () => {
   afterEach(() => {
     mockFetch.restore();
     vi.restoreAllMocks();
+    vi.useRealTimers();
     wsHandler = null;
   });
 
@@ -201,6 +222,130 @@ describe("TasksTab — events and row actions", () => {
     await waitFor(() => {
       expect(screen.getByText("Updated by WS")).toBeTruthy();
     });
+  });
+
+  it("keeps the focused detail draft mounted during a WebSocket refetch", async () => {
+    render(<TasksTab projectId="proj-1" />);
+
+    fireEvent.click(await screen.findByText("Review approved task"));
+    const description = (await screen.findByLabelText(
+      "Description",
+    )) as HTMLTextAreaElement;
+    vi.useFakeTimers();
+    fireEvent.change(description, { target: { value: "Unsaved draft" } });
+    description.focus();
+
+    const detailFetchCount = () =>
+      mockFetch.fn.mock.calls.filter(([url]) =>
+        String(url).endsWith("/api/tasks/task-review"),
+      ).length;
+    expect(detailFetchCount()).toBe(1);
+
+    const originalFetch = mockFetch.fn.getMockImplementation();
+    let resolveListFetch!: (response: Response) => void;
+    const pendingListFetch = new Promise<Response>((resolve) => {
+      resolveListFetch = resolve;
+    });
+    mockFetch.fn.mockImplementation((input: RequestInfo | URL) => {
+      if (String(input).includes("/api/tasks?")) return pendingListFetch;
+      return originalFetch?.(input);
+    });
+
+    act(() => {
+      wsHandler?.({
+        type: "task_event",
+        event: "task_updated",
+        task_id: "task-1",
+        task: { id: "task-1", title: "Updated during refetch" },
+      });
+      vi.advanceTimersByTime(500);
+    });
+
+    expect(screen.getByTestId("task-tree")).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByLabelText("Description")).toBe(description);
+    expect(description.value).toBe("Unsaved draft");
+    expect(document.activeElement).toBe(description);
+    expect(screen.queryByText("Loading tasks…")).toBeNull();
+    expect(detailFetchCount()).toBe(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(100);
+      await Promise.resolve();
+    });
+    const descriptionPatches = mockFetch.fn.mock.calls.filter(
+      ([url, init]) =>
+        String(url).endsWith("/api/tasks/task-review") &&
+        init?.method === "PATCH",
+    );
+    expect(descriptionPatches).toHaveLength(1);
+    expect(descriptionPatches[0]?.[1]).toMatchObject({
+      body: JSON.stringify({ description: "Unsaved draft" }),
+    });
+
+    vi.useRealTimers();
+    resolveListFetch(
+      new Response(JSON.stringify({ tasks: taskList }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("task-tree")).toHaveAttribute("aria-busy", "false"),
+    );
+  });
+
+  it("keeps the detail editor mounted while refreshing the selected task", async () => {
+    render(<TasksTab projectId="proj-1" />);
+
+    fireEvent.click(await screen.findByText("Review approved task"));
+    const description = (await screen.findByLabelText(
+      "Description",
+    )) as HTMLTextAreaElement;
+    fireEvent.change(description, { target: { value: "Unsaved draft" } });
+    description.focus();
+
+    const originalFetch = mockFetch.fn.getMockImplementation();
+    let resolveDetailFetch!: (response: Response) => void;
+    const pendingDetailFetch = new Promise<Response>((resolve) => {
+      resolveDetailFetch = resolve;
+    });
+    mockFetch.fn.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/api/tasks/task-review")) {
+        return pendingDetailFetch;
+      }
+      return originalFetch?.(input, init);
+    });
+
+    act(() => {
+      wsHandler?.({
+        type: "task_event",
+        event: "task_updated",
+        task_id: "task-review",
+        task: { id: "task-review", title: "Updated selected task" },
+      });
+    });
+
+    expect(screen.getByLabelText("Description")).toBe(description);
+    expect(description.value).toBe("Unsaved draft");
+    expect(document.activeElement).toBe(description);
+    expect(screen.queryByText("Loading...")).toBeNull();
+
+    resolveDetailFetch(
+      new Response(
+        JSON.stringify({
+          task: {
+            ...taskList[0],
+            title: "Updated selected task",
+            description: "Server description",
+          },
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+    await screen.findByDisplayValue("Server description");
   });
 
   it("ignores WebSocket events for other projects", async () => {
@@ -366,6 +511,7 @@ describe("TasksTab — events and row actions", () => {
     await waitFor(() => {
       expect(screen.getByText("Startable build task")).toBeTruthy();
     });
+    await screen.findByDisplayValue("Task detail");
 
     await openTaskMenu("Startable build task");
     expect(screen.getByRole("menuitem", { name: "Build" })).toBeEnabled();
@@ -373,10 +519,17 @@ describe("TasksTab — events and row actions", () => {
     expect(screen.queryByRole("menuitem", { name: "Stop Build" })).toBeNull();
     expect(screen.queryByRole("menuitem", { name: "Resume Build" })).toBeNull();
 
+    const releaseListRefetch = holdTaskListRefetch([startableTask]);
     fireEvent.click(screen.getByRole("menuitem", { name: "Build" }));
     await waitFor(() => {
       expect(findPostCall("/api/build")).toBeTruthy();
     });
+    expect(screen.getByDisplayValue("Task detail")).toBeTruthy();
+    expect(screen.queryByText("Task not found")).toBeNull();
+    releaseListRefetch();
+    await waitFor(() =>
+      expect(screen.getByTestId("task-tree")).toHaveAttribute("aria-busy", "false"),
+    );
     expect(findPostCall("/api/build")?.[1]).toMatchObject({
       body: JSON.stringify({ input_ref: "#501" }),
     });
@@ -418,8 +571,10 @@ describe("TasksTab — events and row actions", () => {
     await waitFor(() => {
       expect(screen.getByText("Review approved task")).toBeTruthy();
     });
+    await screen.findByDisplayValue("Review approved task detail");
     await openReviewTaskMenu();
     expect(screen.getByRole("menuitem", { name: "Resume Build" })).toBeEnabled();
+    const releaseListRefetch = holdTaskListRefetch(taskList);
     fireEvent.click(screen.getByRole("menuitem", { name: "Resume Build" }));
 
     await waitFor(() => {
@@ -428,6 +583,12 @@ describe("TasksTab — events and row actions", () => {
     expect(findPostCall("/api/build/resume")?.[1]).toMatchObject({
       body: JSON.stringify({ input_ref: "#401" }),
     });
+    expect(screen.getByDisplayValue("Review approved task detail")).toBeTruthy();
+    expect(screen.queryByText("Task not found")).toBeNull();
+    releaseListRefetch();
+    await waitFor(() =>
+      expect(screen.getByTestId("task-tree")).toHaveAttribute("aria-busy", "false"),
+    );
   });
 
   it("stops task-scoped build automation from the quick menu", async () => {
@@ -445,11 +606,13 @@ describe("TasksTab — events and row actions", () => {
     await waitFor(() => {
       expect(screen.getByText("Review approved task")).toBeTruthy();
     });
+    await screen.findByDisplayValue("Task detail");
     await openReviewTaskMenu();
     expect(screen.getByRole("menuitem", { name: "Stop Build" })).toBeEnabled();
     expect(screen.queryByRole("menuitem", { name: "Build" })).toBeNull();
     expect(screen.queryByRole("menuitem", { name: "Build Quick" })).toBeNull();
     expect(screen.queryByRole("menuitem", { name: "Resume Build" })).toBeNull();
+    const releaseListRefetch = holdTaskListRefetch([activeBuildTask]);
     fireEvent.click(screen.getByRole("menuitem", { name: "Stop Build" }));
 
     await waitFor(() => {
@@ -458,6 +621,12 @@ describe("TasksTab — events and row actions", () => {
     expect(findPostCall("/api/build/stop")?.[1]).toMatchObject({
       body: JSON.stringify({ input_ref: "#401" }),
     });
+    expect(screen.getByDisplayValue("Task detail")).toBeTruthy();
+    expect(screen.queryByText("Task not found")).toBeNull();
+    releaseListRefetch();
+    await waitFor(() =>
+      expect(screen.getByTestId("task-tree")).toHaveAttribute("aria-busy", "false"),
+    );
   });
 
   it("releases a claimed task from the quick menu", async () => {

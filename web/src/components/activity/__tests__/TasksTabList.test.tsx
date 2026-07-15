@@ -40,6 +40,22 @@ function rows(open = true): VisibleTaskRow[] {
   ];
 }
 
+function flatRows(count: number): VisibleTaskRow[] {
+  return Array.from({ length: count }, (_, index) => {
+    const id = `task-${index}`;
+    return {
+      node: {
+        id,
+        task: makeTask({ id, title: `Task ${index}` }),
+        children: [],
+      },
+      depth: 0,
+      isInternal: false,
+      isOpen: false,
+    };
+  });
+}
+
 function renderKeyboardList(open = true) {
   const onSelect = vi.fn();
   const onToggleOpen = vi.fn();
@@ -142,5 +158,67 @@ describe("TasksTabList keyboard navigation", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+describe("TasksTabList rendering performance", () => {
+  const defaultProps = {
+    isEmpty: false,
+    isLoading: false,
+    hasAnyTasks: true,
+    activeTaskActionId: null,
+    onSelect: vi.fn(),
+    onToggleOpen: vi.fn(),
+    onMenuButtonClick: vi.fn(),
+  };
+
+  it("windows large task trees", async () => {
+    render(
+      <TasksTabList
+        {...defaultProps}
+        visibleRows={flatRows(500)}
+        selectedTaskId={null}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getAllByRole("treeitem").length).toBeGreaterThan(0));
+    expect(screen.getAllByRole("treeitem").length).toBeLessThan(500);
+    expect(screen.queryByRole("treeitem", { name: /Task 499/ })).toBeNull();
+  });
+
+  it("does not re-render an unaffected memoized row when selection changes", () => {
+    const visibleRows = flatRows(3);
+    const unaffectedTask = visibleRows[2].node.task;
+    let titleReads = 0;
+    Object.defineProperty(unaffectedTask, "title", {
+      configurable: true,
+      get: () => {
+        titleReads += 1;
+        return "Unaffected task";
+      },
+    });
+
+    const { rerender } = render(
+      <TasksTabList
+        {...defaultProps}
+        visibleRows={visibleRows}
+        selectedTaskId="task-0"
+      />,
+    );
+    const initialTitleReads = titleReads;
+
+    rerender(
+      <TasksTabList
+        {...defaultProps}
+        visibleRows={visibleRows}
+        selectedTaskId="task-1"
+      />,
+    );
+
+    expect(titleReads).toBe(initialTitleReads);
+    expect(screen.getByRole("treeitem", { name: /Task 1/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 });

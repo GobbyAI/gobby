@@ -245,12 +245,6 @@ function AgentCard({
                   {agent.tasksEscalated.length}
                 </span>
               </div>
-              <div className="agent-detail-row">
-                <span>Escalated</span>
-                <span className="agent-detail-value agent-detail-value--warn">
-                  {agent.tasksEscalated.length}
-                </span>
-              </div>
             </div>
 
             {/* Domain strengths */}
@@ -454,7 +448,7 @@ export function AgentPortfolioPage() {
 
   // Filter and sort
   const displayAgents = useMemo(() => {
-    let result = agents
+    let result = [...agents]
     if (filterSource) {
       result = result.filter(a => a.source === filterSource)
     }
@@ -528,7 +522,7 @@ export function AgentPortfolioPage() {
             onClick={fetchData}
             aria-label="Refresh agents"
           >
-            \u21BB
+            {'↻'}
           </button>
         </div>
       </div>

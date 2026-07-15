@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { FilesTab } from '../FilesTab'
@@ -25,7 +26,19 @@ vi.mock('../../chat/artifacts/ResizeHandle', () => ({
 }))
 
 vi.mock('../../shared/CodeMirrorEditor', () => ({
-  CodeMirrorEditor: () => null,
+  CodeMirrorEditor: ({
+    content,
+    onChange,
+  }: {
+    content: string
+    onChange: (content: string) => void
+  }) => (
+    <textarea
+      aria-label="File contents"
+      value={content}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  ),
 }))
 
 vi.mock('react-syntax-highlighter', () => ({
@@ -170,5 +183,230 @@ describe('FilesTab', () => {
       expect(screen.getByTestId('resize-handle')).toHaveAttribute('data-direction', 'horizontal')
     })
     expect(screen.getByTestId('resize-handle')).toHaveAttribute('data-horizontal-anchor', 'left')
+  })
+
+  it('isolates project state and aborts project-scoped reads on project switch', async () => {
+    vi.mocked(useIsMobile).mockReturnValue(false)
+    const requestSignals = new Map<string, AbortSignal>()
+    let resolveChildTree: ((response: Response) => void) | undefined
+    let resolveFileRead: ((response: Response) => void) | undefined
+
+    fetchMock.mockImplementation(async (input?: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (init?.signal) requestSignals.set(url, init.signal)
+
+      if (url.includes('project_id=alpha') && url.endsWith('path=src')) {
+        return new Promise<Response>((resolve) => { resolveChildTree = resolve })
+      }
+      if (url.includes('/api/files/read') && url.includes('project_id=alpha')) {
+        return new Promise<Response>((resolve) => { resolveFileRead = resolve })
+      }
+      if (url.includes('/api/files/git-status')) {
+        return Response.json({ files: {} })
+      }
+      if (url.includes('project_id=alpha') && url.endsWith('path=')) {
+        return Response.json([
+          { name: 'src', path: 'src', is_dir: true },
+          { name: 'alpha.ts', path: 'alpha.ts', is_dir: false, extension: 'ts' },
+        ])
+      }
+      if (url.includes('project_id=beta') && url.endsWith('path=')) {
+        return Response.json([
+          { name: 'beta.ts', path: 'beta.ts', is_dir: false, extension: 'ts' },
+        ])
+      }
+      return Response.json([])
+    })
+
+    const { rerender } = render(<FilesTab projectId="alpha" />)
+    await screen.findByText('alpha.ts')
+
+    fireEvent.click(screen.getByText('src'))
+    fireEvent.click(screen.getByText('alpha.ts'))
+    await waitFor(() => {
+      expect(resolveChildTree).toBeTypeOf('function')
+      expect(resolveFileRead).toBeTypeOf('function')
+    })
+
+    rerender(<FilesTab projectId="beta" />)
+    await screen.findByText('beta.ts')
+
+    const alphaSignals = [...requestSignals]
+      .filter(([url]) => url.includes('project_id=alpha'))
+      .map(([, signal]) => signal)
+    expect(alphaSignals).toHaveLength(4)
+    alphaSignals.forEach((signal) => expect(signal.aborted).toBe(true))
+
+    resolveChildTree?.(Response.json([
+      { name: 'stale.ts', path: 'src/stale.ts', is_dir: false, extension: 'ts' },
+    ]))
+    resolveFileRead?.(Response.json({ content: 'stale alpha content' }))
+
+    await waitFor(() => {
+      expect(screen.queryByText('alpha.ts')).not.toBeInTheDocument()
+      expect(screen.queryByText('stale.ts')).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument()
+    })
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/files/write'))).toBe(false)
+  })
+
+  it('does not carry an edited file into the next project', async () => {
+    vi.mocked(useIsMobile).mockReturnValue(false)
+    fetchMock.mockImplementation(async (input?: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/files/git-status')) return Response.json({ files: {} })
+      if (url.includes('/api/files/read')) return Response.json({ content: 'alpha content' })
+      if (url.includes('project_id=alpha') && url.endsWith('path=')) {
+        return Response.json([
+          { name: 'alpha.ts', path: 'alpha.ts', is_dir: false, extension: 'ts' },
+        ])
+      }
+      if (url.includes('project_id=beta') && url.endsWith('path=')) {
+        return Response.json([
+          { name: 'beta.ts', path: 'beta.ts', is_dir: false, extension: 'ts' },
+        ])
+      }
+      return Response.json([])
+    })
+
+    const { rerender } = render(<FilesTab projectId="alpha" />)
+    fireEvent.click(await screen.findByText('alpha.ts'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'File contents' }), {
+      target: { value: 'edited alpha content' },
+    })
+    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument()
+
+    rerender(<FilesTab projectId="beta" />)
+    await screen.findByText('beta.ts')
+
+    expect(screen.queryByText('alpha.ts')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/files/write'))).toBe(false)
+  })
+
+  it('keeps failed file reads out of the editor and never writes the error message', async () => {
+    vi.mocked(useIsMobile).mockReturnValue(false)
+    fetchMock.mockImplementation(async (input?: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/files/git-status')) return Response.json({ files: {} })
+      if (url.includes('/api/files/read')) return new Response('unavailable', { status: 500 })
+      if (url.includes('/api/files/tree')) {
+        return Response.json([
+          { name: 'broken.ts', path: 'broken.ts', is_dir: false, extension: 'ts' },
+        ])
+      }
+      return Response.json([])
+    })
+
+    render(<FilesTab projectId="test-project" />)
+    fireEvent.click(await screen.findByText('broken.ts'))
+
+    expect(await screen.findByText('Failed to load file')).toBeInTheDocument()
+    const editButton = screen.getByRole('button', { name: 'Edit' })
+    expect(editButton).toBeDisabled()
+    fireEvent.click(editButton)
+
+    expect(screen.queryByRole('textbox', { name: 'File contents' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/files/write'))).toBe(false)
+  })
+
+  it('refreshes the visible root entries after deleting a root file', async () => {
+    vi.mocked(useIsMobile).mockReturnValue(false)
+    let rootFetches = 0
+    fetchMock.mockImplementation(async (input?: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/files/git-status')) return Response.json({ files: {} })
+      if (url.includes('/api/files/delete')) return Response.json({})
+      if (url.endsWith('path=')) {
+        rootFetches += 1
+        return Response.json(rootFetches === 1
+          ? [{ name: 'delete-me.ts', path: 'delete-me.ts', is_dir: false, extension: 'ts' }]
+          : [])
+      }
+      return Response.json([])
+    })
+
+    render(<FilesTab projectId="test-project" />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Actions for delete-me.ts' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Delete' }))
+
+    await waitFor(() => expect(screen.queryByText('delete-me.ts')).not.toBeInTheDocument())
+    expect(rootFetches).toBe(2)
+  })
+
+  it('refreshes the visible root entries after renaming a root file', async () => {
+    vi.mocked(useIsMobile).mockReturnValue(false)
+    let rootFetches = 0
+    fetchMock.mockImplementation(async (input?: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/files/git-status')) return Response.json({ files: {} })
+      if (url.includes('/api/files/rename')) return Response.json({})
+      if (url.endsWith('path=')) {
+        rootFetches += 1
+        return Response.json(rootFetches === 1
+          ? [{ name: 'old-name.ts', path: 'old-name.ts', is_dir: false, extension: 'ts' }]
+          : [{ name: 'new-name.ts', path: 'new-name.ts', is_dir: false, extension: 'ts' }])
+      }
+      return Response.json([])
+    })
+
+    render(<FilesTab projectId="test-project" />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Actions for old-name.ts' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Rename' }))
+    const input = screen.getByDisplayValue('old-name.ts')
+    await userEvent.clear(input)
+    await userEvent.type(input, 'new-name.ts{Enter}')
+
+    expect(await screen.findByText('new-name.ts')).toBeInTheDocument()
+    expect(screen.queryByText('old-name.ts')).not.toBeInTheDocument()
+    expect(rootFetches).toBe(2)
+  })
+
+  it('operates tree rows and reaches file actions with the keyboard', async () => {
+    const user = userEvent.setup()
+    vi.mocked(useIsMobile).mockReturnValue(false)
+    fetchMock.mockImplementation(async (input?: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/files/git-status')) return Response.json({ files: {} })
+      if (url.includes('/api/files/read')) return Response.json({ content: 'export {}' })
+      if (url.endsWith('path=src')) {
+        return Response.json([
+          { name: 'index.ts', path: 'src/index.ts', is_dir: false, extension: 'ts' },
+        ])
+      }
+      if (url.includes('/api/files/tree')) {
+        return Response.json([{ name: 'src', path: 'src', is_dir: true }])
+      }
+      return Response.json([])
+    })
+
+    render(<FilesTab projectId="test-project" />)
+
+    const folder = await screen.findByRole('treeitem', { name: /src/ })
+    expect(folder).toHaveAttribute('aria-expanded', 'false')
+    folder.focus()
+    await user.keyboard('{Enter}')
+
+    expect(folder).toHaveAttribute('aria-expanded', 'true')
+    const file = await screen.findByRole('treeitem', { name: /index\.ts/ })
+    file.focus()
+    await user.keyboard(' ')
+    expect(await screen.findByRole('button', { name: 'Edit' })).toBeInTheDocument()
+
+    const actions = screen.getByRole('button', { name: 'Actions for index.ts' })
+    actions.focus()
+    await user.keyboard('{Enter}')
+
+    expect(screen.getByRole('menu', { name: 'Actions for index.ts' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Rename' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeInTheDocument()
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Duplicate' }))
+    await user.tab()
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Rename' }))
+    await user.tab()
+    await user.tab()
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Delete' }))
   })
 })

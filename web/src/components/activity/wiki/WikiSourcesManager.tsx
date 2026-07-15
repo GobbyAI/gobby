@@ -143,7 +143,7 @@ export function WikiSourcesManager({
       </div>
 
       {error ? (
-        <p role="alert" className="px-3 py-2 text-xs text-destructive">
+        <p role="alert" className="px-3 py-2 text-xs text-destructive-foreground">
           {error}
         </p>
       ) : null}
@@ -188,7 +188,7 @@ export function WikiSourcesManager({
                     <button
                       type="button"
                       onClick={() => void startRemoval(source)}
-                      className="shrink-0 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                      className="shrink-0 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive-foreground"
                       aria-label={`Remove ${sourceTitle(source)}`}
                     >
                       Remove

@@ -39,8 +39,19 @@ export function useRunningAgents() {
     const baseUrl = getBaseUrl();
     try {
       const response = await fetch(`${baseUrl}/api/agents/running`);
-      const data = response.ok ? await response.json() : { agents: [] };
-      setAgents(data.agents ?? data ?? []);
+      if (!response.ok) {
+        throw new Error(`Running agents request failed (${response.status})`);
+      }
+      const data: unknown = await response.json();
+      const nextAgents = Array.isArray(data)
+        ? data
+        : typeof data === "object" && data !== null && "agents" in data
+          ? (data as { agents: unknown }).agents
+          : null;
+      if (!Array.isArray(nextAgents)) {
+        throw new Error("Running agents response must contain an array");
+      }
+      setAgents(nextAgents as RunningAgent[]);
       setFetchError(null);
     } catch (error) {
       console.error("Failed to fetch running agents:", error);

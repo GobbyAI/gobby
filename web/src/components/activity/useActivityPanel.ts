@@ -1,29 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useDirtyGuardController } from './dirtyGuard'
-import type { ActivityTab } from './ActivityPanelTabs'
+import { ACTIVITY_PANEL_TABS, type ActivityTab } from './ActivityPanelTabs'
 
 const STORAGE_KEY_LAYOUT = 'gobby-activity-panel-layout'
 const STORAGE_KEY_WIDTH = 'gobby-activity-panel-width'
 const STORAGE_KEY_TAB = 'gobby-activity-panel-tab-v2'
 
-const VALID_TABS: ActivityTab[] = [
-  'sessions',
-  'mcp',
-  'agents',
-  'stages',
-  'skills',
-  'memory',
-  'integrations',
-  'wiki',
-  'rules',
-  'tasks',
-  'plans',
-  'changes',
-  'files',
-  'pipelines',
-  'cron',
-  'traces',
-]
+const VALID_TABS = ACTIVITY_PANEL_TABS.map(({ id }) => id)
 
 /**
  * Pane visibility is one enum, not two booleans, so "both panes collapsed"

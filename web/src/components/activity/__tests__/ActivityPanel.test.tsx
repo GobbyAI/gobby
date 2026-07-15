@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -161,11 +161,11 @@ describe('ActivityPanel', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /sessions/i }))
 
-    expect(screen.getByRole('menu')).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('menuitemradio', { name: /pipelines/i }))
+    expect(document.querySelector('.activity-panel-mobile-menu')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /pipelines/i }))
 
     expect(onTabChange).toHaveBeenCalledWith('pipelines')
-    expect(screen.queryByRole('menu')).toBeNull()
+    expect(document.querySelector('.activity-panel-mobile-menu')).toBeNull()
   })
 
   it('uses the same dropdown selector in the pinned desktop panel', async () => {
@@ -191,7 +191,7 @@ describe('ActivityPanel', () => {
     expect(screen.queryByRole('tablist')).toBeNull()
 
     await userEvent.click(screen.getByRole('button', { name: /sessions/i }))
-    await userEvent.click(screen.getByRole('menuitemradio', { name: /tasks/i }))
+    await userEvent.click(screen.getByRole('button', { name: /tasks/i }))
 
     expect(onTabChange).toHaveBeenCalledWith('tasks')
   })
@@ -218,12 +218,15 @@ describe('ActivityPanel', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /sessions/i }))
 
+    const disclosure = document.querySelector('.activity-panel-mobile-menu')
+    expect(disclosure).not.toBeNull()
+    const disclosureQueries = within(disclosure as HTMLElement)
     expect(
-      screen.getAllByRole('menuitemradio').map((item) => item.textContent),
+      disclosureQueries.getAllByRole('button').map((item) => item.textContent),
     ).toEqual(ACTIVITY_PANEL_DROPDOWN_TABS.map((tab) => tab.label))
-    expect(screen.getByRole('menuitemradio', { name: /sessions/i })).toHaveAttribute(
-      'aria-checked',
-      'true',
+    expect(disclosureQueries.getByRole('button', { name: /sessions/i })).toHaveAttribute(
+      'aria-current',
+      'page',
     )
   })
 

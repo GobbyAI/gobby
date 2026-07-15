@@ -1,8 +1,21 @@
-import { describe, expect, it, vi } from "vitest";
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 
+import { useIsMobile } from "../../../hooks/useIsMobile";
 import { SessionsFilterDropdown } from "../SessionsFilterDropdown";
 import { defaultSessionsFilters, type SessionsFilters } from "../sessionsFilters";
+
+vi.mock("../../../hooks/useIsMobile", () => ({
+  useIsMobile: vi.fn(),
+}));
+
+beforeEach(() => {
+  vi.mocked(useIsMobile).mockReturnValue(false);
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function renderDropdown(overrides: Partial<{
   filters: SessionsFilters;
@@ -186,6 +199,35 @@ describe("SessionsFilterDropdown", () => {
     const { onClose } = renderDropdown();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("moves and traps focus in the mobile modal, then restores focus", async () => {
+    vi.mocked(useIsMobile).mockReturnValue(true);
+    vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
+      {} as DOMRect,
+    ] as unknown as DOMRectList);
+    const trigger = document.createElement("button");
+    document.body.append(trigger);
+    trigger.focus();
+
+    const { onClose, unmount } = renderDropdown();
+    const first = screen.getByLabelText("Interactive");
+    const last = screen.getByRole("button", { name: "Apply" });
+
+    await waitFor(() => expect(first).toHaveFocus());
+    last.focus();
+    fireEvent.keyDown(last, { key: "Tab" });
+    expect(first).toHaveFocus();
+
+    fireEvent.keyDown(first, { key: "Tab", shiftKey: true });
+    expect(last).toHaveFocus();
+
+    fireEvent.keyDown(last, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    unmount();
+    expect(trigger).toHaveFocus();
+    trigger.remove();
   });
 
   it("clicking the outside overlay closes the dropdown", () => {

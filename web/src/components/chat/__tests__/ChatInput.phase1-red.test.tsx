@@ -3,7 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { ChatInput } from '../ChatInput'
 
 describe('ChatInput Phase 1 sizing contract', () => {
-  it('renders a one-line input footprint with a 36px send button', () => {
+  it('keeps a compact send button with a 44px coarse-pointer floor', () => {
     render(<ChatInput onSend={vi.fn()} />)
 
     const textarea = screen.getByRole('textbox', { name: 'Message input' })
@@ -12,6 +12,7 @@ describe('ChatInput Phase 1 sizing contract', () => {
     expect(textarea).toHaveClass('min-h-[36px]')
     expect(textarea).not.toHaveClass('min-h-[52px]')
     expect(sendButton).toHaveClass('h-[36px]', 'w-[36px]', 'self-end')
+    expect(sendButton).toHaveClass('pointer-coarse:h-11', 'pointer-coarse:w-11')
     expect(sendButton).not.toHaveClass('h-[52px]', 'w-[52px]', 'self-start')
   })
 

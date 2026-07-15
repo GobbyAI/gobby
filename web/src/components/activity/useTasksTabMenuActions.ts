@@ -57,7 +57,7 @@ export function useTasksTabMenuActions({
       setActionError(null);
       try {
         const rawTask = await operation();
-        applyRawTaskUpdate(task.id, rawTask);
+        if (rawTask !== null) applyRawTaskUpdate(task.id, rawTask);
         if (refetchAfter) fetchTasks();
       } catch (error) {
         setActionError(

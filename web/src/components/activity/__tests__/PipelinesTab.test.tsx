@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { PipelinesTab } from '../PipelinesTab'
 import { createMockFetch, type MockFetchInstance } from '../../../test/mocks/fetch'
 
@@ -160,5 +160,167 @@ describe('PipelinesTab', () => {
       .filter((url) => url.includes('/api/pipelines/executions?'))
 
     expect(executionCalls.some((url) => url.includes('offset=50'))).toBe(true)
+  })
+
+  it('preserves loaded pages while polling and loads the next offset', async () => {
+    mockFetch.resetRoutes()
+    const executions = Array.from({ length: 101 }, (_, index) => ({
+      id: `exec-${index + 1}`,
+      pipeline_name: `Pipeline ${index + 1}`,
+      status: index === 0 ? 'running' : 'completed',
+      created_at: '2026-04-09T00:00:00Z',
+    }))
+
+    mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname === '/api/pipelines/executions') {
+        const offset = Number(url.searchParams.get('offset') ?? 0)
+        const limit = Number(url.searchParams.get('limit') ?? 50)
+        return Response.json({ executions: executions.slice(offset, offset + limit) })
+      }
+      const id = url.pathname.split('/').pop()
+      return Response.json({ execution: { ...executions.find((item) => item.id === id), steps: [] } })
+    })
+
+    render(<PipelinesTab projectId="proj-1" />)
+    await screen.findByText('Pipeline 50')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
+    await screen.findByText('Pipeline 100')
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000)
+    })
+    await waitFor(() => {
+      expect(screen.getByText('Pipeline 100')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
+    await screen.findByText('Pipeline 101')
+
+    const executionCalls = mockFetch.fn.mock.calls
+      .map(([url]) => String(url))
+      .filter((url) => url.includes('/api/pipelines/executions?'))
+    expect(executionCalls.some((url) => url.includes('limit=100') && !url.includes('offset='))).toBe(true)
+    expect(executionCalls.some((url) => url.includes('offset=100'))).toBe(true)
+  })
+
+  it('discards a stale execution response after the filter changes', async () => {
+    mockFetch.resetRoutes()
+    let resolveAll: (response: Response) => void = () => undefined
+    const allResponse = new Promise<Response>((resolve) => {
+      resolveAll = resolve
+    })
+    let allRequestCount = 0
+
+    mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname === '/api/pipelines/executions') {
+        if (!url.searchParams.has('status')) {
+          allRequestCount += 1
+          if (allRequestCount > 1) return allResponse
+          return Response.json({
+            executions: [{
+              id: 'running-exec',
+              pipeline_name: 'Initially running',
+              status: 'running',
+              created_at: '2026-04-09T00:00:00Z',
+            }],
+          })
+        }
+        return Response.json({
+          executions: [{
+            id: 'failed-exec',
+            pipeline_name: 'Current failed run',
+            status: 'failed',
+            created_at: '2026-04-09T00:00:00Z',
+          }],
+        })
+      }
+      return Response.json({
+        execution: {
+          id: url.pathname.split('/').pop(),
+          pipeline_name: url.pathname.endsWith('failed-exec')
+            ? 'Current failed run'
+            : 'Initially running',
+          status: url.pathname.endsWith('failed-exec') ? 'failed' : 'running',
+          created_at: '2026-04-09T00:00:00Z',
+          steps: [],
+        },
+      })
+    })
+
+    render(<PipelinesTab projectId="proj-1" />)
+    await screen.findByText('Initially running')
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000)
+    })
+    await waitFor(() => {
+      expect(allRequestCount).toBeGreaterThan(1)
+    })
+
+    openFilterDropdown()
+    fireEvent.click(screen.getByRole('option', { name: 'Failed' }))
+    await screen.findAllByText('Current failed run')
+
+    resolveAll(Response.json({
+      executions: [{
+        id: 'stale-exec',
+        pipeline_name: 'Stale all-status run',
+        status: 'running',
+        created_at: '2026-04-09T00:00:00Z',
+      }],
+    }))
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(screen.queryByText('Stale all-status run')).toBeNull()
+    expect(screen.getAllByText('Current failed run').length).toBeGreaterThan(0)
+  })
+
+  it('discards stale detail when selection changes rapidly', async () => {
+    mockFetch.resetRoutes()
+    let resolveFirstDetail: (response: Response) => void = () => undefined
+    const firstDetail = new Promise<Response>((resolve) => {
+      resolveFirstDetail = resolve
+    })
+    const list = [
+      {
+        id: 'exec-1',
+        pipeline_name: 'First run',
+        status: 'completed',
+        created_at: '2026-04-09T00:00:00Z',
+      },
+      {
+        id: 'exec-2',
+        pipeline_name: 'Second run',
+        status: 'completed',
+        created_at: '2026-04-09T00:01:00Z',
+      },
+    ]
+
+    mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname === '/api/pipelines/executions') return Response.json({ executions: list })
+      if (url.pathname === '/api/pipelines/exec-1') return firstDetail
+      return Response.json({
+        execution: { ...list[1], pipeline_name: 'Second detail', steps: [] },
+      })
+    })
+
+    render(<PipelinesTab projectId="proj-1" />)
+    fireEvent.click(await screen.findByRole('button', { name: /Second run/ }))
+    await screen.findByText('Second detail')
+
+    resolveFirstDetail(Response.json({
+      execution: { ...list[0], pipeline_name: 'Stale first detail', steps: [] },
+    }))
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(screen.queryByText('Stale first detail')).toBeNull()
+    expect(screen.getByText('Second detail')).toBeInTheDocument()
   })
 })

@@ -68,7 +68,7 @@ function ToolArgumentsContent({
   args: Record<string, unknown>
   callId: string
 }) {
-  const filePath = args.file_path as string | undefined
+  const filePath = stringValue(args.file_path)
 
   // Write pattern: file_path + content
   if (filePath && typeof args.content === 'string') {
@@ -204,7 +204,7 @@ function ToolResultContent({ call }: { call: ToolCall }) {
       return String(rawContent)
     }
   }, [rawContent])
-  const filePath = call.arguments?.file_path as string | undefined
+  const filePath = stringValue(call.arguments?.file_path)
 
   // Base64 image — render inline
   if (imageSrc) {
@@ -337,7 +337,7 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
   // Compute artifact info for Read tools to show button in toolbar
   const artifactButton = useMemo(() => {
     if (toolType !== 'read' || call.status !== 'completed' || !call.result) return null
-    const filePath = call.arguments?.file_path as string | undefined
+    const filePath = stringValue(call.arguments?.file_path)
     if (!filePath) return null
     const content = extractResultContent(call.result)
     const resultStr = typeof content === 'string' ? content : String(content)
@@ -373,12 +373,21 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
     )}>
       <div
         className={cn(TOOL_CARD_SPACING.header, 'text-sm cursor-pointer hover:bg-muted/50 transition-colors')}
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
         onClick={() => hasDetails && setExpanded(!expanded)}
+        onKeyDown={(event) => {
+          if (event.target === event.currentTarget && hasDetails && (event.key === 'Enter' || event.key === ' ')) {
+            event.preventDefault()
+            setExpanded(!expanded)
+          }
+        }}
       >
         <StatusIcon status={call.status} />
         <span className="font-mono text-foreground">{displayName}</span>
         {call.tool_kind && (
-          <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+          <span className="rounded bg-muted px-1.5 py-0.5 text-[length:var(--text-xs)] text-muted-foreground">
             {call.tool_kind}
           </span>
         )}
@@ -393,12 +402,13 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
         <div className="flex-1" />
         {artifactButton && (
           <button
-            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors pointer-coarse:min-h-11 pointer-coarse:min-w-11"
             onClick={(e) => {
               e.stopPropagation()
               openFileAsArtifact(artifactButton.artifactInfo.type, artifactButton.artifactInfo.language, artifactButton.parsed.content, artifactButton.fileName)
             }}
             title="Open in artifacts panel"
+            aria-label="Open file in artifacts panel"
           >
             <PanelIcon size={14} />
           </button>
@@ -454,14 +464,17 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
 function ToolApprovalCard({ call, onRespondToApproval }: { call: ToolCall; onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => boolean | void }) {
   const displayName = getToolDisplayName(call)
   const isLive = onRespondToApproval && call.status === 'pending_approval'
+  const [decided, setDecided] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
 
   const handleDecision = (decision: 'approve' | 'reject' | 'approve_always') => {
+    if (decided) return
     const sent = onRespondToApproval?.(call.id, decision)
     if (sent === false) {
       setSendError('Disconnected — reconnecting...')
     } else {
       setSendError(null)
+      setDecided(true)
     }
   }
 
@@ -503,13 +516,13 @@ function ToolApprovalCard({ call, onRespondToApproval }: { call: ToolCall; onRes
         </div>
       )}
       <div className="flex items-center gap-2 px-3 pb-2">
-        <Button size="sm" variant="accent" onClick={() => handleDecision('approve')}>
+        <Button size="sm" variant="accent" onClick={() => handleDecision('approve')} disabled={decided}>
           Approve
         </Button>
-        <Button size="sm" variant="outline" onClick={() => handleDecision('approve_always')}>
+        <Button size="sm" variant="outline" onClick={() => handleDecision('approve_always')} disabled={decided}>
           Always Approve
         </Button>
-        <Button size="sm" variant="destructive" onClick={() => handleDecision('reject')}>
+        <Button size="sm" variant="destructive" onClick={() => handleDecision('reject')} disabled={decided}>
           Reject
         </Button>
       </div>
@@ -521,19 +534,39 @@ function ToolApprovalCard({ call, onRespondToApproval }: { call: ToolCall; onRes
 }
 
 /** Parse answered values from AskUserQuestion result content. */
+function normalizeAnsweredValues(value: unknown): Record<string, string> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+
+  const answers: Record<string, string> = {}
+  for (const [question, answer] of Object.entries(value)) {
+    if (typeof answer === 'string') {
+      answers[question] = answer
+      continue
+    }
+
+    const serialized = Array.isArray(answer) && answer.every((item) => typeof item === 'string')
+      ? answer.join(', ')
+      : JSON.stringify(answer)
+    if (serialized !== undefined) answers[question] = serialized
+  }
+  return answers
+}
+
 function parseAnsweredValues(result: ToolResult | undefined): Record<string, string> | null {
   if (!result?.content) return null
   if (result.kind === 'json') {
+    if (typeof result.content !== 'object' || Array.isArray(result.content)) return null
     const obj = result.content as Record<string, unknown>
-    const answers = (obj.answers ?? obj) as Record<string, string>
-    return answers
+    return normalizeAnsweredValues(obj.answers ?? obj)
   }
   if (result.kind === 'text') {
-    const text = result.content as string
+    if (typeof result.content !== 'string') return null
+    const text = result.content
     try {
       const parsed = JSON.parse(text)
       if (parsed && typeof parsed === 'object') {
-        return parsed.answers ?? parsed
+        const answers = normalizeAnsweredValues(parsed.answers ?? parsed)
+        if (answers) return answers
       }
     } catch {
       // Fall back to treating content as a plain string
@@ -784,7 +817,16 @@ function ToolCallGroupHeader({ group, expanded, onToggle, onRespond, onRespondTo
     <div className={cn('border-l my-1', groupBorderClass)}>
       <div
         className="flex items-center gap-2 pl-3 pr-2 py-1 text-sm cursor-pointer hover:bg-muted/30 transition-colors"
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
         onClick={onToggle}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            onToggle()
+          }
+        }}
       >
         <GroupStatusIcon hasErrors={group.hasErrors} allCompleted={group.allCompleted} hasInFlight={group.hasInFlight} />
         <span className="font-mono text-foreground">{group.displayName}</span>

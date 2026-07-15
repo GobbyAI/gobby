@@ -70,6 +70,8 @@ export const AGENT_EDIT_CHECKBOX_GROUP_CLS = "flex flex-col gap-1.5";
 // ── Rules editor ──
 
 export const AGENT_RULES_EDITOR_CLS = "flex flex-col gap-2";
+export const AGENT_EDITOR_ERROR_CLS =
+  "rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive-foreground";
 export const AGENT_RULES_CHIPS_CLS = "flex flex-wrap gap-1.5 items-center";
 export const AGENT_RULES_CHIP_CLS =
   "inline-flex items-center gap-1 bg-[var(--bg-tertiary)] border border-border rounded-xl pl-2.5 pr-2 py-0.5 text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-primary)]";
@@ -198,7 +200,7 @@ export const STEP_CARD_CLS =
   "border border-border rounded-md bg-[var(--bg-primary)] overflow-hidden";
 export const STEP_CARD_EXPANDED_CLS = "border-[var(--accent)]";
 export const STEP_CARD_HEADER_CLS =
-  "flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11";
+  "flex w-full items-center gap-2 border-0 bg-transparent px-3 py-2 text-left font-[inherit] text-[inherit] cursor-pointer transition-colors hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11";
 export const STEP_CARD_BODY_CLS =
   "px-3 pt-2 pb-3 border-t border-border flex flex-col gap-2.5";
 

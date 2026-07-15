@@ -156,7 +156,7 @@ describe("useTaskInlineEdit — optimistic + rollback (#14771 / D4)", () => {
     expect(patchTask).not.toHaveBeenCalled();
   });
 
-  it("a WS reconcile during an in-flight request suppresses a stale rollback", async () => {
+  it("a WS reconcile suppresses stale rollback but surfaces the PATCH failure", async () => {
     const gate = deferred<RawTaskPayload | null>();
     const patchTask = vi.fn<PatchFn>().mockReturnValue(gate.promise);
     const { result } = renderHook(() =>
@@ -184,7 +184,9 @@ describe("useTaskInlineEdit — optimistic + rollback (#14771 / D4)", () => {
 
     // The slow rejection must not stomp WS truth.
     expect(rollback).not.toHaveBeenCalled();
-    expect(result.current.errorFor("task-1")).toBeNull();
+    expect(result.current.errorFor("task-1")).toBe(
+      "Couldn't save title: late failure",
+    );
     expect(result.current.isFieldPending("task-1", "title")).toBe(false);
   });
 

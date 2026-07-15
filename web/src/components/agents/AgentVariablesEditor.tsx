@@ -1,7 +1,9 @@
 import { useState, useCallback } from 'react'
+import { getAgentEditorCaughtError, getAgentEditorResponseError } from './agent-editor-errors'
 import {
   AGENT_BTN_CLS,
   AGENT_BTN_PRIMARY_CLS,
+  AGENT_EDITOR_ERROR_CLS,
   AGENT_EDIT_INPUT_CLS,
   AGENT_RULES_ADD_BTN_CLS,
   AGENT_RULES_CHIP_REMOVE_CLS,
@@ -24,10 +26,12 @@ export function AgentVariablesEditor({ definitionId, variables, onVariablesChang
   const [newKey, setNewKey] = useState('')
   const [newValue, setNewValue] = useState('')
   const [adding, setAdding] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
 
   const entries = Object.entries(variables)
 
   const handleSet = useCallback(async (key: string, value: string) => {
+    setActionError(null)
     let parsed: unknown = value
     try { parsed = JSON.parse(value) } catch { /* keep as string */ }
     if (!definitionId) {
@@ -40,16 +44,16 @@ export function AgentVariablesEditor({ definitionId, variables, onVariablesChang
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ set: { [key]: parsed } }),
       })
-      if (res.ok) {
-        const data = await res.json()
-        onVariablesChange(data.variables || { ...variables, [key]: parsed })
-      }
+      if (!res.ok) throw new Error(await getAgentEditorResponseError(res, 'Failed to set variable'))
+      const data = await res.json()
+      onVariablesChange(data.variables || { ...variables, [key]: parsed })
     } catch (e) {
-      console.error('Failed to set variable:', e)
+      setActionError(getAgentEditorCaughtError(e, 'Failed to set variable'))
     }
   }, [definitionId, variables, onVariablesChange])
 
   const handleRemove = useCallback(async (key: string) => {
+    setActionError(null)
     if (!definitionId) {
       onVariablesChange(Object.fromEntries(entries.filter(([k]) => k !== key)))
       return
@@ -60,12 +64,11 @@ export function AgentVariablesEditor({ definitionId, variables, onVariablesChang
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ remove: [key] }),
       })
-      if (res.ok) {
-        const data = await res.json()
-        onVariablesChange(data.variables || Object.fromEntries(entries.filter(([k]) => k !== key)))
-      }
+      if (!res.ok) throw new Error(await getAgentEditorResponseError(res, 'Failed to remove variable'))
+      const data = await res.json()
+      onVariablesChange(data.variables || Object.fromEntries(entries.filter(([k]) => k !== key)))
     } catch (e) {
-      console.error('Failed to remove variable:', e)
+      setActionError(getAgentEditorCaughtError(e, 'Failed to remove variable'))
     }
   }, [definitionId, entries, onVariablesChange])
 
@@ -79,6 +82,16 @@ export function AgentVariablesEditor({ definitionId, variables, onVariablesChang
 
   return (
     <div className={AGENT_VARS_EDITOR_CLS}>
+      {actionError && (
+        <button
+          type="button"
+          className={AGENT_EDITOR_ERROR_CLS}
+          onClick={() => setActionError(null)}
+          aria-label={`Dismiss error: ${actionError}`}
+        >
+          {actionError}
+        </button>
+      )}
       {entries.length > 0 ? (
         <div className={AGENT_VARS_LIST_CLS}>
           {entries.map(([key, val]) => (

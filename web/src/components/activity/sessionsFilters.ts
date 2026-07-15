@@ -24,7 +24,6 @@ export const DEFAULT_LIVE_STATUSES: readonly SessionStatus[] = ["active", "pause
 export interface SessionsFilters {
   modes: Set<SessionMode>;
   providers: Set<string>;
-  models: Set<string>;
   sessionRefMin: number | null;
   sessionRefMax: number | null;
   taskRefMin: number | null;
@@ -40,7 +39,6 @@ export function defaultSessionsFilters(): SessionsFilters {
   return {
     modes: new Set<SessionMode>(),
     providers: new Set<string>(),
-    models: new Set<string>(),
     sessionRefMin: null,
     sessionRefMax: null,
     taskRefMin: null,
@@ -64,6 +62,31 @@ export function countActiveFilters(filters: SessionsFilters): number {
   return count;
 }
 
+function parseLocalDate(value: string | null): Date | null {
+  if (value === null) return null;
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (match === null) return null;
+
+  const [, yearText, monthText, dayText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const date = new Date(year, month - 1, day);
+  if (year < 100) date.setFullYear(year);
+
+  return Number.isFinite(date.getTime()) &&
+    date.getFullYear() === year &&
+    date.getMonth() === month - 1 &&
+    date.getDate() === day
+    ? date
+    : null;
+}
+
+function isValidLocalDate(value: unknown): value is string {
+  return typeof value === "string" && parseLocalDate(value) !== null;
+}
+
 /**
  * Resolve a date preset to (after, before) inclusive-after / exclusive-before
  * timestamps. Returns null for either bound when the preset doesn't apply.
@@ -85,15 +108,16 @@ export function resolveDateRange(
         before: null,
       };
     case "custom": {
-      // Custom dates arrive as YYYY-MM-DD; expand them to UTC bounds.
-      const after = filters.dateCustomFrom
-        ? new Date(`${filters.dateCustomFrom}T00:00:00.000Z`).toISOString()
-        : null;
-      // Inclusive end-of-day: bump the upper bound by one day so it stays
-      // exclusive in the URL serializer (matches backend semantics).
-      const before = filters.dateCustomTo
+      const afterDate = parseLocalDate(filters.dateCustomFrom);
+      const beforeDate = parseLocalDate(filters.dateCustomTo);
+      const after = afterDate?.toISOString() ?? null;
+      // The next local midnight keeps the end date inclusive while preserving
+      // the backend's exclusive-before semantics across DST transitions.
+      const before = beforeDate
         ? new Date(
-            new Date(`${filters.dateCustomTo}T00:00:00.000Z`).getTime() + 24 * 60 * 60 * 1000,
+            beforeDate.getFullYear(),
+            beforeDate.getMonth(),
+            beforeDate.getDate() + 1,
           ).toISOString()
         : null;
       return { after, before };
@@ -156,8 +180,10 @@ export function matchesSessionsFilters(
       created: session.created_task_refs ?? [],
       closed: session.closed_task_refs ?? [],
     };
+    const roles: ReadonlySet<TaskRefRole> | readonly TaskRefRole[] =
+      filters.taskRefRoles.size > 0 ? filters.taskRefRoles : ["claimed"];
     let anyMatch = false;
-    for (const role of filters.taskRefRoles) {
+    for (const role of roles) {
       if (roleColumns[role].some((ref) => ref >= min && ref <= max)) {
         anyMatch = true;
         break;
@@ -204,7 +230,6 @@ export function serializeSessionsFilters(filters: SessionsFilters, now: Date): U
 interface StoredSessionsFilters {
   modes: SessionMode[];
   providers: string[];
-  models: string[];
   sessionRefMin: number | null;
   sessionRefMax: number | null;
   taskRefMin: number | null;
@@ -221,7 +246,6 @@ export function serializeForStorage(filters: SessionsFilters): StoredSessionsFil
   return {
     modes: [...filters.modes],
     providers: [...filters.providers],
-    models: [],
     sessionRefMin: filters.sessionRefMin,
     sessionRefMax: filters.sessionRefMax,
     taskRefMin: filters.taskRefMin,
@@ -253,7 +277,6 @@ export function deserializeFromStorage(raw: string | null): SessionsFilters {
     const providers = new Set<string>(
       Array.isArray(parsed.providers) ? parsed.providers.filter((p) => typeof p === "string") : [],
     );
-    const models = new Set<string>();
     const taskRefRoles = new Set<TaskRefRole>(
       Array.isArray(parsed.taskRefRoles)
         ? parsed.taskRefRoles.filter((r): r is TaskRefRole => ALL_TASK_REF_ROLES.includes(r))
@@ -273,15 +296,14 @@ export function deserializeFromStorage(raw: string | null): SessionsFilters {
     return {
       modes,
       providers,
-      models,
       sessionRefMin: typeof parsed.sessionRefMin === "number" ? parsed.sessionRefMin : null,
       sessionRefMax: typeof parsed.sessionRefMax === "number" ? parsed.sessionRefMax : null,
       taskRefMin: typeof parsed.taskRefMin === "number" ? parsed.taskRefMin : null,
       taskRefMax: typeof parsed.taskRefMax === "number" ? parsed.taskRefMax : null,
       taskRefRoles,
       datePreset,
-      dateCustomFrom: typeof parsed.dateCustomFrom === "string" ? parsed.dateCustomFrom : null,
-      dateCustomTo: typeof parsed.dateCustomTo === "string" ? parsed.dateCustomTo : null,
+      dateCustomFrom: isValidLocalDate(parsed.dateCustomFrom) ? parsed.dateCustomFrom : null,
+      dateCustomTo: isValidLocalDate(parsed.dateCustomTo) ? parsed.dateCustomTo : null,
       statuses,
     };
   } catch {

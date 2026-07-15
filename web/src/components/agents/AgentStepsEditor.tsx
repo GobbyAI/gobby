@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react'
 import {
   AGENT_BTN_CLS,
   AGENT_BTN_DANGER_CLS,
+  AGENT_EDITOR_ERROR_CLS,
   AGENT_EDIT_INPUT_CLS,
   AGENT_EDIT_TEXTAREA_CLS,
   AGENT_RULES_ADD_BTN_CLS,
@@ -65,7 +66,6 @@ export interface WorkflowStep {
 interface AgentStepsEditorProps {
   steps: WorkflowStep[]
   onChange: (steps: WorkflowStep[]) => void
-  stepNames?: string[]  // all step names for transition dropdown
 }
 
 // ---------------------------------------------------------------------------
@@ -278,10 +278,64 @@ function TransitionsSection({ step, onChange, allStepNames }: {
 // Advanced Section (JSON editors for hooks)
 // ---------------------------------------------------------------------------
 
+type AdvancedFieldKey = 'on_enter' | 'on_exit' | 'on_mcp_success' | 'on_mcp_error'
+
+function AdvancedJsonField({
+  label,
+  value,
+  onCommit,
+}: {
+  label: string
+  value: Record<string, unknown>[] | undefined
+  onCommit: (value: Record<string, unknown>[]) => void
+}) {
+  const [draft, setDraft] = useState(value?.length ? JSON.stringify(value, null, 2) : '')
+  const [error, setError] = useState<string | null>(null)
+
+  const commitDraft = () => {
+    const text = draft.trim()
+    if (!text) {
+      setError(null)
+      onCommit([])
+      return
+    }
+
+    try {
+      const parsed: unknown = JSON.parse(text)
+      if (!Array.isArray(parsed)) {
+        setError('Value must be a JSON array')
+        return
+      }
+      setError(null)
+      onCommit(parsed as Record<string, unknown>[])
+    } catch {
+      setError('Invalid JSON')
+    }
+  }
+
+  return (
+    <div className={STEP_FIELD_CLS}>
+      <label className={STEP_FIELD_LABEL_CLS}>
+        {label}
+        <textarea
+          className={`${AGENT_EDIT_INPUT_CLS} ${AGENT_EDIT_TEXTAREA_CLS} ${STEP_JSON_EDITOR_CLS}`}
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onBlur={commitDraft}
+          aria-invalid={error ? true : undefined}
+          rows={3}
+          placeholder="[]"
+        />
+      </label>
+      {error && <span className={AGENT_EDITOR_ERROR_CLS} role="alert">{error}</span>}
+    </div>
+  )
+}
+
 function AdvancedSection({ step, onChange }: { step: WorkflowStep; onChange: (s: Partial<WorkflowStep>) => void }) {
   const [expanded, setExpanded] = useState(false)
 
-  const fields: { key: keyof WorkflowStep; label: string }[] = [
+  const fields: { key: AdvancedFieldKey; label: string }[] = [
     { key: 'on_enter', label: 'on_enter' },
     { key: 'on_exit', label: 'on_exit' },
     { key: 'on_mcp_success', label: 'on_mcp_success' },
@@ -296,33 +350,14 @@ function AdvancedSection({ step, onChange }: { step: WorkflowStep; onChange: (s:
       </button>
       {expanded && (
         <div className={STEP_ADVANCED_FIELDS_CLS}>
-          {fields.map(({ key, label }) => {
-            const val = step[key] as Record<string, unknown>[] | undefined
-            return (
-              <div key={key} className={STEP_FIELD_CLS}>
-                <label className={STEP_FIELD_LABEL_CLS}>{label}</label>
-                <textarea
-                  className={`${AGENT_EDIT_INPUT_CLS} ${AGENT_EDIT_TEXTAREA_CLS} ${STEP_JSON_EDITOR_CLS}`}
-                  value={val && val.length > 0 ? JSON.stringify(val, null, 2) : ''}
-                  onChange={e => {
-                    const text = e.target.value.trim()
-                    if (!text) {
-                      onChange({ [key]: [] })
-                      return
-                    }
-                    try {
-                      const parsed = JSON.parse(text)
-                      if (Array.isArray(parsed)) onChange({ [key]: parsed })
-                    } catch {
-                      // Parse errors expected while user is typing — no-op
-                    }
-                  }}
-                  rows={3}
-                  placeholder="[]"
-                />
-              </div>
-            )
-          })}
+          {fields.map(({ key, label }) => (
+            <AdvancedJsonField
+              key={key}
+              label={label}
+              value={step[key]}
+              onCommit={value => onChange({ [key]: value })}
+            />
+          ))}
         </div>
       )}
     </div>
@@ -340,6 +375,16 @@ export function AgentStepsEditor({ steps, onChange }: AgentStepsEditorProps) {
 
   const updateStep = useCallback((idx: number, updates: Partial<WorkflowStep>) => {
     onChange(steps.map((s, i) => i === idx ? { ...s, ...updates } : s))
+  }, [steps, onChange])
+
+  const renameStep = useCallback((idx: number, newName: string) => {
+    const oldName = steps[idx].name
+    onChange(steps.map((step, i) => ({
+      ...step,
+      ...(i === idx ? { name: newName } : {}),
+      transitions: step.transitions?.map(transition =>
+        transition.to === oldName ? { ...transition, to: newName } : transition),
+    })))
   }, [steps, onChange])
 
   const deleteStep = useCallback((idx: number) => {
@@ -374,14 +419,16 @@ export function AgentStepsEditor({ steps, onChange }: AgentStepsEditorProps) {
         return (
           <div className={`${STEP_CARD_CLS}${isExpanded ? ' ' + STEP_CARD_EXPANDED_CLS : ''}`} key={`${step.name}-${idx}`}>
             {/* Header */}
-            <div
+            <button
+              type="button"
               className={STEP_CARD_HEADER_CLS}
+              aria-expanded={isExpanded}
               onClick={() => setExpandedName(isExpanded ? null : step.name)}
             >
               <span className={STEP_NAME_BADGE_CLS}>{step.name}</span>
               <span className={STEP_PREVIEW_CLS}>{getStepPreview(step)}</span>
               <span className={STEP_CHEVRON_CLS}>{isExpanded ? '\u25BE' : '\u25B8'}</span>
-            </div>
+            </button>
 
             {/* Expanded body */}
             {isExpanded && (
@@ -401,7 +448,7 @@ export function AgentStepsEditor({ steps, onChange }: AgentStepsEditorProps) {
                     value={step.name}
                     onChange={e => {
                       const newName = e.target.value
-                      updateStep(idx, { name: newName })
+                      renameStep(idx, newName)
                       setExpandedName(newName)
                     }}
                   />
