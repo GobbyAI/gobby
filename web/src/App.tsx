@@ -189,12 +189,6 @@ export default function App() {
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsOverlay = useSettingsOverlay();
-  // The Providers & Models settings section drives the same default-provider
-  // state as the chat picker; App owns its persistence (see effects below).
-  const providerSelection = useMemo(
-    () => ({ selectedProvider, onSelectProvider: setSelectedProvider }),
-    [selectedProvider, setSelectedProvider],
-  );
   const [activityTabRequest, setActivityTabRequest] =
     useState<ActivityTab | null>(null);
   // Chat is the only page surface. Any legacy hash (e.g. #dashboard, #sessions)
@@ -224,7 +218,8 @@ export default function App() {
     projectOptions,
     projectReady,
     projectSelection,
-    setSelectedProjectId,
+    selectProject,
+    selectProvider,
   } = useAppProjectSelection({
     allProjects: projectsHook.allProjects,
     selectedProvider,
@@ -233,6 +228,12 @@ export default function App() {
     setProjectIdRef,
     sendProjectChange,
   });
+  // The Providers & Models settings section drives the same default-provider
+  // state as the chat picker; App owns its persistence (see effects below).
+  const providerSelection = useMemo(
+    () => ({ selectedProvider, onSelectProvider: selectProvider }),
+    [selectedProvider, selectProvider],
+  );
   const { sessionsFilters, setSessionsFilters } =
     usePersistedSessionsFilters();
 
@@ -478,7 +479,7 @@ export default function App() {
               <ProjectSelector
                 projects={projectOptions}
                 selectedProjectId={effectiveProjectId}
-                onProjectChange={setSelectedProjectId}
+                onProjectChange={selectProject}
                 dropDirection="down"
               />
             )}
@@ -589,7 +590,7 @@ export default function App() {
                   activeAgent,
                   onAgentChange: sendAgentChange,
                   provider: selectedProvider,
-                  onProviderChange: setSelectedProvider,
+                  onProviderChange: selectProvider,
                   onSwitchProvider: switchProvider,
                   dbSessionId,
                   conversationSwitchKey,
