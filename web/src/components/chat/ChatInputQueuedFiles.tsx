@@ -62,7 +62,7 @@ export function ChatInputQueuedFiles({
           <button
             type="button"
             aria-label={`Remove ${queuedFile.file.name}`}
-            className="absolute top-0 right-0 bg-[var(--surface-scrim)] rounded-bl text-foreground w-4 h-4 flex items-center justify-center text-xs"
+            className="absolute top-0 right-0 bg-[var(--surface-scrim)] rounded-bl text-foreground w-4 h-4 flex items-center justify-center text-xs pointer-coarse:h-11 pointer-coarse:w-11"
             onClick={() => onRemove(queuedFile.id)}
           >
             &times;

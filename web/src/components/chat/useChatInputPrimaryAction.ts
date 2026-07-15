@@ -250,7 +250,7 @@ export function useChatInputPrimaryAction({
           : 'Start push to talk'
 
   const primaryButtonClassName = cn(
-    'chat-input-primary-button inline-flex h-[36px] w-[36px] self-end items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50',
+    'chat-input-primary-button inline-flex h-[36px] w-[36px] self-end items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 pointer-coarse:h-11 pointer-coarse:w-11',
     primaryButtonKind === 'stop'
       ? 'border border-border bg-transparent text-foreground hover:bg-muted'
       : 'bg-accent text-accent-foreground hover:bg-accent-hover',

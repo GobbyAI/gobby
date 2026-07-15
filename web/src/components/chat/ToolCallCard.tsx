@@ -402,12 +402,13 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
         <div className="flex-1" />
         {artifactButton && (
           <button
-            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors pointer-coarse:min-h-11 pointer-coarse:min-w-11"
             onClick={(e) => {
               e.stopPropagation()
               openFileAsArtifact(artifactButton.artifactInfo.type, artifactButton.artifactInfo.language, artifactButton.parsed.content, artifactButton.fileName)
             }}
             title="Open in artifacts panel"
+            aria-label="Open file in artifacts panel"
           >
             <PanelIcon size={14} />
           </button>

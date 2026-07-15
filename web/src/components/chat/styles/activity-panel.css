@@ -373,7 +373,7 @@
   text-align: left;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 768px), (pointer: coarse) {
   .activity-panel-mobile-menu__item {
     min-height: 2.75rem;
   }

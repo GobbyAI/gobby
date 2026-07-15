@@ -92,6 +92,11 @@ describe('ChatInput attachments', () => {
 
     fireEvent.change(input, { target: { files: [file] } })
 
+    expect(screen.getByRole('button', { name: 'Remove note.txt' })).toHaveClass(
+      'pointer-coarse:h-11',
+      'pointer-coarse:w-11',
+    )
+
     const xhr = MockXMLHttpRequest.instances[0]
     expect(xhr.requestBody).toBeInstanceOf(FormData)
     expect((xhr.requestBody as FormData).get('project_id')).toBe('proj-1')

@@ -225,7 +225,7 @@ export function SessionsFilterDropdown({
                 {TASK_REF_ROLES.map((role) => (
                   <label
                     key={role.value}
-                    className="flex min-w-0 items-center gap-1.5 text-[length:var(--text-md)] text-muted-foreground cursor-pointer"
+                    className="flex min-w-0 items-center gap-1.5 text-[length:var(--text-md)] text-muted-foreground cursor-pointer pointer-coarse:min-h-11"
                   >
                     <input
                       type="checkbox"

@@ -30,7 +30,7 @@ export function FilterCheckboxRow({
 }) {
   return (
     <label
-      className={`flex min-w-0 items-center gap-1.5 px-2 py-1 rounded text-[length:var(--text-md)] cursor-pointer hover:bg-muted/50 ${
+      className={`flex min-w-0 items-center gap-1.5 px-2 py-1 rounded text-[length:var(--text-md)] cursor-pointer hover:bg-muted/50 pointer-coarse:min-h-11 ${
         checked ? 'text-foreground bg-muted/50' : 'text-muted-foreground'
       }`}
     >

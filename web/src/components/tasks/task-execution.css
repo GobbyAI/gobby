@@ -231,6 +231,13 @@
   color: var(--text-primary);
 }
 
+@media (pointer: coarse) {
+  .activity-task-row-toggle {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+}
+
 .activity-task-row-toggle-icon {
   display: flex;
   width: 1rem;

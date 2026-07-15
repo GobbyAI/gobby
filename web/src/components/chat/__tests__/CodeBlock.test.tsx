@@ -97,7 +97,10 @@ describe('CodeBlock', () => {
       </CodeBlock>,
     )
 
-    expect(screen.getByTitle('Copy code')).toBeTruthy()
+    expect(screen.getByTitle('Copy code')).toHaveClass(
+      'pointer-coarse:min-h-11',
+      'pointer-coarse:min-w-11',
+    )
   })
 
   it('copies code on click', async () => {
@@ -122,7 +125,10 @@ describe('CodeBlock', () => {
       </CodeBlock>,
     )
 
-    expect(screen.getByTitle('Open in panel')).toBeTruthy()
+    expect(screen.getByTitle('Open in panel')).toHaveClass(
+      'pointer-coarse:min-h-11',
+      'pointer-coarse:min-w-11',
+    )
   })
 
   it('does not show open-in-panel for short code blocks', () => {

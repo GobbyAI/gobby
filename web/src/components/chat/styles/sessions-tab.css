@@ -490,6 +490,7 @@
 /* Desktop keeps the kebab compact so task/MCP rows match the Sessions row
    height; touch promotes it to the 44px target. */
 @media (pointer: coarse) {
+  .session-more-btn,
   .task-more-btn {
     width: 2.75rem;
     height: 2.75rem;
