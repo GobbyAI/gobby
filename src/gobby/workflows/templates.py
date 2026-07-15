@@ -4,6 +4,7 @@ import shlex
 from typing import Any, Protocol, runtime_checkable
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from jinja2.sandbox import SandboxedEnvironment
 
 logger = logging.getLogger(__name__)
 
@@ -67,17 +68,23 @@ class TemplateEngine:
         else:
             loader = None
 
-        self.env = Environment(
-            loader=loader,
+        self.env = SandboxedEnvironment(
             # Disable autoescape for inline templates (default_for_string=False)
             # We generate markdown, not HTML - escaping breaks apostrophes etc.
             autoescape=select_autoescape(["html", "xml"], default_for_string=False),
             trim_blocks=True,
             lstrip_blocks=True,
         )
-        self.env.filters["regex_search"] = _regex_search
-        self.env.filters["regex_replace"] = _regex_replace
-        self.env.filters["shlex_quote"] = _shlex_quote
+        self.file_env = Environment(
+            loader=loader,
+            autoescape=select_autoescape(["html", "xml"], default_for_string=False),
+            trim_blocks=True,
+            lstrip_blocks=True,
+        )
+        for env in (self.env, self.file_env):
+            env.filters["regex_search"] = _regex_search
+            env.filters["regex_replace"] = _regex_replace
+            env.filters["shlex_quote"] = _shlex_quote
 
     def render(self, template_str: str, context: dict[str, Any]) -> str:
         """
@@ -98,7 +105,7 @@ class TemplateEngine:
         Render a template file with the given context.
         """
         try:
-            template = self.env.get_template(template_name)
+            template = self.file_env.get_template(template_name)
             return str(template.render(**context))
         except Exception as e:
             logger.error(f"Error rendering template file '{template_name}': {e}", exc_info=True)

@@ -11,6 +11,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from jinja2.exceptions import SecurityError
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.skills.formatting import skill_fetch_directive
@@ -2640,6 +2641,12 @@ class TestRuleEngineHelpers:
         engine = RuleEngine(db)
         result = engine._render_template("plain text", {}, {})
         assert result == "plain text"
+
+    def test_render_template_raises_on_unsafe_attribute_access(self, db: HubDatabase) -> None:
+        engine = RuleEngine(db)
+
+        with pytest.raises(SecurityError):
+            engine._render_template("{{ [].__class__.__mro__ }}", {}, {})
 
     def test_has_pending_messages_empty_session(self, db: HubDatabase) -> None:
         """_has_pending_messages returns False for empty session_id."""

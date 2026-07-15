@@ -10,6 +10,7 @@ from collections.abc import Callable
 from typing import Any
 
 import psycopg
+from jinja2.exceptions import SecurityError
 
 from gobby.hooks.events import HookEvent
 from gobby.skills.formatting import skill_fetch_batch_directive, skill_fetch_directive
@@ -185,6 +186,8 @@ class TemplatingMixin:
             render_ctx = {**ctx, **allowed_funcs}
             engine = TemplateEngine()
             return engine.render(template, render_ctx)
+        except SecurityError:
+            raise
         except Exception as e:
             logger.warning(f"Failed to render template: {e}")
             return template
