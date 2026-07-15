@@ -1297,6 +1297,76 @@ describe('useVoice', () => {
     expect(playedMarkers).toEqual([1, 2])
   })
 
+  it('detaches a stopped TTS source before starting replacement playback', () => {
+    const { result } = renderHook(() => useVoice(
+      wsRef as any,
+      'conv-tts-barge-in',
+      0,
+      projectIdRef,
+      { sttEnabled: false, ttsEnabled: true, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    act(() => {
+      result.current.handleVoiceMessage({
+        type: 'tts_audio',
+        sample_rate: 24_000,
+        format: 'pcm_s16le',
+        chunk_index: 1,
+      })
+      result.current.handleBinaryMessage(pcmChunk(1))
+    })
+    const stoppedSource = startedSources[0]
+
+    act(() => {
+      result.current.stopTTS()
+    })
+
+    expect(stoppedSource.stop).toHaveBeenCalledOnce()
+    expect(stoppedSource.onended).toBeNull()
+
+    act(() => {
+      result.current.handleVoiceMessage({
+        type: 'tts_audio',
+        sample_rate: 24_000,
+        format: 'pcm_s16le',
+        chunk_index: 2,
+      })
+      result.current.handleBinaryMessage(pcmChunk(2))
+      stoppedSource.onended?.(new Event('ended'))
+    })
+
+    expect(startedSources).toHaveLength(2)
+    expect(Math.round((startedSources[1].buffer?.getChannelData(0)[0] ?? 0) * 32768)).toBe(2)
+  })
+
+  it('closes each TTS AudioContext when its hook unmounts', () => {
+    for (const marker of [1, 2]) {
+      const { result, unmount } = renderHook(() => useVoice(
+        wsRef as any,
+        `conv-tts-unmount-${marker}`,
+        0,
+        projectIdRef,
+        { sttEnabled: false, ttsEnabled: true, voiceInputMode: 'ptt' },
+        true,
+      ))
+
+      act(() => {
+        result.current.handleVoiceMessage({
+          type: 'tts_audio',
+          sample_rate: 24_000,
+          format: 'pcm_s16le',
+          chunk_index: marker,
+        })
+        result.current.handleBinaryMessage(pcmChunk(marker))
+      })
+      unmount()
+    }
+
+    expect(audioContexts).toHaveLength(2)
+    expect(audioContexts.every((context) => context.state === 'closed')).toBe(true)
+  })
+
   it('stops TTS and cancels recording on conversation switch', async () => {
     const trackStop = vi.fn()
     getUserMediaMock.mockResolvedValueOnce({
