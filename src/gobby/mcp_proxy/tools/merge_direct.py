@@ -39,6 +39,8 @@ def _non_gobby_status_lines(status_output: str) -> list[str]:
 async def _dirty_worktree_result(
     git_manager: WorktreeGitManager | None,
     wt_path: str,
+    *,
+    after_merge: bool = False,
 ) -> dict[str, Any] | None:
     if git_manager is None:
         return {"success": False, "error": "git_manager not configured for clean-tree check"}
@@ -50,9 +52,10 @@ async def _dirty_worktree_result(
         timeout=10,
     )
     if status_result.returncode != 0:
+        phase = "after merge commit" if after_merge else "before merge"
         return {
             "success": False,
-            "error": f"git status failed after merge commit: {git_output(status_result)}",
+            "error": f"git status failed {phase}: {git_output(status_result)}",
         }
 
     dirty_files = _non_gobby_status_lines(status_result.stdout)
@@ -61,7 +64,11 @@ async def _dirty_worktree_result(
 
     return {
         "success": False,
-        "error": "merge completed but worktree is dirty",
+        "error": (
+            "merge completed but worktree is dirty"
+            if after_merge
+            else "worktree is dirty; commit or stash changes before merging"
+        ),
         "dirty_files": dirty_files,
     }
 
@@ -75,6 +82,10 @@ async def _complete_direct_merge(
         return {"success": False, "error": "git_manager not configured"}
 
     repo_path = str(getattr(git_manager, "repo_path", None) or wt_path)
+    dirty_result = await _dirty_worktree_result(git_manager, repo_path)
+    if dirty_result is not None:
+        return dirty_result
+
     original_branch_result = await asyncio.to_thread(
         git_manager.run_git_command,
         ["rev-parse", "--abbrev-ref", "HEAD"],
@@ -91,6 +102,17 @@ async def _complete_direct_merge(
     target_branch = resolution.target_branch
     source_branch = resolution.source_branch
     restore_original = original_branch and original_branch != target_branch
+    restore_args = ["checkout", original_branch]
+    restore_description = f"branch {original_branch}"
+    if original_branch == "HEAD":
+        original_sha = await rev_parse_head(git_manager, repo_path)
+        if not original_sha:
+            return {
+                "success": False,
+                "error": "Failed to determine current commit for detached HEAD",
+            }
+        restore_args = ["checkout", "--detach", original_sha]
+        restore_description = f"detached HEAD at {original_sha}"
     strategy_name = "no-ff" if resolution.tier_used == _GIT_NO_FF_TIER else "ff-only"
 
     try:
@@ -136,16 +158,21 @@ async def _complete_direct_merge(
                 "merge_strategy": strategy_name,
             }
 
-        dirty_result = await _dirty_worktree_result(git_manager, repo_path)
+        dirty_result = await _dirty_worktree_result(
+            git_manager,
+            repo_path,
+            after_merge=True,
+        )
         if dirty_result is not None:
-            dirty_result.update(
-                {
-                    "merge_sha": merge_sha,
-                    "commit_sha": merge_sha,
-                    "merge_strategy": strategy_name,
-                }
-            )
-            return dirty_result
+            return {
+                "success": True,
+                "merge_sha": merge_sha,
+                "commit_sha": merge_sha,
+                "merge_strategy": strategy_name,
+                "merge_output": (merge_result.stdout or merge_result.stderr or "").strip(),
+                "warning": dirty_result["error"],
+                "dirty_files": dirty_result.get("dirty_files", []),
+            }
 
         return {
             "success": True,
@@ -157,14 +184,14 @@ async def _complete_direct_merge(
         if restore_original:
             restore_result = await asyncio.to_thread(
                 git_manager.run_git_command,
-                ["checkout", original_branch],
+                restore_args,
                 cwd=repo_path,
                 timeout=30,
             )
             if restore_result.returncode != 0:
                 logger.warning(
-                    "Failed to restore branch %s after direct merge: %s",
-                    original_branch,
+                    "Failed to restore %s after direct merge: %s",
+                    restore_description,
                     git_output(restore_result),
                 )
 

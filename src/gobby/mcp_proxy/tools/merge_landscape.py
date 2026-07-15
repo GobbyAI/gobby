@@ -16,8 +16,11 @@ import asyncio
 import logging
 import os
 import shlex
+import signal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
+
+import psycopg
 
 from gobby.config.validation_detection import (
     ValidationCommandMatch,
@@ -650,11 +653,12 @@ def register_merge_landscape_tools(
                 env=safe_env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                start_new_session=True,
             )
             try:
                 stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
             except TimeoutError:
-                proc.kill()
+                os.killpg(proc.pid, signal.SIGKILL)
                 await proc.wait()
                 return {
                     "success": False,
@@ -810,13 +814,21 @@ def _active_merge_resolution_payload(
                 file_path=file_path,
                 status="pending",
             )
-        except Exception as exc:
+        except psycopg.IntegrityError as exc:
             logger.debug(
                 "Failed to hydrate merge conflict row for %s in %s: %s",
                 file_path,
                 resolution.id,
                 exc,
             )
+        except psycopg.Error:
+            logger.warning(
+                "Failed to hydrate merge conflict row for %s in %s",
+                file_path,
+                resolution.id,
+                exc_info=True,
+            )
+            raise
     if missing_paths:
         conflicts = merge_storage.list_conflicts(resolution_id=resolution.id)
     payload.update(

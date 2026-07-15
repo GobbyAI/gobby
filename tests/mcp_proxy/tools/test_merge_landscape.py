@@ -9,13 +9,20 @@ Each tool gets a happy-path test plus at least one failure mode.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import subprocess
+import sys
 from unittest.mock import MagicMock
 
+import psycopg
 import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.mcp_proxy.tools.merge_landscape import register_merge_landscape_tools
+from gobby.mcp_proxy.tools.merge_landscape import (
+    _active_merge_resolution_payload,
+    register_merge_landscape_tools,
+)
 from gobby.storage.worktrees import Worktree
 from tests._timing import wait_forever
 
@@ -809,24 +816,80 @@ async def test_verify_in_worktree_timeout(tmp_path, monkeypatch) -> None:
     worktree_manager.get.return_value = wt
 
     class SlowProcess:
+        pid = 1234
         returncode: int | None = None
 
         async def communicate(self):
             await wait_forever()
             return b"", b""
 
-        def kill(self) -> None:
-            self.returncode = -9
-
         async def wait(self) -> int:
             return self.returncode or -9
 
-    async def slow_subprocess(*_args, **_kwargs):
+    subprocess_options = {}
+
+    async def slow_subprocess(*_args, **kwargs):
+        subprocess_options.update(kwargs)
         return SlowProcess()
 
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.merge_landscape.asyncio.create_subprocess_exec",
         slow_subprocess,
+    )
+    killpg = MagicMock()
+    monkeypatch.setattr("gobby.mcp_proxy.tools.merge_landscape.os.killpg", killpg)
+
+    registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
+    result = await registry.call(
+        "verify_in_worktree",
+        {
+            "worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+            "command": "git status",
+            "timeout": 1,
+        },
+    )
+
+    assert result["success"] is False
+    assert result.get("timed_out") is True
+    assert subprocess_options["start_new_session"] is True
+    killpg.assert_called_once_with(1234, 9)
+
+
+@pytest.mark.asyncio
+async def test_verify_in_worktree_timeout_kills_descendants(tmp_path, monkeypatch) -> None:
+    wt = _make_worktree(path=str(tmp_path))
+    worktree_manager = MagicMock()
+    worktree_manager.get.return_value = wt
+    heartbeat = tmp_path / "heartbeat"
+    child_code = """
+import os
+import sys
+import time
+
+if os.fork() == 0:
+    with open(sys.argv[1], "w") as output:
+        output.write(str(os.getpid()))
+    time.sleep(60)
+else:
+    time.sleep(60)
+"""
+    create_subprocess_exec = asyncio.create_subprocess_exec
+    spawned_process = None
+
+    async def spawn_process(*_args, **kwargs):
+        nonlocal spawned_process
+        spawned_process = await create_subprocess_exec(
+            sys.executable,
+            "-c",
+            child_code,
+            str(heartbeat),
+            **kwargs,
+        )
+        return spawned_process
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.merge_landscape.asyncio.create_subprocess_exec",
+        spawn_process,
     )
 
     registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
@@ -841,9 +904,49 @@ async def test_verify_in_worktree_timeout(tmp_path, monkeypatch) -> None:
 
     assert result["success"] is False
     assert result.get("timed_out") is True
+    assert heartbeat.read_text()
+    assert spawned_process is not None
+    assert spawned_process.stdout is not None
+    assert await asyncio.wait_for(spawned_process.stdout.read(), timeout=1) == b""
 
 
 # --- inspect_merge_state ---
+
+
+def test_active_merge_resolution_payload_ignores_duplicate_conflict_row(caplog) -> None:
+    caplog.set_level(logging.DEBUG)
+    resolution = MagicMock(id="mr-test123")
+    merge_storage = MagicMock()
+    merge_storage.get_active_resolution.return_value = resolution
+    merge_storage.list_conflicts.return_value = []
+    merge_storage.create_conflict.side_effect = psycopg.IntegrityError("duplicate row")
+
+    payload = _active_merge_resolution_payload(
+        merge_storage,
+        "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+        conflicted_files=["src/conflicted.py"],
+    )
+
+    assert payload["conflicts"] == []
+    assert "Failed to hydrate merge conflict row" in caplog.text
+    assert merge_storage.list_conflicts.call_count == 2
+
+
+def test_active_merge_resolution_payload_surfaces_non_integrity_db_error(caplog) -> None:
+    resolution = MagicMock(id="mr-test123")
+    merge_storage = MagicMock()
+    merge_storage.get_active_resolution.return_value = resolution
+    merge_storage.list_conflicts.return_value = []
+    merge_storage.create_conflict.side_effect = psycopg.OperationalError("database unavailable")
+
+    with pytest.raises(psycopg.OperationalError, match="database unavailable"):
+        _active_merge_resolution_payload(
+            merge_storage,
+            "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+            conflicted_files=["src/conflicted.py"],
+        )
+
+    assert "Failed to hydrate merge conflict row" in caplog.text
 
 
 @pytest.mark.asyncio
