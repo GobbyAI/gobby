@@ -84,6 +84,18 @@ def test_removed_bundled_pipeline_sync_soft_deletes_installed_row(
 
     pipelines_dir = tmp_path / "pipelines"
     pipelines_dir.mkdir()
+    (pipelines_dir / "retained.yaml").write_text(
+        """
+name: retained
+type: pipeline
+description: retained definition
+enabled: false
+steps:
+  - id: noop
+    exec: "true"
+""",
+        encoding="utf-8",
+    )
 
     with patch(
         "gobby.workflows.sync_pipelines.get_bundled_pipelines_path", return_value=pipelines_dir

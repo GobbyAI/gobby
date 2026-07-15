@@ -171,7 +171,9 @@ class StepRenderer:
                     rendered_step.invoke_pipeline["arguments"], dict
                 ):
                     rendered_step.invoke_pipeline["arguments"] = self.render_mcp_arguments(
-                        rendered_step.invoke_pipeline["arguments"], render_context
+                        rendered_step.invoke_pipeline["arguments"],
+                        render_context,
+                        coerce_strings=False,
                     )
 
             if rendered_step.wait and isinstance(rendered_step.wait, dict):
@@ -229,30 +231,56 @@ class StepRenderer:
         evaluator = SafeExpressionEvaluator(context, _PIPELINE_EVAL_FUNCS)
         return evaluator.evaluate_value(expr)
 
-    def _render_argument_value(self, value: Any, context: dict[str, Any]) -> Any:
+    def _render_argument_value(
+        self,
+        value: Any,
+        context: dict[str, Any],
+        *,
+        coerce_strings: bool,
+    ) -> Any:
         """Render an argument while preserving the rendered value's native type."""
         if isinstance(value, str):
             # A pure expression carries the source value's type through rendering.
             m = re.fullmatch(r"\$\{\{\s*(.*?)\s*\}\}", value.strip(), re.DOTALL)
             if m:
-                return self._resolve_expression(m.group(1), context)
+                resolved = self._resolve_expression(m.group(1), context)
+                return self._coerce_value(resolved) if coerce_strings else resolved
             return self.render_string(value, context)
         if isinstance(value, dict):
-            return self.render_mcp_arguments(value, context)
+            return self.render_mcp_arguments(value, context, coerce_strings=coerce_strings)
         if isinstance(value, list):
-            return self._render_list(value, context)
+            return self._render_list(value, context, coerce_strings=coerce_strings)
         return value
 
-    def render_mcp_arguments(self, args: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
-        """Render template variables in MCP arguments without guessing string types."""
+    def render_mcp_arguments(
+        self,
+        args: dict[str, Any],
+        context: dict[str, Any],
+        *,
+        coerce_strings: bool = True,
+    ) -> dict[str, Any]:
+        """Render nested tool arguments, optionally coercing string scalars."""
         rendered: dict[str, Any] = {}
         for key, value in args.items():
-            rendered[key] = self._render_argument_value(value, context)
+            rendered[key] = self._render_argument_value(
+                value,
+                context,
+                coerce_strings=coerce_strings,
+            )
         return rendered
 
-    def _render_list(self, items: list[Any], context: dict[str, Any]) -> list[Any]:
+    def _render_list(
+        self,
+        items: list[Any],
+        context: dict[str, Any],
+        *,
+        coerce_strings: bool,
+    ) -> list[Any]:
         """Render template variables in a list, handling nested dicts and lists."""
-        return [self._render_argument_value(value, context) for value in items]
+        return [
+            self._render_argument_value(value, context, coerce_strings=coerce_strings)
+            for value in items
+        ]
 
     def resolve_reference(self, ref: str, context: dict[str, Any]) -> Any:
         """Resolve a $step.output reference from context.
