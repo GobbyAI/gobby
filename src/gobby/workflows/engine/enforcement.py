@@ -14,17 +14,15 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_audit import WorkflowAuditManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.engine.enforcement_audit import EnforcementAuditMixin
-from gobby.workflows.engine.enforcement_checks import (
-    RESERVED_STEP_WORKFLOW_VARIABLES,
-    EnforcementCheckMixin,
-)
+from gobby.workflows.engine.enforcement_checks import EnforcementCheckMixin
 from gobby.workflows.engine.enforcement_completion import EnforcementCompletionMixin
 from gobby.workflows.engine.enforcement_handlers import EnforcementHandlerMixin
+from gobby.workflows.reserved_variables import RESERVED_WORKFLOW_VARIABLES
 from gobby.workflows.state_manager import WorkflowInstanceManager
 
 __all__ = [
     "EnforcementMixin",
-    "RESERVED_STEP_WORKFLOW_VARIABLES",
+    "RESERVED_WORKFLOW_VARIABLES",
     "cleanup_agent_runtime_state",
     "complete_and_notify_agent_run",
 ]

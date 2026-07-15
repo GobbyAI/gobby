@@ -418,6 +418,74 @@ class TestSetVariableEffect:
 
         assert variables["template_counter"] == 3
 
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "enforce_tool_schema_check",
+            "unlocked_tools",
+            "listed_servers",
+            "consecutive_tool_blocks",
+            "_last_blocked_tool",
+            "edit_write_pending",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_user_rule_effect_cannot_write_runtime_managed_variable(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+        name: str,
+    ) -> None:
+        _insert_rule(
+            manager,
+            f"set-{name}",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.NOTIFICATION,
+                effects=[RuleEffect(type="set_variable", variable=name, value="changed")],
+            ),
+            tags=["gobby", "user"],
+        )
+
+        variables: dict[str, Any] = {name: "original"}
+        await _assert_evaluation(
+            db,
+            _make_event(HookEventType.NOTIFICATION),
+            "allow",
+            variables=variables,
+        )
+
+        assert variables[name] == "original"
+
+    @pytest.mark.asyncio
+    async def test_bundled_rule_effect_can_write_runtime_managed_variable(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "track-unlocked-tool",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.AFTER_TOOL,
+                effects=[
+                    RuleEffect(
+                        type="set_variable",
+                        variable="unlocked_tools",
+                        value=["gobby-tasks:create_task"],
+                    )
+                ],
+            ),
+            tags=["gobby"],
+        )
+
+        variables: dict[str, Any] = {"unlocked_tools": []}
+        await _assert_evaluation(
+            db,
+            _make_event(HookEventType.AFTER_TOOL),
+            "allow",
+            variables=variables,
+        )
+
+        assert variables["unlocked_tools"] == ["gobby-tasks:create_task"]
+
 
 class TestInjectContextEffect:
     @pytest.mark.asyncio

@@ -17,14 +17,13 @@ from gobby.workflows.enforcement.blocking import (
     is_operator_tool,
 )
 from gobby.workflows.engine.skill_load_guidance import skill_load_block_guidance
+from gobby.workflows.reserved_variables import is_reserved_workflow_variable
 from gobby.workflows.state_manager import WorkflowInstanceManager
 
 if TYPE_CHECKING:
     from gobby.storage.workflow_audit import WorkflowAuditManager
 
 logger = logging.getLogger("gobby.workflows.engine.enforcement")
-
-RESERVED_STEP_WORKFLOW_VARIABLES = frozenset({"step_workflow_complete", "_step_workflow_name"})
 
 
 class EnforcementCheckMixin:
@@ -96,12 +95,29 @@ class EnforcementCheckMixin:
         self, event: HookEvent, session_id: str, variables: dict[str, Any]
     ) -> HookResponse | None:
         """Check agent-level tool restrictions. Returns block response or None to continue."""
+        tool_name = event.data.get("tool_name", "")
+        tool_input = event.data.get("tool_input") or {}
+        if isinstance(tool_input, dict):
+            mcp_tool_name = tool_input.get("tool_name")
+            variable_name = self._is_reserved_variable_write(
+                tool_name,
+                tool_input,
+                mcp_tool_name=mcp_tool_name if isinstance(mcp_tool_name, str) else None,
+            )
+            if variable_name:
+                return HookResponse(
+                    decision="block",
+                    reason=(
+                        "Rule enforced by Gobby: [workflow-runtime-variable]\n"
+                        f"Variable '{variable_name}' is managed by the workflow runtime."
+                    ),
+                )
+
         blocked_tools: list[str] = variables.get("_agent_blocked_tools") or []
         blocked_mcp_tools: list[str] = variables.get("_agent_blocked_mcp_tools") or []
         if not blocked_tools and not blocked_mcp_tools:
             return None
 
-        tool_name = event.data.get("tool_name", "")
         agent_type = variables.get("_agent_type", "unknown")
 
         # Check native tool block-list first so explicit agent blocks override exemptions.
@@ -364,7 +380,7 @@ class EnforcementCheckMixin:
             else tool_input
         )
         variable_name = str(resolved_input.get("name") or resolved_input.get("variable") or "")
-        if variable_name in RESERVED_STEP_WORKFLOW_VARIABLES:
+        if is_reserved_workflow_variable(variable_name):
             return variable_name
         return None
 

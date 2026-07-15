@@ -323,6 +323,47 @@ async def test_step_workflow_complete_call_tool_write_is_blocked(db: HubDatabase
     assert "step_workflow_complete" in response.reason
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "enforce_tool_schema_check",
+        "unlocked_tools",
+        "listed_servers",
+        "consecutive_tool_blocks",
+        "_last_blocked_tool",
+        "edit_write_pending",
+    ],
+)
+@pytest.mark.asyncio
+async def test_runtime_managed_write_is_blocked_without_step_workflow(
+    db: HubDatabase, name: str
+) -> None:
+    response = await RuleEngine(db).evaluate(
+        _before_set_variable(name, True),
+        session_id=SESSION_ID,
+        variables={},
+    )
+
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert name in response.reason
+
+
+@pytest.mark.asyncio
+async def test_runtime_managed_call_tool_write_is_blocked_without_step_workflow(
+    db: HubDatabase,
+) -> None:
+    response = await RuleEngine(db).evaluate(
+        _before_mcp_set_variable("unlocked_tools", ["gobby-tasks:delete_task"]),
+        session_id=SESSION_ID,
+        variables={},
+    )
+
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert "unlocked_tools" in response.reason
+
+
 @pytest.mark.asyncio
 async def test_non_reserved_set_variable_remains_allowed(db: HubDatabase) -> None:
     _setup_workflow(db, current_step="implement")

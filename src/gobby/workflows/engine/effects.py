@@ -16,6 +16,7 @@ from gobby.hooks.events import HookEvent
 from gobby.hooks.normalization import is_shell_tool
 from gobby.memory.recall_constants import MEMORY_RECALL_PRODUCER
 from gobby.storage.workflow_definitions import WorkflowDefinitionRow
+from gobby.workflows.reserved_variables import is_internal_rule, is_reserved_workflow_variable
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
 logger = logging.getLogger(__name__)
@@ -104,7 +105,13 @@ class EffectsMixin:
             blocking outcome, otherwise None.
         """
         if effect.type == "set_variable":
-            await asyncio.to_thread(self._apply_set_variable, effect, variables, ctx)
+            await asyncio.to_thread(
+                self._apply_set_variable,
+                effect,
+                variables,
+                ctx,
+                allow_reserved=is_internal_rule(row),
+            )
 
         elif effect.type == "inject_context":
             # NOTE: inject_context templates render with rule evaluation context:
@@ -919,11 +926,15 @@ class EffectsMixin:
         effect: Any,
         variables: dict[str, Any],
         eval_context: dict[str, Any],
+        *,
+        allow_reserved: bool = False,
     ) -> None:
         """Apply a set_variable effect, handling expressions."""
         if effect.variable is None:
             return
-
+        if is_reserved_workflow_variable(effect.variable) and not allow_reserved:
+            logger.warning("Rule effect cannot write runtime-managed variable %r", effect.variable)
+            return
         value = effect.value
 
         # Render Jinja2 templates first, before expression evaluation
