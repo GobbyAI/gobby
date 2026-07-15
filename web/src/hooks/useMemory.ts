@@ -312,6 +312,8 @@ export function useMemory(projectId?: string | null) {
         return
       }
 
+      setSearchResults(null)
+
       debounceRef.current = window.setTimeout(async () => {
         try {
           const baseUrl = getBaseUrl()

@@ -60,12 +60,13 @@ function jsonResponse(data: unknown, status = 200) {
   });
 }
 
-interface FetchFailureRoutes {
+interface FetchRouteOptions {
   promote?: Set<string>;
   restore?: Set<string>;
+  searchResults?: MemoryRecord[];
 }
 
-function setupFetch(initialMemories: MemoryRecord[], failures: FetchFailureRoutes = {}) {
+function setupFetch(initialMemories: MemoryRecord[], options: FetchRouteOptions = {}) {
   let memories = [...initialMemories];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -92,6 +93,15 @@ function setupFetch(initialMemories: MemoryRecord[], failures: FetchFailureRoute
         project_id: "project-1",
       });
     }
+    if (url.includes("/api/memories/search?") && method === "GET") {
+      const query = new URL(url, "http://localhost").searchParams.get("q")?.toLowerCase() ?? "";
+      const results = options.searchResults ?? memories.filter((memory) =>
+        memory.content.toLowerCase().includes(query) ||
+        memory.memory_type.toLowerCase().includes(query) ||
+        (memory.tags ?? []).some((tag) => tag.toLowerCase().includes(query))
+      );
+      return jsonResponse({ results });
+    }
     if (url.includes("/api/memories?") && method === "GET") {
       return jsonResponse({ memories });
     }
@@ -107,7 +117,7 @@ function setupFetch(initialMemories: MemoryRecord[], failures: FetchFailureRoute
     }
     if (url.endsWith("/promote") && method === "POST") {
       const memoryId = url.split("/").slice(-2, -1)[0];
-      if (failures.promote?.has(memoryId)) return jsonResponse({ error: "not found" }, 404);
+      if (options.promote?.has(memoryId)) return jsonResponse({ error: "not found" }, 404);
       const index = memories.findIndex((memory) => memory.id === memoryId);
       if (index === -1) return jsonResponse({ error: "not found" }, 404);
       memories = memories.map((memory, memoryIndex) =>
@@ -117,7 +127,7 @@ function setupFetch(initialMemories: MemoryRecord[], failures: FetchFailureRoute
     }
     if (url.includes("/restore") && method === "POST") {
       const memoryId = url.split("/").slice(-2, -1)[0];
-      if (failures.restore?.has(memoryId)) return jsonResponse({ error: "not found" }, 404);
+      if (options.restore?.has(memoryId)) return jsonResponse({ error: "not found" }, 404);
       const index = memories.findIndex((memory) => memory.id === memoryId);
       if (index === -1) return jsonResponse({ error: "not found" }, 404);
       memories = memories.map((memory, memoryIndex) =>
@@ -199,7 +209,7 @@ describe("Memory activity tab", () => {
     await user.click(screen.getByRole("checkbox", { name: "Last 24 hours" }));
     await user.type(screen.getByRole("searchbox", { name: "Search memories" }), "palette");
     expect(screen.queryByText("Persist panel width override")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Select Use a quiet palette for dashboards" }))
+    expect(await screen.findByRole("button", { name: "Select Use a quiet palette for dashboards" }))
       .toBeInTheDocument();
 
     await user.clear(screen.getByRole("searchbox", { name: "Search memories" }));
@@ -236,6 +246,38 @@ describe("Memory activity tab", () => {
     expect(within(menu).getByRole("menuitem", { name: "Copy content" })).toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
   }, 10_000);
+
+  it("uses server search results beyond the 100-row list cap", async () => {
+    const listedMemories = Array.from({ length: 100 }, (_, index) =>
+      makeMemory({
+        id: `mem-${index}`,
+        content: `Listed memory ${index}`,
+      }),
+    );
+    const serverOnlyMemory = makeMemory({
+      id: "mem-server-only",
+      content: "Server-only memory beyond list cap",
+    });
+    const fetchMock = setupFetch(listedMemories, { searchResults: [serverOnlyMemory] });
+    const user = userEvent.setup();
+
+    render(<MemoryTab projectId="project-1" />);
+    expect(await screen.findByRole("button", { name: "Select Listed memory 0" }))
+      .toBeInTheDocument();
+
+    await user.type(screen.getByRole("searchbox", { name: "Search memories" }), "server-only");
+
+    expect(
+      await screen.findByRole("button", { name: "Select Server-only memory beyond list cap" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Listed memory 0")).not.toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some(([url]) => {
+        const requestUrl = String(url);
+        return requestUrl.includes("/api/memories/search?") && requestUrl.includes("q=server-only");
+      }),
+    ).toBe(true);
+  });
 
   it("shows memory scope and promotes a project memory to global", async () => {
     const fetchMock = setupFetch([

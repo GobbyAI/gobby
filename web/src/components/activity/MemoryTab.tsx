@@ -44,6 +44,7 @@ export const MemoryTab = memo(function MemoryTab({
 }: MemoryTabProps) {
   const {
     memories,
+    searchResults,
     stats,
     isLoading,
     filters,
@@ -52,6 +53,7 @@ export const MemoryTab = memo(function MemoryTab({
     deleteMemory,
     restoreMemory,
     promoteMemoryToGlobal,
+    searchMemories,
     refreshMemories,
     fetchKnowledgeGraph,
     fetchEntityNeighbors,
@@ -71,18 +73,26 @@ export const MemoryTab = memo(function MemoryTab({
     () =>
       filtersFromMemoryHook({
         ...filters,
-        search,
+        search: "",
       }),
-    [filters, search],
+    [filters],
+  );
+  const displayedMemories = useMemo(
+    () => (search.trim() ? (searchResults ?? []) : memories),
+    [memories, search, searchResults],
   );
   const filteredMemories = useMemo(
-    () => filterMemories(memories, tabFilters),
-    [memories, tabFilters],
+    () => filterMemories(displayedMemories, tabFilters),
+    [displayedMemories, tabFilters],
   );
   const selectedMemory = useMemo(
-    () => memories.find((memory) => memory.id === selectedId) ?? null,
-    [memories, selectedId],
+    () => displayedMemories.find((memory) => memory.id === selectedId) ?? null,
+    [displayedMemories, selectedId],
   );
+
+  useEffect(() => {
+    searchMemories(search);
+  }, [search, searchMemories]);
 
   useEffect(() => {
     if (filteredMemories.length === 0) {
@@ -382,7 +392,9 @@ export const MemoryTab = memo(function MemoryTab({
               body={
                 filters.visibility === "hidden"
                   ? "No hidden memories — dream hasn't flagged anything."
-                  : memories.length === 0
+                  : search.trim()
+                    ? "No memories match the current filters."
+                    : memories.length === 0
                     ? "Memories captured during sessions appear here."
                     : "No memories match the current filters."
               }
