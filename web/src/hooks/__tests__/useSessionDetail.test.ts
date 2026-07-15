@@ -203,6 +203,67 @@ describe('useSessionDetail', () => {
     expect(result.current.totalMessages).toBe(1)
   })
 
+  it('preserves a live message received during the initial transcript load', async () => {
+    await loadModule()
+
+    let resolveInitialMessages: ((response: Response) => void) | null = null
+    mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/sessions/sess-cli') {
+        return new Response(JSON.stringify({
+          session: {
+            id: 'sess-cli',
+            external_id: 'cli-ext-1',
+            session_type: 'terminal',
+            status: 'active',
+          },
+        }), { status: 200 })
+      }
+      if (url === '/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail') {
+        return new Promise<Response>((resolve) => {
+          resolveInitialMessages = resolve
+        })
+      }
+      throw new Error(`Unhandled fetch: ${url}`)
+    })
+
+    const { result } = renderHook(() => useSessionDetail('sess-cli'))
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    await waitFor(() => expect(resolveInitialMessages).not.toBeNull())
+
+    act(() => {
+      ws.simulateMessage({
+        type: 'session_message',
+        session_id: 'sess-cli',
+        message: {
+          id: 'live-msg',
+          role: 'assistant',
+          content: 'Live output',
+          timestamp: '2026-04-09T00:00:01Z',
+          content_blocks: [{ type: 'text', content: 'Live output' }],
+        },
+      })
+    })
+
+    act(() => {
+      resolveInitialMessages?.(new Response(JSON.stringify({
+        messages: [{
+          id: 'snapshot-msg',
+          role: 'assistant',
+          content: 'Snapshot output',
+          timestamp: '2026-04-09T00:00:00Z',
+          content_blocks: [{ type: 'text', content: 'Snapshot output' }],
+        }],
+        total_count: 1,
+      }), { status: 200 }))
+    })
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    expect(result.current.messages.map((message) => message.id)).toContain('live-msg')
+  })
+
   it('fetches newer transcript pages when live messages reveal a tail gap', async () => {
     await loadModule()
 

@@ -190,8 +190,9 @@ export function useSessionDetail(sessionId: string | null) {
       resetPaging()
 
       // Tail-first: open at the newest page, page older on scroll-up.
+      const tailWindowVersion = tailWindowVersionRef.current
       const renderedResult = await fetchRenderedSessionMessages(activeSessionId, 0, 'tail')
-      if (!isCurrent()) return
+      if (!isCurrent() || tailWindowVersionRef.current !== tailWindowVersion) return
 
       const shouldUseChatMessages =
         sessionData.session_type === 'web_chat' &&
