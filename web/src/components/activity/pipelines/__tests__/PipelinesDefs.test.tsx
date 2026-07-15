@@ -155,4 +155,18 @@ describe('Pipelines defs segment', () => {
     expect(requestBody.description).toBe('Deploy production services with staged approvals.')
     expect(definition.steps).toEqual([{ id: 'step-1', exec: 'npm test -- --runInBand' }])
   })
+
+  it('switches from definition detail to the pipeline editor and back', async () => {
+    render(<PipelinesTab projectId="project-1" />)
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Defs' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+
+    expect(screen.getByPlaceholderText('Pipeline name')).toHaveValue('deploy-prod')
+
+    fireEvent.click(screen.getByRole('button', { name: '←' }))
+
+    expect(await screen.findByRole('button', { name: 'Edit' })).toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('Pipeline name')).not.toBeInTheDocument()
+  })
 })

@@ -38,6 +38,10 @@ describe('PipelineStepList row identity', () => {
     await user.click(screen.getByRole('button', { name: /old-id/ }))
     const input = screen.getByLabelText('Step ID')
     await user.clear(input)
+
+    expect(input).toHaveValue('')
+    expect(input).toHaveFocus()
+
     await user.type(input, 'new-id')
 
     expect(input).toHaveValue('new-id')

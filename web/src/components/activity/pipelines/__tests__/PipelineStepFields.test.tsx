@@ -40,6 +40,21 @@ function stepState(): PipelineStep {
 }
 
 describe('PipelineStepFields drafts', () => {
+  it('keeps a newly added argument row while its value is typed before its key', async () => {
+    const user = userEvent.setup()
+    render(<McpHarness initialStep={{ id: 'mcp', mcp: { arguments: {} } }} />)
+
+    await user.click(screen.getByRole('button', { name: 'Add Arguments row' }))
+    const keyInput = screen.getByRole('textbox', { name: 'Arguments key 1' })
+    const valueInput = screen.getByRole('textbox', { name: 'Arguments value 1' })
+
+    await user.type(valueInput, 'secret')
+
+    expect(keyInput).toBeInTheDocument()
+    expect(valueInput).toHaveValue('secret')
+    expect(stepState().mcp).toEqual({ arguments: {} })
+  })
+
   it('keeps a newly added argument row while its key is typed', async () => {
     const user = userEvent.setup()
     render(<McpHarness initialStep={{ id: 'mcp', mcp: { arguments: {} } }} />)
