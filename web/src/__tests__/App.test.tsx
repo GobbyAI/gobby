@@ -698,47 +698,25 @@ describe("App wiring", () => {
     });
   });
 
-  it("lands on chat for a stale #sessions hash", async () => {
-    window.location.hash = "#sessions";
+  it("keeps chat rendered when back or forward navigation changes the hash", async () => {
+    window.history.replaceState(null, "", "#sessions");
 
     await act(async () => {
       render(<App />);
     });
 
     expect(await screen.findByText("Chat")).toBeInTheDocument();
-    await waitFor(() => {
-      expect(window.location.hash).toBe("#chat");
+    expect(window.location.hash).toBe("#sessions");
+
+    act(() => {
+      window.history.replaceState(null, "", "#terminals");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
     });
+
+    expect(screen.getByText("Chat")).toBeInTheDocument();
+    expect(window.location.hash).toBe("#terminals");
   });
-
-  it("lands on chat for a stale #terminals hash", async () => {
-    window.location.hash = "#terminals";
-
-    await act(async () => {
-      render(<App />);
-    });
-
-    expect(await screen.findByText("Chat")).toBeInTheDocument();
-    await waitFor(() => {
-      expect(window.location.hash).toBe("#chat");
-    });
-  });
-
-  it.each(["projects", "cron", "reports", "traces"])(
-    "lands on chat for retired #%s hash",
-    async (hash) => {
-      window.location.hash = `#${hash}`;
-
-      await act(async () => {
-        render(<App />);
-      });
-
-      expect(await screen.findByText("Chat")).toBeInTheDocument();
-      await waitFor(() => {
-        expect(window.location.hash).toBe("#chat");
-      });
-    },
-  );
 
   it("resets the backend-facing chat mode when New Chat is selected from the palette", async () => {
     const sendMode = vi.fn();

@@ -191,14 +191,9 @@ export default function App() {
   const settingsOverlay = useSettingsOverlay();
   const [activityTabRequest, setActivityTabRequest] =
     useState<ActivityTab | null>(null);
-  // Chat is the only page surface. Any legacy hash (e.g. #dashboard, #sessions)
-  // normalizes to #chat via the effect below; activity tabs (Tasks/Sessions/MCP)
-  // live inside ChatPage and are driven by activityTabRequest, not the page hash.
+  // Chat is the only page surface. Activity tabs (Tasks/Sessions/MCP) live
+  // inside ChatPage and are driven by activityTabRequest, not the URL hash.
   const [activeTab, setActiveTab] = useState<string>("chat");
-
-  useEffect(() => {
-    window.location.hash = activeTab;
-  }, [activeTab]);
   const showPlanRef = useRef<(() => void) | null>(null);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
   const [resumeModalOpen, setResumeModalOpen] = useState(false);

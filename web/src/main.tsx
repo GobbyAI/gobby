@@ -14,7 +14,6 @@ createRoot(document.getElementById('root')!).render(
   <AppErrorBoundary
     activeTab="application"
     onReturnToChat={() => {
-      window.location.hash = 'chat'
       window.location.reload()
     }}
   >
