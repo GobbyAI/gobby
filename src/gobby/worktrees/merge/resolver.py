@@ -117,6 +117,10 @@ _FENCED_SOURCE_RESPONSE_RE = re.compile(
     re.DOTALL,
 )
 _CONFLICT_MARKER_LINE_RE = re.compile(r"(?m)^\s*(<<<<<<<|\|\|\|\|\|\|\||=======|>>>>>>>).*")
+# A bare ``=======`` line is ambiguous (it is also a Markdown H1 underline), so
+# AI source cleaning only rejects the unambiguous markers; merge-tool inputs use
+# the strict pattern above.
+_AI_CONFLICT_MARKER_LINE_RE = re.compile(r"(?m)^\s*(<<<<<<<|\|\|\|\|\|\|\||>>>>>>>).*")
 
 
 def assert_marker_free(content: str) -> None:
@@ -177,9 +181,7 @@ def clean_ai_source_response(response: str) -> str | None:
 
     if "```" in candidate:
         return None
-    try:
-        assert_marker_free(candidate)
-    except ValueError:
+    if _AI_CONFLICT_MARKER_LINE_RE.search(candidate):
         return None
     if _AI_PROSE_LINE_RE.search(candidate):
         return None
