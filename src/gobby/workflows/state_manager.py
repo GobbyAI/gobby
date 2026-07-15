@@ -5,7 +5,11 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from gobby.storage.hub.protocol import HubDatabase, SessionVariableMutation
+from gobby.storage.hub.protocol import (
+    HubDatabase,
+    SessionVariableMutation,
+    WorkflowInstanceMutation,
+)
 from gobby.storage.session_resolution import is_session_uuid
 from gobby.utils.datetime import parse_stored_datetime, require_stored_datetime
 
@@ -107,17 +111,19 @@ class WorkflowInstanceManager:
         """Atomically merge variables without rewriting workflow execution state."""
         if not updates or not is_session_uuid(session_id):
             return False
-        now = datetime.now(UTC).isoformat()
-        cursor = self.db.execute(
-            """
-            UPDATE workflow_instances
-            SET variables = COALESCE(variables, '{}'::jsonb) || %s::jsonb,
-                updated_at = %s
-            WHERE session_id = %s AND workflow_name = %s
-            """,
-            (json.dumps(updates), now, session_id, workflow_name),
-        )
-        return cursor.rowcount > 0
+        lock = WorkflowInstanceMutation(session_id=session_id, workflow_name=workflow_name)
+        with self.db.transaction_immediate(lock) as conn:
+            now = datetime.now(UTC).isoformat()
+            cursor = conn.execute(
+                """
+                UPDATE workflow_instances
+                SET variables = COALESCE(variables, '{}'::jsonb) || %s::jsonb,
+                    updated_at = %s
+                WHERE session_id = %s AND workflow_name = %s
+                """,
+                (json.dumps(updates), now, session_id, workflow_name),
+            )
+            return cursor.rowcount > 0
 
     def delete_instance(self, session_id: str, workflow_name: str) -> None:
         """Delete a workflow instance."""

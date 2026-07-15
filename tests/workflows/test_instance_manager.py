@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -143,6 +145,57 @@ def test_merge_instance_variables_preserves_concurrent_step_transition(
     assert result.current_step == "review"
     assert result.step_action_count == 7
     assert result.total_action_count == 11
+    assert result.variables == {"existing": "value", "new": "value"}
+
+
+def test_instance_mutations_serialize_parallel_step_and_variable_writes(
+    db: HubDatabase,
+) -> None:
+    from gobby.storage.hub.protocol import WorkflowInstanceMutation
+    from gobby.workflows.definitions import WorkflowInstance
+    from gobby.workflows.state_manager import WorkflowInstanceManager
+
+    _ensure_session(db, S1)
+    mgr = WorkflowInstanceManager(db)
+    mgr.save_instance(
+        WorkflowInstance(
+            id=INST_1,
+            session_id=S1,
+            workflow_name="auto-task",
+            current_step="work",
+            variables={"existing": "value"},
+        )
+    )
+    transition_read = threading.Event()
+    variable_write_started = threading.Event()
+    finish_transition = threading.Event()
+
+    def transition_step() -> None:
+        lock = WorkflowInstanceMutation(session_id=S1, workflow_name="auto-task")
+        with db.transaction_immediate(lock):
+            instance = mgr.get_instance(S1, "auto-task")
+            assert instance is not None
+            transition_read.set()
+            assert finish_transition.wait(timeout=5)
+            instance.current_step = "review"
+            mgr.save_instance(instance)
+
+    def merge_variables() -> bool:
+        assert transition_read.wait(timeout=5)
+        variable_write_started.set()
+        return mgr.merge_instance_variables(S1, "auto-task", {"new": "value"})
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        transition_future = executor.submit(transition_step)
+        variable_future = executor.submit(merge_variables)
+        assert variable_write_started.wait(timeout=5)
+        finish_transition.set()
+        transition_future.result(timeout=5)
+        assert variable_future.result(timeout=5) is True
+
+    result = mgr.get_instance(S1, "auto-task")
+    assert result is not None
+    assert result.current_step == "review"
     assert result.variables == {"existing": "value", "new": "value"}
 
 
