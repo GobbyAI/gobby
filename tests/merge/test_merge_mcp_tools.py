@@ -1165,7 +1165,10 @@ class TestMergeApplyTool:
         self, merge_registry, mock_storage
     ):
         """merge_apply releases the per-resolution lock in finally."""
-        from gobby.mcp_proxy.tools.merge_resolve_locks import try_acquire_resolve_lock
+        from gobby.mcp_proxy.tools.merge_resolve_locks import (
+            release_resolve_lock,
+            try_acquire_resolve_lock,
+        )
         from gobby.storage.merge_resolutions import MergeResolution
 
         resolution = MergeResolution(
@@ -1191,7 +1194,7 @@ class TestMergeApplyTool:
         acquire_lock.assert_awaited_once_with(resolution.id)
         reacquired = await try_acquire_resolve_lock(resolution.id)
         assert reacquired is not None
-        reacquired.release()
+        release_resolve_lock(resolution.id, reacquired)
 
     @pytest.mark.parametrize("marker_line", ["<<<<<<< HEAD", "=======", ">>>>>>> feature"])
     async def test_merge_apply_rejects_markers_before_write_or_stage(

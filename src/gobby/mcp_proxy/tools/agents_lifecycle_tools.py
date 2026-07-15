@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+from gobby.agents.kill import KILL_ERROR_NO_TARGET_PID
 from gobby.mcp_proxy.tools.agent_cancellation import (
     stop_agent_run,
     terminalize_killed_agent_run,
@@ -253,7 +254,7 @@ def register_agent_lifecycle_tools(
                 close_terminal=not debug,
             ),
         )
-        if not result.get("success"):
+        if not result.get("success") and result.get("error_code") != KILL_ERROR_NO_TARGET_PID:
             return result
 
         if not stop:

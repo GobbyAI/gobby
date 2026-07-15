@@ -16,7 +16,10 @@ from gobby.mcp_proxy.tools.merge_git_state import (
     resolved_reuse_error,
     source_branch_validation_error,
 )
-from gobby.mcp_proxy.tools.merge_resolve_locks import try_acquire_resolve_lock
+from gobby.mcp_proxy.tools.merge_resolve_locks import (
+    release_resolve_lock,
+    try_acquire_resolve_lock,
+)
 from gobby.storage.merge_resolutions import ConflictStatus, MergeResolutionManager
 from gobby.worktrees.git import WorktreeGitManager
 from gobby.worktrees.merge import MergeResolver, ResolutionTier
@@ -257,5 +260,5 @@ def register_merge_start_tool(
             )
             return {"success": False, "error": str(e)}
         finally:
-            if resolve_lock is not None and resolve_lock.locked():
-                resolve_lock.release()
+            if resolve_lock is not None and resolution is not None:
+                release_resolve_lock(resolution.id, resolve_lock)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Literal, cast
 
+from gobby.agents.kill import KILL_ERROR_NO_TARGET_PID
 from gobby.agents.task_recovery import TaskRecoveryHandler
 
 logger = logging.getLogger(__name__)
@@ -181,7 +182,7 @@ async def stop_agent_run(
             close_terminal=True,
         ),
     )
-    if not result.get("success") and result.get("error") != "No target PID found":
+    if not result.get("success") and result.get("error_code") != KILL_ERROR_NO_TARGET_PID:
         return result
 
     transitioned = await terminalize_cancelled_agent_run(

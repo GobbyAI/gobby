@@ -22,6 +22,8 @@ from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
 
+KILL_ERROR_NO_TARGET_PID = "no_target_pid"
+
 # Validation patterns for terminal context values passed to subprocess calls
 _TERMINAL_CTX_PATTERNS: dict[str, re.Pattern[str]] = {
     "tmux_pane": re.compile(r"^%\d+$"),
@@ -448,7 +450,11 @@ async def kill_agent(
                 "error": "Terminal closed but no target PID was found to verify process death",
                 "terminal_close": terminal_close_result,
             }
-        return {"success": False, "error": "No target PID found"}
+        return {
+            "success": False,
+            "error": "No target PID found",
+            "error_code": KILL_ERROR_NO_TARGET_PID,
+        }
 
     # Check if process is alive
     try:

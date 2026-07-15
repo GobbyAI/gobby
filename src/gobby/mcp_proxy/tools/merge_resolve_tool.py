@@ -8,7 +8,10 @@ from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.merge_conflict_hydration import conflict_hunks_for_ai
-from gobby.mcp_proxy.tools.merge_resolve_locks import try_acquire_resolve_lock
+from gobby.mcp_proxy.tools.merge_resolve_locks import (
+    release_resolve_lock,
+    try_acquire_resolve_lock,
+)
 from gobby.storage.merge_resolutions import ConflictStatus, MergeResolutionManager
 from gobby.worktrees.merge import MergeResolver
 from gobby.worktrees.merge.resolver import assert_marker_free
@@ -129,5 +132,5 @@ def register_merge_resolve_tool(
             logger.exception("Error resolving conflict %s", conflict_id)
             return {"success": False, "error": str(e)}
         finally:
-            if resolve_lock is not None and resolve_lock.locked():
-                resolve_lock.release()
+            if resolve_lock is not None:
+                release_resolve_lock(conflict.resolution_id, resolve_lock)

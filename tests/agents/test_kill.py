@@ -574,6 +574,10 @@ class TestKillAgent:
 
         res = await kill_agent(agent_run, mock_db, close_terminal=True)
 
-        assert res == {"success": False, "error": "No target PID found"}
+        assert res == {
+            "success": False,
+            "error": "No target PID found",
+            "error_code": "no_target_pid",
+        }
         mock_close_window.assert_not_called()
         mock_run.assert_not_called()
