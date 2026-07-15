@@ -140,6 +140,7 @@ async def test_check_autonomous_stuck_agents_nudges_change_approach(
     sample_session: dict,
     session_manager: SessionManager,
     sample_project: dict,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Lifecycle heartbeat queries stuck detection and acts on advisory actions."""
     stuck_detector = MagicMock()
@@ -175,6 +176,11 @@ async def test_check_autonomous_stuck_agents_nudges_change_approach(
     assert handled == 1
     stuck_detector.is_stuck.assert_called_once_with(child.id)
     monitor._tmux.send_keys.assert_awaited_once_with("gobby-test", "Enter", literal=True)
+    assert all(
+        "Counter agent_lifecycle_autonomous_stuck_detected_total not registered"
+        not in record.getMessage()
+        for record in caplog.records
+    )
     assert run.id
 
 
