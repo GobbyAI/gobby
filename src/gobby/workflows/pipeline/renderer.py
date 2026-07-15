@@ -21,17 +21,19 @@ _PIPELINE_EVAL_FUNCS: dict[str, Any] = {
     "all": all,
 }
 
-# Env-var suffixes that indicate sensitive values (case-insensitive check).
-_SENSITIVE_SUFFIXES = (
-    "_SECRET",
-    "_KEY",
-    "_TOKEN",
-    "_PASSWORD",
-    "_CREDENTIAL",
-    "_PRIVATE_KEY",
-    "_AUTH",
-    "_OAUTH",
-    "_API_KEY",
+# Underscore-delimited env-var segments that indicate sensitive values.
+_SENSITIVE_SEGMENTS = frozenset(
+    {
+        "AUTH",
+        "CREDENTIAL",
+        "CREDENTIALS",
+        "KEY",
+        "OAUTH",
+        "PASSWORD",
+        "PAT",
+        "SECRET",
+        "TOKEN",
+    }
 )
 
 # Specific env-var names that are always excluded.
@@ -53,14 +55,16 @@ def _filter_env(
     """Return a copy of *env* with sensitive variables removed.
 
     If *allowed_keys* is provided only those keys are included (explicit
-    whitelist).  Otherwise a suffix/name-based blocklist is applied.
+    whitelist). Otherwise sensitive names and underscore-delimited segments
+    are excluded case-insensitively.
     """
     if allowed_keys is not None:
         return {k: v for k, v in env.items() if k in allowed_keys}
     return {
         k: v
         for k, v in env.items()
-        if k not in _SENSITIVE_NAMES and not any(k.upper().endswith(s) for s in _SENSITIVE_SUFFIXES)
+        if (normalized := k.upper()) not in _SENSITIVE_NAMES
+        and _SENSITIVE_SEGMENTS.isdisjoint(normalized.split("_"))
     }
 
 
