@@ -107,11 +107,10 @@ class TestTaskTreeComplete:
         ev = _build_evaluator(ctx, task_manager=mock_task_manager)
         assert ev.evaluate("task_tree_complete('task-123')") is False
 
-    def test_no_task_manager_returns_true(self) -> None:
+    def test_no_task_manager_returns_false(self) -> None:
         ctx: dict[str, Any] = {"variables": {}}
         ev = _build_evaluator(ctx, task_manager=None)
-        # Without task_manager, should return True (no-op, matches ConditionEvaluator behavior)
-        assert ev.evaluate("task_tree_complete('task-123')") is True
+        assert ev.evaluate("task_tree_complete('task-123')") is False
 
 
 class TestTaskTypeIn:

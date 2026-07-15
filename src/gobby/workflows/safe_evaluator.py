@@ -547,7 +547,7 @@ def build_condition_helpers(
             task_manager, task_id_or_ids, *types
         )
     else:
-        funcs["task_tree_complete"] = lambda task_id: True
+        funcs["task_tree_complete"] = lambda task_id: False
         funcs["task_needs_human_review"] = lambda task_id: False
         funcs["task_state_in"] = lambda task_id, *states: False
         funcs["task_type_in"] = lambda task_id_or_ids, *types: False
