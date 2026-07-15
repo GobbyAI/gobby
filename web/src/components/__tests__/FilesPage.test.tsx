@@ -32,6 +32,7 @@ const FAILED_FILE: OpenFile = {
   editing: true,
   image: false,
   binary: false,
+  truncated: false,
   mime_type: 'text/plain',
   size: 8,
 }

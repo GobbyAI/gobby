@@ -59,7 +59,7 @@ describe('useFiles save', () => {
     await act(async () => {
       await result.current.saveFile(0)
     })
-    expect(result.current.openFiles[0]?.error).toContain('save failed')
+    expect(result.current.openFiles[0]?.saveError).toContain('save failed')
 
     await act(async () => {
       await result.current.saveFile(0)
@@ -67,6 +67,7 @@ describe('useFiles save', () => {
 
     await waitFor(() => {
       expect(result.current.openFiles[0]?.error).toBeNull()
+      expect(result.current.openFiles[0]?.saveError).toBeNull()
       expect(result.current.gitStatuses.get('project-1')?.files).toEqual({ 'notes.txt': 'M' })
     })
     expect(fetchMock).toHaveBeenCalledWith(

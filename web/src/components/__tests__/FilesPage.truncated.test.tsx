@@ -24,6 +24,7 @@ const truncatedFile: OpenFile = {
   loading: false,
   saving: false,
   error: null,
+  saveError: null,
   dirty: false,
   editing: false,
   image: false,
@@ -51,6 +52,7 @@ function makeProps(file: OpenFile): ComponentProps<typeof FilesPage> {
     onCancelEditing: vi.fn(),
     onUpdateEditContent: vi.fn(),
     onSaveFile: vi.fn(),
+    onClearSaveError: vi.fn(),
     gitStatuses: new Map(),
     onFetchDiff: vi.fn(async () => ''),
   }
