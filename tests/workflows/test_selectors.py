@@ -102,6 +102,27 @@ def test_match_rule_group() -> None:
     assert _match_rule("group", "core", rule, {}) is False
 
 
+@pytest.mark.parametrize(
+    ("dim", "rule_attrs", "definition_json"),
+    [
+        ("name", {"name": "CaseValue"}, {}),
+        ("source", {"source": "CaseValue"}, {}),
+        ("tag", {"tags": ["CaseValue"]}, {}),
+        ("group", {}, {"group": "CaseValue"}),
+        ("category", {}, {"category": "CaseValue"}),
+    ],
+)
+def test_match_rule_globs_are_case_sensitive(
+    dim: str, rule_attrs: dict[str, object], definition_json: dict[str, object]
+) -> None:
+    rule = MagicMock(name="rule", source="", tags=[])
+    for attr, value in rule_attrs.items():
+        setattr(rule, attr, value)
+
+    assert _match_rule(dim, "Case*", rule, definition_json) is True
+    assert _match_rule(dim, "case*", rule, definition_json) is False
+
+
 def test_match_rule_unknown_dim() -> None:
     rule = MagicMock()
     assert _match_rule("bogus", "val", rule, {}) is False
@@ -254,6 +275,24 @@ def test_match_skill_tag_no_metadata() -> None:
     skill = MagicMock()
     skill.metadata = None
     assert _match_skill("tag", "any", skill) is False
+
+
+@pytest.mark.parametrize(
+    ("dim", "skill_attrs"),
+    [
+        ("name", {"name": "CaseValue"}),
+        ("source", {"source_type": "CaseValue"}),
+        ("category", {"metadata": {"gobby": {"category": "CaseValue"}}}),
+        ("tag", {"metadata": {"gobby": {"tags": ["CaseValue"]}}}),
+    ],
+)
+def test_match_skill_globs_are_case_sensitive(dim: str, skill_attrs: dict[str, object]) -> None:
+    skill = MagicMock(name="skill", source_type=None, metadata=None)
+    for attr, value in skill_attrs.items():
+        setattr(skill, attr, value)
+
+    assert _match_skill(dim, "Case*", skill) is True
+    assert _match_skill(dim, "case*", skill) is False
 
 
 def test_match_skill_unknown_dim() -> None:
