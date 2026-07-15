@@ -658,13 +658,10 @@ class TestVariablePersistence:
         """Create a WorkflowHookHandler with a real rule engine."""
         return WorkflowHookHandler(rule_engine=rule_engine)
 
-    def _insert_set_variable_rule(
-        self, db, name: str, event: str, variable: str, value: str, priority: int = 10
-    ):
+    def _insert_set_variable_rule(self, db, name: str, event: str, variable: str, value: str):
         """Insert a test rule that does set_variable."""
         definition = {
             "event": event,
-            "priority": priority,
             "effects": [
                 {
                     "type": "set_variable",
@@ -748,7 +745,6 @@ class TestVariablePersistence:
         # Insert a block rule that only fires when my_flag is true
         definition = {
             "event": "stop",
-            "priority": 10,
             "when": "variables.get('my_flag')",
             "effects": [
                 {
@@ -827,6 +823,44 @@ class TestVariablePersistence:
         assert variables.get("task_claimed") is True
         assert "task-uuid-observer" in variables.get("claimed_tasks", {})
         assert variables.get("claimed_tasks", {}).get("task-uuid-observer") == "#99"
+
+    @pytest.mark.asyncio
+    async def test_observer_failure_does_not_drop_later_changes(
+        self, db, session_var_manager
+    ) -> None:
+        """One observer failure must not stop later observers or persistence."""
+        from gobby.workflows.engine.core import RuleEngine
+
+        handler = WorkflowHookHandler(rule_engine=RuleEngine(db=db))
+        event = HookEvent(
+            event_type=HookEventType.AFTER_TOOL,
+            session_id="test-ext",
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"tool_name": "Read"},
+            metadata={"_platform_session_id": SESSION_ID},
+        )
+
+        def record_later_change(
+            _event: HookEvent, variables: dict[str, object], _session_id: str
+        ) -> None:
+            variables["later_observer_ran"] = True
+
+        with (
+            patch(
+                "gobby.workflows.observers.detect_task_claim",
+                side_effect=RuntimeError("observer failed"),
+            ),
+            patch(
+                "gobby.workflows.observers.detect_commit_link",
+                side_effect=record_later_change,
+            ),
+        ):
+            response = await handler._evaluate_rules(event)
+
+        assert response.decision == "allow"
+        variables = session_var_manager.get_variables(SESSION_ID)
+        assert variables["later_observer_ran"] is True
 
     @pytest.mark.asyncio
     async def test_validation_evidence_observer_is_wired_and_persisted(
@@ -1151,7 +1185,6 @@ class TestBaselineDirtyFilesSubtraction:
         """Insert a rule that blocks when has_dirty_files is true."""
         definition = {
             "event": "before_tool",
-            "priority": 10,
             "when": "has_dirty_files",
             "effects": [
                 {"type": "block", "tools": ["some_tool"], "reason": "dirty files detected"},
@@ -1483,6 +1516,37 @@ class TestStopFailsClosedOnVariableLoadError:
         # Non-STOP events should still allow (fail-open)
         assert response.decision == "allow"
         mock_var_manager.merge_variables.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_stop_blocked_when_claim_reconciliation_fails(self, rule_engine) -> None:
+        """STOP should be blocked when claimed tasks cannot be listed."""
+        import psycopg
+
+        task_manager = MagicMock()
+        task_manager.list_tasks.side_effect = psycopg.OperationalError("DB locked")
+        handler = WorkflowHookHandler(rule_engine=rule_engine, task_manager=task_manager)
+
+        response = await handler._evaluate_rules(self._make_stop_event())
+
+        assert response.decision == "block"
+        assert "Could not reconcile claimed tasks" in response.reason
+
+    @pytest.mark.asyncio
+    async def test_stop_blocked_when_claim_lookup_fails(self, rule_engine) -> None:
+        """STOP should be blocked when an existing claim cannot be loaded."""
+        import psycopg
+
+        task_manager = MagicMock()
+        task_manager.get_task.side_effect = psycopg.OperationalError("DB locked")
+        handler = WorkflowHookHandler(rule_engine=rule_engine, task_manager=task_manager)
+        assert handler._session_var_manager is not None
+        handler._session_var_manager.set_variable(SESSION_ID, "claimed_tasks", {"task-uuid": "#42"})
+        handler._session_var_manager.set_variable(SESSION_ID, "task_claimed", True)
+
+        response = await handler._evaluate_rules(self._make_stop_event())
+
+        assert response.decision == "block"
+        assert "Could not reconcile claimed tasks" in response.reason
 
 
 class TestCodexToolContextRehydration:

@@ -4,6 +4,7 @@ import json
 import logging
 import threading
 from _thread import LockType
+from collections.abc import Callable
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
@@ -511,7 +512,7 @@ class WorkflowHookHandler:
         event: HookEvent,
         session_id: str,
         variables: dict[str, Any],
-    ) -> None:
+    ) -> set[str]:
         """Run built-in observer functions to populate tracking variables.
 
         Must run BEFORE rule evaluation so conditions have current data.
@@ -526,9 +527,31 @@ class WorkflowHookHandler:
             reconcile_claimed_tasks,
         )
 
+        failures: set[str] = set()
+
+        def run_observer(
+            name: str,
+            observer: Callable[..., None],
+            *args: Any,
+            **kwargs: Any,
+        ) -> None:
+            try:
+                observer(*args, **kwargs)
+            except Exception:
+                failures.add(name)
+                logger.warning(
+                    "Observer %s failed for session=%s event=%s",
+                    name,
+                    session_id,
+                    event.event_type,
+                    exc_info=True,
+                )
+
         # Reconcile stale claimed_tasks on semantic turn-end before rule evaluation
         if _is_turn_end_event(event.event_type):
-            reconcile_claimed_tasks(
+            run_observer(
+                "reconcile_claimed_tasks",
+                reconcile_claimed_tasks,
                 variables,
                 session_id,
                 task_manager=self._task_manager,
@@ -538,7 +561,9 @@ class WorkflowHookHandler:
 
         # Task claim/release tracking (AFTER_TOOL for gobby-tasks calls)
         if event.event_type == HookEventType.AFTER_TOOL:
-            detect_task_claim(
+            run_observer(
+                "detect_task_claim",
+                detect_task_claim,
                 event,
                 variables,
                 session_id,
@@ -546,16 +571,31 @@ class WorkflowHookHandler:
                 task_manager=self._task_manager,
                 project_id=event.project_id,
             )
-            detect_commit_link(event, variables, session_id)
-            detect_bash_commit(event, variables, session_id)
-            detect_verification_evidence(event, variables, session_id, self._config)
-            detect_mcp_call(event, variables, session_id)
+            run_observer("detect_commit_link", detect_commit_link, event, variables, session_id)
+            run_observer("detect_bash_commit", detect_bash_commit, event, variables, session_id)
+            run_observer(
+                "detect_verification_evidence",
+                detect_verification_evidence,
+                event,
+                variables,
+                session_id,
+                self._config,
+            )
+            run_observer("detect_mcp_call", detect_mcp_call, event, variables, session_id)
 
         # Plan mode detection on the semantic start-of-turn boundary
         if _is_turn_start_event(event.event_type):
             prompt = (event.data or {}).get("prompt", "") or ""
             if prompt:
-                detect_plan_mode_from_context(prompt, variables, session_id)
+                run_observer(
+                    "detect_plan_mode_from_context",
+                    detect_plan_mode_from_context,
+                    prompt,
+                    variables,
+                    session_id,
+                )
+
+        return failures
 
     async def _evaluate_rules(self, event: HookEvent) -> HookResponse:
         """Evaluate rules for a hook event using the RuleEngine.
@@ -765,7 +805,15 @@ class WorkflowHookHandler:
                 pre_eval = deepcopy(variables)
 
                 # Run built-in observers BEFORE rule evaluation
-                self._run_observers(event, session_id, variables)
+                observer_failures = self._run_observers(event, session_id, variables)
+                if (
+                    event.event_type == HookEventType.STOP
+                    and "reconcile_claimed_tasks" in observer_failures
+                ):
+                    return HookResponse(
+                        decision="block",
+                        reason="Could not reconcile claimed tasks. Try again.",
+                    )
 
                 response = await self.rule_engine.evaluate(
                     event=event,

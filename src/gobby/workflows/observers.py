@@ -11,6 +11,8 @@ import logging
 import threading
 from typing import TYPE_CHECKING, Any
 
+import psycopg
+
 from gobby.sessions.handoff_identity import sessions_have_continuous_terminal_context
 from gobby.tasks.state_semantics import (
     ACTIVE_STAGE_STATES,
@@ -151,7 +153,7 @@ def detect_task_claim(
                 closed_task = task_manager.get_task(raw_close_id, project_id=project_id)
                 if closed_task:
                     closed_task_id = closed_task.id
-            except (ValueError, KeyError, TaskNotFoundError):
+            except (ValueError, KeyError, TaskNotFoundError, psycopg.Error):
                 logger.debug(
                     "Skipping unresolved closed task ref",
                     extra={"task_ref": raw_close_id, "session_id": session_id},
@@ -301,7 +303,15 @@ def reconcile_claimed_tasks(
         for task_uuid, ref in list(claimed_tasks.items()):
             try:
                 task = task_manager.get_task(task_uuid)
-            except (TaskNotFoundError, ValueError, KeyError):
+            except (TaskNotFoundError, ValueError, KeyError, psycopg.Error) as e:
+                if isinstance(e, psycopg.Error):
+                    logger.warning(
+                        "Session %s: failed to reconcile claimed task %s: %s",
+                        session_id,
+                        task_uuid,
+                        e,
+                    )
+                    raise
                 task = None
 
             if not is_task_actively_claimed(task, session_id):
@@ -330,9 +340,9 @@ def reconcile_claimed_tasks(
                 claimed_by_session_id=session_id,
                 current_stage_state=list(ACTIVE_STAGE_STATES),
             )
-        except Exception as e:
+        except psycopg.Error as e:
             logger.warning("Session %s: failed to list claimed tasks: %s", session_id, e)
-            db_tasks = []
+            raise
 
         if db_tasks:
             for task in db_tasks:
