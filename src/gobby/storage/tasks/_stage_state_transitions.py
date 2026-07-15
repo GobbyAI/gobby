@@ -245,6 +245,7 @@ class StageStateTransitions:
         *,
         by_session_id: str | None,
         reason: str = "abandoned_in_progress_recovered",
+        preheld_mutex_run_id: str | None = None,
     ) -> StageState:
         holder = by_session_id or "system"
         snapshot = self.rows.current_stage(task_id)
@@ -253,6 +254,7 @@ class StageStateTransitions:
             holder,
             f"{stage_name}:recover_abandoned_stage",
             expected_stage=snapshot,
+            preheld_run_id=preheld_mutex_run_id,
         ):
             current = self.rows.current_stage(task_id)
             row = self.rows.get(task_id, stage_name)

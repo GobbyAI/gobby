@@ -303,12 +303,14 @@ class StageStatesManager:
         *,
         by_session_id: str | None,
         reason: str = "abandoned_in_progress_recovered",
+        preheld_mutex_run_id: str | None = None,
     ) -> StageState:
         return self._transitions.recover_abandoned_stage(
             task_id,
             stage_name,
             by_session_id=by_session_id,
             reason=reason,
+            preheld_mutex_run_id=preheld_mutex_run_id,
         )
 
     def move_to_stage(

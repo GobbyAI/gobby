@@ -12,7 +12,9 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
+from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.tasks.state_semantics import (
     ACTIVE_STAGE_STATES,
     get_claimed_session_id,
@@ -79,11 +81,13 @@ def _submit_current_stage_for_review(
     task_manager: LocalTaskManager,
     task_id: str,
     stage_name: str,
+    preheld_mutex_run_id: str,
 ) -> None:
     task_manager.stage_states.submit_for_review(
         task_id,
         stage_name,
         by_session_id=None,
+        preheld_mutex_run_id=preheld_mutex_run_id,
     )
 
 
@@ -91,13 +95,65 @@ def _recover_abandoned_stage(
     task_manager: LocalTaskManager,
     task_id: str,
     stage_name: str,
+    preheld_mutex_run_id: str,
 ) -> None:
     task_manager.stage_states.recover_abandoned_stage(
         task_id,
         stage_name,
         reason="stale_task_recovery",
         by_session_id=None,
+        preheld_mutex_run_id=preheld_mutex_run_id,
     )
+
+
+def _recover_stale_task(
+    task_manager: LocalTaskManager,
+    task_id: str,
+    owner_session_id: str,
+) -> str | None:
+    """Recover one stale task atomically under its dispatch mutex."""
+    mutexes = TaskDispatchMutexManager(task_manager.db)
+    lease_run_id = str(uuid4())
+    lease_holder = f"pipeline_heartbeat:{lease_run_id}"
+    if not mutexes.acquire_mutex(
+        task_id,
+        holder=lease_holder,
+        kind="stale_task_recovery",
+        ttl_seconds=30,
+        run_id=lease_run_id,
+    ):
+        return None
+
+    try:
+        with task_manager.db.transaction():
+            task = task_manager.get_task(task_id)
+            if task is None or get_claimed_session_id(task) != owner_session_id:
+                return None
+
+            current_stage = task_manager.stage_states.current_stage(task_id)
+            has_commits = bool(getattr(task, "commits", None))
+            if current_stage and current_stage.state == "in_progress" and has_commits:
+                _submit_current_stage_for_review(
+                    task_manager,
+                    task_id,
+                    current_stage.stage_name,
+                    lease_run_id,
+                )
+                action = "review"
+            elif current_stage and current_stage.state == "in_progress":
+                _recover_abandoned_stage(
+                    task_manager,
+                    task_id,
+                    current_stage.stage_name,
+                    lease_run_id,
+                )
+                action = "retry"
+            else:
+                action = "release"
+            task_manager.release_task_claim(task_id)
+        return action
+    finally:
+        mutexes.release_mutex(task_id, lease_holder)
 
 
 class PipelineHeartbeat:
@@ -290,48 +346,32 @@ class PipelineHeartbeat:
                     continue
 
                 # No active agent run and no live session — task ownership is orphaned.
-                has_commits = bool(getattr(task, "commits", None))
-                current_stage = await self._run_db(
-                    task_manager.stage_states.current_stage,
+                action = await self._run_db(
+                    _recover_stale_task,
+                    task_manager,
                     task.id,
+                    owner_session_id,
                 )
-                if current_stage and current_stage.state == "in_progress" and has_commits:
-                    await self._run_db(
-                        _submit_current_stage_for_review,
-                        task_manager,
-                        task.id,
-                        current_stage.stage_name,
-                    )
-                    await self._run_db(task_manager.release_task_claim, task.id)
+                if action == "review":
                     logger.info(
                         "Heartbeat: submitted stale task %s (#%s) for review",
                         task.id,
                         task.seq_num,
                     )
-                elif current_stage and current_stage.state == "in_progress":
-                    await self._run_db(
-                        _recover_abandoned_stage,
-                        task_manager,
-                        task.id,
-                        current_stage.stage_name,
-                    )
-                    await self._run_db(task_manager.release_task_claim, task.id)
+                elif action == "retry":
                     logger.info(
                         "Heartbeat: recovered abandoned task %s (#%s) for retry",
                         task.id,
                         task.seq_num,
                     )
-                else:
-                    await self._run_db(
-                        task_manager.release_task_claim,
-                        task.id,
-                    )
+                elif action == "release":
                     logger.info(
                         "Heartbeat: released stale claim on task %s (#%s)",
                         task.id,
                         task.seq_num,
                     )
-                recovered += 1
+                if action is not None:
+                    recovered += 1
             except Exception:
                 logger.exception(f"Heartbeat: error checking task {task.id} for staleness")
         return recovered

@@ -15,6 +15,7 @@ from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob, CronRun
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._manager import LocalTaskManager
 from gobby.tasks.state_semantics import projected_task_state
 from gobby.workflows.pipeline_heartbeat import PipelineHeartbeat, PipelineHeartbeatResult
@@ -506,6 +507,63 @@ async def test_stale_task_with_terminal_agent_run_recovered(
     stage = task_manager.stage_states.get(task_id, "development")
     assert stage is not None
     assert stage.work_attempt_count == 0
+
+
+@pytest.mark.asyncio
+async def test_stale_task_recovery_respects_concurrent_dispatch_mutex(
+    heartbeat_with_tasks: PipelineHeartbeat,
+    task_manager: LocalTaskManager,
+    temp_db: HubDatabase,
+) -> None:
+    """A concurrent dispatch lease prevents stale-task recovery writes."""
+    _seed_db(temp_db)
+    task_id = _create_in_progress_task(task_manager)
+    mutexes = TaskDispatchMutexManager(temp_db)
+    holder = "concurrent-dispatch"
+    assert mutexes.acquire_mutex(
+        task_id,
+        holder=holder,
+        kind="dispatch",
+        ttl_seconds=30,
+    )
+
+    assert await heartbeat_with_tasks.check_stale_tasks() == 0
+
+    task = task_manager.get_task(task_id)
+    assert task is not None
+    assert task.claimed_by_session_id == DEAD_AGENT_SESSION_ID
+    stage = task_manager.stage_states.current_stage(task_id)
+    assert stage is not None
+    assert stage.state == "in_progress"
+
+    assert mutexes.release_mutex(task_id, holder)
+    assert await heartbeat_with_tasks.check_stale_tasks() == 1
+
+
+@pytest.mark.asyncio
+async def test_stale_task_recovery_rolls_back_stage_when_claim_release_fails(
+    heartbeat_with_tasks: PipelineHeartbeat,
+    task_manager: LocalTaskManager,
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stage recovery and claim release commit atomically."""
+    _seed_db(temp_db)
+    task_id = _create_in_progress_task(task_manager)
+
+    def fail_claim_release(_task_id: str) -> None:
+        raise RuntimeError("claim release failed")
+
+    monkeypatch.setattr(task_manager, "release_task_claim", fail_claim_release)
+
+    assert await heartbeat_with_tasks.check_stale_tasks() == 0
+
+    task = task_manager.get_task(task_id)
+    assert task is not None
+    assert task.claimed_by_session_id == DEAD_AGENT_SESSION_ID
+    stage = task_manager.stage_states.current_stage(task_id)
+    assert stage is not None
+    assert stage.state == "in_progress"
 
 
 @pytest.mark.asyncio
