@@ -839,6 +839,35 @@ class TestMcpCallToolUnwrapping:
         }
 
     @pytest.mark.asyncio
+    async def test_call_tool_outer_routing_overwrites_inner_decoys(self, db: HubDatabase) -> None:
+        """Outer routing fields are authoritative when nested arguments contain decoys."""
+
+        engine = RuleEngine(db)
+        event = _make_event(
+            HookEventType.BEFORE_TOOL,
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "close_task",
+                    "arguments": {
+                        "task_id": "#1",
+                        "server_name": "decoy-server",
+                        "tool_name": "decoy-tool",
+                    },
+                },
+            },
+        )
+
+        ctx = engine._build_eval_context(event, variables={})
+
+        assert ctx["tool_input"] == {
+            "task_id": "#1",
+            "server_name": "gobby-tasks",
+            "tool_name": "close_task",
+        }
+
+    @pytest.mark.asyncio
     async def test_mcp_prefixed_call_tool_unwraps(self, db: HubDatabase) -> None:
         """_build_eval_context should unwrap for mcp__gobby__call_tool too."""
 

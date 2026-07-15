@@ -68,7 +68,7 @@ class TemplatingMixin:
                 raw_tool_input = dict(inner_args)
             # Re-inject MCP routing fields so rule conditions can still access them
             for field in ("server_name", "tool_name"):
-                if field in original_tool_input and field not in raw_tool_input:
+                if field in original_tool_input:
                     raw_tool_input[field] = original_tool_input[field]
 
         ctx: dict[str, Any] = {

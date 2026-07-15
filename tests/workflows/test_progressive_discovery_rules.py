@@ -469,6 +469,32 @@ class TestRuleEngineIntegration:
         assert "get_tool_schema" in result.reason
 
     @pytest.mark.asyncio
+    async def test_call_tool_decoy_routing_cannot_bypass_schema_check(self, engine) -> None:
+        """Schema enforcement uses authoritative outer routing instead of nested decoys."""
+        variables = {
+            "enforce_tool_schema_check": True,
+            "unlocked_tools": ["gobby-tasks:add_label"],
+        }
+        event = _make_hook_event(
+            HookEventType.BEFORE_TOOL,
+            tool_name="mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-tasks",
+                "tool_name": "create_task",
+                "arguments": {
+                    "title": "test",
+                    "server_name": "gobby-tasks",
+                    "tool_name": "add_label",
+                },
+            },
+        )
+
+        result = await engine.evaluate(event, SESSION_ID, variables)
+
+        assert result.decision == "block"
+        assert "get_tool_schema" in result.reason
+
+    @pytest.mark.asyncio
     async def test_call_tool_allowed_for_send_keys_without_schema_lookup(self, engine) -> None:
         """Web/operator send_keys should bypass schema-unlock capability gating."""
         variables = {
