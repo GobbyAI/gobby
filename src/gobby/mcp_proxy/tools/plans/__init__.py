@@ -13,6 +13,10 @@ from gobby.storage.plans import LocalPlanManager, PlanNotFoundError
 from gobby.storage.projects import LocalProjectManager
 
 
+class _InvalidProjectError(ValueError):
+    """Raised when an explicitly provided project reference cannot be resolved."""
+
+
 def create_plan_registry(
     db: HubDatabase, *, default_project_id: str | None = None
 ) -> InternalToolRegistry:
@@ -105,11 +109,14 @@ def create_plan_registry(
         plan_kind: str | None = None,
         project: str | None = None,
     ) -> dict[str, Any]:
-        records = manager.list_plans(
-            state=state,
-            plan_kind=plan_kind,
-            project_id=_optional_project_id(db, project, default_project_id),
-        )
+        try:
+            records = manager.list_plans(
+                state=state,
+                plan_kind=plan_kind,
+                project_id=_optional_project_id(db, project, default_project_id),
+            )
+        except _InvalidProjectError as exc:
+            return _known_error_payload(exc, "list_plans_failed")
         return {
             "ok": True,
             "plans": [record.to_dict() for record in records],
@@ -217,7 +224,7 @@ def create_plan_registry(
         except PlanNotFoundError as exc:
             return {"ok": False, "error": "plan_not_found", "message": str(exc)}
         except ValueError as exc:
-            return {"ok": False, "error": "invalid_ref", "message": str(exc)}
+            return _known_error_payload(exc, "invalid_ref")
         return {"ok": True, "deleted": deleted}
 
     registry.register(
@@ -284,12 +291,17 @@ def _optional_project_id(
 ) -> str | None:
     if project:
         resolved = LocalProjectManager(db).resolve_ref(project)
-        return resolved.id if resolved is not None else None
+        if resolved is None:
+            raise _InvalidProjectError(f"Project not found: {project}")
+        return resolved.id
     return default_project_id
 
 
 def _known_error_payload(exc: Exception, fallback_error: str) -> dict[str, Any]:
-    error = "invalid_ref" if "ref must not be blank" in str(exc) else fallback_error
+    if isinstance(exc, _InvalidProjectError):
+        error = "invalid_project"
+    else:
+        error = "invalid_ref" if "ref must not be blank" in str(exc) else fallback_error
     return {"ok": False, "error": error, "message": str(exc)}
 
 
