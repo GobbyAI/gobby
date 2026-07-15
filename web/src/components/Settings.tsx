@@ -1,4 +1,5 @@
-import { useId } from 'react'
+import { useId, useRef } from 'react'
+import { useDialogFocus } from '../hooks/useDialogFocus'
 import type { Settings, Theme } from '../hooks/useSettings'
 import type { ChatMode } from '../types/chat'
 import { CHAT_MODES } from '../types/chat'
@@ -26,6 +27,9 @@ export function Settings({
   const headingId = useId()
   const themeLabelId = useId()
   const defaultModeLabelId = useId()
+  const dialogRef = useRef<HTMLDivElement>(null)
+
+  useDialogFocus({ ref: dialogRef, isOpen, onClose })
 
   if (!isOpen) return null
 
@@ -33,6 +37,7 @@ export function Settings({
     <>
       <div className="settings-overlay" onClick={onClose} />
       <div
+        ref={dialogRef}
         className="settings-panel"
         role="dialog"
         aria-modal="true"

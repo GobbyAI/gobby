@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { Settings } from '../Settings'
 
 const baseSettings = {
@@ -15,9 +15,14 @@ const baseSettings = {
   density: 'comfortable' as const,
 }
 
-describe('Settings voice section', () => {
+describe('Settings', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.spyOn(HTMLElement.prototype, 'getClientRects').mockReturnValue({ length: 1 } as DOMRectList)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   it('does not render the legacy model selector', () => {
@@ -96,5 +101,88 @@ describe('Settings voice section', () => {
     expect(screen.queryByLabelText('Enable speech to text')).toBeNull()
     expect(screen.queryByLabelText('Enable text to speech')).toBeNull()
     expect(screen.queryByText('VAD')).toBeNull()
+  })
+
+  it('focuses the first control and closes on Escape', async () => {
+    const onClose = vi.fn()
+    render(
+      <Settings
+        isOpen={true}
+        onClose={onClose}
+        settings={baseSettings}
+        onFontSizeChange={vi.fn()}
+        onThemeChange={vi.fn()}
+        onDefaultChatModeChange={vi.fn()}
+        onReset={vi.fn()}
+      />,
+    )
+
+    const dialog = screen.getByRole('dialog', { name: 'Settings' })
+    const closeButton = screen.getByRole('button', { name: 'Close settings' })
+    await waitFor(() => expect(closeButton).toHaveFocus())
+
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it('traps forward and backward focus inside the dialog', async () => {
+    render(
+      <Settings
+        isOpen={true}
+        onClose={vi.fn()}
+        settings={baseSettings}
+        onFontSizeChange={vi.fn()}
+        onThemeChange={vi.fn()}
+        onDefaultChatModeChange={vi.fn()}
+        onReset={vi.fn()}
+      />,
+    )
+
+    const dialog = screen.getByRole('dialog', { name: 'Settings' })
+    const first = screen.getByRole('button', { name: 'Close settings' })
+    const last = screen.getByRole('button', { name: 'Reset to Defaults' })
+    await waitFor(() => expect(first).toHaveFocus())
+
+    last.focus()
+    fireEvent.keyDown(dialog, { key: 'Tab' })
+    expect(first).toHaveFocus()
+
+    fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true })
+    expect(last).toHaveFocus()
+  })
+
+  it('restores focus when the dialog closes', async () => {
+    const trigger = document.createElement('button')
+    document.body.appendChild(trigger)
+    trigger.focus()
+
+    const { rerender } = render(
+      <Settings
+        isOpen={true}
+        onClose={vi.fn()}
+        settings={baseSettings}
+        onFontSizeChange={vi.fn()}
+        onThemeChange={vi.fn()}
+        onDefaultChatModeChange={vi.fn()}
+        onReset={vi.fn()}
+      />,
+    )
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Close settings' })).toHaveFocus())
+
+    rerender(
+      <Settings
+        isOpen={false}
+        onClose={vi.fn()}
+        settings={baseSettings}
+        onFontSizeChange={vi.fn()}
+        onThemeChange={vi.fn()}
+        onDefaultChatModeChange={vi.fn()}
+        onReset={vi.fn()}
+      />,
+    )
+
+    expect(trigger).toHaveFocus()
+    trigger.remove()
   })
 })
