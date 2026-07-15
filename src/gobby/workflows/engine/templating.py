@@ -221,6 +221,8 @@ class TemplatingMixin:
         context: dict[str, Any],
         effect_type: str = "block",
         allowed_funcs: dict[str, Callable[..., Any]] | None = None,
+        *,
+        fail_closed: bool | None = None,
     ) -> bool:
         """Evaluate a `when` condition string using SafeExpressionEvaluator.
 
@@ -238,7 +240,8 @@ class TemplatingMixin:
             )
             return evaluator.evaluate(condition)
         except Exception as e:
-            fail_closed = effect_type == "block"
+            if fail_closed is None:
+                fail_closed = effect_type == "block"
             logger.error(
                 f"Failed to evaluate condition '{condition}': {e} "
                 f"(defaulting to {'True' if fail_closed else 'False'} for {effect_type} effect)"

@@ -82,6 +82,8 @@ class EvaluationMixin:
             context: dict[str, Any],
             effect_type: str = "block",
             allowed_funcs: dict[str, Callable[..., Any]] | None = None,
+            *,
+            fail_closed: bool | None = None,
         ) -> bool: ...
 
         def _effect_matches_event(self, effect: Any, event: HookEvent) -> bool: ...
@@ -248,9 +250,13 @@ class EvaluationMixin:
 
             # Check rule-level `when` condition
             if body.when:
-                # Use first effect type for fail-open/closed heuristic
-                first_type = body.resolved_effects[0].type if body.resolved_effects else "block"
-                if not self._evaluate_condition(body.when, ctx, first_type, allowed_funcs):
+                fail_closed = any(effect.type == "block" for effect in body.resolved_effects)
+                if not self._evaluate_condition(
+                    body.when,
+                    ctx,
+                    allowed_funcs=allowed_funcs,
+                    fail_closed=fail_closed,
+                ):
                     continue
 
             if block_gates:

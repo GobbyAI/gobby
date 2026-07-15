@@ -505,6 +505,34 @@ class TestWhenConditions:
 
         assert variables["stop_attempts"] == 0
 
+    @pytest.mark.asyncio
+    async def test_when_error_fails_closed_when_any_effect_blocks(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "conditional-mixed-effects",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.BEFORE_TOOL,
+                when="normalize_path(tool_input.get('file_path')).endswith('.py')",
+                effects=[
+                    RuleEffect(type="set_variable", variable="evaluated", value=True),
+                    RuleEffect(type="mcp_call", server="gobby-tasks", tool="update_task"),
+                    RuleEffect(type="block", reason="Invalid write input"),
+                ],
+            ),
+        )
+
+        engine = RuleEngine(db)
+        event = _make_event(
+            HookEventType.BEFORE_TOOL,
+            data={"tool_name": "Write", "tool_input": {"file_path": 42}},
+        )
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
+
+        assert response.decision == "block"
+        assert "Invalid write input" in (response.reason or "")
+
 
 class TestPriorityOrdering:
     @pytest.mark.asyncio
