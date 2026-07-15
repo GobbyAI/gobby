@@ -6,6 +6,7 @@ import logging
 import sqlite3
 from collections import deque
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -34,6 +35,50 @@ REASONING_WATCHDOG_CONTINUATION = (
     "Continue from the current task context, avoid redoing completed analysis, finish the "
     "required Gobby lifecycle MCP transition, then call end_agent_run."
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _CodexTranscriptEventSummary:
+    line_num: int
+    timestamp: str | None
+    event_type: str
+    payload_type: str
+
+    def to_log_dict(self) -> dict[str, object]:
+        return {
+            "line_num": self.line_num,
+            "timestamp": self.timestamp,
+            "event_type": self.event_type,
+            "payload_type": self.payload_type,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class _CodexTranscriptSnapshot:
+    response_items: tuple[_CodexTranscriptEventSummary, ...]
+    lifecycle_event: _CodexTranscriptEventSummary | None
+    last_malformed_line_num: int | None = None
+
+    @property
+    def latest_response_payload_type(self) -> str | None:
+        if not self.response_items:
+            return None
+        return self.response_items[-1].payload_type
+
+    @property
+    def has_conclusive_task_complete(self) -> bool:
+        event = self.lifecycle_event
+        if event is None or event.payload_type != "task_complete":
+            return False
+        return self.last_malformed_line_num is None
+
+    def to_log_dict(self) -> dict[str, object]:
+        return {
+            "response_items": [item.to_log_dict() for item in self.response_items],
+            "lifecycle_event": (
+                self.lifecycle_event.to_log_dict() if self.lifecycle_event is not None else None
+            ),
+        }
 
 
 class IdleCheckHandler:
@@ -226,11 +271,50 @@ class IdleCheckHandler:
                 f"Agent {run.id} still idle after "
                 f"{self._tmux_config.max_reprompt_attempts} reprompts — failing"
             )
-            await self._log_recent_codex_response_items(
+            await self._log_codex_transcript_snapshot(
                 run,
                 reason="failing after max idle reprompts",
             )
             await self._fail_idle_agent(run, reason="idle after max reprompt attempts")
+            return 1
+
+        transcript_snapshot: _CodexTranscriptSnapshot | None = None
+        if session_stale and session is not None and getattr(session, "source", None) == "codex":
+            transcript_path = getattr(session, "transcript_path", None)
+            if isinstance(transcript_path, str) and transcript_path:
+                try:
+                    transcript_snapshot = await self._read_codex_transcript_snapshot(
+                        transcript_path
+                    )
+                except OSError:
+                    logger.warning(
+                        "Failed to read Codex transcript for completed-turn recovery on run %s",
+                        run.id,
+                    )
+
+        completed_turn_recovery_due: bool | None = None
+        if transcript_snapshot is not None:
+            completed_turn_recovery_due = self._completed_codex_turn_recovery_due(
+                transcript_snapshot,
+                idle_timeout_seconds=idle_timeout_seconds,
+            )
+        if completed_turn_recovery_due is False:
+            return 0
+        if completed_turn_recovery_due is True:
+            logger.info("Recovering completed Codex turn for idle agent %s", run.id)
+            await self._log_codex_transcript_snapshot(
+                run,
+                reason="recovering completed Codex turn",
+                snapshot=transcript_snapshot,
+            )
+            if not await self._send_idle_reprompt(run, tmux_name=tmux_name):
+                return 0
+            await self._record_watchdog_task_event(
+                run,
+                action="task_complete_reprompt",
+                session_id=session_id,
+                detail="latest_lifecycle_event=task_complete",
+            )
             return 1
 
         if self._idle_detector.should_reprompt(
@@ -243,33 +327,37 @@ class IdleCheckHandler:
                 tmux_name=tmux_name,
                 session=session,
                 session_id=session_id,
+                snapshot=transcript_snapshot,
             ):
                 return 1
 
             logger.info(f"Reprompting idle agent {run.id}")
-            await self._log_recent_codex_response_items(
+            await self._log_codex_transcript_snapshot(
                 run,
                 reason="reprompting apparently idle agent",
+                snapshot=transcript_snapshot,
             )
-            reprompt_message = await self._idle_reprompt_message(run)
-            cleared = await self._tmux.send_keys(tmux_name, "Escape", literal=False)
-            if not cleared:
-                logger.warning("Failed to clear queued prompt before reprompting agent %s", run.id)
-                if not await self._recover_failed_reprompt_clear(run, tmux_name):
-                    return 0
-            sent = await self._tmux.send_keys(tmux_name, reprompt_message)
-            if not sent:
-                logger.warning("Failed to send idle reprompt text to agent %s", run.id)
-                return 0
-            submitted = await self._tmux.send_keys(tmux_name, "Enter", literal=False)
-            if submitted:
-                self._idle_detector.record_reprompt(run.id)
-                return 1
-            else:
-                logger.warning("Failed to submit idle reprompt for agent %s", run.id)
-            return 0
+            return int(await self._send_idle_reprompt(run, tmux_name=tmux_name))
 
         return 0
+
+    async def _send_idle_reprompt(self, run: AgentRun, *, tmux_name: str) -> bool:
+        reprompt_message = await self._idle_reprompt_message(run)
+        cleared = await self._tmux.send_keys(tmux_name, "Escape", literal=False)
+        if not cleared:
+            logger.warning("Failed to clear queued prompt before reprompting agent %s", run.id)
+            if not await self._recover_failed_reprompt_clear(run, tmux_name):
+                return False
+        sent = await self._tmux.send_keys(tmux_name, reprompt_message)
+        if not sent:
+            logger.warning("Failed to send idle reprompt text to agent %s", run.id)
+            return False
+        submitted = await self._tmux.send_keys(tmux_name, "Enter", literal=False)
+        if not submitted:
+            logger.warning("Failed to submit idle reprompt for agent %s", run.id)
+            return False
+        self._idle_detector.record_reprompt(run.id)
+        return True
 
     async def _idle_reprompt_message(self, run: AgentRun) -> str:
         """Return an idle continuation prompt tuned to active step workflows."""
@@ -318,12 +406,25 @@ class IdleCheckHandler:
         )
 
     @staticmethod
-    def _latest_response_payload_type(items: list[dict[str, object]]) -> str | None:
-        for item in reversed(items):
-            payload_type = item.get("payload_type")
-            if isinstance(payload_type, str) and payload_type:
-                return payload_type
-        return None
+    def _completed_codex_turn_recovery_due(
+        snapshot: _CodexTranscriptSnapshot,
+        *,
+        idle_timeout_seconds: int,
+    ) -> bool | None:
+        if not snapshot.has_conclusive_task_complete:
+            return None
+
+        event = snapshot.lifecycle_event
+        if event is None or event.timestamp is None:
+            return None
+        try:
+            completed_at = parse_stored_datetime(event.timestamp)
+        except (TypeError, ValueError):
+            return None
+        if completed_at is None:
+            return None
+        elapsed = (datetime.now(UTC) - completed_at).total_seconds()
+        return elapsed >= idle_timeout_seconds
 
     async def _recover_reasoning_idle(
         self,
@@ -332,6 +433,7 @@ class IdleCheckHandler:
         tmux_name: str,
         session: Any | None,
         session_id: str | None,
+        snapshot: _CodexTranscriptSnapshot | None = None,
     ) -> bool:
         """Interrupt a stale Codex reasoning turn and send a focused continuation."""
         if not self._tmux_config.reasoning_watchdog_interrupt_enabled:
@@ -339,36 +441,27 @@ class IdleCheckHandler:
         if session is None or getattr(session, "source", None) != "codex":
             return False
 
-        transcript_path = getattr(session, "transcript_path", None)
-        if not isinstance(transcript_path, str) or not transcript_path:
+        if snapshot is None:
+            transcript_path = getattr(session, "transcript_path", None)
+            if not isinstance(transcript_path, str) or not transcript_path:
+                return False
+            try:
+                snapshot = await self._read_codex_transcript_snapshot(transcript_path)
+            except OSError:
+                logger.warning(
+                    "Failed to read Codex transcript for reasoning watchdog on run %s",
+                    run.id,
+                )
+                return False
+
+        if snapshot.latest_response_payload_type != "reasoning":
             return False
 
-        try:
-            items = await self._read_recent_codex_response_items(transcript_path)
-        except OSError as exc:
-            logger.warning(
-                "Failed to read Codex transcript for reasoning watchdog on run %s: %s",
-                run.id,
-                exc,
-            )
-            return False
-
-        if self._latest_response_payload_type(items) != "reasoning":
-            return False
-
-        redacted_items = [
-            {
-                "line_num": item.get("line_num"),
-                "timestamp": item.get("timestamp"),
-                "payload_type": item.get("payload_type"),
-            }
-            for item in items
-        ]
         logger.warning(
             "Codex reasoning watchdog interrupting run %s session %s: %s",
             run.id,
             session_id,
-            json.dumps(redacted_items, ensure_ascii=True),
+            json.dumps(snapshot.to_log_dict(), ensure_ascii=True),
         )
 
         interrupted = await self._tmux.send_keys(tmux_name, "C-c", literal=False)
@@ -459,13 +552,15 @@ class IdleCheckHandler:
         await self._cleanup_handler.cleanup_agent(run, terminal_payload=f"Agent idle: {reason}")
 
     @staticmethod
-    async def _read_recent_codex_response_items(
+    async def _read_codex_transcript_snapshot(
         transcript_path: str,
         *,
         limit: int = 8,
-    ) -> list[dict[str, object]]:
-        def _read() -> list[dict[str, object]]:
-            items: deque[dict[str, object]] = deque(maxlen=limit)
+    ) -> _CodexTranscriptSnapshot:
+        def _read() -> _CodexTranscriptSnapshot:
+            items: deque[_CodexTranscriptEventSummary] = deque(maxlen=limit)
+            lifecycle_event: _CodexTranscriptEventSummary | None = None
+            last_malformed_line_num: int | None = None
             with open(transcript_path, encoding="utf-8") as handle:
                 for line_num, raw_line in enumerate(handle, start=1):
                     if not raw_line.strip():
@@ -473,71 +568,97 @@ class IdleCheckHandler:
                     try:
                         data = json.loads(raw_line)
                     except json.JSONDecodeError:
+                        last_malformed_line_num = line_num
                         continue
-                    if not isinstance(data, dict) or data.get("type") != "response_item":
+                    if not isinstance(data, dict):
+                        last_malformed_line_num = line_num
+                        continue
+                    event_type = data.get("type")
+                    if not isinstance(event_type, str):
+                        last_malformed_line_num = line_num
+                        continue
+                    if event_type not in {"response_item", "event_msg"}:
                         continue
                     payload = data.get("payload")
                     if not isinstance(payload, dict):
+                        last_malformed_line_num = line_num
                         continue
-                    items.append(
-                        {
-                            "line_num": line_num,
-                            "timestamp": data.get("timestamp"),
-                            "payload_type": payload.get("type"),
-                            "raw": data,
-                        }
+                    payload_type = payload.get("type")
+                    if not isinstance(payload_type, str):
+                        last_malformed_line_num = line_num
+                        continue
+                    raw_timestamp = data.get("timestamp")
+                    timestamp = raw_timestamp if isinstance(raw_timestamp, str) else None
+                    summary = _CodexTranscriptEventSummary(
+                        line_num=line_num,
+                        timestamp=timestamp,
+                        event_type=event_type,
+                        payload_type=payload_type,
                     )
-            return list(items)
+                    if event_type == "response_item":
+                        items.append(summary)
+                    elif payload_type in {"task_started", "task_complete"}:
+                        lifecycle_event = summary
+            return _CodexTranscriptSnapshot(
+                response_items=tuple(items),
+                lifecycle_event=lifecycle_event,
+                last_malformed_line_num=last_malformed_line_num,
+            )
 
         return await asyncio.to_thread(_read)
 
-    async def _log_recent_codex_response_items(self, run: AgentRun, *, reason: str) -> None:
-        session_manager = self._get_session_manager()
-        if session_manager is None:
-            return
-
+    async def _log_codex_transcript_snapshot(
+        self,
+        run: AgentRun,
+        *,
+        reason: str,
+        snapshot: _CodexTranscriptSnapshot | None = None,
+    ) -> None:
         session_id = run.child_session_id
         if not session_id:
             return
 
-        try:
-            session = await self._run_db(session_manager.get, session_id)
-        except Exception as exc:
-            logger.warning(
-                "Failed to load session %s for Codex idle diagnostics on run %s: %s",
-                session_id,
-                run.id,
-                exc,
-            )
-            return
+        if snapshot is None:
+            session_manager = self._get_session_manager()
+            if session_manager is None:
+                return
 
-        if session is None or getattr(session, "source", None) != "codex":
-            return
+            try:
+                session = await self._run_db(session_manager.get, session_id)
+            except Exception:
+                logger.warning(
+                    "Failed to load session %s for Codex idle diagnostics on run %s",
+                    session_id,
+                    run.id,
+                )
+                return
 
-        transcript_path = getattr(session, "transcript_path", None)
-        if not isinstance(transcript_path, str) or not transcript_path:
-            logger.warning(
-                "Codex idle diagnostic for run %s (%s): session %s has no transcript path",
-                run.id,
-                reason,
-                session_id,
-            )
-            return
+            if session is None or getattr(session, "source", None) != "codex":
+                return
 
-        try:
-            items = await self._read_recent_codex_response_items(transcript_path)
-        except OSError as exc:
-            logger.warning(
-                "Failed to read Codex transcript for idle diagnostic on run %s (%s): %s",
-                run.id,
-                reason,
-                exc,
-            )
-            return
+            transcript_path = getattr(session, "transcript_path", None)
+            if not isinstance(transcript_path, str) or not transcript_path:
+                logger.warning(
+                    "Codex idle diagnostic for run %s (%s): session %s has no transcript path",
+                    run.id,
+                    reason,
+                    session_id,
+                )
+                return
 
-        if not items:
+            try:
+                snapshot = await self._read_codex_transcript_snapshot(transcript_path)
+            except OSError:
+                logger.warning(
+                    "Failed to read Codex transcript for idle diagnostic on run %s (%s)",
+                    run.id,
+                    reason,
+                )
+                return
+
+        if not snapshot.response_items and snapshot.lifecycle_event is None:
             logger.warning(
-                "Codex idle diagnostic for run %s (%s): no recent response_item records for session %s",
+                "Codex idle diagnostic for run %s (%s): no transcript summaries for session %s",
                 run.id,
                 reason,
                 session_id,
@@ -549,5 +670,5 @@ class IdleCheckHandler:
             run.id,
             reason,
             session_id,
-            json.dumps(items, ensure_ascii=True),
+            json.dumps(snapshot.to_log_dict(), ensure_ascii=True),
         )
