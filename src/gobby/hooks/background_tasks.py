@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 from collections.abc import Coroutine
 from typing import Any
 
 _background_tasks: set[asyncio.Task[Any]] = set()
 _background_tasks_lock = threading.Lock()
+logger = logging.getLogger(__name__)
 
 
 def create_background_task[T](
@@ -28,3 +30,9 @@ def create_background_task[T](
 def _discard_background_task(task: asyncio.Task[Any]) -> None:
     with _background_tasks_lock:
         _background_tasks.discard(task)
+    if task.cancelled():
+        return
+    try:
+        task.result()
+    except Exception:
+        logger.exception("Background hook task failed")

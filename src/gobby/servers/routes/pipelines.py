@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from gobby.servers.responses import JSONResponse
-from gobby.workflows.pipeline_state import StepStatus
+from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -448,6 +448,12 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
 
         try:
             execution = await executor.approve(token, approved_by=None)
+
+            if execution.status == ExecutionStatus.FAILED:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Pipeline execution {execution.id} failed after approval",
+                )
 
             return {
                 "status": execution.status.value,

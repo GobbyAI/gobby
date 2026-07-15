@@ -516,6 +516,32 @@ class TestApproveExecution:
             assert response.status_code == 200
             assert response.json()["execution_id"] == "pe-1"
 
+    def test_approve_failed_resume_returns_server_error(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        with patch("gobby.storage.pipelines.LocalPipelineExecutionManager") as MockEM:
+            mock_step = MagicMock(
+                execution_id="pe-1",
+                status=StepStatus.WAITING_APPROVAL,
+            )
+            execution_record = MagicMock(project_id="proj-1")
+            failed_execution = MagicMock(
+                id="pe-1",
+                pipeline_name="test",
+                status=ExecutionStatus.FAILED,
+            )
+
+            em = MockEM.return_value
+            em.get_step_by_approval_token.return_value = mock_step
+            em.get_execution.return_value = execution_record
+            executor = mock_server.services.get_pipeline_executor.return_value
+            executor.approve = AsyncMock(return_value=failed_execution)
+
+            response = client.post("/api/pipelines/approve/tok-1")
+
+        assert response.status_code == 500
+        assert response.json()["detail"] == "Pipeline execution pe-1 failed after approval"
+
     def test_approve_non_waiting_step_returns_conflict(
         self, client: TestClient, mock_server: MagicMock
     ) -> None:

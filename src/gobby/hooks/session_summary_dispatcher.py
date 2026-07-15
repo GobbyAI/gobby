@@ -7,6 +7,8 @@ import logging
 import threading
 from typing import Any
 
+from gobby.hooks.background_tasks import create_background_task
+
 
 class SessionSummaryDispatcher:
     """Schedule session summary generation on the best available event loop."""
@@ -63,7 +65,7 @@ class SessionSummaryDispatcher:
         coro = _run()
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(coro)
+            create_background_task(coro, loop=loop)
         except RuntimeError:
             self._dispatch_without_running_loop(coro, done_event)
 

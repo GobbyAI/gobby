@@ -1,10 +1,15 @@
 import json
 import logging
 import time
+from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from gobby.storage.hub.protocol import HubDatabase, SessionVariableMutation
+from gobby.storage.hub.protocol import (
+    HubDatabase,
+    SessionVariableMutation,
+    WorkflowInstanceMutation,
+)
 from gobby.storage.session_resolution import is_session_uuid
 from gobby.utils.datetime import parse_stored_datetime, require_stored_datetime
 
@@ -28,6 +33,13 @@ def _decode_variables_payload(variables: Any) -> dict[str, Any]:
     return {}
 
 
+def _normalize_string_list(value: Any) -> list[str]:
+    """Return the string entries from a stored list variable."""
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
 class WorkflowInstanceManager:
     """Manages CRUD operations for workflow instances (multi-workflow per session)."""
 
@@ -47,12 +59,12 @@ class WorkflowInstanceManager:
         return self._row_to_instance(row)
 
     def get_active_instances(self, session_id: str) -> list[WorkflowInstance]:
-        """Get all enabled workflow instances for a session, sorted by priority."""
+        """Get all enabled workflow instances for a session, sorted deterministically."""
         if not is_session_uuid(session_id):
             return []
         rows = self.db.fetchall(
             "SELECT * FROM workflow_instances WHERE session_id = %s AND enabled = %s "
-            "ORDER BY priority ASC",
+            "ORDER BY priority ASC, workflow_name ASC",
             (session_id, True),
         )
         return [self._row_to_instance(row) for row in rows]
@@ -62,7 +74,7 @@ class WorkflowInstanceManager:
         if not is_session_uuid(instance.session_id):
             return
         now = datetime.now(UTC).isoformat()
-        self.db.execute(
+        persisted = self.db.fetchone(
             """
             INSERT INTO workflow_instances (
                 id, session_id, workflow_name, enabled, priority,
@@ -79,6 +91,7 @@ class WorkflowInstanceManager:
                 variables = excluded.variables,
                 context_injected = excluded.context_injected,
                 updated_at = excluded.updated_at
+            RETURNING id, created_at, updated_at
             """,
             (
                 instance.id,
@@ -92,10 +105,15 @@ class WorkflowInstanceManager:
                 instance.total_action_count,
                 json.dumps(instance.variables),
                 instance.context_injected,
-                now,
+                instance.created_at.isoformat(),
                 now,
             ),
         )
+        if persisted is None:  # pragma: no cover - PostgreSQL RETURNING always yields a row.
+            raise RuntimeError("Workflow instance upsert returned no row")
+        instance.id = persisted["id"]
+        instance.created_at = require_stored_datetime(persisted["created_at"], "created_at")
+        instance.updated_at = require_stored_datetime(persisted["updated_at"], "updated_at")
 
     def merge_instance_variables(
         self,
@@ -106,26 +124,19 @@ class WorkflowInstanceManager:
         """Atomically merge variables without rewriting workflow execution state."""
         if not updates or not is_session_uuid(session_id):
             return False
-        now = datetime.now(UTC).isoformat()
-        cursor = self.db.execute(
-            """
-            UPDATE workflow_instances
-            SET variables = COALESCE(variables, '{}'::jsonb) || %s::jsonb,
-                updated_at = %s
-            WHERE session_id = %s AND workflow_name = %s
-            """,
-            (json.dumps(updates), now, session_id, workflow_name),
-        )
-        return cursor.rowcount > 0
-
-    def delete_instance(self, session_id: str, workflow_name: str) -> None:
-        """Delete a workflow instance."""
-        if not is_session_uuid(session_id):
-            return
-        self.db.execute(
-            "DELETE FROM workflow_instances WHERE session_id = %s AND workflow_name = %s",
-            (session_id, workflow_name),
-        )
+        lock = WorkflowInstanceMutation(session_id=session_id, workflow_name=workflow_name)
+        with self.db.transaction_immediate(lock) as conn:
+            now = datetime.now(UTC).isoformat()
+            cursor = conn.execute(
+                """
+                UPDATE workflow_instances
+                SET variables = COALESCE(variables, '{}'::jsonb) || %s::jsonb,
+                    updated_at = %s
+                WHERE session_id = %s AND workflow_name = %s
+                """,
+                (json.dumps(updates), now, session_id, workflow_name),
+            )
+            return cursor.rowcount > 0
 
     def delete_instances_for_session(self, session_id: str) -> int:
         """Delete all workflow instances for a session and return deleted row count."""
@@ -137,17 +148,6 @@ class WorkflowInstanceManager:
                 (session_id,),
             )
             return cursor.rowcount
-
-    def set_enabled(self, session_id: str, workflow_name: str, enabled: bool) -> None:
-        """Toggle the enabled state of a workflow instance."""
-        if not is_session_uuid(session_id):
-            return
-        now = datetime.now(UTC).isoformat()
-        self.db.execute(
-            "UPDATE workflow_instances SET enabled = %s, updated_at = %s "
-            "WHERE session_id = %s AND workflow_name = %s",
-            (enabled, now, session_id, workflow_name),
-        )
 
     @staticmethod
     def _row_to_instance(row: Any) -> WorkflowInstance:
@@ -191,8 +191,6 @@ class SessionVariableManager:
         This ensures presets are always available even if they were never
         explicitly materialized into the session row.
         """
-        defaults = self._get_variable_defaults()
-
         row = self.db.fetchone(
             "SELECT variables FROM session_variables WHERE session_id = %s",
             (session_id,),
@@ -201,9 +199,7 @@ class SessionVariableManager:
         if row:
             session_vars = _decode_variables_payload(row["variables"])
 
-        if not defaults:
-            return session_vars
-        return {**defaults, **session_vars}
+        return self._apply_variable_defaults(session_vars)
 
     def _get_variable_defaults(self) -> dict[str, Any]:
         """Load default values from enabled, installed variable definitions.
@@ -217,7 +213,7 @@ class SessionVariableManager:
             self._defaults_cache is not None
             and (now - self._defaults_cache_time) < self._DEFAULTS_CACHE_TTL
         ):
-            return dict(self._defaults_cache)
+            return deepcopy(self._defaults_cache)
 
         rows = self.db.fetchall(
             "SELECT name, definition_json FROM workflow_definitions "
@@ -229,12 +225,19 @@ class SessionVariableManager:
             try:
                 body = json.loads(row["definition_json"])
                 defaults[body.get("variable", row["name"])] = body.get("value")
-            except (json.JSONDecodeError, KeyError):
+            except (json.JSONDecodeError, TypeError, AttributeError, KeyError):
                 continue
 
         self._defaults_cache = defaults
         self._defaults_cache_time = now
-        return defaults
+        return deepcopy(defaults)
+
+    def _apply_variable_defaults(self, variables: dict[str, Any]) -> dict[str, Any]:
+        """Layer stored variables over installed definition defaults."""
+        defaults = self._get_variable_defaults()
+        if not defaults:
+            return variables
+        return {**defaults, **variables}
 
     def set_variable(self, session_id: str, name: str, value: Any) -> None:
         """Set a single session variable (atomic read-modify-write)."""
@@ -243,7 +246,7 @@ class SessionVariableManager:
     def merge_variables(self, session_id: str, updates: dict[str, Any]) -> bool:
         """Atomically merge variable updates into session variables.
 
-        Uses BEGIN IMMEDIATE to serialize the read-modify-write,
+        A PostgreSQL transaction-scoped advisory lock serializes the read-modify-write,
         preventing concurrent evaluations from clobbering each other.
         Creates the row if it doesn't exist.
 
@@ -355,10 +358,11 @@ class SessionVariableManager:
         return len(bounded_items)
 
     def append_to_set_variable(self, session_id: str, name: str, values: list[str]) -> bool:
-        """Atomically append values to a list variable (deduped, sorted).
+        """Atomically append strings to a string-list variable (deduped, sorted).
 
-        Uses BEGIN IMMEDIATE to serialize the read-modify-write, preventing
-        concurrent AFTER_TOOL events from clobbering each other.
+        A PostgreSQL transaction-scoped advisory lock serializes the read-modify-write,
+        preventing concurrent events from clobbering each other. Stored scalars and
+        non-string list entries are discarded to preserve the string-list contract.
 
         Args:
             session_id: Session ID to scope the variable to.
@@ -376,11 +380,9 @@ class SessionVariableManager:
                 "SELECT variables FROM session_variables WHERE session_id = %s",
                 (session_id,),
             ).fetchone()
-            current_vars = _decode_variables_payload(row["variables"]) if row else {}
-            stored = current_vars.get(name, [])
-            if not isinstance(stored, list):
-                stored = [stored] if stored else []
-            existing = set(stored)
+            stored_vars = _decode_variables_payload(row["variables"]) if row else {}
+            current_vars = self._apply_variable_defaults(stored_vars)
+            existing = set(_normalize_string_list(current_vars.get(name)))
             existing.update(values)
             current_vars[name] = sorted(existing)
             if row:
@@ -419,11 +421,7 @@ class SessionVariableManager:
                 (session_id,),
             ).fetchone()
             current_vars = _decode_variables_payload(row["variables"]) if row else {}
-            stored = current_vars.get(name, [])
-            if not isinstance(stored, list):
-                stored = [stored] if stored else []
-
-            existing = set(stored)
+            existing = set(_normalize_string_list(current_vars.get(name)))
             claimed: list[str] = []
             for value in values:
                 if value not in existing:
@@ -471,13 +469,11 @@ class SessionVariableManager:
                 "SELECT variables FROM session_variables WHERE session_id = %s",
                 (session_id,),
             ).fetchone()
-            current_vars = _decode_variables_payload(row["variables"]) if row else {}
+            stored_vars = _decode_variables_payload(row["variables"]) if row else {}
+            current_vars = self._apply_variable_defaults(stored_vars)
 
             if values:
-                stored = current_vars.get(name, [])
-                if not isinstance(stored, list):
-                    stored = [stored] if stored else []
-                existing = set(stored)
+                existing = set(_normalize_string_list(current_vars.get(name)))
                 existing.update(values)
                 current_vars[name] = sorted(existing)
 
@@ -518,7 +514,8 @@ class SessionVariableManager:
                 "SELECT variables FROM session_variables WHERE session_id = %s",
                 (session_id,),
             ).fetchone()
-            current_vars = _decode_variables_payload(row["variables"]) if row else {}
+            stored_vars = _decode_variables_payload(row["variables"]) if row else {}
+            current_vars = self._apply_variable_defaults(stored_vars)
 
             stored = current_vars.get("session_edited_files", [])
             if not isinstance(stored, list):
@@ -571,7 +568,8 @@ class SessionVariableManager:
                 "SELECT variables FROM session_variables WHERE session_id = %s",
                 (session_id,),
             ).fetchone()
-            current_vars = _decode_variables_payload(row["variables"]) if row else {}
+            stored_vars = _decode_variables_payload(row["variables"]) if row else {}
+            current_vars = self._apply_variable_defaults(stored_vars)
 
             if current_vars.get("_startup_context_injected") is True:
                 return "live"
@@ -590,10 +588,3 @@ class SessionVariableManager:
                     (session_id, json.dumps(current_vars), now),
                 )
         return "full"
-
-    def delete_variables(self, session_id: str) -> None:
-        """Delete all session variables for a session."""
-        self.db.execute(
-            "DELETE FROM session_variables WHERE session_id = %s",
-            (session_id,),
-        )

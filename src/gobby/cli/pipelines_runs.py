@@ -119,7 +119,7 @@ def approve_pipeline(ctx: click.Context, token: str, json_format: bool) -> None:
             return
 
         executor = facade.get_pipeline_executor()
-        execution = facade.asyncio.run(executor.approve(token, approved_by=None))
+        execution = facade.asyncio.run(executor.approve(token, approved_by=facade._cli_actor()))
         facade._echo_approval_result(
             "approve", facade._pipeline_result_dict(execution), json_format
         )
@@ -153,7 +153,7 @@ def reject_pipeline(ctx: click.Context, token: str, json_format: bool) -> None:
             return
 
         executor = facade.get_pipeline_executor()
-        execution = facade.asyncio.run(executor.reject(token, rejected_by=None))
+        execution = facade.asyncio.run(executor.reject(token, rejected_by=facade._cli_actor()))
         facade._echo_approval_result("reject", facade._pipeline_result_dict(execution), json_format)
 
     except ValueError as e:

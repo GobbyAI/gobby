@@ -1,6 +1,8 @@
 """Extra tests for HookManager."""
 
+import asyncio
 import threading
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -32,14 +34,17 @@ class TestReregisterActiveSessions:
 
 class TestDispatchSessionSummaries:
     @patch("gobby.hooks.session_summary_dispatcher.asyncio.get_running_loop")
-    @patch("gobby.hooks.session_summary_dispatcher.asyncio.run_coroutine_threadsafe")
-    @patch("gobby.sessions.summarize.generate_session_summaries", new_callable=AsyncMock)
-    def test_dispatches_on_running_loop(self, mock_generate, mock_threadsafe, mock_get_loop):
-        """Tests that if a running loop exists, it creates a task on it."""
+    def test_dispatches_on_running_loop(self, mock_get_loop) -> None:
+        """Tests that a running loop uses the retained-task scheduler."""
         mock_loop = MagicMock()
         mock_get_loop.return_value = mock_loop
 
-        with patch("gobby.hooks.hook_manager.HookManagerFactory.create") as mock_create:
+        with (
+            patch("gobby.hooks.hook_manager.HookManagerFactory.create") as mock_create,
+            patch(
+                "gobby.hooks.session_summary_dispatcher.create_background_task"
+            ) as mock_background_task,
+        ):
             mock_components = MagicMock()
             mock_create.return_value = mock_components
             manager = HookManager()
@@ -50,13 +55,42 @@ class TestDispatchSessionSummaries:
             event = threading.Event()
             manager._dispatch_session_summaries("sess-1", done_event=event)
 
-            # It should create a task on the running loop
-            mock_loop.create_task.assert_called_once()
-            assert mock_loop.create_task.call_count == 1
-            assert mock_loop.create_task.call_args is not None
+            mock_background_task.assert_called_once()
+            coro = mock_background_task.call_args.args[0]
+            assert mock_background_task.call_args.kwargs == {"loop": mock_loop}
+            assert mock_get_loop.call_count == 2
+            assert mock_create.call_count == 1
+            coro.close()
 
-            # To test the side-effects of the coro, we'd have to execute it,
-            # but we just verified the correct branch was taken.
+    @pytest.mark.asyncio
+    async def test_running_loop_task_is_retained_until_summary_finishes(self) -> None:
+        from gobby.hooks import background_tasks
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def generate(**_kwargs: Any) -> None:
+            started.set()
+            await release.wait()
+
+        with (
+            patch("gobby.sessions.summarize.generate_session_summaries", side_effect=generate),
+            patch("gobby.hooks.hook_manager.HookManagerFactory.create") as mock_create,
+        ):
+            mock_create.return_value = MagicMock()
+            manager = HookManager()
+            manager._dispatch_session_summaries("sess-1")
+
+            await started.wait()
+            assert len(background_tasks._background_tasks) == 1
+            task = next(iter(background_tasks._background_tasks))
+            callback_complete = asyncio.Event()
+            task.add_done_callback(lambda _task: callback_complete.set())
+
+            release.set()
+            await callback_complete.wait()
+
+            assert not background_tasks._background_tasks
 
     @patch("gobby.hooks.session_summary_dispatcher.asyncio.get_running_loop")
     @patch("gobby.hooks.session_summary_dispatcher.asyncio.run_coroutine_threadsafe")

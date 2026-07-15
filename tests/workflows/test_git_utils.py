@@ -65,6 +65,7 @@ class TestGetGitStatus:
                 capture_output=True,
                 text=True,
                 timeout=5,
+                cwd=None,
             )
 
     def test_returns_no_changes_when_empty(self) -> None:
@@ -172,6 +173,7 @@ class TestGetRecentGitCommits:
                 capture_output=True,
                 text=True,
                 timeout=5,
+                cwd=None,
             )
             assert mock_run.call_count == 1
             assert mock_run.call_args is not None
@@ -187,6 +189,7 @@ class TestGetRecentGitCommits:
                 capture_output=True,
                 text=True,
                 timeout=5,
+                cwd=None,
             )
             assert mock_run.call_count == 1
             assert mock_run.call_args is not None
@@ -285,6 +288,7 @@ class TestGetRecentGitCommits:
                 capture_output=True,
                 text=True,
                 timeout=5,
+                cwd=None,
             )
             assert result == []
 
@@ -299,6 +303,7 @@ class TestGetRecentGitCommits:
                 capture_output=True,
                 text=True,
                 timeout=5,
+                cwd=None,
             )
             assert mock_run.call_count == 1
             assert mock_run.call_args is not None

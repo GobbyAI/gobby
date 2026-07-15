@@ -29,6 +29,38 @@ async def _run_inline(func: Any, *args: Any, **kwargs: Any) -> Any:
     return func(*args, **kwargs)
 
 
+@pytest.mark.asyncio
+async def test_pipeline_maintenance_uses_single_stale_task_scan(temp_db: HubDatabase) -> None:
+    class Heartbeat:
+        stale_task_scans = 0
+
+        async def check_stalled_executions(self) -> int:
+            return 2
+
+        async def check_stale_tasks(self) -> tuple[int, int]:
+            self.stale_task_scans += 1
+            return 3, 4
+
+        async def count_running_executions(self) -> int:
+            return 5
+
+    heartbeat = Heartbeat()
+    loop = SystemAutomationLoop(
+        db=temp_db,
+        config=DaemonConfig(),
+        pipeline_heartbeat=heartbeat,
+        run_db=_run_inline,
+    )
+
+    summary = await loop._run_pipeline_maintenance()
+
+    assert heartbeat.stale_task_scans == 1
+    assert summary.pipeline_stalled_handled == 2
+    assert summary.pipeline_stale_tasks_recovered == 3
+    assert summary.pipeline_stale_task_candidates == 4
+    assert summary.pipeline_running_executions == 5
+
+
 def _seed_project(
     db: HubDatabase, project_id: str = "11111111-1111-4111-8111-111111110001"
 ) -> None:

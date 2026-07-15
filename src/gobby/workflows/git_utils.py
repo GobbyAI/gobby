@@ -18,8 +18,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def get_git_status() -> str:
-    """Get git status for current directory.
+def get_git_status(project_path: str | None = None) -> str:
+    """Get git status for a project directory.
+
+    Args:
+        project_path: Optional path to the project directory.
 
     Returns:
         Short git status output, or error message if not a git repo.
@@ -30,17 +33,22 @@ def get_git_status() -> str:
             capture_output=True,
             text=True,
             timeout=5,
+            cwd=project_path,
         )
         return result.stdout.strip() or "No changes"
     except Exception:
         return "Not a git repository or git not available"
 
 
-def get_recent_git_commits(max_commits: int = 10) -> list[dict[str, str]]:
+def get_recent_git_commits(
+    max_commits: int = 10,
+    project_path: str | None = None,
+) -> list[dict[str, str]]:
     """Get recent git commits with hash and message.
 
     Args:
         max_commits: Maximum number of commits to return
+        project_path: Optional path to the project directory.
 
     Returns:
         List of dicts with 'hash' and 'message' keys
@@ -51,6 +59,7 @@ def get_recent_git_commits(max_commits: int = 10) -> list[dict[str, str]]:
             capture_output=True,
             text=True,
             timeout=5,
+            cwd=project_path,
         )
         if result.returncode != 0:
             return []

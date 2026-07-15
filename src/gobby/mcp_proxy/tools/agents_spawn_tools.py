@@ -45,8 +45,6 @@ def register_agent_spawn_tools(
                 if isinstance(context_project_path, str):
                     project_path = context_project_path
 
-        mcp_mgr = getattr(ctx.runner, "_mcp_manager", None)
-
         eval_result = await evaluate_spawn(
             agent=agent,
             workflow=workflow,
@@ -58,6 +56,7 @@ def register_agent_spawn_tools(
             parent_session_id=resolved_parent,
             project_path=project_path,
             db=ctx.db,
+            workflow_loader=ctx.workflow_loader,
             runner=ctx.runner,
             session_manager=ctx.session_manager,
             git_manager=ctx.git_manager,
@@ -65,7 +64,7 @@ def register_agent_spawn_tools(
             clone_storage=ctx.clone_storage,
             clone_manager=ctx.clone_manager,
             task_manager=ctx.task_manager,
-            mcp_manager=mcp_mgr,
+            mcp_manager=ctx.mcp_inventory,
         )
         return eval_result.to_dict()
 

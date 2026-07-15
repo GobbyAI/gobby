@@ -244,6 +244,7 @@ def test_postgres_migrations_limited_to_known_post_baseline() -> None:
         "318_chat_messages_sequence_unique.sql",
         "319_worktree_last_activity.sql",
         "320_projects_active_name_unique.sql",
+        "321_session_variables_session_cascade.sql",
     ]
 
 
@@ -297,7 +298,7 @@ def test_postgres_baseline_version_is_flattened_to_305() -> None:
     # The 0.5.0 pre-release flatten folded 295-305 into the baseline. Hubs below
     # 305 take the corrupt_partial backup/recreate path; later migrations replay.
     assert module.BASELINE_VERSION == 305
-    assert module.latest_known_version() == 320
+    assert module.latest_known_version() == 321
 
 
 def test_postgres_baseline_uses_uuid_for_internal_identity_columns() -> None:
@@ -834,6 +835,24 @@ def test_memory_source_session_fk_sets_null_in_baseline_and_upgrade_migration() 
     ) in memories
     assert "DROP CONSTRAINT IF EXISTS memories_source_session_id_fkey" in migration
     assert "FOREIGN KEY (source_session_id) REFERENCES sessions(id) ON DELETE SET NULL" in migration
+
+
+def test_session_variables_fk_cascades_in_baseline_and_upgrade_migration() -> None:
+    session_variables = _normalize_sql_whitespace(
+        _table_definition(_baseline_text(), "session_variables")
+    )
+    migration = _normalize_sql_whitespace(
+        (
+            SRC_ROOT / "storage" / "migrations" / "321_session_variables_session_cascade.sql"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert (
+        "session_id UUID PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE "
+        "DEFERRABLE INITIALLY IMMEDIATE"
+    ) in session_variables
+    assert "DELETE FROM session_variables" in migration
+    assert "FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE" in migration
 
 
 def test_memory_vector_reindex_state_is_consistent_across_schema_and_runtime() -> None:

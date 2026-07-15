@@ -18,7 +18,7 @@ import logging
 import uuid
 from typing import Any
 
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase, WorkflowInstanceMutation
 from gobby.workflows.definitions import AgentDefinitionBody
 
 logger = logging.getLogger(__name__)
@@ -98,33 +98,35 @@ def build_persona_changes(
 
         step_wf_name = f"{agent_body.name}-steps"
         instance_mgr = WorkflowInstanceManager(db)
-        existing_instance = instance_mgr.get_instance(session_id, step_wf_name)
-        if existing_instance is None:
-            step_instance = WorkflowInstance(
-                id=str(uuid.uuid4()),
-                session_id=session_id,
-                workflow_name=step_wf_name,
-                enabled=True,
-                priority=10,
-                current_step=agent_body.steps[0].name,
-                variables=dict(agent_body.step_variables),
-            )
-            instance_mgr.save_instance(step_instance)
-            logger.info(
-                "Created step workflow instance %s for session %s (agent=%s, step=%s)",
-                step_wf_name,
-                session_id,
-                agent_body.name,
-                agent_body.steps[0].name,
-            )
-        else:
-            logger.debug(
-                "Preserved existing step workflow instance %s for session %s (agent=%s, step=%s)",
-                step_wf_name,
-                session_id,
-                agent_body.name,
-                existing_instance.current_step,
-            )
+        lock = WorkflowInstanceMutation(session_id=session_id, workflow_name=step_wf_name)
+        with db.transaction_immediate(lock):
+            existing_instance = instance_mgr.get_instance(session_id, step_wf_name)
+            if existing_instance is None:
+                step_instance = WorkflowInstance(
+                    id=str(uuid.uuid4()),
+                    session_id=session_id,
+                    workflow_name=step_wf_name,
+                    enabled=True,
+                    priority=10,
+                    current_step=agent_body.steps[0].name,
+                    variables=dict(agent_body.step_variables),
+                )
+                instance_mgr.save_instance(step_instance)
+                logger.info(
+                    "Created step workflow instance %s for session %s (agent=%s, step=%s)",
+                    step_wf_name,
+                    session_id,
+                    agent_body.name,
+                    agent_body.steps[0].name,
+                )
+            else:
+                logger.debug(
+                    "Preserved existing step workflow instance %s for session %s (agent=%s, step=%s)",
+                    step_wf_name,
+                    session_id,
+                    agent_body.name,
+                    existing_instance.current_step,
+                )
         changes["_step_workflow_name"] = step_wf_name
         changes["step_workflow_complete"] = False
 

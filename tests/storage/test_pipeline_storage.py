@@ -13,6 +13,7 @@ import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
+from gobby.storage.sessions import SessionManager
 from gobby.workflows.pipeline_state import (
     ExecutionStatus,
     PipelineExecution,
@@ -611,7 +612,7 @@ class TestGetByToken:
     @pytest.mark.parametrize(
         ("decision", "approved_by", "error"),
         [
-            (StepStatus.COMPLETED, "reviewer", None),
+            (StepStatus.PENDING, "reviewer", None),
             (StepStatus.FAILED, None, "Rejected by reviewer"),
         ],
     )
@@ -641,6 +642,7 @@ class TestGetByToken:
         assert consumed.status == decision
         assert consumed.approval_token is None
         assert consumed.approved_by == approved_by
+        assert (consumed.approved_at is not None) is (decision == StepStatus.PENDING)
         assert consumed.error == error
         assert manager.consume_step_approval("single-use-token", status=decision) is None
 
@@ -651,7 +653,7 @@ class TestGetByToken:
         step = manager.create_step_execution(execution_id=execution.id, step_id="approve")
         manager.update_step_execution(step.id, approval_token="stale-token")
 
-        assert manager.consume_step_approval("stale-token", status=StepStatus.COMPLETED) is None
+        assert manager.consume_step_approval("stale-token", status=StepStatus.PENDING) is None
         unchanged = manager.get_step_by_approval_token("stale-token")
         assert unchanged is not None
         assert unchanged.status == StepStatus.PENDING
@@ -762,6 +764,25 @@ class TestInterruptStaleRunningExecutions:
         assert updated is not None
         assert updated.status == ExecutionStatus.INTERRUPTED
 
+    def test_interrupts_only_pending_executions_older_than_threshold(
+        self,
+        manager: LocalPipelineExecutionManager,
+        db: HubDatabase,
+    ) -> None:
+        stale = manager.create_execution(pipeline_name="never-started")
+        recent = manager.create_execution(pipeline_name="starting-now")
+        db.execute(
+            "UPDATE pipeline_executions SET updated_at = NOW() - INTERVAL '5 minutes' "
+            "WHERE id = %s",
+            (stale.id,),
+        )
+
+        count = manager.interrupt_stale_running_executions(pending_stall_threshold_seconds=60)
+
+        assert count == 1
+        assert _get_execution(manager, stale.id).status == ExecutionStatus.INTERRUPTED
+        assert _get_execution(manager, recent.id).status == ExecutionStatus.PENDING
+
     def test_leaves_waiting_approval_alone(self, manager: LocalPipelineExecutionManager) -> None:
         """Waiting-approval executions are not affected."""
         execution = manager.create_execution(pipeline_name="approval-pipeline")
@@ -859,6 +880,23 @@ class TestFailStaleRunningExecutions:
         assert updated is not None
         assert updated.status == ExecutionStatus.FAILED
 
+    def test_marks_stale_pending_execution_as_failed(
+        self,
+        manager: LocalPipelineExecutionManager,
+        db: HubDatabase,
+    ) -> None:
+        execution = manager.create_execution(pipeline_name="never-started")
+        db.execute(
+            "UPDATE pipeline_executions SET updated_at = NOW() - INTERVAL '5 minutes' "
+            "WHERE id = %s",
+            (execution.id,),
+        )
+
+        count = manager.fail_stale_running_executions(pending_stall_threshold_seconds=60)
+
+        assert count == 1
+        assert _get_execution(manager, execution.id).status == ExecutionStatus.FAILED
+
     def test_also_fails_running_steps(self, manager: LocalPipelineExecutionManager) -> None:
         """Running steps belonging to orphaned executions are also failed."""
         execution = manager.create_execution(pipeline_name="orphan-pipeline")
@@ -953,6 +991,44 @@ class TestApprovalTimeout:
         assert expired_execution is not None
         assert expired_execution.status == ExecutionStatus.CANCELLED
 
+    def test_expiry_closes_pipeline_child_session_once(
+        self,
+        manager: LocalPipelineExecutionManager,
+        db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        execution = manager.create_execution(pipeline_name="timeout-pipeline")
+        manager.update_execution_status(execution.id, ExecutionStatus.WAITING_APPROVAL)
+        step = manager.create_step_execution(execution.id, "approval-step")
+        manager.update_step_execution(step.id, status=StepStatus.WAITING_APPROVAL)
+
+        sessions = SessionManager(db)
+        caller = sessions.register(
+            external_id="timeout-caller",
+            machine_id="test-machine",
+            source="codex",
+            project_id=PROJECT_ID,
+        )
+        child = sessions.register(
+            external_id=f"pipeline-{execution.id}",
+            machine_id="pipeline",
+            source="pipeline",
+            project_id=PROJECT_ID,
+            parent_session_id=caller.id,
+        )
+        update_status = MagicMock(wraps=manager._session_manager.update_status)
+        monkeypatch.setattr(manager._session_manager, "update_status", update_status)
+
+        assert sessions.get(child.id).status == "active"
+        manager.expire_approval_timeout(
+            step_execution_id=step.id,
+            execution_id=execution.id,
+        )
+
+        update_status.assert_called_once_with(child.id, "deleted")
+        assert sessions.get(child.id).status == "deleted"
+        assert sessions.get(caller.id).status == "active"
+
     def test_get_expired_approval_steps(
         self, manager: LocalPipelineExecutionManager, db: HubDatabase
     ) -> None:
@@ -977,6 +1053,62 @@ class TestApprovalTimeout:
         expired = manager.get_expired_approval_steps()
         assert len(expired) == 1
         assert expired[0].step_id == "approval-step"
+
+    def test_unscoped_manager_maintains_executions_across_projects(
+        self, manager: LocalPipelineExecutionManager, db: HubDatabase
+    ) -> None:
+        """Global lifecycle maintenance includes every project."""
+        db.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at) "
+            "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            (OTHER_PROJECT_ID, "Other Project"),
+        )
+        other_manager = LocalPipelineExecutionManager(db, project_id=OTHER_PROJECT_ID)
+        global_manager = LocalPipelineExecutionManager(db, project_id=None)
+
+        running = [
+            manager.create_execution(pipeline_name="current-running"),
+            other_manager.create_execution(pipeline_name="other-running"),
+        ]
+        for execution_manager, execution in zip((manager, other_manager), running, strict=True):
+            execution_manager.update_execution_status(execution.id, ExecutionStatus.RUNNING)
+            db.execute(
+                "UPDATE pipeline_executions SET updated_at = NOW() - INTERVAL '60 seconds' "
+                "WHERE id = %s",
+                (execution.id,),
+            )
+
+        assert {execution.id for execution in global_manager.get_stalled_executions(1)} == {
+            execution.id for execution in running
+        }
+        assert global_manager.interrupt_stale_running_executions() == 2
+        assert all(
+            execution_manager.get_execution(execution.id).status == ExecutionStatus.INTERRUPTED
+            for execution_manager, execution in zip((manager, other_manager), running, strict=True)
+        )
+
+        approval = other_manager.create_execution(pipeline_name="other-approval")
+        other_manager.update_execution_status(approval.id, ExecutionStatus.WAITING_APPROVAL)
+        step = other_manager.create_step_execution(approval.id, "approval-step")
+        other_manager.update_step_execution(
+            step.id,
+            status=StepStatus.WAITING_APPROVAL,
+            approval_timeout_seconds=1,
+        )
+        db.execute(
+            "UPDATE step_executions SET started_at = NOW() - INTERVAL '60 seconds' WHERE id = %s",
+            (step.id,),
+        )
+
+        expired = global_manager.get_expired_approval_steps()
+        assert [expired_step.id for expired_step in expired] == [step.id]
+        global_manager.expire_approval_timeout(
+            step_execution_id=step.id,
+            execution_id=approval.id,
+        )
+        approval_execution = other_manager.get_execution(approval.id)
+        assert approval_execution is not None
+        assert approval_execution.status == ExecutionStatus.CANCELLED
 
     def test_steps_without_timeout_not_expired(
         self, manager: LocalPipelineExecutionManager

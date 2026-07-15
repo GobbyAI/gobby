@@ -3,13 +3,17 @@
 Split from the test_pipeline_executor monolith (#12210).
 """
 
+import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.config.pipelines import PipelineConfig
+from gobby.workflows.definitions import WebhookConfig, WebhookEndpoint
 from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
+from gobby.workflows.pipeline_webhooks import WebhookNotifier
+from gobby.workflows.webhook_executor import WebhookExecutor
 
 pytestmark = pytest.mark.unit
 
@@ -68,10 +72,12 @@ class TestPipelineExecutorExecute:
         """Test that execute() creates a PipelineExecution record."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
 
+        run_db = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
         executor = PipelineExecutor(
             db=mock_db,
             execution_manager=mock_execution_manager,
             llm_service=mock_llm_service,
+            run_db=run_db,
         )
 
         await executor.execute(
@@ -84,6 +90,13 @@ class TestPipelineExecutorExecute:
         call_kwargs = mock_execution_manager.create_execution.call_args
         assert call_kwargs.kwargs["pipeline_name"] == "test-pipeline"
         assert call_kwargs.kwargs["inputs_json"] is not None
+        offloaded = [call.args[0] for call in run_db.await_args_list]
+        assert executor._create_execution_record in offloaded
+        assert mock_execution_manager.update_execution_status in offloaded
+        assert mock_execution_manager.get_steps_for_execution in offloaded
+        assert mock_execution_manager.create_step_execution in offloaded
+        assert mock_execution_manager.update_step_execution in offloaded
+        assert mock_execution_manager.get_failed_steps in offloaded
 
     @pytest.mark.asyncio
     async def test_execute_with_existing_execution_id(
@@ -184,6 +197,116 @@ class TestPipelineExecutorExecute:
 
         assert result is not None
         assert result.status == ExecutionStatus.COMPLETED
+
+    async def test_execute_notifies_completion_webhook(
+        self,
+        mock_db,
+        mock_execution_manager,
+        mock_llm_service,
+        mock_webhook_notifier,
+        simple_pipeline,
+    ) -> None:
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        completed_execution = MagicMock()
+        completed_execution.id = "pe-test-123"
+        completed_execution.status = ExecutionStatus.COMPLETED
+        mock_execution_manager.update_execution_status.return_value = completed_execution
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            webhook_notifier=mock_webhook_notifier,
+        )
+
+        result = await executor.execute(
+            pipeline=simple_pipeline,
+            inputs={},
+            project_id="proj-123",
+        )
+
+        assert result.status == ExecutionStatus.COMPLETED
+        mock_webhook_notifier.notify_complete.assert_awaited_once_with(
+            execution=completed_execution,
+            pipeline=simple_pipeline,
+        )
+
+    async def test_webhook_transport_failure_does_not_change_completed_state(
+        self,
+        mock_db,
+        mock_execution_manager,
+        mock_llm_service,
+        simple_pipeline,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        completed_execution = MagicMock()
+        completed_execution.id = "pe-test-123"
+        completed_execution.pipeline_name = simple_pipeline.name
+        completed_execution.status = ExecutionStatus.COMPLETED
+        completed_execution.outputs_json = None
+        completed_execution.completed_at = "2026-07-15T12:00:00Z"
+        mock_execution_manager.update_execution_status.return_value = completed_execution
+        simple_pipeline.webhooks = WebhookConfig(
+            on_complete=WebhookEndpoint(url="https://example.com/complete")
+        )
+        transport = MagicMock(spec=WebhookExecutor)
+        transport.execute = AsyncMock(side_effect=ValueError("unsafe webhook target"))
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            webhook_notifier=WebhookNotifier(
+                base_url="https://gobby.local",
+                executor=transport,
+            ),
+        )
+
+        with caplog.at_level("ERROR"):
+            result = await executor.execute(
+                pipeline=simple_pipeline,
+                inputs={},
+                project_id="proj-123",
+            )
+
+        assert result.status == ExecutionStatus.COMPLETED
+        assert "unsafe webhook target" in caplog.text
+
+    async def test_execute_notifies_failure_webhook(
+        self,
+        mock_db,
+        mock_execution_manager,
+        mock_llm_service,
+        mock_webhook_notifier,
+        simple_pipeline,
+    ) -> None:
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        failed_execution = MagicMock()
+        failed_execution.id = "pe-test-123"
+        failed_execution.status = ExecutionStatus.FAILED
+        mock_execution_manager.update_execution_status.return_value = failed_execution
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            webhook_notifier=mock_webhook_notifier,
+        )
+        executor._execute_step = AsyncMock(side_effect=RuntimeError("step failed"))
+
+        with pytest.raises(RuntimeError, match="step failed"):
+            await executor.execute(
+                pipeline=simple_pipeline,
+                inputs={},
+                project_id="proj-123",
+            )
+
+        mock_webhook_notifier.notify_failure.assert_awaited_once_with(
+            execution=failed_execution,
+            pipeline=simple_pipeline,
+            error="step failed",
+        )
 
     @pytest.mark.asyncio
     async def test_execute_updates_status_to_running(
@@ -331,6 +454,109 @@ class TestPipelineExecutorStepExecution:
         update_calls = mock_execution_manager.update_step_execution.call_args_list
         has_output = any(call.kwargs.get("output_json") is not None for call in update_calls)
         assert has_output
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("timeout_seconds", "inputs", "expected_timeout"),
+        [
+            (45, {}, 45),
+            ("${{ inputs.exec_timeout }}", {"exec_timeout": 12.5}, 12.5),
+        ],
+    )
+    async def test_exec_step_passes_rendered_timeout_to_handler(
+        self,
+        mock_db,
+        mock_execution_manager,
+        mock_llm_service,
+        timeout_seconds,
+        inputs,
+        expected_timeout,
+    ) -> None:
+        """Configured exec timeouts reach the handler without mutating shared context."""
+        from gobby.workflows.definitions import PipelineStep
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+        from gobby.workflows.templates import TemplateEngine
+
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            template_engine=TemplateEngine(),
+        )
+        step = PipelineStep(id="exec", exec="echo ok", timeout_seconds=timeout_seconds)
+        context = {"inputs": inputs, "steps": {}}
+        handler = AsyncMock(return_value={"exit_code": 0})
+
+        with patch("gobby.workflows.pipeline_executor.execute_exec_step", handler):
+            await executor._execute_step(step, context, "project")
+
+        assert handler.await_args.args[1]["timeout_seconds"] == expected_timeout
+        assert "timeout_seconds" not in context
+
+    @pytest.mark.asyncio
+    async def test_exec_step_omits_timeout_to_preserve_handler_default(
+        self, mock_db, mock_execution_manager, mock_llm_service
+    ) -> None:
+        """Omitted step timeout leaves the handler's 300-second default in effect."""
+        from gobby.workflows.definitions import PipelineStep
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+        )
+        context = {"inputs": {}, "steps": {}}
+        observed_timeouts = []
+        wait_for = asyncio.wait_for
+
+        async def capture_timeout(awaitable, timeout):
+            observed_timeouts.append(timeout)
+            return await wait_for(awaitable, timeout=timeout)
+
+        with patch(
+            "gobby.workflows.pipeline.handlers.asyncio.wait_for",
+            side_effect=capture_timeout,
+        ):
+            await executor._execute_step(
+                PipelineStep(id="exec", exec="echo ok"), context, "project"
+            )
+
+        assert observed_timeouts == [300]
+        assert "timeout_seconds" not in context
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("rendered_timeout", [0, -1, "invalid"])
+    async def test_exec_step_rejects_invalid_rendered_timeout(
+        self,
+        mock_db,
+        mock_execution_manager,
+        mock_llm_service,
+        rendered_timeout,
+    ) -> None:
+        """Templated exec timeouts are revalidated after rendering."""
+        from gobby.workflows.definitions import PipelineStep
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+        from gobby.workflows.templates import TemplateEngine
+
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            template_engine=TemplateEngine(),
+        )
+        step = PipelineStep(
+            id="exec",
+            exec="echo ok",
+            timeout_seconds="${{ inputs.exec_timeout }}",
+        )
+
+        with pytest.raises(ValueError, match="timeout_seconds"):
+            await executor._execute_step(
+                step,
+                {"inputs": {"exec_timeout": rendered_timeout}, "steps": {}},
+                "project",
+            )
 
 
 class TestExecuteExecStep:

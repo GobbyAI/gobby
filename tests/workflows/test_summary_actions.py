@@ -7,6 +7,7 @@ Tests cover:
 - generate_summary: Session summary generation via LLM
 """
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -17,14 +18,54 @@ import pytest
 
 from gobby.config.sessions import SessionSummaryConfig
 from gobby.sessions.analyzer import HandoffContext
+from gobby.sessions.summary_transcripts import TRANSCRIPT_FALLBACK_MAX_CHARS
 from gobby.workflows.summary_actions import (
     _format_structured_context,
     _write_summary_file,
     format_turns_for_llm,
     generate_summary,
+    schedule_tmux_window_rename,
 )
 
 pytestmark = pytest.mark.unit
+
+VALID_SUMMARY_CONTENT = """# Session Summary
+
+## Current State
+
+The implementation is complete and the focused workflow tests pass with the expected behavior.
+
+## Next Steps
+
+Continue with the remaining task validation and lifecycle handoff steps.
+"""
+
+
+@pytest.mark.asyncio
+async def test_scheduled_tmux_rename_is_retained_until_done() -> None:
+    from gobby.hooks import background_tasks
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def rename(_session: Any, _title: str) -> None:
+        started.set()
+        await release.wait()
+
+    with patch("gobby.workflows.summary_actions._rename_tmux_window", side_effect=rename):
+        schedule_tmux_window_rename(MagicMock(), "title")
+
+        await started.wait()
+        assert len(background_tasks._background_tasks) == 1
+        task = next(iter(background_tasks._background_tasks))
+        callback_complete = asyncio.Event()
+        task.add_done_callback(lambda _task: callback_complete.set())
+
+        release.set()
+        await callback_complete.wait()
+
+        assert not background_tasks._background_tasks
+
 
 # =============================================================================
 # Fixtures
@@ -42,7 +83,7 @@ def mock_session_manager() -> MagicMock:
 def mock_llm_service() -> MagicMock:
     """Create a mock LLM service."""
     service = MagicMock()
-    service.call_feature = AsyncMock(return_value="Generated Summary Content")
+    service.call_feature = AsyncMock(return_value=VALID_SUMMARY_CONTENT)
     return service
 
 
@@ -1038,8 +1079,226 @@ class TestGenerateSummary:
 
         assert result is not None
         assert result["summary_generated"] is True
-        assert result["summary_length"] == len("Generated Summary Content")
+        assert result["summary_length"] == len(VALID_SUMMARY_CONTENT)
         mock_session_manager.update_summary.assert_called_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("suffix", "source", "transcript_content"),
+        [
+            (
+                ".jsonl",
+                "claude",
+                json.dumps({"message": {"role": "user", "content": "Help me"}}) + "\n{torn",
+            ),
+            (
+                ".json",
+                "qwen",
+                json.dumps(
+                    {
+                        "messages": [
+                            {"type": "user", "content": [{"text": "Help me"}]},
+                        ]
+                    }
+                ),
+            ),
+            (
+                ".json",
+                "gemini",
+                json.dumps(
+                    {
+                        "messages": [
+                            {"type": "gemini", "content": "I can help"},
+                        ]
+                    }
+                ),
+            ),
+        ],
+    )
+    async def test_generate_summary_reads_supported_transcript_formats(
+        self,
+        suffix: str,
+        source: str,
+        transcript_content: str,
+        mock_session_manager,
+        mock_llm_service,
+        mock_transcript_processor,
+        summary_config,
+        tmp_path: Path,
+    ) -> None:
+        transcript_file = tmp_path / f"transcript{suffix}"
+        transcript_file.write_text(transcript_content)
+        session = MagicMock(
+            transcript_path=str(transcript_file),
+            source=source,
+            digest_markdown="Existing digest",
+            terminal_context={"cwd": str(tmp_path)},
+        )
+        mock_session_manager.get.return_value = session
+        mock_transcript_processor.extract_turns_since_clear.side_effect = (
+            lambda turns, max_turns: turns[-max_turns:]
+        )
+        mock_transcript_processor.extract_last_messages.return_value = []
+
+        with (
+            patch("gobby.workflows.summary_actions.get_git_status", return_value="clean"),
+            patch("gobby.workflows.summary_actions.get_file_changes", return_value="No changes"),
+            patch("gobby.workflows.summary_actions.get_git_diff_summary", return_value=""),
+            patch("gobby.workflows.summary_actions.get_recent_git_commits", return_value=[]),
+        ):
+            result = await generate_summary(
+                session_manager=mock_session_manager,
+                session_id="test-session",
+                llm_service=mock_llm_service,
+                transcript_processor=mock_transcript_processor,
+                session_summary_config=summary_config,
+            )
+
+        assert result is not None
+        assert result["summary_generated"] is True
+        parsed_turns = mock_transcript_processor.extract_turns_since_clear.call_args.args[0]
+        assert len(parsed_turns) == 1
+
+    @pytest.mark.asyncio
+    async def test_generate_summary_offloads_io_and_uses_session_workspace(
+        self,
+        mock_session_manager,
+        mock_llm_service,
+        mock_transcript_processor,
+        summary_config,
+        tmp_path: Path,
+    ) -> None:
+        transcript_file = tmp_path / "transcript.jsonl"
+        transcript_file.write_text(json.dumps({"message": {"role": "user", "content": "Help me"}}))
+        session = MagicMock(
+            transcript_path=str(transcript_file),
+            source="claude",
+            digest_markdown="Existing digest",
+            terminal_context={"cwd": str(tmp_path)},
+        )
+        mock_session_manager.get.return_value = session
+        mock_transcript_processor.extract_turns_since_clear.return_value = []
+        mock_transcript_processor.extract_last_messages.return_value = []
+
+        async def run_in_thread(func: Any, *args: Any, **kwargs: Any) -> Any:
+            return func(*args, **kwargs)
+
+        with (
+            patch(
+                "gobby.workflows.summary_actions.asyncio.to_thread",
+                new=AsyncMock(side_effect=run_in_thread),
+            ) as to_thread,
+            patch("gobby.workflows.summary_actions.get_git_status", return_value="clean") as status,
+            patch(
+                "gobby.workflows.summary_actions.get_file_changes", return_value="No changes"
+            ) as changes,
+            patch("gobby.workflows.summary_actions.get_git_diff_summary", return_value="") as diff,
+            patch(
+                "gobby.workflows.summary_actions.get_recent_git_commits", return_value=[]
+            ) as commits,
+        ):
+            result = await generate_summary(
+                session_manager=mock_session_manager,
+                session_id="test-session",
+                llm_service=mock_llm_service,
+                transcript_processor=mock_transcript_processor,
+                session_summary_config=summary_config,
+            )
+
+        assert result is not None
+        assert result["summary_generated"] is True
+        assert to_thread.await_count == 6
+        status.assert_called_once_with(str(tmp_path))
+        changes.assert_called_once_with(str(tmp_path))
+        diff.assert_called_once_with(8000, str(tmp_path))
+        commits.assert_called_once_with(10, str(tmp_path))
+
+    @pytest.mark.asyncio
+    async def test_generate_summary_caps_prompt_inputs(
+        self,
+        mock_session_manager,
+        mock_llm_service,
+        mock_transcript_processor,
+        summary_config,
+        tmp_path: Path,
+    ) -> None:
+        transcript_file = tmp_path / "transcript.jsonl"
+        transcript_file.write_text(
+            json.dumps({"message": {"role": "user", "content": "t" * 30_000}})
+        )
+        session = MagicMock(
+            transcript_path=str(transcript_file),
+            source="claude",
+            digest_markdown="d" * 30_000,
+            terminal_context={"cwd": str(tmp_path)},
+        )
+        mock_session_manager.get.return_value = session
+        mock_transcript_processor.extract_turns_since_clear.side_effect = (
+            lambda turns, max_turns: turns[-max_turns:]
+        )
+        mock_transcript_processor.extract_last_messages.return_value = []
+
+        with (
+            patch("gobby.workflows.summary_actions.get_git_status", return_value="clean"),
+            patch("gobby.workflows.summary_actions.get_file_changes", return_value="No changes"),
+            patch("gobby.workflows.summary_actions.get_git_diff_summary", return_value=""),
+            patch("gobby.workflows.summary_actions.get_recent_git_commits", return_value=[]),
+        ):
+            result = await generate_summary(
+                session_manager=mock_session_manager,
+                session_id="test-session",
+                llm_service=mock_llm_service,
+                transcript_processor=mock_transcript_processor,
+                session_summary_config=summary_config,
+                template="{transcript_summary}|{structured_context}",
+            )
+
+        assert result is not None
+        assert result["summary_generated"] is True
+        transcript_context, structured_context = mock_llm_service.call_feature.await_args.args[
+            1
+        ].split("|", maxsplit=1)
+        assert len(transcript_context) <= TRANSCRIPT_FALLBACK_MAX_CHARS + 4
+        assert len(structured_context) <= TRANSCRIPT_FALLBACK_MAX_CHARS + 4
+
+    @pytest.mark.parametrize("llm_output", ["", "   \n"])
+    async def test_generate_summary_rejects_invalid_llm_output(
+        self,
+        llm_output: str,
+        mock_session_manager,
+        mock_llm_service,
+        mock_transcript_processor,
+        summary_config,
+        tmp_path: Path,
+    ) -> None:
+        """Invalid LLM output must not replace an existing summary."""
+        transcript_file = tmp_path / "transcript.jsonl"
+        transcript_file.write_text(
+            json.dumps({"message": {"role": "user", "content": "Help me"}}) + "\n"
+        )
+
+        session = MagicMock()
+        session.transcript_path = str(transcript_file)
+        session.summary_markdown = "Existing good summary"
+        mock_session_manager.get.return_value = session
+        mock_llm_service.call_feature.return_value = llm_output
+
+        with (
+            patch("gobby.workflows.summary_actions.get_git_status", return_value="clean"),
+            patch("gobby.workflows.summary_actions.get_file_changes", return_value="No changes"),
+            patch("gobby.workflows.summary_actions.get_git_diff_summary", return_value=""),
+        ):
+            result = await generate_summary(
+                session_manager=mock_session_manager,
+                session_id="test-session",
+                llm_service=mock_llm_service,
+                transcript_processor=mock_transcript_processor,
+                session_summary_config=summary_config,
+            )
+
+        assert result == {"error": "LLM returned invalid summary"}
+        mock_session_manager.update_summary.assert_not_called()
+        assert session.summary_markdown == "Existing good summary"
 
     @pytest.mark.asyncio
     async def test_generate_summary_invalid_mode(
@@ -1100,9 +1359,12 @@ class TestGenerateSummary:
                 session_summary_config=summary_config,
                 template="Mode: {mode}\nTranscript:\n{transcript_summary}",
                 mode="clear",
+                write_file=True,
+                output_path=str(tmp_path),
             )
 
         assert result["summary_generated"] is True
+        assert result["summary_file"] == str(tmp_path / "test-session-clear.md")
         prompt = mock_llm_service.call_feature.await_args.args[1]
         assert "Mode: clear" in prompt
 
@@ -1142,9 +1404,12 @@ class TestGenerateSummary:
                 session_summary_config=summary_config,
                 template="Mode: {mode}\nTranscript:\n{transcript_summary}",
                 mode="compact",
+                write_file=True,
+                output_path=str(tmp_path),
             )
 
         assert result["summary_generated"] is True
+        assert result["summary_file"] == str(tmp_path / "test-session-compact.md")
         prompt = mock_llm_service.call_feature.await_args.args[1]
         assert "Mode: compact" in prompt
 
@@ -1296,7 +1561,7 @@ class TestGenerateSummary:
         assert result == {"error": "Transcript not found"}
 
     @pytest.mark.asyncio
-    async def test_generate_summary_transcript_processing_error(
+    async def test_generate_summary_skips_malformed_transcript_lines(
         self,
         mock_session_manager,
         mock_llm_service,
@@ -1304,7 +1569,7 @@ class TestGenerateSummary:
         summary_config,
         tmp_path: Path,
     ) -> None:
-        """Test summary generation when transcript processing fails."""
+        """Malformed JSONL lines do not abort summary generation."""
         transcript_file = tmp_path / "bad_transcript.jsonl"
         with open(transcript_file, "w") as f:
             f.write("invalid json content\n")
@@ -1321,7 +1586,8 @@ class TestGenerateSummary:
             session_summary_config=summary_config,
         )
 
-        assert "error" in result
+        assert result is not None
+        assert result["summary_generated"] is True
 
     @pytest.mark.asyncio
     async def test_generate_summary_llm_error(
@@ -1584,7 +1850,7 @@ class TestWriteSummaryFile:
         from pathlib import Path
 
         filename = Path(result).name
-        assert filename == "my-session-full.md"
+        assert filename == "my-session-clear.md"
 
     @pytest.mark.asyncio
     async def test_write_summary_file_compact_mode(self, tmp_path: Path) -> None:

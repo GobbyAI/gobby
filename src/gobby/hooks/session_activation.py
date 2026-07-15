@@ -15,6 +15,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from gobby.hooks.events import HookEvent
+from gobby.storage.hub.protocol import WorkflowInstanceMutation
 
 logger = logging.getLogger(__name__)
 
@@ -648,37 +649,39 @@ def _ensure_step_workflow_from_definition(
     from gobby.workflows.state_manager import WorkflowInstanceManager
 
     instance_mgr = WorkflowInstanceManager(db)
-    if instance_mgr.get_instance(session_id, step_name) is not None:
-        return False
+    lock = WorkflowInstanceMutation(session_id=session_id, workflow_name=step_name)
+    with db.transaction_immediate(lock):
+        if instance_mgr.get_instance(session_id, step_name) is not None:
+            return False
 
-    row = LocalWorkflowDefinitionManager(db).get_by_name(
-        step_name,
-        project_id=getattr(session, "project_id", None),
-    )
-    if row is None:
-        return False
-    try:
-        definition = json.loads(row.definition_json)
-    except (json.JSONDecodeError, TypeError):
-        return False
-    steps = definition.get("steps") or []
-    first = steps[0] if steps else {}
-    first_step = first.get("name") if isinstance(first, dict) else None
-    if not first_step:
-        return False
-
-    instance_mgr.save_instance(
-        WorkflowInstance(
-            id=str(uuid.uuid4()),
-            session_id=session_id,
-            workflow_name=step_name,
-            enabled=True,
-            priority=10,
-            current_step=first_step,
-            step_entered_at=datetime.now(UTC),
-            variables=definition.get("variables") or {},
+        row = LocalWorkflowDefinitionManager(db).get_by_name(
+            step_name,
+            project_id=getattr(session, "project_id", None),
         )
-    )
+        if row is None:
+            return False
+        try:
+            definition = json.loads(row.definition_json)
+        except (json.JSONDecodeError, TypeError):
+            return False
+        steps = definition.get("steps") or []
+        first = steps[0] if steps else {}
+        first_step = first.get("name") if isinstance(first, dict) else None
+        if not first_step:
+            return False
+
+        instance_mgr.save_instance(
+            WorkflowInstance(
+                id=str(uuid.uuid4()),
+                session_id=session_id,
+                workflow_name=step_name,
+                enabled=True,
+                priority=10,
+                current_step=first_step,
+                step_entered_at=datetime.now(UTC),
+                variables=definition.get("variables") or {},
+            )
+        )
     return True
 
 

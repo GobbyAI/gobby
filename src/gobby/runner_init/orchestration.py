@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-RETIRED_SYSTEM_CRON_JOBS = ("gobby:conductor-tick",)
+RETIRED_SYSTEM_CRON_JOBS = ("gobby:conductor-tick", "gobby:pipeline-heartbeat")
 
 
 class _CronDependencyUnavailable(Exception):

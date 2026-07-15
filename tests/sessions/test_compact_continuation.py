@@ -34,6 +34,21 @@ pytestmark = pytest.mark.unit
 
 SESSION_ID = "00000000-0000-4000-8000-000000000001"
 SOURCE_SESSION_ID = "00000000-0000-4000-8000-000000000002"
+PROJECT_ID = "00000000-0000-4000-8000-000000000003"
+
+
+@pytest.fixture
+def session_db(hub_db: HubDatabase) -> HubDatabase:
+    hub_db.execute(
+        "INSERT INTO projects (id, name) VALUES (%s, %s)",
+        (PROJECT_ID, "compact-continuation-test"),
+    )
+    hub_db.execute(
+        "INSERT INTO sessions (id, external_id, machine_id, source, project_id) "
+        "VALUES (%s, %s, %s, %s, %s)",
+        (SESSION_ID, "compact-session", "test-machine", "codex", PROJECT_ID),
+    )
+    return hub_db
 
 
 class _FakeTmux:
@@ -80,14 +95,14 @@ async def test_scheduled_task_is_retained_and_multiline_prompt_is_sent_once() ->
 
 
 def test_merge_session_variable_serializes_with_workflow_first_write(
-    hub_db: HubDatabase,
+    session_db: HubDatabase,
 ) -> None:
-    manager = SessionVariableManager(hub_db)
+    manager = SessionVariableManager(session_db)
     barrier = threading.Barrier(3)
 
     def merge_compact_variable() -> None:
         barrier.wait()
-        _merge_session_variable(hub_db, SESSION_ID, "compact", True)
+        _merge_session_variable(session_db, SESSION_ID, "compact", True)
 
     def merge_workflow_variable() -> None:
         barrier.wait()
@@ -106,15 +121,15 @@ def test_merge_session_variable_serializes_with_workflow_first_write(
 
 
 def test_pop_session_variable_serializes_with_workflow_write(
-    hub_db: HubDatabase,
+    session_db: HubDatabase,
 ) -> None:
-    manager = SessionVariableManager(hub_db)
+    manager = SessionVariableManager(session_db)
     manager.merge_variables(SESSION_ID, {"discard": True})
     barrier = threading.Barrier(3)
 
     def pop_compact_variable() -> bool:
         barrier.wait()
-        return bool(_pop_session_variable(hub_db, SESSION_ID, "discard"))
+        return bool(_pop_session_variable(session_db, SESSION_ID, "discard"))
 
     def merge_workflow_variable() -> None:
         barrier.wait()
@@ -132,10 +147,10 @@ def test_pop_session_variable_serializes_with_workflow_write(
 
 @pytest.mark.asyncio
 async def test_fallback_consumes_pending_marker_and_sends_prompt(
-    hub_db: HubDatabase,
+    session_db: HubDatabase,
 ) -> None:
     """Send one continuation prompt and clear the pending marker."""
-    db = hub_db
+    db = session_db
     session = SimpleNamespace(
         id=SESSION_ID,
         terminal_context={"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
@@ -161,20 +176,20 @@ async def test_fallback_consumes_pending_marker_and_sends_prompt(
     assert COMPACT_SELF_CONTINUE_VARIABLE not in variables
 
 
-def test_pending_marker_stores_summary_session_id(hub_db: HubDatabase) -> None:
+def test_pending_marker_stores_summary_session_id(session_db: HubDatabase) -> None:
     assert mark_compact_self_continuation_pending(
-        hub_db,
+        session_db,
         SESSION_ID,
         summary_session_id=SOURCE_SESSION_ID,
     )
 
-    variables = SessionVariableManager(hub_db).get_variables(SESSION_ID)
+    variables = SessionVariableManager(session_db).get_variables(SESSION_ID)
     assert variables[COMPACT_SELF_CONTINUE_VARIABLE]["summary_session_id"] == SOURCE_SESSION_ID
 
 
-def test_failed_schedule_restores_exact_pending_marker(hub_db: HubDatabase) -> None:
+def test_failed_schedule_restores_exact_pending_marker(session_db: HubDatabase) -> None:
     created_at = datetime.now(UTC).isoformat()
-    sv_mgr = SessionVariableManager(hub_db)
+    sv_mgr = SessionVariableManager(session_db)
     payload = {
         "prompt": "continue exactly",
         "created_at": created_at,
@@ -187,7 +202,7 @@ def test_failed_schedule_restores_exact_pending_marker(hub_db: HubDatabase) -> N
         return_value=False,
     ):
         scheduled = consume_and_schedule_compact_self_continuation(
-            hub_db,
+            session_db,
             pending_session_id=SESSION_ID,
             target_session=SimpleNamespace(id=SESSION_ID),
         )
@@ -196,8 +211,8 @@ def test_failed_schedule_restores_exact_pending_marker(hub_db: HubDatabase) -> N
     assert sv_mgr.get_variables(SESSION_ID)[COMPACT_SELF_CONTINUE_VARIABLE] == payload
 
 
-def test_failed_schedule_does_not_replace_newer_pending_marker(hub_db: HubDatabase) -> None:
-    sv_mgr = SessionVariableManager(hub_db)
+def test_failed_schedule_does_not_replace_newer_pending_marker(session_db: HubDatabase) -> None:
+    sv_mgr = SessionVariableManager(session_db)
     old_payload = {
         "prompt": "old prompt",
         "created_at": datetime.now(UTC).isoformat(),
@@ -217,7 +232,7 @@ def test_failed_schedule_does_not_replace_newer_pending_marker(hub_db: HubDataba
         side_effect=fail_after_new_marker,
     ):
         scheduled = consume_and_schedule_compact_self_continuation(
-            hub_db,
+            session_db,
             pending_session_id=SESSION_ID,
             target_session=SimpleNamespace(id=SESSION_ID),
         )
@@ -227,9 +242,9 @@ def test_failed_schedule_does_not_replace_newer_pending_marker(hub_db: HubDataba
 
 
 def test_persist_compact_resume_required_skills_excludes_loaded_skills(
-    hub_db: HubDatabase,
+    session_db: HubDatabase,
 ) -> None:
-    db = hub_db
+    db = session_db
     sv_mgr = SessionVariableManager(db)
     sv_mgr.merge_variables(
         SESSION_ID,
@@ -272,10 +287,10 @@ def test_build_compact_self_continue_prompt_includes_skill_fetch_directives() ->
 
 @pytest.mark.asyncio
 async def test_fallback_noops_when_marker_was_already_consumed(
-    hub_db: HubDatabase,
+    session_db: HubDatabase,
 ) -> None:
     """Skip prompt delivery when the pending marker is already absent."""
-    db = hub_db
+    db = session_db
     session = SimpleNamespace(
         id=SESSION_ID,
         terminal_context={"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},

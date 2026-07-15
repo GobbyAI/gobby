@@ -117,6 +117,14 @@ class TestStepToolGates:
         assert len(errors) == 1
         assert errors[0].code == "MALFORMED_MCP_TOOL_REF"
 
+    def test_malformed_allowed_mcp_ref_is_warning(self) -> None:
+        step = WorkflowStep(name="work", allowed_mcp_tools=["claim_task"])
+        result = _evaluation()
+        check_step_tool_gates(step, result)
+        warnings = [i for i in result.items if i.level == "warning"]
+        assert len(warnings) == 1
+        assert warnings[0].code == "MALFORMED_MCP_TOOL_REF"
+
     def test_wellformed_mcp_refs_pass_static_check(self) -> None:
         step = WorkflowStep(
             name="work",
@@ -209,6 +217,7 @@ class TestBlockedMcpSemanticSeverity:
         result = await evaluate_workflow("wf", loader, mcp_manager=mcp_manager)
         warnings = [i for i in result.items if i.code == "UNKNOWN_MCP_TOOL"]
         assert warnings and all(i.level == "warning" for i in warnings)
+        assert result.valid
 
 
 def _iter_bundled(pattern: str) -> list[Path]:

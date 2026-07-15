@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, cast
 
 from opentelemetry.trace import Status, StatusCode
 
@@ -41,6 +41,9 @@ if TYPE_CHECKING:
     from gobby.workflows.templates import TemplateEngine
 
 logger = logging.getLogger(__name__)
+
+_P = ParamSpec("_P")
+_T = TypeVar("_T")
 
 
 # Type alias for event callback
@@ -137,6 +140,12 @@ class PipelineExecutor(
         self._detached_tasks: set[asyncio.Task[Any]] = set()
         self._detached_execution_ids: set[str] = set()
 
+    async def _run_db(self, func: Callable[_P, _T], *args: _P.args, **kwargs: _P.kwargs) -> _T:
+        """Run synchronous storage work through the configured database executor."""
+        if self.run_db:
+            return cast(_T, await self.run_db(func, *args, **kwargs))
+        return await asyncio.to_thread(func, *args, **kwargs)
+
     def _create_execution_record(
         self,
         pipeline: PipelineDefinition,
@@ -180,8 +189,11 @@ class PipelineExecutor(
         if not pipeline.enabled:
             raise ValueError(f"Pipeline '{pipeline.name}' is disabled")
 
-        execution = self._create_execution_record(pipeline, inputs, session_id, project_id)
-        updated = self.execution_manager.update_execution_status(
+        execution = await self._run_db(
+            self._create_execution_record, pipeline, inputs, session_id, project_id
+        )
+        updated = await self._run_db(
+            self.execution_manager.update_execution_status,
             execution_id=execution.id,
             status=ExecutionStatus.RUNNING,
         )
@@ -323,7 +335,9 @@ class PipelineExecutor(
                 _terminal_statuses = {ExecutionStatus.CANCELLED, ExecutionStatus.COMPLETED}
                 prior_status: ExecutionStatus | None = None
                 if execution_id:
-                    execution = self.execution_manager.get_execution(execution_id)
+                    execution = await self._run_db(
+                        self.execution_manager.get_execution, execution_id
+                    )
                     if not execution:
                         raise ValueError(f"Execution {execution_id} not found")
                     prior_status = execution.status
@@ -334,7 +348,8 @@ class PipelineExecutor(
                             f"Start a new execution instead."
                         )
                 else:
-                    execution = self._create_execution_record(
+                    execution = await self._run_db(
+                        self._create_execution_record,
                         pipeline,
                         inputs,
                         session_id,
@@ -344,11 +359,23 @@ class PipelineExecutor(
                         span.set_attribute("execution_id", str(execution.id))
                     execution_id = execution.id
 
-                # 2. Update status to RUNNING
-                updated = self.execution_manager.update_execution_status(
-                    execution_id=execution.id,
-                    status=ExecutionStatus.RUNNING,
-                )
+                # 2. Update status to RUNNING. Failed resumes use an atomic claim
+                # so concurrent callers cannot both reset and execute the same rows.
+                if prior_status == ExecutionStatus.FAILED:
+                    updated = await self._run_db(
+                        self.execution_manager.claim_failed_execution_for_resume, execution.id
+                    )
+                    if updated is None:
+                        execution = None
+                        raise ValueError(
+                            f"Cannot resume execution {execution_id}: it is already being resumed"
+                        )
+                else:
+                    updated = await self._run_db(
+                        self.execution_manager.update_execution_status,
+                        execution_id=execution.id,
+                        status=ExecutionStatus.RUNNING,
+                    )
                 if updated:
                     execution = updated
 
@@ -370,7 +397,8 @@ class PipelineExecutor(
 
                 if _depth == 0 and self.session_manager:
                     try:
-                        child_session = self.session_manager.register(
+                        child_session = await self._run_db(
+                            self.session_manager.register,
                             external_id=f"pipeline-{execution.id}",
                             machine_id="pipeline",
                             source="pipeline",
@@ -386,7 +414,8 @@ class PipelineExecutor(
                         # can tell it apart from agent sessions.
                         from gobby.workflows.state_manager import SessionVariableManager
 
-                        _best_effort_child_session_setup(
+                        await self._run_db(
+                            _best_effort_child_session_setup,
                             lambda: SessionVariableManager(self.db).set_variable(
                                 child_session.id, "_agent_type", "pipeline"
                             ),
@@ -396,7 +425,8 @@ class PipelineExecutor(
                         # execution.session_id (list_by_parent); without the
                         # child session persisted, long wait steps get marked
                         # FAILED as "stalled, no agents" while the agent runs.
-                        _best_effort_child_session_setup(
+                        await self._run_db(
+                            _best_effort_child_session_setup,
                             lambda: self.execution_manager.update_execution_session(
                                 execution_id, child_session.id
                             ),
@@ -459,17 +489,27 @@ class PipelineExecutor(
                     "_pipeline_stack": _pipeline_stack,
                 }
 
-                # Fetch existing steps if resuming a non-failed execution.
-                # Failed executions re-execute all steps since completed steps
-                # may reference stale agent sessions or other invalidated state.
+                # Fetch existing steps when resuming. Failed executions reset all
+                # persisted steps so they re-execute without creating duplicate rows.
                 existing_steps: dict[str, StepExecution] = {}
-                if execution_id and prior_status != ExecutionStatus.FAILED:
-                    steps = self.execution_manager.get_steps_for_execution(execution_id)
+                if execution_id:
+                    steps = await self._run_db(
+                        self.execution_manager.get_steps_for_execution, execution_id
+                    )
+                    if prior_status == ExecutionStatus.FAILED and steps:
+                        await self._run_db(
+                            self.execution_manager.reset_steps_from,
+                            execution_id,
+                            steps[0].step_id,
+                        )
+                        steps = await self._run_db(
+                            self.execution_manager.get_steps_for_execution, execution_id
+                        )
                     existing_steps = {s.step_id: s for s in steps}
 
                 # 4. Iterate through steps in order
                 for step in pipeline.steps:
-                    cancelled = self._get_cancelled_execution(execution.id)
+                    cancelled = await self._run_db(self._get_cancelled_execution, execution.id)
                     if cancelled:
                         self._close_pipeline_session(pipeline_session_id, caller_session_id)
                         return cancelled
@@ -498,18 +538,15 @@ class PipelineExecutor(
                             context["steps"][step.id] = {"output": None}
                             continue
 
-                        # If waiting approval, check if we should check gate again
-                        # If we are resuming, it might have been approved
+                        # A still-waiting step will raise ApprovalRequired again.
+                        # Approved steps are reset to PENDING and execute below.
                         if step_execution.status == StepStatus.WAITING_APPROVAL:
-                            # If the step is still marked as waiting approval in DB,
-                            # checking the gate will just re-raise ApprovalRequired.
-                            # If it was approved, status should be COMPLETED.
-                            # So we can just proceed to check/execute.
                             pass
 
                     # Create new step execution if not exists
                     if not step_execution:
-                        step_execution = self.execution_manager.create_step_execution(
+                        step_execution = await self._run_db(
+                            self.execution_manager.create_step_execution,
                             execution_id=execution.id,
                             step_id=step.id,
                             input_json=json_dumps(
@@ -518,11 +555,13 @@ class PipelineExecutor(
                             if context
                             else None,
                         )
+                    assert step_execution is not None
 
                     # Check if step should run based on condition
                     if not self.renderer.should_run_step(step, context):
                         # Skip this step
-                        self.execution_manager.update_step_execution(
+                        await self._run_db(
+                            self.execution_manager.update_step_execution,
                             step_execution_id=step_execution.id,
                             status=StepStatus.SKIPPED,
                         )
@@ -543,7 +582,8 @@ class PipelineExecutor(
                         continue
 
                     # Update step status to RUNNING
-                    self.execution_manager.update_step_execution(
+                    await self._run_db(
+                        self.execution_manager.update_step_execution,
                         step_execution_id=step_execution.id,
                         status=StepStatus.RUNNING,
                     )
@@ -566,7 +606,7 @@ class PipelineExecutor(
                     # Execute the step
                     step_output = await self._execute_step(step, context, project_id)
 
-                    cancelled = self._get_cancelled_execution(execution.id)
+                    cancelled = await self._run_db(self._get_cancelled_execution, execution.id)
                     if cancelled:
                         current_step_execution = None
                         self._close_pipeline_session(pipeline_session_id, caller_session_id)
@@ -580,7 +620,8 @@ class PipelineExecutor(
                             or "Unknown error"
                         )
                         context["steps"][step.id] = {"output": step_output}
-                        self.execution_manager.update_step_execution(
+                        await self._run_db(
+                            self.execution_manager.update_step_execution,
                             step_execution_id=step_execution.id,
                             status=StepStatus.FAILED,
                             output_json=json_dumps(step_output),
@@ -589,6 +630,18 @@ class PipelineExecutor(
                         raise RuntimeError(
                             f"Step '{step.id}' failed with exit code {step_output['exit_code']}"
                         )
+
+                    if isinstance(step_output, dict) and "error" in step_output:
+                        error_msg = str(step_output["error"])
+                        context["steps"][step.id] = {"output": step_output}
+                        await self._run_db(
+                            self.execution_manager.update_step_execution,
+                            step_execution_id=step_execution.id,
+                            status=StepStatus.FAILED,
+                            output_json=json_dumps(step_output),
+                            error=error_msg,
+                        )
+                        raise RuntimeError(f"Step '{step.id}' failed: {error_msg}")
 
                     # For exec steps with JSON stdout, merge parsed data into output
                     if isinstance(step_output, dict) and "stdout" in step_output:
@@ -603,7 +656,8 @@ class PipelineExecutor(
                     context["steps"][step.id] = {"output": step_output}
 
                     # Update step with output and mark completed
-                    self.execution_manager.update_step_execution(
+                    await self._run_db(
+                        self.execution_manager.update_step_execution,
                         step_execution_id=step_execution.id,
                         status=StepStatus.COMPLETED,
                         output_json=json_dumps(step_output) if step_output is not None else None,
@@ -619,17 +673,20 @@ class PipelineExecutor(
                         output=step_output,
                     )
 
-                cancelled = self._get_cancelled_execution(execution.id)
+                cancelled = await self._run_db(self._get_cancelled_execution, execution.id)
                 if cancelled:
                     self._close_pipeline_session(pipeline_session_id, caller_session_id)
                     return cancelled
 
                 # 5. Safety net — verify no steps failed before marking completed
-                failed_steps = self.execution_manager.get_failed_steps(execution.id)
+                failed_steps = await self._run_db(
+                    self.execution_manager.get_failed_steps, execution.id
+                )
                 if failed_steps:
                     failed_ids = [s.step_id for s in failed_steps]
                     outputs = self._build_outputs(pipeline, context)
-                    self.execution_manager.update_execution_status(
+                    await self._run_db(
+                        self.execution_manager.update_execution_status,
                         execution_id=execution.id,
                         status=ExecutionStatus.FAILED,
                         outputs_json=json_dumps(outputs),
@@ -638,13 +695,20 @@ class PipelineExecutor(
 
                 # Mark execution as completed
                 outputs = self._build_outputs(pipeline, context)
-                completed = self.execution_manager.update_execution_status(
+                completed = await self._run_db(
+                    self.execution_manager.update_execution_status,
                     execution_id=execution.id,
                     status=ExecutionStatus.COMPLETED,
                     outputs_json=json_dumps(outputs),
                 )
                 if completed:
                     execution = completed
+
+                if self.webhook_notifier:
+                    await self.webhook_notifier.notify_complete(
+                        execution=execution,
+                        pipeline=pipeline,
+                    )
 
                 # Emit pipeline_completed event
                 await self._emit_event(
@@ -692,7 +756,8 @@ class PipelineExecutor(
                         and current_step_execution.status == StepStatus.RUNNING
                     ):
                         try:
-                            self.execution_manager.update_step_execution(
+                            await self._run_db(
+                                self.execution_manager.update_step_execution,
                                 step_execution_id=current_step_execution.id,
                                 status=StepStatus.FAILED,
                                 error=str(e),
@@ -704,7 +769,8 @@ class PipelineExecutor(
                             )
 
                     try:
-                        failed = self.execution_manager.update_execution_status(
+                        failed = await self._run_db(
+                            self.execution_manager.update_execution_status,
                             execution_id=execution.id,
                             status=ExecutionStatus.FAILED,
                             outputs_json=json_dumps({"error": str(e)}),
@@ -715,6 +781,13 @@ class PipelineExecutor(
                         logger.error(
                             f"Failed to mark execution {execution.id} as failed",
                             exc_info=True,
+                        )
+
+                    if self.webhook_notifier:
+                        await self.webhook_notifier.notify_failure(
+                            execution=execution,
+                            pipeline=pipeline,
+                            error=str(e),
                         )
 
                     # Emit pipeline_failed event

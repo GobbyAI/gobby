@@ -7,6 +7,7 @@ import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -31,6 +32,8 @@ def db(temp_db: HubDatabase) -> Any:
         "INSERT INTO projects (id, name) VALUES (%s, %s)",
         (PROJECT_ID, "test-project"),
     )
+    for session_id in (S1, S2, NEW_SESSION_ID):
+        _ensure_session(database, session_id)
     yield database
 
 
@@ -41,6 +44,26 @@ def _ensure_session(db: HubDatabase, session_id: str) -> None:
         "ON CONFLICT (id) DO NOTHING",
         (session_id, f"ext-{session_id}", "machine-1", "claude", PROJECT_ID),
     )
+
+
+def _install_variable_default(db: HubDatabase, name: str, value: Any) -> None:
+    from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+
+    LocalWorkflowDefinitionManager(db).create(
+        name=name,
+        definition_json=json.dumps({"variable": name, "value": value}),
+        workflow_type="variable",
+    )
+
+
+def _stored_variables(db: HubDatabase, session_id: str) -> dict[str, Any]:
+    row = db.fetchone(
+        "SELECT variables FROM session_variables WHERE session_id = %s",
+        (session_id,),
+    )
+    assert row is not None
+    variables = row["variables"]
+    return json.loads(variables) if isinstance(variables, str) else dict(variables)
 
 
 class _DictVariablesConnection:
@@ -70,6 +93,9 @@ class _DictVariablesDB:
     def transaction_immediate(self, _mutation: object) -> _DictVariablesConnection:
         return self.connection
 
+    def fetchall(self, _query: str, _params: tuple[Any, ...]) -> list[dict[str, Any]]:
+        return []
+
 
 def test_get_variables_empty(db: Any) -> None:
     """Test get_variables returns empty dict for new/unknown session."""
@@ -78,6 +104,41 @@ def test_get_variables_empty(db: Any) -> None:
     mgr = SessionVariableManager(db)
     result = mgr.get_variables(NONEXISTENT_SESSION_ID)
     assert result == {}
+
+
+def test_container_defaults_are_isolated_across_sessions_and_cache_hits(db: Any) -> None:
+    """Mutating one returned default must not mutate the cached value or another session."""
+    from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    LocalWorkflowDefinitionManager(db).create(
+        name="loaded-skills",
+        definition_json=json.dumps({"variable": "loaded_skills", "value": []}),
+        workflow_type="variable",
+    )
+    mgr = SessionVariableManager(db)
+
+    session_a = mgr.get_variables(S1)
+    session_a["loaded_skills"].append("development-discipline")
+    session_b = mgr.get_variables(S2)
+
+    assert session_b["loaded_skills"] == []
+    assert mgr._defaults_cache is not None
+    assert session_a["loaded_skills"] is not mgr._defaults_cache["loaded_skills"]
+    assert session_b["loaded_skills"] is not mgr._defaults_cache["loaded_skills"]
+
+
+@pytest.mark.parametrize("definition_json", [None, json.dumps("scalar")])
+def test_get_variables_skips_malformed_variable_defaults(
+    definition_json: str | None,
+) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    db = MagicMock()
+    db.fetchall.return_value = [{"name": "malformed-default", "definition_json": definition_json}]
+    db.fetchone.return_value = None
+
+    assert SessionVariableManager(db).get_variables(S1) == {}
 
 
 def test_append_to_set_variable_accepts_jsonb_dict_payload() -> None:
@@ -226,35 +287,11 @@ def test_adjust_counter_and_derive_boolean_clamps_at_zero(db: Any) -> None:
     assert variables["is_subagent"] is False
 
 
-def test_delete_variables(db: Any) -> None:
-    """Test delete_variables removes all variables for a session."""
-    from gobby.workflows.state_manager import SessionVariableManager
-
-    mgr = SessionVariableManager(db)
-
-    mgr.set_variable(S1, "a", 1)
-    mgr.set_variable(S1, "b", 2)
-
-    mgr.delete_variables(S1)
-
-    result = mgr.get_variables(S1)
-    assert result == {}
-
-
-def test_delete_variables_nonexistent(db: Any) -> None:
-    """Test delete_variables on non-existent session doesn't raise."""
-    from gobby.workflows.state_manager import SessionVariableManager
-
-    mgr = SessionVariableManager(db)
-    mgr.delete_variables(NONEXISTENT_SESSION_ID)
-    assert mgr.get_variables(NONEXISTENT_SESSION_ID) == {}
-
-
 def test_variables_persist_across_workflow_changes(db: Any) -> None:
-    """Test that session variables persist when workflows are enabled/disabled.
+    """Test that session variables persist when workflow instances change.
 
     Session variables live in their own table, independent of workflow instances.
-    Enabling/disabling a workflow should not affect session variables.
+    Creating/removing workflow instances should not affect session variables.
     """
     from gobby.workflows.definitions import WorkflowInstance
     from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
@@ -275,7 +312,7 @@ def test_variables_persist_across_workflow_changes(db: Any) -> None:
             workflow_name="auto-task",
         )
     )
-    wi_mgr.delete_instance(S1, "auto-task")
+    wi_mgr.delete_instances_for_session(S1)
 
     # Session variables should be unaffected
     result = sv_mgr.get_variables(S1)
@@ -328,6 +365,17 @@ def test_append_to_set_variable_creates_new(db: Any) -> None:
     assert result["session_edited_files"] == ["a.py"]
 
 
+def test_append_to_set_variable_persists_installed_default_entries(db: Any) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    _install_variable_default(db, "listed_servers", ["gobby-tasks"])
+    mgr = SessionVariableManager(db)
+
+    mgr.append_to_set_variable(S1, "listed_servers", ["gobby-memory"])
+
+    assert _stored_variables(db, S1)["listed_servers"] == ["gobby-memory", "gobby-tasks"]
+
+
 def test_append_to_set_variable_deduplicates(db: Any) -> None:
     """Duplicate values are ignored, result is sorted."""
     from gobby.workflows.state_manager import SessionVariableManager
@@ -338,6 +386,33 @@ def test_append_to_set_variable_deduplicates(db: Any) -> None:
 
     result = mgr.get_variables(S1)
     assert result["files"] == ["a.py", "b.py", "c.py"]
+
+
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [
+        (None, ["new.py"]),
+        (False, ["new.py"]),
+        (0, ["new.py"]),
+        ("", ["new.py"]),
+        ({"bad": "value"}, ["new.py"]),
+        (["kept.py", 0, ["unhashable"]], ["kept.py", "new.py"]),
+    ],
+)
+def test_append_to_set_variable_normalizes_stored_values(
+    db: Any,
+    stored: Any,
+    expected: list[str],
+) -> None:
+    """Only strings from stored lists participate in set mutation."""
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    mgr.set_variable(S1, "files", stored)
+
+    mgr.append_to_set_variable(S1, "files", ["new.py"])
+
+    assert mgr.get_variables(S1)["files"] == expected
 
 
 def test_append_to_set_variable_preserves_other_vars(db: Any) -> None:
@@ -430,6 +505,23 @@ def test_append_to_set_variable_and_conditional_merge_resets_evidence(db: Any) -
     assert variables["kept"] == "value"
 
 
+def test_conditional_append_persists_installed_default_entries(db: Any) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    _install_variable_default(db, "listed_servers", ["gobby-tasks"])
+    mgr = SessionVariableManager(db)
+
+    mgr.append_to_set_variable_and_conditional_merge(
+        S1,
+        "listed_servers",
+        ["gobby-memory"],
+        condition_name="verification_evidence_recorded",
+        updates={},
+    )
+
+    assert _stored_variables(db, S1)["listed_servers"] == ["gobby-memory", "gobby-tasks"]
+
+
 def test_append_to_set_variable_and_conditional_merge_preserves_unrecorded_evidence(
     db: Any,
 ) -> None:
@@ -477,6 +569,36 @@ def test_record_edited_file_tracks_sole_claimed_task(db: Any) -> None:
     variables = mgr.get_variables(S1)
     assert variables["session_edited_files"] == ["src/app.py"]
     assert variables["task_edited_files"] == {"task-1": ["src/app.py"]}
+
+
+def test_record_edited_file_persists_installed_default_entries(db: Any) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    _install_variable_default(db, "session_edited_files", ["seed.py"])
+    mgr = SessionVariableManager(db)
+
+    mgr.record_edited_file(
+        S1,
+        "src/app.py",
+        condition_name="verification_evidence_recorded",
+        updates={},
+    )
+
+    assert _stored_variables(db, S1)["session_edited_files"] == ["seed.py", "src/app.py"]
+
+
+def test_claim_startup_context_persists_installed_defaults(db: Any) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    _install_variable_default(db, "listed_servers", ["gobby-tasks"])
+    mgr = SessionVariableManager(db)
+
+    assert mgr.claim_startup_context(S1) == "full"
+
+    assert _stored_variables(db, S1) == {
+        "_startup_context_injected": True,
+        "listed_servers": ["gobby-tasks"],
+    }
 
 
 def test_record_edited_file_without_claim_has_no_task_scoped_entry(db: Any) -> None:

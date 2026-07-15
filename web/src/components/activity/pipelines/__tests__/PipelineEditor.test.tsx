@@ -35,7 +35,26 @@ const pipeline: WorkflowDetail = {
   canvas_json: null,
 }
 
-describe('PipelineEditor save failures', () => {
+describe('PipelineEditor', () => {
+  it('does not offer activate_workflow as a pipeline step type', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <PipelineEditor
+        pipeline={pipeline}
+        updateWorkflow={vi.fn()}
+        onBack={vi.fn()}
+        onExport={vi.fn()}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: /npm test/ }))
+
+    const typeSelect = screen.getByRole('combobox', { name: 'Type' })
+    expect(typeSelect).not.toHaveTextContent('Workflow')
+    expect(screen.queryByRole('option', { name: 'Workflow' })).not.toBeInTheDocument()
+  })
+
   it('shows a retryable error when the update returns no pipeline', async () => {
     const user = userEvent.setup()
     const updateWorkflow = vi.fn(async () => null)

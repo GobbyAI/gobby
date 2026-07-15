@@ -37,6 +37,7 @@ __all__ = [
     "Transaction",
     "WebChatSessionBootstrap",
     "WorkflowDefinitionMutation",
+    "WorkflowInstanceMutation",
 ]
 
 
@@ -220,6 +221,15 @@ class WorkflowDefinitionMutation:
 
     PRIORITY: ClassVar[int] = 850
     definition_id: str
+
+
+@dataclass(frozen=True)
+class WorkflowInstanceMutation:
+    """Serializes mutations to one workflow instance."""
+
+    PRIORITY: ClassVar[int] = 875
+    session_id: str
+    workflow_name: str
 
 
 @dataclass(frozen=True)

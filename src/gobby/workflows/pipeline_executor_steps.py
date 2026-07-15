@@ -10,6 +10,7 @@ from typing import Any, cast
 from opentelemetry.trace import Status, StatusCode
 
 from gobby.telemetry.tracing import create_span
+from gobby.workflows.definitions import PipelineDefinition
 from gobby.workflows.pipeline_state import ApprovalRequired, ExecutionStatus, PipelineExecution
 
 logger = logging.getLogger("gobby.workflows.pipeline_executor")
@@ -49,7 +50,6 @@ class PipelineExecutorStepMixin:
                 "prompt",
                 "invoke_pipeline",
                 "mcp",
-                "activate_workflow",
             )
             if getattr(step, f, None)
         ]
@@ -75,7 +75,13 @@ class PipelineExecutorStepMixin:
                     return await self._execute_wait_step(rendered_step, context)
                 elif step.exec:
                     # Execute shell command
-                    return await _facade_attr("execute_exec_step")(rendered_step.exec, context)
+                    exec_context = context
+                    if rendered_step.timeout_seconds is not None:
+                        exec_context = {
+                            **context,
+                            "timeout_seconds": rendered_step.timeout_seconds,
+                        }
+                    return await _facade_attr("execute_exec_step")(rendered_step.exec, exec_context)
                 elif step.prompt:
                     # Execute LLM prompt
                     return await _facade_attr("execute_prompt_step")(
@@ -97,8 +103,6 @@ class PipelineExecutorStepMixin:
                         self.tool_proxy_getter,
                         self.session_manager,
                     )
-                elif step.activate_workflow:
-                    raise RuntimeError("activate_workflow pipeline steps are not supported")
                 else:
                     logger.warning(f"Step {step.id} has no action defined")
                     return None
@@ -167,56 +171,64 @@ class PipelineExecutorStepMixin:
             await self.approval_manager.approve_step(token, approved_by),
         )
 
-        # Resume execution
-        if self.loader:
-            pipeline = None
-            try:
+        # Resume execution from the definition captured when the execution started.
+        pipeline = None
+        try:
+            definition_json = execution.definition_json
+            if isinstance(definition_json, str) and definition_json:
+                pipeline = PipelineDefinition.model_validate_json(definition_json)
+            elif self.loader:
                 pipeline = await self.loader.load_pipeline(
                     execution.pipeline_name, execution.project_id
                 )
-                if pipeline:
-                    if not pipeline.enabled:
-                        self.execution_manager.update_execution_status(
-                            execution_id=execution.id,
-                            status=ExecutionStatus.CANCELLED,
-                        )
-                        raise ValueError(f"Pipeline '{pipeline.name}' is disabled")
+            else:
+                logger.warning("No loader configured, cannot resume execution automatically")
+                return execution
+            if pipeline is None:
+                raise ValueError(f"Pipeline '{execution.pipeline_name}' not found for resume")
 
-                    inputs = {}
-                    if execution.inputs_json:
-                        try:
-                            inputs = json.loads(execution.inputs_json)
-                        except json.JSONDecodeError:
-                            pass
+            if not pipeline.enabled:
+                self.execution_manager.update_execution_status(
+                    execution_id=execution.id,
+                    status=ExecutionStatus.CANCELLED,
+                )
+                raise ValueError(f"Pipeline '{pipeline.name}' is disabled")
 
-                    # Execute (resume)
-                    execution = cast(
-                        PipelineExecution,
-                        await cast(Any, self).execute(
-                            pipeline=pipeline,
-                            inputs=inputs,
-                            project_id=execution.project_id,
-                            execution_id=execution.id,
-                        ),
-                    )
-            except ApprovalRequired:
-                # Pipeline paused again for another approval - this is expected
-                # Refresh execution to get latest status
-                exec_id = execution.id  # Save before get_execution may return None
-                refreshed = self.execution_manager.get_execution(exec_id)
-                if not refreshed:
-                    raise ValueError(f"Execution {exec_id} not found after resume") from None
-                execution = refreshed
-            except Exception as e:
-                if pipeline is not None and not pipeline.enabled:
-                    raise
-                logger.error(f"Failed to resume execution after approval: {e}", exc_info=True)
-                refreshed = self.execution_manager.get_execution(execution.id)
-                if refreshed:
-                    execution = refreshed
-                # Don't fail the approval if resume fails, but return refreshed state if available.
-        else:
-            logger.warning("No loader configured, cannot resume execution automatically")
+            inputs = {}
+            if execution.inputs_json:
+                try:
+                    inputs = json.loads(execution.inputs_json)
+                except json.JSONDecodeError:
+                    pass
+
+            execution = cast(
+                PipelineExecution,
+                await cast(Any, self).execute(
+                    pipeline=pipeline,
+                    inputs=inputs,
+                    project_id=execution.project_id,
+                    execution_id=execution.id,
+                ),
+            )
+        except ApprovalRequired:
+            # Pipeline paused again for another approval - this is expected
+            # Refresh execution to get latest status
+            exec_id = execution.id  # Save before get_execution may return None
+            refreshed = await cast(Any, self)._run_db(self.execution_manager.get_execution, exec_id)
+            if not refreshed:
+                raise ValueError(f"Execution {exec_id} not found after resume") from None
+            execution = refreshed
+        except Exception as e:
+            if pipeline is None or not pipeline.enabled:
+                raise
+            logger.error(f"Failed to resume execution after approval: {e}", exc_info=True)
+            refreshed = await cast(Any, self)._run_db(
+                self.execution_manager.get_execution, execution.id
+            )
+            if not refreshed:
+                raise
+            execution = refreshed
+            # Preserve approval state when execution itself fails after resolution.
 
         return execution
 
@@ -305,6 +317,8 @@ class PipelineExecutorStepMixin:
                     pass
             return step_output
 
+        except ApprovalRequired:
+            raise
         except Exception as e:
             logger.error(f"Nested pipeline execution failed: {e}", exc_info=True)
             return {

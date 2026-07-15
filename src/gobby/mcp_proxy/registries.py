@@ -210,7 +210,7 @@ def setup_internal_registries(
         logger.debug("Review-learning registry initialized")
 
     # Initialize workflows registry (always available — umbrella for pipelines + agent defs)
-    from gobby.mcp_proxy.tools.workflows import create_workflows_registry
+    from gobby.mcp_proxy.tools.workflows import create_workflows_registry, workflow_mcp_inventory
 
     workflows_registry = create_workflows_registry(
         loader=workflow_loader,
@@ -277,6 +277,8 @@ def setup_internal_registries(
             clone_storage=clone_storage,
             clone_manager=clone_git_manager,
             db=db,
+            workflow_loader=workflow_loader,
+            mcp_inventory=workflow_mcp_inventory(manager, mcp_manager),
             hook_manager_resolver=hook_manager_resolver,
             completion_registry=completion_registry,
             lifecycle_monitor=agent_lifecycle_monitor,

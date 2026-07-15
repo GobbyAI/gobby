@@ -38,7 +38,6 @@ import {
   getTypeColor,
 } from './pipelineStepModel'
 import {
-  ActivateWorkflowFields,
   CommonFields,
   ExecFields,
   InvokePipelineFields,
@@ -208,10 +207,6 @@ function PipelineStepCard({
           {type === 'invoke_pipeline' && (
             <InvokePipelineFields step={step} onChange={onUpdate} />
           )}
-          {type === 'activate_workflow' && (
-            <ActivateWorkflowFields step={step} onChange={onUpdate} />
-          )}
-
           <CommonFields step={step} type={type} onChange={onUpdate} />
         </div>
       )}
