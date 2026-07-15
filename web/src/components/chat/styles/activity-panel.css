@@ -375,6 +375,7 @@
 
 @media (max-width: 768px), (pointer: coarse) {
   .activity-panel-mobile-menu__item {
+    min-width: 2.75rem;
     min-height: 2.75rem;
   }
 }
