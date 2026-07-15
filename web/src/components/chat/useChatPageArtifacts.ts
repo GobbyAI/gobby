@@ -215,6 +215,7 @@ export function useChatPageArtifacts({
 
   useEffect(() => {
     chat.setOnArtifactEvent?.(onArtifactEvent);
+    return () => chat.setOnArtifactEvent?.(null);
   }, [chat, onArtifactEvent]);
 
   const handleApprovePlan = useCallback(

@@ -40,7 +40,7 @@ export function usePlanArtifactCallbacks() {
   }, []);
 
   const onArtifactEventRef = useRef<ArtifactEventCallback | null>(null);
-  const setOnArtifactEvent = useCallback((fn: ArtifactEventCallback) => {
+  const setOnArtifactEvent = useCallback((fn: ArtifactEventCallback | null) => {
     onArtifactEventRef.current = fn;
   }, []);
 

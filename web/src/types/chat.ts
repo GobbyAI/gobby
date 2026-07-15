@@ -339,12 +339,14 @@ export interface ChatState {
   onRequestPlanChanges: (feedback: string) => void;
   setOnPlanReady?: (fn: (content: string | null) => void) => void;
   setOnArtifactEvent?: (
-    fn: (
-      type: string,
-      content: string,
-      language?: string,
-      title?: string,
-    ) => void,
+    fn:
+      | ((
+          type: string,
+          content: string,
+          language?: string,
+          title?: string,
+        ) => void)
+      | null,
   ) => void;
   provider?: string | null;
   onProviderChange?: (provider: string | null) => void;
