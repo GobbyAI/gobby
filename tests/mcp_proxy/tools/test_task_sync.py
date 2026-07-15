@@ -5,11 +5,49 @@ Sync tools (sync_tasks, get_sync_status, sync_import, sync_export) have been
 removed from MCP — they are CLI-only operations.
 """
 
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+
+@pytest.mark.asyncio
+async def test_task_sync_git_helper_runs_off_event_loop_thread() -> None:
+    """The actual task-sync registry must dispatch its synchronous Git helper off-loop."""
+    from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+
+    event_loop_thread = threading.get_ident()
+    helper_threads: list[int] = []
+
+    def auto_link_commits_fn(**_kwargs: object) -> SimpleNamespace:
+        helper_threads.append(threading.get_ident())
+        return SimpleNamespace(linked_tasks=[], total_linked=0, skipped=0, skipped_refs=[])
+
+    registry = create_commit_registry(
+        sync_manager=MagicMock(),
+        task_manager=MagicMock(),
+        project_manager=MagicMock(),
+        auto_link_commits_fn=auto_link_commits_fn,
+    )
+
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.task_sync.resolve_project_repo_path",
+            return_value="/repo",
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.task_sync.get_project_context",
+            return_value={"id": "project-id"},
+        ),
+    ):
+        result = await registry.call("auto_link_commits", {})
+
+    assert result == {"linked_tasks": [], "total_linked": 0, "skipped": 0, "skipped_refs": []}
+    assert helper_threads
+    assert helper_threads[0] != event_loop_thread
+
 
 pytestmark = pytest.mark.unit
 
@@ -309,14 +347,14 @@ class TestUnlinkCommit:
 class TestAutoLinkCommits:
     """Tests for auto_link_commits MCP tool."""
 
-    def test_auto_link_commits_basic(self, mock_sync_registry) -> None:
+    def test_auto_link_commits_basic(self, mock_sync_registry, tmp_path: Path) -> None:
         """Test auto_link_commits basic call."""
         from gobby.mcp_proxy.tools.task_sync import create_commit_registry
 
         task_manager = MagicMock()
         project_manager = MagicMock()
         mock_project = MagicMock()
-        mock_project.repo_path = "/path/to/repo"
+        mock_project.repo_path = str(tmp_path)
         project_manager.get.return_value = mock_project
 
         mock_result = MagicMock()
