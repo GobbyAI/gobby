@@ -210,6 +210,8 @@ class ToolMetricsManager:
         Aggregate and delete metrics older than the retention period.
         Delegates to ToolMetricsStore.
         """
+        if retention_days < 1:
+            raise ValueError("retention_days must be at least 1")
         cutoff = utc_now() - timedelta(days=retention_days)
         return self.store.cleanup_old_metrics(cutoff)
 

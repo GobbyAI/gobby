@@ -483,6 +483,18 @@ class TestResetMetrics:
 class TestCleanupOldMetrics:
     """Tests for cleanup_old_metrics method."""
 
+    @pytest.mark.parametrize("retention_days", [0, -1])
+    def test_cleanup_rejects_invalid_retention(
+        self, metrics_manager: ToolMetricsManager, retention_days: int
+    ) -> None:
+        with (
+            patch.object(metrics_manager.store, "cleanup_old_metrics") as cleanup,
+            pytest.raises(ValueError, match="retention_days must be at least 1"),
+        ):
+            metrics_manager.cleanup_old_metrics(retention_days=retention_days)
+
+        cleanup.assert_not_called()
+
     def test_cleanup_passes_one_cutoff_to_store(self, metrics_manager: ToolMetricsManager) -> None:
         now = datetime(2026, 7, 12, 12, 0, tzinfo=UTC)
         with (
