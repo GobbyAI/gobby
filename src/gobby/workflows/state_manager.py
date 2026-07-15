@@ -230,7 +230,7 @@ class SessionVariableManager:
             try:
                 body = json.loads(row["definition_json"])
                 defaults[body.get("variable", row["name"])] = body.get("value")
-            except (json.JSONDecodeError, KeyError):
+            except (json.JSONDecodeError, TypeError, AttributeError, KeyError):
                 continue
 
         self._defaults_cache = defaults

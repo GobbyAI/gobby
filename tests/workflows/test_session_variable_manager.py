@@ -7,6 +7,7 @@ import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -31,6 +32,8 @@ def db(temp_db: HubDatabase) -> Any:
         "INSERT INTO projects (id, name) VALUES (%s, %s)",
         (PROJECT_ID, "test-project"),
     )
+    for session_id in (S1, S2, NEW_SESSION_ID):
+        _ensure_session(database, session_id)
     yield database
 
 
@@ -100,6 +103,19 @@ def test_container_defaults_are_isolated_across_sessions_and_cache_hits(db: Any)
     assert mgr._defaults_cache is not None
     assert session_a["loaded_skills"] is not mgr._defaults_cache["loaded_skills"]
     assert session_b["loaded_skills"] is not mgr._defaults_cache["loaded_skills"]
+
+
+@pytest.mark.parametrize("definition_json", [None, json.dumps("scalar")])
+def test_get_variables_skips_malformed_variable_defaults(
+    definition_json: str | None,
+) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    db = MagicMock()
+    db.fetchall.return_value = [{"name": "malformed-default", "definition_json": definition_json}]
+    db.fetchone.return_value = None
+
+    assert SessionVariableManager(db).get_variables(S1) == {}
 
 
 def test_append_to_set_variable_accepts_jsonb_dict_payload() -> None:
