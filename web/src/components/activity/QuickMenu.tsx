@@ -22,6 +22,7 @@ interface QuickMenuActionItem {
   icon?: ReactNode;
   destructive?: boolean;
   disabled?: boolean;
+  title?: string;
   onSelect: () => void;
 }
 
@@ -282,6 +283,7 @@ export function QuickMenu({
                   )}
                   role="menuitem"
                   disabled={item.disabled}
+                  title={item.title}
                   onClick={() => {
                     item.onSelect();
                     closeMenu();

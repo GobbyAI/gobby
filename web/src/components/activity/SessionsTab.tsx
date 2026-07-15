@@ -630,6 +630,7 @@ export const SessionsTab = memo(function SessionsTab({
       )}
 
       <SessionsContextMenu
+        chatSessionId={chatSessionId}
         closeCtxMenu={closeCtxMenu}
         ctxMenu={ctxMenu}
         handleClose={handleClose}

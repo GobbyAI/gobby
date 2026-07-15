@@ -159,7 +159,7 @@ export function SessionInteractionModal({
       let result: any;
       if (mode === "context") {
         result = await callTool("gobby-agents", "send_message", {
-          from_session: fromSessionId ?? "",
+          ...(fromSessionId ? { from_session: fromSessionId } : {}),
           target: "session",
           target_id: entry.id,
           content: text,

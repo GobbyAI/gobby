@@ -1278,6 +1278,42 @@ describe("SessionsTab", () => {
     expect(screen.getByRole("button", { name: "Transcript" })).toBeInTheDocument();
   });
 
+  it("disables Send Context with guidance when no web chat is active", async () => {
+    render(<SessionsTab sessions={[PAUSED_SESSION]} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("#202: Paused Terminal")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
+    const sendContext = screen.getByRole("menuitem", { name: "Send Context" });
+
+    expect(sendContext).toBeDisabled();
+    expect(sendContext).toHaveAttribute(
+      "title",
+      "Start a web chat before sending context",
+    );
+  });
+
+  it("enables Send Context when a web chat is active", async () => {
+    render(
+      <SessionsTab
+        sessions={[PAUSED_SESSION]}
+        chatSessionId="active-web-chat"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("#202: Paused Terminal")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
+
+    expect(
+      screen.getByRole("menuitem", { name: "Send Context" }),
+    ).toBeEnabled();
+  });
+
   it("restores a session in the list when expire fails", async () => {
     let resolveExpire: ((value: boolean) => void) | null = null;
     const onExpireSession = vi.fn(

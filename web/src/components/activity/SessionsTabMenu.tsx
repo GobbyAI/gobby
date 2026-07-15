@@ -11,6 +11,7 @@ import type {
 export type { InteractionMode };
 
 interface SessionsContextMenuProps {
+  chatSessionId?: string | null;
   closeCtxMenu: () => void;
   ctxMenu: SessionContextMenu | null;
   handleClose: (entry: WatchingSessionEntry) => Promise<boolean>;
@@ -21,6 +22,7 @@ interface SessionsContextMenuProps {
 }
 
 export function SessionsContextMenu({
+  chatSessionId,
   closeCtxMenu,
   ctxMenu,
   handleClose,
@@ -49,7 +51,14 @@ export function SessionsContextMenu({
   const showEndingDivider = showExpire || canClose || canDelete;
 
   const items: QuickMenuItem[] = [
-    { label: "Send Context", onSelect: () => openModal("context", entry) },
+    {
+      label: "Send Context",
+      disabled: !chatSessionId,
+      title: chatSessionId
+        ? undefined
+        : "Start a web chat before sending context",
+      onSelect: () => openModal("context", entry),
+    },
   ];
   if (entry.hasTmux) {
     items.push(
