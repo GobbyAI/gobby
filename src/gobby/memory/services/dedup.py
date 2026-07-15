@@ -199,6 +199,12 @@ class DedupService:
                 except ValueError:
                     continue
                 if existing and _is_richer_memory_content(content, existing.content):
+                    if exclude_memory_id is not None:
+                        logger.debug(
+                            "Similar memory update skipped because content is already stored "
+                            f"by excluded source memory {exclude_memory_id}"
+                        )
+                        return result
                     updated = await self._run_storage(
                         self.storage.update_memory, memory_id, content=content
                     )

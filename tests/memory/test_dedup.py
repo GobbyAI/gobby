@@ -1,5 +1,6 @@
 """Tests for DedupService (vector similarity dedup)."""
 
+import asyncio
 import logging
 import threading
 from typing import Any
@@ -155,14 +156,46 @@ class TestProcess:
         assert storage_thread_ids
         assert all(thread_id != event_loop_thread_id for thread_id in storage_thread_ids)
 
+    async def test_process_similar_excluded_source_is_concurrent_noop(
+        self,
+        dedup_service: DedupService,
+        mock_vector_store: Any,
+        mock_storage: Any,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Background dedup does not copy already-stored source content to another memory."""
+        mock_vector_store.search.return_value = [
+            ("mem-source", 0.99),
+            ("mem-old", 0.90),
+        ]
+        mock_existing = MagicMock(content="Short fact")
+        mock_storage.get_memory.return_value = mock_existing
+
+        with caplog.at_level(logging.DEBUG, logger="gobby.memory.services.dedup"):
+            results = await asyncio.gather(
+                *(
+                    dedup_service.process(
+                        content="Much longer and more detailed fact about something",
+                        project_id="proj-1",
+                        exclude_memory_id="mem-source",
+                    )
+                    for _ in range(2)
+                )
+            )
+
+        assert all(result.added == [] and result.updated == [] for result in results)
+        assert mock_storage.get_memory.call_count == 2
+        mock_storage.update_memory.assert_not_called()
+        assert caplog.text.count("already stored by excluded source memory mem-source") == 2
+
     @pytest.mark.asyncio
-    async def test_process_skips_excluded_self_match_and_updates_distinct_duplicate(
+    async def test_process_skips_excluded_self_match_without_copying_to_duplicate(
         self,
         dedup_service: DedupService,
         mock_vector_store: Any,
         mock_storage: Any,
     ) -> None:
-        """A just-created memory does not hide an older duplicate behind its self-match."""
+        """A just-created memory already owns richer content found after its self-match."""
         content = "Much longer and more detailed fact about something"
         mock_vector_store.search.return_value = [("mem-new", 1.0), ("mem-old", 0.90)]
 
@@ -170,19 +203,15 @@ class TestProcess:
         mock_existing.content = "Short fact"
         mock_storage.get_memory.return_value = mock_existing
 
-        mock_updated = MagicMock()
-        mock_updated.id = "mem-old"
-        mock_storage.update_memory.return_value = mock_updated
-
         result = await dedup_service.process(
             content=content,
             project_id="proj-1",
             exclude_memory_id="mem-new",
         )
 
-        assert result.updated == [mock_updated]
+        assert result.updated == []
         mock_storage.get_memory.assert_called_once_with("mem-old")
-        mock_storage.update_memory.assert_called_once_with("mem-old", content=content)
+        mock_storage.update_memory.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_process_similar_noop_when_existing_sufficient(

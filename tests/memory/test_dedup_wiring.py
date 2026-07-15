@@ -1,6 +1,7 @@
 """Tests for DedupService wiring into MemoryManager."""
 
 import asyncio
+import logging
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -188,7 +189,9 @@ class TestBackgroundDedupTask:
         assert len(manager._background_tasks) == 0
 
     @pytest.mark.asyncio
-    async def test_dedup_failure_doesnt_fail_caller(self) -> None:
+    async def test_dedup_failure_doesnt_fail_caller(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """Dedup failure is logged but doesn't affect the create_memory return."""
         manager = _make_manager(has_llm=True, has_vector_store=True, has_embed_fn=True)
 
@@ -215,16 +218,18 @@ class TestBackgroundDedupTask:
         manager._dedup_service.process = AsyncMock(side_effect=Exception("LLM crash"))
 
         # create_memory should still succeed
-        memory = await manager.create_memory(content="Content")
-        assert memory.id == "mem-4"
+        with caplog.at_level(logging.WARNING, logger="gobby.memory.services.lifecycle"):
+            memory = await manager.create_memory(content="Content")
+            assert memory.id == "mem-4"
 
-        await wait_for_async_condition(
-            lambda: len(manager._background_tasks) == 0,
-            description="dedup background task cleanup",
-        )
+            await wait_for_async_condition(
+                lambda: len(manager._background_tasks) == 0,
+                description="dedup background task cleanup",
+            )
 
         # Task should still be cleaned up
         assert len(manager._background_tasks) == 0
+        assert "Background dedup failed: LLM crash" in caplog.text
 
     @pytest.mark.asyncio
     async def test_create_memory_returns_immediately(self) -> None:
