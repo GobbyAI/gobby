@@ -8,8 +8,10 @@ use gobby_core::ai::generation::{
     resolve_direct_generation_target, run_tool_loop,
 };
 use gobby_core::ai::{
-    AiNoticeKind, daemon::generate_via_daemon_with_max_tokens, effective_route,
-    resolve_route_observed, text::generate_text,
+    AiNoticeKind,
+    daemon::{GenerationBudget, generate_via_daemon_with_max_tokens},
+    effective_route, resolve_route_observed,
+    text::generate_text,
 };
 use gobby_core::ai_context::{AiConfigSource, AiContext, AiContextOptions, PostgresAiConfigSource};
 use gobby_core::ai_types::{AiError, TokenUsage};
@@ -171,6 +173,7 @@ pub(crate) fn resolve_text_generator(
                 generate_one_shot_pinned(
                     &ai_context,
                     route,
+                    gen_tier,
                     &aggregate_candidates,
                     prompt.as_str(),
                     Some(system.as_ref()),
@@ -356,6 +359,7 @@ pub(crate) fn resolve_text_verifier(
                 Some(system),
                 None,
                 Some(verify_profile.as_str()),
+                GenerationBudget::Interactive,
             ),
             AiRouting::Direct => generate_text(&ai_context, prompt, Some(system)),
             AiRouting::Off | AiRouting::Auto => {

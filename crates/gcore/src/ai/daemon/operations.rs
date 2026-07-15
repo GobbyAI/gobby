@@ -18,6 +18,34 @@ pub(super) const TEXT_GENERATE_PATH: &str = "/api/llm/generate";
 const FAST_CANDIDATE_TIMEOUT_SECONDS: u64 = 30;
 const SPAWN_COLD_CANDIDATE_TIMEOUT_SECONDS: u64 = 60;
 const TOTAL_GENERATION_TIMEOUT_SECONDS: u64 = 1200;
+
+/// Per-candidate budget class for daemon text generation (#18288).
+///
+/// `Interactive` keeps the tight per-candidate budgets that let a failing
+/// candidate fail over quickly on short generations (#17710). `LongForm`
+/// gives each candidate the whole total budget — codewiki aggregate pages
+/// legitimately generate for minutes, and the daemon route caps raised
+/// per-candidate budgets at its configured total.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenerationBudget {
+    Interactive,
+    LongForm,
+}
+
+impl GenerationBudget {
+    fn candidate_timeouts(self) -> (u64, u64) {
+        match self {
+            Self::Interactive => (
+                FAST_CANDIDATE_TIMEOUT_SECONDS,
+                SPAWN_COLD_CANDIDATE_TIMEOUT_SECONDS,
+            ),
+            Self::LongForm => (
+                TOTAL_GENERATION_TIMEOUT_SECONDS,
+                TOTAL_GENERATION_TIMEOUT_SECONDS,
+            ),
+        }
+    }
+}
 const EMBEDDINGS_PATH: &str = "/api/embeddings";
 
 pub fn transcribe_via_daemon(
@@ -119,7 +147,14 @@ pub fn generate_via_daemon(
     prompt: &str,
     system: Option<&str>,
 ) -> Result<TextResult, AiError> {
-    generate_via_daemon_with_max_tokens(cfg, prompt, system, None, None)
+    generate_via_daemon_with_max_tokens(
+        cfg,
+        prompt,
+        system,
+        None,
+        None,
+        GenerationBudget::Interactive,
+    )
 }
 
 /// `profile` overrides the binding's configured daemon feature profile for
@@ -131,8 +166,9 @@ pub fn generate_via_daemon_with_max_tokens(
     system: Option<&str>,
     max_tokens: Option<usize>,
     profile: Option<&str>,
+    budget: GenerationBudget,
 ) -> Result<TextResult, AiError> {
-    generate_text_via_daemon(cfg, prompt, system, max_tokens, profile, None)
+    generate_text_via_daemon(cfg, prompt, system, max_tokens, profile, None, budget)
 }
 
 /// Pin an explicit provider/model candidate chain for this one call, overriding
@@ -147,8 +183,17 @@ pub fn generate_via_daemon_with_candidates(
     system: Option<&str>,
     max_tokens: Option<usize>,
     candidates: &[FeatureCandidate],
+    budget: GenerationBudget,
 ) -> Result<TextResult, AiError> {
-    generate_text_via_daemon(cfg, prompt, system, max_tokens, None, Some(candidates))
+    generate_text_via_daemon(
+        cfg,
+        prompt,
+        system,
+        max_tokens,
+        None,
+        Some(candidates),
+        budget,
+    )
 }
 
 fn generate_text_via_daemon(
@@ -158,11 +203,13 @@ fn generate_text_via_daemon(
     max_tokens: Option<usize>,
     profile: Option<&str>,
     candidates_override: Option<&[FeatureCandidate]>,
+    budget: GenerationBudget,
 ) -> Result<TextResult, AiError> {
     let capability = AiCapability::TextGenerate;
     let client = daemon_client()?;
     let token = read_local_cli_token()?;
     let url = daemon_url(TEXT_GENERATE_PATH);
+    let (candidate_timeout, cli_candidate_timeout) = budget.candidate_timeouts();
     // An explicit daemon candidate chain pins the exact provider/model
     // sequence. Otherwise the daemon selects candidates from the requested
     // feature profile; standalone binding fields never cross this boundary.
@@ -175,8 +222,8 @@ fn generate_text_via_daemon(
             profile: None,
             candidates: Some(candidates),
             reasoning_effort: None,
-            candidate_timeout_seconds: Some(FAST_CANDIDATE_TIMEOUT_SECONDS),
-            cli_candidate_timeout_seconds: Some(SPAWN_COLD_CANDIDATE_TIMEOUT_SECONDS),
+            candidate_timeout_seconds: Some(candidate_timeout),
+            cli_candidate_timeout_seconds: Some(cli_candidate_timeout),
             total_timeout_seconds: Some(TOTAL_GENERATION_TIMEOUT_SECONDS),
         },
         None => TextRequestOptions {
@@ -187,8 +234,8 @@ fn generate_text_via_daemon(
             profile,
             candidates: None,
             reasoning_effort: None,
-            candidate_timeout_seconds: Some(FAST_CANDIDATE_TIMEOUT_SECONDS),
-            cli_candidate_timeout_seconds: Some(SPAWN_COLD_CANDIDATE_TIMEOUT_SECONDS),
+            candidate_timeout_seconds: Some(candidate_timeout),
+            cli_candidate_timeout_seconds: Some(cli_candidate_timeout),
             total_timeout_seconds: Some(TOTAL_GENERATION_TIMEOUT_SECONDS),
         },
     };

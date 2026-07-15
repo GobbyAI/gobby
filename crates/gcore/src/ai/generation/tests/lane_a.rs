@@ -32,6 +32,7 @@ fn pinned_one_shot_rejects_direct_route_with_clear_error() {
     let error = generate_one_shot_pinned(
         &pinned_context(),
         AiRouting::Direct,
+        GenerationTier::Aggregate,
         &pinned_candidates(),
         "prompt",
         None,
@@ -53,6 +54,7 @@ fn pinned_one_shot_requires_at_least_one_candidate() {
     let error = generate_one_shot_pinned(
         &pinned_context(),
         AiRouting::Daemon,
+        GenerationTier::Aggregate,
         &[],
         "prompt",
         None,
@@ -73,6 +75,7 @@ fn pinned_one_shot_rejects_off_and_auto_routes() {
         let error = generate_one_shot_pinned(
             &pinned_context(),
             route,
+            GenerationTier::Aggregate,
             &pinned_candidates(),
             "prompt",
             None,

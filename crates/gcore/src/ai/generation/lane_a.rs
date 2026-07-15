@@ -16,7 +16,9 @@ use std::collections::BTreeMap;
 use reqwest::blocking::Client;
 use reqwest::header::AUTHORIZATION;
 
-use crate::ai::daemon::{generate_via_daemon_with_candidates, generate_via_daemon_with_max_tokens};
+use crate::ai::daemon::{
+    GenerationBudget, generate_via_daemon_with_candidates, generate_via_daemon_with_max_tokens,
+};
 use crate::ai::text::chat_completion_usage;
 use crate::ai::{
     chat_api_root, chat_completion_content, chat_completion_model, parse_json_response,
@@ -28,6 +30,16 @@ use crate::config::{AiCapability, AiRouting, FeatureCandidate};
 
 use super::profile::DirectGenerationTarget;
 use super::tier::{GenerationTier, profile_for_tier};
+
+/// Aggregate prose runs for minutes per page, so its daemon candidates get the
+/// whole total budget; per-file and module generations keep tight budgets for
+/// fast candidate failover (#18288, #17710).
+fn budget_for_tier(tier: GenerationTier) -> GenerationBudget {
+    match tier {
+        GenerationTier::Aggregate => GenerationBudget::LongForm,
+        GenerationTier::Standard | GenerationTier::Module => GenerationBudget::Interactive,
+    }
+}
 use super::tool_loop::{ChatCompletionRequest, ChatMessage, ToolChoice};
 use super::transport::build_request_body;
 
@@ -58,6 +70,7 @@ pub fn generate_one_shot(
                 system,
                 max_tokens,
                 Some(profile.as_str()),
+                budget_for_tier(tier),
             )
         },
         || {
@@ -97,6 +110,7 @@ fn dispatch_one_shot<T>(
 pub fn generate_one_shot_pinned(
     context: &AiContext,
     route: AiRouting,
+    tier: GenerationTier,
     candidates: &[FeatureCandidate],
     prompt: &str,
     system: Option<&str>,
@@ -109,9 +123,14 @@ pub fn generate_one_shot_pinned(
         ));
     }
     match route {
-        AiRouting::Daemon => {
-            generate_via_daemon_with_candidates(context, prompt, system, max_tokens, candidates)
-        }
+        AiRouting::Daemon => generate_via_daemon_with_candidates(
+            context,
+            prompt,
+            system,
+            max_tokens,
+            candidates,
+            budget_for_tier(tier),
+        ),
         AiRouting::Direct => Err(AiError::not_configured(
             Some(AiCapability::TextGenerate.as_str().to_string()),
             "explicit generation candidates are unsupported on the Direct route (it resolves a \

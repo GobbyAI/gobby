@@ -84,23 +84,30 @@ def _generation_timeout_overrides(
     configured_cli_candidate: float,
     configured_total: float,
 ) -> tuple[float | None, float | None, float | None]:
+    """Resolve per-request timeout overrides against the configured budgets.
+
+    Payload-supplied per-candidate timeouts are capped at the total attempt
+    budget only — a caller that declares a long-running generation (e.g. a
+    codewiki aggregate page, #18288) may raise its candidate budget above the
+    tight configured per-candidate defaults, which exist for fast failover on
+    short per-file generations (#17710) and still apply when the payload omits
+    them.
+    """
     total = (
         min(payload.total_timeout_seconds, configured_total)
         if payload.total_timeout_seconds is not None
         else None
     )
     total_cap = total if total is not None else configured_total
-    candidate_cap = min(configured_candidate, total_cap)
-    cli_candidate_cap = min(configured_cli_candidate, total_cap)
     candidate = (
-        min(payload.candidate_timeout_seconds, candidate_cap)
+        min(payload.candidate_timeout_seconds, total_cap)
         if payload.candidate_timeout_seconds is not None
-        else (candidate_cap if total is not None else None)
+        else (min(configured_candidate, total_cap) if total is not None else None)
     )
     cli_candidate = (
-        min(payload.cli_candidate_timeout_seconds, cli_candidate_cap)
+        min(payload.cli_candidate_timeout_seconds, total_cap)
         if payload.cli_candidate_timeout_seconds is not None
-        else (cli_candidate_cap if total is not None else None)
+        else (min(configured_cli_candidate, total_cap) if total is not None else None)
     )
     return candidate, cli_candidate, total
 

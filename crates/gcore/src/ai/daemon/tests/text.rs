@@ -19,6 +19,7 @@ fn daemon_profile_request_omits_standalone_binding_fields() {
         Some("Be brief"),
         Some(64),
         None,
+        GenerationBudget::Interactive,
     )
     .unwrap();
     let request = request.join().unwrap().unwrap();
@@ -143,7 +144,7 @@ fn lopsided_standalone_binding_is_ignored_by_daemon_routing() {
 
 #[test]
 fn pinned_one_shot_forwards_explicit_candidates_and_omits_profile() {
-    use crate::ai::generation::generate_one_shot_pinned;
+    use crate::ai::generation::{GenerationTier, generate_one_shot_pinned};
     use crate::config::AiRouting;
 
     let (port, request) = spawn_server(r#"{"text":"ok","model":"claude-sonnet"}"#);
@@ -170,6 +171,7 @@ fn pinned_one_shot_forwards_explicit_candidates_and_omits_profile() {
     let result = generate_one_shot_pinned(
         &cfg,
         AiRouting::Daemon,
+        GenerationTier::Aggregate,
         &candidates,
         "Pinned prompt",
         Some("Be brief"),
@@ -195,8 +197,11 @@ fn pinned_one_shot_forwards_explicit_candidates_and_omits_profile() {
     assert_eq!(body["system_prompt"], "Be brief");
     assert_eq!(body["max_tokens"], 64);
     assert_eq!(body["project_id"], "project-123");
-    assert_eq!(body["candidate_timeout_seconds"], 30);
-    assert_eq!(body["cli_candidate_timeout_seconds"], 60);
+    // Aggregate-tier candidates get the whole total budget (#18288) — opus/gpt
+    // aggregate pages generate for minutes and must not die on the tight
+    // interactive per-candidate budgets.
+    assert_eq!(body["candidate_timeout_seconds"], 1200);
+    assert_eq!(body["cli_candidate_timeout_seconds"], 1200);
     assert_eq!(body["total_timeout_seconds"], 1200);
     assert_eq!(result.text, "ok");
 }
@@ -222,8 +227,15 @@ fn daemon_profile_request_ignores_incidental_candidates_and_reasoning_pin() {
     ]);
     cfg.bindings.text_generate.reasoning_effort = Some("medium".to_string());
 
-    let result =
-        generate_via_daemon_with_max_tokens(&cfg, "Use candidates", None, None, None).unwrap();
+    let result = generate_via_daemon_with_max_tokens(
+        &cfg,
+        "Use candidates",
+        None,
+        None,
+        None,
+        GenerationBudget::Interactive,
+    )
+    .unwrap();
     let request = request.join().unwrap().unwrap();
     let body = request_body_json(&request);
 
@@ -245,8 +257,15 @@ fn per_call_profile_overrides_configured_binding_profile() {
     cfg.bindings.text_generate.model = None;
     cfg.bindings.text_generate.profile = Some("feature_high".to_string());
 
-    generate_via_daemon_with_max_tokens(&cfg, "Override profile", None, None, Some("feature_mid"))
-        .unwrap();
+    generate_via_daemon_with_max_tokens(
+        &cfg,
+        "Override profile",
+        None,
+        None,
+        Some("feature_mid"),
+        GenerationBudget::Interactive,
+    )
+    .unwrap();
     let request = request.join().unwrap().unwrap();
     let body = request_body_json(&request);
 
@@ -261,8 +280,15 @@ fn per_call_profile_is_the_only_daemon_routing_override() {
     write_daemon_files(home.path(), port, "text-token");
     let cfg = test_context(None);
 
-    generate_via_daemon_with_max_tokens(&cfg, "Explicit routing", None, None, Some("feature_mid"))
-        .unwrap();
+    generate_via_daemon_with_max_tokens(
+        &cfg,
+        "Explicit routing",
+        None,
+        None,
+        Some("feature_mid"),
+        GenerationBudget::Interactive,
+    )
+    .unwrap();
     let request = request.join().unwrap().unwrap();
     let body = request_body_json(&request);
 

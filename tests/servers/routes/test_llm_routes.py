@@ -214,6 +214,9 @@ def test_generate_caps_and_propagates_timeout_overrides(
         {"qwen": adapter},
     )
 
+    # Callers may raise per-candidate budgets above the tight configured
+    # defaults for long-running generations (#18288); the total attempt budget
+    # is the only cap. total itself still clamps to the configured total.
     response = client.post(
         "/api/llm/generate",
         json={
@@ -229,9 +232,46 @@ def test_generate_caps_and_propagates_timeout_overrides(
     assert response.status_code == 200
     assert len(adapter.requests) == 1
     request = adapter.requests[0]
-    assert request.candidate_timeout_seconds == 30
-    assert request.cli_candidate_timeout_seconds == 60
+    assert request.candidate_timeout_seconds == 90
+    assert request.cli_candidate_timeout_seconds == 300
     assert request.total_timeout_seconds == 1200
+
+    # Per-candidate values never exceed the total budget; with no total in the
+    # payload the configured total (1200) is the cap.
+    response = client.post(
+        "/api/llm/generate",
+        json={
+            "prompt": "Summarize this",
+            "provider": "qwen",
+            "model": "qwen3-coder",
+            "candidate_timeout_seconds": 5000,
+            "cli_candidate_timeout_seconds": 5000,
+        },
+    )
+
+    assert response.status_code == 200
+    request = adapter.requests[1]
+    assert request.candidate_timeout_seconds == 1200
+    assert request.cli_candidate_timeout_seconds == 1200
+    assert request.total_timeout_seconds is None
+
+    # Omitted per-candidate fields keep the tight configured defaults (#17710),
+    # clamped to a payload-supplied total.
+    response = client.post(
+        "/api/llm/generate",
+        json={
+            "prompt": "Summarize this",
+            "provider": "qwen",
+            "model": "qwen3-coder",
+            "total_timeout_seconds": 45,
+        },
+    )
+
+    assert response.status_code == 200
+    request = adapter.requests[2]
+    assert request.candidate_timeout_seconds == 30
+    assert request.cli_candidate_timeout_seconds == 45
+    assert request.total_timeout_seconds == 45
 
 
 @pytest.mark.parametrize(
