@@ -2272,6 +2272,7 @@ class TestCheckExpiredAgents:
             tmux_config=TmuxConfig(),
         )
         events: list[str] = []
+        release_observations: list[tuple[list[str], str | None]] = []
         original_release_claim = task_manager.release_task_claim
 
         async def kill_live_agent(*args: object, **kwargs: object) -> dict[str, object]:
@@ -2279,10 +2280,10 @@ class TestCheckExpiredAgents:
             return {"success": True, "pid": 12345}
 
         def release_task_claim(*args: object, **kwargs: object) -> object:
-            assert events == ["killed"]
             mutex = mutexes.get_mutex(task.id)
-            assert mutex is not None
-            assert mutex.lease_holder == "task_recovery"
+            release_observations.append(
+                (events.copy(), mutex.lease_holder if mutex is not None else None)
+            )
             events.append("release_task_claim")
             return original_release_claim(*args, **kwargs)
 
@@ -2304,6 +2305,11 @@ class TestCheckExpiredAgents:
 
         assert cleaned == 1
         assert events == ["killed", "release_task_claim"]
+        assert len(release_observations) == 1
+        observed_events, lease_holder = release_observations[0]
+        assert observed_events == ["killed"]
+        assert lease_holder is not None
+        assert lease_holder.startswith("task_recovery:")
         assert mutexes.get_mutex(task.id) is None
         recovered = task_manager.get_task(task.id)
         assert recovered is not None
@@ -2750,6 +2756,7 @@ class TestCheckExpiredAgents:
             tmux_config=TmuxConfig(),
         )
         events: list[str] = []
+        release_observations: list[tuple[list[str], str | None, str | None]] = []
         original_fail_stage = task_manager.stage_states.fail_stage
         original_release_claim = task_manager.release_task_claim
 
@@ -2757,20 +2764,19 @@ class TestCheckExpiredAgents:
             events.append("verified_dead")
             return {"success": True, "pid": 12345}
 
-        def assert_recovery_mutex_held() -> None:
-            mutex = mutexes.get_mutex(task.id)
-            assert mutex is not None
-            assert mutex.lease_holder == "task_recovery"
-            assert mutex.run_id is None
-
         def fail_stage(*args: object, **kwargs: object) -> object:
-            assert events == ["verified_dead"]
             events.append("fail_stage")
             return original_fail_stage(*args, **kwargs)
 
         def release_task_claim(*args: object, **kwargs: object) -> object:
-            assert events == ["verified_dead", "fail_stage"]
-            assert_recovery_mutex_held()
+            mutex = mutexes.get_mutex(task.id)
+            release_observations.append(
+                (
+                    events.copy(),
+                    mutex.lease_holder if mutex is not None else None,
+                    mutex.run_id if mutex is not None else None,
+                )
+            )
             events.append("release_task_claim")
             return original_release_claim(*args, **kwargs)
 
@@ -2788,6 +2794,12 @@ class TestCheckExpiredAgents:
 
         assert expired == 1
         assert events == ["verified_dead", "fail_stage", "release_task_claim"]
+        assert len(release_observations) == 1
+        observed_events, lease_holder, mutex_run_id = release_observations[0]
+        assert observed_events == ["verified_dead", "fail_stage"]
+        assert lease_holder is not None
+        assert lease_holder.startswith("task_recovery:")
+        assert mutex_run_id is None
         assert mutexes.get_mutex(task.id) is None
 
     @pytest.mark.asyncio
