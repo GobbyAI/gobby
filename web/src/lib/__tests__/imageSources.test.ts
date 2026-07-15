@@ -5,10 +5,10 @@ import { extractImageSrc, isSafeImageSrc } from '../imageSources'
 const DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=='
 
 describe('isSafeImageSrc', () => {
-  it('allows data, HTTPS, same-origin, and relative image sources', () => {
+  it('allows data and image paths from safe locations', () => {
     expect(isSafeImageSrc(DATA_URI)).toBe(true)
     expect(isSafeImageSrc('https://example.test/image.png')).toBe(true)
-    expect(isSafeImageSrc('/api/files/image?id=1')).toBe(true)
+    expect(isSafeImageSrc('/api/files/image.png?id=1')).toBe(true)
     expect(isSafeImageSrc('./image.png')).toBe(true)
     expect(isSafeImageSrc('../image.png')).toBe(true)
     expect(isSafeImageSrc('image.png')).toBe(true)
@@ -19,6 +19,8 @@ describe('isSafeImageSrc', () => {
     expect(isSafeImageSrc('//example.test/image.png')).toBe(false)
     expect(isSafeImageSrc('javascript:alert(1)')).toBe(false)
     expect(isSafeImageSrc('plain-token')).toBe(false)
+    expect(isSafeImageSrc('https://example.test/page')).toBe(false)
+    expect(isSafeImageSrc('/api/files/image?id=1')).toBe(false)
     expect(isSafeImageSrc('/image.png" onerror="alert(1)')).toBe(false)
   })
 })
@@ -69,6 +71,11 @@ describe('extractImageSrc', () => {
         },
       }),
     ).toBe('https://example.test/generated')
+  })
+
+  it('does not classify bare URLs or rooted paths without image extensions as images', () => {
+    expect(extractImageSrc('https://example.test/page')).toBeNull()
+    expect(extractImageSrc('/api/files/image?id=1')).toBeNull()
   })
 
   it('extracts nested image blocks from arrays and JSON strings', () => {
