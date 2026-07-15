@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from gobby.mcp_proxy.manager import MCPServerConfig
+from gobby.mcp_proxy.transport_types import URL_TRANSPORTS
 from gobby.storage.mcp_secrets import cleanup_replaced_mcp_secrets, protect_mcp_mapping
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.secrets import SecretStore, write_private_file
@@ -236,7 +237,7 @@ class MCPConfigManager:
                         "transport": server.transport,
                     }
 
-                    if server.transport in ("http", "websocket", "sse"):
+                    if server.transport in URL_TRANSPORTS:
                         protected_headers = protect_mcp_mapping(
                             server.headers,
                             secret_store=self._secret_store,

@@ -11,6 +11,7 @@ from gobby.config.url_validation import (
     WEBSOCKET_URL_SCHEMES,
     validate_endpoint_url,
 )
+from gobby.mcp_proxy.transport_types import SUPPORTED_TRANSPORTS, URL_TRANSPORTS
 
 
 class ConnectionState(str, Enum):
@@ -148,7 +149,12 @@ class MCPServerConfig:
 
     def validate(self) -> None:
         """Validate configuration based on transport type."""
-        if self.transport in ("http", "websocket", "sse"):
+        if self.transport not in SUPPORTED_TRANSPORTS:
+            raise ValueError(
+                f"Unsupported transport: {self.transport}. Supported: {list(SUPPORTED_TRANSPORTS)}"
+            )
+
+        if self.transport in URL_TRANSPORTS:
             if not self.url:
                 raise ValueError(f"{self.transport} transport requires 'url' parameter")
             allowed_schemes = (
@@ -162,8 +168,6 @@ class MCPServerConfig:
         elif self.transport == "stdio":
             if not self.command:
                 raise ValueError("stdio transport requires 'command' parameter")
-        else:
-            raise ValueError(f"Unsupported transport: {self.transport}")
 
         # Validate connect_timeout is positive
         if self.connect_timeout <= 0:
