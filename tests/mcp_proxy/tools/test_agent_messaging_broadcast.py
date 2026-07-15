@@ -328,9 +328,10 @@ class TestSendMessageBroadcast:
             },
         )
 
-        assert result["success"] is False
+        assert result["success"] is True
         assert result["recipient_session_ids"] == ["s-child-1", "s-child-2"]
-        assert result["failed_broadcasts"] == [
+        assert result["failed_broadcasts"] == []
+        assert result["failed_ws_broadcasts"] == [
             {"recipient_session_id": "s-child-1", "error": "socket down"}
         ]
         assert broadcast_fn.await_count == 2
@@ -341,6 +342,72 @@ class TestSendMessageBroadcast:
         )
         assert failure_log.to_session == "s-child-1"
         assert failure_log.exc_info is not None
+
+    @pytest.mark.asyncio
+    async def test_send_message_preserves_mailbox_broadcast_failures(
+        self,
+        mock_session_manager,
+        mock_message_manager,
+        mock_db,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Mailbox and WebSocket broadcast failures remain distinct."""
+        from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
+        from gobby.sessions.mailbox import MailboxSendResult, MailboxService
+
+        mailbox_failure = {
+            "recipient_session_id": "s-missing",
+            "error": "mailbox unavailable",
+        }
+        message = MockMessage(
+            id="msg-s-to",
+            from_session="s-from",
+            to_session="s-to",
+            content="hello",
+            priority="normal",
+            message_type="message",
+            metadata_json=None,
+        )
+        mailbox_send = AsyncMock(
+            return_value=MailboxSendResult(
+                messages=[message],
+                recipient_session_ids=["s-to"],
+                failed_broadcasts=[mailbox_failure],
+            )
+        )
+        monkeypatch.setattr(MailboxService, "send", mailbox_send)
+        broadcast_fn = AsyncMock(side_effect=RuntimeError("socket down"))
+        registry = InternalToolRegistry(
+            name="gobby-agents",
+            description="Agent messaging with mailbox and WebSocket failures",
+        )
+        add_messaging_tools(
+            registry=registry,
+            message_manager=mock_message_manager,
+            session_manager=mock_session_manager,
+            db=mock_db,
+            broadcast_fn=broadcast_fn,
+        )
+        mock_session_manager.get.side_effect = lambda sid: {
+            "s-from": MockSession(id="s-from"),
+            "s-to": MockSession(id="s-to"),
+        }.get(sid)
+
+        result = await registry.call(
+            "send_message",
+            {
+                "from_session": "s-from",
+                "target": "session",
+                "target_id": "s-to",
+                "content": "hello",
+            },
+        )
+
+        assert result["success"] is False
+        assert result["failed_broadcasts"] == [mailbox_failure]
+        assert result["failed_ws_broadcasts"] == [
+            {"recipient_session_id": "s-to", "error": "socket down"}
+        ]
 
     @pytest.mark.asyncio
     async def test_no_broadcast_on_failure(

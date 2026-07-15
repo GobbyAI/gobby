@@ -9,6 +9,7 @@ import pytest
 from gobby.mcp_proxy.tools.agent_cancellation import (
     stop_agent_run,
     terminalize_cancelled_agent_run,
+    terminalize_killed_agent_run,
 )
 
 pytestmark = pytest.mark.unit
@@ -110,6 +111,42 @@ async def test_terminalize_cancelled_agent_run_fallback_skips_recovery_when_not_
     runner.cancel_run.assert_called_once_with("run-123")
     runner.run_storage.get.assert_not_called()
     completion_registry.notify.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_terminalize_killed_agent_run_error_recovers_claim_and_notifies() -> None:
+    runner = MagicMock()
+    failed_run = MagicMock()
+    runner.run_storage.fail.return_value = failed_run
+    runner.run_storage.get.return_value = failed_run
+    completion_registry = MagicMock()
+    completion_registry.notify = AsyncMock()
+    task_manager = MagicMock()
+
+    with patch("gobby.mcp_proxy.tools.agent_cancellation.TaskRecoveryHandler") as recovery_cls:
+        recovery = recovery_cls.return_value
+        recovery.recover_task_from_terminal_agent = AsyncMock()
+
+        result = await terminalize_killed_agent_run(
+            runner=runner,
+            run_id="run-123",
+            effective_status="error",
+            lifecycle_monitor=None,
+            completion_registry=completion_registry,
+            task_manager=task_manager,
+        )
+
+    assert result == {"status": "error", "workflow_stopped": True}
+    runner.run_storage.fail.assert_called_once_with("run-123", error="Agent self-reported error")
+    recovery.recover_task_from_terminal_agent.assert_awaited_once_with(
+        failed_run,
+        outcome="failed",
+    )
+    completion_registry.notify.assert_awaited_once_with(
+        "run-123",
+        {"status": "error", "error": "Agent self-reported error"},
+        message="Agent run-123 failed",
+    )
 
 
 @pytest.mark.asyncio

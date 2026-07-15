@@ -209,7 +209,7 @@ def add_messaging_tools(
                     logger.warning(f"Failed to write to agent_runs.result: {e}")
 
             # Broadcast agent_message event
-            failed_broadcasts: list[dict[str, Any]] = []
+            failed_ws_broadcasts: list[dict[str, Any]] = []
             if broadcast_fn:
                 for recipient_id in send_result.recipient_session_ids:
                     try:
@@ -229,15 +229,15 @@ def add_messaging_tools(
                             },
                             exc_info=True,
                         )
-                        failed_broadcasts.append(
+                        failed_ws_broadcasts.append(
                             {
                                 "recipient_session_id": recipient_id,
                                 "error": str(e),
                             }
                         )
             payload = send_result.to_dict()
-            payload["failed_broadcasts"] = failed_broadcasts
-            payload["success"] = bool(payload.get("success")) and not failed_broadcasts
+            payload["failed_ws_broadcasts"] = failed_ws_broadcasts
+            payload["success"] = send_result.success
             payload["message"] = msg.to_dict() if msg is not None else None
             return payload
 
@@ -276,8 +276,21 @@ def add_messaging_tools(
                     "error": "target_session_id must resolve to the calling session.",
                 }
 
-            claimed = message_manager.claim_undelivered_messages(resolved_id)
-            messages = [_message_delivery_payload(msg) for msg in claimed]
+            pending = message_manager.get_undelivered_messages(resolved_id)
+            payloads = [_message_delivery_payload(msg) for msg in pending]
+            claimed_ids = set(
+                message_manager.mark_delivered_batch(
+                    [msg.id for msg in pending],
+                    resolved_id,
+                )
+                if pending
+                else []
+            )
+            messages = [
+                payload
+                for msg, payload in zip(pending, payloads, strict=True)
+                if msg.id in claimed_ids
+            ]
 
             return {
                 "success": True,

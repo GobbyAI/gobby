@@ -470,6 +470,100 @@ class TestSpawnAgentImplErrorBranches:
         spawn_request = mock_execute.await_args.args[0]
         assert spawn_request.cwd == str(worktree_path)
         assert spawn_request.worktree_id == "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01"
+        assert (
+            spawn_request.prompt
+            == f"""CRITICAL: Worktree Context
+You are working in a git worktree, NOT the main repository.
+- Branch: branch
+- Worktree path: {worktree_path}
+- Main repo: {tmp_path / "repo"}
+
+Changes in this worktree are isolated from the main repository.
+Commit your changes to the worktree branch when done.
+
+---
+
+test"""
+        )
+
+    @pytest.mark.asyncio
+    async def test_reused_clone_restores_isolation_context_prompt(self, tmp_path) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
+
+        runner = MagicMock()
+        runner.can_spawn.return_value = (True, "ok", 0)
+        runner._child_session_manager = MagicMock()
+        runner.run_storage = MagicMock()
+        runner.run_storage.has_active_run_for_task.return_value = False
+        clone_path = tmp_path / "clone"
+        clone_path.mkdir()
+        clone = MagicMock(id="clone-1", clone_path=str(clone_path), branch_name="branch")
+        clone_storage = MagicMock()
+        clone_storage.get.return_value = clone
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
+                return_value={
+                    "id": "11111111-1111-4111-8111-111111110001",
+                    "project_path": str(tmp_path / "repo"),
+                },
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.repair_isolation_environment",
+                new=AsyncMock(),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.provider_mcp_config_error",
+                return_value=None,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._code_index.ensure_isolation_code_index",
+                new=AsyncMock(),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
+            ) as mock_execute,
+        ):
+            mock_execute.return_value = MagicMock(
+                success=True,
+                child_session_id="c-1",
+                status="ok",
+                pid=1,
+                terminal_type=None,
+                tmux_session_name=None,
+                message="ok",
+                process=None,
+            )
+
+            result = await spawn_agent_impl(
+                prompt="test",
+                runner=runner,
+                parent_session_id="sess-1",
+                provider="codex",
+                clone_id="clone-1",
+                clone_storage=clone_storage,
+            )
+
+        assert result["success"] is True
+        spawn_request = mock_execute.await_args.args[0]
+        assert spawn_request.cwd == str(clone_path)
+        assert spawn_request.clone_id == "clone-1"
+        assert (
+            spawn_request.prompt
+            == f"""CRITICAL: Clone Context
+You are working in a shallow clone, NOT the original repository.
+- Branch: branch
+- Clone path: {clone_path}
+- Source repo: {tmp_path / "repo"}
+
+Changes in this clone are fully isolated from the original repository.
+Push your changes when ready to share with the original.
+
+---
+
+test"""
+        )
 
     @pytest.mark.asyncio
     async def test_reused_worktree_rebase_conflict_uses_fresh_retry_worktree(

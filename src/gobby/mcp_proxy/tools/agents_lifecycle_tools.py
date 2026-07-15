@@ -215,8 +215,8 @@ def register_agent_lifecycle_tools(
         agent_session_id = db_run.child_session_id or resolved_session_id
         tmux_session_name = db_run.tmux_session_name
 
-        is_self_termination = resolved_session_id is not None
-        if not is_self_termination and agent_session_id:
+        is_self_termination = False
+        if agent_session_id:
             caller_session_id = ctx.get_current_session_id()
             if caller_session_id and caller_session_id == agent_session_id:
                 is_self_termination = True

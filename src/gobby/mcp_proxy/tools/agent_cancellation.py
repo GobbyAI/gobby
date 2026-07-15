@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from gobby.agents.task_recovery import TaskRecoveryHandler
 
 logger = logging.getLogger(__name__)
 
 
-class _CancelledRunClassifier:
-    """Provider classification is irrelevant for cancelled-run recovery."""
+class _TerminalRunClassifier:
+    """Classify explicit terminalization as a non-provider failure."""
 
     def is_provider_error(self, error_string: str | None) -> bool:
         return False
@@ -20,32 +20,33 @@ class _CancelledRunClassifier:
         return False
 
 
-async def recover_cancelled_agent_task_claim(
+async def recover_terminal_agent_task_claim(
     *,
     runner: Any,
     task_manager: Any | None,
     run_id: str,
+    outcome: Literal["failed", "cancelled"],
 ) -> None:
-    """Release task ownership for a cancelled agent when fallback cancellation is used."""
+    """Release task ownership when direct terminalization bypasses the lifecycle monitor."""
     if task_manager is None:
         return
 
     run_storage = getattr(runner, "run_storage", None)
     if run_storage is None:
-        logger.debug("Cannot recover cancelled run %s claim without run storage", run_id)
+        logger.debug("Cannot recover terminal run %s claim without run storage", run_id)
         return
 
     db_run = run_storage.get(run_id)
     if db_run is None:
-        logger.debug("Cannot recover cancelled run %s claim; run row not found", run_id)
+        logger.debug("Cannot recover terminal run %s claim; run row not found", run_id)
         return
 
     recovery = TaskRecoveryHandler(
         task_manager,
         run_storage,
-        _CancelledRunClassifier(),
+        _TerminalRunClassifier(),
     )
-    await recovery.recover_task_from_terminal_agent(db_run, outcome="cancelled")
+    await recovery.recover_task_from_terminal_agent(db_run, outcome=outcome)
 
 
 async def terminalize_cancelled_agent_run(
@@ -71,10 +72,11 @@ async def terminalize_cancelled_agent_run(
     if not transitioned:
         return False
 
-    await recover_cancelled_agent_task_claim(
+    await recover_terminal_agent_task_claim(
         runner=runner,
         task_manager=task_manager,
         run_id=run_id,
+        outcome="cancelled",
     )
     if completion_registry is not None:
         await completion_registry.notify(
@@ -100,7 +102,8 @@ async def terminalize_killed_agent_run(
 ) -> dict[str, Any]:
     """Apply workflow terminal state after an explicit parent-side kill."""
     if effective_status == "error":
-        failed_run = runner.run_storage.fail(run_id, error="Agent self-reported error")
+        error = "Agent self-reported error"
+        failed_run = runner.run_storage.fail(run_id, error=error)
         if failed_run is None:
             current = runner.get_run(run_id)
             logger.debug(
@@ -108,6 +111,19 @@ async def terminalize_killed_agent_run(
                 run_id,
                 current.status if current else "missing",
             )
+        else:
+            await recover_terminal_agent_task_claim(
+                runner=runner,
+                task_manager=task_manager,
+                run_id=run_id,
+                outcome="failed",
+            )
+            if completion_registry is not None:
+                await completion_registry.notify(
+                    run_id,
+                    {"status": "error", "error": error},
+                    message=f"Agent {run_id} failed",
+                )
         return {"status": "error", "workflow_stopped": True}
 
     log_prefix = "Cancelled" if effective_status == "cancelled" else "Fallback cancelled"

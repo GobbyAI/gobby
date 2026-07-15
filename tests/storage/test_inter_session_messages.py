@@ -480,16 +480,22 @@ class TestInterSessionMessageManagerDeliveryClaims:
             to_session=recipient.id,
             content="recipient message",
         )
+        unselected_message = manager.create_message(
+            from_session=sender.id,
+            to_session=recipient.id,
+            content="unselected message",
+        )
         foreign_message = manager.create_message(
             from_session=sender.id,
             to_session=foreign.id,
             content="foreign message",
         )
 
-        claimed = manager.claim_undelivered_messages(recipient.id)
+        claimed = manager.mark_delivered_batch([recipient_message.id], recipient.id)
 
-        assert [message.id for message in claimed] == [recipient_message.id]
-        assert manager.claim_undelivered_messages(recipient.id) == []
+        assert claimed == [recipient_message.id]
+        assert manager.mark_delivered_batch([recipient_message.id], recipient.id) == []
+        assert manager.get_message(unselected_message.id).delivered_at is None
         assert manager.get_message(foreign_message.id).delivered_at is None
 
     def test_concurrent_claim_delivers_each_message_once(self, mailbox) -> None:
@@ -503,7 +509,7 @@ class TestInterSessionMessageManagerDeliveryClaims:
 
         def claim() -> list[str]:
             barrier.wait()
-            return [item.id for item in manager.claim_undelivered_messages(recipient.id)]
+            return manager.mark_delivered_batch([message.id], recipient.id)
 
         with ThreadPoolExecutor(max_workers=3) as executor:
             results = list(executor.map(lambda _index: claim(), range(3)))
