@@ -38,6 +38,7 @@ vi.mock("ink-select-input", () => ({
   ),
 }));
 
+vi.mock("ink-spinner", () => ({ default: () => <span /> }));
 vi.mock("../../utils/config.js", () => ({ setBindHost: mocks.setBindHost }));
 vi.mock("../../utils/state.js", () => ({ saveState: mocks.saveState }));
 
@@ -55,6 +56,10 @@ describe("Tailscale", () => {
       completed_step_id: null,
     } as unknown as SetupState;
     const setState = vi.fn((updater: (prev: SetupState) => SetupState) => updater(state));
+    mocks.spawnSync.mockImplementation(() => {
+      expect(screen.getByText(/Configuring Tailscale serve/i)).toBeTruthy();
+      return { status: 0 };
+    });
 
     render(<Tailscale state={state} setState={setState} onNext={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Yes, configure tailscale serve" }));

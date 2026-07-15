@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { Text, Box } from "ink";
 import SelectInput from "ink-select-input";
 import Spinner from "ink-spinner";
@@ -15,7 +15,7 @@ export function NetworkSecurity({ state, setState, onNext }: StepProps): React.R
 
   const plat = process.platform;
 
-  const finish = (firewallConfigured: boolean): void => {
+  const finish = useCallback((firewallConfigured: boolean): void => {
     setState((prev) => {
       const next = {
         ...prev,
@@ -26,13 +26,20 @@ export function NetworkSecurity({ state, setState, onNext }: StepProps): React.R
       return next;
     });
     setTimeout(onNext, 300);
-  };
+  }, [onNext, setState]);
 
   const configureFirewall = (): void => {
     setFailureMessage(null);
     setPhase("running");
+  };
+
+  useEffect(() => {
+    if (phase !== "running") return;
+
     const scriptPath = resolveFirewallScriptPath();
     if (!scriptPath) {
+      // The running phase intentionally owns this synchronous command and its result state.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setFailureMessage(
         "Firewall setup script was not found. Reinstall with npx @gobby/setup@latest and retry.",
       );
@@ -60,7 +67,7 @@ export function NetworkSecurity({ state, setState, onNext }: StepProps): React.R
     }
     setResult("failed");
     setPhase("done");
-  };
+  }, [finish, phase, state.ports]);
 
   if (plat === "darwin") {
     if (phase === "prompt") {

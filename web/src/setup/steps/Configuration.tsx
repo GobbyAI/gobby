@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Text, Box } from "ink";
 import TextInput from "ink-text-input";
 import SelectInput from "ink-select-input";
@@ -24,22 +24,30 @@ export function Configuration({ state, setState, onNext }: StepProps): React.Rea
   const [editingIdx, setEditingIdx] = useState(0);
   const [editValue, setEditValue] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [pendingPorts, setPendingPorts] = useState<typeof ports | null>(null);
 
   const commit = (finalPorts: typeof ports): void => {
     setError(null);
+    setPendingPorts(finalPorts);
     setPhase("saving");
+  };
+
+  useEffect(() => {
+    if (phase !== "saving" || !pendingPorts) return;
 
     // Keep the daemon on loopback unless the firewall was explicitly configured.
     patchPorts(
-      finalPorts.http,
-      finalPorts.ws,
-      finalPorts.ui,
+      pendingPorts.http,
+      pendingPorts.ws,
+      pendingPorts.ui,
       state.firewall_configured,
     );
 
     // Run configuration and DB initialization without installing hooks or services.
     const result = runGobby(["install", "--config-only"], { timeout: 30000 });
     if (!result.success) {
+      // The saving phase intentionally owns this synchronous command and its result state.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setError(result.output.trim() || "gobby install --config-only failed or timed out.");
       setPhase("error");
       return;
@@ -48,7 +56,7 @@ export function Configuration({ state, setState, onNext }: StepProps): React.Rea
     setState((prev) => {
       const next = {
         ...prev,
-        ports: finalPorts,
+        ports: pendingPorts,
         completed_step_id: "config" as const,
       };
       saveState(next);
@@ -57,7 +65,7 @@ export function Configuration({ state, setState, onNext }: StepProps): React.Rea
 
     setPhase("done");
     setTimeout(onNext, 300);
-  };
+  }, [onNext, pendingPorts, phase, setState, state.firewall_configured]);
 
   if (phase === "show") {
     return (

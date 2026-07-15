@@ -64,6 +64,10 @@ describe("NetworkSecurity", () => {
       completed_step_id: null,
     } as unknown as SetupState;
     const setState = vi.fn((updater: (prev: SetupState) => SetupState) => updater(state));
+    mocks.spawnSync.mockImplementation(() => {
+      expect(screen.getByText(/Configuring firewall rules/i)).toBeTruthy();
+      return { status: 0 };
+    });
 
     render(<NetworkSecurity state={state} setState={setState} onNext={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Yes, configure firewall" }));

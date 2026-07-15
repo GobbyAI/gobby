@@ -89,7 +89,10 @@ describe("Configuration", () => {
   });
 
   it("runs config-only initialization and completes after success", () => {
-    mocks.runGobby.mockReturnValue({ success: true, output: "" });
+    mocks.runGobby.mockImplementation(() => {
+      expect(screen.getByText(/Saving configuration/i)).toBeTruthy();
+      return { success: true, output: "" };
+    });
     const view = renderConfiguration();
 
     fireEvent.click(screen.getByRole("button", { name: "No, use defaults" }));

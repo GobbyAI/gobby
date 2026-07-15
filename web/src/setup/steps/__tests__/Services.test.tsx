@@ -197,7 +197,10 @@ describe("Services FalkorDB setup", () => {
   );
 
   it("installs FalkorDB with a valid password and records the renamed state fields", async () => {
-    mocks.runGobby.mockReturnValue({ success: true, output: "installed" });
+    mocks.runGobby.mockImplementation(() => {
+      expect(hasRenderedText("Installing FalkorDB via Docker")).toBe(true);
+      return { success: true, output: "installed" };
+    });
     const view = renderServices();
 
     submit("p");

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { Text, Box } from "ink";
 import Spinner from "ink-spinner";
 import TextInput from "ink-text-input";
@@ -58,8 +58,9 @@ export function Services({ state: _state, setState, onNext }: StepProps): React.
   const [customPassword, setCustomPassword] = useState("");
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [result, setResult] = useState<InstallResult | null>(null);
+  const [installPassword, setInstallPassword] = useState<string | undefined>();
 
-  const finish = (installed: boolean, passwordSet: boolean): void => {
+  const finish = useCallback((installed: boolean, passwordSet: boolean): void => {
     setState((prev) => {
       const next = {
         ...prev,
@@ -71,7 +72,7 @@ export function Services({ state: _state, setState, onNext }: StepProps): React.
       return next;
     });
     setTimeout(onNext, 300);
-  };
+  }, [onNext, setState]);
 
   const install = (password?: string): void => {
     if (password) {
@@ -85,21 +86,28 @@ export function Services({ state: _state, setState, onNext }: StepProps): React.
 
     setPasswordError(null);
     setResult(null);
+    setInstallPassword(password);
     setPhase("installing");
+  };
 
-    const r = runGobby(buildInstallArgs(password), {
+  useEffect(() => {
+    if (phase !== "installing") return;
+
+    const r = runGobby(buildInstallArgs(installPassword), {
       timeout: INSTALL_TIMEOUT_MS,
-      input: password,
+      input: installPassword,
     });
 
     if (r.success) {
+      // The installing phase intentionally owns this synchronous command and its result state.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setResult({ success: true, message: "FalkorDB installed successfully." });
       setPhase("done");
-      finish(true, !!password);
+      finish(true, !!installPassword);
       return;
     }
 
-    if (password) {
+    if (installPassword) {
       setPasswordError(extractFalkorPasswordError(r.output) ?? formatInstallFailure(r.output));
       setPhase("password");
       return;
@@ -110,7 +118,7 @@ export function Services({ state: _state, setState, onNext }: StepProps): React.
       message: formatInstallFailure(r.output),
     });
     setPhase("done");
-  };
+  }, [finish, installPassword, phase]);
 
   if (phase === "prompt") {
     return (

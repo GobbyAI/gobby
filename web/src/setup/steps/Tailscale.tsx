@@ -1,5 +1,6 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { Text, Box } from "ink";
+import Spinner from "ink-spinner";
 import SelectInput from "ink-select-input";
 import { spawnSync } from "child_process";
 import { StatusMessage } from "../components/StatusMessage.js";
@@ -7,10 +8,10 @@ import { saveState } from "../utils/state.js";
 import type { StepProps } from "../types.js";
 
 export function Tailscale({ state, setState, onNext }: StepProps): React.ReactElement {
-  const [phase, setPhase] = useState<"prompt" | "done">("prompt");
+  const [phase, setPhase] = useState<"prompt" | "running" | "done">("prompt");
   const [result, setResult] = useState<string | null>(null);
 
-  const finish = (configured: boolean): void => {
+  const finish = useCallback((configured: boolean): void => {
     setState((prev) => {
       const next = {
         ...prev,
@@ -21,9 +22,15 @@ export function Tailscale({ state, setState, onNext }: StepProps): React.ReactEl
       return next;
     });
     setTimeout(onNext, 300);
-  };
+  }, [onNext, setState]);
 
   const configureTailscale = (): void => {
+    setPhase("running");
+  };
+
+  useEffect(() => {
+    if (phase !== "running") return;
+
     try {
       const r = spawnSync(
         "tailscale",
@@ -31,6 +38,8 @@ export function Tailscale({ state, setState, onNext }: StepProps): React.ReactEl
         { encoding: "utf-8", timeout: 30000 },
       );
       if (r.status === 0) {
+        // The running phase intentionally owns this synchronous command and its result state.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setResult("success");
         setPhase("done");
         finish(true);
@@ -41,7 +50,7 @@ export function Tailscale({ state, setState, onNext }: StepProps): React.ReactEl
       setResult(`failed: ${error instanceof Error ? error.message : "command could not run"}`);
     }
     setPhase("done");
-  };
+  }, [finish, phase, state.ports.ui]);
 
   if (phase === "prompt") {
     return (
@@ -67,6 +76,14 @@ export function Tailscale({ state, setState, onNext }: StepProps): React.ReactEl
           }}
         />
       </Box>
+    );
+  }
+
+  if (phase === "running") {
+    return (
+      <Text>
+        <Spinner type="dots" /> Configuring Tailscale serve...
+      </Text>
     );
   }
 

@@ -59,7 +59,10 @@ describe("Integrations", () => {
   });
 
   it("renders a secret-store failure in the active input phase", () => {
-    mocks.spawnSync.mockReturnValue({ status: 1 });
+    mocks.spawnSync.mockImplementation(() => {
+      expect(screen.getByText(/Saving GitHub key/i)).toBeTruthy();
+      return { status: 1 };
+    });
     const setState = vi.fn();
     const onNext = vi.fn();
 
