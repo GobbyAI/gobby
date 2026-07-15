@@ -237,6 +237,7 @@ class LocalWorkflowDefinitionManager:
             "sources",
             "definition_json",
             "canvas_json",
+            "source",
             "tags",
         }
         unknown_fields = set(fields) - allowed_fields

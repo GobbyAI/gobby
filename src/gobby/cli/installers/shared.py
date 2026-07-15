@@ -330,47 +330,41 @@ def _sync_user_templates_to_db(db: "HubDatabase") -> int:
     total = 0
     project_path = Path.cwd()
 
-    # Sync functions: (path_fn, sync_module, sync_fn_name, content_type)
-    sync_pairs: list[tuple[Path, str, str, str]] = [
+    # Each type is synced once across its complete set of user roots so
+    # same-tag orphan cleanup sees the full on-disk namespace.
+    sync_pairs: list[tuple[list[Path], str, str, str]] = [
         (
-            get_project_rules_dir(project_path),
+            [get_project_rules_dir(project_path), get_global_rules_dir()],
             "gobby.workflows.sync_rules",
             "sync_bundled_rules",
             "rules",
         ),
-        (get_global_rules_dir(), "gobby.workflows.sync_rules", "sync_bundled_rules", "rules"),
         (
-            get_project_variables_dir(project_path),
-            "gobby.workflows.sync_variables",
-            "sync_bundled_variables",
-            "variables",
-        ),
-        (
-            get_global_variables_dir(),
+            [get_project_variables_dir(project_path), get_global_variables_dir()],
             "gobby.workflows.sync_variables",
             "sync_bundled_variables",
             "variables",
         ),
     ]
 
-    for path, module_path, func_name, content_type in sync_pairs:
-        if not path.exists():
+    for paths, module_path, func_name, content_type in sync_pairs:
+        if not any(path.exists() for path in paths):
             continue
         try:
             module = __import__(module_path, fromlist=[func_name])
             sync_fn = getattr(module, func_name)
             if content_type == "rules":
-                sync_result = sync_fn(db, rules_path=path, tag="user")
+                sync_result = sync_fn(db, rules_path=paths, tag="user")
             elif content_type == "variables":
-                sync_result = sync_fn(db, variables_path=path, tag="user")
+                sync_result = sync_fn(db, variables_path=paths, tag="user")
             else:
                 continue
             synced = sync_result.get("synced", 0) + sync_result.get("updated", 0)
             total += synced
             if synced > 0:
-                logger.info(f"Synced {synced} user {content_type} from {path}")
+                logger.info(f"Synced {synced} user {content_type} from {paths}")
         except Exception as e:
-            logger.warning(f"Failed to sync user {content_type} from {path}: {e}")
+            logger.warning(f"Failed to sync user {content_type} from {paths}: {e}")
 
     # User templates are now created as installed rows directly by the
     # sync functions above — no separate install step needed.

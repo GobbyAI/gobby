@@ -253,6 +253,70 @@ rules:
 
         result = sync_bundled_rules(db, rules_path=rules_dir)
         assert len(result["errors"]) >= 1
+        assert result["success"] is False
+
+    def test_parse_error_does_not_orphan_existing_rule(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, tmp_path: Path
+    ) -> None:
+        from gobby.workflows.sync_rules import sync_bundled_rules
+
+        rules_dir = tmp_path / "rules"
+        rules_dir.mkdir()
+        rule_file = rules_dir / "rule.yaml"
+        rule_file.write_text(
+            "rules:\n  retained-rule:\n    event: before_tool\n    effect:\n"
+            "      type: inject_context\n      content: retained\n"
+        )
+        sync_bundled_rules(db, rules_path=rules_dir)
+
+        rule_file.unlink()
+        (rules_dir / "broken.yaml").write_text(":\n  invalid: [yaml\n  broken")
+        result = sync_bundled_rules(db, rules_path=rules_dir)
+
+        assert result["success"] is False
+        assert result["orphaned"] == 0
+        assert manager.get_by_name("retained-rule") is not None
+
+    def test_empty_directory_does_not_orphan_existing_rule(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, tmp_path: Path
+    ) -> None:
+        from gobby.workflows.sync_rules import sync_bundled_rules
+
+        rules_dir = tmp_path / "rules"
+        rules_dir.mkdir()
+        rule_file = rules_dir / "rule.yaml"
+        rule_file.write_text(
+            "rules:\n  retained-rule:\n    event: before_tool\n    effect:\n"
+            "      type: inject_context\n      content: retained\n"
+        )
+        sync_bundled_rules(db, rules_path=rules_dir)
+        rule_file.unlink()
+
+        result = sync_bundled_rules(db, rules_path=rules_dir)
+
+        assert result["orphaned"] == 0
+        assert manager.get_by_name("retained-rule") is not None
+
+    def test_restores_soft_deleted_rule(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, tmp_path: Path
+    ) -> None:
+        from gobby.workflows.sync_rules import sync_bundled_rules
+
+        rules_dir = tmp_path / "rules"
+        rules_dir.mkdir()
+        (rules_dir / "restore.yaml").write_text(
+            "rules:\n  restore-rule:\n    event: before_tool\n    effect:\n"
+            "      type: inject_context\n      content: restored\n"
+        )
+        sync_bundled_rules(db, rules_path=rules_dir)
+        row = manager.get_by_name("restore-rule")
+        assert row is not None
+        manager.delete(row.id)
+
+        result = sync_bundled_rules(db, rules_path=rules_dir)
+
+        assert result["updated"] == 1
+        assert manager.get_by_name("restore-rule") is not None
 
     def test_reload_cache_resync_updates_rule_event(
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, tmp_path: Path
@@ -749,11 +813,30 @@ variables:
 
         sync_bundled_variables(db, variables_path=var_dir)
         var_file.unlink()
+        (var_dir / "retained.yaml").write_text("variables:\n  retained_var:\n    value: retained\n")
 
         result = sync_bundled_variables(db, variables_path=var_dir)
         assert result["orphaned"] >= 1
 
-    def test_respects_soft_deleted_variable(self, db: HubDatabase, tmp_path: Path) -> None:
+    def test_empty_directory_does_not_orphan_existing_variable(
+        self, db: HubDatabase, tmp_path: Path
+    ) -> None:
+        from gobby.workflows.sync_variables import sync_bundled_variables
+
+        var_dir = tmp_path / "variables"
+        var_dir.mkdir()
+        var_file = var_dir / "variable.yaml"
+        var_file.write_text("variables:\n  retained_var:\n    value: retained\n")
+        sync_bundled_variables(db, variables_path=var_dir)
+        var_file.unlink()
+
+        result = sync_bundled_variables(db, variables_path=var_dir)
+
+        manager = LocalWorkflowDefinitionManager(db)
+        assert result["orphaned"] == 0
+        assert manager.get_by_name("retained_var") is not None
+
+    def test_restores_soft_deleted_variable(self, db: HubDatabase, tmp_path: Path) -> None:
         from gobby.workflows.sync_variables import sync_bundled_variables
 
         var_dir = tmp_path / "variables"
@@ -773,9 +856,9 @@ variables:
         assert row is not None
         manager.delete(row.id)
 
-        # Sync respects soft-deletes — does not re-create
         result = sync_bundled_variables(db, variables_path=var_dir)
-        assert result["skipped"] == 1
+        assert result["updated"] == 1
+        assert manager.get_by_name("restore_var") is not None
 
     def test_handles_yaml_parse_error(self, db: HubDatabase, tmp_path: Path) -> None:
         from gobby.workflows.sync_variables import sync_bundled_variables
@@ -786,6 +869,27 @@ variables:
 
         result = sync_bundled_variables(db, variables_path=var_dir)
         assert len(result["errors"]) >= 1
+        assert result["success"] is False
+
+    def test_parse_error_does_not_orphan_existing_variable(
+        self, db: HubDatabase, tmp_path: Path
+    ) -> None:
+        from gobby.workflows.sync_variables import sync_bundled_variables
+
+        var_dir = tmp_path / "variables"
+        var_dir.mkdir()
+        var_file = var_dir / "variable.yaml"
+        var_file.write_text("variables:\n  retained_var:\n    value: present\n")
+        sync_bundled_variables(db, variables_path=var_dir)
+
+        var_file.unlink()
+        (var_dir / "broken.yaml").write_text(":\n  invalid: [yaml\n  broken")
+        result = sync_bundled_variables(db, variables_path=var_dir)
+
+        manager = LocalWorkflowDefinitionManager(db)
+        assert result["success"] is False
+        assert result["orphaned"] == 0
+        assert manager.get_by_name("retained_var") is not None
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -64,6 +64,10 @@ class TestOrphanTagIsolation:
         # Sync with empty rules dir — gobby template becomes orphan
         rules_dir = tmp_path / "rules"
         rules_dir.mkdir()
+        (rules_dir / "retained.yaml").write_text(
+            "rules:\n  retained-rule:\n    event: before_tool\n    effect:\n"
+            "      type: inject_context\n      content: retained\n"
+        )
 
         result = sync_bundled_rules(temp_db, rules_path=rules_dir)
 
@@ -88,6 +92,10 @@ class TestOrphanTagIsolation:
 
         rules_dir = tmp_path / "rules"
         rules_dir.mkdir()
+        (rules_dir / "retained.yaml").write_text(
+            "rules:\n  retained-rule:\n    event: before_tool\n    effect:\n"
+            "      type: inject_context\n      content: retained\n"
+        )
 
         sync_bundled_rules(temp_db, rules_path=rules_dir)
 
@@ -180,13 +188,76 @@ class TestSyncUserRules:
 
         rules_dir = tmp_path / "rules"
         rules_dir.mkdir()
-        # Empty dir — old-user-rule is orphaned, but gobby-rule should not be
+        # A single user root is a partial scan and cannot prove this row is orphaned.
 
         result = sync_bundled_rules(temp_db, rules_path=rules_dir, tag="user")
-        assert result["orphaned"] == 1
+        assert result["orphaned"] == 0
 
         # gobby rule untouched
         gobby = temp_db.fetchone(
             "SELECT deleted_at FROM workflow_definitions WHERE name = 'gobby-rule'"
         )
         assert gobby["deleted_at"] is None
+
+
+class TestMultiRootUserSync:
+    def test_consecutive_syncs_preserve_rules_and_variables_from_both_roots(
+        self, temp_db, tmp_path, monkeypatch
+    ):
+        import gobby.paths
+        from gobby.cli.installers.shared import _sync_user_templates_to_db
+
+        project_rules = tmp_path / "project-rules"
+        global_rules = tmp_path / "global-rules"
+        project_variables = tmp_path / "project-variables"
+        global_variables = tmp_path / "global-variables"
+        for path in (project_rules, global_rules, project_variables, global_variables):
+            path.mkdir()
+
+        (project_rules / "project.yaml").write_text(
+            "rules:\n  project-rule:\n    event: before_tool\n    effect:\n"
+            "      type: inject_context\n      content: project\n"
+        )
+        (global_rules / "global.yaml").write_text(
+            "rules:\n  global-rule:\n    event: before_tool\n    effect:\n"
+            "      type: inject_context\n      content: global\n"
+        )
+        (project_variables / "project.yaml").write_text(
+            "variables:\n  project_variable:\n    value: project\n"
+        )
+        (global_variables / "global.yaml").write_text(
+            "variables:\n  global_variable:\n    value: global\n"
+        )
+
+        monkeypatch.setattr(gobby.paths, "get_project_rules_dir", lambda _path: project_rules)
+        monkeypatch.setattr(gobby.paths, "get_global_rules_dir", lambda: global_rules)
+        monkeypatch.setattr(
+            gobby.paths, "get_project_variables_dir", lambda _path: project_variables
+        )
+        monkeypatch.setattr(gobby.paths, "get_global_variables_dir", lambda: global_variables)
+
+        sync_counts = [_sync_user_templates_to_db(temp_db) for _ in range(2)]
+        assert sync_counts == [4, 0]
+
+        active_names = {
+            row["name"]
+            for row in temp_db.fetchall(
+                "SELECT name FROM workflow_definitions WHERE deleted_at IS NULL"
+            )
+        }
+        assert {
+            "project-rule",
+            "global-rule",
+            "project_variable",
+            "global_variable",
+        }.issubset(active_names)
+        user_tagged = temp_db.fetchall(
+            "SELECT name FROM workflow_definitions "
+            "WHERE deleted_at IS NULL AND tags::text LIKE '%%user%%'"
+        )
+        assert {row["name"] for row in user_tagged} == {
+            "project-rule",
+            "global-rule",
+            "project_variable",
+            "global_variable",
+        }
