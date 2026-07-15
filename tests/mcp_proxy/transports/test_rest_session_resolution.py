@@ -81,6 +81,7 @@ async def test_rest_call_resolves_arguments_session_id_before_dispatch() -> None
         "get_session",
         {"session_id": SESSION_UUID_3},
         session_id=SESSION_UUID_3,
+        timeout=30.0,
     )
     assert mcp_manager.call_tool.await_count == 1
     assert mcp_manager.call_tool.await_args is not None
