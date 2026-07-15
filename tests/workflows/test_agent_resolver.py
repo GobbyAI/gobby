@@ -144,7 +144,7 @@ class TestResolveAgentLookup:
         assert any(record.exc_info for record in caplog.records)
 
 
-class TestProviderNormalization:
+class TestProviderInheritance:
     """Provider 'inherit' is resolved based on cli_source."""
 
     def test_inherit_resolved_to_claude_by_default(
@@ -161,8 +161,12 @@ class TestProviderNormalization:
         assert result is not None
         assert result.provider == "claude"
 
-    def test_inherit_resolved_from_cli_source(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    @pytest.mark.parametrize("cli_source", ["claude", "codex", "droid"])
+    def test_inherit_resolved_from_supported_cli_source(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+        cli_source: str,
     ) -> None:
         body = {"name": "test2", "provider": "inherit"}
         manager.create(
@@ -171,11 +175,11 @@ class TestProviderNormalization:
             definition_json=json.dumps(body),
             source="test",
         )
-        result = resolve_agent("test2", db, cli_source="codex")
+        result = resolve_agent("test2", db, cli_source=cli_source)
         assert result is not None
-        assert result.provider == "codex"
+        assert result.provider == cli_source
 
-    def test_claude_source_maps_to_claude(
+    def test_inherit_preserves_unknown_cli_source(
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         body = {"name": "test3", "provider": "inherit"}
@@ -185,9 +189,9 @@ class TestProviderNormalization:
             definition_json=json.dumps(body),
             source="test",
         )
-        result = resolve_agent("test3", db, cli_source="claude")
+        result = resolve_agent("test3", db, cli_source="custom-provider")
         assert result is not None
-        assert result.provider == "claude"
+        assert result.provider == "custom-provider"
 
     def test_explicit_provider_not_overridden(
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
