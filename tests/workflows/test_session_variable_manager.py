@@ -80,6 +80,28 @@ def test_get_variables_empty(db: Any) -> None:
     assert result == {}
 
 
+def test_container_defaults_are_isolated_across_sessions_and_cache_hits(db: Any) -> None:
+    """Mutating one returned default must not mutate the cached value or another session."""
+    from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    LocalWorkflowDefinitionManager(db).create(
+        name="loaded-skills",
+        definition_json=json.dumps({"variable": "loaded_skills", "value": []}),
+        workflow_type="variable",
+    )
+    mgr = SessionVariableManager(db)
+
+    session_a = mgr.get_variables(S1)
+    session_a["loaded_skills"].append("development-discipline")
+    session_b = mgr.get_variables(S2)
+
+    assert session_b["loaded_skills"] == []
+    assert mgr._defaults_cache is not None
+    assert session_a["loaded_skills"] is not mgr._defaults_cache["loaded_skills"]
+    assert session_b["loaded_skills"] is not mgr._defaults_cache["loaded_skills"]
+
+
 def test_append_to_set_variable_accepts_jsonb_dict_payload() -> None:
     """PostgreSQL JSONB may return a dict instead of a JSON string."""
     from gobby.workflows.state_manager import SessionVariableManager

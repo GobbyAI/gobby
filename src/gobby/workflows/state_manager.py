@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -217,7 +218,7 @@ class SessionVariableManager:
             self._defaults_cache is not None
             and (now - self._defaults_cache_time) < self._DEFAULTS_CACHE_TTL
         ):
-            return dict(self._defaults_cache)
+            return deepcopy(self._defaults_cache)
 
         rows = self.db.fetchall(
             "SELECT name, definition_json FROM workflow_definitions "
@@ -234,7 +235,7 @@ class SessionVariableManager:
 
         self._defaults_cache = defaults
         self._defaults_cache_time = now
-        return defaults
+        return deepcopy(defaults)
 
     def set_variable(self, session_id: str, name: str, value: Any) -> None:
         """Set a single session variable (atomic read-modify-write)."""
