@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
+import { StrictMode, createElement, type ReactNode } from "react";
 import {
   cleanupUseChatTestContext,
   createUseChatTestContext,
@@ -125,6 +126,36 @@ describe("useChat connection lifecycle", () => {
     act(() => ws.simulateClose());
     expect(result.current.isConnected).toBe(false);
     expect(result.current.isStreaming).toBe(false);
+  });
+
+  it("does not reconnect when a close event races with unmount", async () => {
+    vi.useFakeTimers();
+    try {
+      await loadModule();
+      const wrapper = ({ children }: { children: ReactNode }) =>
+        createElement(StrictMode, null, children);
+      const { unmount } = renderHook(() => useChat(), { wrapper });
+      const socketCountAfterStrictModeRemount = mockWs.instances.length;
+      const ws = mockWs.instances[socketCountAfterStrictModeRemount - 1];
+      const queuedOnClose = ws.onclose;
+
+      unmount();
+
+      expect(ws.onopen).toBeNull();
+      expect(ws.onclose).toBeNull();
+      expect(ws.onerror).toBeNull();
+      expect(ws.onmessage).toBeNull();
+      expect(ws.close).toHaveBeenCalledOnce();
+
+      act(() => {
+        queuedOnClose?.(new CloseEvent("close"));
+        vi.advanceTimersByTime(2_000);
+      });
+
+      expect(mockWs.instances).toHaveLength(socketCountAfterStrictModeRemount);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not send set_project on connect when restoring an existing main chat", async () => {
