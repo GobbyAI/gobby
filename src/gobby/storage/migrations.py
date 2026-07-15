@@ -91,7 +91,7 @@ class MigrationRunner:
         for migration in self._discover_migrations():
             if migration.version in applied:
                 continue
-            logger.warning("Applying PostgreSQL migration %s_%s", migration.version, migration.name)
+            logger.info("Applying PostgreSQL migration %s_%s", migration.version, migration.name)
             with self._hub.transaction() as txn:
                 self._run_migration(txn, migration)
                 self._record_applied_version(txn, migration.version)
@@ -117,6 +117,8 @@ class MigrationRunner:
                 continue
             match = _MIGRATION_FILE_RE.match(path.name)
             if match is None:
+                if not path.name.startswith("."):
+                    logger.warning("Ignoring invalid migration filename: %s", path.name)
                 continue
 
             version = int(match.group("version"))
@@ -156,7 +158,13 @@ def _split_statements_respecting_dollar_quotes(sql: str) -> Iterator[str]:
             continue
 
         if char == "'":
-            i = _skip_single_quoted_string(sql, i)
+            prefix = sql[i - 1] if i > 0 else ""
+            escape_backslashes = (
+                bool(prefix)
+                and prefix in "eE"
+                and (i < 2 or not _is_identifier_continuation(sql[i - 2]))
+            )
+            i = _skip_single_quoted_string(sql, i, escape_backslashes=escape_backslashes)
             continue
 
         if char == '"':
@@ -206,10 +214,18 @@ def _skip_block_comment(sql: str, start: int) -> int:
     return i
 
 
-def _skip_single_quoted_string(sql: str, start: int) -> int:
+def _skip_single_quoted_string(
+    sql: str,
+    start: int,
+    *,
+    escape_backslashes: bool = False,
+) -> int:
     i = start + 1
     n = len(sql)
     while i < n:
+        if escape_backslashes and sql[i] == "\\":
+            i += 2
+            continue
         if sql[i] == "'":
             if i + 1 < n and sql[i + 1] == "'":
                 i += 2

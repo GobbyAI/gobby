@@ -54,7 +54,7 @@ class _PostgresMigrationHub:
         raise AssertionError(f"unexpected query: {sql}")
 
 
-def test_postgres_pending_migration_logs_warning(caplog: pytest.LogCaptureFixture) -> None:
+def test_postgres_pending_migration_logs_info(caplog: pytest.LogCaptureFixture) -> None:
     module = _migration_module()
     hub = _PostgresMigrationHub()
     runner = module.MigrationRunner(hub)
@@ -87,11 +87,38 @@ def test_postgres_pending_migration_logs_warning(caplog: pytest.LogCaptureFixtur
     runner._run_migration = MethodType(run_migration, runner)
     runner._record_applied_version = MethodType(record_applied_version, runner)
 
-    with caplog.at_level("WARNING", logger="gobby.storage.migrations"):
+    with caplog.at_level("INFO", logger="gobby.storage.migrations"):
         runner.apply_pending()
 
     assert hub.applied == [295]
     assert "Applying PostgreSQL migration 295_add_needed_column" in caplog.text
+    record = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "Applying PostgreSQL migration 295_add_needed_column"
+    )
+    assert record.levelname == "INFO"
+
+
+def test_postgres_migration_discovery_reports_invalid_filenames(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    module = _migration_module()
+    migrations_dir = tmp_path / "migrations"
+    migrations_dir.mkdir()
+    (migrations_dir / ".gitkeep").touch()
+    (migrations_dir / "321_valid.sql").touch()
+    (migrations_dir / "invalid.sql").touch()
+    monkeypatch.setattr(module.importlib.resources, "files", lambda _package: tmp_path)
+
+    with caplog.at_level("WARNING", logger="gobby.storage.migrations"):
+        discovered = module.MigrationRunner(_PostgresMigrationHub())._discover_migrations()
+
+    assert [(migration.version, migration.name) for migration in discovered] == [(321, "valid")]
+    assert "Ignoring invalid migration filename: invalid.sql" in caplog.text
+    assert ".gitkeep" not in caplog.text
 
 
 def test_postgres_migration_discovery_finds_all_post_baseline_migrations() -> None:
@@ -270,6 +297,12 @@ def test_split_statements_respecting_dollar_quotes_ignores_strings_and_comments(
     assert statements[1] == 'SELECT "odd;identifier"'
     assert "SELECT 1" in statements[2]
     assert "SELECT '$$not a tag;$$'" in statements[3]
+
+
+def test_split_statements_respecting_dollar_quotes_handles_escape_strings() -> None:
+    statements = _split(r"SELECT E'escaped quote \'; still string'; SELECT 2;")
+
+    assert statements == [r"SELECT E'escaped quote \'; still string'", "SELECT 2"]
 
 
 def test_split_statements_respecting_dollar_quotes_ignores_mixed_contexts_inside_body() -> None:

@@ -47,6 +47,13 @@ _CONFIG_SECRET_NAMES = {
 _REMOVED_LLM_PROVIDERS_CONFIG_PREFIX = "llm_providers"
 
 
+def _decode_value(key: str, value: str) -> Any:
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON for config key {key!r}") from exc
+
+
 def _validate_storage_config_key(key: str) -> None:
     """Reject config keys that no longer have a runtime config surface."""
     if key == _REMOVED_LLM_PROVIDERS_CONFIG_PREFIX or key.startswith(
@@ -116,12 +123,12 @@ class ConfigStore:
         row = self.db.fetchone("SELECT value FROM config_store WHERE key = %s", (key,))
         if not row:
             return None
-        return json.loads(row["value"])
+        return _decode_value(key, row["value"])
 
     def get_all(self) -> dict[str, Any]:
         """Get all config entries as flat key-value pairs."""
         rows = self.db.fetchall("SELECT key, value FROM config_store")
-        return {row["key"]: json.loads(row["value"]) for row in rows}
+        return {row["key"]: _decode_value(row["key"], row["value"]) for row in rows}
 
     def set(self, key: str, value: Any, source: str = "user") -> None:
         """Upsert a single config value (JSON-encoded)."""
@@ -161,8 +168,20 @@ class ConfigStore:
         return count
 
     def delete(self, key: str) -> bool:
-        """Delete a single key. Returns True if it existed."""
-        cursor = self.db.execute("DELETE FROM config_store WHERE key = %s", (key,))
+        """Delete a non-secret key. Returns True if it existed.
+
+        Secret keys must use ``clear_secret`` so the encrypted value is also removed.
+        """
+        with self.db.transaction():
+            row = self.db.fetchone(
+                "SELECT is_secret FROM config_store WHERE key = %s FOR UPDATE",
+                (key,),
+            )
+            if not row:
+                return False
+            if row["is_secret"]:
+                raise ValueError(f"Config key {key!r} is secret; use clear_secret")
+            cursor = self.db.execute("DELETE FROM config_store WHERE key = %s", (key,))
         return bool(cursor.rowcount and cursor.rowcount > 0)
 
     def delete_all(
@@ -274,7 +293,10 @@ def flatten_config(config_dict: dict[str, Any], prefix: str = "") -> dict[str, A
     for key, value in config_dict.items():
         full_key = f"{prefix}{key}" if not prefix else f"{prefix}.{key}"
         if isinstance(value, dict):
-            flat.update(flatten_config(value, full_key))
+            if value:
+                flat.update(flatten_config(value, full_key))
+            else:
+                flat[full_key] = {}
         else:
             flat[full_key] = value
     return flat
@@ -288,8 +310,13 @@ def unflatten_config(flat_dict: dict[str, Any]) -> dict[str, Any]:
         → {"gobby-tasks": {"validation": {"profile": "mid"}}}
     """
     result: dict[str, Any] = {}
-    for key, value in flat_dict.items():
+    terminal_paths: set[tuple[str, ...]] = set()
+    for key, value in sorted(flat_dict.items(), key=lambda item: (item[0].count("."), item[0])):
         parts = key.split(".")
+        path = tuple(parts)
+        if any(path[:length] in terminal_paths for length in range(1, len(path))):
+            raise ValueError(f"Conflicting scalar and nested config keys at {key!r}")
+        terminal_paths.add(path)
         current = result
         for part in parts[:-1]:
             if part not in current:
