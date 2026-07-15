@@ -312,6 +312,58 @@ describe('FilesTab', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/files/write'))).toBe(false)
   })
 
+  it('refreshes the visible root entries after deleting a root file', async () => {
+    vi.mocked(useIsMobile).mockReturnValue(false)
+    let rootFetches = 0
+    fetchMock.mockImplementation(async (input?: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/files/git-status')) return Response.json({ files: {} })
+      if (url.includes('/api/files/delete')) return Response.json({})
+      if (url.endsWith('path=')) {
+        rootFetches += 1
+        return Response.json(rootFetches === 1
+          ? [{ name: 'delete-me.ts', path: 'delete-me.ts', is_dir: false, extension: 'ts' }]
+          : [])
+      }
+      return Response.json([])
+    })
+
+    render(<FilesTab projectId="test-project" />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Actions for delete-me.ts' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Delete' }))
+
+    await waitFor(() => expect(screen.queryByText('delete-me.ts')).not.toBeInTheDocument())
+    expect(rootFetches).toBe(2)
+  })
+
+  it('refreshes the visible root entries after renaming a root file', async () => {
+    vi.mocked(useIsMobile).mockReturnValue(false)
+    let rootFetches = 0
+    fetchMock.mockImplementation(async (input?: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/files/git-status')) return Response.json({ files: {} })
+      if (url.includes('/api/files/rename')) return Response.json({})
+      if (url.endsWith('path=')) {
+        rootFetches += 1
+        return Response.json(rootFetches === 1
+          ? [{ name: 'old-name.ts', path: 'old-name.ts', is_dir: false, extension: 'ts' }]
+          : [{ name: 'new-name.ts', path: 'new-name.ts', is_dir: false, extension: 'ts' }])
+      }
+      return Response.json([])
+    })
+
+    render(<FilesTab projectId="test-project" />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Actions for old-name.ts' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Rename' }))
+    const input = screen.getByDisplayValue('old-name.ts')
+    await userEvent.clear(input)
+    await userEvent.type(input, 'new-name.ts{Enter}')
+
+    expect(await screen.findByText('new-name.ts')).toBeInTheDocument()
+    expect(screen.queryByText('old-name.ts')).not.toBeInTheDocument()
+    expect(rootFetches).toBe(2)
+  })
+
   it('operates tree rows and reaches file actions with the keyboard', async () => {
     const user = userEvent.setup()
     vi.mocked(useIsMobile).mockReturnValue(false)

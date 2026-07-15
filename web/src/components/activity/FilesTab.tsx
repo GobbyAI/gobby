@@ -211,6 +211,10 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => {
         if (controller.signal.aborted) return
+        if (dirPath === '') {
+          setRootEntries(Array.isArray(data) ? data : [])
+          return
+        }
         setChildrenMap((prev) => {
           const next = new Map(prev)
           next.set(dirPath, Array.isArray(data) ? data : [])
