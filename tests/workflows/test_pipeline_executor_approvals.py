@@ -667,27 +667,73 @@ class TestApproveReject:
     """Tests for approve() and reject() methods."""
 
     @pytest.mark.asyncio
-    async def test_approve_without_loader(
+    async def test_approve_uses_definition_snapshot_instead_of_edited_pipeline(
+        self, mock_db: MagicMock, mock_execution_manager: MagicMock, mock_llm_service: MagicMock
+    ) -> None:
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        snapshot = PipelineDefinition(
+            name="test",
+            steps=[PipelineStep(id="run", exec="echo snapshot")],
+        )
+        mock_exec = MagicMock()
+        mock_exec.id = "pe-1"
+        mock_exec.pipeline_name = "test"
+        mock_exec.project_id = "project-1"
+        mock_exec.definition_json = snapshot.model_dump_json()
+        mock_exec.inputs_json = None
+
+        approval_mgr = AsyncMock()
+        approval_mgr.approve_step.return_value = mock_exec
+        loader = AsyncMock()
+        loader.load_pipeline.return_value = PipelineDefinition(
+            name="test",
+            steps=[PipelineStep(id="renamed", exec="echo edited")],
+        )
+
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            loader=loader,
+        )
+        executor.approval_manager = approval_mgr
+        executor.execute = AsyncMock(return_value=mock_exec)  # type: ignore[method-assign]
+
+        result = await executor.approve("tok-1")
+
+        assert result.id == "pe-1"
+        resumed_pipeline = executor.execute.await_args.kwargs["pipeline"]
+        assert resumed_pipeline.steps[0].exec == "echo snapshot"
+        loader.load_pipeline.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_approve_missing_pipeline_surfaces_resume_error(
         self, mock_db: MagicMock, mock_execution_manager: MagicMock, mock_llm_service: MagicMock
     ) -> None:
         from gobby.workflows.pipeline_executor import PipelineExecutor
 
         mock_exec = MagicMock()
         mock_exec.id = "pe-1"
-        mock_exec.pipeline_name = "test"
+        mock_exec.pipeline_name = "deleted"
+        mock_exec.project_id = "project-1"
+        mock_exec.definition_json = None
 
         approval_mgr = AsyncMock()
         approval_mgr.approve_step.return_value = mock_exec
+        loader = AsyncMock()
+        loader.load_pipeline.return_value = None
 
         executor = PipelineExecutor(
             db=mock_db,
             execution_manager=mock_execution_manager,
             llm_service=mock_llm_service,
+            loader=loader,
         )
         executor.approval_manager = approval_mgr
 
-        result = await executor.approve("tok-1")
-        assert result.id == "pe-1"
+        with pytest.raises(ValueError, match="Pipeline 'deleted' not found for resume"):
+            await executor.approve("tok-1")
 
     @pytest.mark.asyncio
     async def test_reject_delegates_to_approval_manager(
