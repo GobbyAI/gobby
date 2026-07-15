@@ -183,6 +183,7 @@ async def test_stalled_with_alive_agents_touches_updated_at(
     assert exe.updated_at >= old_updated
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_stalled_with_agents_under_persisted_child_session_survives(
     heartbeat: PipelineHeartbeat,
@@ -241,6 +242,7 @@ async def test_stalled_with_active_session_survives_without_agent_runs(
     assert execution.status == ExecutionStatus.RUNNING
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_stalled_without_session_is_left_unchanged(
     heartbeat: PipelineHeartbeat,

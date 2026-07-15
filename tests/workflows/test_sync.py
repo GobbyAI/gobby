@@ -652,6 +652,7 @@ steps:
         assert result["orphaned"] == 0
         assert manager.get(installed.id).deleted_at is None
 
+    @pytest.mark.integration
     def test_orphan_cleanup_skips_parse_failure(
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, tmp_path: Path
     ) -> None:

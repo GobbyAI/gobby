@@ -741,6 +741,7 @@ def _create_waiting_approval(
     return manager, execution.id
 
 
+@pytest.mark.integration
 class TestApprovalReplayIntegration:
     async def test_reject_after_approve_cannot_cancel_completed_execution(
         self,

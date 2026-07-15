@@ -8,7 +8,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from gobby.workflows.definitions import PipelineDefinition, PipelineStep
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.pipelines import LocalPipelineExecutionManager
+from gobby.workflows.definitions import PipelineApproval, PipelineDefinition, PipelineStep
 from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.pipeline_state import ApprovalRequired, ExecutionStatus, StepStatus
 
@@ -147,29 +149,51 @@ class TestExecuteNestedPipeline:
         with pytest.raises(RuntimeError, match="No loader configured"):
             await executor._execute_nested_pipeline("child-pipeline", context, "proj-123")
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_nested_pipeline_propagates_approval_required(
-        self, mock_db, mock_execution_manager, mock_llm_service, mock_loader
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, object],
+        mock_llm_service: AsyncMock,
     ) -> None:
         """A child approval gate pauses the caller instead of becoming an error result."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
 
-        executor = PipelineExecutor(
-            db=mock_db,
-            execution_manager=mock_execution_manager,
-            llm_service=mock_llm_service,
+        project_id = str(sample_project["id"])
+        child = PipelineDefinition(
+            name="child-pipeline",
+            steps=[
+                PipelineStep(
+                    id="approve",
+                    exec="printf child-approved",
+                    approval=PipelineApproval(required=True, message="Review child"),
+                )
+            ],
         )
-        executor.loader = AsyncMock()
-        executor.loader.load_pipeline.return_value = mock_loader.load_pipeline.return_value
-        approval = ApprovalRequired("child-execution", "approve", "token", "Review child")
-        executor.execute = AsyncMock(side_effect=approval)
+        loader = AsyncMock()
+        loader.load_pipeline.return_value = child
+        manager = LocalPipelineExecutionManager(temp_db, project_id=project_id)
+        executor = PipelineExecutor(
+            db=temp_db,
+            execution_manager=manager,
+            llm_service=mock_llm_service,
+            loader=loader,
+        )
 
         with pytest.raises(ApprovalRequired) as exc_info:
             await executor._execute_nested_pipeline(
-                "child-pipeline", {"inputs": {}, "steps": {}}, "proj-123"
+                "child-pipeline", {"inputs": {}, "steps": {}}, project_id
             )
 
-        assert exc_info.value is approval
+        execution = manager.get_execution(exc_info.value.execution_id)
+        steps = manager.get_steps_for_execution(exc_info.value.execution_id)
+        assert execution is not None
+        assert execution.status == ExecutionStatus.WAITING_APPROVAL
+        assert len(steps) == 1
+        assert steps[0].status == StepStatus.WAITING_APPROVAL
+        assert steps[0].approval_token == exc_info.value.token
+        assert exc_info.value.message == "Review child"
 
     @pytest.mark.asyncio
     async def test_nested_pipeline_error_result_fails_parent_step(
