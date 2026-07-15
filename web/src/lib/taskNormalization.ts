@@ -326,7 +326,7 @@ export function normalizeStageRow(
     state: isStageState(row?.state) ? row.state : (fallback?.state ?? 'ready'),
     review_policy: isReviewPolicy(row?.review_policy)
       ? row.review_policy
-      : (fallback?.review_policy ?? 'none'),
+      : (fallback?.review_policy ?? 'required'),
     updated_at: row?.updated_at ?? fallback?.updated_at ?? null,
     position,
     reviewer_agent: row?.reviewer_agent ?? fallback?.reviewer_agent ?? null,

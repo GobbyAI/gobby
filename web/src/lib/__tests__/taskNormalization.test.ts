@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { resolveAdvanceAction } from '../stageActions'
 import {
   extractTaskPayload,
   isRawTaskPayload,
@@ -155,6 +156,26 @@ describe('normalizeStageRow display_name fallback', () => {
 
     expect(task.current_stage?.name).toBe('development')
     expect(task.stages.map(stage => stage.name)).toEqual(['development'])
+  })
+})
+
+describe('normalizeStageRow review_policy fallback', () => {
+  it('defaults a missing review policy to required', () => {
+    const stage = normalizeStageRow({ name: 'development' })
+
+    expect(stage.review_policy).toBe('required')
+    expect(resolveAdvanceAction('in_progress', stage.review_policy)).toBe(
+      'submit_for_review',
+    )
+  })
+
+  it('defaults an invalid review policy to required', () => {
+    const row = {
+      name: 'development',
+      review_policy: 'invalid',
+    } as unknown as Parameters<typeof normalizeStageRow>[0]
+
+    expect(normalizeStageRow(row).review_policy).toBe('required')
   })
 })
 
