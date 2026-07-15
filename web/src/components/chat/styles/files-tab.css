@@ -22,7 +22,7 @@
 }
 
 .file-tree-chevron {
-  font-size: 0.6em;
+  font-size: var(--text-2xs);
   color: var(--text-muted);
   width: 0.75rem;
   text-align: center;
@@ -66,7 +66,7 @@
 }
 
 .file-viewer-path {
-  font-size: calc(var(--font-size-base) * 0.75);
+  font-size: var(--text-sm);
   color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -182,7 +182,7 @@
 
 /* Git status indicators */
 .files-git-badge {
-  font-size: calc(var(--font-size-base) * 0.65);
+  font-size: var(--text-2xs);
   font-weight: 700;
   font-family: inherit;
   flex-shrink: 0;
@@ -211,7 +211,7 @@
 /* Markdown viewer */
 .files-markdown-viewer {
   padding: 1rem 1.5rem;
-  font-size: calc(var(--font-size-base) * 0.875);
+  font-size: var(--text-base);
   line-height: 1.7;
   color: var(--text-primary);
   overflow-wrap: break-word;
@@ -242,7 +242,7 @@
   border: none;
   background: transparent;
   color: var(--text-primary);
-  font-size: calc(var(--font-size-base) * 0.8);
+  font-size: var(--text-md);
   cursor: pointer;
   border-radius: 0.25rem;
   transition: background 0.1s;

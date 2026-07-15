@@ -18,7 +18,7 @@ interface AgentPickerDropdownProps {
 const SCOPE_TOGGLE_CLS = 'flex gap-0.5 border-b border-[var(--border)] px-2 py-1.5'
 
 const SCOPE_BTN_BASE_CLS =
-  'flex-1 cursor-pointer rounded border-0 bg-transparent px-2 py-1 text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-muted)] transition-colors duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-secondary)] pointer-coarse:min-h-11'
+  'flex-1 cursor-pointer rounded border-0 bg-transparent px-2 py-1 text-xs text-[var(--text-muted)] transition-colors duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-secondary)] pointer-coarse:min-h-11'
 
 const SCOPE_BTN_ACTIVE_CLS =
   'bg-[var(--accent)] text-[var(--accent-foreground)] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]'
@@ -37,10 +37,10 @@ const ITEM_MAIN_CLS = 'flex items-center gap-2'
 
 const ITEM_NAME_CLS = 'text-[length:var(--text-md)] font-medium'
 
-const ITEM_CHECK_CLS = 'ml-auto text-[length:calc(var(--font-size-base)*0.7)] text-[var(--accent)]'
+const ITEM_CHECK_CLS = 'ml-auto text-xs text-[var(--accent)]'
 
 const ITEM_DESC_CLS =
-  'mt-0.5 ml-[1.375rem] overflow-hidden text-ellipsis whitespace-nowrap text-[length:calc(var(--font-size-base)*0.7)] leading-[1.3] text-[var(--text-muted)]'
+  'mt-0.5 ml-[1.375rem] overflow-hidden text-ellipsis whitespace-nowrap text-xs leading-[1.3] text-[var(--text-muted)]'
 
 export function AgentPickerDropdown({
   globalDefs,

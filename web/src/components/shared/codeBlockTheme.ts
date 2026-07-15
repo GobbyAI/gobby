@@ -55,7 +55,7 @@ export const CODE_CHROME_VARS = {
  */
 export const CODE_CHROME_TYPOGRAPHY = {
   fontFamily: "'SF Mono', 'Fira Code', 'JetBrains Mono', monospace",
-  fontSize: '0.9em',
+  fontSize: 'var(--text-base)',
   padding: '1rem',
   borderRadius: '0',
 } as const

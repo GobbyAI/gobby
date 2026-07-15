@@ -51,24 +51,24 @@ const TYPE_OPTIONS = ['task', 'bug', 'feature', 'epic', 'chore']
 const BACKDROP_CLS = cn(TASK_MODAL_BACKDROP_BASE_CLS, 'z-[200]')
 const MODAL_CLS =
   'fixed left-1/2 top-1/2 z-[210] max-h-[85vh] w-[520px] max-w-[90vw] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] shadow-[var(--shadow-xl)]'
-const TITLE_CLS = 'text-[length:calc(var(--font-size-base)*1.05)] font-semibold'
+const TITLE_CLS = 'text-lg font-semibold'
 
 const FORM_CLS = 'flex flex-col gap-3 px-5 py-4'
 const FIELD_CLS = 'flex flex-col gap-1'
 const ROW_CLS = 'flex gap-3 [&>*]:flex-1'
-const LABEL_CLS = 'text-[length:calc(var(--font-size-base)*0.75)] font-medium text-[var(--text-muted)]'
+const LABEL_CLS = 'text-sm font-medium text-[var(--text-muted)]'
 const REQUIRED_CLS = 'text-[var(--color-error)]'
 const INPUT_CLS =
-  `rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2.5 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.85)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] ${inputFocusCls} pointer-coarse:min-h-11`
+  `rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2.5 py-1.5 font-[inherit] text-base text-[var(--text-primary)] placeholder:text-[var(--text-muted)] ${inputFocusCls} pointer-coarse:min-h-11`
 const TEXTAREA_CLS =
-  `min-h-12 resize-y rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2.5 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.85)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] ${inputFocusCls}`
-const ERROR_CLS = 'text-[length:calc(var(--font-size-base)*0.8)] text-[var(--color-error)]'
+  `min-h-12 resize-y rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2.5 py-1.5 font-[inherit] text-base text-[var(--text-primary)] placeholder:text-[var(--text-muted)] ${inputFocusCls}`
+const ERROR_CLS = 'text-md text-[var(--color-error)]'
 
 const ACTIONS_CLS = 'flex justify-end gap-2 border-t border-[var(--border)] pt-2'
 const CANCEL_BTN_CLS =
-  'min-w-[100px] cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-3 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] font-medium text-[var(--text-primary)] transition-colors duration-150 hover:bg-[var(--border)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
+  'min-w-[100px] cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-3 py-1.5 font-[inherit] text-md font-medium text-[var(--text-primary)] transition-colors duration-150 hover:bg-[var(--border)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
 const SUBMIT_BTN_CLS =
-  'min-w-[100px] cursor-pointer rounded-md border border-[var(--accent)] bg-[var(--accent)] px-3 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] font-medium text-[var(--accent-foreground)] transition-colors duration-150 hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
+  'min-w-[100px] cursor-pointer rounded-md border border-[var(--accent)] bg-[var(--accent)] px-3 py-1.5 font-[inherit] text-md font-medium text-[var(--accent-foreground)] transition-colors duration-150 hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
 
 export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: TaskCreateFormProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
