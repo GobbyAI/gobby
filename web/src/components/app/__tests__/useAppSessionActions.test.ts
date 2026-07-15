@@ -42,7 +42,38 @@ describe("useAppSessionActions — ACP close/delete (#17400)", () => {
 
   afterEach(() => {
     mockFetch.restore();
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
+  });
+
+  it("uses the API base URL when cancelling an agent", async () => {
+    vi.stubEnv("VITE_API_BASE_URL", "https://api.example.test");
+    mockFetch.mockJsonResponse("/cancel", {});
+    const { result } = renderHook(() => useAppSessionActions(makeArgs()));
+
+    await act(async () => {
+      await result.current.handleKillAgent("run/1");
+    });
+
+    expect(mockFetch.fn).toHaveBeenCalledWith(
+      "https://api.example.test/api/agents/runs/run%2F1/cancel",
+      { method: "POST" },
+    );
+  });
+
+  it("uses the API base URL when expiring a session", async () => {
+    vi.stubEnv("VITE_API_BASE_URL", "https://api.example.test");
+    mockFetch.mockJsonResponse("/expire", {});
+    const { result } = renderHook(() => useAppSessionActions(makeArgs()));
+
+    await act(async () => {
+      await result.current.handleExpireSession("session/1");
+    });
+
+    expect(mockFetch.fn).toHaveBeenCalledWith(
+      "https://api.example.test/api/sessions/session%2F1/expire",
+      { method: "POST" },
+    );
   });
 
   it("POSTs to /acp/close and returns true on success", async () => {

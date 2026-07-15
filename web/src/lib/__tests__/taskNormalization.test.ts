@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { currentStage, resolveAdvanceAction, type StageStateView } from '../stageActions'
+import { getCanonicalStageName } from '../taskState'
 import {
   extractTaskPayload,
   isRawTaskPayload,
@@ -155,6 +157,61 @@ describe('normalizeStageRow display_name fallback', () => {
 
     expect(task.current_stage?.name).toBe('development')
     expect(task.stages.map(stage => stage.name)).toEqual(['development'])
+  })
+})
+
+describe('normalizeStageRow review_policy fallback', () => {
+  it('defaults a missing review policy to required', () => {
+    const stage = normalizeStageRow({ name: 'development' })
+
+    expect(stage.review_policy).toBe('required')
+    expect(resolveAdvanceAction('in_progress', stage.review_policy)).toBe(
+      'submit_for_review',
+    )
+  })
+
+  it('defaults an invalid review policy to required', () => {
+    const row = {
+      name: 'development',
+      review_policy: 'invalid',
+    } as unknown as Parameters<typeof normalizeStageRow>[0]
+
+    expect(normalizeStageRow(row).review_policy).toBe('required')
+  })
+})
+
+describe('current stage parity', () => {
+  it('uses backend state semantics across normalization, task state, and stage actions', () => {
+    const stages: StageStateView[] = [
+      normalizeStageRow({ name: 'zeta', state: 'in_progress', position: 0 }),
+      normalizeStageRow({ name: 'done_first', state: 'done', position: -1 }),
+      normalizeStageRow({ name: 'alpha', state: 'ready' }),
+      normalizeStageRow({ name: 'later', state: 'ready', position: 2 }),
+    ]
+    const direct = normalizeStageRow({ name: 'direct', state: 'needs_review' })
+    const payload = {
+      id: 'task-1',
+      stages,
+      state: { current_stage: direct },
+      current_stage: direct,
+    }
+
+    expect(currentStage(payload)?.name).toBe('alpha')
+    expect(getCanonicalStageName(payload)).toBe('alpha')
+    expect(normalizeTaskPayload(payload).current_stage?.name).toBe('alpha')
+  })
+
+  it('uses state current stage before the top-level fallback when rows are absent', () => {
+    const stateCurrent = normalizeStageRow({ name: 'state', state: 'in_progress' })
+    const topLevelCurrent = normalizeStageRow({ name: 'top_level', state: 'ready' })
+    const payload = {
+      id: 'task-1',
+      state: { current_stage: stateCurrent },
+      current_stage: topLevelCurrent,
+    }
+
+    expect(currentStage(payload)?.name).toBe('state')
+    expect(getCanonicalStageName(payload)).toBe('state')
   })
 })
 

@@ -1,4 +1,9 @@
-import type { ReviewPolicy, StageState5, StageStateView } from './stageActions'
+import {
+  currentStage as selectCurrentStage,
+  type ReviewPolicy,
+  type StageState5,
+  type StageStateView,
+} from './stageActions'
 import type { CanonicalTaskState, OwnerSessionRef } from './taskState'
 import { getCanonicalTaskState, getTaskDisplayState } from './taskState'
 import { DEFAULT_TASK_PRIORITY } from './taskOptions'
@@ -326,7 +331,7 @@ export function normalizeStageRow(
     state: isStageState(row?.state) ? row.state : (fallback?.state ?? 'ready'),
     review_policy: isReviewPolicy(row?.review_policy)
       ? row.review_policy
-      : (fallback?.review_policy ?? 'none'),
+      : (fallback?.review_policy ?? 'required'),
     updated_at: row?.updated_at ?? fallback?.updated_at ?? null,
     position,
     reviewer_agent: row?.reviewer_agent ?? fallback?.reviewer_agent ?? null,
@@ -366,30 +371,21 @@ function normalizeCurrentStage(
   task: RawTaskPayload,
   stages: StageStateView[],
 ): StageStateView | null {
-  const rawCurrent = (task.current_stage ?? task.state?.current_stage ?? null) as
-    | RawStagePayload
-    | null
-  if (!rawCurrent) return selectCurrentStageFromRows(stages)
+  const selected = selectCurrentStage<RawStagePayload>({
+    stages: Array.isArray(task.stages) ? stages : undefined,
+    state: {
+      current_stage: task.state?.current_stage as RawStagePayload | null | undefined,
+    },
+    current_stage: task.current_stage,
+  })
+  if (!selected) return null
 
-  const currentName = rawCurrent.name ?? rawCurrent.stage_name ?? null
-  if (isRetiredStageName(currentName)) return selectCurrentStageFromRows(stages)
-
+  const currentName = selected.name ?? selected.stage_name ?? null
+  if (isRetiredStageName(currentName)) return null
   const matchingStage = currentName
     ? stages.find(stage => stage.name === currentName)
     : null
-  return normalizeStageRow(rawCurrent, matchingStage)
-}
-
-function selectCurrentStageFromRows(stages: StageStateView[]): StageStateView | null {
-  if (!stages.length) return null
-  return stages
-    .map((row, index) => ({ row, index }))
-    .sort((a, b) => {
-      const aPosition = a.row.position ?? a.index
-      const bPosition = b.row.position ?? b.index
-      return aPosition - bPosition
-    })
-    .find(({ row }) => row.state !== 'done')?.row ?? null
+  return normalizeStageRow(selected, matchingStage)
 }
 
 export function normalizeTaskPayload<T extends RawTaskPayload>(

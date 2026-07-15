@@ -10,7 +10,6 @@ export function isValidGithubRepoSlug(value: string | null | undefined): value i
     GITHUB_OWNER_RE.test(owner) &&
     !owner.includes('--') &&
     GITHUB_REPO_RE.test(repo) &&
-    !repo.includes('..') &&
-    !repo.includes('--')
+    !repo.includes('..')
   )
 }

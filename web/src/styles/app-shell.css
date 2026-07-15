@@ -111,6 +111,21 @@
   padding-inline: 0.7rem;
 }
 
+@media (pointer: coarse) {
+  .app-header-actions {
+    --control-row-height: 2.75rem;
+  }
+
+  .app-header-actions .app-theme-toggle,
+  .app-header-actions .app-settings-cog,
+  .app-header-actions .app-logout-btn,
+  .app-header-actions .segmented-control__option,
+  .project-selector-compact-trigger {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
+}
+
 @media (max-width: 768px) {
   .app-header {
     gap: 0.5rem;

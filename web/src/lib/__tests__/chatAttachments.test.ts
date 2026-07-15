@@ -1,9 +1,8 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   ATTACHMENT_DELETE_TIMEOUT_MS,
   ATTACHMENT_UPLOAD_TIMEOUT_MS,
-  MAX_ATTACHMENT_SIZE_BYTES,
   deleteChatAttachment,
   formatAttachmentSize,
   uploadChatAttachment,
@@ -58,15 +57,31 @@ afterEach(() => {
   FakeXMLHttpRequest.instances = []
 })
 
+beforeEach(() => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue(Response.json({ max_file_bytes: 100_000_000 })),
+  )
+})
+
+async function startedUpload(): Promise<FakeXMLHttpRequest> {
+  await vi.waitFor(() => expect(FakeXMLHttpRequest.instances).toHaveLength(1))
+  return FakeXMLHttpRequest.instances[0]
+}
+
 describe('uploadChatAttachment', () => {
-  it('rejects oversized files before creating an XHR', async () => {
+  it('rejects files above the backend-configured limit before creating an XHR', async () => {
     globalThis.XMLHttpRequest = FakeXMLHttpRequest as unknown as typeof XMLHttpRequest
-    const file = new File(['x'], 'huge.bin')
-    Object.defineProperty(file, 'size', { value: MAX_ATTACHMENT_SIZE_BYTES + 1 })
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json({ max_file_bytes: 4 }))
+    const file = new File(['hello'], 'huge.bin')
 
     const upload = uploadChatAttachment(file)
 
-    await expect(upload.promise).rejects.toThrow('Attachment exceeds 95.4 MB limit')
+    await expect(upload.promise).rejects.toThrow('Attachment exceeds 4 B limit')
+    expect(fetch).toHaveBeenCalledWith('/api/chat/attachments/limits', {
+      credentials: 'include',
+      signal: expect.any(AbortSignal),
+    })
     expect(FakeXMLHttpRequest.instances).toHaveLength(0)
   })
 
@@ -75,7 +90,7 @@ describe('uploadChatAttachment', () => {
     const onProgress = vi.fn()
 
     const upload = uploadChatAttachment(new File(['hello'], 'note.txt'), { onProgress })
-    const xhr = FakeXMLHttpRequest.instances[0]
+    const xhr = await startedUpload()
 
     xhr.upload.onprogress?.(
       new ProgressEvent('progress', {
@@ -97,7 +112,7 @@ describe('uploadChatAttachment', () => {
     globalThis.XMLHttpRequest = FakeXMLHttpRequest as unknown as typeof XMLHttpRequest
 
     const upload = uploadChatAttachment(new File(['hello'], 'note.txt'))
-    const xhr = FakeXMLHttpRequest.instances[0]
+    const xhr = await startedUpload()
     xhr.status = 200
     xhr.responseText = '{bad'
     const rejection = expect(upload.promise).rejects.toThrow('Attachment upload returned invalid JSON')
@@ -111,7 +126,7 @@ describe('uploadChatAttachment', () => {
     const onProgress = vi.fn()
 
     const upload = uploadChatAttachment(new File(['hello'], 'note.txt'), { onProgress })
-    const xhr = FakeXMLHttpRequest.instances[0]
+    const xhr = await startedUpload()
     const rejection = expect(upload.promise).rejects.toThrow('Attachment upload failed')
     xhr.onerror?.()
 
@@ -123,7 +138,7 @@ describe('uploadChatAttachment', () => {
     globalThis.XMLHttpRequest = FakeXMLHttpRequest as unknown as typeof XMLHttpRequest
 
     const upload = uploadChatAttachment(new File(['hello'], 'note.txt'))
-    const xhr = FakeXMLHttpRequest.instances[0]
+    const xhr = await startedUpload()
     xhr.status = 201
     xhr.responseText = JSON.stringify({
       id: 'att-1',
@@ -146,7 +161,7 @@ describe('uploadChatAttachment', () => {
     globalThis.XMLHttpRequest = FakeXMLHttpRequest as unknown as typeof XMLHttpRequest
 
     const upload = uploadChatAttachment(new File(['hello'], 'note.txt'))
-    const xhr = FakeXMLHttpRequest.instances[0]
+    const xhr = await startedUpload()
     xhr.status = 201
     xhr.responseText = JSON.stringify({
       id: 'att-1',
@@ -168,7 +183,7 @@ describe('uploadChatAttachment', () => {
     const onProgress = vi.fn()
 
     const upload = uploadChatAttachment(new File(['hello'], 'note.txt'), { onProgress })
-    const xhr = FakeXMLHttpRequest.instances[0]
+    const xhr = await startedUpload()
     const abort = vi.fn(() => xhr.onabort?.())
     xhr.abort = abort
     const rejection = expect(upload.promise).rejects.toThrow('Attachment upload canceled')
@@ -184,7 +199,7 @@ describe('uploadChatAttachment', () => {
     globalThis.XMLHttpRequest = FakeXMLHttpRequest as unknown as typeof XMLHttpRequest
 
     const upload = uploadChatAttachment(new File(['hello'], 'note.txt'))
-    const xhr = FakeXMLHttpRequest.instances[0]
+    const xhr = await startedUpload()
     xhr.status = 200
     xhr.responseText = JSON.stringify({ id: 'att-1' })
     const rejection = expect(upload.promise).rejects.toThrow(
@@ -251,9 +266,9 @@ describe('formatAttachmentSize', () => {
     expect(formatAttachmentSize(-1)).toBe('0 B')
   })
 
-  it('formats KB, MB, and GB byte counts', () => {
-    expect(formatAttachmentSize(1536)).toBe('1.5 KB')
-    expect(formatAttachmentSize(2 * 1024 * 1024)).toBe('2.0 MB')
-    expect(formatAttachmentSize(3 * 1024 * 1024 * 1024)).toBe('3.0 GB')
+  it('formats binary byte counts with IEC units', () => {
+    expect(formatAttachmentSize(1536)).toBe('1.5 KiB')
+    expect(formatAttachmentSize(2 * 1024 * 1024)).toBe('2.0 MiB')
+    expect(formatAttachmentSize(3 * 1024 * 1024 * 1024)).toBe('3.0 GiB')
   })
 })

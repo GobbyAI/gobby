@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Text, Box } from "ink";
 import Spinner from "ink-spinner";
+import SelectInput from "ink-select-input";
 import { runGobby } from "../utils/gobby.js";
 import { MultiSelect } from "../components/MultiSelect.js";
+import { StatusMessage } from "../components/StatusMessage.js";
 import { saveState } from "../utils/state.js";
 import type { StepProps } from "../types.js";
 
@@ -21,7 +23,7 @@ const CLI_FLAGS: Record<string, string> = {
 };
 
 export function CliHooks({ state, setState, onNext }: StepProps): React.ReactElement {
-  const [phase, setPhase] = useState<"select" | "installing" | "done">("select");
+  const [phase, setPhase] = useState<"select" | "installing" | "error" | "done">("select");
   const [results, setResults] = useState<string[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
 
@@ -63,12 +65,16 @@ export function CliHooks({ state, setState, onNext }: StepProps): React.ReactEle
         installed.push(k);
       }
     } else {
-      lines.push(`  Install output: ${r.output.trim().slice(0, 200)}`);
+      lines.push(r.output.trim().slice(0, 200) || "gobby install failed or timed out.");
     }
 
     setResults(lines);
-    setPhase("done");
-    finish(installed);
+    if (r.success) {
+      setPhase("done");
+      finish(installed);
+    } else {
+      setPhase("error");
+    }
   }, [finish, phase, selected]);
 
   if (available.length === 0) {
@@ -115,6 +121,30 @@ export function CliHooks({ state, setState, onNext }: StepProps): React.ReactEle
       <Text>
         <Spinner type="dots" /> Installing hooks...
       </Text>
+    );
+  }
+
+  if (phase === "error") {
+    return (
+      <Box flexDirection="column">
+        <StatusMessage level="error">Hook installation failed: {results[0]}</StatusMessage>
+        <SelectInput
+          items={[
+            { label: "Retry", value: "retry" },
+            { label: "Continue without hooks", value: "skip" },
+            { label: "Exit setup", value: "exit" },
+          ]}
+          onSelect={(item) => {
+            if (item.value === "retry") {
+              setPhase("installing");
+            } else if (item.value === "skip") {
+              finish([]);
+            } else {
+              process.exit(1);
+            }
+          }}
+        />
+      </Box>
     );
   }
 

@@ -248,7 +248,15 @@ vi.mock("../hooks/useAgentDefinitions", () => ({
 }));
 
 vi.mock("../components/ProjectSelector", () => ({
-  ProjectSelector: () => <div data-testid="project-selector" />,
+  ProjectSelector: ({
+    onProjectChange,
+  }: {
+    onProjectChange: (projectId: string) => void;
+  }) => (
+    <button type="button" onClick={() => onProjectChange("personal")}>
+      Switch project
+    </button>
+  ),
 }));
 
 vi.mock("../components/chat/ChatPage", () => ({
@@ -314,6 +322,86 @@ describe("App wiring", () => {
       expect(mockSetProjectIdRef).toHaveBeenCalledWith("repo-project");
       expect(mockSendProjectChange).toHaveBeenCalledWith("repo-project");
     });
+  });
+
+  it("clears a requested activity tab before switching projects", async () => {
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(mockSetProjectIdRef).toHaveBeenCalledWith("repo-project");
+    });
+
+    const currentProps = () =>
+      chatPagePropsSpy.mock.calls[chatPagePropsSpy.mock.calls.length - 1]?.[0] as {
+        projectId: string;
+        requestedActivityTab: string | null;
+        chat: { onPaletteSelect: (item: unknown) => void };
+      };
+
+    act(() => {
+      currentProps().chat.onPaletteSelect({
+        kind: "command",
+        action: "open_mcp",
+      });
+    });
+    expect(currentProps().requestedActivityTab).toBe("mcp");
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch project" }));
+
+    await waitFor(() => {
+      expect(currentProps().projectId).toBe("personal");
+    });
+    expect(currentProps().requestedActivityTab).toBeNull();
+    expect(
+      chatPagePropsSpy.mock.calls.some(([props]) => {
+        const chatPageProps = props as {
+          projectId: string;
+          requestedActivityTab: string | null;
+        };
+        return (
+          chatPageProps.projectId === "personal" &&
+          chatPageProps.requestedActivityTab === "mcp"
+        );
+      }),
+    ).toBe(false);
+  });
+
+  it("waits for persisted project hydration before syncing the project", async () => {
+    let resolveSettings: ((response: Response) => void) | undefined;
+    globalThis.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/config/ui-settings" && !init) {
+        return new Promise<Response>((resolve) => {
+          resolveSettings = resolve;
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({}),
+      } as Response);
+    }) as unknown as typeof fetch;
+
+    render(<App />);
+
+    expect(mockSetProjectIdRef).not.toHaveBeenCalled();
+    expect(mockSendProjectChange).not.toHaveBeenCalled();
+
+    await waitFor(() => {
+      expect(resolveSettings).toBeDefined();
+    });
+    await act(async () => {
+      resolveSettings?.({
+        ok: true,
+        json: () => Promise.resolve({ selectedProjectId: "personal" }),
+      } as Response);
+    });
+
+    await waitFor(() => {
+      expect(mockSetProjectIdRef).toHaveBeenCalledWith("personal");
+      expect(mockSendProjectChange).toHaveBeenCalledWith("personal");
+    });
+    expect(mockSendProjectChange).not.toHaveBeenCalledWith("repo-project");
   });
 
   it("shows transport errors in the app toast", async () => {
@@ -610,49 +698,27 @@ describe("App wiring", () => {
     });
   });
 
-  it("lands on chat for a stale #sessions hash", async () => {
-    window.location.hash = "#sessions";
+  it("keeps chat rendered when back or forward navigation changes the hash", async () => {
+    window.history.replaceState(null, "", "#sessions");
 
     await act(async () => {
       render(<App />);
     });
 
     expect(await screen.findByText("Chat")).toBeInTheDocument();
-    await waitFor(() => {
-      expect(window.location.hash).toBe("#chat");
+    expect(window.location.hash).toBe("#sessions");
+
+    act(() => {
+      window.history.replaceState(null, "", "#terminals");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
     });
+
+    expect(screen.getByText("Chat")).toBeInTheDocument();
+    expect(window.location.hash).toBe("#terminals");
   });
 
-  it("lands on chat for a stale #terminals hash", async () => {
-    window.location.hash = "#terminals";
-
-    await act(async () => {
-      render(<App />);
-    });
-
-    expect(await screen.findByText("Chat")).toBeInTheDocument();
-    await waitFor(() => {
-      expect(window.location.hash).toBe("#chat");
-    });
-  });
-
-  it.each(["projects", "cron", "reports", "traces"])(
-    "lands on chat for retired #%s hash",
-    async (hash) => {
-      window.location.hash = `#${hash}`;
-
-      await act(async () => {
-        render(<App />);
-      });
-
-      expect(await screen.findByText("Chat")).toBeInTheDocument();
-      await waitFor(() => {
-        expect(window.location.hash).toBe("#chat");
-      });
-    },
-  );
-
-  it("resets the backend-facing chat mode on New Chat so a fresh session does not inherit the prior mode (#15703)", async () => {
+  it("resets the backend-facing chat mode when New Chat is selected from the palette", async () => {
     const sendMode = vi.fn();
     const startNewChat = vi.fn();
     vi.mocked(useChat).mockReturnValue({
@@ -670,12 +736,17 @@ describe("App wiring", () => {
     });
     const props = chatPagePropsSpy.mock.calls[
       chatPagePropsSpy.mock.calls.length - 1
-    ]?.[0] as { conversations?: { onNewChat?: (agentName?: string) => void } };
+    ]?.[0] as {
+      paletteActions?: Array<{ id: string; onSelect: () => void }>;
+    };
 
-    expect(props.conversations?.onNewChat).toBeTypeOf("function");
+    const newChatAction = props.paletteActions?.find(
+      (action) => action.id === "new-chat",
+    );
+    expect(newChatAction?.onSelect).toBeTypeOf("function");
 
     await act(async () => {
-      props.conversations?.onNewChat?.();
+      newChatAction?.onSelect();
     });
 
     // handleStartNewChat must reset BOTH the UI radio and the backend-facing
@@ -685,6 +756,37 @@ describe("App wiring", () => {
     // session-created-in-bypass desync (#15703). defaultChatMode is "plan".
     expect(startNewChat).toHaveBeenCalled();
     expect(sendMode).toHaveBeenCalledWith("plan");
+  });
+
+  it("restores the persisted mode when the active session arrives after the initial catalog load", async () => {
+    const sendMode = vi.fn();
+    vi.mocked(useChat).mockReturnValue({
+      ...makeChatHookState(),
+      dbSessionId: "db-session-1",
+      sendMode,
+    } as never);
+
+    const { rerender } = render(<App />);
+
+    expect(sendMode).not.toHaveBeenCalled();
+
+    vi.mocked(useSessionCatalog).mockReturnValue({
+      ...makeSessionCatalogState(),
+      sessions: [
+        {
+          id: "db-session-1",
+          project_id: "repo-project",
+          session_type: "web_chat",
+          chat_mode: "bypass",
+        },
+      ],
+    } as never);
+
+    rerender(<App />);
+
+    await waitFor(() => {
+      expect(sendMode).toHaveBeenCalledWith("bypass");
+    });
   });
 
   it("shows a header Log out button that signs out when auth is enabled", async () => {

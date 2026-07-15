@@ -263,14 +263,31 @@ export function findToolCallById(
   toolUseId: string,
 ): ToolCall | undefined {
   if (msg.contentBlocks) {
-    for (const block of msg.contentBlocks) {
+    for (let i = msg.contentBlocks.length - 1; i >= 0; i--) {
+      const block = msg.contentBlocks[i]
       if (block.type === 'tool_chain') {
-        const found = block.tool_calls.find((tc) => tc.id === toolUseId)
+        const found = block.tool_calls.find(
+          (tc) => tc.id === toolUseId && isPendingToolCall(tc),
+        )
         if (found) return found
       }
     }
   }
-  return msg.toolCalls?.find((tc) => tc.id === toolUseId)
+  if (msg.toolCalls) {
+    for (let i = msg.toolCalls.length - 1; i >= 0; i--) {
+      const toolCall = msg.toolCalls[i]
+      if (toolCall.id === toolUseId && isPendingToolCall(toolCall)) {
+        return toolCall
+      }
+    }
+  }
+  return undefined
+}
+
+function isPendingToolCall(toolCall: ToolCall): boolean {
+  return toolCall.status === 'calling' ||
+    toolCall.status === 'pending' ||
+    toolCall.status === 'pending_approval'
 }
 
 export function findPendingToolCall(msg: ChatMessage): ToolCall | undefined {
@@ -278,20 +295,12 @@ export function findPendingToolCall(msg: ChatMessage): ToolCall | undefined {
     for (let i = msg.contentBlocks.length - 1; i >= 0; i--) {
       const block = msg.contentBlocks[i]
       if (block.type === 'tool_chain') {
-        const pending = block.tool_calls.find(
-          (tc) => tc.status === 'calling' ||
-            tc.status === 'pending' ||
-            tc.status === 'pending_approval',
-        )
+        const pending = block.tool_calls.find(isPendingToolCall)
         if (pending) return pending
       }
     }
   }
-  return msg.toolCalls?.find(
-    (tc) => tc.status === 'calling' ||
-      tc.status === 'pending' ||
-      tc.status === 'pending_approval',
-  )
+  return msg.toolCalls?.find(isPendingToolCall)
 }
 
 export function extractServerName(toolName: string): string {
@@ -302,7 +311,7 @@ export function extractServerName(toolName: string): string {
 
 export function extractUserText(content: string): string | null {
   if (!content.startsWith('[') || !content.endsWith(']')) return null
-  let blocks: Array<{ type?: string; text?: string; content?: string }> | null =
+  let blocks: Array<{ type?: string; text?: unknown; content?: unknown }> | null =
     null
   try {
     const parsed = JSON.parse(content)
@@ -311,9 +320,16 @@ export function extractUserText(content: string): string | null {
     return null
   }
   if (!blocks || blocks.length === 0) return null
+  if (blocks.some((block) => !isRecord(block) || typeof block.type !== 'string')) {
+    return null
+  }
   const texts: string[] = []
   for (const block of blocks) {
-    const text = block.text ?? block.content ?? ''
+    const text = typeof block.text === 'string'
+      ? block.text
+      : typeof block.content === 'string'
+        ? block.content
+        : ''
     if (!text) continue
     if (text.includes('<hook_context>') || text.includes('</hook_context>')) {
       continue
@@ -394,28 +410,58 @@ function appendAssistantText(
   }
 }
 
-function completeToolCallFromMessage(assistant: ChatMessage, message: ApiMessage): void {
+function completeToolCallFromMessage(assistant: ChatMessage, message: ApiMessage): boolean {
   const match = message.tool_use_id
     ? findToolCallById(assistant, message.tool_use_id)
     : findPendingToolCall(assistant)
-  if (match) {
-    const parsed = parseToolResultPayload(message.content)
-    if (parsed.error) {
-      match.result = undefined
-      match.error = parsed.error
-      match.status = 'error'
-      return
-    }
-    match.result = parsed.result
-    match.error = undefined
-    match.status = 'completed'
+  if (!match) return false
+
+  const parsed = parseToolResultPayload(message.content)
+  if (parsed.error) {
+    match.result = undefined
+    match.error = parsed.error
+    match.status = 'error'
+    return true
   }
+  match.result = parsed.result
+  match.error = undefined
+  match.status = 'completed'
+  return true
+}
+
+function renderUnmatchedToolResult(
+  state: ApiMappingState,
+  message: ApiMessage,
+  id: string,
+  timestamp: Date,
+): void {
+  const error = message.tool_use_id
+    ? `Unmatched tool result: ${message.tool_use_id}`
+    : 'Unmatched tool result'
+
+  const pendingToolCall = state.currentAssistant
+    ? findPendingToolCall(state.currentAssistant)
+    : undefined
+  if (pendingToolCall) {
+    pendingToolCall.result = undefined
+    pendingToolCall.error = error
+    pendingToolCall.status = 'error'
+  }
+
+  flushAssistant(state)
+  const resultContent = message.content ||
+    (typeof message.tool_result === 'string'
+      ? message.tool_result
+      : JSON.stringify(message.tool_result ?? ''))
+  state.result.push({ id, role: 'system', content: resultContent, timestamp })
 }
 
 function markLatestToolCallError(assistant: ChatMessage, content: string): boolean {
   if (!assistant.toolCalls?.length) return false
 
   const lastTc = assistant.toolCalls[assistant.toolCalls.length - 1]
+  if (lastTc.status !== 'calling') return false
+
   lastTc.error = content
   lastTc.status = 'error'
   if (assistant.contentBlocks) {
@@ -467,13 +513,15 @@ function mapUserApiMessage(
   content: string,
 ): void {
   if (message.content_type === 'tool_result' || message.tool_use_id) {
-    if (state.currentAssistant) {
+    if (
+      state.currentAssistant &&
       completeToolCallFromMessage(state.currentAssistant, message)
+    ) {
+      return
     }
+    renderUnmatchedToolResult(state, message, id, timestamp)
     return
   }
-
-  if (content.startsWith('[{') && content.includes('tool_result')) return
 
   if (isHookFeedback(content)) {
     if (
@@ -611,17 +659,26 @@ function mapAssistantApiMessage(
   appendAssistantText(state, id, timestamp, message.content || '')
 }
 
-function mapToolApiMessage(state: ApiMappingState, message: ApiMessage): void {
-  if (state.currentAssistant) {
+function mapToolApiMessage(
+  state: ApiMappingState,
+  message: ApiMessage,
+  id: string,
+  timestamp: Date,
+): void {
+  if (
+    state.currentAssistant &&
     completeToolCallFromMessage(state.currentAssistant, message)
+  ) {
+    return
   }
+  renderUnmatchedToolResult(state, message, id, timestamp)
 }
 
 export function mapApiMessages(messages: ApiMessage[]): ChatMessage[] {
   const state: ApiMappingState = { result: [], currentAssistant: null }
 
-  for (const message of messages) {
-    const id = message.id || `msg-${message.message_index ?? state.result.length}`
+  for (const [messageIndex, message] of messages.entries()) {
+    const id = message.id || `msg-${message.message_index ?? messageIndex}`
     const timestamp = new Date(message.timestamp)
 
     if (message.content_blocks && message.content_blocks.length > 0) {
@@ -636,7 +693,15 @@ export function mapApiMessages(messages: ApiMessage[]): ChatMessage[] {
     } else if (message.role === 'assistant') {
       mapAssistantApiMessage(state, message, id, timestamp, content)
     } else if (message.role === 'tool') {
-      mapToolApiMessage(state, message)
+      mapToolApiMessage(state, message, id, timestamp)
+    } else {
+      flushAssistant(state)
+      state.result.push({
+        id,
+        role: normalizeChatRole(message.role, message.content),
+        content: message.content || '',
+        timestamp,
+      })
     }
   }
 

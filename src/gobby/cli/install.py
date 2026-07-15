@@ -358,6 +358,12 @@ def _resolve_ide_settings_consent(
     help="Install hooks for all detected CLIs (default behavior when no flags specified)",
 )
 @click.option(
+    "--config-only",
+    "config_only_flag",
+    is_flag=True,
+    help="Initialize daemon configuration and database without installing hooks or services",
+)
+@click.option(
     "--no-ext-services",
     "no_ext_services_flag",
     is_flag=True,
@@ -371,10 +377,10 @@ def _resolve_ide_settings_consent(
     help="Install only the FalkorDB service",
 )
 @click.option(
-    "--falkordb-password",
-    "falkordb_password",
-    default=None,
-    help="Set a custom FalkorDB password (default: auto-generated or reused from existing config)",
+    "--falkordb-password-stdin",
+    "falkordb_password_stdin",
+    is_flag=True,
+    help="Read a custom FalkorDB password from stdin",
 )
 @click.option(
     "--neo4j-password",
@@ -479,9 +485,10 @@ def install(
     qwen_flag: bool,
     hooks_flag: bool,
     all_flag: bool,
+    config_only_flag: bool,
     no_ext_services_flag: bool,
     falkordb_flag: bool,
-    falkordb_password: str | None,
+    falkordb_password_stdin: bool,
     voice_flag: bool,
     project_flag: bool,
     embedding_url: str | None,
@@ -501,9 +508,16 @@ def install(
     Use --claude, --grok, --agy, --qwen, --codex, or --droid to install only
     to specific CLIs.
     Use --hooks to install Git hooks for verification, JSONL export, and code indexing.
+    Use --config-only to initialize daemon configuration and database only.
     """
     if embedding_provider and not embedding_url:
         raise click.UsageError("--embedding-provider requires --embedding-url.")
+
+    falkordb_password: str | None = None
+    if falkordb_password_stdin:
+        falkordb_password = sys.stdin.read().strip()
+        if not falkordb_password:
+            raise click.UsageError("--falkordb-password-stdin requires a password on stdin.")
 
     if falkordb_flag:
         service_results: dict[str, dict[str, Any]] = {}
@@ -529,6 +543,7 @@ def install(
         and not hooks_flag
         and not falkordb_flag
         and not all_flag
+        and not config_only_flag
     ):
         all_flag = True
     is_full_install = all_flag
@@ -603,7 +618,7 @@ def install(
             click.echo(f"Error: {error}", err=True)
         sys.exit(1)
 
-    initialize_project_after_setup = _should_initialize_project(
+    initialize_project_after_setup = not config_only_flag and _should_initialize_project(
         project_path,
         no_interactive=no_interactive_flag,
     )
@@ -625,13 +640,18 @@ def install(
     if auth_mode is not None:
         _set_bootstrap_auth_mode(Path(config_result["path"]), auth_mode)
         click.echo(f"Daemon API authentication mode: {auth_mode}")
-    configure_ide_settings = _resolve_ide_settings_consent(
-        ide_settings_flag,
-        no_interactive=no_interactive_flag,
-    )
+    configure_ide_settings = False
+    if not config_only_flag:
+        configure_ide_settings = _resolve_ide_settings_consent(
+            ide_settings_flag,
+            no_interactive=no_interactive_flag,
+        )
     run_daemon_setup(project_path, configure_ide_settings=configure_ide_settings)
     if initialize_project_after_setup:
         _initialize_project_after_setup(project_path)
+    if config_only_flag:
+        click.echo("Configuration and database initialization complete.")
+        return
 
     toggles = list(clis_to_install)
     if install_hooks:

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Text, Box } from "ink";
 import Spinner from "ink-spinner";
+import SelectInput from "ink-select-input";
 import { execSync } from "child_process";
 import { writeFileSync } from "fs";
 import { join } from "path";
@@ -12,8 +13,9 @@ import { saveState } from "../utils/state.js";
 import type { StepProps } from "../types.js";
 
 export function Launch({ state, setState, onNext: _onNext }: StepProps): React.ReactElement {
-  const [phase, setPhase] = useState<"starting" | "waiting" | "done">("starting");
-  const [healthy, setHealthy] = useState(false);
+  const [phase, setPhase] = useState<"starting" | "waiting" | "error" | "done">("starting");
+  const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const launchStateRef = useRef(state);
 
   useEffect(() => {
@@ -21,15 +23,23 @@ export function Launch({ state, setState, onNext: _onNext }: StepProps): React.R
     const launchState = launchStateRef.current;
 
     const run = async (): Promise<void> => {
-      // Start daemon
-      runGobby(["start"], { timeout: 15000 });
+      const startResult = runGobby(["start"], { timeout: 15000 });
       if (cancelled) return;
+      if (!startResult.success) {
+        setError(startResult.output.trim() || "gobby start failed or timed out.");
+        setPhase("error");
+        return;
+      }
       setPhase("waiting");
 
       // Wait for health
       const ok = await checkHealth(launchState.ports.http, 30000);
       if (cancelled) return;
-      setHealthy(ok);
+      if (!ok) {
+        setError("Daemon health check did not pass. Check ~/.gobby/logs/ for details.");
+        setPhase("error");
+        return;
+      }
 
       // Write INITIAL_SETUP.md
       writeInitialSetupMd(launchState);
@@ -66,7 +76,7 @@ export function Launch({ state, setState, onNext: _onNext }: StepProps): React.R
     return () => {
       cancelled = true;
     };
-  }, [setState]);
+  }, [attempt, setState]);
 
   if (phase === "starting") {
     return (
@@ -84,18 +94,32 @@ export function Launch({ state, setState, onNext: _onNext }: StepProps): React.R
     );
   }
 
+  if (phase === "error") {
+    return (
+      <Box flexDirection="column">
+        <StatusMessage level="error">Launch failed: {error}</StatusMessage>
+        <SelectInput
+          items={[
+            { label: "Retry", value: "retry" },
+            { label: "Exit setup", value: "exit" },
+          ]}
+          onSelect={(item) => {
+            if (item.value === "retry") {
+              setError(null);
+              setPhase("starting");
+              setAttempt((value) => value + 1);
+            } else {
+              process.exit(1);
+            }
+          }}
+        />
+      </Box>
+    );
+  }
+
   return (
     <Box flexDirection="column">
-      {healthy ? (
-        <StatusMessage level="success">Daemon is running.</StatusMessage>
-      ) : (
-        <Box flexDirection="column">
-          <StatusMessage level="warning">
-            Daemon started but health check did not pass.
-          </StatusMessage>
-          <Text dimColor>{"  "}Check logs: ~/.gobby/logs/</Text>
-        </Box>
-      )}
+      <StatusMessage level="success">Daemon is running.</StatusMessage>
       <Text> </Text>
       <Box
         borderStyle="round"
@@ -197,7 +221,7 @@ Completed: ${now}
 ## Network
 - Firewall: ${state.firewall_configured ? "macOS pf rules installed" : "not configured"}
 - Tailscale: ${state.tailscale_configured ? "configured" : "not configured"}
-- Bind host: ${state.tailscale_configured ? "0.0.0.0" : "127.0.0.1"}
+- Bind host: 127.0.0.1
 
 ## Installed CLIs
 | CLI | Version | Hooks Installed |

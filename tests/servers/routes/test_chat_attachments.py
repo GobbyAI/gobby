@@ -70,6 +70,18 @@ def test_upload_persists_metadata_and_file(client: TestClient, temp_db: HubDatab
     assert stored_path.parent.parent.parent.parent.name == project.id
 
 
+def test_attachment_limits_returns_configured_max_file_bytes(
+    client: TestClient,
+    temp_db: HubDatabase,
+) -> None:
+    ConfigStore(temp_db).set("chat.attachment_max_file_bytes", 4)
+
+    response = client.get("/api/chat/attachments/limits")
+
+    assert response.status_code == 200
+    assert response.json() == {"max_file_bytes": 4}
+
+
 def test_upload_without_project_id_uses_server_project(
     temp_db: HubDatabase,
     tmp_path: Path,

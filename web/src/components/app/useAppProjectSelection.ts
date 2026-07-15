@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ProjectWithStats } from "../../hooks/useProjects";
 import type {
@@ -12,8 +12,9 @@ const HIDDEN_PROJECTS = new Set(["_orphaned", "_migrated"]);
 
 interface UseAppProjectSelectionArgs {
   allProjects: ProjectWithStats[];
+  onProjectSelect: () => void;
   selectedProvider: string | null;
-  setSelectedProvider: (provider: string) => void;
+  setSelectedProvider: (provider: string | null) => void;
   startNewChat: StartNewChatAction;
   setProjectIdRef: (projectId: string | null) => void;
   sendProjectChange: SendProjectChangeAction;
@@ -21,6 +22,7 @@ interface UseAppProjectSelectionArgs {
 
 export function useAppProjectSelection({
   allProjects,
+  onProjectSelect,
   selectedProvider,
   setSelectedProvider,
   startNewChat,
@@ -32,6 +34,25 @@ export function useAppProjectSelection({
   );
   const [uiSettingsLoaded, setUiSettingsLoaded] = useState(false);
   const initialReconciliationDoneRef = useRef(false);
+  const projectTouchedRef = useRef(false);
+  const providerTouchedRef = useRef(false);
+
+  const selectProject = useCallback(
+    (projectId: string | null) => {
+      onProjectSelect();
+      projectTouchedRef.current = true;
+      setSelectedProjectId(projectId);
+    },
+    [onProjectSelect],
+  );
+
+  const selectProvider = useCallback(
+    (provider: string | null) => {
+      providerTouchedRef.current = true;
+      setSelectedProvider(provider);
+    },
+    [setSelectedProvider],
+  );
 
   const projectOptions: ProjectOption[] = useMemo(
     () =>
@@ -71,9 +92,9 @@ export function useAppProjectSelection({
   const projectSelection: ProjectSelectionContextValue = useMemo(
     () => ({
       selectedProjectId: effectiveProjectId,
-      onSelectProject: setSelectedProjectId,
+      onSelectProject: selectProject,
     }),
-    [effectiveProjectId, setSelectedProjectId],
+    [effectiveProjectId, selectProject],
   );
 
   // On mount: fetch persisted project/provider from API (DB is source of truth).
@@ -84,10 +105,16 @@ export function useAppProjectSelection({
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (cancelled) return;
-        if (typeof data?.selectedProjectId === "string") {
+        if (
+          !projectTouchedRef.current &&
+          typeof data?.selectedProjectId === "string"
+        ) {
           setSelectedProjectId(data.selectedProjectId);
         }
-        if (typeof data?.selectedProvider === "string") {
+        if (
+          !providerTouchedRef.current &&
+          typeof data?.selectedProvider === "string"
+        ) {
           setSelectedProvider(data.selectedProvider);
         }
         setUiSettingsLoaded(true);
@@ -105,7 +132,7 @@ export function useAppProjectSelection({
     if (!uiSettingsLoaded) return;
     if (isFirstProviderRender.current) {
       isFirstProviderRender.current = false;
-      return;
+      if (!providerTouchedRef.current) return;
     }
     const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
     fetch(`${baseUrl}/api/config/ui-settings`, {
@@ -122,7 +149,7 @@ export function useAppProjectSelection({
     if (!projectReady) return;
     if (isFirstProjectRender.current) {
       isFirstProjectRender.current = false;
-      return;
+      if (!projectTouchedRef.current) return;
     }
     const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
     fetch(`${baseUrl}/api/config/ui-settings`, {
@@ -147,11 +174,12 @@ export function useAppProjectSelection({
   }, [effectiveProjectId, startNewChat, projectReady]);
 
   useEffect(() => {
+    if (!projectReady) return;
     setProjectIdRef(effectiveProjectId);
     if (effectiveProjectId) {
       sendProjectChange(effectiveProjectId);
     }
-  }, [effectiveProjectId, setProjectIdRef, sendProjectChange]);
+  }, [effectiveProjectId, setProjectIdRef, sendProjectChange, projectReady]);
 
   return {
     effectiveProjectId,
@@ -160,6 +188,7 @@ export function useAppProjectSelection({
     projectOptions,
     projectReady,
     projectSelection,
-    setSelectedProjectId,
+    selectProject,
+    selectProvider,
   };
 }

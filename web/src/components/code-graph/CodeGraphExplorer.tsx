@@ -696,10 +696,10 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
         nodeLabel={(node: any) => {
           const name = escapeHtml(String(node.name || ''))
           const parts = [`<b>${name}</b>`]
-          if (node.kind) parts.push(`<br/><span style="color:${getNodeColorCss(node.type)};text-transform:uppercase;font-size:9px">${escapeHtml(String(node.kind))}</span>`)
-          if (node.signature) parts.push(`<br/><span style="color:var(--color-warning-foreground);font-size:9px">${escapeHtml(String(node.signature))}</span>`)
-          if (node.file_path && node.type !== 'file') parts.push(`<br/><span style="color:var(--text-muted);font-size:9px">${escapeHtml(String(node.file_path))}${node.line_start ? ':' + node.line_start : ''}</span>`)
-          return `<div style="text-align:center;font-family:monospace;font-size:11px;line-height:1.4">${parts.join('')}</div>`
+          if (node.kind) parts.push(`<br/><span style="color:${getNodeColorCss(node.type)};text-transform:uppercase;font-size:var(--text-2xs)">${escapeHtml(String(node.kind))}</span>`)
+          if (node.signature) parts.push(`<br/><span style="color:var(--color-warning-foreground);font-size:var(--text-2xs)">${escapeHtml(String(node.signature))}</span>`)
+          if (node.file_path && node.type !== 'file') parts.push(`<br/><span style="color:var(--text-muted);font-size:var(--text-2xs)">${escapeHtml(String(node.file_path))}${node.line_start ? ':' + node.line_start : ''}</span>`)
+          return `<div style="text-align:center;font-family:monospace;font-size:var(--text-md);line-height:1.4">${parts.join('')}</div>`
         }}
         linkSource="source"
         linkTarget="target"

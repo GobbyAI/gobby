@@ -130,7 +130,7 @@ describe("useChat project and mode controls", () => {
     expect(modeChanges).toEqual([]);
   });
 
-  it("sendMode treats accept_edits as normal for the no-op guard", async () => {
+  it("sendMode skips a duplicate canonical mode", async () => {
     await loadModule();
     const { result } = renderHook(() => useChat());
 
@@ -143,7 +143,7 @@ describe("useChat project and mode controls", () => {
     ws.send.mockClear();
 
     act(() => {
-      result.current.sendMode("accept_edits");
+      result.current.sendMode("normal");
     });
 
     const setModeMsgs = ws.send.mock.calls

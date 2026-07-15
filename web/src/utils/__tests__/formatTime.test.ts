@@ -26,6 +26,10 @@ afterEach(() => {
 // relativeTime
 // ---------------------------------------------------------------------------
 describe('relativeTime', () => {
+  it.each(['', 'not-a-date'])('returns "Invalid date" for invalid input %j', input => {
+    expect(relativeTime(input)).toBe('Invalid date')
+  })
+
   it('returns "just now" for future dates', () => {
     const future = new Date(Date.now() + 60_000).toISOString()
     expect(relativeTime(future)).toBe('just now')

@@ -1,5 +1,4 @@
 import type { ChatMessage, SessionObservationMeta } from "../../types/chat";
-import { normalizeChatMode } from "../../types/chat";
 import {
   type ApiMessage,
   mapApiMessages,
@@ -82,13 +81,8 @@ export function handleAttachToSessionResult(
     ctx.setAttachedSessionMeta(meta);
     ctx.attachedSessionMetaRef.current = meta;
     ctx.setProxyDeliveryNotice(null);
-    if (
-      meta.chatMode === "accept_edits" ||
-      meta.chatMode === "bypass" ||
-      meta.chatMode === "normal" ||
-      meta.chatMode === "plan"
-    ) {
-      const restored = normalizeChatMode(meta.chatMode);
+    if (meta.chatMode) {
+      const restored = meta.chatMode;
       if (restored !== ctx.currentModeRef.current) {
         ctx.currentModeRef.current = restored;
         ctx.onModeChangedRef.current?.(restored);

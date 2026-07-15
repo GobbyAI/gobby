@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Text, Box } from "ink";
 import TextInput from "ink-text-input";
 import SelectInput from "ink-select-input";
@@ -8,7 +8,7 @@ import { saveState } from "../utils/state.js";
 import { StatusMessage } from "../components/StatusMessage.js";
 import type { StepProps } from "../types.js";
 
-type Phase = "show" | "editing" | "saving" | "done";
+type Phase = "show" | "editing" | "saving" | "error" | "done";
 type EditField = "http" | "ws" | "ui";
 
 const FIELD_ORDER: EditField[] = ["http", "ws", "ui"];
@@ -23,26 +23,40 @@ export function Configuration({ state, setState, onNext }: StepProps): React.Rea
   const [ports, setPorts] = useState(state.ports);
   const [editingIdx, setEditingIdx] = useState(0);
   const [editValue, setEditValue] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [pendingPorts, setPendingPorts] = useState<typeof ports | null>(null);
 
   const commit = (finalPorts: typeof ports): void => {
+    setError(null);
+    setPendingPorts(finalPorts);
     setPhase("saving");
+  };
 
-    // Write ports to bootstrap.yaml
-    if (
-      finalPorts.http !== 60887 ||
-      finalPorts.ws !== 60888 ||
-      finalPorts.ui !== 60889
-    ) {
-      patchPorts(finalPorts.http, finalPorts.ws, finalPorts.ui);
+  useEffect(() => {
+    if (phase !== "saving" || !pendingPorts) return;
+
+    // Keep the daemon on loopback unless the firewall was explicitly configured.
+    patchPorts(
+      pendingPorts.http,
+      pendingPorts.ws,
+      pendingPorts.ui,
+      state.firewall_configured,
+    );
+
+    // Run configuration and DB initialization without installing hooks or services.
+    const result = runGobby(["install", "--config-only"], { timeout: 30000 });
+    if (!result.success) {
+      // The saving phase intentionally owns this synchronous command and its result state.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setError(result.output.trim() || "gobby install --config-only failed or timed out.");
+      setPhase("error");
+      return;
     }
-
-    // Run gobby install for DB init + config
-    runGobby(["install"], { timeout: 30000 });
 
     setState((prev) => {
       const next = {
         ...prev,
-        ports: finalPorts,
+        ports: pendingPorts,
         completed_step_id: "config" as const,
       };
       saveState(next);
@@ -51,7 +65,7 @@ export function Configuration({ state, setState, onNext }: StepProps): React.Rea
 
     setPhase("done");
     setTimeout(onNext, 300);
-  };
+  }, [onNext, pendingPorts, phase, setState, state.firewall_configured]);
 
   if (phase === "show") {
     return (
@@ -97,11 +111,16 @@ export function Configuration({ state, setState, onNext }: StepProps): React.Rea
               if (!isNaN(port) && port > 0 && port < 65536) {
                 const newPorts = { ...ports, [field]: port };
                 setPorts(newPorts);
+                setError(null);
 
                 if (editingIdx < FIELD_ORDER.length - 1) {
                   const nextIdx = editingIdx + 1;
                   setEditingIdx(nextIdx);
                   setEditValue(String(newPorts[FIELD_ORDER[nextIdx]]));
+                } else if (new Set(Object.values(newPorts)).size !== FIELD_ORDER.length) {
+                  setError("Ports must be unique.");
+                  setEditingIdx(0);
+                  setEditValue(String(newPorts[FIELD_ORDER[0]]));
                 } else {
                   commit(newPorts);
                 }
@@ -110,12 +129,34 @@ export function Configuration({ state, setState, onNext }: StepProps): React.Rea
           />
         </Box>
         <Text dimColor>  Current: {ports[field]}</Text>
+        {error && <StatusMessage level="error">{error}</StatusMessage>}
       </Box>
     );
   }
 
   if (phase === "saving") {
     return <Text>  Saving configuration...</Text>;
+  }
+
+  if (phase === "error") {
+    return (
+      <Box flexDirection="column">
+        <StatusMessage level="error">Configuration failed: {error}</StatusMessage>
+        <SelectInput
+          items={[
+            { label: "Retry", value: "retry" },
+            { label: "Exit setup", value: "exit" },
+          ]}
+          onSelect={(item) => {
+            if (item.value === "retry") {
+              commit(ports);
+            } else {
+              process.exit(1);
+            }
+          }}
+        />
+      </Box>
+    );
   }
 
   return <StatusMessage level="success">Configuration saved.</StatusMessage>;

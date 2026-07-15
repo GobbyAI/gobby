@@ -22,7 +22,6 @@ export const ATTACHMENT_DELETE_TIMEOUT_MS = envTimeoutMs(
   30 * 1000,
   MAX_DELETE_TIMEOUT_MS,
 )
-export const MAX_ATTACHMENT_SIZE_BYTES = 100_000_000
 
 export interface ChatAttachmentUpload {
   promise: Promise<ChatAttachment>
@@ -48,6 +47,22 @@ function requireNumber(record: Record<string, unknown>, field: string): number {
   const value = record[field]
   if (typeof value !== 'number') throw attachmentFieldError(field, 'a number')
   return value
+}
+
+async function fetchAttachmentMaxFileBytes(signal: AbortSignal): Promise<number> {
+  const response = await fetch(apiUrl('/api/chat/attachments/limits'), {
+    credentials: 'include',
+    signal,
+  })
+  if (!response.ok) {
+    throw new Error(`Unable to load attachment limit: ${response.statusText || response.status}`)
+  }
+  const value = (await response.json()) as { max_file_bytes?: unknown }
+  const maxFileBytes = value.max_file_bytes
+  if (typeof maxFileBytes !== 'number' || !Number.isSafeInteger(maxFileBytes) || maxFileBytes <= 0) {
+    throw new Error('Attachment limit response field max_file_bytes must be a positive integer')
+  }
+  return maxFileBytes
 }
 
 function parseChatAttachment(value: unknown): ChatAttachment {
@@ -102,61 +117,73 @@ export function uploadChatAttachment(
     onProgress?: (progress: number | null) => void
   } = {},
 ): ChatAttachmentUpload {
-  if (file.size > MAX_ATTACHMENT_SIZE_BYTES) {
-    return {
-      promise: Promise.reject(
-        new Error(
-          `Attachment exceeds ${formatAttachmentSize(MAX_ATTACHMENT_SIZE_BYTES)} limit`,
-        ),
-      ),
-      abort: () => {},
+  const limitRequest = new AbortController()
+  let xhr: XMLHttpRequest | null = null
+  let canceled = false
+  const promise = (async (): Promise<ChatAttachment> => {
+    let maxFileBytes: number
+    try {
+      maxFileBytes = await fetchAttachmentMaxFileBytes(limitRequest.signal)
+    } catch (error) {
+      if (canceled) throw new Error('Attachment upload canceled')
+      throw error
     }
-  }
-  const xhr = new XMLHttpRequest()
-  const promise = new Promise<ChatAttachment>((resolve, reject) => {
-    const form = new FormData()
-    form.append('file', file)
-    if (options.draftId) form.append('draft_id', options.draftId)
-    if (options.projectId) form.append('project_id', options.projectId)
+    if (file.size > maxFileBytes) {
+      throw new Error(`Attachment exceeds ${formatAttachmentSize(maxFileBytes)} limit`)
+    }
+    if (canceled) throw new Error('Attachment upload canceled')
 
-    xhr.open('POST', apiUrl('/api/chat/attachments'))
-    xhr.withCredentials = true
-    xhr.timeout = ATTACHMENT_UPLOAD_TIMEOUT_MS
-    xhr.upload.onprogress = (event) => {
-      options.onProgress?.(event.lengthComputable ? event.loaded / event.total : null)
-    }
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try {
-          resolve(normalizeAttachmentUrl(parseChatAttachment(JSON.parse(xhr.responseText))))
-        } catch (error) {
-          reject(
-            error instanceof SyntaxError
-              ? new Error('Attachment upload returned invalid JSON')
-              : error,
-          )
-        }
-        return
+    const uploadXhr = new XMLHttpRequest()
+    xhr = uploadXhr
+    return new Promise<ChatAttachment>((resolve, reject) => {
+      const form = new FormData()
+      form.append('file', file)
+      if (options.draftId) form.append('draft_id', options.draftId)
+      if (options.projectId) form.append('project_id', options.projectId)
+
+      uploadXhr.open('POST', apiUrl('/api/chat/attachments'))
+      uploadXhr.withCredentials = true
+      uploadXhr.timeout = ATTACHMENT_UPLOAD_TIMEOUT_MS
+      uploadXhr.upload.onprogress = (event) => {
+        options.onProgress?.(event.lengthComputable ? event.loaded / event.total : null)
       }
-      reject(new Error(errorFromResponse(xhr)))
-    }
-    xhr.onerror = () => {
-      options.onProgress?.(null)
-      reject(new Error('Attachment upload failed'))
-    }
-    xhr.onabort = () => {
-      options.onProgress?.(null)
-      reject(new Error('Attachment upload canceled'))
-    }
-    xhr.ontimeout = () => {
-      options.onProgress?.(null)
-      reject(new Error('Attachment upload timed out'))
-    }
-    xhr.send(form)
-  })
+      uploadXhr.onload = () => {
+        if (uploadXhr.status >= 200 && uploadXhr.status < 300) {
+          try {
+            resolve(normalizeAttachmentUrl(parseChatAttachment(JSON.parse(uploadXhr.responseText))))
+          } catch (error) {
+            reject(
+              error instanceof SyntaxError
+                ? new Error('Attachment upload returned invalid JSON')
+                : error,
+            )
+          }
+          return
+        }
+        reject(new Error(errorFromResponse(uploadXhr)))
+      }
+      uploadXhr.onerror = () => {
+        options.onProgress?.(null)
+        reject(new Error('Attachment upload failed'))
+      }
+      uploadXhr.onabort = () => {
+        options.onProgress?.(null)
+        reject(new Error('Attachment upload canceled'))
+      }
+      uploadXhr.ontimeout = () => {
+        options.onProgress?.(null)
+        reject(new Error('Attachment upload timed out'))
+      }
+      uploadXhr.send(form)
+    })
+  })()
   return {
     promise,
-    abort: () => xhr.abort(),
+    abort: () => {
+      canceled = true
+      limitRequest.abort()
+      xhr?.abort()
+    },
   }
 }
 
@@ -189,8 +216,8 @@ export async function deleteChatAttachment(attachmentId: string): Promise<Respon
 
 export function formatAttachmentSize(bytes: number): string {
   if (bytes <= 0) return '0 B'
-  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
-  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GiB`
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KiB`
   return `${bytes} B`
 }

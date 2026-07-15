@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef } from "react";
-import { Box } from "ink";
+import { Box, Text } from "ink";
 import { StepHeader } from "./components/StepHeader.js";
 import { loadState, type SetupState } from "./utils/state.js";
 import type { StepProps } from "./types.js";
@@ -92,28 +92,45 @@ export function App(): React.ReactElement {
 
   const setState = useCallback(
     (fn: (prev: SetupState) => SetupState) => {
-      setStateRaw((prev) => {
-        const next = fn(prev);
-        stateRef.current = next;
-        return next;
-      });
+      const next = fn(stateRef.current);
+      stateRef.current = next;
+      setStateRaw(next);
     },
     [],
   );
 
-  // Compute initial step index: resume after last completed step
-  const [currentIdx, setCurrentIdx] = useState<number>(() => {
-    if (!initialState.completed_step_id) return findNextActive(0, initialState);
-    const completedIdx = STEPS.findIndex(
-      (s) => s.id === initialState.completed_step_id,
-    );
-    if (completedIdx < 0) return findNextActive(0, initialState);
-    return findNextActive(completedIdx + 1, initialState);
-  });
+  const [currentIdx, setCurrentIdx] = useState<number>(() =>
+    findNextActive(0, initialState),
+  );
 
   const onNext = useCallback(() => {
-    setCurrentIdx((prev) => findNextActive(prev + 1, stateRef.current));
+    setCurrentIdx((prev) => {
+      const currentStep = STEPS[prev];
+      if (currentStep?.id === "welcome") {
+        const completedIdx = STEPS.findIndex(
+          (step) => step.id === stateRef.current.completed_step_id,
+        );
+        if (completedIdx > prev) {
+          return findNextActive(completedIdx + 1, stateRef.current);
+        }
+      }
+      return findNextActive(prev + 1, stateRef.current);
+    });
   }, []);
+
+  if (initialState.completed_at) {
+    return (
+      <Box flexDirection="column">
+        <Text bold color="green">
+          Setup is already complete.
+        </Text>
+        <Text>Web UI: http://localhost:{state.ports.ui}</Text>
+        <Text>
+          Run <Text bold>gobby status</Text> to check the daemon.
+        </Text>
+      </Box>
+    );
+  }
 
   // Done?
   if (currentIdx >= STEPS.length) {

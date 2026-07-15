@@ -112,6 +112,59 @@ describe("providerModels", () => {
     expect(getPreferredModelForProvider(catalog, "claude")).toBe("opus");
   });
 
+  it("ranks Claude model family ahead of version", () => {
+    const claudeCatalog: ProviderModelEntry[] = [
+      {
+        provider: "claude",
+        available: true,
+        source: "live",
+        models: [
+          { value: "opus", label: "Opus", canonical_id: "claude-opus-4-1" },
+          { value: "haiku", label: "Haiku", canonical_id: "claude-haiku-4-5" },
+        ],
+      },
+    ];
+
+    expect(getPreferredModelForProvider(claudeCatalog, "claude")).toBe("opus");
+  });
+
+  it("recognizes Fable as the strongest Claude family", () => {
+    const claudeCatalog: ProviderModelEntry[] = [
+      {
+        provider: "claude",
+        available: true,
+        source: "live",
+        models: [
+          { value: "fable", label: "Fable", canonical_id: "claude-fable-5" },
+          { value: "opus", label: "Opus", canonical_id: "claude-opus-5" },
+        ],
+      },
+    ];
+
+    expect(getPreferredModelForProvider(claudeCatalog, "claude")).toBe("fable");
+  });
+
+  it("prefers the provider-declared default over heuristic ranking", () => {
+    const claudeCatalog: ProviderModelEntry[] = [
+      {
+        provider: "claude",
+        available: true,
+        source: "live",
+        models: [
+          { value: "fable", label: "Fable", canonical_id: "claude-fable-5" },
+          {
+            value: "haiku",
+            label: "Haiku",
+            canonical_id: "claude-haiku-4-5",
+            is_default: true,
+          },
+        ],
+      },
+    ];
+
+    expect(getPreferredModelForProvider(claudeCatalog, "claude")).toBe("haiku");
+  });
+
   it("resolves provider/model pairs using canonical model identifiers", () => {
     expect(
       resolveProviderModelPair(catalog, {
@@ -317,6 +370,58 @@ describe("providerModels", () => {
       "Failed to load provider catalog",
       expect.any(Error),
     );
+  });
+
+  it("returns the stale cached catalog when a refresh fails", async () => {
+    const cachedCatalog = [
+      { provider: "claude", available: true, source: "live", models: [] },
+    ];
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ providers: cachedCatalog }),
+      })
+      .mockRejectedValueOnce(new Error("offline"));
+    vi.stubGlobal("fetch", fetchSpy);
+    vi.spyOn(Date, "now")
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(5 * 60 * 1000 + 1);
+    vi.spyOn(console, "debug").mockImplementation(() => {});
+
+    await expect(fetchProviderModelCatalog()).resolves.toEqual(cachedCatalog);
+    await expect(fetchProviderModelCatalog()).resolves.toEqual(cachedCatalog);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("filters malformed provider catalog entries before caching", async () => {
+    const validEntry = {
+      provider: "claude",
+      available: true,
+      source: "live",
+      models: [{ value: "opus", label: "Opus" }],
+    };
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        providers: [
+          null,
+          { provider: "codex", available: true, source: "live" },
+          {
+            provider: "qwen",
+            available: true,
+            source: "live",
+            models: [null],
+          },
+          validEntry,
+        ],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await expect(fetchProviderModelCatalog()).resolves.toEqual([validEntry]);
+    await expect(fetchProviderModelCatalog()).resolves.toEqual([validEntry]);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it("clearProviderModelCache resets the cached catalog", async () => {

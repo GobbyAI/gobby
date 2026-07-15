@@ -8,5 +8,15 @@ import './styles/app-shell.css'
 import './styles/settings.css'
 import './styles/settings-overlay.css'
 import App from './App'
+import { AppErrorBoundary } from './components/app/AppErrorBoundary'
 
-createRoot(document.getElementById('root')!).render(<App />)
+createRoot(document.getElementById('root')!).render(
+  <AppErrorBoundary
+    activeTab="application"
+    onReturnToChat={() => {
+      window.location.reload()
+    }}
+  >
+    <App />
+  </AppErrorBoundary>,
+)

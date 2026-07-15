@@ -423,6 +423,10 @@
     min-width: 2.75rem;
     min-height: 2.75rem;
   }
+
+  .quick-menu-item {
+    min-height: 2.75rem;
+  }
 }
 
 .quick-menu-trigger:hover {

@@ -3,7 +3,12 @@ import type { MutableRefObject } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ChatMessage, ContentBlock } from "../../types/chat";
-import { isContentBlock, useContinuationRestore } from "../useChat/useContinuationRestore";
+import { CHAT_MODES, normalizeChatMode } from "../../types/chat";
+import {
+  isContentBlock,
+  RESTORABLE_CHAT_MODES,
+  useContinuationRestore,
+} from "../useChat/useContinuationRestore";
 import type { ContinuationRollbackSnapshot } from "../useChat/sessionRecords";
 
 function ref<T>(current: T): MutableRefObject<T> {
@@ -118,7 +123,7 @@ function makeSnapshot(messages: ChatMessage[]): ContinuationRollbackSnapshot {
   };
 }
 
-function renderRestoreHook(setMessages = vi.fn()) {
+function renderRestoreHook(setMessages = vi.fn(), setCurrentMode = vi.fn()) {
   return renderHook(() =>
     useContinuationRestore({
       sessionRefs: {
@@ -148,7 +153,7 @@ function renderRestoreHook(setMessages = vi.fn()) {
         setAttachedSessionMeta: vi.fn(),
         setContextUsage: vi.fn(),
         setCurrentBranch: vi.fn(),
-        setCurrentMode: vi.fn(),
+        setCurrentMode,
         setIsLoadingMessages: vi.fn(),
         setMainSessionMeta: vi.fn(),
         setMessages,
@@ -202,5 +207,29 @@ describe("useContinuationRestore content block normalization", () => {
         contentBlocks: blocks,
       }),
     ]);
+  });
+});
+
+describe("useContinuationRestore chat mode normalization", () => {
+  it("restores accept_edits as normal", () => {
+    const setCurrentMode = vi.fn();
+    const snapshot = {
+      ...makeSnapshot([]),
+      currentMode: "accept_edits",
+    } as unknown as ContinuationRollbackSnapshot;
+    const { result } = renderRestoreHook(vi.fn(), setCurrentMode);
+
+    act(() => result.current(snapshot));
+
+    expect(setCurrentMode).toHaveBeenCalledWith("normal");
+  });
+
+  it("keeps restorable modes aligned with the selector registry", () => {
+    const registryModes = new Set(CHAT_MODES.map(({ id }) => id));
+
+    for (const mode of RESTORABLE_CHAT_MODES) {
+      expect(registryModes.has(mode)).toBe(true);
+      expect(normalizeChatMode(mode)).toBe(mode);
+    }
   });
 });

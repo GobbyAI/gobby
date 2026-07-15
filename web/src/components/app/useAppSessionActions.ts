@@ -101,7 +101,7 @@ export function useAppSessionActions({
     async (runId: string) => {
       try {
         const res = await fetch(
-          `/api/agents/runs/${encodeURIComponent(runId)}/cancel`,
+          `${import.meta.env.VITE_API_BASE_URL || ""}/api/agents/runs/${encodeURIComponent(runId)}/cancel`,
           { method: "POST" },
         );
         if (res.ok) {
@@ -122,7 +122,7 @@ export function useAppSessionActions({
     async (sessionId: string) => {
       try {
         const res = await fetch(
-          `/api/sessions/${encodeURIComponent(sessionId)}/expire`,
+          `${import.meta.env.VITE_API_BASE_URL || ""}/api/sessions/${encodeURIComponent(sessionId)}/expire`,
           { method: "POST" },
         );
         if (!res.ok) {

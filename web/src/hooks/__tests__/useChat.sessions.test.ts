@@ -953,6 +953,55 @@ describe("useChat viewed session state", () => {
     });
   });
 
+  it("clearViewingSession preserves stored message created_at timestamps", async () => {
+    const createdAt = "2026-04-09T03:04:05Z";
+    localStorage.setItem("gobby-db-session-id", "main-chat");
+    localStorage.setItem("gobby-viewing-session-id", "terminal-session");
+    mockFetch.mockJsonResponse(
+      "/api/sessions/terminal-session/messages?limit=100&offset=0",
+      { messages: [] },
+    );
+    mockFetch.mockJsonResponse("/api/sessions/terminal-session", {
+      session: {
+        id: "terminal-session",
+        source: "codex",
+        status: "active",
+        session_type: "terminal",
+      },
+    });
+    mockFetch.mockJsonResponse(
+      "/api/chat/main-chat/messages?limit=100&after_seq=0",
+      {
+        messages: [
+          {
+            id: "stored-main-message",
+            role: "assistant",
+            content: "Restored main chat",
+            created_at: createdAt,
+          },
+        ],
+      },
+    );
+    mockFetch.mockJsonResponse("/api/sessions/main-chat", {
+      session: { id: "main-chat", chat_mode: "plan" },
+    });
+
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+
+    await waitFor(() => {
+      expect(result.current.viewingSessionId).toBe("terminal-session");
+    });
+
+    act(() => {
+      result.current.clearViewingSession?.();
+    });
+
+    await waitFor(() => {
+      expect(result.current.messages[0]?.timestamp).toEqual(new Date(createdAt));
+    });
+  });
+
   it("ignores stale detach acknowledgements after swapping watched terminal sessions", async () => {
     await loadModule();
     mockFetch.mockJsonResponse(

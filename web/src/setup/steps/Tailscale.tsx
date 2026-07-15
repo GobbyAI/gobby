@@ -1,17 +1,17 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { Text, Box } from "ink";
+import Spinner from "ink-spinner";
 import SelectInput from "ink-select-input";
 import { spawnSync } from "child_process";
-import { setBindHost } from "../utils/config.js";
 import { StatusMessage } from "../components/StatusMessage.js";
 import { saveState } from "../utils/state.js";
 import type { StepProps } from "../types.js";
 
 export function Tailscale({ state, setState, onNext }: StepProps): React.ReactElement {
-  const [phase, setPhase] = useState<"prompt" | "done">("prompt");
+  const [phase, setPhase] = useState<"prompt" | "running" | "done">("prompt");
   const [result, setResult] = useState<string | null>(null);
 
-  const finish = (configured: boolean): void => {
+  const finish = useCallback((configured: boolean): void => {
     setState((prev) => {
       const next = {
         ...prev,
@@ -22,7 +22,35 @@ export function Tailscale({ state, setState, onNext }: StepProps): React.ReactEl
       return next;
     });
     setTimeout(onNext, 300);
+  }, [onNext, setState]);
+
+  const configureTailscale = (): void => {
+    setPhase("running");
   };
+
+  useEffect(() => {
+    if (phase !== "running") return;
+
+    try {
+      const r = spawnSync(
+        "tailscale",
+        ["serve", "--bg", String(state.ports.ui)],
+        { encoding: "utf-8", timeout: 30000 },
+      );
+      if (r.status === 0) {
+        // The running phase intentionally owns this synchronous command and its result state.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setResult("success");
+        setPhase("done");
+        finish(true);
+        return;
+      }
+      setResult(`failed: ${(r.stderr || "").trim() || "command exited unsuccessfully"}`);
+    } catch (error) {
+      setResult(`failed: ${error instanceof Error ? error.message : "command could not run"}`);
+    }
+    setPhase("done");
+  }, [finish, phase, state.ports.ui]);
 
   if (phase === "prompt") {
     return (
@@ -44,25 +72,18 @@ export function Tailscale({ state, setState, onNext }: StepProps): React.ReactEl
               return;
             }
 
-            const uiPort = state.ports.ui;
-            const r = spawnSync(
-              "tailscale",
-              ["serve", "--bg", String(uiPort)],
-              { encoding: "utf-8", timeout: 30000 },
-            );
-
-            if (r.status === 0) {
-              setBindHost("0.0.0.0");
-              setResult("success");
-              finish(true);
-            } else {
-              setResult(`failed: ${(r.stderr || "").trim()}`);
-              finish(false);
-            }
-            setPhase("done");
+            configureTailscale();
           }}
         />
       </Box>
+    );
+  }
+
+  if (phase === "running") {
+    return (
+      <Text>
+        <Spinner type="dots" /> Configuring Tailscale serve...
+      </Text>
     );
   }
 
@@ -75,9 +96,25 @@ export function Tailscale({ state, setState, onNext }: StepProps): React.ReactEl
       )}
       {result === "skipped" && <Text dimColor>{"  "}Skipped.</Text>}
       {result && result.startsWith("failed") && (
-        <StatusMessage level="warning">
-          Tailscale setup {result}
-        </StatusMessage>
+        <Box flexDirection="column">
+          <StatusMessage level="error">Tailscale setup {result}</StatusMessage>
+          <SelectInput
+            items={[
+              { label: "Retry", value: "retry" },
+              { label: "Continue without Tailscale", value: "skip" },
+              { label: "Exit setup", value: "exit" },
+            ]}
+            onSelect={(item) => {
+              if (item.value === "retry") {
+                configureTailscale();
+              } else if (item.value === "skip") {
+                finish(false);
+              } else {
+                process.exit(1);
+              }
+            }}
+          />
+        </Box>
       )}
     </Box>
   );

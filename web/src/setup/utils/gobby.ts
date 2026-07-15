@@ -6,13 +6,14 @@ function gobbyBin(): string {
 
 export function runGobby(
   args: string[],
-  options?: { cwd?: string; timeout?: number },
+  options?: { cwd?: string; timeout?: number; input?: string },
 ): { success: boolean; output: string } {
   try {
     const result = spawnSync(gobbyBin(), args, {
       encoding: "utf-8",
       timeout: options?.timeout || 60000,
       cwd: options?.cwd,
+      input: options?.input,
       env: process.env,
     });
     return {

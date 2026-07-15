@@ -18,6 +18,24 @@ vi.mock("ink-spinner", () => ({
   default: () => <span data-testid="spinner" />,
 }));
 
+vi.mock("ink-select-input", () => ({
+  default: ({
+    items,
+    onSelect,
+  }: {
+    items: Array<{ label: string; value: string }>;
+    onSelect: (item: { label: string; value: string }) => void;
+  }) => (
+    <div>
+      {items.map((item) => (
+        <button key={item.value} onClick={() => onSelect(item)}>
+          {item.label}
+        </button>
+      ))}
+    </div>
+  ),
+}));
+
 vi.mock("ink-text-input", () => ({
   default: ({
     value,
@@ -179,7 +197,10 @@ describe("Services FalkorDB setup", () => {
   );
 
   it("installs FalkorDB with a valid password and records the renamed state fields", async () => {
-    mocks.runGobby.mockReturnValue({ success: true, output: "installed" });
+    mocks.runGobby.mockImplementation(() => {
+      expect(hasRenderedText("Installing FalkorDB via Docker")).toBe(true);
+      return { success: true, output: "installed" };
+    });
     const view = renderServices();
 
     submit("p");
@@ -187,9 +208,10 @@ describe("Services FalkorDB setup", () => {
 
     expect(view.setState).toHaveBeenCalledTimes(1);
     expect(mocks.runGobby).toHaveBeenCalledWith(
-      ["install", "--falkordb", "--falkordb-password", "ValidPassword123!"],
-      { timeout: 120000 },
+      ["install", "--falkordb", "--falkordb-password-stdin"],
+      { timeout: 120000, input: "ValidPassword123!" },
     );
+    expect(mocks.runGobby.mock.calls[0]?.[0]).not.toContain("ValidPassword123!");
     expect(view.state).toMatchObject({
       falkordb_installed: true,
       falkordb_password_set: true,
@@ -214,5 +236,18 @@ describe("Services FalkorDB setup", () => {
     expect(view.onNext).not.toHaveBeenCalled();
     expect(screen.getByText(/Enter FalkorDB password/i)).toBeTruthy();
     expect(hasRenderedText("FalkorDB password must not contain whitespace")).toBe(true);
+  });
+
+  it("keeps a default install failure visible until the operator retries or skips", () => {
+    mocks.runGobby.mockReturnValue({ success: false, output: "docker unavailable" });
+    const view = renderServices();
+
+    submit("y");
+
+    expect(hasRenderedText("docker unavailable")).toBe(true);
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Continue without FalkorDB" })).toBeTruthy();
+    expect(view.setState).not.toHaveBeenCalled();
+    expect(view.onNext).not.toHaveBeenCalled();
   });
 });

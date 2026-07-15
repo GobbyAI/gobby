@@ -53,29 +53,39 @@
 
   --color-info: oklch(70% 0.16 250);
   --color-info-bg: oklch(28% 0.08 250);
+  --color-info-foreground: oklch(70% 0.16 250);
   --color-info-soft: oklch(70% 0.16 250 / 0.12);
+  --color-info-tint: oklch(70% 0.16 250 / 0.06);
+  --text-on-info: oklch(15% 0 0);
 
-  --color-warning: oklch(30% 0.08 75);
+  --color-warning: oklch(78% 0.16 75);
+  --color-warning-bg: oklch(30% 0.08 75);
   --color-warning-foreground: oklch(78% 0.16 75);
   --color-warning-soft: oklch(78% 0.16 75 / 0.12);
+  --color-warning-tint: oklch(78% 0.16 75 / 0.06);
   --text-on-warning: oklch(15% 0 0);
 
   --color-destructive: oklch(28% 0.10 350);
   --color-destructive-foreground: oklch(72% 0.20 350);
   --color-error: oklch(65% 0.20 350);
+  --color-error-bg: var(--color-destructive);
+  --color-error-foreground: oklch(65% 0.20 350);
   --color-error-soft: oklch(65% 0.20 350 / 0.12);
+  --color-error-tint: oklch(65% 0.20 350 / 0.06);
   --text-on-error: oklch(15% 0 0);
 
-  --color-inactive: oklch(60% 0.04 30);
+  --color-inactive: oklch(60% 0.008 125);
 
-  --color-success: oklch(25% 0.05 125);
+  --color-success: oklch(72% 0.10 125);
+  --color-success-bg: oklch(25% 0.05 125);
   --color-success-foreground: oklch(72% 0.10 125);
   --color-success-soft: oklch(72% 0.10 125 / 0.12);
+  --color-success-tint: oklch(72% 0.10 125 / 0.06);
   --text-on-success: oklch(15% 0 0);
 
-  --color-review: oklch(72% 0.14 200);
-  --color-review-bg: oklch(28% 0.08 200);
-  --color-review-soft: oklch(72% 0.14 200 / 0.12);
+  --color-review: var(--color-info);
+  --color-review-bg: var(--color-info-bg);
+  --color-review-soft: var(--color-info-soft);
 
   /* Chart series tokens pair with lib/chartSeries.ts dash patterns.
      Dark theme lightness descends for stable grayscale order. Use these for
@@ -302,37 +312,47 @@
   --shadow-popover-up: 0 -4px 12px oklch(0% 0 0 / 0.12);
   --shadow-panel-left: -4px 0 20px oklch(0% 0 0 / 0.12);
 
-  --accent: oklch(50% 0.18 125);
+  --accent: oklch(43% 0.18 125);
   --accent-hover: oklch(42% 0.18 125);
   --accent-foreground: oklch(99% 0 0);
-  --accent-soft: oklch(50% 0.18 125 / 0.18);
-  --accent-tint: oklch(50% 0.18 125 / 0.10);
+  --accent-soft: oklch(43% 0.18 125 / 0.18);
+  --accent-tint: oklch(43% 0.18 125 / 0.10);
 
   --color-info: oklch(48% 0.18 250);
   --color-info-bg: oklch(94% 0.05 250);
+  --color-info-foreground: oklch(48% 0.18 250);
   --color-info-soft: oklch(48% 0.18 250 / 0.10);
+  --color-info-tint: oklch(48% 0.18 250 / 0.05);
+  --text-on-info: oklch(99% 0 0);
 
-  --color-warning: oklch(95% 0.06 75);
-  --color-warning-foreground: oklch(58% 0.16 75);
-  --color-warning-soft: oklch(58% 0.16 75 / 0.10);
-  --text-on-warning: oklch(99% 0 0);
+  --color-warning: oklch(47% 0.16 75);
+  --color-warning-bg: oklch(95% 0.06 75);
+  --color-warning-foreground: oklch(47% 0.16 75);
+  --color-warning-soft: oklch(47% 0.16 75 / 0.10);
+  --color-warning-tint: oklch(47% 0.16 75 / 0.05);
+  --text-on-warning: oklch(20% 0.005 125);
 
   --color-destructive: oklch(95% 0.05 350);
-  --color-destructive-foreground: oklch(52% 0.22 350);
-  --color-error: oklch(52% 0.22 350);
-  --color-error-soft: oklch(52% 0.22 350 / 0.10);
+  --color-destructive-foreground: oklch(44% 0.22 350);
+  --color-error: oklch(44% 0.22 350);
+  --color-error-bg: var(--color-destructive);
+  --color-error-foreground: oklch(44% 0.22 350);
+  --color-error-soft: oklch(44% 0.22 350 / 0.10);
+  --color-error-tint: oklch(44% 0.22 350 / 0.05);
   --text-on-error: oklch(99% 0 0);
 
-  --color-inactive: oklch(45% 0.06 30);
+  --color-inactive: oklch(45% 0.008 125);
 
-  --color-success: oklch(95% 0.04 125);
+  --color-success: oklch(48% 0.10 125);
+  --color-success-bg: oklch(95% 0.04 125);
   --color-success-foreground: oklch(48% 0.10 125);
   --color-success-soft: oklch(48% 0.10 125 / 0.10);
+  --color-success-tint: oklch(48% 0.10 125 / 0.05);
   --text-on-success: oklch(99% 0 0);
 
-  --color-review: oklch(48% 0.16 200);
-  --color-review-bg: oklch(94% 0.05 200);
-  --color-review-soft: oklch(48% 0.16 200 / 0.10);
+  --color-review: var(--color-info);
+  --color-review-bg: var(--color-info-bg);
+  --color-review-soft: var(--color-info-soft);
 
   /* Chart series tokens pair with lib/chartSeries.ts dash patterns.
      Light theme values are lowered for WCAG 2.2 AA and stable grayscale order.

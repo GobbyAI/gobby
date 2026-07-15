@@ -1,22 +1,21 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { Text, Box } from "ink";
 import SelectInput from "ink-select-input";
 import Spinner from "ink-spinner";
 import { spawnSync } from "child_process";
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from "fs";
-import { join } from "path";
-import { tmpdir } from "os";
 import { StatusMessage } from "../components/StatusMessage.js";
+import { resolveFirewallScriptPath } from "../utils/firewall.js";
 import { saveState } from "../utils/state.js";
 import type { StepProps } from "../types.js";
 
 export function NetworkSecurity({ state, setState, onNext }: StepProps): React.ReactElement {
   const [phase, setPhase] = useState<"prompt" | "running" | "done">("prompt");
   const [result, setResult] = useState<"success" | "failed" | "skipped" | null>(null);
+  const [failureMessage, setFailureMessage] = useState<string | null>(null);
 
   const plat = process.platform;
 
-  const finish = (firewallConfigured: boolean): void => {
+  const finish = useCallback((firewallConfigured: boolean): void => {
     setState((prev) => {
       const next = {
         ...prev,
@@ -27,7 +26,48 @@ export function NetworkSecurity({ state, setState, onNext }: StepProps): React.R
       return next;
     });
     setTimeout(onNext, 300);
+  }, [onNext, setState]);
+
+  const configureFirewall = (): void => {
+    setFailureMessage(null);
+    setPhase("running");
   };
+
+  useEffect(() => {
+    if (phase !== "running") return;
+
+    const scriptPath = resolveFirewallScriptPath();
+    if (!scriptPath) {
+      // The running phase intentionally owns this synchronous command and its result state.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setFailureMessage(
+        "Firewall setup script was not found. Reinstall with npx @gobby/setup@latest and retry.",
+      );
+      setResult("failed");
+      setPhase("done");
+      return;
+    }
+
+    try {
+      const { http, ws, ui } = state.ports;
+      const r = spawnSync(
+        "sudo",
+        ["bash", scriptPath, String(http), String(ws), String(ui)],
+        { stdio: "inherit", timeout: 60000 },
+      );
+      if (r.status === 0) {
+        setResult("success");
+        setPhase("done");
+        finish(true);
+        return;
+      }
+      setFailureMessage("Firewall setup command failed. Review the output above and retry.");
+    } catch (error) {
+      setFailureMessage(error instanceof Error ? error.message : "Firewall setup command failed.");
+    }
+    setResult("failed");
+    setPhase("done");
+  }, [finish, phase, state.ports]);
 
   if (plat === "darwin") {
     if (phase === "prompt") {
@@ -54,46 +94,7 @@ export function NetworkSecurity({ state, setState, onNext }: StepProps): React.R
                 return;
               }
 
-              setPhase("running");
-
-              // Find the bundled firewall script
-              const installDir = process.env.GOBBY_INSTALL_DIR;
-              const scriptPath = installDir
-                ? join(installDir, "shared", "scripts", "setup-firewall.sh")
-                : null;
-
-              if (!scriptPath || !existsSync(scriptPath)) {
-                setResult("failed");
-                setPhase("done");
-                finish(false);
-                return;
-              }
-
-              // Copy to temp and execute with sudo
-              const tmpScript = join(tmpdir(), `gobby-fw-${Date.now()}.sh`);
-              writeFileSync(tmpScript, readFileSync(scriptPath));
-              try {
-                const { http, ws, ui } = state.ports;
-                const r = spawnSync(
-                  "sudo",
-                  ["bash", tmpScript, String(http), String(ws), String(ui)],
-                  { stdio: "inherit", timeout: 60000 },
-                );
-
-                if (r.status === 0) {
-                  setResult("success");
-                  finish(true);
-                } else {
-                  setResult("failed");
-                  finish(false);
-                }
-              } catch {
-                setResult("failed");
-                finish(false);
-              } finally {
-                try { unlinkSync(tmpScript); } catch { /* best-effort cleanup */ }
-              }
-              setPhase("done");
+              configureFirewall();
             }}
           />
         </Box>
@@ -116,9 +117,27 @@ export function NetworkSecurity({ state, setState, onNext }: StepProps): React.R
           </StatusMessage>
         )}
         {result === "failed" && (
-          <StatusMessage level="warning">
-            Firewall setup failed. You can retry later.
-          </StatusMessage>
+          <Box flexDirection="column">
+            <StatusMessage level="error">
+              {failureMessage ?? "Firewall setup failed."}
+            </StatusMessage>
+            <SelectInput
+              items={[
+                { label: "Retry", value: "retry" },
+                { label: "Continue without firewall", value: "skip" },
+                { label: "Exit setup", value: "exit" },
+              ]}
+              onSelect={(item) => {
+                if (item.value === "retry") {
+                  configureFirewall();
+                } else if (item.value === "skip") {
+                  finish(false);
+                } else {
+                  process.exit(1);
+                }
+              }}
+            />
+          </Box>
         )}
         {result === "skipped" && <Text dimColor>  Skipped.</Text>}
       </Box>

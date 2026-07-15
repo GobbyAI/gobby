@@ -569,6 +569,28 @@
   gap: 0.5rem;
 }
 
+@media (pointer: coarse) {
+  .activity-panel-mobile-trigger,
+  .activity-panel-mobile-menu__item {
+    min-height: 2.75rem;
+  }
+
+  .activity-panel-actions-slot .btn-sm,
+  .activity-panel-close-slot .btn-sm,
+  .activity-panel-status-bar__actions .btn-sm,
+  .activity-panel-toolbar .btn-sm {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
+
+  .activity-panel-search,
+  .activity-panel-toolbar .segmented-control__option,
+  .activity-panel-toolbar select,
+  .activity-filter-dropdown__item {
+    min-height: 2.75rem;
+  }
+}
+
 .activity-filter-dropdown__item {
   display: inline-flex;
   align-items: center;

@@ -171,6 +171,128 @@ Stay concise and direct.`
     })
   })
 
+  it('renders user text containing the tool_result substring', () => {
+    const [message] = mapApiMessages([
+      {
+        id: 'user-1',
+        role: 'user',
+        content: '[{"note":"pasted tool_result log"}]',
+        timestamp: '2026-05-30T00:00:00.000Z',
+      },
+    ])
+
+    expect(message).toEqual(
+      expect.objectContaining({
+        id: 'user-1',
+        role: 'user',
+        content: '[{"note":"pasted tool_result log"}]',
+      }),
+    )
+  })
+
+  it('pairs duplicate tool ids with the pending call', () => {
+    const messages = mapApiMessages([
+      {
+        id: 'call-1',
+        role: 'assistant',
+        content: '',
+        content_type: 'tool_use',
+        tool_name: 'Read',
+        tool_use_id: 'tool-a',
+        timestamp: '2026-05-30T00:00:00.000Z',
+      },
+      {
+        id: 'result-1',
+        role: 'user',
+        content: '{"content":"first","kind":"text","truncated":false}',
+        content_type: 'tool_result',
+        tool_use_id: 'tool-a',
+        timestamp: '2026-05-30T00:00:01.000Z',
+      },
+      {
+        id: 'call-2',
+        role: 'assistant',
+        content: '',
+        content_type: 'tool_use',
+        tool_name: 'Read',
+        tool_use_id: 'tool-a',
+        timestamp: '2026-05-30T00:00:02.000Z',
+      },
+      {
+        id: 'result-2',
+        role: 'user',
+        content: '{"content":"second","kind":"text","truncated":false}',
+        content_type: 'tool_result',
+        tool_use_id: 'tool-a',
+        timestamp: '2026-05-30T00:00:03.000Z',
+      },
+    ])
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0].toolCalls?.map((tool) => [tool.status, tool.result?.content])).toEqual([
+      ['completed', 'first'],
+      ['completed', 'second'],
+    ])
+  })
+
+  it.each([
+    ['system', 'system'],
+    ['unknown', 'assistant'],
+  ])('renders blockless %s-role messages as %s', (role, expectedRole) => {
+    const [message] = mapApiMessages([
+      {
+        id: `${role}-1`,
+        role,
+        content: `${role} content`,
+        timestamp: '2026-05-30T00:00:00.000Z',
+      },
+    ])
+
+    expect(message).toEqual(
+      expect.objectContaining({
+        id: `${role}-1`,
+        role: expectedRole,
+        content: `${role} content`,
+      }),
+    )
+  })
+
+  it('renders unmatched tool results and ends pending calls with an error', () => {
+    const [assistant, result] = mapApiMessages([
+      {
+        id: 'call-1',
+        role: 'assistant',
+        content: '',
+        content_type: 'tool_use',
+        tool_name: 'Read',
+        tool_use_id: 'tool-a',
+        timestamp: '2026-05-30T00:00:00.000Z',
+      },
+      {
+        id: 'result-1',
+        role: 'user',
+        content: '{"content":"orphaned","kind":"text","truncated":false}',
+        content_type: 'tool_result',
+        tool_use_id: 'tool-missing',
+        timestamp: '2026-05-30T00:00:01.000Z',
+      },
+    ])
+
+    expect(assistant.toolCalls?.[0]).toEqual(
+      expect.objectContaining({
+        error: 'Unmatched tool result: tool-missing',
+        status: 'error',
+      }),
+    )
+    expect(result).toEqual(
+      expect.objectContaining({
+        id: 'result-1',
+        role: 'system',
+        content: '{"content":"orphaned","kind":"text","truncated":false}',
+      }),
+    )
+  })
+
   it('marks invalid tool result payloads as errors', () => {
     const [assistant] = mapApiMessages([
       {
@@ -338,6 +460,56 @@ Stay concise and direct.`
     })
   })
 
+  it('preserves a completed tool call when hook feedback arrives later', () => {
+    const [assistant, feedback] = mapApiMessages([
+      {
+        id: 'call-1',
+        role: 'assistant',
+        content: '',
+        content_type: 'tool_use',
+        tool_name: 'Read',
+        tool_use_id: 'tool-a',
+        timestamp: '2026-05-30T00:00:00.000Z',
+      },
+      {
+        id: 'result-1',
+        role: 'user',
+        content: '{"content":{"ok":true},"kind":"json","truncated":false}',
+        content_type: 'tool_result',
+        tool_use_id: 'tool-a',
+        timestamp: '2026-05-30T00:00:01.000Z',
+      },
+      {
+        id: 'feedback-1',
+        role: 'user',
+        content: 'Stop hook feedback: follow-up warning',
+        timestamp: '2026-05-30T00:00:02.000Z',
+      },
+    ])
+
+    expect(assistant.toolCalls?.[0]).toEqual(
+      expect.objectContaining({
+        result: {
+          content: { ok: true },
+          kind: 'json',
+          truncated: false,
+        },
+        status: 'completed',
+      }),
+    )
+    expect(assistant.contentBlocks?.[0]).toEqual({
+      type: 'tool_chain',
+      tool_calls: [expect.objectContaining({ status: 'completed' })],
+    })
+    expect(feedback).toEqual(
+      expect.objectContaining({
+        id: 'feedback-1',
+        role: 'system',
+        content: 'Stop hook feedback: follow-up warning',
+      }),
+    )
+  })
+
   it('renders orphan hook feedback as a system message', () => {
     const [message] = mapApiMessages([
       {
@@ -355,5 +527,22 @@ Stay concise and direct.`
         content: 'UserPromptSubmit hook feedback',
       }),
     )
+  })
+
+  it('assigns unique fallback ids when flushing a pending assistant message', () => {
+    const messages = mapApiMessages([
+      {
+        role: 'assistant',
+        content: 'Assistant response',
+        timestamp: '2026-05-30T00:00:00.000Z',
+      },
+      {
+        role: 'user',
+        content: 'Follow-up question',
+        timestamp: '2026-05-30T00:01:00.000Z',
+      },
+    ])
+
+    expect(messages.map((message) => message.id)).toEqual(['msg-0', 'msg-1'])
   })
 })

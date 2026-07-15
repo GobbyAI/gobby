@@ -1,6 +1,6 @@
 {
   "name": "@gobby/setup",
-  "version": "0.4.8",
+  "version": "0.5.0",
   "description": "Interactive setup wizard for Gobby",
   "type": "module",
   "bin": {
@@ -10,7 +10,8 @@
     "node": ">=18"
   },
   "files": [
-    "cli.mjs"
+    "cli.mjs",
+    "setup-firewall.sh"
   ],
   "keywords": [
     "gobby",

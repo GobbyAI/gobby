@@ -63,25 +63,22 @@ from destructive/error hues for deutan accessibility.
 State colors must not rely on hue alone. Pair color with text, icon, position,
 or shape.
 
-| Token | Dark | Light | Usage |
-|-------|------|-------|-------|
-| `--color-info` | `oklch(70% 0.16 250)` | `oklch(48% 0.18 250)` | Informational text, dots, badges |
-| `--color-info-bg` | `oklch(28% 0.08 250)` | `oklch(94% 0.05 250)` | Info backgrounds |
-| `--color-info-soft` | `oklch(70% 0.16 250 / 0.12)` | `oklch(48% 0.18 250 / 0.10)` | Soft info backgrounds |
-| `--color-warning` | `oklch(30% 0.08 75)` | `oklch(95% 0.06 75)` | Warning backgrounds |
-| `--color-warning-foreground` | `oklch(78% 0.16 75)` | `oklch(58% 0.16 75)` | Warning text/icons |
-| `--color-warning-soft` | `oklch(78% 0.16 75 / 0.12)` | `oklch(58% 0.16 75 / 0.10)` | Soft warning backgrounds |
-| `--color-destructive` | `oklch(28% 0.10 350)` | `oklch(95% 0.05 350)` | Destructive button backgrounds |
-| `--color-destructive-foreground` | `oklch(72% 0.20 350)` | `oklch(52% 0.22 350)` | Destructive text/icons |
-| `--color-error` | `oklch(65% 0.20 350)` | `oklch(52% 0.22 350)` | Error text |
-| `--color-error-soft` | `oklch(65% 0.20 350 / 0.12)` | `oklch(52% 0.22 350 / 0.10)` | Soft error backgrounds |
-| `--color-inactive` | `oklch(60% 0.04 30)` | `oklch(45% 0.06 30)` | Stopped, closed, dormant states |
-| `--color-success` | `oklch(25% 0.05 125)` | `oklch(95% 0.04 125)` | Success backgrounds |
-| `--color-success-foreground` | `oklch(72% 0.10 125)` | `oklch(48% 0.10 125)` | Success text/icons |
-| `--color-success-soft` | `oklch(72% 0.10 125 / 0.12)` | `oklch(48% 0.10 125 / 0.10)` | Soft success backgrounds |
-| `--color-review` | `oklch(72% 0.14 200)` | `oklch(48% 0.16 200)` | Review state accents |
-| `--color-review-bg` | `oklch(28% 0.08 200)` | `oklch(94% 0.05 200)` | Review backgrounds |
-| `--color-review-soft` | `oklch(72% 0.14 200 / 0.12)` | `oklch(48% 0.16 200 / 0.10)` | Soft review backgrounds |
+The `info`, `warning`, `error`, and `success` lanes share one foreground-first
+sibling contract:
+
+| Token pattern | Usage |
+|---------------|-------|
+| `--color-<state>` | Readable state text, icons, dots, and borders |
+| `--color-<state>-foreground` | Same readable value as the bare foreground token |
+| `--color-<state>-bg` | Solid state surface |
+| `--color-<state>-soft` | Soft state surface |
+| `--color-<state>-tint` | Subtle state emphasis |
+| `--text-on-<state>` | Text placed on the solid `-bg` state surface |
+
+Destructive actions retain the dedicated `--color-destructive` surface and
+`--color-destructive-foreground` text pair. Review aliases the info lane;
+inactive uses the neutral hue-125 lane. Exact dark and light values live only
+in `web/src/styles/tokens.css`.
 
 Specialized palettes for language icons, git status, pipeline steps, execution
 status, session sources, providers, integration channels, task categories, and
@@ -189,13 +186,17 @@ Use semantic Tailwind colors where mappings exist.
 | `border-border` | `--border` |
 | `bg-destructive` | `--color-destructive` |
 | `text-destructive-foreground` | `--color-destructive-foreground` |
-| `bg-warning` | `--color-warning` |
+| `text-warning` | `--color-warning` |
+| `bg-warning-bg` | `--color-warning-bg` |
 | `text-warning-foreground` | `--color-warning-foreground` |
-| `bg-success` | `--color-success` |
+| `text-success` | `--color-success` |
+| `bg-success-bg` | `--color-success-bg` |
 | `text-success-foreground` | `--color-success-foreground` |
 | `text-error` | `--color-error` |
+| `bg-error-bg` | `--color-error-bg` |
 | `bg-error-soft` | `--color-error-soft` |
 | `text-info` | `--color-info` |
+| `bg-info-bg` | `--color-info-bg` |
 | `bg-info-soft` | `--color-info-soft` |
 | `text-review` | `--color-review` |
 | `bg-review-soft` | `--color-review-soft` |

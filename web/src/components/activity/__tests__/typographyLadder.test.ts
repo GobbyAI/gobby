@@ -4,14 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 const cwd = process.cwd()
 
-const TYPOGRAPHY_ROOTS = [
-  'src/styles',
-  'src/components/activity',
-  'src/components/chat',
-  'src/components/settings',
-  'src/components/shared',
-  'src/components/tasks',
-]
+const TYPOGRAPHY_ROOTS = ['src/styles', 'src/components']
 const SANCTIONED_TOKEN_FILES = new Set([
   'src/styles/tailwind-theme.css',
   'src/styles/tokens.css',
@@ -57,7 +50,7 @@ function sourceFilesUnder(rel: string): string[] {
   return readdirSync(join(cwd, rel), { withFileTypes: true }).flatMap((entry) => {
     const child = join(rel, entry.name)
     if (entry.isDirectory()) {
-      return entry.name === '__tests__' ? [] : sourceFilesUnder(child)
+      return entry.name === '__tests__' || entry.name === '__visual__' ? [] : sourceFilesUnder(child)
     }
     return /\.(?:css|ts|tsx)$/.test(entry.name) ? [child] : []
   })

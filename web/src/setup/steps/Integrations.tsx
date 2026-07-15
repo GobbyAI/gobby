@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Text, Box } from "ink";
 import TextInput from "ink-text-input";
 import SelectInput from "ink-select-input";
@@ -33,6 +33,7 @@ const INTEGRATIONS: Integration[] = [
 ];
 
 type Phase = "menu" | "input" | "saving" | "done";
+type PendingSecret = { id: string; label: string; name: string; value: string };
 
 function gobbyBin(): string {
   return process.env.GOBBY_BIN || "gobby";
@@ -54,6 +55,7 @@ export function Integrations({ state, setState, onNext }: StepProps): React.Reac
   const [inputValue, setInputValue] = useState("");
   const [configured, setConfigured] = useState<string[]>(state.secrets_configured || []);
   const [error, setError] = useState<string | null>(null);
+  const [pendingSecret, setPendingSecret] = useState<PendingSecret | null>(null);
 
   const finish = (): void => {
     setState((prev) => {
@@ -69,6 +71,23 @@ export function Integrations({ state, setState, onNext }: StepProps): React.Reac
   };
 
   const integration = INTEGRATIONS[currentIdx];
+
+  useEffect(() => {
+    if (phase !== "saving" || !pendingSecret) return;
+
+    const ok = setSecret(pendingSecret.name, pendingSecret.value);
+    if (ok) {
+      // The saving phase intentionally owns this synchronous command and its result state.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setConfigured((prev) => [...prev, pendingSecret.id]);
+      setError(null);
+      setCurrentIdx((i) => i + 1);
+      setPhase("menu");
+    } else {
+      setError(`Failed to store ${pendingSecret.label} secret.`);
+      setPhase("input");
+    }
+  }, [pendingSecret, phase]);
 
   if (phase === "done") {
     const count = configured.length;
@@ -140,21 +159,18 @@ export function Integrations({ state, setState, onNext }: StepProps): React.Reac
             onSubmit={(val) => {
               const trimmed = val.trim();
               if (!trimmed) {
-                setError("Empty value — skipping.");
+                setError(null);
                 setCurrentIdx((i) => i + 1);
                 setPhase("menu");
                 return;
               }
+              setPendingSecret({
+                id: integration.id,
+                label: integration.label,
+                name: integration.secretName,
+                value: trimmed,
+              });
               setPhase("saving");
-              const ok = setSecret(integration.secretName, trimmed);
-              if (ok) {
-                setConfigured((prev) => [...prev, integration.id]);
-                setError(null);
-              } else {
-                setError(`Failed to store ${integration.label} secret.`);
-              }
-              setCurrentIdx((i) => i + 1);
-              setPhase("menu");
             }}
           />
         </Box>

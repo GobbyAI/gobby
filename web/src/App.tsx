@@ -201,22 +201,11 @@ export default function App() {
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsOverlay = useSettingsOverlay();
-  // The Providers & Models settings section drives the same default-provider
-  // state as the chat picker; App owns its persistence (see effects below).
-  const providerSelection = useMemo(
-    () => ({ selectedProvider, onSelectProvider: setSelectedProvider }),
-    [selectedProvider, setSelectedProvider],
-  );
   const [activityTabRequest, setActivityTabRequest] =
     useState<ActivityTab | null>(null);
-  // Chat is the only page surface. Any legacy hash (e.g. #dashboard, #sessions)
-  // normalizes to #chat via the effect below; activity tabs (Tasks/Sessions/MCP)
-  // live inside ChatPage and are driven by activityTabRequest, not the page hash.
+  // Chat is the only page surface. Activity tabs (Tasks/Sessions/MCP) live
+  // inside ChatPage and are driven by activityTabRequest, not the URL hash.
   const [activeTab, setActiveTab] = useState<string>("chat");
-
-  useEffect(() => {
-    window.location.hash = activeTab;
-  }, [activeTab]);
   const showPlanRef = useRef<(() => void) | null>(null);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
   const [resumeModalOpen, setResumeModalOpen] = useState(false);
@@ -226,6 +215,10 @@ export default function App() {
     setActivityTabRequest(tab);
     setActiveTab("chat");
   }, []);
+  const clearActivityTabRequest = useCallback(
+    () => setActivityTabRequest(null),
+    [],
+  );
 
   useAppKeyboardShortcuts({ setQuickCaptureOpen });
 
@@ -236,15 +229,23 @@ export default function App() {
     projectOptions,
     projectReady,
     projectSelection,
-    setSelectedProjectId,
+    selectProject,
+    selectProvider,
   } = useAppProjectSelection({
     allProjects: projectsHook.allProjects,
+    onProjectSelect: clearActivityTabRequest,
     selectedProvider,
     setSelectedProvider,
     startNewChat,
     setProjectIdRef,
     sendProjectChange,
   });
+  // The Providers & Models settings section drives the same default-provider
+  // state as the chat picker; App owns its persistence (see effects below).
+  const providerSelection = useMemo(
+    () => ({ selectedProvider, onSelectProvider: selectProvider }),
+    [selectedProvider, selectProvider],
+  );
   const { sessionsFilters, setSessionsFilters } =
     usePersistedSessionsFilters();
 
@@ -412,7 +413,7 @@ export default function App() {
       normalizeChatMode(settings.defaultChatMode);
     updateChatMode(restoredMode);
     sendMode(restoredMode);
-  }, [conversationSwitchKey, sessionCatalog.isLoading, dbSessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [conversationSwitchKey, sessionCatalog.isLoading, dbSessionId, webChatSessions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleInputChange = useCallback(
     (value: string) => {
@@ -422,7 +423,7 @@ export default function App() {
   );
 
   const { handlePaletteSelect, commandPaletteActions } = useAppCommandPalette({
-    startNewChat,
+    startNewChat: handleStartNewChat,
     clearHistory,
     sendMessage,
     settings,
@@ -463,72 +464,81 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="app-header">
-        <div className="app-brand">
-          <GobbyLogo className="app-brand-logo" size={44} />
-          <span className="app-brand-title">Gobby</span>
-        </div>
-        <div className="app-header-actions">
-          {!isConnected && (
-            <Badge
-              variant="error"
-              style={{ height: "var(--control-row-height)" }}
-              className="app-health-badge gap-2 uppercase tracking-[0.05em]"
-            >
-              <span
-                aria-hidden="true"
-                className="size-2 rounded-full bg-destructive-foreground"
+      <AppErrorBoundary
+        activeTab="header"
+        onReturnToChat={() => setActiveTab("chat")}
+      >
+        <header className="app-header">
+          <div className="app-brand">
+            <GobbyLogo className="app-brand-logo" size={44} />
+            <span className="app-brand-title">Gobby</span>
+          </div>
+          <div className="app-header-actions">
+            {!isConnected && (
+              <Badge
+                variant="error"
+                style={{ height: "var(--control-row-height)" }}
+                className="app-health-badge gap-2 uppercase tracking-[0.05em]"
+              >
+                <span
+                  aria-hidden="true"
+                  className="size-2 rounded-full bg-destructive-foreground"
+                />
+                <span>Down</span>
+              </Badge>
+            )}
+            {projectOptions.length > 0 && (
+              <ProjectSelector
+                projects={projectOptions}
+                selectedProjectId={effectiveProjectId}
+                onProjectChange={selectProject}
+                dropDirection="down"
               />
-              <span>Down</span>
-            </Badge>
-          )}
-          {projectOptions.length > 0 && (
-            <ProjectSelector
-              projects={projectOptions}
-              selectedProjectId={effectiveProjectId}
-              onProjectChange={setSelectedProjectId}
-              dropDirection="down"
-            />
-          )}
-          <ThemeToggle theme={settings.theme} onThemeChange={updateTheme} />
-          <button
-            type="button"
-            className="btn btn-accent btn-sm app-settings-cog"
-            onClick={() => settingsOverlay.open()}
-            aria-label="Open settings"
-            aria-haspopup="dialog"
-            aria-expanded={settingsOverlay.isOpen}
-            title="Settings"
-          >
-            <SettingsCogIcon />
-          </button>
-          {authRequired && authenticated && (
+            )}
+            <ThemeToggle theme={settings.theme} onThemeChange={updateTheme} />
             <button
               type="button"
-              className="btn btn-ghost btn-sm app-logout-btn"
-              onClick={() => logout()}
-              aria-label="Log out"
-              title="Log out"
+              className="btn btn-accent btn-sm app-settings-cog"
+              onClick={() => settingsOverlay.open()}
+              aria-label="Open settings"
+              aria-haspopup="dialog"
+              aria-expanded={settingsOverlay.isOpen}
+              title="Settings"
             >
-              <LogoutIcon />
+              <SettingsCogIcon />
             </button>
-          )}
-        </div>
-      </header>
+            {authRequired && authenticated && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm app-logout-btn"
+                onClick={() => logout()}
+                aria-label="Log out"
+                title="Log out"
+              >
+                <LogoutIcon />
+              </button>
+            )}
+          </div>
+        </header>
+      </AppErrorBoundary>
 
-      <FilesProvider>
-        <AppErrorBoundary
-          activeTab={activeTab}
-          onReturnToChat={() => setActiveTab("chat")}
-        >
-          <Suspense
-            fallback={
-              <main className="flex flex-1 items-center justify-center text-muted-foreground">
-                Loading...
-              </main>
-            }
+      <AppErrorBoundary
+        activeTab="files"
+        onReturnToChat={() => setActiveTab("chat")}
+      >
+        <FilesProvider>
+          <AppErrorBoundary
+            activeTab={activeTab}
+            onReturnToChat={() => setActiveTab("chat")}
           >
-            <ChatPage
+            <Suspense
+              fallback={
+                <main className="flex flex-1 items-center justify-center text-muted-foreground">
+                  Loading...
+                </main>
+              }
+            >
+              <ChatPage
                 projectId={effectiveProjectId}
                 showPlanRef={showPlanRef}
                 planPendingVariant={settings.planPendingVariant}
@@ -592,7 +602,7 @@ export default function App() {
                   activeAgent,
                   onAgentChange: sendAgentChange,
                   provider: selectedProvider,
-                  onProviderChange: setSelectedProvider,
+                  onProviderChange: selectProvider,
                   onSwitchProvider: switchProvider,
                   dbSessionId,
                   conversationSwitchKey,
@@ -655,74 +665,76 @@ export default function App() {
                   stopTTS: voice.stopTTS,
                 }}
               />
+            </Suspense>
+          </AppErrorBoundary>
+        </FilesProvider>
+      </AppErrorBoundary>
+
+      <AppErrorBoundary
+        activeTab="modal"
+        onReturnToChat={() => setActiveTab("chat")}
+      >
+        <Settings
+          isOpen={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          settings={settings}
+          onFontSizeChange={updateFontSize}
+          onThemeChange={updateTheme}
+          onDefaultChatModeChange={updateDefaultChatMode}
+          onReset={resetSettings}
+        />
+        {settingsOverlay.isOpen && (
+          <Suspense fallback={null}>
+            <SettingsOverlay
+              isOpen={settingsOverlay.isOpen}
+              activeSection={settingsOverlay.activeSection}
+              onClose={settingsOverlay.close}
+              onSelectSection={settingsOverlay.selectSection}
+              registerDirtyGuard={settingsOverlay.registerDirtyGuard}
+              clientSettings={clientSettings}
+              providerSelection={providerSelection}
+              projectSelection={projectSelection}
+            />
           </Suspense>
-        </AppErrorBoundary>
-      </FilesProvider>
-
-      <Settings
-        isOpen={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        settings={settings}
-        onFontSizeChange={updateFontSize}
-        onThemeChange={updateTheme}
-        onDefaultChatModeChange={updateDefaultChatMode}
-        onReset={resetSettings}
-      />
-
-      {settingsOverlay.isOpen && (
-        <Suspense fallback={null}>
-          <SettingsOverlay
-            isOpen={settingsOverlay.isOpen}
-            activeSection={settingsOverlay.activeSection}
-            onClose={settingsOverlay.close}
-            onSelectSection={settingsOverlay.selectSection}
-            registerDirtyGuard={settingsOverlay.registerDirtyGuard}
-            clientSettings={clientSettings}
-            providerSelection={providerSelection}
-            projectSelection={projectSelection}
-          />
-        </Suspense>
-      )}
-
-      {quickCaptureOpen && (
-        <Suspense fallback={null}>
-          <QuickCaptureTask
-            isOpen
-            onClose={() => setQuickCaptureOpen(false)}
-          />
-        </Suspense>
-      )}
-
-      {resumeModalOpen && (
-        <Suspense fallback={null}>
-          <ResumeSessionModal
-            isOpen
-            onClose={() => setResumeModalOpen(false)}
-            sessions={allProjectSessions}
-            onResume={handleContinueInChat}
-          />
-        </Suspense>
-      )}
-
-      {activeModal && (
-        <Suspense fallback={null}>
-          <SlashCommandModal
-            modal={activeModal}
-            onClose={() => setActiveModal(null)}
-            onSendMessage={(content, context) => {
-              sendMessage(
-                content,
-                settings.model,
-                undefined,
-                effectiveProjectId,
-                context,
-                currentMainReasoning,
-                settings.ttsEnabled,
-              );
-            }}
-          />
-        </Suspense>
-      )}
+        )}
+        {quickCaptureOpen && (
+          <Suspense fallback={null}>
+            <QuickCaptureTask
+              isOpen
+              onClose={() => setQuickCaptureOpen(false)}
+            />
+          </Suspense>
+        )}
+        {resumeModalOpen && (
+          <Suspense fallback={null}>
+            <ResumeSessionModal
+              isOpen
+              onClose={() => setResumeModalOpen(false)}
+              sessions={allProjectSessions}
+              onResume={handleContinueInChat}
+            />
+          </Suspense>
+        )}
+        {activeModal && (
+          <Suspense fallback={null}>
+            <SlashCommandModal
+              modal={activeModal}
+              onClose={() => setActiveModal(null)}
+              onSendMessage={(content, context) => {
+                sendMessage(
+                  content,
+                  settings.model,
+                  undefined,
+                  effectiveProjectId,
+                  context,
+                  currentMainReasoning,
+                  settings.ttsEnabled,
+                );
+              }}
+            />
+          </Suspense>
+        )}
+      </AppErrorBoundary>
 
       {visibleToastMessage && (
         <button

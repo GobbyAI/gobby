@@ -3,7 +3,7 @@ import { useCallback } from "react";
 import { normalizeChatMode } from "../../types/chat";
 import {
   mapApiMessages,
-  mapRenderedMessageToChatMessage,
+  mapStoredChatMessage,
 } from "../../lib/chatMessageMapping";
 import { markFreshChatDraft } from "../../lib/sessionPersistence";
 import {
@@ -117,9 +117,7 @@ export function useConversationActions(
             if (!data?.messages?.length || conversationIdRef.current !== id) {
               return;
             }
-            const mapped = data.messages.map((m: Record<string, unknown>) =>
-              mapRenderedMessageToChatMessage(m),
-            );
+            const mapped = data.messages.map(mapStoredChatMessage);
             if (mapped.length > 0) {
               setMessages(mapped);
             }

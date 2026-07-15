@@ -30,7 +30,7 @@ function hasUnsafeUrlChars(value: string): boolean {
   return UNSAFE_URL_CHARS_RE.test(value)
 }
 
-export function isSafeImageSrc(src: string): boolean {
+function isSafeImageSrcValue(src: string, requireImagePath: boolean): boolean {
   const trimmed = src.trim()
   if (!trimmed || hasUnsafeUrlChars(trimmed)) return false
 
@@ -39,18 +39,26 @@ export function isSafeImageSrc(src: string): boolean {
   }
 
   if (SCHEME_RE.test(trimmed)) {
-    return trimmed.toLowerCase().startsWith('https://')
+    if (!trimmed.toLowerCase().startsWith('https://')) return false
   }
 
   if (trimmed.startsWith('//')) {
     return false
   }
 
-  if (trimmed.startsWith('/')) {
-    return true
-  }
+  if (requireImagePath) return IMAGE_PATH_RE.test(trimmed)
 
-  return trimmed.startsWith('./') || trimmed.startsWith('../') || IMAGE_PATH_RE.test(trimmed)
+  return (
+    trimmed.toLowerCase().startsWith('https://') ||
+    trimmed.startsWith('/') ||
+    trimmed.startsWith('./') ||
+    trimmed.startsWith('../') ||
+    IMAGE_PATH_RE.test(trimmed)
+  )
+}
+
+export function isSafeImageSrc(src: string): boolean {
+  return isSafeImageSrcValue(src, true)
 }
 
 function safeImageSrc(value: unknown): string | null {
@@ -60,9 +68,10 @@ function safeImageSrc(value: unknown): string | null {
 }
 
 function safeImageUrl(value: unknown): string | null {
-  if (typeof value === 'string') return safeImageSrc(value)
-  if (isRecord(value)) return safeImageSrc(value.url)
-  return null
+  const url = typeof value === 'string' ? value : isRecord(value) ? value.url : null
+  if (typeof url !== 'string') return null
+  const trimmed = url.trim()
+  return isSafeImageSrcValue(trimmed, false) ? trimmed : null
 }
 
 function extractBase64Source(source: unknown): string | null {

@@ -39,16 +39,14 @@ export function patchPorts(
   httpPort: number,
   wsPort: number,
   uiPort: number,
+  firewallConfigured: boolean,
 ): void {
   const data = readBootstrap();
   data.daemon_port = httpPort;
   data.websocket_port = wsPort;
   data.ui_port = uiPort;
-  writeBootstrap(data);
-}
-
-export function setBindHost(host: string): void {
-  const data = readBootstrap();
-  data.bind_host = host;
+  if (!firewallConfigured) {
+    data.bind_host = "127.0.0.1";
+  }
   writeBootstrap(data);
 }
