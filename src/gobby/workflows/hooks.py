@@ -20,6 +20,32 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_EVALUATION_TIMEOUT_SECONDS = 15.0
+
+
+class WorkflowEvaluationTimeout(TimeoutError):
+    """Raised when one workflow evaluation exceeds its internal budget."""
+
+    def __init__(
+        self,
+        *,
+        event_type: HookEventType | str,
+        session_id: str,
+        timeout_seconds: float,
+    ) -> None:
+        self.event_type = (
+            event_type.value if isinstance(event_type, HookEventType) else str(event_type)
+        )
+        self.session_id = session_id
+        self.timeout_seconds = timeout_seconds
+        self.queue_duration_seconds: float | None = None
+        self.execution_duration_seconds: float | None = None
+        super().__init__(
+            "Workflow evaluation timed out "
+            f"after {timeout_seconds:g}s for event={self.event_type} session={session_id or '<none>'}"
+        )
+
+
 _NO_REPO_PROJECT_CONSTANTS = frozenset(
     {
         PERSONAL_PROJECT_ID,
@@ -113,7 +139,7 @@ class WorkflowHookHandler:
     def __init__(
         self,
         loop: asyncio.AbstractEventLoop | None = None,
-        timeout: float = 30.0,
+        timeout: float = DEFAULT_EVALUATION_TIMEOUT_SECONDS,
         enabled: bool = True,
         rule_engine: "RuleEngine | None" = None,
         task_manager: "LocalTaskManager | None" = None,
@@ -415,16 +441,8 @@ class WorkflowHookHandler:
 
     async def _acquire_eval_lock(self, lock: LockType) -> None:
         """Acquire a thread lock without blocking the event loop."""
-        if lock.acquire(blocking=False):
-            return
-
-        acquire_task = asyncio.create_task(asyncio.to_thread(lock.acquire))
-        try:
-            await asyncio.shield(acquire_task)
-        except asyncio.CancelledError:
-            await acquire_task
-            lock.release()
-            raise
+        while not lock.acquire(blocking=False):
+            await asyncio.sleep(0.01)
 
     def _resolve_project_path(self, event: HookEvent) -> str | None:
         """Resolve the best available filesystem path for workflow git checks."""
@@ -773,7 +791,18 @@ class WorkflowHookHandler:
         """Evaluate rules asynchronously for callers that already own the loop."""
         if not self._enabled:
             return HookResponse(decision="allow")
-        return await self._evaluate_rules(event)
+        if self.timeout is None:
+            return await self._evaluate_rules(event)
+
+        try:
+            return await asyncio.wait_for(self._evaluate_rules(event), timeout=self.timeout)
+        except TimeoutError as exc:
+            session_id = event.metadata.get("_platform_session_id") or event.session_id or ""
+            raise WorkflowEvaluationTimeout(
+                event_type=event.event_type,
+                session_id=session_id,
+                timeout_seconds=self.timeout,
+            ) from exc
 
     def evaluate(self, event: HookEvent) -> HookResponse:
         """Evaluate rules for a hook event.
@@ -784,28 +813,23 @@ class WorkflowHookHandler:
             return HookResponse(decision="allow")
 
         try:
-            if self._loop and self._loop.is_running():
-                if threading.current_thread() is threading.main_thread():
-                    return HookResponse(decision="allow")
-                else:
-                    future = asyncio.run_coroutine_threadsafe(
-                        self._evaluate_rules(event),
-                        self._loop,
-                    )
-                    return future.result(timeout=self.timeout)
-
             try:
                 asyncio.get_running_loop()
                 logger.warning("Could not run workflow engine: Event loop is already running.")
                 return HookResponse(decision="allow")
             except RuntimeError:
-                coroutine = self.evaluate_async(event)
-                return asyncio.run(coroutine)
+                # HTTP adapters already run this synchronous entry point in the
+                # bounded adapter executor. Keep evaluation, blocking DB work,
+                # and its asyncio loop in that worker instead of resubmitting
+                # the coroutine to the daemon loop.
+                return asyncio.run(self.evaluate_async(event))
 
-        except concurrent.futures.CancelledError:
+        except (asyncio.CancelledError, concurrent.futures.CancelledError):
             return self._handle_cancelled(event)
+        except WorkflowEvaluationTimeout:
+            raise
         except Exception as e:
-            logger.error(f"Error evaluating rules: {e}", exc_info=True)
+            logger.error("Error evaluating rules: %s: %s", type(e).__name__, e, exc_info=True)
             raise
 
     def handle(self, event: HookEvent) -> HookResponse:

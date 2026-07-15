@@ -37,6 +37,7 @@ from gobby.servers.tool_approvals import (
 )
 from gobby.storage.config_store import ConfigStore
 from gobby.telemetry.instruments import inc_counter
+from gobby.workflows.hooks import WorkflowEvaluationTimeout
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -310,17 +311,56 @@ async def _run_adapter_hook(
 ) -> dict[str, Any]:
     """Run blocking hook work in the bounded adapter executor."""
     loop = asyncio.get_running_loop()
+    queued_at = time.perf_counter()
+    started_at: float | None = None
+    finished_at: float | None = None
+    exception_type: str | None = None
+
+    def run_adapter() -> dict[str, Any]:
+        nonlocal started_at, finished_at
+        started_at = time.perf_counter()
+        try:
+            return cast(dict[str, Any], adapter.handle_native(payload, hook_manager))
+        finally:
+            finished_at = time.perf_counter()
+
     pending = loop.run_in_executor(
         _HOOK_ADAPTER_EXECUTOR,
-        adapter.handle_native,
-        payload,
-        hook_manager,
+        run_adapter,
     )
-    if timeout_seconds is None:
-        result = await pending
-    else:
-        result = await asyncio.wait_for(pending, timeout=timeout_seconds)
-    return cast(dict[str, Any], result)
+    try:
+        if timeout_seconds is None:
+            return await pending
+        return await asyncio.wait_for(pending, timeout=timeout_seconds)
+    except WorkflowEvaluationTimeout as exc:
+        exception_type = type(exc).__name__
+        now = time.perf_counter()
+        exc.queue_duration_seconds = (
+            started_at - queued_at if started_at is not None else now - queued_at
+        )
+        exc.execution_duration_seconds = now - started_at if started_at is not None else 0.0
+        raise
+    except BaseException as exc:
+        exception_type = type(exc).__name__
+        raise
+    finally:
+        now = finished_at or time.perf_counter()
+        queue_duration = started_at - queued_at if started_at is not None else now - queued_at
+        execution_duration = now - started_at if started_at is not None else 0.0
+        input_data = payload.get("input_data")
+        payload_session_id = input_data.get("session_id") if isinstance(input_data, dict) else None
+        logger.debug(
+            "Hook adapter timing",
+            extra={
+                "hook_type": payload.get("hook_type"),
+                "source": payload.get("source"),
+                "session_id": payload.get("_platform_session_id") or payload_session_id,
+                "timeout_seconds": timeout_seconds,
+                "queue_duration_seconds": queue_duration,
+                "execution_duration_seconds": execution_duration,
+                "exception_type": exception_type,
+            },
+        )
 
 
 def _normalize_hold_open_hook_type(hook_type: str | None) -> str | None:
@@ -776,9 +816,20 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     )
                 )
 
-            except TimeoutError:
+            except TimeoutError as exc:
                 inc_counter("hooks_failed_total")
                 timeout_seconds = _fail_safe_hook_timeout_seconds(hook_type, request_metadata)
+                timeout_log_extra = {
+                    "source": source,
+                    "exception_type": type(exc).__name__,
+                    "evaluation_event": getattr(exc, "event_type", hook_type),
+                    "evaluation_session_id": getattr(exc, "session_id", None),
+                    "evaluation_timeout_seconds": getattr(exc, "timeout_seconds", None),
+                    "adapter_queue_duration_seconds": getattr(exc, "queue_duration_seconds", None),
+                    "adapter_execution_duration_seconds": getattr(
+                        exc, "execution_duration_seconds", None
+                    ),
+                }
                 if timeout_seconds is None:
                     timeout_seconds = NON_CRITICAL_HOOK_TIMEOUT_SECONDS
                     logger.warning(
@@ -787,8 +838,8 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         extra=_hook_log_extra(
                             hook_type,
                             request_metadata,
-                            source=source,
                             timeout_seconds=timeout_seconds,
+                            **timeout_log_extra,
                         ),
                     )
                     return mark_processed_and_return(
@@ -805,8 +856,8 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     extra=_hook_log_extra(
                         hook_type,
                         request_metadata,
-                        source=source,
                         timeout_seconds=timeout_seconds,
+                        **timeout_log_extra,
                     ),
                 )
                 return mark_processed_and_return(

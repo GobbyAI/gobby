@@ -8,6 +8,7 @@ from typing import Any
 
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.telemetry.tracing import create_span
+from gobby.workflows.hooks import WorkflowEvaluationTimeout
 
 DispatchMcpCalls = Callable[[list[dict[str, Any]], HookEvent], list[dict[str, Any]]]
 FormatDiscoveryResult = Callable[[dict[str, Any]], str]
@@ -135,6 +136,8 @@ class WorkflowRuleEvaluator:
                 )
 
             return workflow_context, None
+        except WorkflowEvaluationTimeout:
+            raise
         except Exception as exc:
             self.logger.error("Workflow evaluation failed: %s", exc, exc_info=True)
             return None, None
