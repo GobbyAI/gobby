@@ -261,6 +261,95 @@ class TestWebhookExecutorFailureHandling:
             assert mock_session.request.call_count == 3
             assert result.success is True
 
+    async def test_retry_attempts_reuse_one_pinned_session(self, executor):
+        """All attempts in one execution should share one bounded, DNS-pinned session."""
+        responses = [
+            create_mock_response(status=500),
+            create_mock_response(status=500),
+            create_mock_response(status=200),
+        ]
+        mock_session = create_mock_session(responses)
+        connector = MagicMock()
+
+        with (
+            patch(
+                "gobby.workflows.webhook_executor.aiohttp.ClientSession",
+                return_value=mock_session,
+            ) as session_factory,
+            patch(
+                "gobby.workflows.webhook_executor.aiohttp.TCPConnector",
+                return_value=connector,
+            ) as connector_factory,
+        ):
+            result = await executor.execute(
+                url="https://api.example.com/webhook",
+                timeout=17,
+                retry_config={"max_attempts": 3, "backoff_seconds": 0, "retry_on_status": [500]},
+            )
+
+        assert result.success is True
+        session_factory.assert_called_once()
+        connector_factory.assert_called_once()
+        assert session_factory.call_args.kwargs["connector"] is connector
+        assert session_factory.call_args.kwargs["timeout"].total == 17
+        resolver = connector_factory.call_args.kwargs["resolver"]
+        assert resolver._hostname == "api.example.com"
+        assert resolver._addresses[0]["host"] == "93.184.216.34"
+        assert mock_session.request.call_count == 3
+        assert all(
+            call.kwargs["allow_redirects"] is False for call in mock_session.request.call_args_list
+        )
+        mock_session.__aexit__.assert_awaited_once()
+
+    async def test_session_closes_when_retries_are_exhausted(self, executor):
+        """The retry session should close after the final failed attempt."""
+        mock_session = create_mock_session(create_mock_response(status=503))
+
+        with patch(
+            "gobby.workflows.webhook_executor.aiohttp.ClientSession", return_value=mock_session
+        ):
+            result = await executor.execute(
+                url="https://api.example.com/webhook",
+                retry_config={"max_attempts": 2, "backoff_seconds": 0, "retry_on_status": [503]},
+            )
+
+        assert result.success is False
+        mock_session.__aexit__.assert_awaited_once()
+
+    async def test_session_closes_when_execution_is_cancelled(self, executor):
+        """Cancellation should propagate after closing the retry session."""
+        mock_session = create_mock_session(create_mock_response())
+        mock_session.request.side_effect = asyncio.CancelledError
+
+        with (
+            patch(
+                "gobby.workflows.webhook_executor.aiohttp.ClientSession",
+                return_value=mock_session,
+            ),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await executor.execute(url="https://api.example.com/webhook")
+
+        mock_session.request.assert_called_once()
+        mock_session.__aexit__.assert_awaited_once()
+
+    async def test_separate_executions_use_separate_sessions(self, executor):
+        """A session should never leak into a later webhook execution."""
+        sessions = [
+            create_mock_session(create_mock_response(status=200)),
+            create_mock_session(create_mock_response(status=200)),
+        ]
+
+        with patch(
+            "gobby.workflows.webhook_executor.aiohttp.ClientSession", side_effect=sessions
+        ) as session_factory:
+            await executor.execute(url="https://api.example.com/first")
+            await executor.execute(url="https://api.example.com/second")
+
+        assert session_factory.call_count == 2
+        for session in sessions:
+            session.__aexit__.assert_awaited_once()
+
     async def test_retries_use_exponential_backoff(self, executor):
         """Retries should use exponential backoff (backoff_seconds * 2^attempt)."""
         call_times = []

@@ -337,49 +337,56 @@ class WebhookExecutor:
         last_error: str | None = None
         last_status: int | None = None
 
-        for attempt in range(retry.max_attempts):
-            if attempt > 0:
-                # Exponential backoff
-                delay = min(
-                    retry.backoff_seconds * (2 ** (attempt - 1)),
-                    MAX_RETRY_BACKOFF_SECONDS,
-                )
-                logger.debug(f"Webhook retry {attempt + 1}/{retry.max_attempts}, backoff {delay}s")
-                await asyncio.sleep(delay)
+        hostname, addresses = await self._resolve_public_host(url)
+        client_timeout = aiohttp.ClientTimeout(total=timeout)
+        connector = aiohttp.TCPConnector(resolver=_PinnedResolver(hostname, addresses))
 
-            try:
-                start_time = time.time()
-                result = await self._make_request(
-                    url=url,
-                    method=method,
-                    headers=headers,
-                    payload=payload,
-                    timeout=timeout,
-                )
-                elapsed = time.time() - start_time
-                logger.debug(f"Webhook {method} {url} -> {result.status_code} ({elapsed:.2f}s)")
+        async with aiohttp.ClientSession(timeout=client_timeout, connector=connector) as session:
+            for attempt in range(retry.max_attempts):
+                if attempt > 0:
+                    # Exponential backoff
+                    delay = min(
+                        retry.backoff_seconds * (2 ** (attempt - 1)),
+                        MAX_RETRY_BACKOFF_SECONDS,
+                    )
+                    logger.debug(
+                        f"Webhook retry {attempt + 1}/{retry.max_attempts}, backoff {delay}s"
+                    )
+                    await asyncio.sleep(delay)
 
-                if result.success:
+                try:
+                    start_time = time.time()
+                    result = await self._make_request(
+                        session=session,
+                        url=url,
+                        method=method,
+                        headers=headers,
+                        payload=payload,
+                    )
+                    elapsed = time.time() - start_time
+                    logger.debug(f"Webhook {method} {url} -> {result.status_code} ({elapsed:.2f}s)")
+
+                    if result.success:
+                        return result
+
+                    # Check if we should retry
+                    if result.status_code and result.status_code in retry.retry_on_status:
+                        last_error = f"HTTP {result.status_code}"
+                        last_status = result.status_code
+                        continue  # Retry
+
+                    # Non-retryable error
                     return result
 
-                # Check if we should retry
-                if result.status_code and result.status_code in retry.retry_on_status:
-                    last_error = f"HTTP {result.status_code}"
-                    last_status = result.status_code
-                    continue  # Retry
+                except TimeoutError:
+                    last_error = f"Timeout after {timeout}s"
+                    logger.debug(f"Webhook timeout: {url}")
+                    continue  # Retry on timeout
 
-                # Non-retryable error
-                return result
-
-            except TimeoutError:
-                last_error = f"Timeout after {timeout}s"
-                logger.debug(f"Webhook timeout: {url}")
-                continue  # Retry on timeout
-
-            except aiohttp.ClientError as e:
-                last_error = str(e)
-                logger.debug(f"Webhook connection error: {url} - {e}")
-                continue  # Retry on aiohttp client errors
+                except aiohttp.ClientError as e:
+                    last_error = str(e)
+                    logger.debug(f"Webhook connection error: {url} - {e}")
+                    continue  # Retry on aiohttp client errors
 
         # All retries exhausted
         return WebhookResult(
@@ -392,59 +399,54 @@ class WebhookExecutor:
 
     async def _make_request(
         self,
+        session: aiohttp.ClientSession,
         url: str,
         method: str,
         headers: dict[str, str],
         payload: dict[str, Any] | str | None,
-        timeout: int,
     ) -> WebhookResult:
         """Make a single HTTP request.
 
         Args:
+            session: Session scoped to the retry envelope.
             url: Target URL.
             method: HTTP method.
             headers: Request headers.
             payload: Request body.
-            timeout: Timeout in seconds.
 
         Returns:
             WebhookResult with response data.
         """
-        hostname, addresses = await self._resolve_public_host(url)
-        client_timeout = aiohttp.ClientTimeout(total=timeout)
-        connector = aiohttp.TCPConnector(resolver=_PinnedResolver(hostname, addresses))
+        # Prepare request kwargs
+        kwargs: dict[str, Any] = {
+            "method": method,
+            "url": url,
+            "headers": headers,
+            "allow_redirects": False,
+        }
 
-        async with aiohttp.ClientSession(timeout=client_timeout, connector=connector) as session:
-            # Prepare request kwargs
-            kwargs: dict[str, Any] = {
-                "method": method,
-                "url": url,
-                "headers": headers,
-                "allow_redirects": False,
-            }
+        # Add payload
+        if payload is not None:
+            if isinstance(payload, dict):
+                kwargs["json"] = payload
+            else:
+                kwargs["data"] = payload
 
-            # Add payload
-            if payload is not None:
-                if isinstance(payload, dict):
-                    kwargs["json"] = payload
-                else:
-                    kwargs["data"] = payload
+        async with session.request(**kwargs) as response:
+            body = await self._read_response_body(response)
 
-            async with session.request(**kwargs) as response:
-                body = await self._read_response_body(response)
+            # Convert headers to dict
+            response_headers = dict(response.headers)
 
-                # Convert headers to dict
-                response_headers = dict(response.headers)
+            success = 200 <= response.status < 300
 
-                success = 200 <= response.status < 300
-
-                return WebhookResult(
-                    success=success,
-                    status_code=response.status,
-                    body=body,
-                    headers=response_headers,
-                    error=None if success else f"HTTP {response.status}",
-                )
+            return WebhookResult(
+                success=success,
+                status_code=response.status,
+                body=body,
+                headers=response_headers,
+                error=None if success else f"HTTP {response.status}",
+            )
 
     async def _resolve_public_host(self, url: str) -> tuple[str, list[ResolveResult]]:
         """Resolve an HTTP URL and reject every non-public destination address."""
