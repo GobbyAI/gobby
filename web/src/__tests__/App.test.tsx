@@ -688,7 +688,7 @@ describe("App wiring", () => {
     },
   );
 
-  it("resets the backend-facing chat mode on New Chat so a fresh session does not inherit the prior mode (#15703)", async () => {
+  it("resets the backend-facing chat mode when New Chat is selected from the palette", async () => {
     const sendMode = vi.fn();
     const startNewChat = vi.fn();
     vi.mocked(useChat).mockReturnValue({
@@ -706,12 +706,17 @@ describe("App wiring", () => {
     });
     const props = chatPagePropsSpy.mock.calls[
       chatPagePropsSpy.mock.calls.length - 1
-    ]?.[0] as { conversations?: { onNewChat?: (agentName?: string) => void } };
+    ]?.[0] as {
+      paletteActions?: Array<{ id: string; onSelect: () => void }>;
+    };
 
-    expect(props.conversations?.onNewChat).toBeTypeOf("function");
+    const newChatAction = props.paletteActions?.find(
+      (action) => action.id === "new-chat",
+    );
+    expect(newChatAction?.onSelect).toBeTypeOf("function");
 
     await act(async () => {
-      props.conversations?.onNewChat?.();
+      newChatAction?.onSelect();
     });
 
     // handleStartNewChat must reset BOTH the UI radio and the backend-facing

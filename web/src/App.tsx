@@ -410,7 +410,7 @@ export default function App() {
   );
 
   const { handlePaletteSelect, commandPaletteActions } = useAppCommandPalette({
-    startNewChat,
+    startNewChat: handleStartNewChat,
     clearHistory,
     sendMessage,
     settings,
