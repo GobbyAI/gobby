@@ -7,7 +7,7 @@ import type { WorkflowDetail } from '../../../hooks/useWorkflows'
 const mocks = vi.hoisted(() => ({
   workflows: [] as WorkflowDetail[],
   isLoading: false,
-  fetchWorkflows: vi.fn(async (_params?: { workflow_type?: string }) => undefined),
+  fetchWorkflows: vi.fn(async (_params?: { workflow_type?: string }) => true),
   createWorkflow: vi.fn(async (_params: Record<string, unknown>) => null),
   toggleEnabled: vi.fn(async (_id: string) => null),
   deleteWorkflow: vi.fn(async (_id: string) => true),
@@ -49,10 +49,10 @@ function makeVariable(overrides: Partial<WorkflowDetail> = {}): WorkflowDetail {
 beforeEach(() => {
   mocks.workflows = []
   mocks.isLoading = false
-  mocks.fetchWorkflows.mockClear()
-  mocks.createWorkflow.mockClear()
-  mocks.toggleEnabled.mockClear()
-  mocks.deleteWorkflow.mockClear()
+  mocks.fetchWorkflows.mockReset().mockResolvedValue(true)
+  mocks.createWorkflow.mockReset().mockResolvedValue(null)
+  mocks.toggleEnabled.mockReset().mockResolvedValue(null)
+  mocks.deleteWorkflow.mockReset().mockResolvedValue(true)
 })
 
 afterEach(() => {
@@ -170,5 +170,43 @@ describe('WorkflowVariablesEditor', () => {
     expect(
       screen.queryByRole('button', { name: 'Delete max_retries' }),
     ).toBeNull()
+  })
+
+  it('distinguishes a failed fetch from an empty variable list', async () => {
+    mocks.fetchWorkflows.mockResolvedValue(false)
+
+    render(<WorkflowVariablesEditor />)
+
+    expect(
+      await screen.findByRole('alert', { name: '' }),
+    ).toHaveTextContent('Could not load variable defaults.')
+    expect(screen.queryByText('No variable defaults yet.')).toBeNull()
+  })
+
+  it('shows a save failure and keeps the add form open', async () => {
+    render(<WorkflowVariablesEditor />)
+    fireEvent.click(screen.getByRole('button', { name: 'Add variable' }))
+    fireEvent.change(screen.getByLabelText('Variable name'), {
+      target: { value: 'feature_flag' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save variable' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Could not save the variable.',
+    )
+    expect(screen.getByLabelText('Variable name')).toHaveValue('feature_flag')
+  })
+
+  it('shows a delete failure', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mocks.workflows = [makeVariable()]
+    mocks.deleteWorkflow.mockResolvedValue(false)
+    render(<WorkflowVariablesEditor />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete max_retries' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Could not delete "max_retries".',
+    )
   })
 })

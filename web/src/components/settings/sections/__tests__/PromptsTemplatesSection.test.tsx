@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, it, expect, vi } from 'vitest'
 import { PromptsTemplatesSection } from '../PromptsTemplatesSection'
 import {
@@ -164,6 +164,76 @@ describe('PromptsTemplatesSection', () => {
     )
     expect(screen.getByLabelText('Prompt override content')).toHaveValue(
       'Bundled summary body',
+    )
+  })
+
+  it('keeps the latest prompt when detail responses arrive out of order', async () => {
+    const resolvers = new Map<string, (detail: PromptDetail) => void>()
+    const getPromptDetail = vi.fn(
+      (path: string) =>
+        new Promise<PromptDetail>((resolve) => {
+          resolvers.set(path, resolve)
+        }),
+    )
+    renderSection(makeContext({ getPromptDetail }))
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Edit prompt agents/summary' }),
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Edit prompt tasks/expand' }),
+    )
+
+    await act(async () => {
+      resolvers.get('tasks/expand')?.(makeDetail('tasks/expand'))
+    })
+    expect(screen.getByLabelText('Prompt override content')).toHaveValue(
+      'Overridden expand body',
+    )
+
+    await act(async () => {
+      resolvers.get('agents/summary')?.(makeDetail('agents/summary'))
+    })
+    expect(screen.getByLabelText('Prompt override content')).toHaveValue(
+      'Overridden expand body',
+    )
+  })
+
+  it('shows prompt load, save, and revert failures', async () => {
+    const getPromptDetail = vi
+      .fn<(path: string) => Promise<PromptDetail | null>>()
+      .mockRejectedValueOnce(new Error('load failed'))
+      .mockResolvedValueOnce(makeDetail('tasks/expand'))
+    const ctx = makeContext({
+      getPromptDetail,
+      savePromptOverride: vi.fn(async () => false),
+      deletePromptOverride: vi.fn(async () => false),
+    })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    renderSection(ctx)
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Edit prompt agents/summary' }),
+    )
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Could not load this prompt.',
+    )
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Edit prompt tasks/expand' }),
+    )
+    const editor = await screen.findByLabelText('Prompt override content')
+    fireEvent.change(editor, { target: { value: 'Changed content' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save override' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Could not save the override.',
+    )
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Revert to bundled default' }),
+    )
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Could not revert the override.',
     )
   })
 

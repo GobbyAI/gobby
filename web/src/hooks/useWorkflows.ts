@@ -44,7 +44,7 @@ export function useWorkflows() {
   const selectionRequestGenerationRef = useRef(0)
   const workflowFiltersRef = useRef<WorkflowFilters | undefined>(undefined)
 
-  const fetchWorkflows = useCallback(async (params?: WorkflowFilters) => {
+  const fetchWorkflows = useCallback(async (params?: WorkflowFilters): Promise<boolean> => {
     workflowFiltersRef.current = params
     const requestGeneration = ++workflowsRequestGenerationRef.current
     try {
@@ -63,12 +63,14 @@ export function useWorkflows() {
         if (requestGeneration === workflowsRequestGenerationRef.current) {
           setWorkflows(data.definitions || [])
         }
+        return true
       }
     } catch (e) {
       if (requestGeneration === workflowsRequestGenerationRef.current) {
         console.error('Failed to fetch workflows:', e)
       }
     }
+    return false
   }, [])
 
   const refetchWorkflows = useCallback(
