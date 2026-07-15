@@ -7,7 +7,7 @@ import logging
 
 import pytest
 
-from gobby.events.completion_registry import CompletionEventRegistry
+from gobby.events.completion_registry import CompletionEventRegistry, CompletionResultEvictedError
 from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
@@ -70,6 +70,20 @@ class TestRegisterAndNotify:
         await registry.notify(COMPLETION_ID, {"done": True})
         result = await registry.wait(COMPLETION_ID, timeout=0.1)
         assert result == {"done": True}
+
+    @pytest.mark.asyncio
+    async def test_wait_raises_typed_error_when_cleanup_precedes_resume(
+        self, registry: CompletionEventRegistry
+    ) -> None:
+        registry.register(COMPLETION_ID, subscribers=[])
+        waiter = asyncio.create_task(registry.wait(COMPLETION_ID, timeout=1))
+        await drain_asyncio_tasks()
+
+        await registry.notify(COMPLETION_ID, {"status": "done"})
+        registry.cleanup(COMPLETION_ID)
+
+        with pytest.raises(CompletionResultEvictedError, match="removed before the waiter resumed"):
+            await waiter
 
     @pytest.mark.asyncio
     async def test_notify_unregistered_is_noop(self, registry: CompletionEventRegistry) -> None:
@@ -262,6 +276,31 @@ class TestWakeCallback:
         await registry.notify(COMPLETION_ID, {"status": "completed"}, message="done")
 
         assert woken == [SECONDARY_SUBSCRIBER_ID]
+
+    @pytest.mark.asyncio
+    async def test_notify_uses_subscriber_snapshot(self) -> None:
+        woken: list[str] = []
+        registry: CompletionEventRegistry
+
+        async def wake(session_id: str, message: str, result: dict) -> None:
+            woken.append(session_id)
+            if session_id == PRIMARY_SUBSCRIBER_ID:
+                registry.subscribe(COMPLETION_ID, TERTIARY_SUBSCRIBER_ID)
+
+        registry = CompletionEventRegistry(wake_callback=wake)
+        registry.register(
+            COMPLETION_ID,
+            subscribers=[PRIMARY_SUBSCRIBER_ID, SECONDARY_SUBSCRIBER_ID],
+        )
+
+        await registry.notify(COMPLETION_ID, {"status": "completed"})
+
+        assert woken == [PRIMARY_SUBSCRIBER_ID, SECONDARY_SUBSCRIBER_ID]
+        assert registry.get_subscribers(COMPLETION_ID) == [
+            PRIMARY_SUBSCRIBER_ID,
+            SECONDARY_SUBSCRIBER_ID,
+            TERTIARY_SUBSCRIBER_ID,
+        ]
 
     @pytest.mark.asyncio
     async def test_no_wake_without_callback(self, registry: CompletionEventRegistry) -> None:

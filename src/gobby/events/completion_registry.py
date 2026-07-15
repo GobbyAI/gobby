@@ -18,8 +18,16 @@ logger = logging.getLogger(__name__)
 WakeCallback = Callable[[str, str, dict[str, Any]], Coroutine[Any, Any, None]]
 
 
+class CompletionResultEvictedError(RuntimeError):
+    """Raised when cleanup removes a notified result before a waiter resumes."""
+
+
 class CompletionEventRegistry:
     """In-memory registry for completion events with subscriber notifications.
+
+    Instances are confined to one asyncio event-loop thread. Methods do not
+    provide cross-thread synchronization; register, notify, wait, subscribe,
+    and cleanup must all run on that owning loop thread.
 
     Used by:
     - PipelineExecutor: `wait` step type blocks via registry.wait()
@@ -104,7 +112,7 @@ class CompletionEventRegistry:
 
         # Wake each subscriber via callback (fail-open per subscriber)
         if self._wake_callback:
-            for session_id in self._subscribers.get(completion_id, []):
+            for session_id in list(self._subscribers.get(completion_id, [])):
                 try:
                     await self._wake_callback(session_id, message, result)
                 except Exception:
@@ -125,6 +133,7 @@ class CompletionEventRegistry:
 
         Raises:
             KeyError: If completion_id is not registered
+            CompletionResultEvictedError: If cleanup removes the result before this waiter resumes
             asyncio.TimeoutError: If timeout expires before notification
         """
         event = self._events.get(completion_id)
@@ -132,7 +141,12 @@ class CompletionEventRegistry:
             raise KeyError(f"Completion event {completion_id!r} not registered")
 
         await asyncio.wait_for(event.wait(), timeout=timeout)
-        return self._results[completion_id]
+        try:
+            return self._results[completion_id]
+        except KeyError:
+            raise CompletionResultEvictedError(
+                f"Completion result {completion_id!r} was removed before the waiter resumed"
+            ) from None
 
     def get_result(self, completion_id: str) -> dict[str, Any] | None:
         """Get the stored result for a completion event, or None."""
