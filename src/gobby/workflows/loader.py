@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.paths import get_global_workflows_dir
+from gobby.utils.project_context import get_project_context
 from gobby.utils.uuid_validation import parse_uuid_reference
 
 from .definitions import PipelineDefinition, WorkflowDefinition
@@ -96,10 +97,17 @@ class WorkflowLoader(WorkflowLoaderSyncMixin):
         if project_path is None:
             return None
         parsed = parse_uuid_reference(project_path)
-        if parsed is None:
-            logger.debug("Ignoring non-uuid project scope for %s lookup: %s", label, project_path)
-            return None
-        return str(parsed)
+        if parsed is not None:
+            return str(parsed)
+
+        project_context = get_project_context(Path(project_path).expanduser())
+        project_id = project_context.get("id") if project_context else None
+        parsed = parse_uuid_reference(project_id)
+        if parsed is not None:
+            return str(parsed)
+
+        logger.debug("Ignoring unresolved project scope for %s lookup: %s", label, project_path)
+        return None
 
     def _load_from_db(
         self,
@@ -196,15 +204,15 @@ class WorkflowLoader(WorkflowLoaderSyncMixin):
             logger.error(f"Circular workflow inheritance detected: {cycle_path}")
             raise ValueError(f"Circular workflow inheritance detected: {cycle_path}")
 
+        project_id = self._db_project_scope(project_path, label="workflow")
+
         # Cache check
-        cache_key = f"{project_path or 'global'}:{name}"
+        cache_key = f"{project_id or 'global'}:{name}"
         if cache_key in self._cache:
             entry = self._cache[cache_key]
             return entry.definition
 
-        # DB lookup (the only runtime source). workflow_definitions.project_id
-        # is a uuid column; a filesystem path here means "no project scope".
-        project_id = self._db_project_scope(project_path, label="workflow")
+        # DB lookup (the only runtime source).
         visited = set(_inheritance_chain) if _inheritance_chain else set()
         db_definition = self._load_from_db(name, project_id=project_id, _visited=visited)
         if db_definition is not None:
@@ -242,17 +250,17 @@ class WorkflowLoader(WorkflowLoaderSyncMixin):
             logger.error(f"Circular pipeline inheritance detected: {cycle_path}")
             raise ValueError(f"Circular pipeline inheritance detected: {cycle_path}")
 
+        project_id = self._db_project_scope(project_path, label="pipeline")
+
         # Cache check
-        cache_key = f"pipeline:{project_path or 'global'}:{name}"
+        cache_key = f"pipeline:{project_id or 'global'}:{name}"
         if cache_key in self._cache:
             entry = self._cache[cache_key]
             if isinstance(entry.definition, PipelineDefinition):
                 return entry.definition
             return None
 
-        # DB lookup. workflow_definitions.project_id is a uuid column; a
-        # filesystem path here means "no project scope".
-        project_id = self._db_project_scope(project_path, label="pipeline")
+        # DB lookup.
         visited = set(_inheritance_chain) if _inheritance_chain else set()
         db_definition = self._load_from_db(name, project_id=project_id, _visited=visited)
         if db_definition is not None:

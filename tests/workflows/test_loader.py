@@ -198,6 +198,37 @@ class TestWorkflowLoader:
         assert wf is not None
         assert wf.name == "project_wf"
 
+    async def test_load_workflow_resolves_project_path_to_id(
+        self,
+        db: HubDatabase,
+        project: Project,
+        def_manager: LocalWorkflowDefinitionManager,
+        tmp_path: Path,
+    ) -> None:
+        """A filesystem scope resolves to the ID used by project definitions and caches."""
+        (tmp_path / ".gobby").mkdir()
+        (tmp_path / ".gobby" / "project.json").write_text(json.dumps({"id": project.id}))
+        def_manager.create(
+            name="path-scoped",
+            definition_json=json.dumps({"name": "path-scoped", "description": "global"}),
+            workflow_type="workflow",
+        )
+        def_manager.create(
+            name="path-scoped",
+            definition_json=json.dumps({"name": "path-scoped", "description": "project"}),
+            workflow_type="workflow",
+            project_id=project.id,
+        )
+        loader = WorkflowLoader(db=db)
+
+        from_path = await loader.load_workflow("path-scoped", project_path=tmp_path)
+        from_id = await loader.load_workflow("path-scoped", project_path=project.id)
+
+        assert from_path is not None
+        assert from_path.description == "project"
+        assert from_id is from_path
+        assert set(loader._cache) == {f"{project.id}:path-scoped"}
+
     @pytest.mark.asyncio
     async def test_load_workflow_caching(
         self,
@@ -1208,6 +1239,37 @@ class TestDiscoverWorkflows:
         assert len(shared_entries) == 1
         assert shared_entries[0].is_project is True
         assert shared_entries[0].priority == 50
+
+    async def test_discover_resolves_project_path_to_id(
+        self,
+        db: HubDatabase,
+        project: Project,
+        def_manager: LocalWorkflowDefinitionManager,
+        tmp_path: Path,
+    ) -> None:
+        """Path-keyed discovery finds project rows and shares the canonical cache entry."""
+        (tmp_path / ".gobby").mkdir()
+        (tmp_path / ".gobby" / "project.json").write_text(json.dumps({"id": project.id}))
+        def_manager.create(
+            name="path-discovery",
+            definition_json=json.dumps({"name": "path-discovery", "description": "global"}),
+            workflow_type="workflow",
+        )
+        def_manager.create(
+            name="path-discovery",
+            definition_json=json.dumps({"name": "path-discovery", "description": "project"}),
+            workflow_type="workflow",
+            project_id=project.id,
+        )
+        loader = WorkflowLoader(db=db)
+
+        from_path = await loader.discover_workflows(project_path=tmp_path)
+        from_id = await loader.discover_workflows(project_path=project.id)
+
+        discovered = next(item for item in from_path if item.name == "path-discovery")
+        assert discovered.is_project is True
+        assert from_id is from_path
+        assert set(loader._discovery_cache) == {f"unified:{project.id}"}
 
     @pytest.mark.asyncio
     async def test_discover_derives_enabled_from_type(
