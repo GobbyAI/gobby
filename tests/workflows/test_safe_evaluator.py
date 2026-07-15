@@ -628,6 +628,26 @@ class TestBinaryOperations:
             ev.evaluate("'a' * 999999999")
 
 
+class TestUnpacking:
+    def test_rejects_keyword_unpacking(self) -> None:
+        ev = SafeExpressionEvaluator({"values": {"value": 1}}, {"dict": dict})
+
+        with pytest.raises(ValueError, match="Unsupported keyword unpacking"):
+            ev.evaluate_value("dict(**values)")
+
+    def test_rejects_dictionary_unpacking(self) -> None:
+        ev = SafeExpressionEvaluator({"values": {"value": 1}}, {})
+
+        with pytest.raises(ValueError, match="Unsupported dictionary unpacking"):
+            ev.evaluate_value("{**values}")
+
+    def test_allows_ordinary_keywords_and_dictionary_literals(self) -> None:
+        ev = SafeExpressionEvaluator({}, {"dict": dict})
+
+        assert ev.evaluate_value("dict(value=1)") == {"value": 1}
+        assert ev.evaluate_value("{'value': 1}") == {"value": 1}
+
+
 # --- Integration: combined expressions ---
 
 

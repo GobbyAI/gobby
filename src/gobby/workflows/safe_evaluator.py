@@ -280,6 +280,9 @@ class SafeExpressionEvaluator(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> Any:
         """Handle function calls (only allowed functions and safe method calls)."""
+        if any(keyword.arg is None for keyword in node.keywords):
+            raise ValueError("Unsupported keyword unpacking")
+
         # Get function name
         if isinstance(node.func, ast.Name):
             func_name = node.func.id
@@ -304,7 +307,7 @@ class SafeExpressionEvaluator(ast.NodeVisitor):
 
         # Evaluate arguments
         args = [self.visit(arg) for arg in node.args]
-        kwargs = {kw.arg: self.visit(kw.value) for kw in node.keywords if kw.arg}
+        kwargs = {kw.arg: self.visit(kw.value) for kw in node.keywords if kw.arg is not None}
 
         return self.allowed_funcs[func_name](*args, **kwargs)
 
@@ -340,6 +343,9 @@ class SafeExpressionEvaluator(ast.NodeVisitor):
 
     def visit_Dict(self, node: ast.Dict) -> dict[Any, Any]:
         """Handle dict literals (e.g., {'key': 'value'} or {})."""
+        if any(key is None for key in node.keys):
+            raise ValueError("Unsupported dictionary unpacking")
+
         return {
             self.visit(k): self.visit(v)
             for k, v in zip(node.keys, node.values, strict=True)
