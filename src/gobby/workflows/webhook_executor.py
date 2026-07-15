@@ -31,6 +31,8 @@ from gobby.workflows.webhook import MAX_RETRY_BACKOFF_SECONDS, RetryConfig
 logger = logging.getLogger(__name__)
 
 MAX_RESPONSE_BYTES = 1024 * 1024
+ALLOWED_METHODS = frozenset({"DELETE", "GET", "PATCH", "POST", "PUT"})
+HEADER_NAME_PATTERN = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
 
 
 @dataclass
@@ -134,8 +136,11 @@ class WebhookExecutor:
         headers = headers or {}
         context = context or {}
 
+        normalized_method = self._validate_method(method)
+
         # Interpolate secrets in headers
         interpolated_headers = self._interpolate_secrets(headers)
+        self._validate_headers(interpolated_headers)
 
         # Interpolate context in payload
         interpolated_payload = self._interpolate_payload(payload, context)
@@ -146,7 +151,7 @@ class WebhookExecutor:
         # Execute with retry logic
         result = await self._execute_with_retry(
             url=url,
-            method=method,
+            method=normalized_method,
             headers=interpolated_headers,
             payload=interpolated_payload,
             timeout=timeout,
@@ -160,6 +165,23 @@ class WebhookExecutor:
             await on_failure(result)
 
         return result
+
+    @staticmethod
+    def _validate_method(method: str) -> str:
+        """Return a normalized supported HTTP method."""
+        if not isinstance(method, str) or method.upper() not in ALLOWED_METHODS:
+            supported = ", ".join(sorted(ALLOWED_METHODS))
+            raise ValueError(f"Unsupported webhook method {method!r}; expected one of {supported}")
+        return method.upper()
+
+    @staticmethod
+    def _validate_headers(headers: dict[str, str]) -> None:
+        """Reject malformed header names and values before network I/O."""
+        for name, value in headers.items():
+            if not isinstance(name, str) or HEADER_NAME_PATTERN.fullmatch(name) is None:
+                raise ValueError(f"Invalid webhook header name: {name!r}")
+            if not isinstance(value, str) or "\r" in value or "\n" in value:
+                raise ValueError(f"Invalid webhook header value for {name!r}")
 
     async def execute_by_webhook_id(
         self,

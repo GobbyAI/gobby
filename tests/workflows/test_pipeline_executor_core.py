@@ -9,7 +9,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.config.pipelines import PipelineConfig
+from gobby.workflows.definitions import WebhookConfig, WebhookEndpoint
 from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
+from gobby.workflows.pipeline_webhooks import WebhookNotifier
+from gobby.workflows.webhook_executor import WebhookExecutor
 
 pytestmark = pytest.mark.unit
 
@@ -226,6 +229,48 @@ class TestPipelineExecutorExecute:
             execution=completed_execution,
             pipeline=simple_pipeline,
         )
+
+    async def test_webhook_transport_failure_does_not_change_completed_state(
+        self,
+        mock_db,
+        mock_execution_manager,
+        mock_llm_service,
+        simple_pipeline,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        completed_execution = MagicMock()
+        completed_execution.id = "pe-test-123"
+        completed_execution.pipeline_name = simple_pipeline.name
+        completed_execution.status = ExecutionStatus.COMPLETED
+        completed_execution.outputs_json = None
+        completed_execution.completed_at = "2026-07-15T12:00:00Z"
+        mock_execution_manager.update_execution_status.return_value = completed_execution
+        simple_pipeline.webhooks = WebhookConfig(
+            on_complete=WebhookEndpoint(url="https://example.com/complete")
+        )
+        transport = MagicMock(spec=WebhookExecutor)
+        transport.execute = AsyncMock(side_effect=ValueError("unsafe webhook target"))
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            webhook_notifier=WebhookNotifier(
+                base_url="https://gobby.local",
+                executor=transport,
+            ),
+        )
+
+        with caplog.at_level("ERROR"):
+            result = await executor.execute(
+                pipeline=simple_pipeline,
+                inputs={},
+                project_id="proj-123",
+            )
+
+        assert result.status == ExecutionStatus.COMPLETED
+        assert "unsafe webhook target" in caplog.text
 
     async def test_execute_notifies_failure_webhook(
         self,

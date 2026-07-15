@@ -11,9 +11,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-import httpx
-
-from gobby.utils.env import expand_env_mapping
+from gobby.workflows.webhook_executor import WebhookExecutor
 
 if TYPE_CHECKING:
     from gobby.workflows.definitions import PipelineDefinition
@@ -25,18 +23,19 @@ logger = logging.getLogger(__name__)
 class WebhookNotifier:
     """Sends webhook notifications for pipeline execution events.
 
-    Handles approval pending, completion, and failure notifications
-    with environment variable expansion in headers.
+    Handles approval pending, completion, and failure notifications using
+    the workflow webhook transport policy.
     """
 
-    def __init__(self, base_url: str = "http://localhost:7778"):
+    def __init__(self, base_url: str, executor: WebhookExecutor | None = None) -> None:
         """Initialize the webhook notifier.
 
         Args:
             base_url: Base URL for generating approve/reject URLs.
-                     Defaults to localhost Gobby daemon URL.
+            executor: Optional hardened webhook transport.
         """
         self.base_url = base_url.rstrip("/")
+        self.executor = executor or WebhookExecutor()
 
     async def notify_approval_pending(
         self,
@@ -146,38 +145,23 @@ class WebhookNotifier:
 
         Args:
             url: Target URL
-            method: HTTP method (POST, PUT, etc.)
-            headers: Request headers (supports ${VAR} expansion)
+            method: Supported HTTP method.
+            headers: Request headers. Only explicit webhook secrets are interpolated.
             payload: JSON payload to send
         """
-        expanded_headers = expand_env_mapping(headers) or {}
-
         try:
-            async with httpx.AsyncClient() as client:
-                if method.upper() == "POST":
-                    response = await client.post(
-                        url=url,
-                        headers=expanded_headers,
-                        json=payload,
-                        timeout=30.0,
-                    )
-                elif method.upper() == "PUT":
-                    response = await client.put(
-                        url=url,
-                        headers=expanded_headers,
-                        json=payload,
-                        timeout=30.0,
-                    )
-                else:
-                    logger.warning(f"Unsupported webhook method: {method}")
-                    return
-
-                if response.status_code >= 400:
-                    logger.error(
-                        f"Webhook request failed: {response.status_code} - {response.text}"
-                    )
-                else:
-                    logger.debug(f"Webhook sent successfully to {url}")
-
-        except Exception as e:
-            logger.error(f"Failed to send webhook to {url}: {e}")
+            result = await self.executor.execute(
+                url=url,
+                method=method,
+                headers=headers,
+                payload=payload,
+                timeout=30,
+            )
+            if result.success:
+                logger.debug(f"Webhook sent successfully to {url}")
+            else:
+                logger.error(
+                    f"Webhook request failed: {result.status_code} - {result.body or result.error}"
+                )
+        except Exception as exc:
+            logger.error(f"Failed to send webhook to {url}: {exc}", exc_info=True)

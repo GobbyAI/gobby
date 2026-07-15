@@ -378,6 +378,44 @@ class TestWebhookExecutorFailureHandling:
 class TestWebhookExecutorEdgeCases:
     """Tests for edge cases and special handling."""
 
+    @pytest.mark.parametrize("method", ["delete", "GET", "Patch", "POST", "put"])
+    async def test_supported_methods_are_normalized(self, executor, method):
+        mock_response = create_mock_response(status=200)
+        mock_session = create_mock_session(mock_response)
+
+        with patch(
+            "gobby.workflows.webhook_executor.aiohttp.ClientSession", return_value=mock_session
+        ):
+            await executor.execute(url="https://api.example.com/webhook", method=method)
+
+        assert mock_session.request.call_args.kwargs["method"] == method.upper()
+
+    @pytest.mark.parametrize("method", ["", "CONNECT", "OPTIONS", "TRACE"])
+    async def test_unsupported_methods_are_rejected_before_network_io(self, executor, method):
+        with (
+            patch("gobby.workflows.webhook_executor.aiohttp.ClientSession") as client_session,
+            pytest.raises(ValueError, match="Unsupported webhook method"),
+        ):
+            await executor.execute(url="https://api.example.com/webhook", method=method)
+
+        client_session.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "headers",
+        [
+            {"Bad Header": "value"},
+            {"X-Test": "value\r\ninjected: true"},
+        ],
+    )
+    async def test_invalid_headers_are_rejected_before_network_io(self, executor, headers):
+        with (
+            patch("gobby.workflows.webhook_executor.aiohttp.ClientSession") as client_session,
+            pytest.raises(ValueError, match="Invalid webhook header"),
+        ):
+            await executor.execute(url="https://api.example.com/webhook", headers=headers)
+
+        client_session.assert_not_called()
+
     @pytest.mark.parametrize(
         "address",
         ["10.0.0.1", "127.0.0.1", "169.254.169.254", "::1"],

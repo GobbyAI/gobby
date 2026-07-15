@@ -1,11 +1,9 @@
-"""Tests for WebhookNotifier class for pipeline notifications.
-
-TDD tests for pipeline webhook notifications including approval pending,
-completion, and failure notifications.
-"""
+"""Tests for hardened live pipeline webhook notifications."""
 
 from __future__ import annotations
 
+import logging
+import socket
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,13 +11,13 @@ import pytest
 from gobby.workflows.definitions import PipelineDefinition, WebhookConfig, WebhookEndpoint
 from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
 from gobby.workflows.pipeline_webhooks import WebhookNotifier
+from gobby.workflows.webhook_executor import MAX_RESPONSE_BYTES, WebhookExecutor, WebhookResult
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def mock_execution() -> PipelineExecution:
-    """Create a mock pipeline execution."""
+def execution() -> PipelineExecution:
     return PipelineExecution(
         id="pe-abc123def456",
         pipeline_name="test-pipeline",
@@ -32,313 +30,271 @@ def mock_execution() -> PipelineExecution:
 
 
 @pytest.fixture
-def webhook_config() -> WebhookConfig:
-    """Create a webhook config with all endpoints."""
-    return WebhookConfig(
-        on_approval_pending=WebhookEndpoint(
-            url="https://example.com/approval",
-            method="POST",
-            headers={"Authorization": "Bearer ${API_TOKEN}"},
-        ),
-        on_complete=WebhookEndpoint(
-            url="https://example.com/complete",
-            method="POST",
-            headers={"Content-Type": "application/json"},
-        ),
-        on_failure=WebhookEndpoint(
-            url="https://example.com/failure",
-            method="POST",
-        ),
-    )
-
-
-@pytest.fixture
-def pipeline_with_webhooks(webhook_config: WebhookConfig) -> PipelineDefinition:
-    """Create a pipeline definition with webhooks configured."""
+def pipeline() -> PipelineDefinition:
     return PipelineDefinition(
         name="test-pipeline",
-        webhooks=webhook_config,
+        webhooks=WebhookConfig(
+            on_approval_pending=WebhookEndpoint(
+                url="https://example.com/approval",
+                headers={"Authorization": "Bearer ${API_TOKEN}"},
+            ),
+            on_complete=WebhookEndpoint(url="https://example.com/complete"),
+            on_failure=WebhookEndpoint(url="https://example.com/failure"),
+        ),
         steps=[{"id": "step1", "exec": "echo test"}],
     )
 
 
 @pytest.fixture
-def pipeline_without_webhooks() -> PipelineDefinition:
-    """Create a pipeline definition without webhooks."""
-    return PipelineDefinition(
-        name="test-pipeline",
-        steps=[{"id": "step1", "exec": "echo test"}],
+def transport() -> MagicMock:
+    executor = MagicMock(spec=WebhookExecutor)
+    executor.execute = AsyncMock(return_value=WebhookResult(success=True, status_code=200))
+    return executor
+
+
+@pytest.fixture
+def notifier(transport: MagicMock) -> WebhookNotifier:
+    return WebhookNotifier(base_url="https://gobby.local", executor=transport)
+
+
+async def test_approval_payload_does_not_expand_process_environment(
+    execution: PipelineExecution,
+    pipeline: PipelineDefinition,
+    notifier: WebhookNotifier,
+    transport: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("API_TOKEN", "process-secret")
+
+    await notifier.notify_approval_pending(
+        execution=execution,
+        pipeline=pipeline,
+        step_id="deploy",
+        token="approval-token-123",
+        message="Approve deployment?",
     )
 
-
-class TestNotifyApprovalPending:
-    """Tests for notify_approval_pending() method."""
-
-    @pytest.mark.asyncio
-    async def test_sends_post_with_correct_payload(
-        self, mock_execution: PipelineExecution, pipeline_with_webhooks: PipelineDefinition
-    ) -> None:
-        """Test that approval notification sends correct payload."""
-        notifier = WebhookNotifier(base_url="https://gobby.local")
-
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_client.post = AsyncMock(return_value=MagicMock(status_code=200))
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=None)
-            mock_client_class.return_value = mock_client
-
-            await notifier.notify_approval_pending(
-                execution=mock_execution,
-                pipeline=pipeline_with_webhooks,
-                step_id="deploy",
-                token="approval-token-123",
-                message="Approve deployment to production?",
-            )
-
-            mock_client.post.assert_called_once()
-            call_args = mock_client.post.call_args
-
-            # Check URL
-            assert call_args.kwargs["url"] == "https://example.com/approval"
-
-            # Check payload fields
-            payload = call_args.kwargs["json"]
-            assert payload["execution_id"] == "pe-abc123def456"
-            assert payload["pipeline_name"] == "test-pipeline"
-            assert payload["step_id"] == "deploy"
-            assert payload["token"] == "approval-token-123"
-            assert payload["message"] == "Approve deployment to production?"
-            assert "approve_url" in payload
-            assert "reject_url" in payload
-            assert (
-                payload["approve_url"]
-                == "https://gobby.local/api/pipelines/approve/approval-token-123"
-            )
-            assert (
-                payload["reject_url"]
-                == "https://gobby.local/api/pipelines/reject/approval-token-123"
-            )
-
-    @pytest.mark.asyncio
-    async def test_expands_env_vars_in_headers(
-        self,
-        mock_execution: PipelineExecution,
-        pipeline_with_webhooks: PipelineDefinition,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Use shared populated, default, and unresolved expansion semantics."""
-        notifier = WebhookNotifier(base_url="https://gobby.local")
-        webhooks = pipeline_with_webhooks.webhooks
-        assert webhooks is not None
-        endpoint = webhooks.on_approval_pending
-        assert endpoint is not None
-        endpoint.headers = {
-            "Authorization": "Bearer ${API_TOKEN}",
-            "X-Default": "${EMPTY_TOKEN:-fallback}",
-            "X-Unresolved": "${MISSING_TOKEN}",
-        }
-        monkeypatch.setenv("API_TOKEN", "secret-token-value")
-        monkeypatch.setenv("EMPTY_TOKEN", "")
-        monkeypatch.delenv("MISSING_TOKEN", raising=False)
-
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_client.post = AsyncMock(return_value=MagicMock(status_code=200))
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=None)
-            mock_client_class.return_value = mock_client
-
-            await notifier.notify_approval_pending(
-                execution=mock_execution,
-                pipeline=pipeline_with_webhooks,
-                step_id="deploy",
-                token="token-123",
-                message="Approve?",
-            )
-
-            call_args = mock_client.post.call_args
-            headers = call_args.kwargs["headers"]
-            assert headers["Authorization"] == "Bearer secret-token-value"
-            assert headers["X-Default"] == "fallback"
-            assert headers["X-Unresolved"] == "${MISSING_TOKEN}"
-            assert call_args.kwargs["json"]["token"] == "token-123"
-
-    @pytest.mark.asyncio
-    async def test_handles_missing_webhooks_gracefully(
-        self, mock_execution: PipelineExecution, pipeline_without_webhooks: PipelineDefinition
-    ) -> None:
-        """Test that missing webhooks config doesn't raise error."""
-        notifier = WebhookNotifier(base_url="https://gobby.local")
-
-        with patch("httpx.AsyncClient") as mock_client_class:
-            await notifier.notify_approval_pending(
-                execution=mock_execution,
-                pipeline=pipeline_without_webhooks,
-                step_id="deploy",
-                token="token-123",
-                message="Approve?",
-            )
-            assert mock_client_class.call_count == 0
+    call = transport.execute.await_args.kwargs
+    assert call["url"] == "https://example.com/approval"
+    assert call["method"] == "POST"
+    assert call["headers"] == {"Authorization": "Bearer ${API_TOKEN}"}
+    assert call["payload"] == {
+        "execution_id": "pe-abc123def456",
+        "pipeline_name": "test-pipeline",
+        "step_id": "deploy",
+        "token": "approval-token-123",
+        "message": "Approve deployment?",
+        "approve_url": "https://gobby.local/api/pipelines/approve/approval-token-123",
+        "reject_url": "https://gobby.local/api/pipelines/reject/approval-token-123",
+        "status": "running",
+    }
 
 
-class TestNotifyComplete:
-    """Tests for notify_complete() method."""
+async def test_completion_payload_contains_outputs(
+    execution: PipelineExecution,
+    pipeline: PipelineDefinition,
+    notifier: WebhookNotifier,
+    transport: MagicMock,
+) -> None:
+    execution.status = ExecutionStatus.COMPLETED
+    execution.outputs_json = '{"result": "success"}'
 
-    @pytest.mark.asyncio
-    async def test_sends_completion_payload(
-        self, mock_execution: PipelineExecution, pipeline_with_webhooks: PipelineDefinition
-    ) -> None:
-        """Test that completion notification sends correct payload."""
-        mock_execution.status = ExecutionStatus.COMPLETED
-        mock_execution.outputs_json = '{"result": "success"}'
+    await notifier.notify_complete(execution=execution, pipeline=pipeline)
 
-        notifier = WebhookNotifier(base_url="https://gobby.local")
-
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_client.post = AsyncMock(return_value=MagicMock(status_code=200))
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=None)
-            mock_client_class.return_value = mock_client
-
-            await notifier.notify_complete(
-                execution=mock_execution,
-                pipeline=pipeline_with_webhooks,
-            )
-
-            mock_client.post.assert_called_once()
-            call_args = mock_client.post.call_args
-
-            # Check URL
-            assert call_args.kwargs["url"] == "https://example.com/complete"
-
-            # Check payload
-            payload = call_args.kwargs["json"]
-            assert payload["execution_id"] == "pe-abc123def456"
-            assert payload["pipeline_name"] == "test-pipeline"
-            assert payload["status"] == "completed"
-            assert payload["outputs"] == {"result": "success"}
-
-    @pytest.mark.asyncio
-    async def test_handles_missing_on_complete_webhook(
-        self, mock_execution: PipelineExecution
-    ) -> None:
-        """Test that missing on_complete webhook doesn't raise error."""
-        pipeline = PipelineDefinition(
-            name="test-pipeline",
-            webhooks=WebhookConfig(on_failure=WebhookEndpoint(url="https://example.com/fail")),
-            steps=[{"id": "step1", "exec": "echo test"}],
-        )
-        notifier = WebhookNotifier(base_url="https://gobby.local")
-
-        with patch("httpx.AsyncClient") as mock_client_class:
-            await notifier.notify_complete(execution=mock_execution, pipeline=pipeline)
-            assert mock_client_class.call_count == 0
+    payload = transport.execute.await_args.kwargs["payload"]
+    assert payload["status"] == "completed"
+    assert payload["outputs"] == {"result": "success"}
 
 
-class TestNotifyFailure:
-    """Tests for notify_failure() method."""
+async def test_failure_payload_contains_error(
+    execution: PipelineExecution,
+    pipeline: PipelineDefinition,
+    notifier: WebhookNotifier,
+    transport: MagicMock,
+) -> None:
+    execution.status = ExecutionStatus.FAILED
 
-    @pytest.mark.asyncio
-    async def test_sends_error_payload(
-        self, mock_execution: PipelineExecution, pipeline_with_webhooks: PipelineDefinition
-    ) -> None:
-        """Test that failure notification sends error payload."""
-        mock_execution.status = ExecutionStatus.FAILED
+    await notifier.notify_failure(execution=execution, pipeline=pipeline, error="step failed")
 
-        notifier = WebhookNotifier(base_url="https://gobby.local")
-
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_client.post = AsyncMock(return_value=MagicMock(status_code=200))
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=None)
-            mock_client_class.return_value = mock_client
-
-            await notifier.notify_failure(
-                execution=mock_execution,
-                pipeline=pipeline_with_webhooks,
-                error="Step 'deploy' failed with exit code 1",
-            )
-
-            mock_client.post.assert_called_once()
-            call_args = mock_client.post.call_args
-
-            # Check URL
-            assert call_args.kwargs["url"] == "https://example.com/failure"
-
-            # Check payload
-            payload = call_args.kwargs["json"]
-            assert payload["execution_id"] == "pe-abc123def456"
-            assert payload["pipeline_name"] == "test-pipeline"
-            assert payload["status"] == "failed"
-            assert payload["error"] == "Step 'deploy' failed with exit code 1"
-
-    @pytest.mark.asyncio
-    async def test_handles_missing_on_failure_webhook(
-        self, mock_execution: PipelineExecution
-    ) -> None:
-        """Test that missing on_failure webhook doesn't raise error."""
-        pipeline = PipelineDefinition(
-            name="test-pipeline",
-            webhooks=WebhookConfig(on_complete=WebhookEndpoint(url="https://example.com/done")),
-            steps=[{"id": "step1", "exec": "echo test"}],
-        )
-        notifier = WebhookNotifier(base_url="https://gobby.local")
-
-        with patch("httpx.AsyncClient") as mock_client_class:
-            await notifier.notify_failure(
-                execution=mock_execution,
-                pipeline=pipeline,
-                error="Some error",
-            )
-            assert mock_client_class.call_count == 0
+    payload = transport.execute.await_args.kwargs["payload"]
+    assert payload["status"] == "failed"
+    assert payload["error"] == "step failed"
 
 
-class TestWebhookErrors:
-    """Tests for webhook error handling."""
+@pytest.mark.parametrize(
+    ("notification", "field"),
+    [
+        ("approval", "on_approval_pending"),
+        ("complete", "on_complete"),
+        ("failure", "on_failure"),
+    ],
+)
+async def test_missing_endpoint_is_ignored(
+    notification: str,
+    field: str,
+    execution: PipelineExecution,
+    pipeline: PipelineDefinition,
+    notifier: WebhookNotifier,
+    transport: MagicMock,
+) -> None:
+    assert pipeline.webhooks is not None
+    setattr(pipeline.webhooks, field, None)
 
-    @pytest.mark.asyncio
-    async def test_logs_error_on_http_failure(
-        self, mock_execution: PipelineExecution, pipeline_with_webhooks: PipelineDefinition
-    ) -> None:
-        """Test that HTTP errors are logged but don't raise."""
-        notifier = WebhookNotifier(base_url="https://gobby.local")
+    if notification == "approval":
+        await notifier.notify_approval_pending(execution, pipeline, "step", "token", "message")
+    elif notification == "complete":
+        await notifier.notify_complete(execution, pipeline)
+    else:
+        await notifier.notify_failure(execution, pipeline, "error")
 
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_client.post = AsyncMock(
-                return_value=MagicMock(status_code=500, text="Server Error")
-            )
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=None)
-            mock_client_class.return_value = mock_client
+    transport.execute.assert_not_awaited()
 
-            await notifier.notify_complete(
-                execution=mock_execution,
-                pipeline=pipeline_with_webhooks,
-            )
-            assert mock_client.post.await_count == 1
-            assert mock_client.post.call_args.kwargs["url"] == "https://example.com/complete"
 
-    @pytest.mark.asyncio
-    async def test_handles_network_error_gracefully(
-        self, mock_execution: PipelineExecution, pipeline_with_webhooks: PipelineDefinition
-    ) -> None:
-        """Test that network errors don't crash the notifier."""
-        notifier = WebhookNotifier(base_url="https://gobby.local")
+@pytest.mark.parametrize("method", ["DELETE", "GET", "PATCH", "POST", "PUT"])
+async def test_supported_methods_are_forwarded_explicitly(
+    method: str,
+    execution: PipelineExecution,
+    pipeline: PipelineDefinition,
+    notifier: WebhookNotifier,
+    transport: MagicMock,
+) -> None:
+    assert pipeline.webhooks is not None
+    assert pipeline.webhooks.on_complete is not None
+    pipeline.webhooks.on_complete.method = method
 
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_client.post = AsyncMock(side_effect=Exception("Connection refused"))
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=None)
-            mock_client_class.return_value = mock_client
+    await notifier.notify_complete(execution, pipeline)
 
-            await notifier.notify_complete(
-                execution=mock_execution,
-                pipeline=pipeline_with_webhooks,
-            )
-            assert mock_client.post.await_count == 1
-            assert mock_client.post.call_args.kwargs["url"] == "https://example.com/complete"
+    assert transport.execute.await_args.kwargs["method"] == method
+
+
+async def test_transport_failure_is_logged_without_raising(
+    execution: PipelineExecution,
+    pipeline: PipelineDefinition,
+    notifier: WebhookNotifier,
+    transport: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    transport.execute.side_effect = ValueError("unsafe webhook target")
+
+    with caplog.at_level(logging.ERROR):
+        await notifier.notify_complete(execution, pipeline)
+
+    assert "unsafe webhook target" in caplog.text
+
+
+def _response(status: int, body: bytes = b"", headers: dict[str, str] | None = None) -> MagicMock:
+    response = MagicMock()
+    response.status = status
+    response.headers = headers or {}
+    response.get_encoding.return_value = "utf-8"
+    response.content.readexactly = AsyncMock(return_value=body[: MAX_RESPONSE_BYTES + 1])
+    response.__aenter__ = AsyncMock(return_value=response)
+    response.__aexit__ = AsyncMock(return_value=None)
+    return response
+
+
+def _session(response: MagicMock) -> MagicMock:
+    session = MagicMock()
+    session.request.return_value = response
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=None)
+    return session
+
+
+async def test_private_target_is_rejected_without_network_io(
+    execution: PipelineExecution,
+    pipeline: PipelineDefinition,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    assert pipeline.webhooks is not None
+    assert pipeline.webhooks.on_complete is not None
+    pipeline.webhooks.on_complete.url = "http://internal.example/hook"
+    resolved = {
+        "hostname": "internal.example",
+        "host": "127.0.0.1",
+        "port": 80,
+        "family": socket.AF_INET,
+        "proto": 0,
+        "flags": 0,
+    }
+    notifier = WebhookNotifier(base_url="https://gobby.local")
+
+    with (
+        patch(
+            "gobby.workflows.webhook_executor.DefaultResolver.resolve",
+            new=AsyncMock(return_value=[resolved]),
+        ),
+        patch("gobby.workflows.webhook_executor.aiohttp.ClientSession") as client_session,
+        caplog.at_level(logging.ERROR),
+    ):
+        await notifier.notify_complete(execution, pipeline)
+
+    client_session.assert_not_called()
+    assert "non-public address" in caplog.text
+
+
+async def test_redirect_response_is_not_followed(
+    execution: PipelineExecution,
+    pipeline: PipelineDefinition,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    response = _response(302, headers={"Location": "http://127.0.0.1/private"})
+    session = _session(response)
+    resolved = {
+        "hostname": "example.com",
+        "host": "93.184.216.34",
+        "port": 443,
+        "family": socket.AF_INET,
+        "proto": 0,
+        "flags": 0,
+    }
+    notifier = WebhookNotifier(base_url="https://gobby.local")
+
+    with (
+        patch(
+            "gobby.workflows.webhook_executor.DefaultResolver.resolve",
+            new=AsyncMock(return_value=[resolved]),
+        ),
+        patch("gobby.workflows.webhook_executor.aiohttp.ClientSession", return_value=session),
+        caplog.at_level(logging.ERROR),
+    ):
+        await notifier.notify_complete(execution, pipeline)
+
+    assert session.request.call_count == 1
+    assert session.request.call_args.kwargs["allow_redirects"] is False
+    assert "Webhook request failed: 302" in caplog.text
+
+
+async def test_response_read_is_bounded_and_environment_header_stays_literal(
+    execution: PipelineExecution,
+    pipeline: PipelineDefinition,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert pipeline.webhooks is not None
+    assert pipeline.webhooks.on_complete is not None
+    pipeline.webhooks.on_complete.headers = {"Authorization": "Bearer ${PIPELINE_SECRET}"}
+    monkeypatch.setenv("PIPELINE_SECRET", "process-secret")
+    response = _response(200, b"x" * (MAX_RESPONSE_BYTES + 100))
+    session = _session(response)
+    resolved = {
+        "hostname": "example.com",
+        "host": "93.184.216.34",
+        "port": 443,
+        "family": socket.AF_INET,
+        "proto": 0,
+        "flags": 0,
+    }
+    notifier = WebhookNotifier(base_url="https://gobby.local")
+
+    with (
+        patch(
+            "gobby.workflows.webhook_executor.DefaultResolver.resolve",
+            new=AsyncMock(return_value=[resolved]),
+        ),
+        patch("gobby.workflows.webhook_executor.aiohttp.ClientSession", return_value=session),
+    ):
+        await notifier.notify_complete(execution, pipeline)
+
+    request = session.request.call_args.kwargs
+    assert request["headers"] == {"Authorization": "Bearer ${PIPELINE_SECRET}"}
+    response.content.readexactly.assert_awaited_once_with(MAX_RESPONSE_BYTES + 1)
