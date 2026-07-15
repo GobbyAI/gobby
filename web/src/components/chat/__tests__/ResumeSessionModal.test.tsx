@@ -61,6 +61,21 @@ describe("ResumeSessionModal", () => {
     vi.unstubAllGlobals();
   });
 
+  it("names the dialog with its visible title", () => {
+    fetchMock.mockResolvedValue(responseWith([]));
+
+    render(
+      <ResumeSessionModal
+        isOpen
+        onClose={vi.fn()}
+        sessions={[]}
+        onResume={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("dialog", { name: "Resume Session" })).toBeInTheDocument();
+  });
+
   it("aborts the previous request and ignores its stale response", async () => {
     const first = deferred<Response>();
     const second = deferred<Response>();

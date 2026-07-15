@@ -24,7 +24,6 @@ export const DEFAULT_LIVE_STATUSES: readonly SessionStatus[] = ["active", "pause
 export interface SessionsFilters {
   modes: Set<SessionMode>;
   providers: Set<string>;
-  models: Set<string>;
   sessionRefMin: number | null;
   sessionRefMax: number | null;
   taskRefMin: number | null;
@@ -40,7 +39,6 @@ export function defaultSessionsFilters(): SessionsFilters {
   return {
     modes: new Set<SessionMode>(),
     providers: new Set<string>(),
-    models: new Set<string>(),
     sessionRefMin: null,
     sessionRefMax: null,
     taskRefMin: null,
@@ -232,7 +230,6 @@ export function serializeSessionsFilters(filters: SessionsFilters, now: Date): U
 interface StoredSessionsFilters {
   modes: SessionMode[];
   providers: string[];
-  models: string[];
   sessionRefMin: number | null;
   sessionRefMax: number | null;
   taskRefMin: number | null;
@@ -249,7 +246,6 @@ export function serializeForStorage(filters: SessionsFilters): StoredSessionsFil
   return {
     modes: [...filters.modes],
     providers: [...filters.providers],
-    models: [],
     sessionRefMin: filters.sessionRefMin,
     sessionRefMax: filters.sessionRefMax,
     taskRefMin: filters.taskRefMin,
@@ -281,7 +277,6 @@ export function deserializeFromStorage(raw: string | null): SessionsFilters {
     const providers = new Set<string>(
       Array.isArray(parsed.providers) ? parsed.providers.filter((p) => typeof p === "string") : [],
     );
-    const models = new Set<string>();
     const taskRefRoles = new Set<TaskRefRole>(
       Array.isArray(parsed.taskRefRoles)
         ? parsed.taskRefRoles.filter((r): r is TaskRefRole => ALL_TASK_REF_ROLES.includes(r))
@@ -301,7 +296,6 @@ export function deserializeFromStorage(raw: string | null): SessionsFilters {
     return {
       modes,
       providers,
-      models,
       sessionRefMin: typeof parsed.sessionRefMin === "number" ? parsed.sessionRefMin : null,
       sessionRefMax: typeof parsed.sessionRefMax === "number" ? parsed.sessionRefMax : null,
       taskRefMin: typeof parsed.taskRefMin === "number" ? parsed.taskRefMin : null,

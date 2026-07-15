@@ -448,7 +448,7 @@ export function AgentPortfolioPage() {
 
   // Filter and sort
   const displayAgents = useMemo(() => {
-    let result = agents
+    let result = [...agents]
     if (filterSource) {
       result = result.filter(a => a.source === filterSource)
     }

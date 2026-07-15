@@ -45,7 +45,6 @@ describe("defaultSessionsFilters", () => {
     const f = defaultSessionsFilters();
     expect(f.modes.size).toBe(0);
     expect(f.providers.size).toBe(0);
-    expect(f.models.size).toBe(0);
     expect(f.sessionRefMin).toBeNull();
     expect(f.sessionRefMax).toBeNull();
     expect(f.taskRefMin).toBeNull();
@@ -262,12 +261,6 @@ describe("matchesSessionsFilters", () => {
     expect(matchesSessionsFilters(makeSession({ source: "claude" }), f, NOW)).toBe(false);
   });
 
-  it("model filters are ignored after model selection was removed", () => {
-    const f = defaultSessionsFilters();
-    f.models.add("claude-opus-4-7");
-    expect(matchesSessionsFilters(makeSession({ model: null }), f, NOW)).toBe(true);
-  });
-
   it("session ref range filters by seq_num", () => {
     const f = defaultSessionsFilters();
     f.sessionRefMin = 100;
@@ -353,7 +346,6 @@ describe("storage round-trip", () => {
     const original = defaultSessionsFilters();
     original.modes.add("auto");
     original.providers.add("codex");
-    original.models.add("legacy-hidden-model");
     original.taskRefMin = 10;
     original.taskRefRoles = new Set(["claimed", "created"]);
     original.datePreset = "30d";
@@ -363,7 +355,6 @@ describe("storage round-trip", () => {
 
     expect([...restored.modes]).toEqual(["auto"]);
     expect([...restored.providers]).toEqual(["codex"]);
-    expect([...restored.models]).toEqual([]);
     expect(restored.taskRefMin).toBe(10);
     expect([...restored.taskRefRoles].sort()).toEqual(["claimed", "created"]);
     expect(restored.datePreset).toBe("30d");

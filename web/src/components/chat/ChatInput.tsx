@@ -242,6 +242,11 @@ export function ChatInput({
     selected?.scrollIntoView({ block: 'nearest' })
   }, [selectedIndex])
 
+  const handleChange = useCallback((value: string) => {
+    setInput(value)
+    onInputChange?.(value)
+  }, [onInputChange])
+
   const handleSubmit = useCallback(() => {
     const trimmed = input.trim()
     const filesToSend = attachmentsDisabled ? [] : queuedFiles
@@ -256,7 +261,7 @@ export function ChatInput({
         reasoningEffort: currentReasoning,
         ttsEnabled,
       })
-      setInput('')
+      handleChange('')
       clearQueuedFiles()
       onScrollToBottom?.()
     }
@@ -265,6 +270,7 @@ export function ChatInput({
     clearQueuedFiles,
     currentReasoning,
     disabled,
+    handleChange,
     input,
     onScrollToBottom,
     onSend,
@@ -272,11 +278,6 @@ export function ChatInput({
     queuedFiles,
     ttsEnabled,
   ])
-
-  const handleChange = useCallback((value: string) => {
-    setInput(value)
-    onInputChange?.(value)
-  }, [onInputChange])
 
   const handlePaletteSelect = useCallback((item: PaletteItem) => {
     if (item.kind === 'command') {
@@ -299,17 +300,16 @@ export function ChatInput({
           reasoningEffort: currentReasoning,
           ttsEnabled,
         })
-        setInput('')
+        handleChange('')
         clearQueuedFiles()
         onScrollToBottom?.()
         return
       }
       onPaletteSelect?.(item)
-      setInput('')
+      handleChange('')
     } else {
       const completed = `/${item.parentCommand}:${item.name} `
-      setInput(completed)
-      onInputChange?.(completed)
+      handleChange(completed)
       textareaRef.current?.focus()
     }
   }, [
@@ -317,8 +317,8 @@ export function ChatInput({
     clearQueuedFiles,
     currentReasoning,
     disabled,
+    handleChange,
     input,
-    onInputChange,
     onPaletteSelect,
     onScrollToBottom,
     onSend,
@@ -331,7 +331,7 @@ export function ChatInput({
     if (e.nativeEvent.isComposing) return
 
     if (e.key === 'Escape') {
-      if (showPalette) { e.preventDefault(); setInput(''); return }
+      if (showPalette) { e.preventDefault(); handleChange(''); return }
       if (isStreaming && onStop) { e.preventDefault(); onStop(); return }
     }
     if (showPalette) {
@@ -348,12 +348,7 @@ export function ChatInput({
           e.preventDefault()
           const selected = paletteItems[selectedIndex]
           if (selected) {
-            if (selected.kind === 'sub_item') {
-              // Complete the name, don't send
-              handlePaletteSelect(selected)
-            } else {
-              handlePaletteSelect(selected)
-            }
+            handlePaletteSelect(selected)
           }
           return
         }
@@ -364,7 +359,7 @@ export function ChatInput({
     } else {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit() }
     }
-  }, [handleSubmit, input, isStreaming, onStop, proxySlashMode, showPalette, paletteItems, selectedIndex, handlePaletteSelect, isMobile])
+  }, [handleChange, handleSubmit, input, isStreaming, onStop, proxySlashMode, showPalette, paletteItems, selectedIndex, handlePaletteSelect, isMobile])
 
   const hasInput = input.trim().length > 0 || queuedFiles.length > 0
   const pttEnabled = sttEnabled && voiceInputMode === 'ptt'

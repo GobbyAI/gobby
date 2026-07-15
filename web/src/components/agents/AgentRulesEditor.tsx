@@ -62,7 +62,7 @@ export function AgentRulesEditor({
   const [selectorValue, setSelectorValue] = useState('')
 
   useEffect(() => {
-    const params = projectId ? `?project_id=${projectId}` : ''
+    const params = projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''
     fetch(`/api/rules${params}`)
       .then(r => r.json())
       .then(data => {

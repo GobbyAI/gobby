@@ -27,7 +27,7 @@ export function AgentSkillsEditor({ skills, onSkillsChange, projectId }: AgentSk
   const [adding, setAdding] = useState(false)
 
   useEffect(() => {
-    const params = projectId ? `?project_id=${projectId}` : ''
+    const params = projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''
     fetch(`/api/skills${params}`)
       .then(r => r.json())
       .then(data => {

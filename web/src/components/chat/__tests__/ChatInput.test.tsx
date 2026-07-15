@@ -735,13 +735,21 @@ describe('ChatInput', () => {
 
   it('clears input after sending', async () => {
     const onSend = vi.fn()
-    render(<ChatInput {...defaultProps} onSend={onSend} />)
+    const onInputChange = vi.fn()
+    render(
+      <ChatInput
+        {...defaultProps}
+        onSend={onSend}
+        onInputChange={onInputChange}
+      />,
+    )
 
     const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
     await userEvent.type(textarea, 'Hello')
     await userEvent.keyboard('{Enter}')
 
     expect(textarea.value).toBe('')
+    expect(onInputChange).toHaveBeenLastCalledWith('')
   })
 
   it('shows command palette when input starts with /', async () => {

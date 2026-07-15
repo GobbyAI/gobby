@@ -119,7 +119,6 @@ export const TasksTab = memo(function TasksTab({
   const abortRef = useRef<AbortController | null>(null);
   const debouncedRefetchRef = useRef<number | null>(null);
   const selectedTaskIdRef = useRef<string | null>(null);
-  const userSelectedRef = useRef(false);
   // Abort any in-flight WebSocket-triggered detail fetch when a newer one
   // arrives or when the component unmounts.
   const detailFetchControllerRef = useRef<AbortController | null>(null);
@@ -223,7 +222,6 @@ export const TasksTab = memo(function TasksTab({
       if (event === "task_deleted") {
         setTasks((prev) => prev.filter((t) => t.id !== taskId));
         if (taskId === selectedTaskIdRef.current) {
-          userSelectedRef.current = false;
           setSelectedTaskId(null);
         }
       } else if (event === "task_created") {
@@ -484,7 +482,6 @@ export const TasksTab = memo(function TasksTab({
       if (selectedTaskIdRef.current !== null) {
         setSelectedTaskId(null);
       }
-      userSelectedRef.current = false;
       return;
     }
 
@@ -492,7 +489,6 @@ export const TasksTab = memo(function TasksTab({
       (row) => row.node.task.id === selectedTaskIdRef.current,
     );
     if (!hasVisibleSelection) {
-      userSelectedRef.current = false;
       if (selectedTaskIdRef.current !== null) {
         setSelectedTaskId(null);
         return;
@@ -599,7 +595,6 @@ export const TasksTab = memo(function TasksTab({
   }, []);
 
   const handleSelectTask = useCallback((taskId: string) => {
-    userSelectedRef.current = true;
     setActionError(null);
     setSelectedTaskId(taskId);
   }, []);

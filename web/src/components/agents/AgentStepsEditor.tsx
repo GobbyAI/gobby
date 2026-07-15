@@ -66,7 +66,6 @@ export interface WorkflowStep {
 interface AgentStepsEditorProps {
   steps: WorkflowStep[]
   onChange: (steps: WorkflowStep[]) => void
-  stepNames?: string[]  // all step names for transition dropdown
 }
 
 // ---------------------------------------------------------------------------
