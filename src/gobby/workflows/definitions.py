@@ -74,7 +74,7 @@ class RuleDefinition(BaseModel):
         )
         return RuleDefinitionBody(
             event=RuleTriggerEvent.BEFORE_TOOL,
-            effect=effect,
+            effects=[effect],
         )
 
 
@@ -118,6 +118,8 @@ class RuleTriggerEvent(str, Enum):
 class RuleEffect(BaseModel):
     """What happens when a rule fires."""
 
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal[
         "block",
         "set_variable",
@@ -159,6 +161,7 @@ class RuleEffect(BaseModel):
     inject_result: bool = False  # Capture result and inject as agent context
     block_on_failure: bool = False  # Block original tool call if this mcp_call fails
     block_on_success: bool = False  # Block original tool call if this mcp_call succeeds
+    success_variable: str | None = None  # Set to true after successful inline dispatch
 
     # observe — append structured entry to _observations session variable
     category: str | None = None
@@ -187,6 +190,58 @@ class RuleEffect(BaseModel):
     # load_skill — emit an on-demand skill fetch directive into agent context
     skill: str | None = None
 
+    @model_validator(mode="after")
+    def _validate_required_fields(self) -> RuleEffect:
+        required_fields: dict[str, tuple[str, ...]] = {
+            "block": ("reason",),
+            "set_variable": ("variable",),
+            "inject_context": ("template",),
+            "mcp_call": ("server", "tool"),
+            "rewrite_input": ("input_updates",),
+            "set_watch_paths": ("watch_paths",),
+            "set_worktree_path": ("worktree_path",),
+            "load_skill": ("skill",),
+        }
+        missing = [
+            field_name
+            for field_name in required_fields.get(self.type, ())
+            if getattr(self, field_name) is None
+        ]
+        if missing:
+            fields = ", ".join(missing)
+            raise ValueError(f"RuleEffect(type='{self.type}') requires: {fields}")
+
+        if self.success_variable is not None and (not self.inject_result or self.background):
+            raise ValueError("mcp_call success_variable requires inline result injection")
+
+        if self.type == "set_permission_response" and all(
+            value is None
+            for value in (
+                self.permission_decision,
+                self.input_updates,
+                self.updated_permissions,
+            )
+        ):
+            raise ValueError(
+                "RuleEffect(type='set_permission_response') requires at least one of: "
+                "permission_decision, input_updates, updated_permissions"
+            )
+
+        if self.type == "set_elicitation" and all(
+            value is None
+            for value in (
+                self.elicitation_action,
+                self.elicitation_content,
+                self.elicitation_error,
+            )
+        ):
+            raise ValueError(
+                "RuleEffect(type='set_elicitation') requires at least one of: "
+                "elicitation_action, elicitation_content, elicitation_error"
+            )
+
+        return self
+
     def model_post_init(self, __context: Any) -> None:
         """Warn when fields irrelevant to the effect type are set."""
         import warnings
@@ -204,6 +259,7 @@ class RuleEffect(BaseModel):
                 "inject_result",
                 "block_on_failure",
                 "block_on_success",
+                "success_variable",
                 *selector_fields,
             },
             "observe": {"category", "message", *selector_fields},
@@ -253,6 +309,8 @@ class RuleEffect(BaseModel):
 
 class RuleDefinitionBody(BaseModel):
     """Stored as definition_json in workflow_definitions for workflow_type='rule'."""
+
+    model_config = ConfigDict(extra="forbid")
 
     event: RuleTriggerEvent
     when: str | None = None

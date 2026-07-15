@@ -224,6 +224,27 @@ class TestRuleEffect:
         assert effect.inject_result is True
         assert effect.block_on_failure is False
 
+    def test_mcp_call_success_variable_requires_inline_result(self) -> None:
+        from gobby.workflows.definitions import RuleEffect
+
+        effect = RuleEffect(
+            type="mcp_call",
+            server="gobby-skills",
+            tool="list_hubs",
+            inject_result=True,
+            success_variable="skill_discovery_instructions_shown",
+        )
+
+        assert effect.success_variable == "skill_discovery_instructions_shown"
+
+        with pytest.raises(ValueError, match="requires inline result injection"):
+            RuleEffect(
+                type="mcp_call",
+                server="gobby-skills",
+                tool="list_hubs",
+                success_variable="skill_discovery_instructions_shown",
+            )
+
     def test_mcp_call_inject_result_defaults_false(self) -> None:
         from gobby.workflows.definitions import RuleEffect
 
@@ -242,19 +263,55 @@ class TestRuleEffect:
         with pytest.raises(ValidationError):
             RuleEffect(type="invalid_type")
 
-    def test_four_valid_types(self) -> None:
-        """All four effect types should be accepted."""
+    @pytest.mark.parametrize(
+        ("effect_type", "fields"),
+        [
+            ("block", {"reason": "test"}),
+            ("set_variable", {"variable": "flag"}),
+            ("inject_context", {"template": "test"}),
+            ("mcp_call", {"server": "gobby-tasks", "tool": "get_task"}),
+        ],
+    )
+    def test_four_valid_types(self, effect_type: str, fields: dict[str, object]) -> None:
+        """All four original effect types should be accepted with their required fields."""
         from gobby.workflows.definitions import RuleEffect
 
-        for effect_type in ("block", "set_variable", "inject_context", "mcp_call"):
-            effect = RuleEffect(type=effect_type)
-            assert effect.type == effect_type
+        effect = RuleEffect(type=effect_type, **fields)
+        assert effect.type == effect_type
 
-    def test_defaults_are_none(self) -> None:
+    @pytest.mark.parametrize(
+        ("effect_type", "fields"),
+        [
+            ("block", {}),
+            ("set_variable", {}),
+            ("inject_context", {}),
+            ("mcp_call", {"tool": "get_task"}),
+            ("mcp_call", {"server": "gobby-tasks"}),
+            ("rewrite_input", {}),
+            ("set_permission_response", {}),
+            ("set_watch_paths", {}),
+            ("set_worktree_path", {}),
+            ("set_elicitation", {}),
+            ("load_skill", {}),
+        ],
+    )
+    def test_per_type_required_fields(self, effect_type: str, fields: dict[str, object]) -> None:
         from gobby.workflows.definitions import RuleEffect
 
-        effect = RuleEffect(type="block")
-        assert effect.reason is None
+        with pytest.raises(ValidationError, match="requires"):
+            RuleEffect(type=effect_type, **fields)
+
+    def test_unknown_field_rejected(self) -> None:
+        from gobby.workflows.definitions import RuleEffect
+
+        with pytest.raises(ValidationError, match="content"):
+            RuleEffect(type="inject_context", template="test", content="ignored")
+
+    def test_optional_fields_default_to_none(self) -> None:
+        from gobby.workflows.definitions import RuleEffect
+
+        effect = RuleEffect(type="block", reason="test")
+        assert effect.reason == "test"
         assert effect.tools is None
         assert effect.mcp_tools is None
         assert effect.command_pattern is None
@@ -272,6 +329,24 @@ class TestRuleEffect:
 
 
 class TestRuleDefinitionBody:
+    def test_inline_rule_conversion_uses_canonical_effects(self) -> None:
+        from gobby.workflows.definitions import RuleDefinition
+
+        body = RuleDefinition(reason="test").to_rule_definition_body()
+
+        assert len(body.resolved_effects) == 1
+        assert body.resolved_effects[0].reason == "test"
+
+    def test_unknown_field_rejected(self) -> None:
+        from gobby.workflows.definitions import RuleDefinitionBody
+
+        with pytest.raises(ValidationError, match="effectz"):
+            RuleDefinitionBody(
+                event="before_tool",
+                effects=[{"type": "block", "reason": "test"}],
+                effectz=[],
+            )
+
     def test_minimal_block_rule(self) -> None:
         from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 
@@ -475,7 +550,7 @@ class TestRuleDefinitionBody:
         from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
 
         with pytest.raises(ValidationError):
-            RuleDefinitionBody(effects=[RuleEffect(type="block")])
+            RuleDefinitionBody(effects=[RuleEffect(type="block", reason="test")])
 
     def test_effects_required(self) -> None:
         from gobby.workflows.definitions import RuleDefinitionBody, RuleTriggerEvent

@@ -24,6 +24,7 @@ SYNTHETIC_SESSION_IDS = (
 
 SYNTHETIC_SESSION_TEST_MODULES = {
     "test_delivery_pipeline.py",
+    "test_context_handoff_rules.py",
     "test_hook_evaluation_serialization.py",
     "test_hooks.py",
     "test_observers_detection.py",

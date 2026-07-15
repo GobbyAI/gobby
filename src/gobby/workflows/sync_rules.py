@@ -1,9 +1,8 @@
 """Rule definition synchronization from bundled YAML templates.
 
 Single-row model: templates live on disk only. The DB holds installed rows
-directly. Bundled ``gobby`` rows are refreshed in place when the on-disk YAML
-changes, while user/custom rows remain protected. Soft-deleted rows are not
-restored.
+directly. Sync-managed rows are refreshed or restored from their on-disk YAML,
+while user/custom rows remain protected.
 """
 
 import json
@@ -60,9 +59,9 @@ def _iter_active_rule_files(rules_paths: list[Path]) -> list[tuple[Path, Path]]:
 def sync_rule_file(
     db: HubDatabase,
     rule_file: Path,
-    tag: str = "gobby",
+    tag: str = "user",
 ) -> dict[str, Any]:
-    """Sync one rule YAML file without scanning siblings or pruning orphans."""
+    """Sync one user rule YAML file without scanning siblings or pruning orphans."""
     result = _new_rules_sync_result()
     if not rule_file.exists():
         logger.debug("Rule file not found", extra={"file": str(rule_file)})
@@ -76,12 +75,13 @@ def sync_rule_file(
         tag=tag,
         result=result,
     )
+    result["success"] = not result["errors"]
     return result
 
 
 def sync_bundled_rules(
     db: HubDatabase,
-    rules_path: Path | None = None,
+    rules_path: Path | list[Path] | None = None,
     tag: str = "gobby",
 ) -> dict[str, Any]:
     """Sync rule YAML files to workflow_definitions table with workflow_type='rule'.
@@ -92,13 +92,23 @@ def sync_bundled_rules(
 
     Args:
         db: Database connection.
-        rules_path: Path to rules directory. Defaults to bundled rules path.
+        rules_path: Complete rules roots to scan, or one root for bundled rules.
+            Defaults to all bundled rules roots. A single non-gobby root is a
+            partial scan and does not prune orphans.
         tag: Tag to apply to synced rules. Defaults to "gobby" for bundled.
 
     Returns:
         Dict with success status and counts.
     """
-    rules_paths = get_bundled_rules_paths() if rules_path is None else [rules_path]
+    if rules_path is None:
+        rules_paths = get_bundled_rules_paths()
+        scan_is_authoritative = True
+    elif isinstance(rules_path, Path):
+        rules_paths = [rules_path]
+        scan_is_authoritative = tag == "gobby"
+    else:
+        rules_paths = rules_path
+        scan_is_authoritative = True
 
     # Repair rows where workflow_type was silently changed from 'rule'
     event_expr = json_text_expr(db, "definition_json", "event")
@@ -125,7 +135,8 @@ def sync_bundled_rules(
     manager = LocalWorkflowDefinitionManager(db)
     on_disk: set[str] = set()
 
-    for current_rules_path, yaml_file in _iter_active_rule_files(existing_paths):
+    rule_files = _iter_active_rule_files(existing_paths)
+    for current_rules_path, yaml_file in rule_files:
         _sync_rule_file(
             manager=manager,
             current_rules_path=current_rules_path,
@@ -135,21 +146,22 @@ def sync_bundled_rules(
             on_disk=on_disk,
         )
 
-    # Orphan cleanup: soft-delete rules whose YAML was removed.
-    # Only touch rows with matching tag to avoid cross-tag damage.
-    tag_condition, tag_params = json_array_contains_condition(db, "tags", tag)
-    orphan_rows = db.fetchall(
-        "SELECT id, name FROM workflow_definitions "
-        "WHERE workflow_type = 'rule' "
-        f"AND {tag_condition} AND source = 'installed' AND deleted_at IS NULL",
-        tag_params,
-    )
     result["orphaned"] = 0
-    for row in orphan_rows:
-        if row["name"] not in on_disk:
-            manager.delete(row["id"])
-            logger.info("Soft-deleted orphaned rule", extra={"rule": row["name"], "tag": tag})
-            result["orphaned"] += 1
+    if scan_is_authoritative and rule_files and not result["errors"]:
+        tag_condition, tag_params = json_array_contains_condition(db, "tags", tag)
+        orphan_rows = db.fetchall(
+            "SELECT id, name FROM workflow_definitions "
+            "WHERE workflow_type = 'rule' "
+            f"AND {tag_condition} AND source = 'installed' AND deleted_at IS NULL",
+            tag_params,
+        )
+        for row in orphan_rows:
+            if row["name"] not in on_disk:
+                manager.delete(row["id"])
+                logger.info("Soft-deleted orphaned rule", extra={"rule": row["name"], "tag": tag})
+                result["orphaned"] += 1
+
+    result["success"] = not result["errors"]
 
     total = result["synced"] + result["updated"] + result["skipped"]
     logger.info(
@@ -303,9 +315,9 @@ def _sync_single_rule(
 ) -> None:
     """Sync a single rule to workflow_definitions.
 
-    Creates an installed row if none exists. Existing bundled ``gobby`` rows
-    are refreshed when the YAML changes, preserving the user's enabled toggle.
-    Soft-deleted rows and user/custom rows are not restored or overwritten.
+    Creates an installed row if none exists. Existing sync-managed rows are
+    refreshed when the YAML changes, preserving the user's enabled toggle.
+    Soft-deleted sync-managed rows are restored; user/custom rows stay protected.
     """
     # Build the RuleDefinitionBody dict
     body_dict: dict[str, Any] = {
@@ -344,12 +356,25 @@ def _sync_single_rule(
     existing = manager.get_by_name(rule_name, include_deleted=True)
 
     if existing is not None:
-        # Respect soft-deletes — don't re-create rules the user removed
         if existing.deleted_at is not None:
+            if _is_sync_managed_rule(existing, sync_tag):
+                manager.restore(existing.id)
+                update_fields = _build_rule_update_fields(
+                    existing=existing,
+                    definition_json=definition_json,
+                    description=description,
+                    priority=priority,
+                    sources=file_sources,
+                    tags=file_tags,
+                )
+                if update_fields:
+                    manager.update(existing.id, **update_fields)
+                result["updated"] += 1
+                return
             result["skipped"] += 1
             return
 
-        if _is_sync_managed_bundled_rule(existing, sync_tag):
+        if _is_sync_managed_rule(existing, sync_tag):
             update_fields = _build_rule_update_fields(
                 existing=existing,
                 definition_json=definition_json,
@@ -382,10 +407,8 @@ def _sync_single_rule(
     result["synced"] += 1
 
 
-def _is_sync_managed_bundled_rule(existing: Any, sync_tag: str) -> bool:
-    """Return whether an existing row is safe for bundled sync to overwrite."""
-    if sync_tag != "gobby":
-        return False
+def _is_sync_managed_rule(existing: Any, sync_tag: str) -> bool:
+    """Return whether an existing row is safe for template sync to manage."""
     return (
         existing.source == "installed"
         and existing.project_id is None

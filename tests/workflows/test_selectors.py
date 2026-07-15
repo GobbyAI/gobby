@@ -102,6 +102,27 @@ def test_match_rule_group() -> None:
     assert _match_rule("group", "core", rule, {}) is False
 
 
+@pytest.mark.parametrize(
+    ("dim", "rule_attrs", "definition_json"),
+    [
+        ("name", {"name": "CaseValue"}, {}),
+        ("source", {"source": "CaseValue"}, {}),
+        ("tag", {"tags": ["CaseValue"]}, {}),
+        ("group", {}, {"group": "CaseValue"}),
+        ("category", {}, {"category": "CaseValue"}),
+    ],
+)
+def test_match_rule_globs_are_case_sensitive(
+    dim: str, rule_attrs: dict[str, object], definition_json: dict[str, object]
+) -> None:
+    rule = MagicMock(name="rule", source="", tags=[])
+    for attr, value in rule_attrs.items():
+        setattr(rule, attr, value)
+
+    assert _match_rule(dim, "Case*", rule, definition_json) is True
+    assert _match_rule(dim, "case*", rule, definition_json) is False
+
+
 def test_match_rule_unknown_dim() -> None:
     rule = MagicMock()
     assert _match_rule("bogus", "val", rule, {}) is False
@@ -135,6 +156,20 @@ def test_resolve_rules_with_include_selectors() -> None:
     assert "infra-rule" in result
 
 
+def test_resolve_rules_with_category_include() -> None:
+    agent = MagicMock()
+    agent.workflows.rules = []
+    agent.workflows.rule_selectors = MagicMock()
+    agent.workflows.rule_selectors.include = ["category:enforcement"]
+    agent.workflows.rule_selectors.exclude = []
+
+    rule = MagicMock()
+    rule.name = "enforcement-rule"
+    rule.definition_json = '{"category": "enforcement"}'
+
+    assert resolve_rules_for_agent(agent, [rule]) == {"enforcement-rule"}
+
+
 def test_resolve_rules_with_exclude() -> None:
     agent = MagicMock()
     agent.workflows.rules = ["rule-a"]
@@ -152,6 +187,20 @@ def test_resolve_rules_with_exclude() -> None:
     # Actually: combined = explicit | include_matches, then combined - exclude_matches
     # include_matches has rule-a (name:*), exclude has rule-a → removed from combined
     assert "rule-a" not in result
+
+
+def test_resolve_rules_with_category_exclude() -> None:
+    agent = MagicMock()
+    agent.workflows.rules = ["internal-rule"]
+    agent.workflows.rule_selectors = MagicMock()
+    agent.workflows.rule_selectors.include = []
+    agent.workflows.rule_selectors.exclude = ["category:internal"]
+
+    rule = MagicMock()
+    rule.name = "internal-rule"
+    rule.definition_json = '{"category": "internal"}'
+
+    assert resolve_rules_for_agent(agent, [rule]) == set()
 
 
 def test_resolve_rules_json_parse_error() -> None:
@@ -226,6 +275,24 @@ def test_match_skill_tag_no_metadata() -> None:
     skill = MagicMock()
     skill.metadata = None
     assert _match_skill("tag", "any", skill) is False
+
+
+@pytest.mark.parametrize(
+    ("dim", "skill_attrs"),
+    [
+        ("name", {"name": "CaseValue"}),
+        ("source", {"source_type": "CaseValue"}),
+        ("category", {"metadata": {"gobby": {"category": "CaseValue"}}}),
+        ("tag", {"metadata": {"gobby": {"tags": ["CaseValue"]}}}),
+    ],
+)
+def test_match_skill_globs_are_case_sensitive(dim: str, skill_attrs: dict[str, object]) -> None:
+    skill = MagicMock(name="skill", source_type=None, metadata=None)
+    for attr, value in skill_attrs.items():
+        setattr(skill, attr, value)
+
+    assert _match_skill(dim, "Case*", skill) is True
+    assert _match_skill(dim, "case*", skill) is False
 
 
 def test_match_skill_unknown_dim() -> None:
@@ -321,6 +388,19 @@ def test_resolve_variables_with_include() -> None:
     result = resolve_variables_for_agent(agent, [var])
     assert result is not None
     assert "session-defaults" in result
+
+
+def test_resolve_variables_with_category_include() -> None:
+    agent = MagicMock()
+    agent.workflows.variable_selectors = MagicMock()
+    agent.workflows.variable_selectors.include = ["category:defaults"]
+    agent.workflows.variable_selectors.exclude = []
+
+    var = MagicMock()
+    var.name = "session-defaults"
+    var.definition_json = '{"category": "defaults"}'
+
+    assert resolve_variables_for_agent(agent, [var]) == {"session-defaults"}
 
 
 def test_resolve_rules_tag_exclude_sync() -> None:
@@ -429,6 +509,26 @@ def test_resolve_variables_with_exclude() -> None:
     var2.definition_json = None
 
     result = resolve_variables_for_agent(agent, [var1, var2])
+    assert result is not None
+    assert "public-var" in result
+    assert "internal-secret" not in result
+
+
+def test_resolve_variables_with_category_exclude() -> None:
+    agent = MagicMock()
+    agent.workflows.variable_selectors = MagicMock()
+    agent.workflows.variable_selectors.include = ["category:*"]
+    agent.workflows.variable_selectors.exclude = ["category:internal"]
+
+    public = MagicMock()
+    public.name = "public-var"
+    public.definition_json = '{"category": "defaults"}'
+
+    internal = MagicMock()
+    internal.name = "internal-secret"
+    internal.definition_json = '{"category": "internal"}'
+
+    result = resolve_variables_for_agent(agent, [public, internal])
     assert result is not None
     assert "public-var" in result
     assert "internal-secret" not in result

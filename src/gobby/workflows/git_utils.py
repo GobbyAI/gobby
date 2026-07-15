@@ -7,6 +7,7 @@ These are pure utility functions with no ActionContext dependency.
 from __future__ import annotations
 
 import logging
+import os
 import subprocess  # nosec B404 # subprocess needed for git commands
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -296,33 +297,49 @@ def get_dirty_files_categorized(project_path: str | None = None) -> DirtyFiles:
 
     try:
         result = subprocess.run(  # nosec B603 B607 # hardcoded git command
-            ["git", "status", "--porcelain"],
+            ["git", "status", "--porcelain=v2", "-z"],
             cwd=worktree_root,
             capture_output=True,
-            text=True,
             timeout=10,
         )
 
         if result.returncode != 0:
-            logger.warning(f"get_dirty_files: git status failed: {result.stderr}")
+            stderr = result.stderr.decode(errors="replace").strip()
+            logger.warning("get_dirty_files: git status failed: %s", stderr)
             return DirtyFiles(set(), set())
 
-        tracked = set()
-        untracked = set()
-        # Split by newline first, don't strip() the whole string as it removes
-        # the leading space from git status format (e.g., " M file.py")
-        for line in result.stdout.split("\n"):
-            line = line.rstrip()  # Remove trailing whitespace only
-            if not line:
+        tracked: set[str] = set()
+        untracked: set[str] = set()
+        records = result.stdout.split(b"\0")
+        record_index = 0
+        while record_index < len(records):
+            record = records[record_index]
+            record_index += 1
+            if not record:
                 continue
-            # Format is "XY filename" or "XY filename -> newname" for renames
-            status = line[:2]
-            # Skip the status prefix (first 3 chars: 2 status chars + space)
-            filepath = line[3:].split(" -> ")[0]  # Handle renames
-            # Exclude .gobby/ files
+
+            record_type = record[:1]
+            if record_type == b"1":
+                fields = record.split(b" ", 8)
+                path = fields[8] if len(fields) == 9 else None
+            elif record_type == b"2":
+                fields = record.split(b" ", 9)
+                path = fields[9] if len(fields) == 10 else None
+                record_index += 1  # Porcelain v2 stores the original path next.
+            elif record_type == b"u":
+                fields = record.split(b" ", 10)
+                path = fields[10] if len(fields) == 11 else None
+            elif record_type == b"?":
+                path = record[2:]
+            else:
+                continue
+
+            if path is None:
+                continue
+            filepath = os.fsdecode(path)
             if filepath.startswith(".gobby/"):
                 continue
-            if status == "??":
+            if record_type == b"?":
                 untracked.add(filepath)
             else:
                 tracked.add(filepath)

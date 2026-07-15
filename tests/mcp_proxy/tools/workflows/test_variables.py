@@ -127,6 +127,35 @@ class TestSetVariableScoped:
         assert "managed by verification observers" in result["error"]
         mocks["session_var_manager"].set_variable.assert_not_called()
 
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "enforce_tool_schema_check",
+            "unlocked_tools",
+            "listed_servers",
+            "consecutive_tool_blocks",
+            "_last_blocked_tool",
+            "edit_write_stop_blocks",
+        ],
+    )
+    def test_set_variable_blocks_runtime_managed_variables(self, name: str) -> None:
+        from gobby.mcp_proxy.tools.workflows._variables import set_variable
+
+        mocks = _make_mocks()
+
+        result = set_variable(
+            mocks["session_manager"],
+            mocks["db"],
+            name=name,
+            value=True,
+            session_id="#1",
+            session_var_manager=mocks["session_var_manager"],
+        )
+
+        assert result["success"] is False
+        assert "managed by the workflow runtime" in result["error"]
+        mocks["session_var_manager"].set_variable.assert_not_called()
+
     def test_set_variable_with_workflow_not_found(self) -> None:
         """set_variable(workflow='unknown') errors if no instance found."""
         from gobby.mcp_proxy.tools.workflows._variables import set_variable

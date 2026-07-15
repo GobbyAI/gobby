@@ -9,6 +9,7 @@ import pytest
 
 from gobby.agents.sync import sync_bundled_agents
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.agent_resolver import resolve_agent
 from gobby.workflows.definitions import AgentDefinitionBody
@@ -97,6 +98,30 @@ class TestResolveAgentLookup:
         result = resolve_agent("my-rule", db)
         assert result is None
 
+    def test_project_rule_does_not_shadow_global_agent(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        project = LocalProjectManager(db).create(name="agent-collision", repo_path="/tmp/collision")
+        manager.create(
+            name="shared-name",
+            workflow_type="agent",
+            definition_json=json.dumps({"name": "shared-name", "provider": "codex"}),
+            source="test",
+        )
+        manager.create(
+            name="shared-name",
+            workflow_type="rule",
+            definition_json=json.dumps({"event": "before_tool", "effects": []}),
+            project_id=project.id,
+            source="test",
+        )
+
+        result = resolve_agent("shared-name", db, project_id=project.id)
+
+        assert result is not None
+        assert result.name == "shared-name"
+        assert result.provider == "codex"
+
     def test_invalid_agent_definition_logs_warning_with_traceback(
         self,
         db: HubDatabase,
@@ -119,7 +144,7 @@ class TestResolveAgentLookup:
         assert any(record.exc_info for record in caplog.records)
 
 
-class TestProviderNormalization:
+class TestProviderInheritance:
     """Provider 'inherit' is resolved based on cli_source."""
 
     def test_inherit_resolved_to_claude_by_default(
@@ -136,8 +161,12 @@ class TestProviderNormalization:
         assert result is not None
         assert result.provider == "claude"
 
-    def test_inherit_resolved_from_cli_source(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    @pytest.mark.parametrize("cli_source", ["claude", "codex", "droid"])
+    def test_inherit_resolved_from_supported_cli_source(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+        cli_source: str,
     ) -> None:
         body = {"name": "test2", "provider": "inherit"}
         manager.create(
@@ -146,11 +175,11 @@ class TestProviderNormalization:
             definition_json=json.dumps(body),
             source="test",
         )
-        result = resolve_agent("test2", db, cli_source="codex")
+        result = resolve_agent("test2", db, cli_source=cli_source)
         assert result is not None
-        assert result.provider == "codex"
+        assert result.provider == cli_source
 
-    def test_claude_source_maps_to_claude(
+    def test_inherit_preserves_unknown_cli_source(
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         body = {"name": "test3", "provider": "inherit"}
@@ -160,9 +189,9 @@ class TestProviderNormalization:
             definition_json=json.dumps(body),
             source="test",
         )
-        result = resolve_agent("test3", db, cli_source="claude")
+        result = resolve_agent("test3", db, cli_source="custom-provider")
         assert result is not None
-        assert result.provider == "claude"
+        assert result.provider == "custom-provider"
 
     def test_explicit_provider_not_overridden(
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager

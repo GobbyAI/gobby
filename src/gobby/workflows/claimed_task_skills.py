@@ -19,8 +19,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-PYTHON_SKILL = "python"
-RUST_SKILL = "rust"
 DEVELOPMENT_DISCIPLINE_SKILL = "development-discipline"
 TDD_SKILL = "test-driven-development"
 TDD_REQUIRED_LABEL = "tdd:required"
@@ -38,6 +36,80 @@ AGGREGATE_KEYS = (
     "claimed_task_files",
     "claimed_task_validation_criteria",
 )
+
+LANGUAGE_SKILL_EXTENSIONS: dict[str, tuple[str, ...]] = {
+    "bash": (
+        ".sh",
+        ".bash",
+        ".bats",
+        ".sh.j2",
+        ".bash.j2",
+        ".sh.tpl",
+        ".bash.tpl",
+        ".sh.tmpl",
+        ".bash.tmpl",
+        ".sh.template",
+        ".bash.template",
+    ),
+    "c": (".c", ".h", ".c.in", ".h.in", ".pc", ".pc.in"),
+    "cpp": (
+        ".cpp",
+        ".cc",
+        ".cxx",
+        ".c++",
+        ".hpp",
+        ".hh",
+        ".hxx",
+        ".h++",
+        ".ipp",
+        ".ixx",
+        ".tpp",
+        ".inl",
+        ".cu",
+        ".cuh",
+        ".C",
+    ),
+    "csharp": (".cs", ".csx", ".csproj", ".sln", ".slnx", ".razor", ".cshtml", ".cake"),
+    "dart": (".dart",),
+    "elixir": (".ex", ".exs", ".eex", ".heex", ".leex", ".sface", ".livemd"),
+    "go": (".go",),
+    "java": (".java",),
+    "javascript": (".js", ".jsx", ".mjs", ".cjs"),
+    "json": (".json", ".jsonc", ".json5"),
+    "kotlin": (".kt", ".kts"),
+    "lua": (".lua", ".rockspec"),
+    "objc": (".m", ".mm", ".h", ".pch"),
+    "php": (".php",),
+    "python": (".py", ".pyi"),
+    "ruby": (
+        ".rb",
+        ".rake",
+        ".gemspec",
+        ".ru",
+        ".erb",
+        ".rbs",
+        ".jbuilder",
+        ".builder",
+        ".haml",
+        ".slim",
+    ),
+    "rust": (".rs",),
+    "scala": (".scala", ".sc", ".sbt"),
+    "swift": (".swift",),
+    "typescript": (".ts", ".tsx", ".mts", ".cts"),
+    "yaml": (
+        ".yaml",
+        ".yml",
+        ".yaml.j2",
+        ".yml.j2",
+        ".yaml.tpl",
+        ".yml.tpl",
+        ".yaml.tmpl",
+        ".yml.tmpl",
+        ".yaml.template",
+        ".yml.template",
+    ),
+}
 
 
 def build_claimed_task_skill_state(
@@ -120,8 +192,19 @@ def first_unloaded_claimed_task_required_skill(variables: dict[str, Any]) -> str
         return ""
 
     loaded_set = {skill for skill in loaded if isinstance(skill, str)}
+    unresolvable = variables.get("unresolvable_required_skills") or []
+    unresolvable_set = (
+        {skill for skill in unresolvable if isinstance(skill, str)}
+        if isinstance(unresolvable, list)
+        else set()
+    )
     for skill in required:
-        if isinstance(skill, str) and skill and skill not in loaded_set:
+        if (
+            isinstance(skill, str)
+            and skill
+            and skill not in loaded_set
+            and skill not in unresolvable_set
+        ):
             return skill
     return ""
 
@@ -175,10 +258,9 @@ def _task_files(task: Any, task_manager: LocalTaskManager) -> list[str]:
 def _language_skills_for_files(files: Iterable[str]) -> list[str]:
     skills: list[str] = []
     for file_path in files:
-        if file_path.endswith(".py"):
-            _append_unique(skills, PYTHON_SKILL)
-        if file_path.endswith(".rs"):
-            _append_unique(skills, RUST_SKILL)
+        for skill, extensions in LANGUAGE_SKILL_EXTENSIONS.items():
+            if file_path.endswith(extensions):
+                _append_unique(skills, skill)
     return skills
 
 

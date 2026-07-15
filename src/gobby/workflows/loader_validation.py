@@ -27,9 +27,11 @@ def _validate_pipeline_references(data: dict[str, Any]) -> None:
 
     # Build set of valid step IDs that can be referenced at each position
     valid_at_position: dict[int, set[str]] = {}
-    for i in range(len(step_ids)):
-        # Steps at position i can only reference steps 0..i-1
-        valid_at_position[i] = set(step_ids[:i])
+    previous_step_ids: set[str] = set()
+    for i, step in enumerate(steps):
+        valid_at_position[i] = previous_step_ids.copy()
+        if step_id := step.get("id"):
+            previous_step_ids.add(step_id)
 
     # Validate references in each step
     for i, step in enumerate(steps):

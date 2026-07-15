@@ -1,6 +1,8 @@
 """Comprehensive tests for WorkflowLoader (DB-only runtime)."""
 
+import asyncio
 import json
+import threading
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -14,8 +16,34 @@ from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import PipelineDefinition, WorkflowDefinition
 from gobby.workflows.loader import WorkflowLoader
 from gobby.workflows.loader_cache import DiscoveredWorkflow
+from gobby.workflows.loader_sync import WorkflowLoaderSyncMixin
 
 pytestmark = pytest.mark.unit
+
+
+def test_run_sync_from_worker_thread_with_running_loop() -> None:
+    result: dict[str, int] = {}
+    errors: list[BaseException] = []
+
+    async def return_value() -> int:
+        return 42
+
+    async def invoke_sync_wrapper() -> None:
+        result["value"] = WorkflowLoaderSyncMixin._run_sync(return_value())
+
+    def run_worker_loop() -> None:
+        try:
+            asyncio.run(invoke_sync_wrapper())
+        except BaseException as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=run_worker_loop, daemon=True)
+    worker.start()
+    worker.join(timeout=2)
+
+    assert not worker.is_alive(), "_run_sync deadlocked on the worker thread's running loop"
+    assert errors == []
+    assert result == {"value": 42}
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +197,37 @@ class TestWorkflowLoader:
 
         assert wf is not None
         assert wf.name == "project_wf"
+
+    async def test_load_workflow_resolves_project_path_to_id(
+        self,
+        db: HubDatabase,
+        project: Project,
+        def_manager: LocalWorkflowDefinitionManager,
+        tmp_path: Path,
+    ) -> None:
+        """A filesystem scope resolves to the ID used by project definitions and caches."""
+        (tmp_path / ".gobby").mkdir()
+        (tmp_path / ".gobby" / "project.json").write_text(json.dumps({"id": project.id}))
+        def_manager.create(
+            name="path-scoped",
+            definition_json=json.dumps({"name": "path-scoped", "description": "global"}),
+            workflow_type="workflow",
+        )
+        def_manager.create(
+            name="path-scoped",
+            definition_json=json.dumps({"name": "path-scoped", "description": "project"}),
+            workflow_type="workflow",
+            project_id=project.id,
+        )
+        loader = WorkflowLoader(db=db)
+
+        from_path = await loader.load_workflow("path-scoped", project_path=tmp_path)
+        from_id = await loader.load_workflow("path-scoped", project_path=project.id)
+
+        assert from_path is not None
+        assert from_path.description == "project"
+        assert from_id is from_path
+        assert set(loader._cache) == {f"{project.id}:path-scoped"}
 
     @pytest.mark.asyncio
     async def test_load_workflow_caching(
@@ -658,12 +717,15 @@ class TestDiscoverLifecycleWorkflows:
         assert discovered[0].is_project is False
         assert discovered[0].priority == 10
 
+    @pytest.mark.parametrize("project_first", [False, True])
     @pytest.mark.asyncio
     async def test_discover_project_shadows_global(
         self,
         db: HubDatabase,
         project: Project,
         def_manager: LocalWorkflowDefinitionManager,
+        monkeypatch: pytest.MonkeyPatch,
+        project_first: bool,
     ) -> None:
         """Test that project workflows shadow global ones with the same name."""
         global_data = {
@@ -691,6 +753,12 @@ class TestDiscoverLifecycleWorkflows:
         )
 
         loader = WorkflowLoader(db=db)
+        assert loader.def_manager is not None
+        rows = loader.def_manager.list_all(project_id=project.id, workflow_type="workflow")
+        project_row = next(row for row in rows if row.project_id is not None)
+        global_row = next(row for row in rows if row.project_id is None)
+        ordered_rows = [project_row, global_row] if project_first else [global_row, project_row]
+        monkeypatch.setattr(loader.def_manager, "list_all", lambda **_: ordered_rows)
         discovered = await loader.discover_workflows(project_path=project.id)
 
         # Project entry should shadow the global one
@@ -1171,6 +1239,37 @@ class TestDiscoverWorkflows:
         assert len(shared_entries) == 1
         assert shared_entries[0].is_project is True
         assert shared_entries[0].priority == 50
+
+    async def test_discover_resolves_project_path_to_id(
+        self,
+        db: HubDatabase,
+        project: Project,
+        def_manager: LocalWorkflowDefinitionManager,
+        tmp_path: Path,
+    ) -> None:
+        """Path-keyed discovery finds project rows and shares the canonical cache entry."""
+        (tmp_path / ".gobby").mkdir()
+        (tmp_path / ".gobby" / "project.json").write_text(json.dumps({"id": project.id}))
+        def_manager.create(
+            name="path-discovery",
+            definition_json=json.dumps({"name": "path-discovery", "description": "global"}),
+            workflow_type="workflow",
+        )
+        def_manager.create(
+            name="path-discovery",
+            definition_json=json.dumps({"name": "path-discovery", "description": "project"}),
+            workflow_type="workflow",
+            project_id=project.id,
+        )
+        loader = WorkflowLoader(db=db)
+
+        from_path = await loader.discover_workflows(project_path=tmp_path)
+        from_id = await loader.discover_workflows(project_path=project.id)
+
+        discovered = next(item for item in from_path if item.name == "path-discovery")
+        assert discovered.is_project is True
+        assert from_id is from_path
+        assert set(loader._discovery_cache) == {f"unified:{project.id}"}
 
     @pytest.mark.asyncio
     async def test_discover_derives_enabled_from_type(

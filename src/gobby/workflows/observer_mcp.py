@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING, Any
-
-from gobby.workflows.observer_utils import _json_safe
 
 if TYPE_CHECKING:
     from gobby.hooks.events import HookEvent
 
 logger = logging.getLogger("gobby.workflows.observers")
+
+_MAX_MCP_RESULT_ENTRIES = 64
+_MAX_MCP_RESULT_FIELDS = 16
+_MAX_MCP_RESULT_NAME_LENGTH = 128
+_MAX_MCP_RESULT_STRING_LENGTH = 256
+_MCP_FAILURE_FIELDS = ("success", "error", "status")
 
 
 def detect_mcp_call(event: HookEvent, variables: dict[str, Any], session_id: str) -> None:
@@ -27,8 +32,16 @@ def detect_mcp_call(event: HookEvent, variables: dict[str, Any], session_id: str
     tool_output = event.data.get("tool_output") or {}
 
     tracked = _track_mcp_call(variables, server_name, inner_tool, tool_output, session_id)
-    if tracked and server_name == "gobby-skills" and inner_tool == "get_skill":
-        _track_loaded_skill(variables, tool_output, session_id)
+    if server_name == "gobby-skills" and inner_tool == "get_skill":
+        if tracked:
+            _track_loaded_skill(variables, tool_output, session_id)
+        else:
+            _track_unresolvable_required_skill(
+                variables,
+                event.data.get("tool_input") or {},
+                tool_output,
+                session_id,
+            )
 
 
 def _track_loaded_skill(
@@ -78,6 +91,58 @@ def _extract_loaded_skill_name(tool_output: dict[str, Any] | Any) -> str | None:
     return None
 
 
+def _track_unresolvable_required_skill(
+    variables: dict[str, Any],
+    tool_input: dict[str, Any] | Any,
+    tool_output: dict[str, Any] | Any,
+    session_id: str,
+) -> None:
+    """Record a required skill after get_skill definitively reports it missing."""
+    name = _requested_skill_name(tool_input)
+    required = variables.get("claimed_task_required_skills") or []
+    if not name or not isinstance(required, list) or name not in required:
+        return
+
+    error = _skill_error(tool_output)
+    if error != f"Skill not found: {name}":
+        return
+
+    unresolvable = variables.get("unresolvable_required_skills") or []
+    if not isinstance(unresolvable, list):
+        unresolvable = []
+    if name not in unresolvable:
+        unresolvable.append(name)
+        logger.warning("Session %s: dropping unresolvable required skill %s", session_id, name)
+    variables["unresolvable_required_skills"] = unresolvable
+
+
+def _requested_skill_name(tool_input: dict[str, Any] | Any) -> str | None:
+    if not isinstance(tool_input, dict):
+        return None
+    arguments = tool_input.get("arguments", tool_input.get("args", tool_input))
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except (json.JSONDecodeError, TypeError):
+            return None
+    if not isinstance(arguments, dict):
+        return None
+    name = arguments.get("name")
+    return name if isinstance(name, str) and name else None
+
+
+def _skill_error(tool_output: dict[str, Any] | Any) -> str | None:
+    candidate = tool_output
+    for _ in range(3):
+        if not isinstance(candidate, dict):
+            return None
+        error = candidate.get("error")
+        if isinstance(error, str):
+            return error
+        candidate = candidate.get("result")
+    return None
+
+
 def _track_mcp_call(
     variables: dict[str, Any],
     server_name: str,
@@ -122,6 +187,12 @@ def _track_mcp_call(
     if inner_tool not in server_calls:
         server_calls.append(inner_tool)
 
+    if (
+        len(server_name) > _MAX_MCP_RESULT_NAME_LENGTH
+        or len(inner_tool) > _MAX_MCP_RESULT_NAME_LENGTH
+    ):
+        return True
+
     mcp_results_value = variables.get("mcp_results")
     if not isinstance(mcp_results_value, dict):
         mcp_results: dict[str, Any] = {}
@@ -135,7 +206,8 @@ def _track_mcp_call(
         mcp_results[server_name] = server_results
     else:
         server_results = server_results_value
-    server_results[inner_tool] = _json_safe(result)
+    server_results[inner_tool] = _summarize_mcp_result(result)
+    _trim_mcp_results(mcp_results)
 
     logger.debug(
         "Session %s: MCP call tracked %s/%s (result=%s)",
@@ -145,3 +217,50 @@ def _track_mcp_call(
         "present" if result is not None else "null",
     )
     return True
+
+
+def _summarize_mcp_result(result: Any) -> dict[str, Any] | None:
+    """Keep only bounded top-level scalar fields needed by condition helpers."""
+    if result is None:
+        return None
+    if not isinstance(result, dict):
+        return {}
+
+    summary: dict[str, Any] = {}
+    ordered_fields = (
+        *(field for field in _MCP_FAILURE_FIELDS if field in result),
+        *(key for key in result if key not in _MCP_FAILURE_FIELDS),
+    )
+    for field in ordered_fields:
+        if len(summary) >= _MAX_MCP_RESULT_FIELDS:
+            break
+        if not isinstance(field, str) or len(field) > _MAX_MCP_RESULT_NAME_LENGTH:
+            continue
+        value = result[field]
+        if value is None or isinstance(value, bool | int | float):
+            summary[field] = value
+        elif isinstance(value, str) and len(value) <= _MAX_MCP_RESULT_STRING_LENGTH:
+            summary[field] = value
+        elif field == "error" and value:
+            summary[field] = True
+    return summary
+
+
+def _trim_mcp_results(mcp_results: dict[str, Any]) -> None:
+    """Evict oldest tool summaries until the total result count is bounded."""
+    excess = sum(len(results) for results in mcp_results.values() if isinstance(results, dict))
+    excess -= _MAX_MCP_RESULT_ENTRIES
+    if excess <= 0:
+        return
+
+    for server_name in list(mcp_results):
+        server_results = mcp_results[server_name]
+        if not isinstance(server_results, dict):
+            continue
+        while server_results and excess > 0:
+            del server_results[next(iter(server_results))]
+            excess -= 1
+        if not server_results:
+            del mcp_results[server_name]
+        if excess <= 0:
+            return

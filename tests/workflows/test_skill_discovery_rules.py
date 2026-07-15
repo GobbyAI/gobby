@@ -176,14 +176,12 @@ class TestDiscoverSkillHubsOnTurnStart:
         assert [effect.type for effect in body.effects] == [
             "load_skill",
             "mcp_call",
-            "set_variable",
         ]
         assert body.effects[0].skill == "loading-skills"
         assert body.effects[1].server == "gobby-skills"
         assert body.effects[1].tool == "list_hubs"
         assert body.effects[1].inject_result is True
-        assert body.effects[2].variable == "skill_discovery_instructions_shown"
-        assert body.effects[2].value is True
+        assert body.effects[1].success_variable == "skill_discovery_instructions_shown"
 
     @pytest.mark.asyncio
     async def test_injects_guidance_and_sets_guard_after_success(self, db) -> None:

@@ -12,7 +12,10 @@ import yaml
 
 from gobby.cli.workflows import common
 from gobby.paths import get_global_workflows_dir
+from gobby.storage.hub.runtime import runtime_hub_database
 from gobby.utils.local_token import daemon_auth_headers
+from gobby.utils.project_context import get_project_context
+from gobby.workflows.imports import sync_imported_workflow_file
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +114,11 @@ def _run_sync(db: Any, workflow_type: str | None) -> dict[str, Any]:
     return results
 
 
-def _notify_daemon_reload() -> None:
+def _notify_daemon_reload(
+    *,
+    project_path: Path | None = None,
+    project_id: str | None = None,
+) -> None:
     """Tell the running daemon to reload workflow definitions."""
     try:
         import httpx
@@ -121,6 +128,14 @@ def _notify_daemon_reload() -> None:
         response = httpx.post(
             f"{get_daemon_url()}/api/admin/workflows/reload",
             headers=daemon_auth_headers(),
+            params={
+                key: value
+                for key, value in {
+                    "project_path": str(project_path) if project_path else None,
+                    "project_id": project_id,
+                }.items()
+                if value is not None
+            },
             timeout=2.0,
         )
         if response.status_code == 200:
@@ -184,12 +199,19 @@ def import_workflow(ctx: click.Context, source: str, name: str | None, is_global
 
     filename = f"{workflow_name}.yaml"
 
+    project_path: Path | None = None
+    project_id: str | None = None
     if is_global:
         dest_dir = get_global_workflows_dir()
     else:
         project_path = common.get_project_path()
         if not project_path:
             click.echo("Not in a gobby project. Use --global to install globally.", err=True)
+            raise SystemExit(1)
+        project_context = get_project_context(project_path)
+        project_id = str(project_context["id"]) if project_context else None
+        if project_id is None:
+            click.echo("Project configuration is missing its id.", err=True)
             raise SystemExit(1)
         dest_dir = project_path / ".gobby" / "workflows"
 
@@ -199,8 +221,24 @@ def import_workflow(ctx: click.Context, source: str, name: str | None, is_global
     if dest_path.exists():
         click.confirm(f"Workflow '{workflow_name}' already exists. Overwrite?", abort=True)
 
-    shutil.copy(source_path, dest_path)
+    previous_contents = dest_path.read_bytes() if dest_path.exists() else None
+    if workflow_name == data["name"]:
+        shutil.copy(source_path, dest_path)
+    else:
+        data["name"] = workflow_name
+        dest_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    try:
+        with runtime_hub_database(apply_migrations=False) as db:
+            sync_imported_workflow_file(db, dest_path, project_id)
+    except Exception as exc:
+        if previous_contents is None:
+            dest_path.unlink(missing_ok=True)
+        else:
+            dest_path.write_bytes(previous_contents)
+        raise click.ClickException(f"Failed to import workflow: {exc}") from None
+
     click.echo(f"✓ Imported workflow '{workflow_name}' to {dest_path}")
+    _notify_daemon_reload(project_path=project_path, project_id=project_id)
 
 
 @click.command("reload")

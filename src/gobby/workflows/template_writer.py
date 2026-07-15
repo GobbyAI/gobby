@@ -5,6 +5,8 @@ canonical YAML format expected by the sync functions.
 """
 
 import logging
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -143,7 +145,9 @@ def read_template(path: Path) -> dict[str, Any]:
     Returns:
         Parsed YAML data
     """
-    result: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8"))
+    result = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(result, dict):
+        raise ValueError(f"Invalid template {path}: expected YAML object")
     return result
 
 
@@ -151,9 +155,17 @@ def _write_yaml(name: str, data: dict[str, Any], output_dir: Path) -> Path:
     """Write data to a YAML file, creating directories as needed."""
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / f"{name}.yaml"
-    path.write_text(
-        yaml.dump(data, default_flow_style=False, sort_keys=False),
-        encoding="utf-8",
+    handle, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=output_dir, text=True
     )
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as file:
+            yaml.dump(data, file, default_flow_style=False, sort_keys=False)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temp_path, path)
+    finally:
+        temp_path.unlink(missing_ok=True)
     logger.info("Wrote template file", extra={"path": str(path)})
     return path

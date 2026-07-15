@@ -192,9 +192,13 @@ class TestDetectPlanModeFromContext:
         """After clear/compact, mode_level=0 persists but no CLI injects markers."""
         variables["mode_level"] = 0
         variables["chat_mode"] = "bypass"
+        variables["plan_mode"] = True
+        variables["plan_skill_loaded"] = True
         prompt = "Please fix the bug in the code."
         detect_plan_mode_from_context(prompt, variables, SESSION_ID)
         assert variables.get("mode_level") == 2  # reset to YOLO
+        assert variables.get("plan_mode") is False
+        assert variables.get("plan_skill_loaded") is False
 
     def test_no_heal_when_chat_mode_is_plan(self, variables) -> None:
         """Don't reset mode_level if chat_mode is genuinely plan (edge case)."""
@@ -913,9 +917,11 @@ class TestDetectMcpCall:
 
         mcp_results = variables.get("mcp_results", {})
         assert "demo-server" in mcp_results
-        assert mcp_results["demo-server"]["demo-tool"] == "success"
+        assert mcp_results["demo-server"]["demo-tool"] == {}
 
-    def test_tracks_json_safe_result(self, variables, make_after_tool_event) -> None:
+    def test_tracks_only_bounded_scalar_result_fields(
+        self, variables, make_after_tool_event
+    ) -> None:
         @dataclass
         class DemoResult:
             id: str
@@ -924,15 +930,40 @@ class TestDetectMcpCall:
         event = make_after_tool_event(
             "mcp__gobby__call_tool",
             tool_input={"server_name": "demo-server", "tool_name": "demo-tool"},
-            tool_output={"result": {"items": [DemoResult(id="a", count=1)]}},
+            tool_output={
+                "result": {
+                    "timed_out": True,
+                    "status": "ready",
+                    "items": [DemoResult(id="a", count=1)],
+                    "detail": "x" * 257,
+                    **{f"field-{index}": index for index in range(20)},
+                }
+            },
         )
 
         detect_mcp_call(event, variables, SESSION_ID)
 
-        assert variables["mcp_results"]["demo-server"]["demo-tool"] == {
-            "items": [{"id": "a", "count": 1}]
-        }
+        stored = variables["mcp_results"]["demo-server"]["demo-tool"]
+        assert stored["timed_out"] is True
+        assert stored["status"] == "ready"
+        assert "items" not in stored
+        assert "detail" not in stored
+        assert len(stored) == 16
         json.dumps(variables)
+
+    def test_keeps_only_latest_64_mcp_results(self, variables, make_after_tool_event) -> None:
+        for index in range(65):
+            event = make_after_tool_event(
+                "mcp__gobby__call_tool",
+                tool_input={"server_name": "demo-server", "tool_name": f"tool-{index}"},
+                tool_output={"result": {"status": "ready"}},
+            )
+            detect_mcp_call(event, variables, SESSION_ID)
+
+        stored = variables["mcp_results"]["demo-server"]
+        assert len(stored) == 64
+        assert "tool-0" not in stored
+        assert stored["tool-64"] == {"status": "ready"}
 
     def test_tracks_multiple_tools(self, variables, make_after_tool_event) -> None:
         event1 = make_after_tool_event(
@@ -975,7 +1006,7 @@ class TestDetectMcpCall:
 
         detect_mcp_call(event, variables, SESSION_ID)
 
-        assert variables["mcp_results"] == {"demo-server": {"demo-tool": "success"}}
+        assert variables["mcp_results"] == {"demo-server": {"demo-tool": {}}}
 
     def test_heals_null_mcp_server_buckets(self, variables, make_after_tool_event) -> None:
         variables["mcp_calls"] = {"demo-server": None}
@@ -989,7 +1020,7 @@ class TestDetectMcpCall:
         detect_mcp_call(event, variables, SESSION_ID)
 
         assert variables["mcp_calls"] == {"demo-server": ["demo-tool"]}
-        assert variables["mcp_results"] == {"demo-server": {"demo-tool": "success"}}
+        assert variables["mcp_results"] == {"demo-server": {"demo-tool": {}}}
 
     def test_ignores_error_responses(self, variables, make_after_tool_event) -> None:
         event = make_after_tool_event(
@@ -1039,7 +1070,6 @@ class TestDetectMcpCall:
 
         assert variables["mcp_results"]["gobby-skills"]["get_skill"] == {
             "success": True,
-            "skill": {"name": "brevity"},
         }
         assert variables["loaded_skills"] == ["brevity"]
 
@@ -1067,6 +1097,26 @@ class TestDetectMcpCall:
         detect_mcp_call(event, variables, SESSION_ID)
 
         assert "loaded_skills" not in variables
+
+    def test_missing_required_skill_is_recorded_as_unresolvable(
+        self, variables, make_after_tool_event, caplog
+    ) -> None:
+        variables["claimed_task_required_skills"] = ["typo-skill"]
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-skills",
+                "tool_name": "get_skill",
+                "arguments": {"name": "typo-skill"},
+            },
+            tool_output={"result": {"success": False, "error": "Skill not found: typo-skill"}},
+        )
+
+        with caplog.at_level(logging.WARNING, logger="gobby.workflows.observers"):
+            detect_mcp_call(event, variables, SESSION_ID)
+
+        assert variables["unresolvable_required_skills"] == ["typo-skill"]
+        assert "dropping unresolvable required skill typo-skill" in caplog.text
 
     def test_ignores_missing_server_or_tool(self, variables, make_after_tool_event) -> None:
         event = make_after_tool_event(
@@ -1327,8 +1377,75 @@ class TestDetectBashCommit:
 
     def test_dict_output_with_stdout_key(self, variables) -> None:
         """Some adapters use 'stdout' key."""
-        event = _make_bash_event_dict({"stdout": "[feat/x 1a2b3c4] Add feature\n 2 files changed"})
+        event = _make_bash_event_dict(
+            {
+                "stdout": "[feat/x 1a2b3c4] Add feature\n 2 files changed",
+                "success": True,
+            }
+        )
         detect_bash_commit(event, variables, SESSION_ID)
+        assert variables["task_has_commits"] is True
+
+    @pytest.mark.parametrize(
+        "failure_signal",
+        [
+            {"exitCode": 1},
+            {"exit_code": 1},
+            {"returncode": 1},
+            {"success": False},
+            {"status": "failed"},
+        ],
+    )
+    def test_structured_failure_with_commit_output_is_ignored(
+        self, variables, failure_signal: dict[str, object]
+    ) -> None:
+        event = _make_bash_event_dict(
+            {
+                "output": "[main abc1234] Fix bug\n 1 file changed",
+                **failure_signal,
+            }
+        )
+
+        detect_bash_commit(event, variables, SESSION_ID)
+
+        assert "task_has_commits" not in variables
+
+    def test_unrelated_command_with_commit_output_is_ignored(self, variables) -> None:
+        event = _make_bash_event(
+            "[main abc1234] Fix bug\n 1 file changed",
+            command="cat commit-output.txt",
+        )
+
+        detect_bash_commit(event, variables, SESSION_ID)
+
+        assert "task_has_commits" not in variables
+
+    def test_metadata_failure_with_commit_output_is_ignored(self, variables) -> None:
+        event = _make_bash_event("[main abc1234] Fix bug\n 1 file changed", is_error=None)
+        event.metadata["is_failure"] = True
+
+        detect_bash_commit(event, variables, SESSION_ID)
+
+        assert "task_has_commits" not in variables
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git add file.py && git commit -m 'Fix'",
+            "git -C /repo commit -m 'Fix'",
+            "/usr/bin/git commit -m 'Fix'",
+        ],
+    )
+    def test_supported_commit_commands_with_successful_dict_output(
+        self, variables, command: str
+    ) -> None:
+        event = _make_bash_event_dict(
+            {"output": "[main abc1234] Fix bug\n 1 file changed", "exitCode": 0},
+            command=command,
+        )
+
+        detect_bash_commit(event, variables, SESSION_ID)
+
         assert variables["task_has_commits"] is True
 
     def test_dict_output_without_commit_pattern(self, variables) -> None:
@@ -1427,6 +1544,13 @@ class TestDetectBashCommit:
 
 class TestDetectVerificationEvidence:
     """Verify validation commands record completion-readiness evidence."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_codex_machine_id(self, monkeypatch) -> None:
+        monkeypatch.setattr(
+            "gobby.adapters.codex_impl.app_server_adapter._get_daemon_machine_id",
+            lambda: "test-machine-id",
+        )
 
     @pytest.mark.parametrize(
         "command,normalized_argv,wrapper_chain",

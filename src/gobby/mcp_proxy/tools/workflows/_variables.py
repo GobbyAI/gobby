@@ -24,6 +24,7 @@ from gobby.storage.workflow_definitions import (
     WorkflowDefinitionRow,
 )
 from gobby.workflows.definitions import VariableDefinitionBody
+from gobby.workflows.reserved_variables import is_reserved_workflow_variable
 from gobby.workflows.state_manager import (
     SessionVariableManager,
     WorkflowInstanceManager,
@@ -114,6 +115,12 @@ def set_variable(
                 f"{name} is managed by verification observers. Run a validation command "
                 "or use gobby-sessions:record_verification_evidence for non-command evidence."
             ),
+        }
+
+    if is_reserved_workflow_variable(name):
+        return {
+            "success": False,
+            "error": f"{name} is managed by the workflow runtime and cannot be set directly.",
         }
 
     # Resolve session_task references (#N or N) to UUIDs upfront

@@ -4,6 +4,7 @@ Handles applying rule effects: set_variable, inject_context, observe,
 mcp_call, rewrite_input, load_skill, and block matching.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -15,6 +16,7 @@ from gobby.hooks.events import HookEvent
 from gobby.hooks.normalization import is_shell_tool
 from gobby.memory.recall_constants import MEMORY_RECALL_PRODUCER
 from gobby.storage.workflow_definitions import WorkflowDefinitionRow
+from gobby.workflows.reserved_variables import is_internal_rule, is_reserved_workflow_variable
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
 logger = logging.getLogger(__name__)
@@ -95,15 +97,21 @@ class EffectsMixin:
         allowed_funcs: dict[str, Callable[..., Any]],
         context_parts: list[str],
         mcp_calls: list[dict[str, Any]],
-    ) -> bool:
+    ) -> str | None:
         """Apply a single non-block effect.
 
         Returns:
-            True to continue processing sibling effects, False to abort
-            remaining effects for this rule (e.g. inline mcp_call failed).
+            A block reason when an inline mcp_call matches its configured
+            blocking outcome, otherwise None.
         """
         if effect.type == "set_variable":
-            self._apply_set_variable(effect, variables, ctx)
+            await asyncio.to_thread(
+                self._apply_set_variable,
+                effect,
+                variables,
+                ctx,
+                allow_reserved=is_internal_rule(row),
+            )
 
         elif effect.type == "inject_context":
             # NOTE: inject_context templates render with rule evaluation context:
@@ -112,7 +120,12 @@ class EffectsMixin:
             # variables by the SESSION_START handler before rules evaluate, making
             # them available as {{ session_summary }}, {{ task_context }} in templates.
             if effect.template:
-                template_text = self._render_template(effect.template, ctx, allowed_funcs)
+                template_text = await asyncio.to_thread(
+                    self._render_template,
+                    effect.template,
+                    ctx,
+                    allowed_funcs,
+                )
                 # Injected-context fencing lives in the handoff/compact templates
                 # themselves (session_start only), not here, so per-turn injections
                 # (brevity, memory, task context) stay un-tagged. See
@@ -122,7 +135,7 @@ class EffectsMixin:
         elif effect.type == "observe":
             obs_list = variables.get("_observations", [])
             msg = effect.message or ""
-            msg = self._render_template(msg, ctx, allowed_funcs)
+            msg = await asyncio.to_thread(self._render_template, msg, ctx, allowed_funcs)
             obs_list.append(
                 {
                     "category": effect.category or "general",
@@ -135,10 +148,12 @@ class EffectsMixin:
 
         elif effect.type == "mcp_call":
             raw_args = effect.arguments or {}
-            rendered_args = {
-                k: self._render_template(v, ctx, allowed_funcs) if isinstance(v, str) else v
-                for k, v in raw_args.items()
-            }
+            rendered_args = await asyncio.to_thread(
+                lambda: {
+                    k: self._render_template(v, ctx, allowed_funcs) if isinstance(v, str) else v
+                    for k, v in raw_args.items()
+                }
+            )
 
             # Inline dispatch for inject_result calls — ensures atomicity with
             # sibling effects (e.g. set_variable that tracks injection state).
@@ -150,6 +165,11 @@ class EffectsMixin:
                         effect.server, effect.tool, rendered_args, event
                     )
                     success = isinstance(dr, dict) and dr.get("success", False)
+                    if success and effect.success_variable:
+                        if is_internal_rule(row) or not is_reserved_workflow_variable(
+                            effect.success_variable
+                        ):
+                            variables[effect.success_variable] = True
                     if success and dr.get("result"):
                         raw_result = dr["result"]
                         formatted: str | None = None
@@ -166,7 +186,8 @@ class EffectsMixin:
                         ) == ("gobby-agents", "deliver_pending_messages") and isinstance(
                             raw_result, dict
                         ):
-                            formatted = self._format_delivery_result(
+                            formatted = await asyncio.to_thread(
+                                self._format_delivery_result,
                                 raw_result,
                                 platform_session_id,
                                 variables,
@@ -175,7 +196,8 @@ class EffectsMixin:
                             effect.server,
                             effect.tool,
                         ) == ("gobby-memory", "search_memories") and isinstance(raw_result, dict):
-                            formatted = self._format_search_memories_result(
+                            formatted = await asyncio.to_thread(
+                                self._format_search_memories_result,
                                 raw_result,
                                 platform_session_id,
                                 variables,
@@ -184,7 +206,8 @@ class EffectsMixin:
                             "gobby-review-learning",
                             "recall_review_lessons_for_files",
                         ) and isinstance(raw_result, dict):
-                            formatted = self._format_review_lessons_result(
+                            formatted = await asyncio.to_thread(
+                                self._format_review_lessons_result,
                                 raw_result,
                                 platform_session_id,
                                 variables,
@@ -202,21 +225,34 @@ class EffectsMixin:
                             )
                         if formatted:
                             context_parts.append(formatted)
-                    elif not success:
-                        error = dr.get("result", {}).get("error", "unknown") if dr else "no result"
+                    if effect.block_on_success and success:
+                        return f"Intercepted by {effect.server}/{effect.tool} — see context below."
+                    if not success:
+                        call_result = dr.get("result") if isinstance(dr, dict) else None
+                        error = (
+                            call_result.get("error", "unknown")
+                            if isinstance(call_result, dict)
+                            else str(call_result or "no result")
+                        )
                         logger.warning(
                             f"Inline mcp_call {effect.server}/{effect.tool} failed "
-                            f"(rule {row.name}): {error} — aborting remaining effects",
+                            f"(rule {row.name}): {error}",
                         )
-                        return False
-                except Exception:
+                        if effect.block_on_failure:
+                            return (
+                                f"Auto-heal prerequisite failed: "
+                                f"{effect.server}/{effect.tool}: {error}"
+                            )
+                except Exception as exc:
                     logger.warning(
-                        f"Inline mcp_call {effect.server}/{effect.tool} raised "
-                        f"(rule {row.name}) — aborting remaining effects",
+                        f"Inline mcp_call {effect.server}/{effect.tool} raised (rule {row.name})",
                         exc_info=True,
                     )
-                    return False
-                return True
+                    if effect.block_on_failure:
+                        return (
+                            f"Auto-heal prerequisite failed: {effect.server}/{effect.tool}: {exc}"
+                        )
+                return None
 
             # Deferred dispatch (background, non-inject, or no dispatcher)
             mcp_calls.append(
@@ -233,7 +269,8 @@ class EffectsMixin:
 
         elif effect.type == "rewrite_input":
             if effect.input_updates:
-                rendered_updates = self._render_nested_value(
+                rendered_updates = await asyncio.to_thread(
+                    self._render_nested_value,
                     effect.input_updates,
                     ctx,
                     allowed_funcs,
@@ -269,7 +306,8 @@ class EffectsMixin:
             if effect.permission_decision:
                 permission_meta["permission_decision"] = effect.permission_decision
             if effect.input_updates is not None:
-                permission_meta["input_updates"] = self._render_nested_value(
+                permission_meta["input_updates"] = await asyncio.to_thread(
+                    self._render_nested_value,
                     effect.input_updates,
                     ctx,
                     allowed_funcs,
@@ -303,7 +341,8 @@ class EffectsMixin:
                 ):
                     variables["_worktree_path"] = effect.worktree_path
                 else:
-                    variables["_worktree_path"] = self._render_nested_value(
+                    variables["_worktree_path"] = await asyncio.to_thread(
+                        self._render_nested_value,
                         effect.worktree_path,
                         ctx,
                         allowed_funcs,
@@ -314,13 +353,15 @@ class EffectsMixin:
             if effect.elicitation_action:
                 elicitation_meta["action"] = effect.elicitation_action
             if effect.elicitation_content is not None:
-                elicitation_meta["content"] = self._render_nested_value(
+                elicitation_meta["content"] = await asyncio.to_thread(
+                    self._render_nested_value,
                     effect.elicitation_content,
                     ctx,
                     allowed_funcs,
                 )
             if effect.elicitation_error is not None:
-                elicitation_meta["error"] = self._render_nested_value(
+                elicitation_meta["error"] = await asyncio.to_thread(
+                    self._render_nested_value,
                     effect.elicitation_error,
                     ctx,
                     allowed_funcs,
@@ -332,7 +373,7 @@ class EffectsMixin:
 
                 context_parts.append(skill_fetch_directive(effect.skill))
 
-        return True
+        return None
 
     def _format_delivery_result(
         self,
@@ -890,11 +931,15 @@ class EffectsMixin:
         effect: Any,
         variables: dict[str, Any],
         eval_context: dict[str, Any],
+        *,
+        allow_reserved: bool = False,
     ) -> None:
         """Apply a set_variable effect, handling expressions."""
         if effect.variable is None:
             return
-
+        if is_reserved_workflow_variable(effect.variable) and not allow_reserved:
+            logger.warning("Rule effect cannot write runtime-managed variable %r", effect.variable)
+            return
         value = effect.value
 
         # Render Jinja2 templates first, before expression evaluation

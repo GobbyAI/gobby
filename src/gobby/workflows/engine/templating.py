@@ -10,6 +10,7 @@ from collections.abc import Callable
 from typing import Any
 
 import psycopg
+from jinja2.exceptions import SecurityError
 
 from gobby.hooks.events import HookEvent
 from gobby.skills.formatting import skill_fetch_batch_directive, skill_fetch_directive
@@ -37,6 +38,57 @@ class TemplatingMixin:
     """Mixin providing templating and condition evaluation methods for RuleEngine."""
 
     db: HubDatabase
+
+    def _resolve_project_info(
+        self,
+        event: HookEvent,
+        project_from_vars: Any = None,
+    ) -> dict[str, Any]:
+        """Resolve project context once before evaluating an event's rules."""
+        if isinstance(project_from_vars, dict) and project_from_vars.get("path"):
+            return dict(project_from_vars)
+
+        project_info = (
+            dict(project_from_vars)
+            if isinstance(project_from_vars, dict)
+            else {"name": "Unknown", "id": "unknown", "path": ""}
+        )
+        project_info.setdefault("name", "Unknown")
+        project_info.setdefault("id", "unknown")
+        project_info.setdefault("path", "")
+
+        try:
+            from gobby.storage.projects import LocalProjectManager
+            from gobby.storage.sessions import SessionManager
+
+            project_manager = LocalProjectManager(self.db)
+            project_id = event.project_id
+            session_id = event.metadata.get("_platform_session_id")
+            if isinstance(session_id, str) and session_id:
+                session_db = SessionManager(self.db).get(session_id)
+                if session_db and session_db.project_id:
+                    project_id = session_db.project_id
+
+            if project_id:
+                proj = project_manager.get(project_id)
+                if proj:
+                    project_info.update(
+                        {
+                            "name": proj.name,
+                            "id": proj.id,
+                            "path": proj.repo_path or project_info.get("path", ""),
+                        }
+                    )
+        except (OSError, psycopg.Error) as e:
+            logger.warning("Storage failure resolving project info for template context: %s", e)
+        except (AttributeError, KeyError, TypeError, ValueError) as e:
+            logger.debug("Failed to resolve project info for template context: %s", e)
+
+        if not project_info.get("path"):
+            cwd = event.cwd or event.data.get("cwd")
+            if cwd:
+                project_info["path"] = cwd
+        return project_info
 
     def _build_eval_context(
         self,
@@ -68,7 +120,7 @@ class TemplatingMixin:
                 raw_tool_input = dict(inner_args)
             # Re-inject MCP routing fields so rule conditions can still access them
             for field in ("server_name", "tool_name"):
-                if field in original_tool_input and field not in raw_tool_input:
+                if field in original_tool_input:
                     raw_tool_input[field] = original_tool_input[field]
 
         ctx: dict[str, Any] = {
@@ -82,47 +134,7 @@ class TemplatingMixin:
         if isinstance(project_from_vars, dict) and project_from_vars.get("path"):
             ctx["project"] = project_from_vars
         else:
-            project_info = (
-                dict(project_from_vars)
-                if isinstance(project_from_vars, dict)
-                else {"name": "Unknown", "id": "unknown", "path": ""}
-            )
-            project_info.setdefault("name", "Unknown")
-            project_info.setdefault("id", "unknown")
-            project_info.setdefault("path", "")
-
-            try:
-                from gobby.storage.projects import LocalProjectManager
-                from gobby.storage.sessions import SessionManager
-
-                project_manager = LocalProjectManager(self.db)
-                project_id = event.project_id
-                session_id = event.metadata.get("_platform_session_id")
-                if isinstance(session_id, str) and session_id:
-                    session_db = SessionManager(self.db).get(session_id)
-                    if session_db and session_db.project_id:
-                        project_id = session_db.project_id
-
-                if project_id:
-                    proj = project_manager.get(project_id)
-                    if proj:
-                        project_info.update(
-                            {
-                                "name": proj.name,
-                                "id": proj.id,
-                                "path": proj.repo_path or project_info.get("path", ""),
-                            }
-                        )
-            except (OSError, psycopg.Error) as e:
-                logger.warning("Storage failure resolving project info for template context: %s", e)
-            except (AttributeError, KeyError, TypeError, ValueError) as e:
-                logger.debug("Failed to resolve project info for template context: %s", e)
-
-            if not project_info.get("path"):
-                cwd = event.cwd or event.data.get("cwd")
-                if cwd:
-                    project_info["path"] = cwd
-            ctx["project"] = project_info
+            ctx["project"] = self._resolve_project_info(event, project_from_vars)
 
         # Flatten variables at top level for convenience
         for key, val in variables.items():
@@ -172,8 +184,10 @@ class TemplatingMixin:
             return template
         try:
             render_ctx = {**ctx, **allowed_funcs}
-            engine = TemplateEngine()
+            engine = TemplateEngine(strict_undefined=False)
             return engine.render(template, render_ctx)
+        except SecurityError:
+            raise
         except Exception as e:
             logger.warning(f"Failed to render template: {e}")
             return template
@@ -221,6 +235,8 @@ class TemplatingMixin:
         context: dict[str, Any],
         effect_type: str = "block",
         allowed_funcs: dict[str, Callable[..., Any]] | None = None,
+        *,
+        fail_closed: bool | None = None,
     ) -> bool:
         """Evaluate a `when` condition string using SafeExpressionEvaluator.
 
@@ -238,7 +254,8 @@ class TemplatingMixin:
             )
             return evaluator.evaluate(condition)
         except Exception as e:
-            fail_closed = effect_type == "block"
+            if fail_closed is None:
+                fail_closed = effect_type == "block"
             logger.error(
                 f"Failed to evaluate condition '{condition}': {e} "
                 f"(defaulting to {'True' if fail_closed else 'False'} for {effect_type} effect)"

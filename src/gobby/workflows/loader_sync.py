@@ -87,15 +87,10 @@ class WorkflowLoaderSyncMixin:
             # No event loop running - safe to use asyncio.run()
             return asyncio.run(coro)
 
-        if threading.current_thread() is threading.main_thread():
-            # Same-thread with running loop - offload to a new thread
-            # to avoid deadlocking the current loop.
-            pool = WorkflowLoaderSyncMixin._get_sync_executor()
-            return pool.submit(asyncio.run, coro).result()
-
-        # Worker thread with loop running elsewhere - schedule on existing loop
-        future = asyncio.run_coroutine_threadsafe(coro, loop)
-        return future.result()
+        # A synchronous caller cannot drive its own running loop. Run the
+        # coroutine on the dedicated executor thread instead.
+        pool = WorkflowLoaderSyncMixin._get_sync_executor()
+        return pool.submit(asyncio.run, coro).result()
 
     @property
     def _async_self(self) -> _WorkflowLoaderProtocol:

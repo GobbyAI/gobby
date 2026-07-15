@@ -27,13 +27,15 @@ def _match_rule(
     if dim == "*":
         return True
     if dim == "name":
-        return fnmatch.fnmatch(rule.name, val)
+        return fnmatch.fnmatchcase(rule.name, val)
     if dim == "source":
-        return fnmatch.fnmatch(rule.source, val)
+        return fnmatch.fnmatchcase(rule.source, val)
     if dim == "tag":
-        return any(fnmatch.fnmatch(t, val) for t in (rule.tags or []))
+        return any(fnmatch.fnmatchcase(t, val) for t in (rule.tags or []))
     if dim == "group":
-        return fnmatch.fnmatch(definition_json.get("group", ""), val)
+        return fnmatch.fnmatchcase(definition_json.get("group", ""), val)
+    if dim == "category":
+        return fnmatch.fnmatchcase(definition_json.get("category", ""), val)
     return False
 
 
@@ -139,23 +141,23 @@ def _match_skill(dim: str, val: str, skill: Skill) -> bool:
     if dim == "*":
         return True
     if dim == "name":
-        return fnmatch.fnmatch(skill.name, val)
+        return fnmatch.fnmatchcase(skill.name, val)
     if dim == "source":
         source_type = str(skill.source_type) if skill.source_type else ""
-        return fnmatch.fnmatch(source_type, val)
+        return fnmatch.fnmatchcase(source_type, val)
     if dim == "category":
         cat = ""
         if skill.metadata and isinstance(skill.metadata, dict):
             cat = skill.metadata.get("skillport", {}).get("category", "") or skill.metadata.get(
                 "gobby", {}
             ).get("category", "")
-        return fnmatch.fnmatch(cat, val)
+        return fnmatch.fnmatchcase(cat, val)
     if dim == "tag":
         tags: list[str] = []
         if skill.metadata and isinstance(skill.metadata, dict):
             tags.extend(skill.metadata.get("gobby", {}).get("tags", []))
             tags.extend(skill.metadata.get("skillport", {}).get("tags", []))
-        return any(fnmatch.fnmatch(t, val) for t in tags)
+        return any(fnmatch.fnmatchcase(t, val) for t in tags)
     return False
 
 

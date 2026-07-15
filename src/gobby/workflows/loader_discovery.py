@@ -9,7 +9,6 @@ import json
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
-from uuid import UUID
 
 from .definitions import PipelineDefinition, WorkflowDefinition
 from .loader_cache import DiscoveredWorkflow, _CachedDiscovery
@@ -18,23 +17,6 @@ if TYPE_CHECKING:
     from .loader import WorkflowLoader
 
 logger = logging.getLogger(__name__)
-
-
-def _db_project_scope(project_path: Path | str | None) -> str | None:
-    """Map a caller-supplied scope to a DB project id.
-
-    ``workflow_definitions.project_id`` is a uuid column; callers commonly pass
-    a project *directory* here, which means "no project scope" for DB lookups.
-    """
-    if not project_path:
-        return None
-    candidate = str(project_path)
-    try:
-        UUID(candidate)
-    except ValueError:
-        logger.debug(f"Ignoring non-uuid project scope for discovery: {candidate}")
-        return None
-    return candidate
 
 
 def _merge_db_workflows(
@@ -62,6 +44,9 @@ def _merge_db_workflows(
 
             priority = row.priority
             is_project = row.project_id is not None
+            existing = discovered.get(row.name)
+            if existing is not None and existing.is_project and not is_project:
+                continue
             discovered[row.name] = DiscoveredWorkflow(
                 name=row.name,
                 definition=definition,
@@ -104,6 +89,9 @@ def _merge_db_pipelines(
 
             priority = row.priority
             is_project = row.project_id is not None
+            existing = discovered.get(row.name)
+            if existing is not None and existing.is_project and not is_project:
+                continue
             discovered[row.name] = DiscoveredWorkflow(
                 name=row.name,
                 definition=definition,
@@ -127,7 +115,8 @@ async def discover_workflows(
 
     Project workflows shadow global workflows with the same name.
     """
-    cache_key = f"unified:{project_path}" if project_path else "unified:global"
+    project_id = loader._db_project_scope(project_path, label="workflow discovery")
+    cache_key = f"unified:{project_id}" if project_id else "unified:global"
 
     # Check cache
     if cache_key in loader._discovery_cache:
@@ -137,7 +126,7 @@ async def discover_workflows(
     discovered: dict[str, DiscoveredWorkflow] = {}
 
     # DB-only: load all workflow definitions
-    _merge_db_workflows(loader, discovered, project_id=_db_project_scope(project_path))
+    _merge_db_workflows(loader, discovered, project_id=project_id)
 
     # Sort: project first, then by priority (asc), then by name (alpha)
     sorted_workflows = sorted(
@@ -166,7 +155,8 @@ async def discover_pipeline_workflows(
 
     Project pipelines shadow global pipelines with the same name.
     """
-    cache_key = f"pipelines:{project_path}" if project_path else "pipelines:global"
+    project_id = loader._db_project_scope(project_path, label="pipeline discovery")
+    cache_key = f"pipelines:{project_id}" if project_id else "pipelines:global"
 
     # Check cache
     if cache_key in loader._discovery_cache:
@@ -176,7 +166,7 @@ async def discover_pipeline_workflows(
     discovered: dict[str, DiscoveredWorkflow] = {}
 
     # DB-only: load all pipeline definitions
-    _merge_db_pipelines(loader, discovered, project_id=_db_project_scope(project_path))
+    _merge_db_pipelines(loader, discovered, project_id=project_id)
 
     # Sort: project first, then by priority (asc), then by name (alpha)
     sorted_pipelines = sorted(

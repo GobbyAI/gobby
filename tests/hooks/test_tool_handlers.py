@@ -319,6 +319,58 @@ class TestToolHandlerEdgeCases:
         assert mock_dependencies["session_storage"].mark_had_edits.call_count == 1
         assert mock_dependencies["session_storage"].mark_had_edits.call_args is not None
 
+    @pytest.mark.parametrize(
+        ("data", "metadata"),
+        [
+            (
+                {
+                    "tool_name": "Bash",
+                    "tool_input": {"command": "printf changed > src/regular.py"},
+                    "canonical_tool_kind": "write",
+                    "canonical_repo_mutation": True,
+                    "canonical_file_paths": ["src/regular.py"],
+                },
+                {"_platform_session_id": "sess-123", "is_failure": True},
+            ),
+            (
+                {
+                    "tool_name": "Bash",
+                    "tool_input": {"command": "sed -n 1p src/regular.py"},
+                    "canonical_tool_kind": "read",
+                    "canonical_file_paths": ["src/regular.py"],
+                },
+                {"_platform_session_id": "sess-123"},
+            ),
+            (
+                {
+                    "tool_name": "Bash",
+                    "tool_input": {"command": "printf changed > ../outside.py"},
+                    "canonical_tool_kind": "write",
+                    "canonical_repo_mutation": True,
+                    "canonical_file_paths": ["../outside.py"],
+                },
+                {"_platform_session_id": "sess-123"},
+            ),
+        ],
+        ids=["failed", "read-only", "out-of-repo"],
+    )
+    def test_after_tool_shell_non_edits_skip_tracking(
+        self,
+        mock_dependencies: dict,
+        data: dict[str, Any],
+        metadata: dict[str, Any],
+    ) -> None:
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(HookEventType.AFTER_TOOL, data=data, metadata=metadata)
+        event.cwd = "/tmp/project"
+
+        with patch.object(handlers, "_track_session_edited_file") as track:
+            response = handlers.handle_after_tool(event)
+
+        assert response.decision == "allow"
+        track.assert_not_called()
+        mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
+
     def test_after_tool_gitignored_edit_skips_tracking(
         self, mock_dependencies: dict, tmp_path: Path
     ) -> None:

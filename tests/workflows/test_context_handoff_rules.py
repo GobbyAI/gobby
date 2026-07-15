@@ -22,6 +22,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.observer_context_usage import detect_context_compact_guidance
 from gobby.workflows.sync_rules import sync_bundled_rules
 
@@ -400,6 +401,31 @@ class TestNudgeCompactOnContextPressure:
         assert body.when == "variables.get('context_compact_guidance_message')"
         assert body.effects[0].type == "inject_context"
         assert "context_compact_guidance_message" in (body.effects[0].template or "")
+
+    async def test_turn_start_observer_sets_guidance_and_rule_injects_context(self, db) -> None:
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        _sync_bundled(db)
+        handler = WorkflowHookHandler(
+            rule_engine=RuleEngine(db),
+            session_manager=_SessionManagerWithContextRatio(0.65),
+        )
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id=SESSION_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"prompt": "continue"},
+            cwd=".",
+        )
+
+        response = await handler._evaluate_rules(event)
+
+        variables = SessionVariableManager(db).get_variables(SESSION_ID)
+        guidance = variables["context_compact_guidance_message"]
+        assert "Context pressure is 65%" in guidance
+        assert response.context is not None
+        assert guidance in response.context
 
     def test_soft_nudge_at_sixty_five_percent(self) -> None:
         variables = {"parent_turn_seq": 4, "chat_mode": "normal"}

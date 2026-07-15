@@ -12,6 +12,7 @@ from gobby.workflows.safe_evaluator import (
     ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS,
     ASSISTANT_RESPONSE_SCAN_LIMIT,
     MAX_PAYLOAD_DEPTH,
+    LazyBool,
     SafeExpressionEvaluator,
     build_condition_helpers,
 )
@@ -61,6 +62,43 @@ def _build_evaluator(
     return SafeExpressionEvaluator(context, helpers)
 
 
+class TestLazyBool:
+    @pytest.mark.parametrize(("value", "literal"), [(True, "true"), (False, "false")])
+    def test_equality_and_inequality_evaluate_once(self, value: bool, literal: str) -> None:
+        calls = 0
+
+        def thunk() -> bool:
+            nonlocal calls
+            calls += 1
+            return value
+
+        evaluator = SafeExpressionEvaluator({"value": LazyBool(thunk)}, {})
+
+        assert evaluator.evaluate(f"value == {literal}") is True
+        assert evaluator.evaluate(f"value != {literal}") is False
+        assert calls == 1
+
+    def test_lazy_values_compare_by_boolean_value(self) -> None:
+        assert LazyBool(lambda: True) == LazyBool(lambda: True)
+        assert LazyBool(lambda: False) != LazyBool(lambda: True)
+
+    def test_hash_and_containment_use_cached_boolean_value(self) -> None:
+        calls = 0
+
+        def thunk() -> bool:
+            nonlocal calls
+            calls += 1
+            return True
+
+        value = LazyBool(thunk)
+        evaluator = SafeExpressionEvaluator({"value": value}, {})
+
+        assert evaluator.evaluate("value in [true, false]") is True
+        assert hash(value) == hash(True)
+        assert value in {True}
+        assert calls == 1
+
+
 # --- task_tree_complete tests ---
 
 
@@ -107,11 +145,10 @@ class TestTaskTreeComplete:
         ev = _build_evaluator(ctx, task_manager=mock_task_manager)
         assert ev.evaluate("task_tree_complete('task-123')") is False
 
-    def test_no_task_manager_returns_true(self) -> None:
+    def test_no_task_manager_returns_false(self) -> None:
         ctx: dict[str, Any] = {"variables": {}}
         ev = _build_evaluator(ctx, task_manager=None)
-        # Without task_manager, should return True (no-op, matches ConditionEvaluator behavior)
-        assert ev.evaluate("task_tree_complete('task-123')") is True
+        assert ev.evaluate("task_tree_complete('task-123')") is False
 
 
 class TestTaskTypeIn:
@@ -583,6 +620,34 @@ class TestLowercaseConstants:
         assert ev.evaluate_value("None") is None
 
 
+class TestBinaryOperations:
+    def test_rejects_multiplication_before_evaluating_operands(self) -> None:
+        ev = SafeExpressionEvaluator({}, {})
+
+        with pytest.raises(ValueError, match="Unsupported binary operator: Mult"):
+            ev.evaluate("'a' * 999999999")
+
+
+class TestUnpacking:
+    def test_rejects_keyword_unpacking(self) -> None:
+        ev = SafeExpressionEvaluator({"values": {"value": 1}}, {"dict": dict})
+
+        with pytest.raises(ValueError, match="Unsupported keyword unpacking"):
+            ev.evaluate_value("dict(**values)")
+
+    def test_rejects_dictionary_unpacking(self) -> None:
+        ev = SafeExpressionEvaluator({"values": {"value": 1}}, {})
+
+        with pytest.raises(ValueError, match="Unsupported dictionary unpacking"):
+            ev.evaluate_value("{**values}")
+
+    def test_allows_ordinary_keywords_and_dictionary_literals(self) -> None:
+        ev = SafeExpressionEvaluator({}, {"dict": dict})
+
+        assert ev.evaluate_value("dict(value=1)") == {"value": 1}
+        assert ev.evaluate_value("{'value': 1}") == {"value": 1}
+
+
 # --- Integration: combined expressions ---
 
 
@@ -739,6 +804,22 @@ class TestCombinedExpressions:
 
 class TestNormalizeExpr:
     """Verify _normalize_expr collapses YAML folding artefacts."""
+
+    @pytest.mark.parametrize(
+        "literal",
+        [
+            "'git  commit'",
+            "'before\t\tafter'",
+            "'''first\n  second'''",
+        ],
+    )
+    def test_preserves_whitespace_inside_string_literals(self, literal: str) -> None:
+        raw = f"value == {literal}"
+        assert SafeExpressionEvaluator._normalize_expr(raw) == raw
+
+    def test_evaluate_distinguishes_literal_whitespace(self) -> None:
+        evaluator = SafeExpressionEvaluator({"value": "git commit"}, {})
+        assert evaluator.evaluate("value == 'git  commit'") is False
 
     def test_collapses_newline_with_indent(self) -> None:
         raw = "(a + b)\n  not in c"

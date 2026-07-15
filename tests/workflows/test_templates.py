@@ -1,5 +1,13 @@
 import pytest
-from jinja2 import FileSystemLoader, StrictUndefined, TemplateNotFound, UndefinedError
+from jinja2 import (
+    Environment,
+    FileSystemLoader,
+    StrictUndefined,
+    TemplateNotFound,
+    Undefined,
+    UndefinedError,
+)
+from jinja2.exceptions import SecurityError
 from jinja2.sandbox import SandboxedEnvironment
 
 from gobby.workflows.templates import TemplateEngine
@@ -10,6 +18,7 @@ pytestmark = pytest.mark.unit
 class TestTemplateEngine:
     def test_init_defaults(self) -> None:
         engine = TemplateEngine()
+        assert isinstance(engine.env, SandboxedEnvironment)
         assert engine.env.loader is None
         assert engine.env.autoescape
         assert isinstance(engine.env, SandboxedEnvironment)
@@ -19,8 +28,9 @@ class TestTemplateEngine:
         template_dir = tmp_path / "templates"
         template_dir.mkdir()
         engine = TemplateEngine(template_dirs=[str(template_dir)])
-        assert isinstance(engine.env.loader, FileSystemLoader)
-        assert str(template_dir) in engine.env.loader.searchpath
+        assert type(engine.file_env) is Environment
+        assert isinstance(engine.file_env.loader, FileSystemLoader)
+        assert str(template_dir) in engine.file_env.loader.searchpath
 
     def test_render_string_success(self) -> None:
         engine = TemplateEngine()
@@ -36,11 +46,23 @@ class TestTemplateEngine:
         with pytest.raises(TypeError):
             engine.render(template_str, {"x": "string"})
 
+    def test_render_string_blocks_unsafe_attribute_access(self) -> None:
+        engine = TemplateEngine()
+
+        with pytest.raises(SecurityError):
+            engine.render("{{ [].__class__.__mro__ }}", {})
+
     def test_render_string_undefined_variable(self) -> None:
         engine = TemplateEngine()
 
         with pytest.raises(UndefinedError, match="missing"):
             engine.render("{{ missing }}", {})
+
+    def test_render_string_lenient_undefined_variable(self) -> None:
+        engine = TemplateEngine(strict_undefined=False)
+
+        assert engine.env.undefined is Undefined
+        assert engine.render("before {{ missing }} after", {}) == "before  after"
 
     def test_render_file_success(self, tmp_path) -> None:
         template_dir = tmp_path / "templates"

@@ -1,9 +1,11 @@
 """Audit logging regressions for step workflow enforcement."""
 
 import json
+import threading
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+from unittest.mock import patch
 
 import pytest
 
@@ -188,6 +190,53 @@ async def test_step_success_writes_audit_rows(
     assert by_type["exit_check"]["result"] == "met"
     assert by_type["exit_check"]["condition"] == "current_step == 'implement'"
     assert by_type["exit_check"]["context"]["result"] is True
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_step_transition_writes_run_outside_event_loop_thread(
+    db: "HubDatabase",
+    manager: LocalWorkflowDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: WorkflowInstanceManager,
+) -> None:
+    _setup_workflow(db, manager, instance_mgr)
+    event = _make_event(
+        HookEventType.AFTER_TOOL,
+        {
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": "gobby-tasks",
+                "tool_name": "claim_task",
+            },
+            "tool_output": {"success": True, "result": {"task_id": "task-1"}},
+        },
+    )
+    loop_thread_id = threading.get_ident()
+    audit_threads: list[int] = []
+    save_threads: list[int] = []
+    original_log_transition = engine.workflow_audit.log_transition
+    original_save_instance = engine.instance_manager.save_instance
+
+    def log_transition(*args: object, **kwargs: object) -> None:
+        audit_threads.append(threading.get_ident())
+        original_log_transition(*args, **kwargs)
+
+    def save_instance(*args: object, **kwargs: object) -> None:
+        save_threads.append(threading.get_ident())
+        original_save_instance(*args, **kwargs)
+
+    with (
+        patch.object(engine.workflow_audit, "log_transition", side_effect=log_transition),
+        patch.object(engine.instance_manager, "save_instance", side_effect=save_instance),
+    ):
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
+
+    assert response.decision == "allow"
+    assert len(audit_threads) == 1
+    assert len(save_threads) == 1
+    assert audit_threads[0] != loop_thread_id
+    assert save_threads[0] != loop_thread_id
 
 
 @pytest.mark.unit

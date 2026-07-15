@@ -6,7 +6,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from gobby.hooks.events import HookEvent, HookResponse
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.telemetry.tracing import create_span
 from gobby.workflows.hooks import WorkflowEvaluationTimeout
 
@@ -140,6 +140,11 @@ class WorkflowRuleEvaluator:
             raise
         except Exception as exc:
             self.logger.error("Workflow evaluation failed: %s", exc, exc_info=True)
+            if event.event_type in {HookEventType.STOP, HookEventType.STOP_FAILURE}:
+                return None, HookResponse(
+                    decision="block",
+                    reason="Workflow evaluation failed; blocking stop for safety.",
+                )
             return None, None
 
     def _process_dispatch_results(

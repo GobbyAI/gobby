@@ -33,6 +33,7 @@ def test_task_state_in_matches_current_stage_state(temp_db, sample_project) -> N
     manager.submit_for_review(task.id)
 
     assert task_state_in(manager, task.id, "needs_review", "closed") is True
+    assert task_state_in(manager, task.id, " NEEDS_REVIEW ", 42) is True  # type: ignore[arg-type]
     assert task_state_in(manager, task.id, "ready", "review_approved") is False
 
 

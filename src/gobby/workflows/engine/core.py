@@ -5,6 +5,7 @@ Effect types: block, set_variable, inject_context, mcp_call, observe,
 rewrite_input, load_skill.
 """
 
+import asyncio
 import json
 import logging
 from collections.abc import Callable
@@ -165,6 +166,14 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                 if not resolved_rule_events:
                     return HookResponse(decision="allow")
 
+                project_from_vars = variables.get("project")
+                if not (isinstance(project_from_vars, dict) and project_from_vars.get("path")):
+                    variables["project"] = await asyncio.to_thread(
+                        self._resolve_project_info,
+                        event,
+                        project_from_vars,
+                    )
+
                 is_before_tool = raw_event_value == HookEventType.BEFORE_TOOL.value
                 is_after_tool = raw_event_value == HookEventType.AFTER_TOOL.value
                 is_turn_start = RuleTriggerEvent.TURN_START in resolved_rule_events
@@ -172,9 +181,11 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
 
                 # Check global enforcement toggle
                 config_store = ConfigStore(self.db)
-                if config_store.get("rules.enforcement_enabled") is False:
+                if await asyncio.to_thread(config_store.get, "rules.enforcement_enabled") is False:
                     return HookResponse(decision="allow")
-                aggregate_blocks = config_store.get("rules.aggregate_blocks") is not False
+                aggregate_blocks = (
+                    await asyncio.to_thread(config_store.get, "rules.aggregate_blocks") is not False
+                )
 
                 # Collect mcp_call effects from hardcoded rules and DB rules.
                 # Initialized early so hardcoded turn-start rules can append.
@@ -264,21 +275,22 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                     )
 
                 # 1. Load enabled rules for this event, sorted by priority
-                rules = self._load_rules(resolved_rule_events)
+                rules = await asyncio.to_thread(self._load_rules, resolved_rule_events)
 
                 # 2. Apply session overrides
-                overrides = self._load_session_overrides(session_id)
-                rules = self._apply_overrides(rules, overrides)
+                overrides = await asyncio.to_thread(self._load_session_overrides, session_id)
+                rules = await asyncio.to_thread(self._apply_overrides, rules, overrides)
 
                 # 3. Filter by agent_scope
                 agent_type = variables.get("_agent_type")
-                rules = self._filter_by_agent_scope(rules, agent_type)
+                rules = await asyncio.to_thread(self._filter_by_agent_scope, rules, agent_type)
 
                 # 4. Filter by audience
-                rules = self._filter_by_audience(rules, variables)
+                rules = await asyncio.to_thread(self._filter_by_audience, rules, variables)
 
                 # 5. Filter by active rules (selector-based)
-                rules = self._filter_by_active_rules(
+                rules = await asyncio.to_thread(
+                    self._filter_by_active_rules,
                     rules,
                     variables,
                     project_id=_project_id_from_event(event),
@@ -293,7 +305,12 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
 
                 # 4b. Agent-level tool enforcement (broadest scope, preempts everything)
                 if is_before_tool:
-                    agent_block = self._check_agent_tool_enforcement(event, session_id, variables)
+                    agent_block = await asyncio.to_thread(
+                        self._check_agent_tool_enforcement,
+                        event,
+                        session_id,
+                        variables,
+                    )
                     if agent_block is not None:
                         variables["_last_blocked_tool"] = _get_tool_identity(event.data)
                         if _is_write_like_event_data(event.data):
@@ -314,7 +331,12 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
 
                 # 4c. Step-level tool enforcement (preempts declarative rules)
                 if is_before_tool:
-                    step_block = self._check_step_tool_enforcement(event, session_id, variables)
+                    step_block = await asyncio.to_thread(
+                        self._check_step_tool_enforcement,
+                        event,
+                        session_id,
+                        variables,
+                    )
                     if step_block is not None:
                         variables["_last_blocked_tool"] = _get_tool_identity(event.data)
                         # Blocked edit/write never executed — nothing to recover
@@ -575,7 +597,11 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
             return self._agent_def_cache[cache_key]
 
         agent: AgentDefinitionBody | None = None
-        row = self.definition_manager.get_by_name(agent_type, project_id=project_id)
+        row = self.definition_manager.get_by_name(
+            agent_type,
+            project_id=project_id,
+            workflow_type="agent",
+        )
         if row is not None and row.workflow_type == "agent" and row.definition_json:
             try:
                 data = json.loads(row.definition_json)

@@ -4,6 +4,7 @@ import json
 import logging
 import threading
 from _thread import LockType
+from collections.abc import Callable
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
@@ -70,6 +71,7 @@ _TOOL_CONTEXT_REHYDRATION_SOURCES = frozenset(
         SessionSource.DROID,
     }
 )
+_MAX_PENDING_TOOL_CONTEXTS_PER_SESSION = 100
 
 
 def _is_turn_start_event(event_type: HookEventType | str) -> bool:
@@ -295,7 +297,14 @@ class WorkflowHookHandler:
 
         cache_key = self._tool_context_session_key(source, session_id)
         with self._tool_context_lock:
-            self._tool_contexts.setdefault(cache_key, []).append(snapshot)
+            pending = self._tool_contexts.setdefault(cache_key, [])
+            pending.append(snapshot)
+            if len(pending) > _MAX_PENDING_TOOL_CONTEXTS_PER_SESSION:
+                evicted = pending.pop(0)
+                for identifier in evicted.get("_ids", []):
+                    id_key = (cache_key, identifier)
+                    if self._tool_context_by_id.get(id_key) is evicted:
+                        self._tool_context_by_id.pop(id_key, None)
             for identifier in snapshot.get("_ids", []):
                 self._tool_context_by_id[(cache_key, identifier)] = snapshot
 
@@ -379,7 +388,7 @@ class WorkflowHookHandler:
         ):
             return
 
-        if event.event_type == HookEventType.SESSION_END:
+        if event.event_type == HookEventType.SESSION_END or _is_turn_end_event(event.event_type):
             self._clear_tool_context(event.source, session_id)
             return
 
@@ -503,11 +512,12 @@ class WorkflowHookHandler:
         event: HookEvent,
         session_id: str,
         variables: dict[str, Any],
-    ) -> None:
+    ) -> set[str]:
         """Run built-in observer functions to populate tracking variables.
 
         Must run BEFORE rule evaluation so conditions have current data.
         """
+        from .observer_context_usage import detect_context_compact_guidance
         from .observers import (
             detect_bash_commit,
             detect_commit_link,
@@ -518,9 +528,31 @@ class WorkflowHookHandler:
             reconcile_claimed_tasks,
         )
 
+        failures: set[str] = set()
+
+        def run_observer(
+            name: str,
+            observer: Callable[..., None],
+            *args: Any,
+            **kwargs: Any,
+        ) -> None:
+            try:
+                observer(*args, **kwargs)
+            except Exception:
+                failures.add(name)
+                logger.warning(
+                    "Observer %s failed for session=%s event=%s",
+                    name,
+                    session_id,
+                    event.event_type,
+                    exc_info=True,
+                )
+
         # Reconcile stale claimed_tasks on semantic turn-end before rule evaluation
         if _is_turn_end_event(event.event_type):
-            reconcile_claimed_tasks(
+            run_observer(
+                "reconcile_claimed_tasks",
+                reconcile_claimed_tasks,
                 variables,
                 session_id,
                 task_manager=self._task_manager,
@@ -530,7 +562,9 @@ class WorkflowHookHandler:
 
         # Task claim/release tracking (AFTER_TOOL for gobby-tasks calls)
         if event.event_type == HookEventType.AFTER_TOOL:
-            detect_task_claim(
+            run_observer(
+                "detect_task_claim",
+                detect_task_claim,
                 event,
                 variables,
                 session_id,
@@ -538,16 +572,38 @@ class WorkflowHookHandler:
                 task_manager=self._task_manager,
                 project_id=event.project_id,
             )
-            detect_commit_link(event, variables, session_id)
-            detect_bash_commit(event, variables, session_id)
-            detect_verification_evidence(event, variables, session_id, self._config)
-            detect_mcp_call(event, variables, session_id)
+            run_observer("detect_commit_link", detect_commit_link, event, variables, session_id)
+            run_observer("detect_bash_commit", detect_bash_commit, event, variables, session_id)
+            run_observer(
+                "detect_verification_evidence",
+                detect_verification_evidence,
+                event,
+                variables,
+                session_id,
+                self._config,
+            )
+            run_observer("detect_mcp_call", detect_mcp_call, event, variables, session_id)
 
         # Plan mode detection on the semantic start-of-turn boundary
         if _is_turn_start_event(event.event_type):
             prompt = (event.data or {}).get("prompt", "") or ""
             if prompt:
-                detect_plan_mode_from_context(prompt, variables, session_id)
+                run_observer(
+                    "detect_plan_mode_from_context",
+                    detect_plan_mode_from_context,
+                    prompt,
+                    variables,
+                    session_id,
+                )
+            run_observer(
+                "detect_context_compact_guidance",
+                detect_context_compact_guidance,
+                variables,
+                session_id,
+                self._session_manager,
+            )
+
+        return failures
 
     async def _evaluate_rules(self, event: HookEvent) -> HookResponse:
         """Evaluate rules for a hook event using the RuleEngine.
@@ -580,9 +636,15 @@ class WorkflowHookHandler:
                 # session_id may be "" for session-less events; session_variables.session_id
                 # is a native uuid column, so skip the lookup instead of binding "".
                 variables: dict[str, Any] = {}
+                variable_load_failed = False
                 if self._session_var_manager and session_id:
                     try:
-                        variables = dict(self._session_var_manager.get_variables(session_id))
+                        variables = dict(
+                            await asyncio.to_thread(
+                                self._session_var_manager.get_variables,
+                                session_id,
+                            )
+                        )
                     except Exception as e:
                         if event.event_type == HookEventType.STOP:
                             logger.warning(
@@ -594,6 +656,7 @@ class WorkflowHookHandler:
                                 decision="block",
                                 reason="Could not load session state. Try again.",
                             )
+                        variable_load_failed = True
                         logger.debug(
                             "Could not load session variables for rules session=%s event=%s: %s",
                             session_id,
@@ -643,7 +706,12 @@ class WorkflowHookHandler:
 
                         def_manager = LocalWorkflowDefinitionManager(self.rule_engine.db)
                         enabled_variables = [
-                            v for v in def_manager.list_all(workflow_type="variable") if v.enabled
+                            v
+                            for v in await asyncio.to_thread(
+                                def_manager.list_all,
+                                workflow_type="variable",
+                            )
+                            if v.enabled
                         ]
                         defaults: dict[str, Any] = {}
                         for var_row in enabled_variables:
@@ -661,8 +729,12 @@ class WorkflowHookHandler:
                                 )
                         defaults["_variable_defaults_loaded"] = True
                         variables.update(defaults)
-                        if self._session_var_manager and session_id:
-                            self._session_var_manager.merge_variables(session_id, defaults)
+                        if self._session_var_manager and session_id and not variable_load_failed:
+                            await asyncio.to_thread(
+                                self._session_var_manager.merge_variables,
+                                session_id,
+                                defaults,
+                            )
                     except Exception as e:
                         logger.warning(
                             "Could not lazy-load variable defaults session=%s project=%s: %s",
@@ -675,7 +747,7 @@ class WorkflowHookHandler:
                 from gobby.workflows.git_utils import get_dirty_files_categorized
                 from gobby.workflows.safe_evaluator import LazyBool
 
-                project_path = self._resolve_project_path(event)
+                project_path = await asyncio.to_thread(self._resolve_project_path, event)
                 if not project_path:
                     message = (
                         f"_evaluate_rules: no project_path resolved for session={session_id} "
@@ -694,16 +766,19 @@ class WorkflowHookHandler:
                     else:
                         logger.warning(message)
 
+                dirty_files = await asyncio.to_thread(get_dirty_files_categorized, project_path)
+
                 # Lazy-init baseline on first evaluation (rule template may not have fired)
                 if "baseline_dirty_files" not in variables:
-                    initial_dirty = sorted(get_dirty_files_categorized(project_path).all)
+                    initial_dirty = sorted(dirty_files.all)
                     variables["baseline_dirty_files"] = initial_dirty
                     variables.setdefault("session_edited_files", [])
                     variables.setdefault("active_task_id", None)
                     variables.setdefault("task_edited_files", {})
                     # Persist so future evaluations have it
-                    if self._session_var_manager and session_id:
-                        self._session_var_manager.merge_variables(
+                    if self._session_var_manager and session_id and not variable_load_failed:
+                        await asyncio.to_thread(
+                            self._session_var_manager.merge_variables,
                             session_id,
                             {
                                 "baseline_dirty_files": initial_dirty,
@@ -726,24 +801,20 @@ class WorkflowHookHandler:
 
                 def _check_dirty(
                     _edited: set[str] = session_edited,
-                    _path: str | None = project_path,
                 ) -> bool:
-                    result = get_dirty_files_categorized(_path)
                     # Only count files this session actually touched
-                    dirty_tracked = result.tracked
-                    dirty_untracked = result.untracked
+                    dirty_tracked = dirty_files.tracked
+                    dirty_untracked = dirty_files.untracked
                     session_dirty_tracked = _edited & dirty_tracked
                     session_dirty_untracked = _edited & dirty_untracked
                     return bool(session_dirty_tracked or session_dirty_untracked)
 
                 def _check_target_task_dirty(
                     _edited: set[str] = target_task_edited,
-                    _path: str | None = project_path,
                 ) -> bool:
                     if not _edited:
                         return False
-                    result = get_dirty_files_categorized(_path)
-                    return bool(_edited & result.all)
+                    return bool(_edited & dirty_files.all)
 
                 eval_context = {
                     "has_dirty_files": LazyBool(_check_dirty),
@@ -755,7 +826,20 @@ class WorkflowHookHandler:
                 pre_eval = deepcopy(variables)
 
                 # Run built-in observers BEFORE rule evaluation
-                self._run_observers(event, session_id, variables)
+                observer_failures = await asyncio.to_thread(
+                    self._run_observers,
+                    event,
+                    session_id,
+                    variables,
+                )
+                if (
+                    event.event_type == HookEventType.STOP
+                    and "reconcile_claimed_tasks" in observer_failures
+                ):
+                    return HookResponse(
+                        decision="block",
+                        reason="Could not reconcile claimed tasks. Try again.",
+                    )
 
                 response = await self.rule_engine.evaluate(
                     event=event,
@@ -765,8 +849,8 @@ class WorkflowHookHandler:
                 )
 
                 # Persist all variables changed by observers OR rule effects.
-                # Skip when session_id is "" — session_variables.session_id is uuid.
-                if self._session_var_manager and session_id:
+                # Skip when session state could not be loaded or session_id is "".
+                if self._session_var_manager and session_id and not variable_load_failed:
                     changed = {
                         k: v for k, v in variables.items() if k not in pre_eval or pre_eval[k] != v
                     }
@@ -784,7 +868,8 @@ class WorkflowHookHandler:
                                 VERIFICATION_EVIDENCE_RECORDED_VARIABLE
                             )
                         changed.pop(VERIFICATION_EVIDENCE_VARIABLE)
-                        self._session_var_manager.append_to_bounded_list_variable(
+                        await asyncio.to_thread(
+                            self._session_var_manager.append_to_bounded_list_variable,
                             session_id,
                             VERIFICATION_EVIDENCE_VARIABLE,
                             evidence[-1],
@@ -792,7 +877,11 @@ class WorkflowHookHandler:
                             updates=readiness_update,
                         )
                     if changed:
-                        self._session_var_manager.merge_variables(session_id, changed)
+                        await asyncio.to_thread(
+                            self._session_var_manager.merge_variables,
+                            session_id,
+                            changed,
+                        )
 
                 return response
             finally:

@@ -986,6 +986,20 @@ class TestWorkflowsReloadEndpoint:
         assert data["details"] == {"reloaded": 5}
         assert "response_time_ms" in data
 
+    def test_reload_workflows_forwards_project_scope(self, client, mock_server) -> None:
+        registry = mock_server._internal_manager.get_all_registries.return_value[0]
+
+        response = client.post(
+            "/api/admin/workflows/reload",
+            params={"project_path": "/tmp/project", "project_id": "project-id"},
+        )
+
+        assert response.status_code == 200
+        registry.call.assert_awaited_once_with(
+            "reload_cache",
+            {"project_path": "/tmp/project", "project_id": "project-id"},
+        )
+
     def test_reload_workflows_no_registry(self, client, mock_server) -> None:
         # Return registries that don't include gobby-workflows
         other_registry = MagicMock()

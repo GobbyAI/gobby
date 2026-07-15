@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -10,13 +11,85 @@ import pytest
 
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.workflows.claimed_task_skills import (
+    LANGUAGE_SKILL_EXTENSIONS,
     _append_unique_path,
     _criteria_require_tdd,
+    _language_skills_for_files,
     _load_task,
     _task_files,
+    build_claimed_task_skill_state,
+    first_unloaded_claimed_task_required_skill,
 )
 
 pytestmark = pytest.mark.unit
+
+SKILL_DISCOVERY_RULES = (
+    Path(__file__).parents[2] / "src/gobby/install/shared/workflows/rules/skill-discovery"
+)
+
+
+def test_language_skill_extension_map_covers_installed_language_rules() -> None:
+    installed_language_skills = {
+        path.stem.removeprefix("require-").removesuffix("-skill")
+        for path in SKILL_DISCOVERY_RULES.glob("require-*-skill.yaml")
+    }
+
+    assert set(LANGUAGE_SKILL_EXTENSIONS) == installed_language_skills
+
+
+@pytest.mark.parametrize(
+    ("file_path", "expected_skill"),
+    [
+        ("scripts/check.sh", "bash"),
+        ("src/main.c", "c"),
+        ("src/main.cpp", "cpp"),
+        ("src/Program.cs", "csharp"),
+        ("lib/app.dart", "dart"),
+        ("lib/app.ex", "elixir"),
+        ("cmd/server/main.go", "go"),
+        ("src/Main.java", "java"),
+        ("web/app.js", "javascript"),
+        ("config/data.json", "json"),
+        ("src/Main.kt", "kotlin"),
+        ("lua/init.lua", "lua"),
+        ("ios/ViewController.m", "objc"),
+        ("public/index.php", "php"),
+        ("src/module.py", "python"),
+        ("app/models/user.rb", "ruby"),
+        ("src/lib.rs", "rust"),
+        ("src/Main.scala", "scala"),
+        ("Sources/App.swift", "swift"),
+        ("web/component.ts", "typescript"),
+        ("config/app.yaml", "yaml"),
+    ],
+)
+def test_language_skills_for_files_covers_bundled_language_skills(
+    file_path: str,
+    expected_skill: str,
+) -> None:
+    assert expected_skill in _language_skills_for_files([file_path])
+
+
+def test_claimed_task_touching_typescript_requires_typescript_skill() -> None:
+    task = SimpleNamespace(
+        labels=[],
+        additional_skills=[],
+        validation_criteria=None,
+        category="code",
+    )
+    manager = MagicMock()
+
+    with (
+        patch("gobby.workflows.claimed_task_skills._load_task", return_value=task),
+        patch("gobby.workflows.claimed_task_skills._task_files", return_value=["web/app.ts"]),
+    ):
+        state = build_claimed_task_skill_state(
+            {"claimed_tasks": {"task-id": {}}},
+            manager,
+        )
+
+    assert "typescript" in state["claimed_task_language_skills"]
+    assert "typescript" in state["claimed_task_required_skills"]
 
 
 class _FakeAffectedFilesDb:
@@ -178,3 +251,16 @@ def test_load_task_propagates_unexpected_errors() -> None:
 def test_criteria_require_tdd_matches_cycle_keywords_as_whole_words() -> None:
     assert _criteria_require_tdd("TDD evidence required: red, green, refactor/final-green.")
     assert not _criteria_require_tdd("Redirection and evergreen refactoring notes are enough.")
+
+
+def test_first_unloaded_required_skill_skips_unresolvable_names() -> None:
+    variables = {
+        "claimed_task_required_skills": ["typo-skill", "python"],
+        "unresolvable_required_skills": ["typo-skill"],
+        "loaded_skills": [],
+    }
+
+    assert first_unloaded_claimed_task_required_skill(variables) == "python"
+
+    variables["unresolvable_required_skills"].append("python")
+    assert first_unloaded_claimed_task_required_skill(variables) == ""

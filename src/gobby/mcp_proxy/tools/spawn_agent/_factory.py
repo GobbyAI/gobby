@@ -392,7 +392,7 @@ def create_spawn_agent_registry(
             from gobby.workflows.loader import WorkflowLoader
 
             wf_loader = WorkflowLoader(db=db)
-            wf_def = wf_loader.load_workflow_sync(
+            wf_def = await wf_loader.load_workflow(
                 effective_workflow,
                 project_path=effective_project_path,
             )

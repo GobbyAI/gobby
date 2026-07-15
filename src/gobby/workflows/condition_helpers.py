@@ -826,7 +826,7 @@ def task_state_in(
         logger.debug(f"task_state_in: Task '{normalized}' not found")
         return False
 
-    normalized_states = {state.strip() for state in states if isinstance(state, str)}
+    normalized_states = {state.strip().lower() for state in states if isinstance(state, str)}
     return projected_task_state(task) in normalized_states
 
 

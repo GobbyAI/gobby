@@ -52,12 +52,15 @@ def remove_claimed_task(variables: dict[str, Any], task_id: str) -> dict[str, An
     if active_task_id == task_id or active_task_id not in tasks:
         active_task_id = _active_task_id_after_removal(tasks)
 
-    return {
+    result = {
         "task_claimed": len(tasks) > 0,
         "claimed_tasks": tasks,
         "active_task_id": active_task_id,
         "task_edited_files": task_files,
     }
+    if not tasks:
+        result["task_has_commits"] = False
+    return result
 
 
 def active_task_id_for_edit(variables: dict[str, Any]) -> str | None:

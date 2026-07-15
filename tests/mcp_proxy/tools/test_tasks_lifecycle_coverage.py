@@ -790,6 +790,7 @@ class TestCloseTaskTool:
                 "task_claimed": True,
                 "claimed_tasks": {task_uuid: "#42"},
                 "active_task_id": task_uuid,
+                "task_has_commits": True,
                 "task_edited_files": {task_uuid: ["src/owned.py"]},
             }
             MockSVManager.return_value = mock_sv_manager
@@ -828,6 +829,7 @@ class TestCloseTaskTool:
                     "task_claimed": False,
                     "claimed_tasks": {},
                     "active_task_id": None,
+                    "task_has_commits": False,
                     "task_edited_files": {},
                 },
             )

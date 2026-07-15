@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
+import threading
 import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 import pytest
+from jinja2.exceptions import SecurityError
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.skills.formatting import skill_fetch_directive
@@ -105,6 +109,84 @@ def _insert_agent(
         project_id=project_id,
     )
     return row.id
+
+
+@pytest.mark.asyncio
+async def test_project_context_resolves_once_off_loop_for_multiple_rules(
+    db: HubDatabase,
+    manager: LocalWorkflowDefinitionManager,
+) -> None:
+    for name in ("project-context-one", "project-context-two"):
+        _insert_rule(
+            manager,
+            name,
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.BEFORE_TOOL,
+                effects=[RuleEffect(type="observe", message=name)],
+            ),
+        )
+
+    loop_thread_id = threading.get_ident()
+    resolver_threads: list[int] = []
+    engine = RuleEngine(db)
+
+    def resolve_project(_event: HookEvent, _existing: object) -> dict[str, str]:
+        resolver_threads.append(threading.get_ident())
+        return {"id": "project-id", "name": "project", "path": "/tmp/project"}
+
+    event = _make_event()
+    with patch.object(engine, "_resolve_project_info", side_effect=resolve_project):
+        variables: dict[str, Any] = {}
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+
+    assert response.decision == "allow"
+    assert len(resolver_threads) == 1
+    assert resolver_threads[0] != loop_thread_id
+    assert variables["project"] == {
+        "id": "project-id",
+        "name": "project",
+        "path": "/tmp/project",
+    }
+
+
+@pytest.mark.asyncio
+async def test_task_tree_condition_runs_outside_event_loop_thread(
+    db: HubDatabase,
+    manager: LocalWorkflowDefinitionManager,
+) -> None:
+    loop_thread_id = threading.get_ident()
+    task_access_threads: list[int] = []
+
+    class TaskManager:
+        def get_task(self, task_id: str) -> SimpleNamespace:
+            task_access_threads.append(threading.get_ident())
+            return SimpleNamespace(id=task_id, closed_at=datetime.now(UTC))
+
+        def list_tasks(self, parent_task_id: str) -> list[object]:
+            task_access_threads.append(threading.get_ident())
+            assert parent_task_id == "root"
+            return []
+
+    _insert_rule(
+        manager,
+        "off-loop-task-tree",
+        RuleDefinitionBody(
+            event=RuleTriggerEvent.BEFORE_TOOL,
+            when="task_tree_complete('root')",
+            effects=[RuleEffect(type="block", reason="tree complete")],
+        ),
+    )
+    engine = RuleEngine(db, task_manager=TaskManager())
+
+    response = await engine.evaluate(
+        _make_event(),
+        session_id=SESSION_ID,
+        variables={"project": {"id": "project-id", "path": "/tmp/project"}},
+    )
+
+    assert response.decision == "block"
+    assert len(task_access_threads) == 2
+    assert all(thread_id != loop_thread_id for thread_id in task_access_threads)
 
 
 async def _assert_evaluation(
@@ -337,6 +419,74 @@ class TestSetVariableEffect:
 
         assert variables["template_counter"] == 3
 
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "enforce_tool_schema_check",
+            "unlocked_tools",
+            "listed_servers",
+            "consecutive_tool_blocks",
+            "_last_blocked_tool",
+            "edit_write_pending",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_user_rule_effect_cannot_write_runtime_managed_variable(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+        name: str,
+    ) -> None:
+        _insert_rule(
+            manager,
+            f"set-{name}",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.NOTIFICATION,
+                effects=[RuleEffect(type="set_variable", variable=name, value="changed")],
+            ),
+            tags=["gobby", "user"],
+        )
+
+        variables: dict[str, Any] = {name: "original"}
+        await _assert_evaluation(
+            db,
+            _make_event(HookEventType.NOTIFICATION),
+            "allow",
+            variables=variables,
+        )
+
+        assert variables[name] == "original"
+
+    @pytest.mark.asyncio
+    async def test_bundled_rule_effect_can_write_runtime_managed_variable(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "track-unlocked-tool",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.AFTER_TOOL,
+                effects=[
+                    RuleEffect(
+                        type="set_variable",
+                        variable="unlocked_tools",
+                        value=["gobby-tasks:create_task"],
+                    )
+                ],
+            ),
+            tags=["gobby"],
+        )
+
+        variables: dict[str, Any] = {"unlocked_tools": []}
+        await _assert_evaluation(
+            db,
+            _make_event(HookEventType.AFTER_TOOL),
+            "allow",
+            variables=variables,
+        )
+
+        assert variables["unlocked_tools"] == ["gobby-tasks:create_task"]
+
 
 class TestInjectContextEffect:
     @pytest.mark.asyncio
@@ -384,6 +534,7 @@ class TestInjectContextEffect:
         rule_data = document["rules"]["inject-user-profile"]
         priority = rule_data.pop("priority")
         enabled = rule_data.pop("enabled")
+        rule_data.pop("description", None)
         _insert_rule(
             manager,
             "inject-user-profile",
@@ -504,6 +655,34 @@ class TestWhenConditions:
         await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables["stop_attempts"] == 0
+
+    @pytest.mark.asyncio
+    async def test_when_error_fails_closed_when_any_effect_blocks(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "conditional-mixed-effects",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.BEFORE_TOOL,
+                when="normalize_path(tool_input.get('file_path')).endswith('.py')",
+                effects=[
+                    RuleEffect(type="set_variable", variable="evaluated", value=True),
+                    RuleEffect(type="mcp_call", server="gobby-tasks", tool="update_task"),
+                    RuleEffect(type="block", reason="Invalid write input"),
+                ],
+            ),
+        )
+
+        engine = RuleEngine(db)
+        event = _make_event(
+            HookEventType.BEFORE_TOOL,
+            data={"tool_name": "Write", "tool_input": {"file_path": 42}},
+        )
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
+
+        assert response.decision == "block"
+        assert "Invalid write input" in (response.reason or "")
 
 
 class TestPriorityOrdering:
@@ -806,6 +985,35 @@ class TestMcpCallToolUnwrapping:
         assert ctx["tool_input"] == {
             "task_id": "#1",
             "commit_sha": "abc123",
+            "server_name": "gobby-tasks",
+            "tool_name": "close_task",
+        }
+
+    @pytest.mark.asyncio
+    async def test_call_tool_outer_routing_overwrites_inner_decoys(self, db: HubDatabase) -> None:
+        """Outer routing fields are authoritative when nested arguments contain decoys."""
+
+        engine = RuleEngine(db)
+        event = _make_event(
+            HookEventType.BEFORE_TOOL,
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "close_task",
+                    "arguments": {
+                        "task_id": "#1",
+                        "server_name": "decoy-server",
+                        "tool_name": "decoy-tool",
+                    },
+                },
+            },
+        )
+
+        ctx = engine._build_eval_context(event, variables={})
+
+        assert ctx["tool_input"] == {
+            "task_id": "#1",
             "server_name": "gobby-tasks",
             "tool_name": "close_task",
         }
@@ -2047,10 +2255,10 @@ class TestInlineMcpCallDispatch:
         assert len(response.metadata.get("mcp_calls", [])) == 0
 
     @pytest.mark.asyncio
-    async def test_inline_dispatch_failure_aborts_set_variable(
+    async def test_inline_dispatch_failure_without_block_flag_continues(
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
-        """When inline dispatch fails, sibling set_variable should NOT fire."""
+        """An unflagged inline failure has the same allow behavior as deferred dispatch."""
         _insert_rule(
             manager,
             "inject-skill-fail",
@@ -2081,16 +2289,16 @@ class TestInlineMcpCallDispatch:
         event = _make_event(data={"tool_name": "Read"})
         response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        # Variable should NOT be set (dispatch failed, effects aborted)
-        assert variables.get("injected") is None
+        assert response.decision == "allow"
+        assert variables.get("injected") is True
         # No deferred calls either
         assert len(response.metadata.get("mcp_calls", [])) == 0
 
     @pytest.mark.asyncio
-    async def test_inline_dispatch_exception_aborts_set_variable(
+    async def test_inline_dispatch_exception_without_block_flag_continues(
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
-        """When inline dispatch raises, sibling set_variable should NOT fire."""
+        """An unflagged inline exception has the same allow behavior as deferred dispatch."""
         _insert_rule(
             manager,
             "inject-skill-exc",
@@ -2119,10 +2327,127 @@ class TestInlineMcpCallDispatch:
         engine = RuleEngine(db, mcp_dispatcher=mock_dispatcher_raise)
         variables: dict[str, Any] = {}
         event = _make_event(data={"tool_name": "Read"})
-        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        # Variable should NOT be set
-        assert variables.get("injected") is None
+        assert response.decision == "allow"
+        assert variables.get("injected") is True
+
+    @pytest.mark.asyncio
+    async def test_success_variable_cannot_write_runtime_managed_variable(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "untrusted-success-variable",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.BEFORE_TOOL,
+                effects=[
+                    RuleEffect(
+                        type="mcp_call",
+                        server="gobby-skills",
+                        tool="list_hubs",
+                        inject_result=True,
+                        success_variable="verification_evidence_recorded",
+                    )
+                ],
+            ),
+            tags=["gobby", "user"],
+        )
+
+        async def dispatcher(server: str, tool: str, args: dict, event: Any) -> dict:
+            return {"success": True, "result": {"hubs": []}}
+
+        variables: dict[str, Any] = {"verification_evidence_recorded": False}
+        await RuleEngine(db, mcp_dispatcher=dispatcher).evaluate(
+            _make_event(data={"tool_name": "Read"}),
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+
+        assert variables["verification_evidence_recorded"] is False
+
+    @pytest.mark.asyncio
+    async def test_inline_dispatch_failure_honors_block_on_failure(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "inject-skill-block-on-failure",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.BEFORE_TOOL,
+                effects=[
+                    RuleEffect(
+                        type="mcp_call",
+                        server="gobby-skills",
+                        tool="get_skill",
+                        arguments={"name": "python"},
+                        inject_result=True,
+                        block_on_failure=True,
+                    ),
+                    RuleEffect(type="set_variable", variable="completed", value=True),
+                ],
+            ),
+        )
+
+        async def mock_dispatcher(server: str, tool: str, args: dict, event: Any) -> dict:
+            return {"success": False, "result": {"error": "skill not found"}}
+
+        engine = RuleEngine(db, mcp_dispatcher=mock_dispatcher)
+        variables: dict[str, Any] = {}
+        response = await engine.evaluate(
+            _make_event(data={"tool_name": "Read"}),
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+
+        assert response.decision == "block"
+        assert "Auto-heal prerequisite failed: gobby-skills/get_skill: skill not found" in (
+            response.reason or ""
+        )
+        assert variables.get("completed") is True
+
+    @pytest.mark.asyncio
+    async def test_inline_dispatch_success_honors_block_on_success(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "inject-skill-block-on-success",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.BEFORE_TOOL,
+                effects=[
+                    RuleEffect(
+                        type="mcp_call",
+                        server="gobby-skills",
+                        tool="get_skill",
+                        arguments={"name": "python"},
+                        inject_result=True,
+                        block_on_success=True,
+                    ),
+                    RuleEffect(type="set_variable", variable="completed", value=True),
+                ],
+            ),
+        )
+
+        async def mock_dispatcher(server: str, tool: str, args: dict, event: Any) -> dict:
+            return {
+                "success": True,
+                "result": {"skill": {"name": "python", "content": "# Python"}},
+            }
+
+        engine = RuleEngine(db, mcp_dispatcher=mock_dispatcher)
+        variables: dict[str, Any] = {}
+        response = await engine.evaluate(
+            _make_event(data={"tool_name": "Read"}),
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+
+        assert response.decision == "block"
+        assert "Intercepted by gobby-skills/get_skill — see context below." in (
+            response.reason or ""
+        )
+        assert variables.get("completed") is True
 
     @pytest.mark.asyncio
     async def test_non_inject_mcp_call_still_deferred(
@@ -2263,6 +2588,14 @@ class TestRuleEngineHelpers:
         )
         assert result == "gobby-memory:store"
 
+    def test_get_tool_identity_native_mcp_tool(self) -> None:
+        """Native mcp__server__tool names return 'server:tool' identity."""
+        from gobby.workflows.engine.core import _get_tool_identity
+
+        result = _get_tool_identity({"tool_name": "mcp__gobby-tasks__list_tasks"})
+
+        assert result == "gobby-tasks:list_tasks"
+
     def test_get_tool_identity_mcp_missing_fields(self) -> None:
         """MCP call_tool without server/tool returns tool_name."""
         from gobby.workflows.engine.core import _get_tool_identity
@@ -2342,6 +2675,12 @@ class TestRuleEngineHelpers:
         engine = RuleEngine(db)
         result = engine._render_template("plain text", {}, {})
         assert result == "plain text"
+
+    def test_render_template_raises_on_unsafe_attribute_access(self, db: HubDatabase) -> None:
+        engine = RuleEngine(db)
+
+        with pytest.raises(SecurityError):
+            engine._render_template("{{ [].__class__.__mro__ }}", {}, {})
 
     def test_has_pending_messages_empty_session(self, db: HubDatabase) -> None:
         """_has_pending_messages returns False for empty session_id."""
@@ -2787,6 +3126,29 @@ class TestLiveActiveRuleSelection:
 
         assert second_variables.get("new_matched") is True
         assert second_variables.get("old_matched") is None
+
+    def test_project_rule_does_not_cache_missing_global_agent(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        project = LocalProjectManager(db).create(name="agent-collision", repo_path="/tmp/collision")
+        _insert_agent(manager, "shared-name", include=["tag:shared"])
+        manager.create(
+            name="shared-name",
+            workflow_type="rule",
+            definition_json=RuleDefinitionBody(
+                event=RuleTriggerEvent.BEFORE_TOOL,
+                effects=[RuleEffect(type="set_variable", variable="matched", value=True)],
+            ).model_dump_json(),
+            project_id=project.id,
+            source="test",
+        )
+        engine = RuleEngine(db)
+
+        first = engine._load_active_agent_definition("shared-name", project_id=project.id)
+        second = engine._load_active_agent_definition("shared-name", project_id=project.id)
+
+        assert first is not None
+        assert second is first
 
     @pytest.mark.asyncio
     async def test_active_rule_names_remain_fallback_when_agent_cannot_resolve(

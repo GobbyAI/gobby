@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from importlib import import_module
@@ -28,6 +29,11 @@ SESSION_ID = "22222222-2222-4222-8222-222222220002"
 
 
 def _create_project(db: HubDatabase, project_path: Path) -> None:
+    (project_path / ".gobby").mkdir()
+    (project_path / ".gobby" / "project.json").write_text(
+        json.dumps({"id": PROJECT_ID, "name": "Import Project"}),
+        encoding="utf-8",
+    )
     db.execute(
         "INSERT INTO projects (id, name, repo_path, created_at, updated_at) "
         "VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
@@ -87,6 +93,8 @@ steps:
             {"source_path": str(source), "workflow_name": "imported-step"},
         )
         fetched = await registry.call("get_workflow", {"name": "imported-step"})
+        loaded_by_path = await loader.load_workflow("imported-step", project_path=project_path)
+        discovered_by_path = await loader.discover_workflows(project_path=project_path)
 
         source.write_text(
             source.read_text(encoding="utf-8").replace("First version", "Second version"),
@@ -102,6 +110,9 @@ steps:
     assert updated["definition_id"] == imported["definition_id"]
     assert fetched["success"] is True
     assert fetched["description"] == "First version"
+    assert loaded_by_path is not None
+    assert loaded_by_path.description == "First version"
+    assert any(item.name == "imported-step" and item.is_project for item in discovered_by_path)
     assert fetched_updated["description"] == "Second version"
     destination_data = yaml.safe_load(Path(imported["destination"]).read_text(encoding="utf-8"))
     assert destination_data["name"] == "imported-step"
@@ -151,11 +162,19 @@ version: 1.0
     with _tool_context(project_path):
         imported = await registry.call("import_workflow", {"source_path": str(source)})
         fetched = await registry.call("get_pipeline", {"name": "imported-pipeline"})
+        loaded_by_path = await loader.load_pipeline("imported-pipeline", project_path=project_path)
+        discovered_by_path = await loader.discover_pipeline_workflows(project_path=project_path)
         started = await registry.call("run_pipeline", {"name": "imported-pipeline", "inputs": {}})
         await drain_asyncio_tasks(cycles=2)
 
     assert imported["success"] is True
     assert fetched["success"] is True
+    assert loaded_by_path is not None
+    assert loaded_by_path.enabled is expected_enabled
+    assert (
+        any(item.name == "imported-pipeline" and item.is_project for item in discovered_by_path)
+        is expected_enabled
+    )
     row = LocalWorkflowDefinitionManager(temp_db).get(imported["definition_id"])
     assert row.enabled is expected_enabled
     if expected_enabled:

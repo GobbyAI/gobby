@@ -7,11 +7,13 @@ and lazy boolean evaluation for deferred computation.
 from __future__ import annotations
 
 import ast
+import io
 import json
 import logging
 import operator
 import re
 import reprlib
+import tokenize
 from collections.abc import Callable, Iterator
 from typing import Any
 
@@ -61,8 +63,8 @@ class LazyBool:
     Used to avoid expensive operations (git status, DB queries) when
     evaluating block_tools conditions that don't reference certain values.
 
-    The computation is triggered when the value is used in a boolean context
-    (e.g., `if lazy_val:` or `not lazy_val`), which happens during eval().
+    The computation is triggered when the value is used in a boolean context,
+    compared, or hashed. The result is cached after the first computation.
     """
 
     __slots__ = ("_thunk", "_computed", "_value")
@@ -77,6 +79,14 @@ class LazyBool:
             self._value = self._thunk()
             self._computed = True
         return self._value
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, LazyBool):
+            other = bool(other)
+        return bool(self) == other
+
+    def __hash__(self) -> int:
+        return hash(bool(self))
 
     def __repr__(self) -> str:
         if self._computed:
@@ -114,15 +124,41 @@ class SafeExpressionEvaluator(ast.NodeVisitor):
 
     @staticmethod
     def _normalize_expr(expr: str) -> str:
-        """Collapse whitespace so YAML folding artefacts don't break ast.parse.
+        """Collapse whitespace outside strings so YAML folding artefacts parse.
 
         YAML ``>`` folded scalars preserve newlines for lines with extra
         indentation, producing expressions like ``... )\\n  not in ...``
         which cause ``SyntaxError: unexpected indent`` in ``ast.parse``.
-        Replacing interior newlines+whitespace with a single space is safe
-        because ``when`` conditions are always single expressions.
+        String tokens are preserved verbatim so normalization cannot change
+        the value being compared.
         """
-        return " ".join(expr.split())
+        lines = expr.splitlines(keepends=True)
+        line_offsets: list[int] = []
+        offset = 0
+        for line in lines:
+            line_offsets.append(offset)
+            offset += len(line)
+
+        string_spans: list[tuple[int, int]] = []
+        try:
+            tokens = tokenize.generate_tokens(io.StringIO(expr).readline)
+            for token in tokens:
+                if token.type != tokenize.STRING:
+                    continue
+                start = line_offsets[token.start[0] - 1] + token.start[1]
+                end = line_offsets[token.end[0] - 1] + token.end[1]
+                string_spans.append((start, end))
+        except tokenize.TokenError:
+            return " ".join(expr.split())
+
+        pieces: list[str] = []
+        cursor = 0
+        for start, end in string_spans:
+            pieces.append(re.sub(r"\s+", " ", expr[cursor:start]))
+            pieces.append(expr[start:end])
+            cursor = end
+        pieces.append(re.sub(r"\s+", " ", expr[cursor:]))
+        return "".join(pieces).strip()
 
     def evaluate(self, expr: str) -> bool:
         """Evaluate expression and return boolean result."""
@@ -192,13 +228,12 @@ class SafeExpressionEvaluator(ast.NodeVisitor):
     _SAFE_BIN_OPS: dict[type, Callable[..., Any]] = {
         ast.Add: operator.add,
         ast.Sub: operator.sub,
-        ast.Mult: operator.mul,
         ast.FloorDiv: operator.floordiv,
         ast.Mod: operator.mod,
     }
 
     def visit_BinOp(self, node: ast.BinOp) -> Any:
-        """Handle binary arithmetic operations (+, -, *, //, %)."""
+        """Handle binary arithmetic operations (+, -, //, %)."""
         op_func = self._SAFE_BIN_OPS.get(type(node.op))
         if op_func is None:
             raise ValueError(f"Unsupported binary operator: {type(node.op).__name__}")
@@ -245,6 +280,9 @@ class SafeExpressionEvaluator(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> Any:
         """Handle function calls (only allowed functions and safe method calls)."""
+        if any(keyword.arg is None for keyword in node.keywords):
+            raise ValueError("Unsupported keyword unpacking")
+
         # Get function name
         if isinstance(node.func, ast.Name):
             func_name = node.func.id
@@ -269,7 +307,7 @@ class SafeExpressionEvaluator(ast.NodeVisitor):
 
         # Evaluate arguments
         args = [self.visit(arg) for arg in node.args]
-        kwargs = {kw.arg: self.visit(kw.value) for kw in node.keywords if kw.arg}
+        kwargs = {kw.arg: self.visit(kw.value) for kw in node.keywords if kw.arg is not None}
 
         return self.allowed_funcs[func_name](*args, **kwargs)
 
@@ -305,6 +343,9 @@ class SafeExpressionEvaluator(ast.NodeVisitor):
 
     def visit_Dict(self, node: ast.Dict) -> dict[Any, Any]:
         """Handle dict literals (e.g., {'key': 'value'} or {})."""
+        if any(key is None for key in node.keys):
+            raise ValueError("Unsupported dictionary unpacking")
+
         return {
             self.visit(k): self.visit(v)
             for k, v in zip(node.keys, node.values, strict=True)
@@ -548,7 +589,7 @@ def build_condition_helpers(
             task_manager, task_id_or_ids, *types
         )
     else:
-        funcs["task_tree_complete"] = lambda task_id: True
+        funcs["task_tree_complete"] = lambda task_id: False
         funcs["task_needs_human_review"] = lambda task_id: False
         funcs["task_state_in"] = lambda task_id, *states: False
         funcs["task_type_in"] = lambda task_id_or_ids, *types: False

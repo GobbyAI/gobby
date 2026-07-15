@@ -3,8 +3,8 @@
 Single-row model: templates live on disk only. The DB holds installed rows
 directly. **Existing active installed rows are not modified during sync** —
 drift between the on-disk template and the DB row is detected via hash
-comparison at runtime, not corrected here. Soft-deleted rows are not
-restored.
+comparison at runtime, not corrected here. Soft-deleted sync-managed rows are
+restored when their template reappears.
 """
 
 import json
@@ -35,7 +35,7 @@ def get_bundled_variables_path() -> Path:
 
 def sync_bundled_variables(
     db: HubDatabase,
-    variables_path: Path | None = None,
+    variables_path: Path | list[Path] | None = None,
     tag: str = "gobby",
 ) -> dict[str, Any]:
     """Sync variable definitions from YAML files to the database.
@@ -43,18 +43,27 @@ def sync_bundled_variables(
     Creates installed rows directly from template files. **Existing active
     installed rows are not modified during sync** — drift is detected via
     hash comparison at runtime, not corrected here. Soft-deleted rows are
-    not restored.
+    restored when their template reappears.
 
     Args:
         db: Database connection.
-        variables_path: Path to variables directory. Defaults to bundled path.
+        variables_path: Complete variable roots to scan, or one root for bundled
+            variables. Defaults to the bundled root. A single non-gobby root is
+            a partial scan and does not prune orphans.
         tag: Tag to apply. Defaults to "gobby" for bundled.
 
     Returns:
         Dict with success status and counts.
     """
     if variables_path is None:
-        variables_path = get_bundled_variables_path()
+        variables_paths = [get_bundled_variables_path()]
+        scan_is_authoritative = True
+    elif isinstance(variables_path, Path):
+        variables_paths = [variables_path]
+        scan_is_authoritative = tag == "gobby"
+    else:
+        variables_paths = variables_path
+        scan_is_authoritative = True
 
     result: dict[str, Any] = {
         "success": True,
@@ -64,14 +73,20 @@ def sync_bundled_variables(
         "errors": [],
     }
 
-    if not variables_path.exists():
-        logger.debug("Variables path not found", extra={"path": str(variables_path)})
+    existing_paths = [path for path in variables_paths if path.exists()]
+    if not existing_paths:
+        logger.debug(
+            "Variables paths not found", extra={"paths": [str(path) for path in variables_paths]}
+        )
         return result
 
     manager = LocalWorkflowDefinitionManager(db)
     on_disk: set[str] = set()
 
-    for yaml_file in sorted(variables_path.glob("*.yaml")):
+    variable_files = sorted(
+        yaml_file for path in existing_paths for yaml_file in path.glob("*.yaml")
+    )
+    for yaml_file in variable_files:
         try:
             raw_content = yaml_file.read_text(encoding="utf-8")
             data = yaml.safe_load(raw_content)
@@ -105,6 +120,7 @@ def sync_bundled_variables(
                         var_name=var_name,
                         var_data=var_data,
                         file_tags=file_tags,
+                        sync_tag=tag,
                         result=result,
                     )
                 except Exception as e:
@@ -117,21 +133,24 @@ def sync_bundled_variables(
             logger.error(error_msg)
             result["errors"].append(error_msg)
 
-    # Orphan cleanup: soft-delete variable rows whose YAML was removed.
-    # Only touch rows with matching tag.
-    tag_condition, tag_params = json_array_contains_condition(db, "tags", tag)
-    orphan_rows = db.fetchall(
-        "SELECT id, name FROM workflow_definitions "
-        "WHERE workflow_type = 'variable' "
-        f"AND {tag_condition} AND deleted_at IS NULL",
-        tag_params,
-    )
     result["orphaned"] = 0
-    for row in orphan_rows:
-        if row["name"] not in on_disk:
-            manager.delete(row["id"])
-            logger.info("Soft-deleted orphaned bundled variable", extra={"variable": row["name"]})
-            result["orphaned"] += 1
+    if scan_is_authoritative and variable_files and not result["errors"]:
+        tag_condition, tag_params = json_array_contains_condition(db, "tags", tag)
+        orphan_rows = db.fetchall(
+            "SELECT id, name FROM workflow_definitions "
+            "WHERE workflow_type = 'variable' "
+            f"AND {tag_condition} AND source = 'installed' AND deleted_at IS NULL",
+            tag_params,
+        )
+        for row in orphan_rows:
+            if row["name"] not in on_disk:
+                manager.delete(row["id"])
+                logger.info(
+                    "Soft-deleted orphaned bundled variable", extra={"variable": row["name"]}
+                )
+                result["orphaned"] += 1
+
+    result["success"] = not result["errors"]
 
     total = result["synced"] + result["updated"] + result["skipped"]
     logger.info(
@@ -153,13 +172,14 @@ def _sync_single_variable(
     var_name: str,
     var_data: dict[str, Any],
     file_tags: list[str] | None,
+    sync_tag: str,
     result: dict[str, Any],
 ) -> None:
     """Sync a single variable to workflow_definitions.
 
     Creates an installed row if none exists. **Existing active installed
     rows are not modified** — drift is detected via hash comparison at
-    runtime, not corrected during sync. Soft-deleted rows are not restored.
+    runtime, not corrected during sync. Soft-deleted sync-managed rows are restored.
     """
     from gobby.workflows.definitions import VariableDefinitionBody
 
@@ -182,6 +202,14 @@ def _sync_single_variable(
 
     if existing is not None:
         if existing.deleted_at is not None:
+            if (
+                existing.source == "installed"
+                and existing.project_id is None
+                and sync_tag in (existing.tags or [])
+            ):
+                manager.restore(existing.id)
+                result["updated"] += 1
+                return
             result["skipped"] += 1
             return
 

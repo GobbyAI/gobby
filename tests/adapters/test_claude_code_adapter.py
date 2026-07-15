@@ -559,6 +559,23 @@ class TestTranslateFromHookResponse:
             'or `gcode search-content "query" [PATH...]` for ranked content search.'
         )
 
+    def test_pre_tool_use_block_overrides_permission_allow(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        response = HookResponse(
+            decision="block",
+            permission_decision="allow",
+            modified_input={"command": "unsafe command"},
+            reason="Blocked by a lower-priority rule",
+        )
+
+        result = adapter.translate_from_hook_response(response, hook_type="pre-tool-use")
+
+        assert result["continue"] is True
+        hook_output = result["hookSpecificOutput"]
+        assert hook_output["permissionDecision"] == "deny"
+        assert hook_output["permissionDecisionReason"] == "Blocked by a lower-priority rule"
+        assert "updatedInput" not in hook_output
+
     def test_pre_tool_use_code_index_skill_block_preserves_get_skill_directive(self) -> None:
         adapter = ClaudeCodeAdapter()
         directive = (

@@ -208,20 +208,25 @@ class LocalWorkflowDefinitionManager:
         self,
         name: str,
         project_id: str | None = None,
+        workflow_type: str | None = None,
         include_deleted: bool = False,
     ) -> WorkflowDefinitionRow | None:
         """Get a workflow definition by name (project-scoped first, then global fallback)."""
         deleted_filter = "" if include_deleted else " AND deleted_at IS NULL"
+        type_filter = " AND workflow_type = %s" if workflow_type is not None else ""
+        type_params = (workflow_type,) if workflow_type is not None else ()
         if project_id:
             row = self.db.fetchone(
-                f"SELECT * FROM workflow_definitions WHERE name = %s AND project_id = %s{deleted_filter}",
-                (name, project_id),
+                "SELECT * FROM workflow_definitions WHERE name = %s "
+                f"AND project_id = %s{type_filter}{deleted_filter}",
+                (name, project_id, *type_params),
             )
             if row:
                 return WorkflowDefinitionRow.from_row(row)
         row = self.db.fetchone(
-            f"SELECT * FROM workflow_definitions WHERE name = %s AND project_id IS NULL{deleted_filter}",
-            (name,),
+            "SELECT * FROM workflow_definitions WHERE name = %s "
+            f"AND project_id IS NULL{type_filter}{deleted_filter}",
+            (name, *type_params),
         )
         return WorkflowDefinitionRow.from_row(row) if row else None
 
@@ -237,6 +242,7 @@ class LocalWorkflowDefinitionManager:
             "sources",
             "definition_json",
             "canvas_json",
+            "source",
             "tags",
         }
         unknown_fields = set(fields) - allowed_fields

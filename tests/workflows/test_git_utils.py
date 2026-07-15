@@ -6,6 +6,7 @@ pure utility functions for git operations without ActionContext dependency.
 
 import logging
 import subprocess
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -50,6 +51,45 @@ class TestWorktreeRootResolution:
         ] == []
 
 
+class TestGetDirtyFilesCategorized:
+    def test_parses_porcelain_paths_without_truncation(self, tmp_path) -> None:
+        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=tmp_path,
+            check=True,
+        )
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=tmp_path, check=True)
+
+        for path in ("modified.txt", "deleted.txt", "old name.txt"):
+            (tmp_path / path).write_text("original\n")
+        subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "initial"], cwd=tmp_path, check=True, capture_output=True
+        )
+
+        (tmp_path / "modified.txt").write_text("modified\n")
+        (tmp_path / "deleted.txt").unlink()
+        subprocess.run(
+            ["git", "mv", "old name.txt", 'renamed "café" file.txt'],
+            cwd=tmp_path,
+            check=True,
+        )
+        (tmp_path / "added file.txt").write_text("added\n")
+        subprocess.run(["git", "add", "added file.txt"], cwd=tmp_path, check=True)
+        (tmp_path / "untracked ünicode.txt").write_text("untracked\n")
+
+        dirty = get_dirty_files_categorized(str(tmp_path))
+
+        assert dirty.tracked == {
+            "added file.txt",
+            "deleted.txt",
+            "modified.txt",
+            'renamed "café" file.txt',
+        }
+        assert dirty.untracked == {"untracked ünicode.txt"}
+
+
 class TestGetGitStatus:
     """Tests for get_git_status function."""
 
@@ -67,6 +107,19 @@ class TestGetGitStatus:
                 timeout=5,
                 cwd=None,
             )
+
+    def test_uses_explicit_project_path_from_different_cwd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target_repo = tmp_path / "target"
+        target_repo.mkdir()
+        subprocess.run(["git", "init"], cwd=target_repo, check=True, capture_output=True)
+        (target_repo / "target.txt").write_text("target\n")
+        other_cwd = tmp_path / "other"
+        other_cwd.mkdir()
+        monkeypatch.chdir(other_cwd)
+
+        assert get_git_status(str(target_repo)) == "?? target.txt"
 
     def test_returns_no_changes_when_empty(self) -> None:
         """Test that 'No changes' is returned when status is empty."""
@@ -193,6 +246,37 @@ class TestGetRecentGitCommits:
             )
             assert mock_run.call_count == 1
             assert mock_run.call_args is not None
+
+    def test_uses_explicit_project_path_from_different_cwd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target_repo = tmp_path / "target"
+        target_repo.mkdir()
+        subprocess.run(["git", "init"], cwd=target_repo, check=True, capture_output=True)
+        (target_repo / "tracked.txt").write_text("tracked\n")
+        subprocess.run(["git", "add", "tracked.txt"], cwd=target_repo, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Test User",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "target commit",
+            ],
+            cwd=target_repo,
+            check=True,
+            capture_output=True,
+        )
+        other_cwd = tmp_path / "other"
+        other_cwd.mkdir()
+        monkeypatch.chdir(other_cwd)
+
+        commits = get_recent_git_commits(project_path=str(target_repo))
+
+        assert commits[0]["message"] == "target commit"
 
     def test_returns_empty_list_on_non_zero_returncode(self) -> None:
         """Test that empty list is returned when git command fails."""

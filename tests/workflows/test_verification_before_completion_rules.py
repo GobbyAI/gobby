@@ -393,4 +393,5 @@ async def test_protected_evidence_variables_cannot_be_set_directly(
         )
 
         assert response.decision == "block"
-        assert "block-direct-verification-evidence-variable-set" in (response.reason or "")
+        assert "[workflow-runtime-variable]" in (response.reason or "")
+        assert f"Variable '{name}' is managed by the workflow runtime" in (response.reason or "")

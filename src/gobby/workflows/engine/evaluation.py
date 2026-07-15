@@ -1,5 +1,6 @@
 """Evaluation helpers for the rule engine."""
 
+import asyncio
 import logging
 import time
 from collections.abc import Callable
@@ -82,6 +83,8 @@ class EvaluationMixin:
             context: dict[str, Any],
             effect_type: str = "block",
             allowed_funcs: dict[str, Callable[..., Any]] | None = None,
+            *,
+            fail_closed: bool | None = None,
         ) -> bool: ...
 
         def _effect_matches_event(self, effect: Any, event: HookEvent) -> bool: ...
@@ -95,7 +98,7 @@ class EvaluationMixin:
             allowed_funcs: dict[str, Callable[..., Any]],
             context_parts: list[str],
             mcp_calls: list[dict[str, Any]],
-        ) -> bool: ...
+        ) -> str | None: ...
 
         def _check_catastrophic_failure(
             self,
@@ -237,20 +240,26 @@ class EvaluationMixin:
                     continue
 
             # Build fresh eval context with current variables
-            ctx = self._build_eval_context(
+            ctx = await asyncio.to_thread(
+                self._build_eval_context,
                 evaluation.event,
                 evaluation.variables,
                 evaluation.eval_context,
             )
 
             # Build allowed_funcs once per iteration - shared by condition and templates
-            allowed_funcs = self._build_allowed_funcs(ctx)
+            allowed_funcs = await asyncio.to_thread(self._build_allowed_funcs, ctx)
 
             # Check rule-level `when` condition
             if body.when:
-                # Use first effect type for fail-open/closed heuristic
-                first_type = body.resolved_effects[0].type if body.resolved_effects else "block"
-                if not self._evaluate_condition(body.when, ctx, first_type, allowed_funcs):
+                fail_closed = any(effect.type == "block" for effect in body.resolved_effects)
+                if not await asyncio.to_thread(
+                    self._evaluate_condition,
+                    body.when,
+                    ctx,
+                    allowed_funcs=allowed_funcs,
+                    fail_closed=fail_closed,
+                ):
                     continue
 
             if block_gates:
@@ -259,23 +268,28 @@ class EvaluationMixin:
                         effect, evaluation.event
                     ):
                         continue
-                    if effect.when and not self._evaluate_condition(
-                        effect.when,
+                    if effect.when:
+                        condition_matches = await asyncio.to_thread(
+                            self._evaluate_condition,
+                            effect.when,
+                            ctx,
+                            effect.type,
+                            allowed_funcs,
+                        )
+                        if not condition_matches:
+                            continue
+                    reason = await asyncio.to_thread(
+                        self._render_rule_block_reason,
+                        evaluation,
+                        row,
+                        effect,
                         ctx,
-                        effect.type,
                         allowed_funcs,
-                    ):
-                        continue
+                    )
                     block_gates.append(
                         BlockGate(
                             rule_name=row.name,
-                            reason=self._render_rule_block_reason(
-                                evaluation,
-                                row,
-                                effect,
-                                ctx,
-                                allowed_funcs,
-                            ),
+                            reason=reason,
                             acknowledge_variable=effect.acknowledge_variable,
                         )
                     )
@@ -294,7 +308,8 @@ class EvaluationMixin:
 
                 # Check per-effect `when` condition
                 if effect.when:
-                    if not self._evaluate_condition(
+                    if not await asyncio.to_thread(
+                        self._evaluate_condition,
                         effect.when,
                         ctx,
                         effect.type,
@@ -308,7 +323,7 @@ class EvaluationMixin:
                     continue
 
                 # Apply non-block effects immediately
-                should_continue = await self._apply_effect(
+                inline_block_reason = await self._apply_effect(
                     effect,
                     row,
                     evaluation.variables,
@@ -317,14 +332,16 @@ class EvaluationMixin:
                     evaluation.context_parts,
                     evaluation.mcp_calls,
                 )
-                if not should_continue:
-                    break  # Inline dispatch failed - skip remaining effects
+                if inline_block_reason:
+                    rule_blocked = True
+                    block_gates.append(BlockGate(rule_name=row.name, reason=inline_block_reason))
 
             # Now apply deferred block (if any)
             if deferred_block is not None:
                 if self._effect_matches_event(deferred_block, evaluation.event):
                     rule_blocked = True
-                    rendered_block_reason = self._render_rule_block_reason(
+                    rendered_block_reason = await asyncio.to_thread(
+                        self._render_rule_block_reason,
                         evaluation,
                         row,
                         deferred_block,
@@ -352,7 +369,8 @@ class EvaluationMixin:
             if self._event_store:
                 rule_latency = (time.perf_counter() - rule_start) * 1000
                 try:
-                    self._event_store.record_event(
+                    await asyncio.to_thread(
+                        self._event_store.record_event,
                         event_type="rule_eval",
                         name=row.name,
                         session_id=evaluation.session_id,
