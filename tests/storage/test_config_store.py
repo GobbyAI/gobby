@@ -1,7 +1,9 @@
 """Tests for ConfigStore CRUD operations and flatten/unflatten utilities."""
 
+from collections.abc import Mapping, Sequence
 from contextlib import nullcontext
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -14,7 +16,7 @@ from gobby.storage.config_store import (
     is_secret_key_name,
     unflatten_config,
 )
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import Cursor, HubDatabase
 from gobby.storage.secrets import SecretStore
 
 pytestmark = pytest.mark.unit
@@ -127,6 +129,30 @@ class TestConfigStore:
         assert store.get("b") is True
         assert store.get("c") == "str"
 
+    def test_set_many_rolls_back_all_entries_on_failure(
+        self, store: ConfigStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        original_execute = store.db.execute
+        insert_count = 0
+
+        def fail_on_second_insert(
+            sql: str, params: Sequence[Any] | Mapping[str, Any] = ()
+        ) -> Cursor:
+            nonlocal insert_count
+            if "INSERT INTO config_store" in sql:
+                insert_count += 1
+                if insert_count == 2:
+                    raise RuntimeError("injected config write failure")
+            return original_execute(sql, params)
+
+        monkeypatch.setattr(store.db, "execute", fail_on_second_insert)
+
+        with pytest.raises(RuntimeError, match="injected config write failure"):
+            store.set_many({"first": 1, "second": 2})
+
+        assert store.get("first") is None
+        assert store.get("second") is None
+
     def test_set_rejects_plaintext_secret_key(self, store: ConfigStore):
         with pytest.raises(ValueError, match=r"Config key 'ai\.embeddings\.api_key'"):
             store.set(AI_EMBEDDING_API_KEY_KEY, "sk-plaintext")
@@ -171,8 +197,23 @@ class TestConfigStore:
             getattr(store, method)(*args)
 
     def test_set_allows_secret_reference(self, store: ConfigStore):
+        store.set(AI_EMBEDDING_API_KEY_KEY, None)
         store.set(AI_EMBEDDING_API_KEY_KEY, "$secret:embeddings_api_key")
         assert store.get(AI_EMBEDDING_API_KEY_KEY) == "$secret:embeddings_api_key"
+        assert AI_EMBEDDING_API_KEY_KEY in store.get_secret_keys()
+
+    def test_set_many_marks_canonical_secret_references(self, store: ConfigStore):
+        store.set("service.credential", "configured-externally")
+        store.set_many({"service.credential": "$secret:credential", "daemon_port": 9000})
+
+        assert store.get_secret_keys() == ["service.credential"]
+
+    def test_mark_secret_keys_marks_existing_rows(self, store: ConfigStore):
+        store.set("service.credential", "configured-externally")
+
+        store.mark_secret_keys({"service.credential"})
+
+        assert store.get_secret_keys() == ["service.credential"]
 
     def test_set_rejects_cross_key_secret_reference(self, store: ConfigStore):
         with pytest.raises(ValueError, match=r"Config key 'ai\.embeddings\.api_key'"):

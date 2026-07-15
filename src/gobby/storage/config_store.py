@@ -129,14 +129,16 @@ class ConfigStore:
         _reject_plaintext_secret_value(key, value)
         now = utc_now()
         json_value = json.dumps(value)
+        is_secret = _is_canonical_secret_reference(key, value)
         self.db.execute(
-            """INSERT INTO config_store (key, value, source, updated_at)
-               VALUES (%s, %s, %s, %s)
+            """INSERT INTO config_store (key, value, source, is_secret, updated_at)
+               VALUES (%s, %s, %s, %s, %s)
                ON CONFLICT(key) DO UPDATE SET
                    value = excluded.value,
                    source = excluded.source,
+                   is_secret = excluded.is_secret,
                    updated_at = excluded.updated_at""",
-            (key, json_value, source, now),
+            (key, json_value, source, is_secret, now),
         )
 
     def set_many(self, entries: dict[str, Any], source: str = "user") -> int:
@@ -146,18 +148,21 @@ class ConfigStore:
             _reject_plaintext_secret_value(key, value)
         now = utc_now()
         count = 0
-        for key, value in entries.items():
-            json_value = json.dumps(value)
-            self.db.execute(
-                """INSERT INTO config_store (key, value, source, updated_at)
-                   VALUES (%s, %s, %s, %s)
-                   ON CONFLICT(key) DO UPDATE SET
-                       value = excluded.value,
-                       source = excluded.source,
-                       updated_at = excluded.updated_at""",
-                (key, json_value, source, now),
-            )
-            count += 1
+        with self.db.transaction():
+            for key, value in entries.items():
+                json_value = json.dumps(value)
+                is_secret = _is_canonical_secret_reference(key, value)
+                self.db.execute(
+                    """INSERT INTO config_store (key, value, source, is_secret, updated_at)
+                       VALUES (%s, %s, %s, %s, %s)
+                       ON CONFLICT(key) DO UPDATE SET
+                           value = excluded.value,
+                           source = excluded.source,
+                           is_secret = excluded.is_secret,
+                           updated_at = excluded.updated_at""",
+                    (key, json_value, source, is_secret, now),
+                )
+                count += 1
         return count
 
     def delete(self, key: str) -> bool:
@@ -242,6 +247,16 @@ class ConfigStore:
             (True,),
         )
         return [row["key"] for row in rows]
+
+    def mark_secret_keys(self, keys: Collection[str]) -> None:
+        """Mark existing config rows as secrets."""
+        if not keys:
+            return
+        placeholders = ",".join("%s" for _ in keys)
+        self.db.execute(
+            f"UPDATE config_store SET is_secret = %s WHERE key IN ({placeholders})",
+            (True, *sorted(keys)),
+        )
 
     def clear_secret(self, key: str, secret_store: SecretStore) -> None:
         """Remove a secret from both config_store and the secrets table.

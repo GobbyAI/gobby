@@ -31,7 +31,6 @@ from gobby.servers.routes.configuration_secrets import (
     delete_all_except,
     falkordb_validation_response,
     is_secret_reference,
-    mark_secret_keys,
     mask_secret_values,
     validate_falkordb_secret,
 )
@@ -92,7 +91,7 @@ def _apply_transactional_changes(
         deleted_count = delete_all_except(config_store, secret_store, masked_secret_keys)
         if storage_secret_reference_entries:
             count += config_store.set_many(storage_secret_reference_entries, source="user")
-            mark_secret_keys(config_store, set(storage_secret_reference_entries))
+            config_store.mark_secret_keys(set(storage_secret_reference_entries))
         if storage_secret_value_entries:
             for key, value in storage_secret_value_entries.items():
                 if value is None or value == "":
