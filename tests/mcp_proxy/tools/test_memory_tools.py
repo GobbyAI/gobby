@@ -80,6 +80,7 @@ def mock_memory_manager():
     manager.get_memory = MagicMock(return_value=MockMemory())
     manager.get_related = AsyncMock(return_value=[MockMemory()])
     manager.update_memory = AsyncMock(return_value=MockMemory())
+    manager.update_memory_scoped = AsyncMock(return_value=MockMemory())
     manager.rescope_memory = AsyncMock(return_value=MockMemory(project_id=None))
     manager.get_stats = MagicMock(return_value={"total": 10, "by_type": {"fact": 5}})
     manager.db = MagicMock()
@@ -774,21 +775,24 @@ class TestUpdateMemory:
     async def test_update_memory_success(self, memory_registry, mock_memory_manager):
         """Test successful memory update."""
         updated_memory = MockMemory(id="mem-123", updated_at="2024-01-02T00:00:00")
-        mock_memory_manager.update_memory.return_value = updated_memory
+        mock_memory_manager.update_memory_scoped.return_value = updated_memory
 
-        result = await memory_registry.call(
-            "update_memory",
-            {
-                "memory_id": "mem-123",
-                "content": "Updated content",
-                "tags": ["new-tag"],
-            },
-        )
+        with patch("gobby.utils.project_context.get_project_context") as mock_ctx:
+            mock_ctx.return_value = {"id": "project-a", "name": "Project A"}
+            result = await memory_registry.call(
+                "update_memory",
+                {
+                    "memory_id": "mem-123",
+                    "content": "Updated content",
+                    "tags": ["new-tag"],
+                },
+            )
 
         assert result["success"] is True
         assert result["memory"]["id"] == "mem-123"
-        mock_memory_manager.update_memory.assert_called_once_with(
+        mock_memory_manager.update_memory_scoped.assert_awaited_once_with(
             memory_id="mem-123",
+            project_id="project-a",
             content="Updated content",
             tags=["new-tag"],
         )
@@ -796,15 +800,18 @@ class TestUpdateMemory:
     @pytest.mark.asyncio
     async def test_update_memory_partial(self, memory_registry, mock_memory_manager):
         """Test partial memory update."""
-        mock_memory_manager.update_memory.return_value = MockMemory()
+        mock_memory_manager.update_memory_scoped.return_value = MockMemory()
 
-        result = await memory_registry.call(
-            "update_memory", {"memory_id": "mem-123", "tags": ["updated"]}
-        )
+        with patch("gobby.utils.project_context.get_project_context") as mock_ctx:
+            mock_ctx.return_value = {"id": "project-a", "name": "Project A"}
+            result = await memory_registry.call(
+                "update_memory", {"memory_id": "mem-123", "tags": ["updated"]}
+            )
 
         assert result["success"] is True
-        mock_memory_manager.update_memory.assert_called_once_with(
+        mock_memory_manager.update_memory_scoped.assert_awaited_once_with(
             memory_id="mem-123",
+            project_id="project-a",
             content=None,
             tags=["updated"],
         )
@@ -812,7 +819,7 @@ class TestUpdateMemory:
     @pytest.mark.asyncio
     async def test_update_memory_value_error(self, memory_registry, mock_memory_manager):
         """Test update with ValueError."""
-        mock_memory_manager.update_memory.side_effect = ValueError("Memory not found")
+        mock_memory_manager.update_memory_scoped.side_effect = ValueError("Memory not found")
 
         result = await memory_registry.call(
             "update_memory", {"memory_id": "nonexistent", "content": "New"}
@@ -824,7 +831,7 @@ class TestUpdateMemory:
     @pytest.mark.asyncio
     async def test_update_memory_error(self, memory_registry, mock_memory_manager):
         """Test update error handling."""
-        mock_memory_manager.update_memory.side_effect = Exception("Update error")
+        mock_memory_manager.update_memory_scoped.side_effect = Exception("Update error")
 
         result = await memory_registry.call(
             "update_memory", {"memory_id": "mem-123", "content": "New"}

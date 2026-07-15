@@ -193,11 +193,15 @@ def register_memory_dream_tools(
                 "success": False,
                 "error": f"Background memory dream limit reached ({MAX_BACKGROUND_DREAM_TASKS})",
             }
-        started = await service.start_async(options)
-        if not started.get("success"):
+        try:
+            started = await service.start_async(options)
+            if not started.get("success"):
+                _release_background_slot()
+                return started
+            run_id = str(started["run_id"])
+        except (Exception, asyncio.CancelledError):
             _release_background_slot()
-            return started
-        run_id = str(started["run_id"])
+            raise
         run_coro = service.execute_run(run_id, options)
         try:
             task = asyncio.create_task(
