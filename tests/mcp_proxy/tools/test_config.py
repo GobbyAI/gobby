@@ -184,6 +184,23 @@ class TestGetConfigSection:
         assert result["section"]["falkordb"]["password"] == "********"
         assert result["section"]["falkordb"]["rrf_k"] == 77
 
+    def test_explicit_secret_with_innocuous_name_is_masked_on_read_paths(
+        self,
+        config_registry_with_db: InternalToolRegistry,
+    ) -> None:
+        set_result = config_registry_with_db.get_tool("set_config")(
+            key="skills.core_skills_path",
+            value="/private/skills",
+            is_secret=True,
+        )
+
+        get_result = config_registry_with_db.get_tool("get_config")(key="skills.core_skills_path")
+        section_result = config_registry_with_db.get_tool("get_config_section")(prefix="skills")
+
+        assert set_result["success"] is True
+        assert get_result["value"] == "********"
+        assert section_result["section"]["core_skills_path"] == "********"
+
 
 class TestSetConfig:
     """Tests for set_config tool."""
