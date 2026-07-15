@@ -597,8 +597,9 @@ def create_memory_registry(
             tags: New list of tags (optional)
         """
         try:
-            memory = await memory_manager.update_memory(
+            memory = await memory_manager.update_memory_scoped(
                 memory_id=memory_id,
+                project_id=get_current_project_id(),
                 content=content,
                 tags=tags,
             )

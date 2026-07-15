@@ -681,6 +681,38 @@ class TestUpdateMemory:
         with pytest.raises(ValueError, match="not found"):
             await memory_manager.update_memory(MISSING_MEMORY_ID, tags=["new"])
 
+    @pytest.mark.asyncio
+    async def test_scoped_update_rejects_other_project(self, db, memory_config) -> None:
+        """An out-of-scope update leaves the memory and secondary indices unchanged."""
+        mock_vs = MagicMock()
+        mock_vs.upsert = AsyncMock()
+        mock_embed = AsyncMock(return_value=[0.1, 0.2])
+        mock_kg = MagicMock()
+        mock_kg.remove_memory_from_graph = AsyncMock()
+        manager = MemoryManager(
+            db=db, config=memory_config, vector_store=mock_vs, embed_fn=mock_embed
+        )
+        manager._kg_service = mock_kg
+        project_b = "22222222-2222-4222-8222-222222222222"
+        db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_ID, "Project A"))
+        db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (project_b, "Project B"))
+        memory = await manager.create_memory(content="Project B memory", project_id=project_b)
+        mock_vs.upsert.reset_mock()
+
+        with pytest.raises(ValueError, match="not found"):
+            await manager.update_memory_scoped(
+                memory.id,
+                PROJECT_ID,
+                content="Cross-project rewrite",
+            )
+
+        assert manager.get_memory(memory.id).content == "Project B memory"
+        assert all(
+            call.kwargs["payload"]["content"] != "Cross-project rewrite"
+            for call in mock_vs.upsert.await_args_list
+        )
+        mock_kg.remove_memory_from_graph.assert_not_awaited()
+
 
 # =============================================================================
 # Test: Get Stats

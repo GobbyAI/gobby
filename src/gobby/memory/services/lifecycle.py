@@ -416,6 +416,37 @@ class MemoryLifecycleService:
             await self._refresh_content_indices(old_memory=old_memory, memory=result)
         return result
 
+    async def update_memory_scoped(
+        self,
+        memory_id: str,
+        project_id: str | None,
+        content: str | None = None,
+        tags: list[str] | None = None,
+        memory_type: str | None = None,
+    ) -> Memory:
+        """Update a memory visible to a project and refresh its secondary indices."""
+        old_memory = (
+            await self._run_storage(
+                self.storage.get_memory,
+                memory_id,
+                project_id=project_id,
+                visibility="all",
+            )
+            if content is not None
+            else None
+        )
+        result = await self._run_storage(
+            self.storage.update_memory_scoped,
+            memory_id=memory_id,
+            project_id=project_id,
+            content=content,
+            tags=tags,
+            memory_type=memory_type,
+        )
+        if old_memory is not None and old_memory.content != result.content:
+            await self._refresh_content_indices(old_memory=old_memory, memory=result)
+        return result
+
     async def aupdate_memory(
         self,
         memory_id: str,

@@ -78,7 +78,7 @@ class MemoryCrudMixin(MemoryStoreBase):
                               created_at ASC,
                               id ASC
                      LIMIT 1
-                    """,  # nosec B608 - predicate is selected from fixed SQL literals
+                    """,  # nosec B608
                     (normalized_content, *scope_params),
                 ).fetchone()
                 if visible_duplicate is not None:
@@ -373,7 +373,7 @@ class MemoryCrudMixin(MemoryStoreBase):
                AND {scope_predicate}{vis_clause}
              ORDER BY created_at ASC, id ASC
              LIMIT 1
-            """,  # nosec B608 - predicate and visibility clauses are fixed SQL literals
+            """,  # nosec B608
             (normalized_content, *scope_params),
         )
         return row is not None
@@ -405,7 +405,7 @@ class MemoryCrudMixin(MemoryStoreBase):
                       created_at ASC,
                       id ASC
              LIMIT 1
-            """,  # nosec B608 - predicate and visibility clauses are fixed SQL literals
+            """,  # nosec B608
             (normalized_content, *scope_params),
         )
         if row:
@@ -419,6 +419,48 @@ class MemoryCrudMixin(MemoryStoreBase):
         tags: list[str] | None = None,
         memory_type: str | None = None,
     ) -> Memory:
+        return self._update_memory_in_scope(
+            memory_id=memory_id,
+            content=content,
+            tags=tags,
+            memory_type=memory_type,
+            scope_clause="",
+            scope_params=(),
+        )
+
+    def update_memory_scoped(
+        self,
+        memory_id: str,
+        project_id: str | None,
+        content: str | None = None,
+        tags: list[str] | None = None,
+        memory_type: str | None = None,
+    ) -> Memory:
+        """Update a memory only when it is visible in the requested project scope."""
+        scope_clause = (
+            " AND project_id IS NULL"
+            if project_id is None
+            else " AND (project_id = %s OR project_id IS NULL)"
+        )
+        scope_params = () if project_id is None else (project_id,)
+        return self._update_memory_in_scope(
+            memory_id=memory_id,
+            content=content,
+            tags=tags,
+            memory_type=memory_type,
+            scope_clause=scope_clause,
+            scope_params=scope_params,
+        )
+
+    def _update_memory_in_scope(
+        self,
+        memory_id: str,
+        content: str | None,
+        tags: list[str] | None,
+        memory_type: str | None,
+        scope_clause: str,
+        scope_params: tuple[str, ...],
+    ) -> Memory:
         updates = []
         params: list[Any] = []
 
@@ -428,8 +470,8 @@ class MemoryCrudMixin(MemoryStoreBase):
                 raise ValueError("Memory content cannot be empty")
             with self.db.transaction() as conn:
                 current = conn.execute(
-                    "SELECT project_id, content FROM memories WHERE id = %s",
-                    (memory_id,),
+                    f"SELECT project_id, content FROM memories WHERE id = %s{scope_clause}",
+                    (memory_id, *scope_params),
                 ).fetchone()
                 if current is None:
                     raise ValueError(f"Memory {memory_id} not found")
@@ -457,13 +499,22 @@ class MemoryCrudMixin(MemoryStoreBase):
             params.append(memory_type)
 
         if not updates:
-            return self.get_memory(memory_id)
+            row = self.db.fetchone(
+                f"SELECT * FROM memories WHERE id = %s{scope_clause}",
+                (memory_id, *scope_params),
+            )
+            if not row:
+                raise ValueError(f"Memory {memory_id} not found")
+            return Memory.from_row(row)
 
         updates.append("updated_at = %s")
         params.append(utc_now())
         params.append(memory_id)
+        params.extend(scope_params)
 
-        sql = f"UPDATE memories SET {', '.join(updates)} WHERE id = %s"  # nosec B608
+        sql = (  # nosec B608
+            f"UPDATE memories SET {', '.join(updates)} WHERE id = %s{scope_clause}"
+        )
 
         with self.db.transaction() as conn:
             cursor = conn.execute(sql, tuple(params))
