@@ -22,7 +22,7 @@ type StatusFilter = (typeof FILTER_OPTIONS)[number]['id']
 const PAGE_SIZE = 20
 
 export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) {
-  const { traces, isLoading, selectedTraceId, setSelectedTraceId } = useTraces(
+  const { traces, isLoading, error, selectedTraceId, setSelectedTraceId } = useTraces(
     projectId ?? undefined,
   )
   const { spans, isLoading: isDetailLoading } = useTraceDetail(selectedTraceId)
@@ -76,6 +76,12 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
           className="ml-auto"
         />
       </div>
+
+      {error && (
+        <p role="alert" className="border-b border-border px-3 py-1.5 text-xs text-destructive">
+          {error}
+        </p>
+      )}
 
       <div
         className={`overflow-y-auto ${selectedTrace ? 'border-b border-border' : 'flex-1'}`}

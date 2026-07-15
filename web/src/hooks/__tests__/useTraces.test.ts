@@ -102,4 +102,26 @@ describe('useTraces request lifecycle', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
+
+  it('keeps loaded traces and exposes an error when refetch fails', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ traces: [{ trace_id: 'trace-1' }] }))
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error',
+      } as Response)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useTraces('project-123'))
+    await act(async () => undefined)
+
+    await act(async () => {
+      await result.current.fetchTraces()
+    })
+
+    expect(result.current.traces).toEqual([{ trace_id: 'trace-1' }])
+    expect(result.current.error).toBe('Failed to fetch traces (500)')
+  })
 })

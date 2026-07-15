@@ -35,6 +35,7 @@ interface TraceFilters {
 export function useTraces(projectId?: string) {
   const [traces, setTraces] = useState<TraceRecord[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [filters, setFilters] = useState<TraceFilters>({})
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null)
   const refetchTimerRef = useRef<number | null>(null)
@@ -50,12 +51,14 @@ export function useTraces(projectId?: string) {
       if (res.ok) {
         const data = await res.json()
         setTraces(data.traces || [])
+        setError(null)
       } else {
         console.error('Failed to fetch traces:', res.status, res.statusText)
-        setTraces([])
+        setError(`Failed to fetch traces (${res.status})`)
       }
     } catch (e) {
       console.error('Failed to fetch traces:', e)
+      setError(e instanceof Error ? e.message : 'Failed to fetch traces')
     } finally {
       setIsLoading(false)
     }
@@ -79,6 +82,7 @@ export function useTraces(projectId?: string) {
   return {
     traces,
     isLoading,
+    error,
     filters,
     setFilters,
     fetchTraces,
