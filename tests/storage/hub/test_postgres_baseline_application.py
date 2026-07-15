@@ -135,10 +135,14 @@ class _ApplyConnection:
         pg_search_present: bool = True,
         pgcrypto_present: bool = True,
         columns: dict[str, set[str]] | None = None,
+        max_version: int | None = None,
+        tables: set[str] | None = None,
     ) -> None:
         self.state = state
         self.pg_search_present = pg_search_present
         self.pgcrypto_present = pgcrypto_present
+        self.max_version = max_version
+        self.tables = tables or set()
         module = _postgres_module()
         contracts = {**module._GCORE_CODE_INDEX_COLUMNS, **module._GWIKI_COLUMNS}
         self.columns = (
@@ -166,6 +170,10 @@ class _ApplyConnection:
             return _Result([(1,)] if self.pg_search_present else [])
         if "pg_extension" in sql and extension == "pgcrypto":
             return _Result([(1,)] if self.pgcrypto_present else [])
+        if "MAX(version)" in sql:
+            return _Result([(self.max_version,)])
+        if "pg_tables" in sql:
+            return _Result([(table,) for table in sorted(self.tables)])
         if "information_schema.columns" in sql:
             requested_tables = params[0]
             return _Result(
@@ -561,10 +569,34 @@ def test_apply_postgres_baseline_rejects_partial_baseline_state(monkeypatch) -> 
     monkeypatch.setattr(module.importlib, "resources", _Resources())
     db = _new_db(module, _Pool(fast, locked))
 
-    with pytest.raises(MigrationUnsupportedError, match=rf"version {BASELINE_VERSION}"):
+    with pytest.raises(MigrationUnsupportedError, match="Unrecognized PostgreSQL schema"):
         db._apply_postgres_baseline()
 
     assert "CREATE TABLE tasks(id INTEGER)" not in locked.statements
+
+
+def test_apply_postgres_baseline_rejects_pre_baseline_lineage_with_observed_state(
+    monkeypatch,
+) -> None:
+    module = _postgres_module()
+    fast = _ApplyConnection("corrupt_partial")
+    locked = _ApplyConnection(
+        "corrupt_partial",
+        max_version=BASELINE_VERSION - 1,
+        tables={"schema_migrations", "tasks", "sessions"},
+    )
+
+    monkeypatch.setattr(module, "_classify_baseline_state", lambda conn: conn.state)
+    db = _new_db(module, _Pool(fast, locked))
+
+    with pytest.raises(MigrationUnsupportedError) as exc_info:
+        db._apply_postgres_baseline()
+
+    message = str(exc_info.value)
+    assert f"pre-{BASELINE_VERSION}" in message
+    assert f"max schema version {BASELINE_VERSION - 1}" in message
+    assert "tables ['sessions', 'tasks']" in message
+    assert "Post-baseline repair migrations do not run for this lineage" in message
 
 
 def test_apply_postgres_baseline_adopts_gcore_code_index_state(monkeypatch) -> None:

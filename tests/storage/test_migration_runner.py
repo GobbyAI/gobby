@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import importlib
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
+from threading import Barrier, Lock
 from types import MethodType
 
 import pytest
@@ -51,6 +53,11 @@ class _PostgresMigrationHub:
     def execute(self, sql: str, params=()):
         if "to_regclass" in sql:
             return _Result([{"table_exists": params[0] in self.tables}])
+        if "pg_advisory_xact_lock" in sql:
+            return _Result()
+        if "WHERE version = %s" in sql:
+            rows = [{"version": params[0]}] if params[0] in self.applied else []
+            return _Result(rows)
         raise AssertionError(f"unexpected query: {sql}")
 
 
@@ -100,6 +107,83 @@ def test_postgres_pending_migration_logs_info(caplog: pytest.LogCaptureFixture) 
     assert record.levelname == "INFO"
 
 
+class _ConcurrentMigrationTransaction:
+    def __init__(self, hub: _ConcurrentMigrationHub) -> None:
+        self._hub = hub
+        self._locked = False
+
+    def execute(self, sql: str, params=()):
+        if "SELECT version FROM schema_migrations WHERE" in sql:
+            assert self._locked
+            version = params[0]
+            rows = [{"version": version}] if version in self._hub.applied else []
+            return _Result(rows)
+        if sql == "SELECT version FROM schema_migrations":
+            rows = [{"version": version} for version in self._hub.applied]
+            self._hub.initial_reads.wait()
+            return _Result(rows)
+        if "pg_advisory_xact_lock" in sql:
+            self._hub.advisory_lock.acquire()
+            self._locked = True
+            self._hub.lock_acquisitions += 1
+            return _Result()
+        if "INSERT INTO schema_migrations" in sql:
+            assert self._locked
+            self._hub.applied.add(params[0])
+            return _Result()
+        raise AssertionError(f"unexpected query: {sql}")
+
+    def close(self) -> None:
+        if self._locked:
+            self._hub.advisory_lock.release()
+
+
+class _ConcurrentMigrationHub:
+    dialect = "postgres"
+
+    def __init__(self) -> None:
+        self.advisory_lock = Lock()
+        self.initial_reads = Barrier(2)
+        self.applied: set[int] = set()
+        self.lock_acquisitions = 0
+        self.migration_runs = 0
+
+    @contextmanager
+    def transaction(self):
+        txn = _ConcurrentMigrationTransaction(self)
+        try:
+            yield txn
+        finally:
+            txn.close()
+
+
+def test_apply_pending_serializes_concurrent_migrators_and_rechecks_version() -> None:
+    module = _migration_module()
+    hub = _ConcurrentMigrationHub()
+    migration = Migration(version=321, name="concurrent", path=Path("unused.sql"))
+    runners = [module.MigrationRunner(hub), module.MigrationRunner(hub)]
+
+    for runner in runners:
+        runner._ensure_schema_migrations_table = MethodType(lambda self: None, runner)
+        runner._discover_migrations = MethodType(lambda self: [migration], runner)
+
+        def run_migration(self, txn, discovered: Migration) -> None:
+            assert discovered is migration
+            assert hub.advisory_lock.locked()
+            hub.migration_runs += 1
+
+        runner._run_migration = MethodType(run_migration, runner)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(runner.apply_pending) for runner in runners]
+        for future in futures:
+            future.result(timeout=5)
+
+    assert hub.lock_acquisitions == 2
+    assert hub.migration_runs == 1
+    assert hub.applied == {321}
+
+
 def test_postgres_migration_discovery_reports_invalid_filenames(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -119,6 +203,40 @@ def test_postgres_migration_discovery_reports_invalid_filenames(
     assert [(migration.version, migration.name) for migration in discovered] == [(321, "valid")]
     assert "Ignoring invalid migration filename: invalid.sql" in caplog.text
     assert ".gitkeep" not in caplog.text
+
+
+@pytest.mark.parametrize("version", [295, 305])
+def test_postgres_migration_discovery_rejects_reserved_versions(
+    version: int,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _migration_module()
+    migrations_dir = tmp_path / "migrations"
+    migrations_dir.mkdir()
+    (migrations_dir / f"{version}_reused_with_different_sql.sql").touch()
+    monkeypatch.setattr(module.importlib.resources, "files", lambda _package: tmp_path)
+
+    with pytest.raises(
+        RuntimeError,
+        match=rf"Migration v{version} reuses a version reserved by baseline v305",
+    ):
+        module.MigrationRunner(_PostgresMigrationHub())._discover_migrations()
+
+
+def test_postgres_migration_discovery_rejects_duplicate_post_baseline_versions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _migration_module()
+    migrations_dir = tmp_path / "migrations"
+    migrations_dir.mkdir()
+    (migrations_dir / "321_first.sql").touch()
+    (migrations_dir / "321_second.postgres.sql").touch()
+    monkeypatch.setattr(module.importlib.resources, "files", lambda _package: tmp_path)
+
+    with pytest.raises(RuntimeError, match="Duplicate migration file for v321"):
+        module.MigrationRunner(_PostgresMigrationHub())._discover_migrations()
 
 
 def test_postgres_migration_discovery_finds_all_post_baseline_migrations() -> None:
