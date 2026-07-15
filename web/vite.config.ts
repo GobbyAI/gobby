@@ -70,6 +70,7 @@ export default defineConfig({
             if (id.includes('react-syntax-highlighter') || id.includes('refractor') || id.includes('prismjs') || id.includes('highlight.js')) return 'vendor-syntax'
             if (id.includes('react-markdown') || id.includes('remark') || id.includes('rehype') || id.includes('unified') || id.includes('mdast') || id.includes('hast') || id.includes('micromark') || id.includes('marked')) return 'vendor-markdown'
             if (id.includes('d3-') || id.includes('@dagrejs')) return 'vendor-d3'
+            if (id.includes('react-virtuoso')) return 'vendor-virtualization'
           }
         },
       },
