@@ -272,44 +272,41 @@
 
 ## Nits
 
-### [NIT] Three contradictory `enabled` defaults for the same definition; two bundled pipelines install disabled
-- **Where:** `loader_discovery.py:41-42` (`enabled = type == "lifecycle"`), `definitions.py:486,620` (model default `True`), `sync_pipelines.py:175` / `sync_rules.py:298` (`get("enabled", False)`). `expand-task.yaml` and `nightly-fixes.yaml` carry no `enabled:` key and install `enabled=False`, contradicting Guiding Principle 13. (Note: all 149 bundled *rule* YAMLs set `enabled:` explicitly, so the rule-side default is latent.) Pick one default and derive sync from the parsed model.
+### [NIT] Bundled pipelines with omitted `enabled` still install disabled
+- **Where:** `sync_pipelines.py:177`; `pipelines/expand-task.yaml:1-3`; `pipelines/nightly-fixes.yaml:1-3`. Related import-default fixes #18124 and #18128 do not cover bundled sync, which still passes `default=False`. Tracked by #18323.
 
 ### [NIT] `LazyBool` lacks `__eq__`/`__hash__`/`__contains__`; `==`/`is`/`in` compare identity
-- **Where:** `safe_evaluator.py:58-84`. `has_dirty_files == True` routes through `operator.eq` on identity → `False` even when the deferred value is True (the thunk never runs). Bundled rules only use it in truthy/`not` contexts (correct via `__bool__`), so latent. Add `__eq__`/`__ne__` coercing via `bool(self)`, or resolve thunks before comparison.
+- **Where:** `safe_evaluator.py:60-86`. `has_dirty_files == True` routes through `operator.eq` on identity → `False` even when the deferred value is True (the thunk never runs). Bundled rules only use it in truthy/`not` contexts (correct via `__bool__`), so latent. Tracked by #18312.
 
 ### [NIT] `**` dict/keyword spread is silently dropped, not rejected
-- **Where:** `safe_evaluator.py:306-312,271-272`. `{**a, 'b':1}` yields `{'b':1}`; `f(**d)` drops `**d`. Raise `ValueError("unpacking not supported")` instead of computing a different value.
+- **Where:** `safe_evaluator.py:273-301,333-339`. `{**a, 'b':1}` yields `{'b':1}`; `f(**d)` drops `**d`. Tracked by #18313.
 
 ### [NIT] `task_state_in` is case-sensitive while `task_type_in` lowercases — inconsistent
-- **Where:** `condition_helpers.py:364-365` vs `:404-406`. `task_state_in(id, "Closed")` never matches canonical lowercase states. Lowercase in `task_state_in` to match.
+- **Where:** `condition_helpers.py:814-830`. `task_state_in(id, "Closed")` never matches canonical lowercase states. Tracked by #18314.
 
 ### [NIT] `fnmatch.fnmatch` is OS-case-normalizing; selector matching diverges on Windows
-- **Where:** `selectors.py:30-36,141-158`. `name:Plan*` matches `plan-draft` on Windows but not POSIX. Use `fnmatch.fnmatchcase`. Negligible unless Windows is supported.
+- **Where:** `selectors.py:30-38,142-158`. `name:Plan*` matches `plan-draft` on Windows but not POSIX. Tracked by #18315.
 
 ### [NIT] `detect_bash_commit` can set `task_has_commits=true` for failed/unrelated commands
-- **Where:** `observer_commits.py:129,143-155`. Success gate is only `is_error` (ignores `exitCode`/`returncode`/`metadata.is_failure`), and `_GIT_COMMIT_RE` runs against any successful command's output before the command check, so `cat`-ing a log containing `[main abc1234]` flips the flag. Reuse `_shell_tool_succeeded` and gate the regex on `_is_git_commit_command`.
+- **Where:** `observer_commits.py:117-155`. Command parsing has improved, but the success gate is still only `is_error`, and `_GIT_COMMIT_RE` still runs before `_is_git_commit_command`; `cat`-ing a commit log can flip the flag. Tracked by #18316.
 
 ### [NIT] `task_has_commits` is session-scoped and never resets across tasks
-- **Where:** `observer_commits.py:85,119`. The first commit satisfies "commit before close" for every later task in a multi-task session. Reset when `remove_claimed_task` empties `claimed_tasks`, or rename/document as session-scoped.
+- **Where:** `task_claim_state.py:44-60`. The first commit satisfies "commit before close" for every later task in a multi-task session because removing the final claim does not clear `task_has_commits`. Tracked by #18317.
 
 ### [NIT] `mcp_results` stores every MCP tool's full result, deep-copied every hook event
-- **Where:** `observer_mcp.py:138`; `hooks.py:664` (`deepcopy(variables)` per event). Unbounded session-variable growth + per-event deepcopy/JSON cost on the hot path; conditions read only a few scalars. Truncate stored results to consumed fields.
+- **Where:** `observer_mcp.py:186-199`; `safe_evaluator.py:602-646`. Full JSON-safe results remain unbounded even though condition helpers consume only null/failure checks and selected fields. Tracked by #18318.
 
 ### [NIT] Verification-evidence freshness reset misses shell edits
-- **Where:** `hooks/event_handlers/_tool.py:14-21,170-196,289-295` (seam of `observer_verification.py:80-88`). Evidence is invalidated only for structured `EDIT_TOOLS` with `file_path`; `sed -i`/redirects/`git checkout --` neither reset evidence nor enter `session_edited_files`, so pre-edit evidence still counts fresh. Route shell-modified paths through the same reset via the existing `_normalization_shell` detection.
+- **Where:** `hooks/event_handlers/_tool.py:158-258,318-361`. Evidence is invalidated only for structured `EDIT_TOOLS` with a path; detected shell mutations still bypass `session_edited_files` and the freshness reset. Tracked by #18319.
 
 ### [NIT] sync_pipelines coerces any unrecognized `type` to `workflow_type="pipeline"`
-- **Where:** `sync_pipelines.py:155-159,171-172`. A root YAML with `type: step` is stored as pipeline, then `_load_from_db` force-parses it as `PipelineDefinition` and fails. Latent (all bundled root YAMLs are `type: pipeline`). Skip with an error instead of coercing.
+- **Where:** `sync_pipelines.py:157-177`. A root YAML with `type: step` validates as `WorkflowDefinition`, then is stored as `workflow_type="pipeline"` and later fails pipeline parsing. Tracked by #18320.
 
 ### [NIT] `_validate_pipeline_references` misaligns positions when steps lack `id`
-- **Where:** `loader_validation.py:25-37`. `valid_at_position` is built over id-bearing steps but indexed by all steps, producing false "references later step" errors when any step lacks `id`. Build the valid set while iterating `steps` once.
+- **Where:** `loader_validation.py:26-38`. `valid_at_position` is built over ID-bearing steps but indexed by every physical step, producing false forward-reference errors after a step without `id`. Tracked by #18321.
 
 ### [NIT] `agent_resolver._SOURCE_TO_PROVIDER` is an identity no-op
-- **Where:** `agent_resolver.py:13-23`. Every key maps to itself; `_normalize_provider` does nothing. Delete it or make it validate against known providers.
-
-### [NIT] Doc drift: `workflows/CLAUDE.md` mislabels `loader_sync.py` and references nonexistent `rule_engine.py`
-- **Where:** `src/gobby/workflows/CLAUDE.md:9,18,35`. The doc names `rule_engine.py` (RuleEngine actually lives in `engine/core.py`) and says `loader_sync.py` "syncs bundled templates to DB" (it is sync wrappers for async loader methods; template sync lives in `sync_rules.py`/`sync_pipelines.py`/`sync_variables.py`). This doc drift misdirected the review's own scope. Triage candidate for the docs-accuracy leaves (#15799–#15801).
+- **Where:** `agent_resolver.py:12-22`. Every known key maps to itself, and unknown values pass through unchanged. Tracked by #18322.
 
 ## Systemic patterns
 
