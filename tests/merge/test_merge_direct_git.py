@@ -523,7 +523,7 @@ async def test_resolver_never_reports_git_auto_for_malformed_conflict_body(
 
 
 @pytest.mark.asyncio
-async def test_merge_apply_reports_dirty_worktree_after_commit(
+async def test_merge_apply_resolves_with_warning_for_dirty_worktree_after_commit(
     temp_db,
     tmp_path: Path,
 ) -> None:
@@ -579,12 +579,41 @@ async def test_merge_apply_reports_dirty_worktree_after_commit(
 
     result = await registry.call("merge_apply", {"resolution_id": resolution.id})
 
-    assert result["success"] is False
-    assert result["error"] == "merge completed but worktree is dirty"
+    assert result["success"] is True
+    assert result["warning"] == "merge completed but worktree is dirty"
     assert result["dirty_files"] == [" M shared.py"]
     assert result["merge_sha"] == _git(worktree_path, "rev-parse", "HEAD")
     assert not _git_succeeds(worktree_path, "rev-parse", "-q", "--verify", "MERGE_HEAD")
-    assert merge_storage.get_resolution(resolution.id).status == "pending"
+    assert merge_storage.get_resolution(resolution.id).status == "resolved"
+
+
+@pytest.mark.asyncio
+async def test_merge_apply_rejects_dirty_tree_before_direct_merge(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    branch = "feature/pre-dirty-direct"
+    _init_repo(repo)
+    worktree_path, _feature_sha = _create_feature_worktree(repo, tmp_path, branch)
+    registry, merge_storage, worktree = _create_registry(temp_db, repo, worktree_path, branch)
+    (repo / "unrelated.txt").write_text("dirty\n", encoding="utf-8")
+
+    started = await registry.call(
+        "merge_start",
+        {"worktree_id": worktree.id, "source_branch": branch, "target_branch": "main"},
+    )
+    main_before = _git(repo, "rev-parse", "main")
+    status_before = merge_storage.get_resolution(started["resolution_id"]).status
+
+    result = await registry.call("merge_apply", {"resolution_id": started["resolution_id"]})
+
+    assert result["success"] is False
+    assert result["error"] == "worktree is dirty; commit or stash changes before merging"
+    assert result["dirty_files"] == ["?? unrelated.txt"]
+    assert _git(repo, "rev-parse", "main") == main_before
+    assert merge_storage.get_resolution(started["resolution_id"]).status == status_before
 
 
 @pytest.mark.asyncio

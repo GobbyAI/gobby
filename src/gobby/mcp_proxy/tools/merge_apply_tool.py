@@ -185,7 +185,7 @@ def register_merge_apply_tool(
                     tier_used=resolution.tier_used or "manual",
                 )
 
-                return {
+                result = {
                     "success": True,
                     "resolution": updated.to_dict() if updated else None,
                     "message": "Merge completed successfully",
@@ -195,6 +195,10 @@ def register_merge_apply_tool(
                     "merge_strategy": direct_result["merge_strategy"],
                     "direct_merge": True,
                 }
+                if "warning" in direct_result:
+                    result["warning"] = direct_result["warning"]
+                    result["dirty_files"] = direct_result.get("dirty_files", [])
+                return result
 
             commit_result = await asyncio.to_thread(
                 git_manager.run_git_command,
@@ -212,10 +216,11 @@ def register_merge_apply_tool(
             if not merge_sha:
                 return {"success": False, "error": "Merge committed but HEAD could not be resolved"}
 
-            dirty_result = await _dirty_worktree_result(git_manager, wt_path)
-            if dirty_result is not None:
-                dirty_result.update({"merge_sha": merge_sha, "commit_sha": merge_sha})
-                return dirty_result
+            dirty_result = await _dirty_worktree_result(
+                git_manager,
+                wt_path,
+                after_merge=True,
+            )
 
             updated = merge_storage.update_resolution(
                 resolution_id=resolution_id,
@@ -223,7 +228,7 @@ def register_merge_apply_tool(
                 tier_used=resolution.tier_used or "manual",
             )
 
-            return {
+            result = {
                 "success": True,
                 "resolution": updated.to_dict() if updated else None,
                 "message": "Merge completed successfully",
@@ -232,6 +237,10 @@ def register_merge_apply_tool(
                 "commit_sha": merge_sha,
                 "direct_merge": False,
             }
+            if dirty_result is not None:
+                result["warning"] = dirty_result["error"]
+                result["dirty_files"] = dirty_result.get("dirty_files", [])
+            return result
 
         except Exception as e:
             logger.exception("Error applying merge for resolution %s", resolution_id)
