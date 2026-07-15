@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
@@ -44,7 +44,13 @@ def test_gather_validation_context_prefers_linked_commit_diff_over_prose_summary
             task_manager=MagicMock(),
         )
 
-    get_task_diff.assert_called_once()
+    get_task_diff.assert_called_once_with(
+        task_id="task-1",
+        task_manager=ANY,
+        include_uncommitted=False,
+        cwd="/repo",
+        max_chars=None,
+    )
     assert context.raw_diff == diff_result.diff
     assert context.validation_context is not None
     assert "Commit-based diff" in context.validation_context
