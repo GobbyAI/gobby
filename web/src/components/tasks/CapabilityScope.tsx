@@ -20,18 +20,18 @@ interface CapabilityItem {
   detail?: string
 }
 
-const STATE_CLS = 'py-2 text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-muted)]'
+const STATE_CLS = 'py-2 text-sm text-[var(--text-muted)]'
 const ROOT_CLS = 'flex flex-col gap-[0.6rem]'
 const SUMMARY_CLS = 'flex items-center gap-[0.35rem] py-[0.3rem]'
 const SUMMARY_COUNT_CLS =
-  'font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] font-semibold text-[var(--text-primary)]'
-const SUMMARY_LABEL_CLS = 'text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-muted)]'
+  'font-[inherit] text-md font-semibold text-[var(--text-primary)]'
+const SUMMARY_LABEL_CLS = 'text-sm text-[var(--text-muted)]'
 const GROUP_CLS = 'flex flex-col gap-1'
 const GROUP_LABEL_CLS =
-  'text-[length:calc(var(--font-size-base)*0.7)] font-semibold uppercase tracking-[0.04em] text-[var(--text-muted)]'
+  'text-xs font-semibold uppercase tracking-[0.04em] text-[var(--text-muted)]'
 const GROUP_ITEMS_CLS = 'flex flex-wrap gap-[0.3rem]'
 const ITEM_CLS =
-  'inline-flex items-center gap-1 rounded-full border px-[0.45rem] py-[0.15rem] text-[length:calc(var(--font-size-base)*0.7)]'
+  'inline-flex items-center gap-1 rounded-full border px-[0.45rem] py-[0.15rem] text-xs'
 const ITEM_ACTIVE_CLS =
   'border-[color-mix(in_srgb,var(--color-success-foreground)_25%,transparent)] bg-[color-mix(in_srgb,var(--color-success-foreground)_8%,transparent)] text-[var(--text-primary)]'
 const ITEM_INACTIVE_CLS =
@@ -40,7 +40,7 @@ const ITEM_DOT_CLS = 'h-1.5 w-1.5 shrink-0 rounded-full'
 const ITEM_DOT_ACTIVE_CLS = 'bg-[var(--color-success-foreground)]'
 const ITEM_DOT_INACTIVE_CLS = 'bg-[var(--text-muted)]'
 const ITEM_NAME_CLS = 'font-medium'
-const ITEM_DETAIL_CLS = 'text-[length:calc(var(--font-size-base)*0.6)] text-[var(--text-muted)]'
+const ITEM_DETAIL_CLS = 'text-2xs text-[var(--text-muted)]'
 
 function getBaseUrl(): string {
   return ''

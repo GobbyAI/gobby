@@ -24,37 +24,37 @@ interface TraceEntry {
 const ROOT_CLS = 'mt-2'
 const TOOLBAR_CLS = 'flex flex-wrap items-center gap-[0.4rem] py-[0.4rem]'
 const SEARCH_CLS =
-  'min-w-[8rem] flex-1 rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1 font-[inherit] text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]'
+  'min-w-[8rem] flex-1 rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1 font-[inherit] text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent)]'
 const TOOLBAR_BTN_CLS =
-  'cursor-pointer whitespace-nowrap rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1 font-[inherit] text-[length:calc(var(--font-size-base)*0.65)] text-[var(--text-muted)] transition-colors duration-150 hover:border-[var(--text-muted)] hover:text-[var(--text-secondary)]'
+  'cursor-pointer whitespace-nowrap rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1 font-[inherit] text-2xs text-[var(--text-muted)] transition-colors duration-150 hover:border-[var(--text-muted)] hover:text-[var(--text-secondary)]'
 const TOOLBAR_BTN_ACTIVE_CLS =
   'border-[color-mix(in_srgb,var(--color-error)_40%,transparent)] bg-[color-mix(in_srgb,var(--color-error)_8%,transparent)] text-[var(--color-error)] hover:border-[color-mix(in_srgb,var(--color-error)_40%,transparent)] hover:text-[var(--color-error)]'
 const COUNT_CLS =
-  'ml-auto font-[inherit] text-[length:calc(var(--font-size-base)*0.65)] text-[var(--text-muted)]'
-const STATE_CLS = 'py-4 text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-muted)]'
+  'ml-auto font-[inherit] text-2xs text-[var(--text-muted)]'
+const STATE_CLS = 'py-4 text-sm text-[var(--text-muted)]'
 const ENTRIES_CLS = 'flex max-h-[32rem] flex-col gap-0.5 overflow-y-auto'
 const ENTRY_CLS = 'overflow-hidden rounded border border-[var(--border)] bg-[var(--bg-secondary)]'
 const ENTRY_ERROR_CLS = 'border-[color-mix(in_srgb,var(--color-error)_25%,transparent)]'
 const ENTRY_HEADER_CLS =
-  'flex w-full cursor-pointer items-center gap-[0.4rem] border-none bg-transparent px-2 py-[0.3rem] text-left font-[inherit] text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-primary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]'
+  'flex w-full cursor-pointer items-center gap-[0.4rem] border-none bg-transparent px-2 py-[0.3rem] text-left font-[inherit] text-xs text-[var(--text-primary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]'
 const ENTRY_EXPAND_CLS =
-  'w-[0.8rem] shrink-0 text-[length:calc(var(--font-size-base)*0.6)] text-[var(--text-muted)]'
+  'w-[0.8rem] shrink-0 text-2xs text-[var(--text-muted)]'
 const ENTRY_DOT_CLS = 'h-1.5 w-1.5 shrink-0 rounded-full'
 const ENTRY_DOT_OK_CLS = 'bg-[var(--color-success-foreground)]'
 const ENTRY_DOT_ERROR_CLS = 'bg-[var(--color-error)]'
 const ENTRY_NAME_CLS = 'flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-semibold text-[var(--text-primary)]'
 const ENTRY_TIME_CLS =
-  'shrink-0 text-[length:calc(var(--font-size-base)*0.6)] text-[var(--text-muted)]'
+  'shrink-0 text-2xs text-[var(--text-muted)]'
 const ENTRY_IDX_CLS =
-  'min-w-8 shrink-0 text-right text-[length:calc(var(--font-size-base)*0.6)] text-[var(--text-muted)]'
+  'min-w-8 shrink-0 text-right text-2xs text-[var(--text-muted)]'
 const ENTRY_BODY_CLS =
   'flex flex-col gap-[0.4rem] border-t border-[var(--border)] px-2 py-[0.4rem]'
 const ENTRY_SECTION_CLS = 'flex flex-col gap-[0.15rem]'
 const ENTRY_SECTION_HEADER_CLS = 'flex items-center justify-between'
 const ENTRY_SECTION_LABEL_CLS =
-  'font-[inherit] text-[length:calc(var(--font-size-base)*0.6)] font-semibold uppercase tracking-[0.05em] text-[var(--text-muted)]'
+  'font-[inherit] text-2xs font-semibold uppercase tracking-[0.05em] text-[var(--text-muted)]'
 const COPY_BTN_CLS =
-  'cursor-pointer rounded-[3px] border border-[var(--border)] bg-transparent px-[0.35rem] py-[0.1rem] font-[inherit] text-[length:calc(var(--font-size-base)*0.55)] text-[var(--text-muted)] transition-colors duration-150 hover:border-[var(--text-muted)] hover:text-[var(--text-secondary)]'
+  'cursor-pointer rounded-[3px] border border-[var(--border)] bg-transparent px-[0.35rem] py-[0.1rem] font-[inherit] text-2xs text-[var(--text-muted)] transition-colors duration-150 hover:border-[var(--text-muted)] hover:text-[var(--text-secondary)]'
 const PAYLOAD_WRAPPER_CLS = 'max-h-80 overflow-auto rounded border border-[var(--border)]'
 
 function getBaseUrl(): string {

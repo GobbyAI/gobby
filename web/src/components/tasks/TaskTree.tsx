@@ -14,17 +14,17 @@ interface TreeNode {
 const CONTAINER_CLS = 'flex-1 overflow-hidden'
 const TOOLBAR_CLS = 'mb-1 flex items-center gap-2 border-b border-[var(--border)] px-2 py-[0.4rem]'
 const TOOLBAR_BTN_CLS =
-  'cursor-pointer rounded border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 py-[0.2rem] font-[inherit] text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-secondary)] transition-colors duration-150 hover:bg-[var(--border)] hover:text-[var(--text-primary)]'
+  'cursor-pointer rounded border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 py-[0.2rem] font-[inherit] text-xs text-[var(--text-secondary)] transition-colors duration-150 hover:bg-[var(--border)] hover:text-[var(--text-primary)]'
 const TOOLBAR_CHECK_CLS =
-  'ml-auto flex cursor-pointer items-center gap-[0.3rem] text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-secondary)] [&_input]:cursor-pointer'
+  'ml-auto flex cursor-pointer items-center gap-[0.3rem] text-sm text-[var(--text-secondary)] [&_input]:cursor-pointer'
 const SEARCH_CLS =
-  'w-40 rounded border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 py-1 font-[inherit] text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-[var(--accent)]'
+  'w-40 rounded border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 py-1 font-[inherit] text-sm text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-[var(--accent)]'
 
 const NODE_CLS =
   'flex h-full cursor-pointer items-center gap-[0.4rem] px-2 text-[length:var(--font-size-base)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]'
 const NODE_SELECTED_CLS = 'bg-[color-mix(in_srgb,var(--color-info)_8%,transparent)]'
 const TOGGLE_CLS =
-  'inline-flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center border-none bg-transparent p-0 text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-muted)]'
+  'inline-flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center border-none bg-transparent p-0 text-sm text-[var(--text-muted)]'
 const TOGGLE_LEAF_CLS = 'cursor-default'
 const REF_CLS = 'shrink-0 font-[inherit] text-[length:inherit] text-[var(--text-muted)]'
 const TITLE_CLS =
@@ -36,7 +36,7 @@ const CTX_BACKDROP_CLS = 'fixed inset-0 z-[999]'
 const CTX_MENU_CLS =
   'z-[1000] min-w-[180px] rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-1 shadow-[var(--shadow-md)]'
 const CTX_ITEM_CLS =
-  'block w-full cursor-pointer rounded border-none bg-transparent px-2.5 py-1.5 text-left font-[var(--font-sans)] text-[length:calc(var(--font-size-base)*0.72)] text-[var(--text-primary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]'
+  'block w-full cursor-pointer rounded border-none bg-transparent px-2.5 py-1.5 text-left font-[var(--font-sans)] text-sm text-[var(--text-primary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]'
 const DEFAULT_CTX_MENU_SIZE = { width: 220, height: 44 }
 const CTX_MENU_MARGIN = 8
 

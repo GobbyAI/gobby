@@ -34,29 +34,29 @@ const CATEGORIES: { key: string; label: string }[] = [
 
 const ROOT_CLS = 'overflow-hidden rounded-md border border-[var(--border)]'
 const HEADER_CLS =
-  'flex w-full cursor-pointer items-center gap-1.5 border-0 bg-[var(--bg-secondary)] px-2.5 py-2 text-left text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11'
-const TOGGLE_ICON_CLS = 'w-2.5 text-[length:calc(var(--font-size-base)*0.6)] text-[var(--text-muted)]'
+  'flex w-full cursor-pointer items-center gap-1.5 border-0 bg-[var(--bg-secondary)] px-2.5 py-2 text-left text-sm text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11'
+const TOGGLE_ICON_CLS = 'w-2.5 text-2xs text-[var(--text-muted)]'
 const HEADER_LABEL_CLS = 'flex-1 font-medium'
 const BADGE_CLS =
-  'rounded-lg bg-[color-mix(in_srgb,var(--text-muted)_15%,transparent)] px-1.5 py-px text-[length:calc(var(--font-size-base)*0.6)] text-[var(--text-muted)]'
+  'rounded-lg bg-[color-mix(in_srgb,var(--text-muted)_15%,transparent)] px-1.5 py-px text-2xs text-[var(--text-muted)]'
 const BADGE_ACTIVE_CLS =
   'bg-[color-mix(in_srgb,var(--color-warning-foreground)_15%,transparent)] text-[var(--color-warning-foreground)]'
 
 const BODY_CLS = 'flex flex-col gap-2.5 px-2.5 pb-2.5 pt-2'
 const CATEGORY_CLS = 'flex flex-col gap-1'
 const CATEGORY_LABEL_CLS =
-  'pb-0.5 text-[length:calc(var(--font-size-base)*0.6)] font-semibold uppercase tracking-[0.05em] text-[var(--text-muted)]'
+  'pb-0.5 text-2xs font-semibold uppercase tracking-[0.05em] text-[var(--text-muted)]'
 
 const RULE_CLS =
   'flex items-center justify-between gap-2 rounded px-1.5 py-[5px] transition-colors duration-150 hover:bg-[var(--bg-secondary)]'
 const RULE_OVERRIDDEN_CLS =
   'bg-[color-mix(in_srgb,var(--color-warning-foreground)_6%,transparent)] hover:bg-[color-mix(in_srgb,var(--color-warning-foreground)_10%,transparent)]'
 const RULE_INFO_CLS = 'flex min-w-0 flex-1 items-center gap-2'
-const RULE_ICON_CLS = 'w-[18px] shrink-0 text-center text-[length:calc(var(--font-size-base)*0.8)]'
+const RULE_ICON_CLS = 'w-[18px] shrink-0 text-center text-md'
 const RULE_TEXT_CLS = 'flex min-w-0 flex-col gap-px'
-const RULE_LABEL_CLS = 'text-[length:calc(var(--font-size-base)*0.72)] font-medium text-[var(--text-primary)]'
+const RULE_LABEL_CLS = 'text-sm font-medium text-[var(--text-primary)]'
 const RULE_DESC_CLS =
-  'overflow-hidden text-ellipsis whitespace-nowrap text-[length:calc(var(--font-size-base)*0.6)] text-[var(--text-muted)]'
+  'overflow-hidden text-ellipsis whitespace-nowrap text-2xs text-[var(--text-muted)]'
 
 const TOGGLE_CLS = 'relative h-[18px] w-8 shrink-0 cursor-pointer border-0 bg-transparent p-0'
 const TOGGLE_TRACK_CLS = 'block h-full w-full rounded-[9px] transition-colors duration-200'
@@ -68,11 +68,11 @@ const TOGGLE_THUMB_ON_CLS = 'translate-x-3.5'
 
 const FILE_SCOPE_CLS = 'flex flex-col gap-[3px] px-1.5'
 const FILE_INPUT_CLS =
-  'box-border w-full rounded border border-[var(--border)] bg-[var(--bg-primary)] px-2 py-[5px] font-[inherit] text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] pointer-coarse:min-h-11'
-const FILE_HINT_CLS = 'text-[length:calc(var(--font-size-base)*0.55)] text-[var(--text-muted)]'
+  'box-border w-full rounded border border-[var(--border)] bg-[var(--bg-primary)] px-2 py-[5px] font-[inherit] text-xs text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] pointer-coarse:min-h-11'
+const FILE_HINT_CLS = 'text-2xs text-[var(--text-muted)]'
 
 const RESET_CLS =
-  'self-start cursor-pointer rounded border border-[var(--border)] bg-transparent px-2.5 py-[3px] text-[length:calc(var(--font-size-base)*0.6)] text-[var(--text-muted)] transition-colors duration-150 hover:border-[var(--text-muted)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
+  'self-start cursor-pointer rounded border border-[var(--border)] bg-transparent px-2.5 py-[3px] text-2xs text-[var(--text-muted)] transition-colors duration-150 hover:border-[var(--text-muted)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
 
 function getStoredOverrides(taskId: string): PermissionOverridesState {
   try {

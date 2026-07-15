@@ -2,7 +2,7 @@ import { RISK_DEFS, type RiskLevel } from './riskUtils'
 import { cn } from '../../lib/utils'
 
 const BADGE_CLS =
-  'inline-flex items-center gap-[0.2rem] rounded-[0.2rem] border px-[0.35rem] py-[0.1rem] font-[inherit] text-[length:calc(var(--font-size-base)*0.65)] font-semibold leading-none'
+  'inline-flex items-center gap-[0.2rem] rounded-[0.2rem] border px-[0.35rem] py-[0.1rem] font-[inherit] text-2xs font-semibold leading-none'
 const BADGE_COMPACT_CLS = 'px-[0.2rem] py-[0.05rem]'
 const ICON_CLS = 'shrink-0'
 const LABEL_CLS = 'whitespace-nowrap'

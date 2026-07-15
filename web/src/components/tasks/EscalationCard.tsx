@@ -23,39 +23,39 @@ interface ParsedEscalation {
 const CARD_CLS =
   'my-2 flex flex-col gap-2 rounded-lg border border-[color-mix(in_srgb,var(--color-warning-foreground)_30%,transparent)] bg-[color-mix(in_srgb,var(--color-warning-foreground)_6%,transparent)] p-[0.8rem]'
 const HEADER_CLS = 'flex items-center gap-[0.4rem]'
-const ICON_CLS = 'text-[length:calc(var(--font-size-base)*1.1)]'
-const TITLE_CLS = 'flex-1 text-[length:calc(var(--font-size-base)*0.8)] font-semibold text-[var(--color-warning-foreground)]'
-const TIME_CLS = 'font-[inherit] text-[length:calc(var(--font-size-base)*0.6)] text-[var(--text-muted)]'
-const QUESTION_CLS = 'text-[length:calc(var(--font-size-base)*0.8)] font-medium leading-[1.5] text-[var(--text-primary)]'
+const ICON_CLS = 'text-xl'
+const TITLE_CLS = 'flex-1 text-md font-semibold text-[var(--color-warning-foreground)]'
+const TIME_CLS = 'font-[inherit] text-2xs text-[var(--text-muted)]'
+const QUESTION_CLS = 'text-md font-medium leading-[1.5] text-[var(--text-primary)]'
 const CONTEXT_CLS =
-  'rounded bg-[var(--bg-secondary)] px-2 py-[0.3rem] text-[length:calc(var(--font-size-base)*0.7)] leading-[1.4] text-[var(--text-secondary)]'
+  'rounded bg-[var(--bg-secondary)] px-2 py-[0.3rem] text-xs leading-[1.4] text-[var(--text-secondary)]'
 
 const OPTIONS_CLS = 'flex flex-col gap-1'
 const OPTION_CLS =
-  'flex cursor-pointer flex-col gap-[0.2rem] rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-2 text-left text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-primary)] transition-colors duration-150 hover:border-[var(--text-muted)] hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11'
+  'flex cursor-pointer flex-col gap-[0.2rem] rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-2 text-left text-sm text-[var(--text-primary)] transition-colors duration-150 hover:border-[var(--text-muted)] hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11'
 const OPTION_SELECTED_CLS = 'border-[var(--accent)] bg-[color-mix(in_srgb,var(--color-info)_8%,transparent)]'
 const OPTION_HEADER_CLS = 'flex items-center gap-[0.4rem]'
-const OPTION_RADIO_CLS = 'text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-muted)]'
+const OPTION_RADIO_CLS = 'text-md text-[var(--text-muted)]'
 const OPTION_RADIO_SELECTED_CLS = 'text-[var(--accent)]'
 const OPTION_LABEL_CLS = 'flex-1 font-semibold'
-const OPTION_DESC_CLS = 'pl-[1.4rem] text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-secondary)]'
-const OPTION_TRADEOFFS_CLS = 'flex flex-col gap-0.5 pl-[1.4rem] text-[length:calc(var(--font-size-base)*0.65)]'
+const OPTION_DESC_CLS = 'pl-[1.4rem] text-xs text-[var(--text-secondary)]'
+const OPTION_TRADEOFFS_CLS = 'flex flex-col gap-0.5 pl-[1.4rem] text-2xs'
 const PRO_CLS = 'block text-[var(--color-success-foreground)]'
 const CON_CLS = 'block text-[var(--color-error)]'
 
 const CONFIDENCE_CLS = 'ml-auto flex items-center gap-[0.3rem]'
 const CONFIDENCE_BAR_CLS = 'h-1 w-12 overflow-hidden rounded-[2px] bg-[var(--border)]'
 const CONFIDENCE_FILL_CLS = 'h-full rounded-[2px]'
-const CONFIDENCE_LABEL_CLS = 'font-[inherit] text-[length:calc(var(--font-size-base)*0.55)] text-[var(--text-muted)]'
+const CONFIDENCE_LABEL_CLS = 'font-[inherit] text-2xs text-[var(--text-muted)]'
 
 const CUSTOM_TOGGLE_CLS =
-  'cursor-pointer border-0 bg-transparent px-0 py-[0.2rem] text-left font-[inherit] text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-muted)] transition-colors duration-150 hover:text-[var(--text-secondary)]'
+  'cursor-pointer border-0 bg-transparent px-0 py-[0.2rem] text-left font-[inherit] text-xs text-[var(--text-muted)] transition-colors duration-150 hover:text-[var(--text-secondary)]'
 const CUSTOM_TOGGLE_ACTIVE_CLS = 'text-[var(--text-secondary)]'
 const CUSTOM_INPUT_CLS =
-  'resize-y rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-[0.4rem] font-[inherit] text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]'
+  'resize-y rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-[0.4rem] font-[inherit] text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)]'
 const ACTIONS_CLS = 'flex justify-end pt-[0.2rem]'
 const SUBMIT_CLS =
-  'flex-1 cursor-pointer rounded-md border border-[var(--accent)] bg-[var(--accent)] px-3 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] font-medium text-[var(--accent-foreground)] transition-colors duration-150 hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
+  'flex-1 cursor-pointer rounded-md border border-[var(--accent)] bg-[var(--accent)] px-3 py-1.5 font-[inherit] text-md font-medium text-[var(--accent-foreground)] transition-colors duration-150 hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
 
 function parseEscalation(reason: string | null): ParsedEscalation {
   if (!reason) {

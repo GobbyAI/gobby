@@ -38,46 +38,46 @@ const MODAL_BATCH_CLS = 'w-[540px]'
 const HEADER_CLS =
   'flex shrink-0 items-center justify-between border-b border-[var(--border)] px-5 py-3.5'
 const TITLE_CLS =
-  'flex items-center gap-2 text-[length:calc(var(--font-size-base)*1.05)] font-semibold'
+  'flex items-center gap-2 text-lg font-semibold'
 const CLOSE_CLS =
   'flex cursor-pointer items-center rounded border-none bg-transparent p-1 text-[var(--text-muted)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]'
 const BODY_CLS = 'flex flex-1 flex-col gap-3 overflow-y-auto px-5 py-4'
 const TASK_CONTEXT_CLS =
-  'rounded-md border border-[color-mix(in_srgb,var(--accent)_30%,var(--border))] bg-[color-mix(in_srgb,var(--accent)_8%,var(--bg-tertiary))] px-3 py-2 text-[length:calc(var(--font-size-base)*0.85)] text-[var(--text-secondary)]'
+  'rounded-md border border-[color-mix(in_srgb,var(--accent)_30%,var(--border))] bg-[color-mix(in_srgb,var(--accent)_8%,var(--bg-tertiary))] px-3 py-2 text-base text-[var(--text-secondary)]'
 const FIELD_CLS = 'flex flex-col gap-[0.3rem]'
-const LABEL_CLS = 'font-medium text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-muted)]'
+const LABEL_CLS = 'font-medium text-sm text-[var(--text-muted)]'
 const SELECT_CLS =
-  'rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-[0.6rem] py-[0.4rem] font-[inherit] text-[length:calc(var(--font-size-base)*0.85)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]'
+  'rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-[0.6rem] py-[0.4rem] font-[inherit] text-base text-[var(--text-primary)] outline-none focus:border-[var(--accent)]'
 const TEXTAREA_CLS =
-  'min-h-20 resize-y rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-[0.6rem] py-2 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]'
+  'min-h-20 resize-y rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-[0.6rem] py-2 font-[inherit] text-md text-[var(--text-primary)] outline-none focus:border-[var(--accent)]'
 const RADIO_GROUP_CLS = 'flex gap-1'
 const RADIO_CLS =
-  'pointer-coarse:min-h-11 flex min-h-11 flex-1 cursor-pointer items-center justify-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 py-1.5 text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-secondary)] transition-[background-color,color,border-color] duration-150 hover:border-[var(--accent)] hover:text-[var(--text-primary)] [&_input]:hidden'
+  'pointer-coarse:min-h-11 flex min-h-11 flex-1 cursor-pointer items-center justify-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 py-1.5 text-md text-[var(--text-secondary)] transition-[background-color,color,border-color] duration-150 hover:border-[var(--accent)] hover:text-[var(--text-primary)] [&_input]:hidden'
 const RADIO_ACTIVE_CLS =
   'border-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] font-medium text-[var(--accent)]'
 const PROMPT_TOGGLE_CLS =
-  'flex cursor-pointer items-center gap-[0.35rem] border-none bg-transparent py-1 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-const PROMPT_TOGGLE_ICON_CLS = 'text-[0.7em]'
+  'flex cursor-pointer items-center gap-[0.35rem] border-none bg-transparent py-1 font-[inherit] text-md text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+const PROMPT_TOGGLE_ICON_CLS = 'text-xs'
 const LOADING_DOT_CLS = 'text-[var(--text-muted)]'
 const CHECKBOX_CLS =
-  'pointer-coarse:min-h-11 flex min-h-11 cursor-pointer items-center gap-2 text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-secondary)] [&_input]:h-4 [&_input]:w-4 [&_input]:[accent-color:var(--accent)]'
-const FIELD_HINT_CLS = 'text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-muted)]'
-const ERROR_CLS = 'py-1 text-[length:calc(var(--font-size-base)*0.8)] text-[var(--color-error)]'
+  'pointer-coarse:min-h-11 flex min-h-11 cursor-pointer items-center gap-2 text-md text-[var(--text-secondary)] [&_input]:h-4 [&_input]:w-4 [&_input]:[accent-color:var(--accent)]'
+const FIELD_HINT_CLS = 'text-xs text-[var(--text-muted)]'
+const ERROR_CLS = 'py-1 text-md text-[var(--color-error)]'
 const FOOTER_CLS =
   'flex shrink-0 justify-end gap-2 border-t border-[var(--border)] px-5 py-3'
 const BTN_CLS =
-  'pointer-coarse:min-h-11 cursor-pointer rounded-md border border-[var(--border)] px-4 py-2 font-[inherit] text-[length:calc(var(--font-size-base)*0.85)] font-medium transition-[background-color,color,border-color,opacity] duration-150 disabled:cursor-not-allowed disabled:opacity-50'
+  'pointer-coarse:min-h-11 cursor-pointer rounded-md border border-[var(--border)] px-4 py-2 font-[inherit] text-base font-medium transition-[background-color,color,border-color,opacity] duration-150 disabled:cursor-not-allowed disabled:opacity-50'
 const BTN_PRIMARY_CLS =
   'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-foreground)] hover:bg-[var(--accent-hover)] disabled:hover:bg-[var(--accent)]'
 const BTN_DEFAULT_CLS =
   'bg-[var(--bg-tertiary)] text-[var(--text-primary)] hover:bg-[var(--bg-secondary)] disabled:hover:bg-[var(--bg-tertiary)]'
 const SUCCESS_CLS = 'flex flex-col items-center gap-3 px-5 py-8 text-center'
 const SUCCESS_ICON_CLS = 'text-[length:var(--text-4xl)] text-[var(--color-success-foreground)]'
-const SUCCESS_TEXT_CLS = 'text-[length:calc(var(--font-size-base)*0.9)] text-[var(--text-secondary)]'
+const SUCCESS_TEXT_CLS = 'text-base text-[var(--text-secondary)]'
 const TASK_LIST_CLS =
   'flex max-h-[200px] flex-col gap-px overflow-y-auto rounded-md border border-[var(--border)] p-1'
 const TASK_ITEM_CLS =
-  'pointer-coarse:min-h-11 flex min-h-11 cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] [&_input]:h-4 [&_input]:w-4 [&_input]:[accent-color:var(--accent)]'
+  'pointer-coarse:min-h-11 flex min-h-11 cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-md text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] [&_input]:h-4 [&_input]:w-4 [&_input]:[accent-color:var(--accent)]'
 const TASK_ITEM_EXCLUDED_CLS = 'opacity-40 [&>span]:line-through'
 const TASK_ITEM_TITLE_CLS = 'overflow-hidden text-ellipsis whitespace-nowrap'
 

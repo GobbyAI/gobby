@@ -4,6 +4,12 @@ import { describe, expect, it } from 'vitest'
 
 const cwd = process.cwd()
 
+const TYPOGRAPHY_ROOTS = ['src/styles', 'src/components']
+const SANCTIONED_TOKEN_FILES = new Set([
+  'src/styles/tailwind-theme.css',
+  'src/styles/tokens.css',
+])
+
 function readSource(rel: string): string {
   return readFileSync(join(cwd, rel), 'utf8')
 }
@@ -40,7 +46,35 @@ function readTsxSources(rel: string): Array<[string, string]> {
   })
 }
 
+function sourceFilesUnder(rel: string): string[] {
+  return readdirSync(join(cwd, rel), { withFileTypes: true }).flatMap((entry) => {
+    const child = join(rel, entry.name)
+    if (entry.isDirectory()) {
+      return entry.name === '__tests__' || entry.name === '__visual__' ? [] : sourceFilesUnder(child)
+    }
+    return /\.(?:css|ts|tsx)$/.test(entry.name) ? [child] : []
+  })
+}
+
 describe('activity-panel typography ladder (#14245)', () => {
+  it('keeps live component typography on the shared token ladder', () => {
+    const offLadder = TYPOGRAPHY_ROOTS.flatMap(sourceFilesUnder)
+      .filter((rel) => !SANCTIONED_TOKEN_FILES.has(rel))
+      .flatMap((rel) => {
+        const source = readSource(rel)
+        const patterns = [
+          /font-size\s*:\s*(?:calc\(|var\(--font-size-base\)|[0-9])/gi,
+          /fontSize\s*:\s*['"](?:calc\(|[0-9])/g,
+          /text-\[(?:length:calc\(|[0-9])/g,
+        ]
+        return patterns.flatMap((pattern) =>
+          Array.from(source.matchAll(pattern), (match) => `${rel}:${match[0]}`),
+        )
+      })
+
+    expect(offLadder).toEqual([])
+  })
+
   it('exposes shared row-title and row-meta utility classes locked to the ladder', () => {
     const source = readSource('src/components/chat/styles/activity-panel.css')
 

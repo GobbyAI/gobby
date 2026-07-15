@@ -16,7 +16,7 @@ const DOT_IDLE_CLS =
   'bg-[var(--color-warning-foreground)] [animation-duration:2.4s] [box-shadow:0_0_4px_color-mix(in_srgb,var(--color-warning-foreground)_50%,transparent)]'
 const DOT_STUCK_CLS =
   'bg-[var(--color-error)] [animation-duration:3s] [box-shadow:0_0_4px_color-mix(in_srgb,var(--color-error)_50%,transparent)]'
-const LABEL_CLS = 'font-[inherit] text-[length:calc(var(--font-size-base)*0.6)] text-[var(--text-muted)]'
+const LABEL_CLS = 'font-[inherit] text-2xs text-[var(--text-muted)]'
 
 function classifyActivity(task: GobbyTask): ActivityState {
   const state = getCanonicalTaskState(task)

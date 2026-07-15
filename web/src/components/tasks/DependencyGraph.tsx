@@ -28,13 +28,13 @@ const CONTAINER_CLS =
   'relative overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-primary)]'
 const SVG_CLS = 'block h-[520px] w-full'
 const EMPTY_CLS =
-  'p-12 text-center text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-muted)]'
+  'p-12 text-center text-md text-[var(--text-muted)]'
 const CONTROLS_CLS =
   'absolute right-2 top-2 z-10 flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-[3px]'
 const CTRL_BTN_CLS =
-  'flex h-7 w-7 cursor-pointer items-center justify-center rounded border-none bg-transparent text-[length:calc(var(--font-size-base)*0.85)] text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
+  'flex h-7 w-7 cursor-pointer items-center justify-center rounded border-none bg-transparent text-base text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
 const CTRL_LABEL_CLS =
-  'min-w-9 px-1 text-center text-[length:calc(var(--font-size-base)*0.6)] text-[var(--text-muted)]'
+  'min-w-9 px-1 text-center text-2xs text-[var(--text-muted)]'
 
 function buildGraph(tasks: GobbyTask[]): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const taskMap = new Map(tasks.map(t => [t.id, t]))

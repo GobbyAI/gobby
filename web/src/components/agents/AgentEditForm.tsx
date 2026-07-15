@@ -443,7 +443,7 @@ export function AgentEditForm({
               <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Variables</Heading>
               <div className="flex flex-col gap-1">
                 {Object.entries(rd.workflows!.variables as Record<string, unknown>).map(([key, val]) => (
-                  <div key={key} className="flex items-center gap-2 text-[length:calc(var(--font-size-base)*0.75)]">
+                  <div key={key} className="flex items-center gap-2 text-sm">
                     <code className="font-semibold text-[var(--text-primary)] min-w-[80px]">{key}</code>
                     <span className="text-[var(--text-muted)] flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{typeof val === 'string' ? val : JSON.stringify(val)}</span>
                   </div>

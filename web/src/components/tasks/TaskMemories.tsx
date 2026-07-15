@@ -13,53 +13,53 @@ interface MemoryEntry {
 }
 
 const ROOT_CLS = 'flex flex-col gap-[0.3rem]'
-const STATE_TEXT_CLS = 'text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-muted)]'
-const COUNT_CLS = 'font-[inherit] text-[length:calc(var(--font-size-base)*0.6)] text-[var(--text-muted)]'
+const STATE_TEXT_CLS = 'text-xs text-[var(--text-muted)]'
+const COUNT_CLS = 'font-[inherit] text-2xs text-[var(--text-muted)]'
 const LIST_CLS = 'flex max-h-80 flex-col gap-1 overflow-y-auto'
 
 const ITEM_CLS =
-  'group flex w-full cursor-pointer flex-col gap-[0.15rem] rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-[0.4rem] text-left text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-primary)] transition-colors duration-150 hover:border-[var(--text-muted)]'
+  'group flex w-full cursor-pointer flex-col gap-[0.15rem] rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-[0.4rem] text-left text-sm text-[var(--text-primary)] transition-colors duration-150 hover:border-[var(--text-muted)]'
 const ITEM_PINNED_CLS =
   'border-[color-mix(in_srgb,var(--color-warning-foreground)_25%,transparent)] bg-[color-mix(in_srgb,var(--color-warning-foreground)_3%,transparent)]'
 const ITEM_CONFIRMING_CLS =
   'border-[var(--accent)] bg-[color-mix(in_srgb,var(--color-info)_5%,transparent)]'
 
-const HEADER_CLS = 'flex items-center gap-[0.3rem] text-[length:calc(var(--font-size-base)*0.65)]'
-const ICON_CLS = 'text-[length:calc(var(--font-size-base)*0.75)]'
+const HEADER_CLS = 'flex items-center gap-[0.3rem] text-2xs'
+const ICON_CLS = 'text-sm'
 const PIN_BADGE_CLS =
-  'rounded-sm bg-[var(--color-warning-soft)] px-1 text-[length:calc(var(--font-size-base)*0.55)] font-semibold uppercase text-[var(--color-warning-foreground)]'
+  'rounded-sm bg-[var(--color-warning-soft)] px-1 text-2xs font-semibold uppercase text-[var(--color-warning-foreground)]'
 const TYPE_CLS = 'font-[inherit] font-semibold capitalize text-[var(--text-secondary)]'
-const IMPORTANCE_CLS = 'ml-auto font-[inherit] text-[length:calc(var(--font-size-base)*0.6)]'
-const DATE_CLS = 'font-[inherit] text-[length:calc(var(--font-size-base)*0.55)] text-[var(--text-muted)]'
+const IMPORTANCE_CLS = 'ml-auto font-[inherit] text-2xs'
+const DATE_CLS = 'font-[inherit] text-2xs text-[var(--text-muted)]'
 
 const ACTIONS_CLS = 'ml-1 flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100'
 const ACTION_BTN_CLS =
-  'cursor-pointer rounded-[3px] border-0 bg-transparent px-[3px] py-px text-[length:calc(var(--font-size-base)*0.65)] text-[var(--text-muted)] opacity-60 transition-[opacity,background] duration-150 hover:bg-[var(--bg-tertiary)] hover:opacity-100'
+  'cursor-pointer rounded-[3px] border-0 bg-transparent px-[3px] py-px text-2xs text-[var(--text-muted)] opacity-60 transition-[opacity,background] duration-150 hover:bg-[var(--bg-tertiary)] hover:opacity-100'
 const ACTION_BTN_ACTIVE_CLS = 'opacity-100 text-[var(--color-warning-foreground)]'
 
-const CONTENT_CLS = 'text-[length:calc(var(--font-size-base)*0.7)] leading-[1.4] text-[var(--text-secondary)]'
+const CONTENT_CLS = 'text-xs leading-[1.4] text-[var(--text-secondary)]'
 
 const TAGS_CLS = 'mt-[0.1rem] flex flex-wrap gap-[3px]'
 const TAG_CLS =
-  'rounded-[3px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-1 font-[inherit] text-[length:calc(var(--font-size-base)*0.55)] text-[var(--text-muted)]'
+  'rounded-[3px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-1 font-[inherit] text-2xs text-[var(--text-muted)]'
 
 const EDIT_CLS = 'flex flex-col gap-1.5'
 const EDIT_TEXTAREA_CLS =
-  `w-full resize-y rounded border border-[var(--accent)] bg-[var(--bg-primary)] px-2 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.7)] leading-[1.4] text-[var(--text-primary)] focus:border-[var(--accent-hover)] ${inputFocusCls}`
+  `w-full resize-y rounded border border-[var(--accent)] bg-[var(--bg-primary)] px-2 py-1.5 font-[inherit] text-xs leading-[1.4] text-[var(--text-primary)] focus:border-[var(--accent-hover)] ${inputFocusCls}`
 const EDIT_BUTTONS_CLS = 'flex items-center gap-1.5'
 const EDIT_SAVE_CLS =
-  'cursor-pointer rounded border-0 bg-[var(--accent)] px-2.5 py-[3px] text-[length:calc(var(--font-size-base)*0.65)] text-[var(--bg-primary)] hover:bg-[var(--accent-hover)] pointer-coarse:min-h-11'
+  'cursor-pointer rounded border-0 bg-[var(--accent)] px-2.5 py-[3px] text-2xs text-[var(--bg-primary)] hover:bg-[var(--accent-hover)] pointer-coarse:min-h-11'
 const EDIT_CANCEL_CLS =
-  'cursor-pointer rounded border border-[var(--border)] bg-[var(--bg-tertiary)] px-2.5 py-[3px] text-[length:calc(var(--font-size-base)*0.65)] text-[var(--text-secondary)] pointer-coarse:min-h-11'
-const EDIT_HINT_CLS = 'ml-auto text-[length:calc(var(--font-size-base)*0.55)] text-[var(--text-muted)]'
+  'cursor-pointer rounded border border-[var(--border)] bg-[var(--bg-tertiary)] px-2.5 py-[3px] text-2xs text-[var(--text-secondary)] pointer-coarse:min-h-11'
+const EDIT_HINT_CLS = 'ml-auto text-2xs text-[var(--text-muted)]'
 
 const CONFIRM_CLS = 'flex flex-col gap-1.5'
 const CONFIRM_LABEL_CLS =
-  'text-[length:calc(var(--font-size-base)*0.65)] font-semibold uppercase tracking-[0.5px] text-[var(--accent)]'
+  'text-2xs font-semibold uppercase tracking-[0.5px] text-[var(--accent)]'
 const CONFIRM_PREVIEW_CLS =
-  'rounded border border-[color-mix(in_srgb,var(--color-info)_20%,transparent)] bg-[color-mix(in_srgb,var(--color-info)_8%,transparent)] px-2 py-1.5 text-[length:calc(var(--font-size-base)*0.72)] leading-[1.4] text-[var(--text-primary)]'
+  'rounded border border-[color-mix(in_srgb,var(--color-info)_20%,transparent)] bg-[color-mix(in_srgb,var(--color-info)_8%,transparent)] px-2 py-1.5 text-sm leading-[1.4] text-[var(--text-primary)]'
 const CONFIRM_DIFF_CLS = 'flex flex-col gap-0.5'
-const CONFIRM_OLD_CLS = 'text-[length:calc(var(--font-size-base)*0.6)] text-[var(--text-muted)] line-through opacity-70'
+const CONFIRM_OLD_CLS = 'text-2xs text-[var(--text-muted)] line-through opacity-70'
 
 function getBaseUrl(): string {
   return ''

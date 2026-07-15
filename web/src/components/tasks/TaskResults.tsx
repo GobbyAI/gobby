@@ -16,28 +16,28 @@ interface ResultSection {
 const ROOT_CLS = 'flex flex-col gap-2'
 const SECTION_CLS = 'flex flex-col gap-[0.2rem]'
 const LABEL_CLS =
-  'font-[inherit] text-[length:calc(var(--font-size-base)*0.6)] font-semibold uppercase tracking-[0.04em] text-[var(--text-muted)]'
+  'font-[inherit] text-2xs font-semibold uppercase tracking-[0.04em] text-[var(--text-muted)]'
 
 const OUTCOME_CLS = 'flex items-center gap-2'
 const OUTCOME_BADGE_CLS =
-  'inline-flex items-center gap-[0.3rem] rounded-[12px] border px-2 py-[0.2rem] font-[inherit] text-[length:calc(var(--font-size-base)*0.7)] font-semibold'
-const DATE_CLS = 'font-[inherit] text-[length:calc(var(--font-size-base)*0.6)] text-[var(--text-muted)]'
+  'inline-flex items-center gap-[0.3rem] rounded-[12px] border px-2 py-[0.2rem] font-[inherit] text-xs font-semibold'
+const DATE_CLS = 'font-[inherit] text-2xs text-[var(--text-muted)]'
 
 const VALIDATION_CLS = 'flex flex-col gap-[0.2rem]'
-const VALIDATION_BADGE_CLS = 'font-[inherit] text-[length:calc(var(--font-size-base)*0.7)] font-semibold capitalize'
+const VALIDATION_BADGE_CLS = 'font-[inherit] text-xs font-semibold capitalize'
 const VALIDATION_FEEDBACK_CLS =
-  'rounded bg-[var(--bg-secondary)] px-2 py-[0.3rem] text-[length:calc(var(--font-size-base)*0.7)] leading-[1.4] text-[var(--text-secondary)]'
+  'rounded bg-[var(--bg-secondary)] px-2 py-[0.3rem] text-xs leading-[1.4] text-[var(--text-secondary)]'
 
 const COMMITS_CLS = 'flex flex-wrap gap-1'
 const COMMIT_CLS =
-  'inline-flex items-center gap-[0.3rem] rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-[0.4rem] py-[0.15rem] text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-secondary)]'
-const COMMIT_CODE_CLS = 'font-[inherit] text-[length:calc(var(--font-size-base)*0.65)] text-[var(--accent)]'
+  'inline-flex items-center gap-[0.3rem] rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-[0.4rem] py-[0.15rem] text-xs text-[var(--text-secondary)]'
+const COMMIT_CODE_CLS = 'font-[inherit] text-2xs text-[var(--accent)]'
 const COMMIT_TAG_CLS =
-  'rounded-[2px] bg-[color-mix(in_srgb,var(--color-success-foreground)_10%,transparent)] px-[0.2rem] font-[inherit] text-[length:calc(var(--font-size-base)*0.5)] font-semibold uppercase text-[var(--color-success-foreground)]'
+  'rounded-[2px] bg-[color-mix(in_srgb,var(--color-success-foreground)_10%,transparent)] px-[0.2rem] font-[inherit] text-2xs font-semibold uppercase text-[var(--color-success-foreground)]'
 
 const PR_CLS =
-  'inline-flex w-fit items-center gap-[0.3rem] rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-[0.2rem] font-[inherit] text-[length:calc(var(--font-size-base)*0.7)] text-[var(--accent)] no-underline transition-colors duration-150 hover:border-[var(--accent)]'
-const PR_REPO_CLS = 'text-[length:calc(var(--font-size-base)*0.6)] text-[var(--text-muted)]'
+  'inline-flex w-fit items-center gap-[0.3rem] rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-[0.2rem] font-[inherit] text-xs text-[var(--accent)] no-underline transition-colors duration-150 hover:border-[var(--accent)]'
+const PR_REPO_CLS = 'text-2xs text-[var(--text-muted)]'
 
 function CommitIcon() {
   return (

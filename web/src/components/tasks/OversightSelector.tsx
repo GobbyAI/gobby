@@ -19,18 +19,18 @@ const OPTIONS: OversightOption[] = [
 const ROOT_CLS = 'flex flex-col gap-[0.35rem]'
 const HEADER_CLS = 'flex items-center gap-[0.4rem]'
 const LABEL_CLS =
-  'font-[inherit] text-[length:calc(var(--font-size-base)*0.7)] font-semibold uppercase tracking-[0.04em] text-[var(--text-secondary)]'
+  'font-[inherit] text-xs font-semibold uppercase tracking-[0.04em] text-[var(--text-secondary)]'
 const INFO_BTN_CLS =
-  'flex h-4 w-4 cursor-pointer items-center justify-center rounded-full border border-[var(--border)] bg-transparent text-[length:calc(var(--font-size-base)*0.6)] text-[var(--text-muted)] transition-colors duration-150 hover:border-[var(--text-muted)] hover:text-[var(--text-secondary)]'
-const HELP_CLS = 'py-1 text-[length:calc(var(--font-size-base)*0.7)] leading-[1.4] text-[var(--text-muted)]'
+  'flex h-4 w-4 cursor-pointer items-center justify-center rounded-full border border-[var(--border)] bg-transparent text-2xs text-[var(--text-muted)] transition-colors duration-150 hover:border-[var(--text-muted)] hover:text-[var(--text-secondary)]'
+const HELP_CLS = 'py-1 text-xs leading-[1.4] text-[var(--text-muted)]'
 const OPTIONS_CLS = 'flex gap-1'
 const OPTION_CLS =
-  'flex flex-1 cursor-pointer items-center justify-center gap-[0.3rem] rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-[0.4rem] py-[0.35rem] text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-muted)] transition-colors duration-150 hover:border-[var(--text-muted)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-secondary)] pointer-coarse:min-h-11'
+  'flex flex-1 cursor-pointer items-center justify-center gap-[0.3rem] rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-[0.4rem] py-[0.35rem] text-xs text-[var(--text-muted)] transition-colors duration-150 hover:border-[var(--text-muted)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-secondary)] pointer-coarse:min-h-11'
 const OPTION_ACTIVE_CLS =
   'border-[var(--accent)] bg-[color-mix(in_srgb,var(--color-info)_10%,transparent)] text-[var(--accent)] hover:border-[var(--accent-hover)] hover:bg-[color-mix(in_srgb,var(--color-info)_15%,transparent)] hover:text-[var(--accent-hover)]'
-const OPTION_ICON_CLS = 'text-[length:calc(var(--font-size-base)*0.8)]'
-const OPTION_LABEL_CLS = 'whitespace-nowrap font-[inherit] text-[length:calc(var(--font-size-base)*0.65)] font-medium'
-const DESC_CLS = 'italic text-[length:calc(var(--font-size-base)*0.65)] text-[var(--text-muted)]'
+const OPTION_ICON_CLS = 'text-md'
+const OPTION_LABEL_CLS = 'whitespace-nowrap font-[inherit] text-2xs font-medium'
+const DESC_CLS = 'italic text-2xs text-[var(--text-muted)]'
 
 const STORAGE_PREFIX = 'gobby-oversight-'
 

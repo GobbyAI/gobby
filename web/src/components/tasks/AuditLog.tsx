@@ -29,28 +29,28 @@ const ROOT_CLS = 'flex flex-1 flex-col overflow-hidden'
 const FILTERS_CLS =
   'flex shrink-0 flex-wrap items-center gap-3 border-b border-[var(--border)] px-3 py-2'
 const FILTER_GROUP_CLS = 'flex items-center gap-1'
-const FILTER_LABEL_CLS = 'mr-[0.15rem] text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-muted)]'
+const FILTER_LABEL_CLS = 'mr-[0.15rem] text-xs text-[var(--text-muted)]'
 const FILTER_BTN_CLS =
-  'cursor-pointer rounded-[0.2rem] border border-[var(--border)] bg-[var(--bg-primary)] px-[0.4rem] py-[0.15rem] font-[inherit] text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]'
+  'cursor-pointer rounded-[0.2rem] border border-[var(--border)] bg-[var(--bg-primary)] px-[0.4rem] py-[0.15rem] font-[inherit] text-xs text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]'
 const FILTER_BTN_ACTIVE_CLS =
   'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-foreground)] hover:bg-[var(--accent)]'
-const COUNT_CLS = 'ml-auto font-[inherit] text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-muted)]'
+const COUNT_CLS = 'ml-auto font-[inherit] text-xs text-[var(--text-muted)]'
 const ENTRIES_CLS = 'flex-1 overflow-y-auto py-1'
 const EMPTY_CLS =
-  'p-8 text-center text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-muted)]'
+  'p-8 text-center text-md text-[var(--text-muted)]'
 const ENTRY_CLS =
-  'flex w-full cursor-pointer items-center gap-[0.4rem] border-0 border-b border-[var(--border)] bg-transparent px-3 py-[0.35rem] text-left font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-primary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]'
+  'flex w-full cursor-pointer items-center gap-[0.4rem] border-0 border-b border-[var(--border)] bg-transparent px-3 py-[0.35rem] text-left font-[inherit] text-md text-[var(--text-primary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]'
 const ENTRY_FAILURE_CLS =
   'bg-[color-mix(in_srgb,var(--color-error)_4%,transparent)] hover:bg-[color-mix(in_srgb,var(--color-error)_8%,transparent)]'
 const ENTRY_TIME_CLS =
-  'min-w-[5.5rem] shrink-0 font-[inherit] text-[length:calc(var(--font-size-base)*0.65)] text-[var(--text-muted)]'
+  'min-w-[5.5rem] shrink-0 font-[inherit] text-2xs text-[var(--text-muted)]'
 const ENTRY_ICON_CLS =
-  'w-4 shrink-0 text-center text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-muted)]'
+  'w-4 shrink-0 text-center text-sm text-[var(--text-muted)]'
 const ENTRY_ACTION_CLS =
-  'min-w-[5.5rem] shrink-0 text-[length:calc(var(--font-size-base)*0.7)] font-semibold text-[var(--text-secondary)]'
+  'min-w-[5.5rem] shrink-0 text-xs font-semibold text-[var(--text-secondary)]'
 const ENTRY_TARGET_CLS = 'min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap'
 const ENTRY_ACTOR_CLS =
-  'shrink-0 font-[inherit] text-[length:calc(var(--font-size-base)*0.65)] text-[var(--text-muted)]'
+  'shrink-0 font-[inherit] text-2xs text-[var(--text-muted)]'
 
 function deriveAuditEntries(tasks: GobbyTask[]): AuditEntry[] {
   const entries: AuditEntry[] = []

@@ -170,7 +170,7 @@
   background: var(--accent);
   color: var(--accent-foreground);
   border-radius: 9999px;
-  font-size: 0.625rem;
+  font-size: var(--text-2xs);
   font-weight: 600;
   line-height: 1;
   pointer-events: none;
@@ -543,7 +543,7 @@
 .activity-task-detail-section-title {
   margin-bottom: 0.45rem;
   color: var(--text-muted);
-  font-size: calc(var(--font-size-base) * 0.72);
+  font-size: var(--text-sm);
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -551,7 +551,7 @@
 
 .activity-task-detail-markdown {
   color: var(--text-secondary);
-  font-size: calc(var(--font-size-base) * 0.84);
+  font-size: var(--text-base);
   line-height: 1.6;
 }
 
@@ -582,7 +582,7 @@
 .activity-task-detail-parent-ref {
   color: var(--accent);
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
-  font-size: calc(var(--font-size-base) * 0.74);
+  font-size: var(--text-sm);
   font-weight: 600;
   flex-shrink: 0;
 }
@@ -716,7 +716,7 @@
 .activity-task-detail-escalation-reason {
   margin-top: 0.5rem;
   color: var(--text-secondary);
-  font-size: calc(var(--font-size-base) * 0.84);
+  font-size: var(--text-base);
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -734,5 +734,5 @@
 .activity-task-detail-empty {
   padding: 1rem;
   color: var(--text-muted);
-  font-size: calc(var(--font-size-base) * 0.8);
+  font-size: var(--text-md);
 }

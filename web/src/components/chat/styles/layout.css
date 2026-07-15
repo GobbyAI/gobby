@@ -72,7 +72,7 @@
 }
 
 .message-content {
-  font-size: var(--font-size-base);
+  font-size: var(--text-lg);
 }
 
 /* Scale text sizes within the chat area to respect the font size setting.
