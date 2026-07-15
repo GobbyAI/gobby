@@ -194,6 +194,74 @@ class TestPipelineExecutorExecute:
         assert result is not None
         assert result.status == ExecutionStatus.COMPLETED
 
+    async def test_execute_notifies_completion_webhook(
+        self,
+        mock_db,
+        mock_execution_manager,
+        mock_llm_service,
+        mock_webhook_notifier,
+        simple_pipeline,
+    ) -> None:
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        completed_execution = MagicMock()
+        completed_execution.id = "pe-test-123"
+        completed_execution.status = ExecutionStatus.COMPLETED
+        mock_execution_manager.update_execution_status.return_value = completed_execution
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            webhook_notifier=mock_webhook_notifier,
+        )
+
+        result = await executor.execute(
+            pipeline=simple_pipeline,
+            inputs={},
+            project_id="proj-123",
+        )
+
+        assert result.status == ExecutionStatus.COMPLETED
+        mock_webhook_notifier.notify_complete.assert_awaited_once_with(
+            execution=completed_execution,
+            pipeline=simple_pipeline,
+        )
+
+    async def test_execute_notifies_failure_webhook(
+        self,
+        mock_db,
+        mock_execution_manager,
+        mock_llm_service,
+        mock_webhook_notifier,
+        simple_pipeline,
+    ) -> None:
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        failed_execution = MagicMock()
+        failed_execution.id = "pe-test-123"
+        failed_execution.status = ExecutionStatus.FAILED
+        mock_execution_manager.update_execution_status.return_value = failed_execution
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            webhook_notifier=mock_webhook_notifier,
+        )
+        executor._execute_step = AsyncMock(side_effect=RuntimeError("step failed"))
+
+        with pytest.raises(RuntimeError, match="step failed"):
+            await executor.execute(
+                pipeline=simple_pipeline,
+                inputs={},
+                project_id="proj-123",
+            )
+
+        mock_webhook_notifier.notify_failure.assert_awaited_once_with(
+            execution=failed_execution,
+            pipeline=simple_pipeline,
+            error="step failed",
+        )
+
     @pytest.mark.asyncio
     async def test_execute_updates_status_to_running(
         self, mock_db, mock_execution_manager, mock_llm_service, simple_pipeline

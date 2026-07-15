@@ -704,6 +704,12 @@ class PipelineExecutor(
                 if completed:
                     execution = completed
 
+                if self.webhook_notifier:
+                    await self.webhook_notifier.notify_complete(
+                        execution=execution,
+                        pipeline=pipeline,
+                    )
+
                 # Emit pipeline_completed event
                 await self._emit_event(
                     "pipeline_completed",
@@ -775,6 +781,13 @@ class PipelineExecutor(
                         logger.error(
                             f"Failed to mark execution {execution.id} as failed",
                             exc_info=True,
+                        )
+
+                    if self.webhook_notifier:
+                        await self.webhook_notifier.notify_failure(
+                            execution=execution,
+                            pipeline=pipeline,
+                            error=str(e),
                         )
 
                     # Emit pipeline_failed event

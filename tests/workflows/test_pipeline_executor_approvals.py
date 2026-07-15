@@ -12,7 +12,12 @@ import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
-from gobby.workflows.definitions import PipelineDefinition, PipelineStep
+from gobby.workflows.definitions import (
+    PipelineDefinition,
+    PipelineStep,
+    WebhookConfig,
+    WebhookEndpoint,
+)
 from gobby.workflows.pipeline.gatekeeper import ApprovalManager
 from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution, StepStatus
 
@@ -336,6 +341,40 @@ class TestApprovalGateHandling:
             )
 
         mock_webhook_notifier.notify_approval_pending.assert_called_once()
+
+    async def test_approval_gate_sends_configured_http_webhook(
+        self,
+        mock_db: MagicMock,
+        mock_execution_manager: MagicMock,
+        mock_llm_service: MagicMock,
+        pipeline_with_approval: PipelineDefinition,
+    ) -> None:
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+        from gobby.workflows.pipeline_state import ApprovalRequired
+        from gobby.workflows.pipeline_webhooks import WebhookNotifier
+
+        pipeline_with_approval.webhooks = WebhookConfig(
+            on_approval_pending=WebhookEndpoint(url="https://example.com/approval")
+        )
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            webhook_notifier=WebhookNotifier(base_url="http://127.0.0.1:7778"),
+        )
+        response = MagicMock(status_code=200)
+
+        with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)) as post:
+            with pytest.raises(ApprovalRequired):
+                await executor.execute(
+                    pipeline=pipeline_with_approval,
+                    inputs={},
+                    project_id="proj-123",
+                )
+
+        post.assert_awaited_once()
+        assert post.call_args.kwargs["url"] == "https://example.com/approval"
+        assert post.call_args.kwargs["json"]["step_id"] == "deploy"
 
 
 class TestApproveMethod:
