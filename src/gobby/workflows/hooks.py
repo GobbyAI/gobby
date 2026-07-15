@@ -588,6 +588,7 @@ class WorkflowHookHandler:
                 # session_id may be "" for session-less events; session_variables.session_id
                 # is a native uuid column, so skip the lookup instead of binding "".
                 variables: dict[str, Any] = {}
+                variable_load_failed = False
                 if self._session_var_manager and session_id:
                     try:
                         variables = dict(self._session_var_manager.get_variables(session_id))
@@ -602,6 +603,7 @@ class WorkflowHookHandler:
                                 decision="block",
                                 reason="Could not load session state. Try again.",
                             )
+                        variable_load_failed = True
                         logger.debug(
                             "Could not load session variables for rules session=%s event=%s: %s",
                             session_id,
@@ -669,7 +671,7 @@ class WorkflowHookHandler:
                                 )
                         defaults["_variable_defaults_loaded"] = True
                         variables.update(defaults)
-                        if self._session_var_manager and session_id:
+                        if self._session_var_manager and session_id and not variable_load_failed:
                             self._session_var_manager.merge_variables(session_id, defaults)
                     except Exception as e:
                         logger.warning(
@@ -710,7 +712,7 @@ class WorkflowHookHandler:
                     variables.setdefault("active_task_id", None)
                     variables.setdefault("task_edited_files", {})
                     # Persist so future evaluations have it
-                    if self._session_var_manager and session_id:
+                    if self._session_var_manager and session_id and not variable_load_failed:
                         self._session_var_manager.merge_variables(
                             session_id,
                             {
@@ -773,8 +775,8 @@ class WorkflowHookHandler:
                 )
 
                 # Persist all variables changed by observers OR rule effects.
-                # Skip when session_id is "" — session_variables.session_id is uuid.
-                if self._session_var_manager and session_id:
+                # Skip when session state could not be loaded or session_id is "".
+                if self._session_var_manager and session_id and not variable_load_failed:
                     changed = {
                         k: v for k, v in variables.items() if k not in pre_eval or pre_eval[k] != v
                     }

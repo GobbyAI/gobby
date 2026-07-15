@@ -1467,8 +1467,8 @@ class TestStopFailsClosedOnVariableLoadError:
         assert "Could not load session state" in response.reason
 
     @pytest.mark.asyncio
-    async def test_non_stop_allowed_when_get_variables_fails(self, rule_engine) -> None:
-        """Non-STOP events should still be allowed when variables fail to load."""
+    async def test_non_stop_is_read_only_when_get_variables_fails(self, rule_engine) -> None:
+        """Non-STOP events should evaluate without persisting incomplete state."""
         from unittest.mock import MagicMock
 
         mock_var_manager = MagicMock()
@@ -1482,6 +1482,7 @@ class TestStopFailsClosedOnVariableLoadError:
 
         # Non-STOP events should still allow (fail-open)
         assert response.decision == "allow"
+        mock_var_manager.merge_variables.assert_not_called()
 
 
 class TestCodexToolContextRehydration:
