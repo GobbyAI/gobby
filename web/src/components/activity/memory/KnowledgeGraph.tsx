@@ -150,6 +150,8 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
   const fgRef = useRef<any>(null)
   const [graphData, setGraphData] = useState<KnowledgeGraphData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
+  const [loadAttempt, setLoadAttempt] = useState(0)
   const [searchQuery, setSearchQuery] = useState('')
   const [expandingNode, setExpandingNode] = useState<string | null>(null)
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
@@ -262,16 +264,20 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
     void (async () => {
       try {
         const data = await fetchKnowledgeGraph(limit)
-        if (!cancelled && data) setGraphData(data)
-        if (!cancelled) setLoading(false)
+        if (!cancelled) {
+          if (data) setGraphData(data)
+          setLoadError(false)
+          setLoading(false)
+        }
       } catch (error) {
         if (cancelled) return
         console.error('Failed to load knowledge graph', error)
+        setLoadError(true)
         setLoading(false)
       }
     })()
     return () => { cancelled = true }
-  }, [fetchKnowledgeGraph, limit])
+  }, [fetchKnowledgeGraph, limit, loadAttempt])
 
   // Build force graph data
   const forceData = useMemo(() => {
@@ -435,6 +441,26 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
     return (
       <div className={CONTAINER_CLS} ref={containerRef}>
         <div className={EMPTY_CLS}>Loading knowledge graph...</div>
+      </div>
+    )
+  }
+
+  if (loadError) {
+    return (
+      <div className={CONTAINER_CLS} ref={containerRef}>
+        <div className={EMPTY_CLS}>
+          <div>Failed to load knowledge graph</div>
+          <button
+            type="button"
+            className="mt-2 rounded border border-[var(--border)] px-3 py-1 text-[length:var(--text-sm)] hover:bg-[var(--bg-hover)]"
+            onClick={() => {
+              setLoading(true)
+              setLoadAttempt(attempt => attempt + 1)
+            }}
+          >
+            Retry
+          </button>
+        </div>
       </div>
     )
   }

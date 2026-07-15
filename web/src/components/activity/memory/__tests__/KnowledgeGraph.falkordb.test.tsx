@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { KnowledgeGraph } from '../KnowledgeGraph'
@@ -49,6 +49,30 @@ vi.mock('three-spritetext', () => ({
 }))
 
 describe('KnowledgeGraph', () => {
+  it('shows a retryable error when the graph fetch fails', async () => {
+    vi.stubGlobal('ResizeObserver', MockResizeObserver)
+    const fetchKnowledgeGraph = vi.fn()
+      .mockRejectedValueOnce(new Error('network unavailable'))
+      .mockResolvedValueOnce({ entities: [], relationships: [] })
+
+    render(
+      <KnowledgeGraph
+        fetchKnowledgeGraph={fetchKnowledgeGraph}
+        fetchEntityNeighbors={vi.fn()}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Failed to load knowledge graph')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('No entities found')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+
+    await waitFor(() => expect(screen.getByText('No entities found')).toBeInTheDocument())
+    expect(fetchKnowledgeGraph).toHaveBeenCalledTimes(2)
+  })
+
   it('mentions FalkorDB in the empty-state copy', async () => {
     vi.stubGlobal('ResizeObserver', MockResizeObserver)
 
