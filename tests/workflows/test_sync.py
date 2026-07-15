@@ -483,6 +483,7 @@ class TestSyncBundledPipelines:
         rows = manager.list_all(workflow_type="pipeline")
         names = [row.name for row in rows]
         assert "expand-task" in names
+        assert "nightly-fixes" in names
         assert "spawn-developer" in names
         assert "spawn-qa" in names
         assert "wiki-research" in names
@@ -492,6 +493,13 @@ class TestSyncBundledPipelines:
         assert "orchestrator" not in names
         assert "front-half-orchestrator" not in names
         assert "delivery-orchestrator" not in names
+
+        expand_task = manager.get_by_name("expand-task")
+        nightly_fixes = manager.get_by_name("nightly-fixes")
+        assert expand_task is not None
+        assert expand_task.enabled is True
+        assert nightly_fixes is not None
+        assert nightly_fixes.enabled is True
 
     def test_ignores_deprecated_pipeline_directory(self, db: HubDatabase, tmp_path: Path) -> None:
         from gobby.workflows.sync_pipelines import sync_bundled_pipelines
@@ -595,6 +603,52 @@ steps:
             row = LocalWorkflowDefinitionManager(db).get_by_name("test-pipeline")
             assert row is not None
             assert row.enabled is False
+
+    def test_omitted_enabled_defaults_true_and_refresh_preserves_toggle(
+        self, db: HubDatabase, tmp_path: Path
+    ) -> None:
+        from gobby.workflows.sync_pipelines import sync_bundled_pipelines
+
+        pip_dir = tmp_path / "pipelines"
+        pip_dir.mkdir()
+        pipeline_path = pip_dir / "default-enabled.yaml"
+        pipeline_path.write_text(
+            """
+name: default-enabled
+type: pipeline
+steps:
+  - id: step1
+    exec: echo hello
+"""
+        )
+
+        manager = LocalWorkflowDefinitionManager(db)
+        with patch(
+            "gobby.workflows.sync_pipelines.get_bundled_pipelines_path", return_value=pip_dir
+        ):
+            result = sync_bundled_pipelines(db)
+            assert result["synced"] == 1
+            row = manager.get_by_name("default-enabled")
+            assert row is not None
+            assert row.enabled is True
+
+            manager.update(row.id, enabled=False)
+            pipeline_path.write_text(
+                """
+name: default-enabled
+type: pipeline
+description: Updated definition
+steps:
+  - id: step1
+    exec: echo hello
+"""
+            )
+            result = sync_bundled_pipelines(db)
+
+        assert result["updated"] == 1
+        refreshed = manager.get_by_name("default-enabled")
+        assert refreshed is not None
+        assert refreshed.enabled is False
 
     def test_syncs_root_pipeline_files(self, db: HubDatabase, tmp_path: Path) -> None:
         from gobby.workflows.sync_pipelines import sync_bundled_pipelines
