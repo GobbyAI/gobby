@@ -236,8 +236,8 @@ class TestTaskSyncManager:
         assert t1.title == "Imported Task"
         assert t1.created_at == datetime(2023, 1, 2, tzinfo=UTC)
         assert t1.updated_at == datetime(2023, 1, 2, tzinfo=UTC)
-        assert t1.start_date.isoformat() == "2023-01-05"
-        assert t1.due_date.isoformat() == "2023-01-10"
+        assert t1.start_date == "2023-01-05"
+        assert t1.due_date == "2023-01-10"
 
         t2 = task_manager.get_task(_task_id("task-imported-2"))
         assert t2 is not None
@@ -911,8 +911,8 @@ class TestClosedStateRoundTrip:
         assert reimported.github_repo == "owner/repo"
         assert reimported.linear_issue_id == "LIN-123"
         assert reimported.linear_team_id == "TEAM-1"
-        assert reimported.start_date.isoformat() == "2026-01-10"
-        assert reimported.due_date.isoformat() == "2026-01-20"
+        assert reimported.start_date == "2026-01-10"
+        assert reimported.due_date == "2026-01-20"
 
     @pytest.mark.integration
     def test_update_path_preserves_session_local_fields(
