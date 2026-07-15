@@ -66,6 +66,7 @@ def _make_server(db: object | None = None) -> tuple[MagicMock, MagicMock]:
 
     server = MagicMock()
     server.session_manager = session_manager
+    server.run_db = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
     server.tool_proxy = ToolProxyService(
         mcp_manager=mcp_manager,
         internal_manager=internal_manager,
@@ -108,6 +109,7 @@ async def test_stdio_rest_path_resolves_target_session_but_uses_wrapper_context(
         "get_session",
         {"session_id": SESSION_UUID_3},
         session_id=SESSION_UUID_4,
+        timeout=30.0,
     )
     assert mcp_manager.call_tool.await_count == 1
     assert mcp_manager.call_tool.await_args is not None
@@ -128,6 +130,7 @@ async def test_stdio_resolves_hash_ref_from_header_hash_ref_without_project_head
         "get_session",
         {"session_id": SESSION_UUID_3},
         session_id=SESSION_UUID_4,
+        timeout=30.0,
     )
     assert mcp_manager.call_tool.await_count == 1
     assert mcp_manager.call_tool.await_args is not None
