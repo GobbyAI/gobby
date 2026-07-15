@@ -34,6 +34,8 @@ def _match_rule(
         return any(fnmatch.fnmatch(t, val) for t in (rule.tags or []))
     if dim == "group":
         return fnmatch.fnmatch(definition_json.get("group", ""), val)
+    if dim == "category":
+        return fnmatch.fnmatch(definition_json.get("category", ""), val)
     return False
 
 
