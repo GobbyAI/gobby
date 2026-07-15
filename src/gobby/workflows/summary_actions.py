@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import aiofiles
 
+from gobby.hooks.background_tasks import create_background_task
 from gobby.memory.title_heuristics import normalize_title_candidate
 from gobby.sessions.summary_transcripts import (
     DIGEST_FALLBACK_MAX_CHARS,
@@ -316,7 +317,7 @@ def schedule_tmux_window_rename(
 
     try:
         running_loop = asyncio.get_running_loop()
-        running_loop.create_task(coro)
+        create_background_task(coro, loop=running_loop)
         return
     except RuntimeError:
         pass

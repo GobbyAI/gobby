@@ -7,6 +7,7 @@ Tests cover:
 - generate_summary: Session summary generation via LLM
 """
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -23,6 +24,7 @@ from gobby.workflows.summary_actions import (
     _write_summary_file,
     format_turns_for_llm,
     generate_summary,
+    schedule_tmux_window_rename,
 )
 
 pytestmark = pytest.mark.unit
@@ -37,6 +39,33 @@ The implementation is complete and the focused workflow tests pass with the expe
 
 Continue with the remaining task validation and lifecycle handoff steps.
 """
+
+
+@pytest.mark.asyncio
+async def test_scheduled_tmux_rename_is_retained_until_done() -> None:
+    from gobby.hooks import background_tasks
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def rename(_session: Any, _title: str) -> None:
+        started.set()
+        await release.wait()
+
+    with patch("gobby.workflows.summary_actions._rename_tmux_window", side_effect=rename):
+        schedule_tmux_window_rename(MagicMock(), "title")
+
+        await started.wait()
+        assert len(background_tasks._background_tasks) == 1
+        task = next(iter(background_tasks._background_tasks))
+        callback_complete = asyncio.Event()
+        task.add_done_callback(lambda _task: callback_complete.set())
+
+        release.set()
+        await callback_complete.wait()
+
+        assert not background_tasks._background_tasks
+
 
 # =============================================================================
 # Fixtures
