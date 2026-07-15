@@ -747,6 +747,22 @@ class TestCombinedExpressions:
 class TestNormalizeExpr:
     """Verify _normalize_expr collapses YAML folding artefacts."""
 
+    @pytest.mark.parametrize(
+        "literal",
+        [
+            "'git  commit'",
+            "'before\t\tafter'",
+            "'''first\n  second'''",
+        ],
+    )
+    def test_preserves_whitespace_inside_string_literals(self, literal: str) -> None:
+        raw = f"value == {literal}"
+        assert SafeExpressionEvaluator._normalize_expr(raw) == raw
+
+    def test_evaluate_distinguishes_literal_whitespace(self) -> None:
+        evaluator = SafeExpressionEvaluator({"value": "git commit"}, {})
+        assert evaluator.evaluate("value == 'git  commit'") is False
+
     def test_collapses_newline_with_indent(self) -> None:
         raw = "(a + b)\n  not in c"
         assert SafeExpressionEvaluator._normalize_expr(raw) == "(a + b) not in c"

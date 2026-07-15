@@ -7,11 +7,13 @@ and lazy boolean evaluation for deferred computation.
 from __future__ import annotations
 
 import ast
+import io
 import json
 import logging
 import operator
 import re
 import reprlib
+import tokenize
 from collections.abc import Callable, Iterator
 from typing import Any
 
@@ -114,15 +116,41 @@ class SafeExpressionEvaluator(ast.NodeVisitor):
 
     @staticmethod
     def _normalize_expr(expr: str) -> str:
-        """Collapse whitespace so YAML folding artefacts don't break ast.parse.
+        """Collapse whitespace outside strings so YAML folding artefacts parse.
 
         YAML ``>`` folded scalars preserve newlines for lines with extra
         indentation, producing expressions like ``... )\\n  not in ...``
         which cause ``SyntaxError: unexpected indent`` in ``ast.parse``.
-        Replacing interior newlines+whitespace with a single space is safe
-        because ``when`` conditions are always single expressions.
+        String tokens are preserved verbatim so normalization cannot change
+        the value being compared.
         """
-        return " ".join(expr.split())
+        lines = expr.splitlines(keepends=True)
+        line_offsets: list[int] = []
+        offset = 0
+        for line in lines:
+            line_offsets.append(offset)
+            offset += len(line)
+
+        string_spans: list[tuple[int, int]] = []
+        try:
+            tokens = tokenize.generate_tokens(io.StringIO(expr).readline)
+            for token in tokens:
+                if token.type != tokenize.STRING:
+                    continue
+                start = line_offsets[token.start[0] - 1] + token.start[1]
+                end = line_offsets[token.end[0] - 1] + token.end[1]
+                string_spans.append((start, end))
+        except tokenize.TokenError:
+            return " ".join(expr.split())
+
+        pieces: list[str] = []
+        cursor = 0
+        for start, end in string_spans:
+            pieces.append(re.sub(r"\s+", " ", expr[cursor:start]))
+            pieces.append(expr[start:end])
+            cursor = end
+        pieces.append(re.sub(r"\s+", " ", expr[cursor:]))
+        return "".join(pieces).strip()
 
     def evaluate(self, expr: str) -> bool:
         """Evaluate expression and return boolean result."""
