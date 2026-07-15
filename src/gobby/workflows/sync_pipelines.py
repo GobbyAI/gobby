@@ -139,20 +139,24 @@ def sync_bundled_pipelines(db: HubDatabase) -> dict[str, Any]:
 
     manager = LocalWorkflowDefinitionManager(db)
     on_disk: set[str] = set()
+    yaml_files = iter_bundled_pipeline_files(workflows_path)
+    scan_complete = bool(yaml_files)
 
-    for yaml_file in iter_bundled_pipeline_files(workflows_path):
+    for yaml_file in yaml_files:
         try:
             raw_content = yaml_file.read_text(encoding="utf-8")
             data = yaml.safe_load(raw_content)
 
             if not isinstance(data, dict):
                 logger.warning("Skipping non-dict YAML file", extra={"workflow": str(yaml_file)})
+                scan_complete = False
                 continue
 
             if "name" not in data:
                 logger.warning(
                     "Skipping YAML without 'name' field", extra={"workflow": str(yaml_file)}
                 )
+                scan_complete = False
                 continue
 
             # Validate against Pydantic schema
@@ -166,6 +170,7 @@ def sync_bundled_pipelines(db: HubDatabase) -> dict[str, Any]:
                     "Skipping invalid workflow",
                     extra={"workflow": str(yaml_file), "error": str(ve)},
                 )
+                scan_complete = False
                 continue
 
             name = data["name"]
@@ -203,20 +208,20 @@ def sync_bundled_pipelines(db: HubDatabase) -> dict[str, Any]:
                         and existing.definition_json != definition_json
                     ):
                         manager.restore(existing.id)
-                        manager.update(
-                            existing.id,
-                            **_build_pipeline_update_fields(
-                                existing,
-                                definition_json=definition_json,
-                                description=description,
-                                version=version,
-                                enabled=enabled,
-                                priority=priority,
-                                sources=sources_list,
-                                workflow_type=workflow_type,
-                                restore=True,
-                            ),
+                        update_fields = _build_pipeline_update_fields(
+                            existing,
+                            definition_json=definition_json,
+                            description=description,
+                            version=version,
+                            enabled=enabled,
+                            priority=priority,
+                            sources=sources_list,
+                            workflow_type=workflow_type,
+                            restore=True,
                         )
+                        if update_fields.pop("source", None) is not None:
+                            manager.move_to_global(existing.id)
+                        manager.update(existing.id, **update_fields)
                         result["updated"] += 1
                         continue
                     result["skipped"] += 1
@@ -234,6 +239,8 @@ def sync_bundled_pipelines(db: HubDatabase) -> dict[str, Any]:
                         workflow_type=workflow_type,
                     )
                     if update_fields:
+                        if update_fields.pop("source", None) is not None:
+                            manager.move_to_global(existing.id)
                         manager.update(existing.id, **update_fields)
                         result["updated"] += 1
                         continue
@@ -265,22 +272,30 @@ def sync_bundled_pipelines(db: HubDatabase) -> dict[str, Any]:
                 extra={"workflow": str(yaml_file), "error": str(e)},
             )
             result["errors"].append(error_msg)
+            scan_complete = False
 
     # Orphan cleanup: soft-delete pipeline rows whose YAML was removed.
-    # Only touch gobby-tagged pipeline-type rows.
-    tag_condition, tag_params = json_array_contains_condition(db, "tags", "gobby")
-    orphan_rows = db.fetchall(
-        "SELECT id, name FROM workflow_definitions "
-        "WHERE workflow_type = 'pipeline' "
-        f"AND {tag_condition} AND source = 'installed' AND deleted_at IS NULL",
-        tag_params,
-    )
     result["orphaned"] = 0
-    for row in orphan_rows:
-        if row["name"] not in on_disk:
-            manager.delete(row["id"])
-            logger.info("Soft-deleted orphaned bundled workflow", extra={"workflow": row["name"]})
-            result["orphaned"] += 1
+    if scan_complete:
+        # Only touch gobby-tagged pipeline-type rows.
+        tag_condition, tag_params = json_array_contains_condition(db, "tags", "gobby")
+        orphan_rows = db.fetchall(
+            "SELECT id, name FROM workflow_definitions "
+            "WHERE workflow_type = 'pipeline' "
+            f"AND {tag_condition} AND source = 'installed' AND deleted_at IS NULL",
+            tag_params,
+        )
+        for row in orphan_rows:
+            if row["name"] not in on_disk:
+                manager.delete(row["id"])
+                logger.info(
+                    "Soft-deleted orphaned bundled workflow", extra={"workflow": row["name"]}
+                )
+                result["orphaned"] += 1
+    else:
+        logger.warning(
+            "Skipping bundled workflow orphan cleanup because the template scan was incomplete"
+        )
 
     total = result["synced"] + result["updated"] + result["skipped"]
     logger.info(
