@@ -364,8 +364,8 @@ class TestSearchSkillsTool:
         assert {"git-commit", "git-rebase"}.issubset(names)
 
     @pytest.mark.asyncio
-    async def test_active_skill_lookup_error_fails_closed(self, registry) -> None:
-        """Session allowlist lookup failures return no skill matches."""
+    async def test_active_skill_lookup_error_does_not_filter_results(self, registry) -> None:
+        """Session allowlist lookup failures leave search results unfiltered."""
         from gobby.mcp_proxy.tools.skills._context import SkillsContext
 
         tool = registry.get_tool("search_skills")
@@ -375,10 +375,11 @@ class TestSearchSkillsTool:
             "get_active_skill_names",
             new=AsyncMock(side_effect=RuntimeError("session variables unavailable")),
         ):
-            result = await tool(query="git", session_id="s1")
+            result = await tool(query="git commit", session_id="s1")
 
         assert result["success"] is True
-        assert result["results"] == []
+        assert result["count"] > 0
+        assert result["results"][0]["skill_name"] == "git-commit"
 
 
 @pytest.fixture
