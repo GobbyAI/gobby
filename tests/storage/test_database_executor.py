@@ -59,10 +59,10 @@ async def test_database_executor_limits_worker_count() -> None:
 
 
 @pytest.mark.asyncio
-async def test_database_executor_does_not_inherit_ambient_transaction(
+async def test_database_executor_inherits_ambient_transaction(
     temp_db: HubDatabase,
 ) -> None:
-    """Executor work uses its own connection while the caller holds a row lock."""
+    """Executor work joins the transaction held by the async caller."""
     executor = DatabaseExecutor(max_workers=1)
     temp_db.execute("DROP TABLE IF EXISTS executor_transaction_isolation")
     temp_db.execute(
@@ -71,13 +71,13 @@ async def test_database_executor_does_not_inherit_ambient_transaction(
     temp_db.execute("INSERT INTO executor_transaction_isolation VALUES (1, 0)")
 
     def read_committed_value() -> tuple[bool, int]:
-        has_no_ambient_transaction = ambient_transaction(temp_db) is None
+        has_ambient_transaction = ambient_transaction(temp_db) is not None
         row = temp_db.fetchone(
             "SELECT value FROM executor_transaction_isolation WHERE id = %s",
             (1,),
         )
         assert row is not None
-        return has_no_ambient_transaction, int(row["value"])
+        return has_ambient_transaction, int(row["value"])
 
     try:
         with temp_db.transaction() as txn:
@@ -87,7 +87,7 @@ async def test_database_executor_does_not_inherit_ambient_transaction(
             )
             assert await asyncio.wait_for(executor.run(read_committed_value), timeout=2) == (
                 True,
-                0,
+                1,
             )
 
         row = temp_db.fetchone(
