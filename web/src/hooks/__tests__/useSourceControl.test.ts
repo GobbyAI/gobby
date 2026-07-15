@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { useSourceControl } from '../useSourceControl'
 
 const PROJECT_PAYLOADS: Record<string, unknown> = {
@@ -33,6 +33,16 @@ function signalsFor(fetchMock: ReturnType<typeof vi.fn>, projectId: string): Abo
   return fetchMock.mock.calls
     .filter(([input]) => String(input).includes(`project_id=${projectId}`))
     .map(([, init]) => (init as RequestInit).signal as AbortSignal)
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve
+    reject = promiseReject
+  })
+  return { promise, resolve, reject }
 }
 
 describe('useSourceControl', () => {
@@ -100,5 +110,78 @@ describe('useSourceControl', () => {
     expect(newSignals).toHaveLength(7)
     unmount()
     expect(newSignals.every(signal => signal.aborted)).toBe(true)
+  })
+
+  it('ignores a stale project response when the fetch implementation does not honor abort', async () => {
+    const oldBranches = deferred<Response>()
+    const fetchMock = vi.fn((input: RequestInfo | URL): Promise<Response> => {
+      const url = String(input)
+      if (url.includes('/branches?') && url.includes('project_id=old-project')) {
+        return oldBranches.promise
+      }
+      const payload = url.includes('/branches?')
+        ? { branches: [{ name: 'new-project-branch' }] }
+        : payloadFor(url)
+      return Promise.resolve(Response.json(payload))
+    })
+    globalThis.fetch = fetchMock as typeof fetch
+
+    const { result, rerender } = renderHook(
+      ({ projectId }: { projectId: string }) => useSourceControl(projectId),
+      { initialProps: { projectId: 'old-project' } },
+    )
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/branches?project_id=old-project'),
+        expect.any(Object),
+      ),
+    )
+    rerender({ projectId: 'new-project' })
+    await waitFor(() =>
+      expect(result.current.branches).toEqual([{ name: 'new-project-branch' }]),
+    )
+
+    await act(async () => {
+      oldBranches.resolve(Response.json({ branches: [{ name: 'stale-project-branch' }] }))
+      await oldBranches.promise
+    })
+
+    expect(result.current.branches).toEqual([{ name: 'new-project-branch' }])
+    expect(result.current.error).toBeNull()
+  })
+
+  it('ignores a stale refresh error and keeps the active refresh result', async () => {
+    const staleBranches = deferred<Response>()
+    let branchRequestCount = 0
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const fetchMock = vi.fn((input: RequestInfo | URL): Promise<Response> => {
+      const url = String(input)
+      if (url.includes('/branches?') && branchRequestCount++ === 0) {
+        return staleBranches.promise
+      }
+      const payload = url.includes('/branches?')
+        ? { branches: [{ name: 'active-refresh-branch' }] }
+        : payloadFor(url)
+      return Promise.resolve(Response.json(payload))
+    })
+    globalThis.fetch = fetchMock as typeof fetch
+
+    const { result } = renderHook(() => useSourceControl('project'))
+    await waitFor(() => expect(branchRequestCount).toBe(1))
+
+    await act(async () => {
+      await result.current.refresh()
+    })
+    expect(result.current.branches).toEqual([{ name: 'active-refresh-branch' }])
+
+    await act(async () => {
+      staleBranches.reject(new Error('stale refresh failed'))
+      await expect(staleBranches.promise).rejects.toThrow('stale refresh failed')
+    })
+
+    expect(result.current.branches).toEqual([{ name: 'active-refresh-branch' }])
+    expect(result.current.error).toBeNull()
+    expect(consoleError).not.toHaveBeenCalled()
   })
 })
