@@ -1,3 +1,5 @@
+import { inputFocusCls } from '../../shared/focusStyles'
+
 export const EDITOR_CLS = 'flex h-full flex-1 flex-col overflow-hidden'
 export const EDITOR_SIDEBAR_CLS = '!h-auto !overflow-visible'
 
@@ -10,7 +12,7 @@ export const BACK_CLS =
   'cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-3 py-1.5 text-[length:var(--text-base)] text-[var(--text-primary)] transition-colors duration-150 hover:bg-[var(--border)] pointer-coarse:min-h-11'
 
 export const NAME_CLS =
-  'w-[240px] cursor-text rounded-md border border-transparent bg-transparent px-2.5 py-1 text-[length:var(--text-base)] font-semibold text-[var(--text-primary)] outline-none transition-colors duration-150 hover:bg-[var(--bg-tertiary)] focus:border-[var(--accent)] focus:bg-[var(--bg-primary)]'
+  `w-[240px] cursor-text rounded-md border border-transparent bg-transparent px-2.5 py-1 text-[length:var(--text-base)] font-semibold text-[var(--text-primary)] transition-colors duration-150 hover:bg-[var(--bg-tertiary)] focus:bg-[var(--bg-primary)] ${inputFocusCls}`
 
 export const BADGE_CLS =
   'inline-block rounded-[10px] bg-[var(--accent-soft)] px-2 py-0.5 text-[length:var(--text-2xs)] font-medium uppercase tracking-[0.5px] text-[var(--accent)]'
@@ -27,7 +29,7 @@ export const LABEL_CLS =
   'mb-1 block text-[length:var(--text-xs)] font-semibold uppercase tracking-[0.5px] text-[var(--text-secondary)]'
 
 export const DESCRIPTION_CLS =
-  'box-border min-h-[40px] w-full resize-y rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-2.5 py-2 font-[inherit] text-[length:var(--text-md)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]'
+  `box-border min-h-[40px] w-full resize-y rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-2.5 py-2 font-[inherit] text-[length:var(--text-md)] text-[var(--text-primary)] ${inputFocusCls}`
 
 export const STEPS_CLS = 'flex-1 overflow-y-auto px-4 pt-3 pb-5'
 export const STEPS_SIDEBAR_CLS = '!overflow-visible !pb-0'
@@ -77,7 +79,7 @@ export const FIELD_LABEL_CLS =
   'mb-1 block text-[length:var(--text-xs)] font-medium text-[var(--text-secondary)]'
 
 export const FIELD_INPUT_CLS =
-  'box-border w-full rounded border border-[var(--border)] bg-[var(--bg-primary)] px-2 py-1.5 text-[length:var(--text-md)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]'
+  `box-border w-full rounded border border-[var(--border)] bg-[var(--bg-primary)] px-2 py-1.5 text-[length:var(--text-md)] text-[var(--text-primary)] ${inputFocusCls}`
 
 export const FIELD_TEXTAREA_CLS = `${FIELD_INPUT_CLS} min-h-[50px] resize-y font-[inherit]`
 
@@ -93,7 +95,7 @@ export const COMMON_CLS = 'mt-2 border-t border-[var(--border)] pt-2'
 export const KV_CLS = 'flex flex-col gap-1'
 export const KV_ROW_CLS = 'flex items-center gap-1'
 export const KV_INPUT_CLS =
-  'box-border flex-1 rounded border border-[var(--border)] bg-[var(--bg-primary)] px-2 py-1 text-[length:var(--text-sm)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]'
+  `box-border flex-1 rounded border border-[var(--border)] bg-[var(--bg-primary)] px-2 py-1 text-[length:var(--text-sm)] text-[var(--text-primary)] ${inputFocusCls}`
 
 export const KV_REMOVE_CLS =
   'flex-shrink-0 cursor-pointer rounded border border-[var(--border)] bg-transparent px-1.5 py-0.5 text-[length:var(--text-base)] leading-none text-[var(--text-secondary)] hover:border-[var(--color-destructive)] hover:bg-[var(--color-destructive)] hover:text-[var(--color-destructive-foreground)] pointer-coarse:min-h-11 pointer-coarse:min-w-11'

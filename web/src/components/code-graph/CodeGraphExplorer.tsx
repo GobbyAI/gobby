@@ -5,6 +5,7 @@ import { useCodeGraph, mergeCodeGraphData } from '../../hooks/useCodeGraph'
 import type { CodeGraphData, CodeGraphNode, CodeGraphSearchResult } from '../../hooks/useCodeGraph'
 import { IS_MOBILE, IS_IOS } from '../../utils/platform'
 import { resolveCssVar, cn, escapeHtml } from '../../lib/utils'
+import { inputFocusCls } from '../shared/focusStyles'
 
 const DEFAULT_CODE_GRAPH_LIMIT = IS_IOS ? 30 : IS_MOBILE ? 50 : 100
 const CODE_GRAPH_LIMIT_MIN = 10
@@ -27,7 +28,7 @@ const BTN_ACTIVE_CLS =
 
 const SEARCH_WRAP_CLS = 'absolute left-3 top-3 z-10 w-[260px]'
 const SEARCH_INPUT_CLS =
-  'w-full rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1.5 font-mono text-[length:var(--text-sm)] text-[var(--text-primary)] outline-none transition-colors duration-150 placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] pointer-coarse:min-h-11'
+  `w-full rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1.5 font-mono text-[length:var(--text-sm)] text-[var(--text-primary)] transition-colors duration-150 placeholder:text-[var(--text-muted)] pointer-coarse:min-h-11 ${inputFocusCls}`
 const SEARCH_RESULTS_CLS =
   'mt-1 max-h-[240px] overflow-y-auto rounded border border-[var(--border)] bg-[var(--bg-secondary)]'
 const SEARCH_RESULT_CLS =

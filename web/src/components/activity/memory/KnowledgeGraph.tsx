@@ -5,6 +5,7 @@ import { SphereGeometry, MeshLambertMaterial, Mesh } from 'three'
 import { IS_MOBILE, IS_IOS } from '../../../utils/platform'
 import { resolveCssVar, cn, escapeHtml } from '../../../lib/utils'
 import type { KnowledgeGraphData, KnowledgeEntity, KnowledgeRelationship } from '../../../hooks/useMemory'
+import { inputFocusCls } from '../../shared/focusStyles'
 
 const CONTAINER_CLS = 'relative flex min-h-0 flex-1 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-primary)]'
 const EMPTY_CLS = 'flex h-full min-h-[300px] flex-col items-center justify-center gap-2 text-[var(--text-muted)]'
@@ -20,7 +21,7 @@ const PHYSICS_LABEL_CLS = 'min-w-[56px] text-[length:var(--text-xs)] text-[var(-
 const PHYSICS_VALUE_CLS = 'min-w-[36px] text-right font-[inherit] text-[length:var(--text-2xs)] tabular-nums text-[var(--text-muted)]'
 const PHYSICS_SLIDER_CLS = 'h-1 flex-1 cursor-pointer accent-[var(--accent)]'
 const PHYSICS_RESET_CLS = 'mt-0.5 cursor-pointer self-end rounded border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 py-0.5 text-[length:var(--text-xs)] text-[var(--text-secondary)] hover:bg-[var(--bg-primary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11 pointer-coarse:px-3'
-const SEARCH_INPUT_CLS = 'rounded border border-[var(--border)] bg-[var(--bg-primary)] px-2 py-1 text-[length:var(--text-sm)] text-[var(--text-primary)] outline-none w-[150px] font-mono pointer-coarse:min-h-11 pointer-coarse:px-2.5 pointer-coarse:py-2 pointer-coarse:text-[length:var(--text-md)]'
+const SEARCH_INPUT_CLS = `w-[150px] rounded border border-[var(--border)] bg-[var(--bg-primary)] px-2 py-1 font-mono text-[length:var(--text-sm)] text-[var(--text-primary)] pointer-coarse:min-h-11 pointer-coarse:px-2.5 pointer-coarse:py-2 pointer-coarse:text-[length:var(--text-md)] ${inputFocusCls}`
 
 interface KnowledgeGraphProps {
   fetchKnowledgeGraph: (limit?: number) => Promise<KnowledgeGraphData | null>

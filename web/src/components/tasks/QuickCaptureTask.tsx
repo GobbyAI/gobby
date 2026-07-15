@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useDialogFocus } from '../../hooks/useDialogFocus'
 import { DEFAULT_TASK_PRIORITY } from '../../lib/taskOptions'
+import { inputFocusCls } from '../shared/focusStyles'
 
 interface QuickCaptureTaskProps {
   isOpen: boolean
@@ -14,7 +15,7 @@ const MODAL_CLS =
   'fixed left-1/2 top-[20%] z-[1001] w-[480px] max-w-[90vw] -translate-x-1/2 rounded-[12px] border border-[var(--border)] bg-[var(--bg-secondary)] p-4 shadow-[var(--shadow-xl)]'
 const FORM_CLS = 'flex flex-col gap-[10px]'
 const INPUT_CLS =
-  'box-border w-full rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-[10px] font-[var(--font-sans)] text-[length:var(--text-base)] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-[var(--accent)]'
+  `box-border w-full rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-[10px] font-[var(--font-sans)] text-[length:var(--text-base)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] ${inputFocusCls}`
 const ROW_CLS = 'flex items-center justify-between gap-[10px]'
 const TYPES_CLS = 'flex gap-1'
 const TYPE_BTN_CLS =

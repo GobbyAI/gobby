@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 
+import { inputFocusCls } from './shared/focusStyles'
+
 // Class tokens hoisted from the now-deleted legacy configuration-page styles
 // module. This is the only surviving consumer (reused by the settings overlay's
 // ProjectsSessionsSection), so the few classes it needs live here directly.
@@ -16,7 +18,7 @@ const FIELD_LABEL_CLS =
 const FIELD_HELP_CLS =
   'text-[length:var(--text-xs)] leading-[1.4] text-[var(--text-muted)]'
 const INPUT_CLS =
-  'rounded border border-[var(--border)] bg-[var(--bg-primary)] px-2.5 py-1.5 font-mono text-[length:var(--text-md)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)] pointer-coarse:min-h-11'
+  `rounded border border-[var(--border)] bg-[var(--bg-primary)] px-2.5 py-1.5 font-mono text-[length:var(--text-md)] text-[var(--text-primary)] pointer-coarse:min-h-11 ${inputFocusCls}`
 const TOOLBAR_BTN_CLS =
   'flex cursor-pointer items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1.5 text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-[background-color,color,border-color] duration-150 hover:border-[var(--text-muted)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
 

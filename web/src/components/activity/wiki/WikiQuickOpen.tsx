@@ -6,6 +6,7 @@
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
+import { inputFocusCls } from "../../shared/focusStyles";
 import { fetchSearch, type WikiFetchScope } from "./WikiTabData";
 import type { WikiNodeIndex, WikiPageMeta } from "./WikiTabModel";
 
@@ -164,7 +165,7 @@ export function WikiQuickOpen({ scope, pages, nodeIndex, onOpen, onClose }: Wiki
           aria-label="Quick open"
           value={query}
           placeholder="Jump to a page…"
-          className="w-full rounded-t-lg border-b border-border bg-transparent px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+          className={`w-full rounded-t-lg border-b border-border bg-transparent px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground ${inputFocusCls}`}
           onChange={(event) => {
             setQuery(event.target.value);
             setActiveIndex(0);
