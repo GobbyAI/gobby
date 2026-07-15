@@ -14,7 +14,12 @@ from gobby.agents.isolation import IsolationContext
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import AgentDefinitionBody, WorkflowStep
+from gobby.workflows.definitions import (
+    AgentDefinitionBody,
+    PipelineDefinition,
+    PipelineStep,
+    WorkflowStep,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -103,6 +108,56 @@ class TestSpawnAgentDefaults:
             # Verify "default" agent was loaded
             assert mock_load.call_args[0][0] == "default"
             assert result["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_spawn_agent_awaits_workflow_loader(self, mock_runner) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+
+        pipeline = PipelineDefinition(
+            name="review-pipeline",
+            steps=[PipelineStep(id="review", exec="true")],
+        )
+        registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory._context_from_project_path",
+                return_value={
+                    "id": "11111111-1111-4111-8111-111111110123",
+                    "project_path": "/path/to/project",
+                },
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
+                return_value=AgentDefinitionBody(name="default", provider="claude"),
+            ),
+            patch("gobby.workflows.loader.WorkflowLoader") as loader_class,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ) as mock_spawn_impl,
+        ):
+            loader_class.return_value.load_workflow = AsyncMock(return_value=pipeline)
+
+            result = await registry.call(
+                "spawn_agent",
+                {
+                    "prompt": "Review the implementation",
+                    "workflow": "review-pipeline",
+                    "project_path": "/path/to/project",
+                },
+            )
+
+        assert result["success"] is True
+        loader_class.return_value.load_workflow.assert_awaited_once_with(
+            "review-pipeline",
+            project_path="/path/to/project",
+        )
+        assert (
+            mock_spawn_impl.call_args.kwargs["initial_variables"]["_assigned_pipeline"]
+            == "review-pipeline"
+        )
 
     @pytest.mark.asyncio
     async def test_spawn_agent_notify_parent_on_completion_false_skips_subscription(

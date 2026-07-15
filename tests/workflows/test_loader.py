@@ -1,6 +1,8 @@
 """Comprehensive tests for WorkflowLoader (DB-only runtime)."""
 
+import asyncio
 import json
+import threading
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -14,8 +16,34 @@ from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import PipelineDefinition, WorkflowDefinition
 from gobby.workflows.loader import WorkflowLoader
 from gobby.workflows.loader_cache import DiscoveredWorkflow
+from gobby.workflows.loader_sync import WorkflowLoaderSyncMixin
 
 pytestmark = pytest.mark.unit
+
+
+def test_run_sync_from_worker_thread_with_running_loop() -> None:
+    result: dict[str, int] = {}
+    errors: list[BaseException] = []
+
+    async def return_value() -> int:
+        return 42
+
+    async def invoke_sync_wrapper() -> None:
+        result["value"] = WorkflowLoaderSyncMixin._run_sync(return_value())
+
+    def run_worker_loop() -> None:
+        try:
+            asyncio.run(invoke_sync_wrapper())
+        except BaseException as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=run_worker_loop, daemon=True)
+    worker.start()
+    worker.join(timeout=2)
+
+    assert not worker.is_alive(), "_run_sync deadlocked on the worker thread's running loop"
+    assert errors == []
+    assert result == {"value": 42}
 
 
 # ---------------------------------------------------------------------------
