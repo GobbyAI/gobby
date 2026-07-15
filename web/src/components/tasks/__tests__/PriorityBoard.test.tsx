@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import type { GobbyTask } from '../../../hooks/useTasks'
+import type { GobbyTask } from '../../../types/tasks'
 import { PriorityBoard } from '../PriorityBoard'
 
 function task(id: string, title: string, updatedAt: string): GobbyTask {
