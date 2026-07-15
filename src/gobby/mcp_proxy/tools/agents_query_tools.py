@@ -291,13 +291,14 @@ def register_agent_query_tools(
 
     @registry.tool(
         name="unregister_agent",
-        description="Mark an active agent run as failed/unregistered (internal use).",
+        description="Mark an active agent run as cancelled/unregistered (internal use).",
     )
     async def unregister_agent(run_id: str) -> dict[str, Any]:
         run = ctx.agent_run_manager.get(run_id)
         if run and run.status in ("running", "pending"):
-            ctx.agent_run_manager.fail(run_id, error="Unregistered")
-            return {"success": True, "message": f"Unregistered agent {run_id}"}
+            if ctx.runner.cancel_run(run_id):
+                return {"success": True, "message": f"Unregistered agent {run_id}"}
+            run = ctx.agent_run_manager.get(run_id)
         if run:
             return {"success": True, "message": f"Agent {run_id} already in status {run.status}"}
         return {"success": False, "error": f"No agent found with ID {run_id}"}

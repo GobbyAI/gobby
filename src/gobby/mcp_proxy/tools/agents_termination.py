@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from gobby.agents.kill import KILL_ERROR_NO_TARGET_PID
 from gobby.mcp_proxy.tools.agents_runtime import facade
 
 if TYPE_CHECKING:
@@ -159,7 +160,7 @@ async def _complete_self_terminated_run(
         signal_name=signal,
         close_terminal=not debug,
     )
-    if kill_result.get("success") or kill_result.get("error") == "No target PID found":
+    if kill_result.get("success") or kill_result.get("error_code") == KILL_ERROR_NO_TARGET_PID:
         result.update(kill_result)
     else:
         result["terminal_cleanup_error"] = kill_result.get("error") or "unknown terminal cleanup"

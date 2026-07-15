@@ -535,7 +535,11 @@ class TestStopAgent:
             patch(
                 "gobby.mcp_proxy.tools.agents._kill_agent_process",
                 new_callable=AsyncMock,
-                return_value={"success": True},
+                return_value={
+                    "success": False,
+                    "error": "No target PID found",
+                    "error_code": "no_target_pid",
+                },
             ),
             patch(
                 "gobby.mcp_proxy.tools.agents.cleanup_agent_runtime_state",
@@ -987,10 +991,11 @@ class TestUnregisterAgent:
 
     @pytest.mark.asyncio
     async def test_successful_unregistration(self) -> None:
-        """Test successful agent unregistration (marks as failed in DB)."""
+        """Test successful agent unregistration (marks the run as cancelled)."""
         runner = _make_runner_with_run_storage()
         mock_run = _make_mock_agent_run(run_id="run-123", status="running")
         runner.run_storage.get.return_value = mock_run
+        runner.cancel_run.return_value = True
 
         registry = create_agents_registry(runner)
         unregister = registry._tools["unregister_agent"].func
@@ -999,7 +1004,7 @@ class TestUnregisterAgent:
 
         assert result["success"] is True
         assert "Unregistered" in result["message"]
-        runner.run_storage.fail.assert_called_once_with("run-123", error="Unregistered")
+        runner.cancel_run.assert_called_once_with("run-123")
 
     @pytest.mark.asyncio
     async def test_unregister_not_found(self) -> None:
@@ -1122,7 +1127,11 @@ class TestKillAgent:
             patch(
                 "gobby.mcp_proxy.tools.agents._kill_agent_process",
                 new_callable=AsyncMock,
-                return_value={"success": True},
+                return_value={
+                    "success": False,
+                    "error": "No target PID found",
+                    "error_code": "no_target_pid",
+                },
             ),
         ):
             result = await kill_agent(session_id="sess-456")
@@ -1657,7 +1666,11 @@ class TestCompleteSelfTerminatedRunSignoffMessage:
             patch(
                 "gobby.mcp_proxy.tools.agents._kill_agent_process",
                 new_callable=AsyncMock,
-                return_value={"success": True},
+                return_value={
+                    "success": False,
+                    "error": "No target PID found",
+                    "error_code": "no_target_pid",
+                },
             ),
             patch(
                 "gobby.mcp_proxy.tools.agents.complete_and_notify_agent_run",
@@ -1673,7 +1686,7 @@ class TestCompleteSelfTerminatedRunSignoffMessage:
             svm_cls.return_value.get_variables.return_value = {
                 "adversary_verdict": "REJECTED: round 5, 1 blocking (sample)"
             }
-            await _complete_self_terminated_run(
+            result = await _complete_self_terminated_run(
                 runner=runner,
                 run=run,
                 kill_db=kill_db,
@@ -1686,6 +1699,8 @@ class TestCompleteSelfTerminatedRunSignoffMessage:
         assert notify_result["signoff_message"] == "REJECTED: round 5, 1 blocking (sample)"
         assert notify_result["status"] == "success"
         assert notify_result["run_id"] == "run-xyz"
+        assert result["error_code"] == "no_target_pid"
+        assert "terminal_cleanup_error" not in result
 
     @pytest.mark.asyncio
     async def test_signoff_message_omitted_when_var_unset(self) -> None:

@@ -91,11 +91,6 @@ def _add_restart_metadata(
         result["restart_hint"] = _FALKOR_RESTART_HINT
 
 
-def _storage_config_key_to_public_key(key: str) -> str:
-    """Return the key name exposed to callers for a persisted config key."""
-    return key
-
-
 def _remove_scalar_parent_keys(flat: dict[str, Any], key: str) -> None:
     parts = key.split(".")
     for index in range(1, len(parts)):
@@ -487,10 +482,7 @@ def create_config_registry(
             if prefix is not None:
                 runtime_prefix = external_embedding_config_key_to_runtime_key(prefix)
                 storage_prefix = runtime_embedding_config_key_to_storage_key(runtime_prefix)
-            keys = sorted(
-                _storage_config_key_to_public_key(key)
-                for key in config_store.list_keys(prefix=storage_prefix)
-            )
+            keys = sorted(config_store.list_keys(prefix=storage_prefix))
             return {"success": True, "count": len(keys), "keys": keys}
         except ValueError as e:
             return {"success": False, "error": str(e)}
@@ -551,7 +543,7 @@ def create_config_registry(
                 "success": True,
                 "inserted": count,
                 "total_section_keys": len(section_defaults),
-                "keys_inserted": sorted(_storage_config_key_to_public_key(key) for key in missing),
+                "keys_inserted": sorted(missing),
             }
         except ValueError as e:
             return {"success": False, "error": str(e)}
