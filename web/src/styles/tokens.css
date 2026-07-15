@@ -53,24 +53,34 @@
 
   --color-info: oklch(70% 0.16 250);
   --color-info-bg: oklch(28% 0.08 250);
+  --color-info-foreground: oklch(70% 0.16 250);
   --color-info-soft: oklch(70% 0.16 250 / 0.12);
+  --color-info-tint: oklch(70% 0.16 250 / 0.06);
+  --text-on-info: oklch(15% 0 0);
 
-  --color-warning: oklch(30% 0.08 75);
+  --color-warning: oklch(78% 0.16 75);
+  --color-warning-bg: oklch(30% 0.08 75);
   --color-warning-foreground: oklch(78% 0.16 75);
   --color-warning-soft: oklch(78% 0.16 75 / 0.12);
+  --color-warning-tint: oklch(78% 0.16 75 / 0.06);
   --text-on-warning: oklch(15% 0 0);
 
   --color-destructive: oklch(28% 0.10 350);
   --color-destructive-foreground: oklch(72% 0.20 350);
   --color-error: oklch(65% 0.20 350);
+  --color-error-bg: var(--color-destructive);
+  --color-error-foreground: oklch(65% 0.20 350);
   --color-error-soft: oklch(65% 0.20 350 / 0.12);
+  --color-error-tint: oklch(65% 0.20 350 / 0.06);
   --text-on-error: oklch(15% 0 0);
 
   --color-inactive: oklch(60% 0.008 125);
 
-  --color-success: oklch(25% 0.05 125);
+  --color-success: oklch(72% 0.10 125);
+  --color-success-bg: oklch(25% 0.05 125);
   --color-success-foreground: oklch(72% 0.10 125);
   --color-success-soft: oklch(72% 0.10 125 / 0.12);
+  --color-success-tint: oklch(72% 0.10 125 / 0.06);
   --text-on-success: oklch(15% 0 0);
 
   --color-review: var(--color-info);
@@ -310,24 +320,34 @@
 
   --color-info: oklch(48% 0.18 250);
   --color-info-bg: oklch(94% 0.05 250);
+  --color-info-foreground: oklch(48% 0.18 250);
   --color-info-soft: oklch(48% 0.18 250 / 0.10);
+  --color-info-tint: oklch(48% 0.18 250 / 0.05);
+  --text-on-info: oklch(99% 0 0);
 
-  --color-warning: oklch(95% 0.06 75);
+  --color-warning: oklch(47% 0.16 75);
+  --color-warning-bg: oklch(95% 0.06 75);
   --color-warning-foreground: oklch(47% 0.16 75);
   --color-warning-soft: oklch(47% 0.16 75 / 0.10);
+  --color-warning-tint: oklch(47% 0.16 75 / 0.05);
   --text-on-warning: oklch(20% 0.005 125);
 
   --color-destructive: oklch(95% 0.05 350);
   --color-destructive-foreground: oklch(44% 0.22 350);
   --color-error: oklch(44% 0.22 350);
+  --color-error-bg: var(--color-destructive);
+  --color-error-foreground: oklch(44% 0.22 350);
   --color-error-soft: oklch(44% 0.22 350 / 0.10);
+  --color-error-tint: oklch(44% 0.22 350 / 0.05);
   --text-on-error: oklch(99% 0 0);
 
   --color-inactive: oklch(45% 0.008 125);
 
-  --color-success: oklch(95% 0.04 125);
+  --color-success: oklch(48% 0.10 125);
+  --color-success-bg: oklch(95% 0.04 125);
   --color-success-foreground: oklch(48% 0.10 125);
   --color-success-soft: oklch(48% 0.10 125 / 0.10);
+  --color-success-tint: oklch(48% 0.10 125 / 0.05);
   --text-on-success: oklch(99% 0 0);
 
   --color-review: var(--color-info);

@@ -29,7 +29,7 @@ describe('light-theme semantic token contrast', () => {
   })
 
   it('uses dark ink on the light warning surface', () => {
-    expect(contrastRatio(token('text-on-warning'), token('color-warning'))).toBeGreaterThanOrEqual(
+    expect(contrastRatio(token('text-on-warning'), token('color-warning-bg'))).toBeGreaterThanOrEqual(
       AA_NORMAL_TEXT,
     )
   })

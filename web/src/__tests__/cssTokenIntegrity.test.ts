@@ -142,4 +142,21 @@ describe('CSS token integrity', () => {
       { lightness: 45, chroma: 0.008, hue: 125 },
     ])
   })
+
+  it('keeps state colors on the foreground-first sibling contract', () => {
+    const tokens = readFileSync(join(process.cwd(), 'src/styles/tokens.css'), 'utf8')
+    const theme = readFileSync(join(process.cwd(), 'src/styles/tailwind-theme.css'), 'utf8')
+
+    for (const lane of ['info', 'warning', 'error', 'success']) {
+      for (const suffix of ['', '-bg', '-foreground', '-soft', '-tint']) {
+        expect(tokens.match(new RegExp(`--color-${lane}${suffix}:`, 'g'))).toHaveLength(2)
+        expect(theme).toContain(`--color-${lane}${suffix}: var(--color-${lane}${suffix});`)
+      }
+
+      expect(tokens.match(new RegExp(`--text-on-${lane}:`, 'g'))).toHaveLength(2)
+      const values = (name: string) =>
+        [...tokens.matchAll(new RegExp(`--${name}:\\s*([^;]+);`, 'g'))].map((match) => match[1])
+      expect(values(`color-${lane}-foreground`)).toEqual(values(`color-${lane}`))
+    }
+  })
 })
