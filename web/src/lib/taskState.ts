@@ -1,6 +1,5 @@
 import {
   currentStage as selectCurrentStage,
-  type LifecycleTask,
   type StageState5,
   type StageStateView,
 } from './stageActions'
@@ -136,18 +135,7 @@ export const TASK_STATE_BG: Record<TaskDisplayState, string> = {
 }
 
 function deriveCurrentStage(task: TaskStateLike): StageStateView | null {
-  const direct = task.state?.current_stage ?? task.current_stage ?? null
-  if (direct) return direct
-
-  const stages = task.stages ?? []
-  if (stages.length === 0) return null
-
-  return selectCurrentStage({
-    id: '',
-    title: '',
-    task_type: 'task',
-    stages,
-  } satisfies LifecycleTask)
+  return selectCurrentStage(task)
 }
 
 export function getCanonicalTaskState(task: TaskStateLike): CanonicalTaskState {

@@ -70,6 +70,19 @@ export interface LifecycleTask {
   owner_session_ref?: unknown | null
 }
 
+interface CurrentStageRow {
+  name?: string | null
+  stage_name?: string | null
+  position?: number | null
+  state?: string | null
+}
+
+interface CurrentStageTask<TStage extends CurrentStageRow> {
+  stages?: readonly TStage[] | null
+  state?: { current_stage?: TStage | null } | null
+  current_stage?: TStage | null
+}
+
 export function resolveAdvanceAction(
   currentState: StageState5,
   reviewPolicy: ReviewPolicy,
@@ -95,8 +108,22 @@ export function taskStateAt(
   return task.stages?.find(row => row.name === stageName)?.state
 }
 
-export function currentStage(task: LifecycleTask): StageStateView | null {
-  return sortedStages(task).find(row => row.state !== 'done') ?? null
+export function currentStage<TStage extends CurrentStageRow>(
+  task: CurrentStageTask<TStage> | null | undefined,
+): TStage | null {
+  if (!task) return null
+  if (Array.isArray(task.stages)) {
+    return [...task.stages]
+      .sort((a, b) => {
+        const positionDifference = (a.position ?? 0) - (b.position ?? 0)
+        if (positionDifference !== 0) return positionDifference
+        const aName = a.name ?? a.stage_name ?? ''
+        const bName = b.name ?? b.stage_name ?? ''
+        return aName < bName ? -1 : aName > bName ? 1 : 0
+      })
+      .find(row => row.state !== 'done') ?? null
+  }
+  return task.state?.current_stage ?? task.current_stage ?? null
 }
 
 function sortedStages(task: LifecycleTask): StageStateView[] {
