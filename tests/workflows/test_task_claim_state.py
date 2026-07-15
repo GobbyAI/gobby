@@ -57,24 +57,28 @@ class TestRemoveClaimedTask:
         variables = {
             "active_task_id": "uuid-1",
             "claimed_tasks": {"uuid-1": "#1", "uuid-2": "#2"},
+            "task_has_commits": True,
             "task_edited_files": {"uuid-1": ["a.py"], "uuid-2": ["b.py"]},
         }
         result = remove_claimed_task(variables, "uuid-1")
         assert result["task_claimed"] is True
         assert result["claimed_tasks"] == {"uuid-2": "#2"}
         assert result["active_task_id"] == "uuid-2"
+        assert (variables | result)["task_has_commits"] is True
         assert result["task_edited_files"] == {"uuid-2": ["b.py"]}
 
     def test_removes_last_sets_false(self) -> None:
         variables = {
             "active_task_id": "uuid-1",
             "claimed_tasks": {"uuid-1": "#1"},
+            "task_has_commits": True,
             "task_edited_files": {"uuid-1": ["a.py"]},
         }
         result = remove_claimed_task(variables, "uuid-1")
         assert result["task_claimed"] is False
         assert result["claimed_tasks"] == {}
         assert result["active_task_id"] is None
+        assert (variables | result)["task_has_commits"] is False
         assert result["task_edited_files"] == {}
 
     def test_noop_on_missing_task_id(self) -> None:
