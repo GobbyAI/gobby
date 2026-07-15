@@ -276,8 +276,21 @@ def add_messaging_tools(
                     "error": "target_session_id must resolve to the calling session.",
                 }
 
-            claimed = message_manager.claim_undelivered_messages(resolved_id)
-            messages = [_message_delivery_payload(msg) for msg in claimed]
+            pending = message_manager.get_undelivered_messages(resolved_id)
+            payloads = [_message_delivery_payload(msg) for msg in pending]
+            claimed_ids = set(
+                message_manager.mark_delivered_batch(
+                    [msg.id for msg in pending],
+                    resolved_id,
+                )
+                if pending
+                else []
+            )
+            messages = [
+                payload
+                for msg, payload in zip(pending, payloads, strict=True)
+                if msg.id in claimed_ids
+            ]
 
             return {
                 "success": True,

@@ -270,20 +270,28 @@ class InterSessionMessageManager:
         )
         return [InterSessionMessage.from_row(row) for row in rows]
 
-    def claim_undelivered_messages(self, to_session: str) -> list[InterSessionMessage]:
-        """Atomically claim every undelivered message for a recipient."""
+    def mark_delivered_batch(
+        self,
+        message_ids: list[str],
+        to_session: str,
+    ) -> list[str]:
+        """Atomically mark selected messages delivered and return the updated IDs."""
+        if not message_ids:
+            return []
+
+        unique_ids = list(dict.fromkeys(message_ids))
+        placeholders = ",".join("%s" for _ in unique_ids)
         delivered_at = utc_now()
         rows = self.db.fetchall(
-            """WITH claimed AS (
-                   UPDATE inter_session_messages
-                   SET delivered_at = %s
-                   WHERE to_session = %s AND delivered_at IS NULL
-                   RETURNING *
-               )
-               SELECT * FROM claimed ORDER BY sent_at, id""",
-            (delivered_at, to_session),
+            f"""UPDATE inter_session_messages
+                SET delivered_at = %s
+                WHERE to_session = %s
+                  AND delivered_at IS NULL
+                  AND id IN ({placeholders})
+                RETURNING id""",  # nosec B608
+            (delivered_at, to_session, *unique_ids),
         )
-        return [InterSessionMessage.from_row(row) for row in rows]
+        return [str(row["id"]) for row in rows]
 
     def delete_delivered_before(self, cutoff: datetime, *, limit: int = 500) -> int:
         """Delete a bounded batch of delivered messages older than a cutoff."""

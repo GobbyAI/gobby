@@ -99,7 +99,7 @@ def mock_message_manager():
     mgr = MagicMock()
     mgr.create_message = MagicMock(return_value=MockMessage())
     mgr.get_undelivered_messages = MagicMock(return_value=[])
-    mgr.claim_undelivered_messages = MagicMock(return_value=[])
+    mgr.mark_delivered_batch = MagicMock(return_value=[])
     mgr.mark_delivered = MagicMock(return_value=MockMessage(delivered_at="2026-01-01T00:01:00"))
     mgr.list_messages = MagicMock(return_value=[])
     return mgr
@@ -715,7 +715,8 @@ class TestSendMessage:
         assert result["wake_results"][0]["error_code"] == "no_tmux_pane"
         mock_message_manager.mark_delivered.assert_not_called()
 
-        mock_message_manager.claim_undelivered_messages.return_value = [created]
+        mock_message_manager.get_undelivered_messages.return_value = [created]
+        mock_message_manager.mark_delivered_batch.return_value = [created.id]
         with session_context_for_test("s-to"):
             delivered = await registry.call(
                 "deliver_pending_messages",
@@ -724,7 +725,7 @@ class TestSendMessage:
 
         assert delivered["success"] is True
         assert delivered["count"] == 1
-        mock_message_manager.claim_undelivered_messages.assert_called_once_with("s-to")
+        mock_message_manager.mark_delivered_batch.assert_called_once_with(["msg-direct"], "s-to")
 
     @pytest.mark.asyncio
     async def test_send_message_different_project_rejected(
@@ -824,7 +825,8 @@ class TestDeliverPendingMessages:
         """Returns undelivered messages and marks them delivered."""
         msg1 = MockMessage(id="msg-1", content="first")
         msg2 = MockMessage(id="msg-2", content="second")
-        mock_message_manager.claim_undelivered_messages.return_value = [msg1, msg2]
+        mock_message_manager.get_undelivered_messages.return_value = [msg1, msg2]
+        mock_message_manager.mark_delivered_batch.return_value = [msg1.id, msg2.id]
 
         result = await messaging_registry.call(
             "deliver_pending_messages",
@@ -833,7 +835,10 @@ class TestDeliverPendingMessages:
 
         assert result["success"] is True
         assert len(result["messages"]) == 2
-        mock_message_manager.claim_undelivered_messages.assert_called_once_with("s-child")
+        mock_message_manager.get_undelivered_messages.assert_called_once_with("s-child")
+        mock_message_manager.mark_delivered_batch.assert_called_once_with(
+            ["msg-1", "msg-2"], "s-child"
+        )
 
     @pytest.mark.asyncio
     async def test_deliver_empty(self, messaging_registry, mock_message_manager) -> None:
@@ -848,6 +853,7 @@ class TestDeliverPendingMessages:
         assert result["success"] is True
         assert result["messages"] == []
         assert result["count"] == 0
+        mock_message_manager.mark_delivered_batch.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_deliver_defaults_target_to_caller(
@@ -856,7 +862,7 @@ class TestDeliverPendingMessages:
         result = await messaging_registry.call("deliver_pending_messages", {})
 
         assert result["success"] is True
-        mock_message_manager.claim_undelivered_messages.assert_called_once_with("s-child")
+        mock_message_manager.get_undelivered_messages.assert_called_once_with("s-child")
 
     @pytest.mark.asyncio
     async def test_deliver_rejects_foreign_target(
@@ -871,7 +877,7 @@ class TestDeliverPendingMessages:
             "success": False,
             "error": "target_session_id must resolve to the calling session.",
         }
-        mock_message_manager.claim_undelivered_messages.assert_not_called()
+        mock_message_manager.get_undelivered_messages.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_deliver_requires_calling_session(
@@ -890,7 +896,7 @@ class TestDeliverPendingMessages:
             "success": False,
             "error": "No calling session is available for message delivery.",
         }
-        mock_message_manager.claim_undelivered_messages.assert_not_called()
+        mock_message_manager.get_undelivered_messages.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_deliver_includes_run_task_type_and_signoff_context(
@@ -905,7 +911,8 @@ class TestDeliverPendingMessages:
                 '"completion_id": "run-1", "signoff_message": "Approved"}'
             ),
         )
-        mock_message_manager.claim_undelivered_messages.return_value = [msg]
+        mock_message_manager.get_undelivered_messages.return_value = [msg]
+        mock_message_manager.mark_delivered_batch.return_value = [msg.id]
 
         result = await messaging_registry.call(
             "deliver_pending_messages",
@@ -920,6 +927,50 @@ class TestDeliverPendingMessages:
         assert delivered["signoff_message"] == "Approved"
         assert delivered["has_signoff"] is True
         assert delivered["metadata"]["run_id"] == "run-1"
+
+    @pytest.mark.asyncio
+    async def test_payload_failure_does_not_claim_any_messages(
+        self, messaging_registry, mock_message_manager, monkeypatch
+    ) -> None:
+        from gobby.mcp_proxy.tools import agent_messaging
+
+        msg1 = MockMessage(id="msg-1", content="first")
+        msg2 = MockMessage(id="msg-2", content="second")
+        mock_message_manager.get_undelivered_messages.return_value = [msg1, msg2]
+        original_builder = agent_messaging._message_delivery_payload
+
+        def build_payload(msg: MockMessage) -> dict[str, Any]:
+            if msg.id == "msg-2":
+                raise ValueError("payload failed")
+            return original_builder(msg)
+
+        monkeypatch.setattr(agent_messaging, "_message_delivery_payload", build_payload)
+
+        result = await messaging_registry.call(
+            "deliver_pending_messages",
+            {"target_session_id": "s-child"},
+        )
+
+        assert result == {"success": False, "error": "payload failed"}
+        mock_message_manager.mark_delivered_batch.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_returns_only_messages_claimed_by_batch(
+        self, messaging_registry, mock_message_manager
+    ) -> None:
+        msg1 = MockMessage(id="msg-1", content="first")
+        msg2 = MockMessage(id="msg-2", content="second")
+        mock_message_manager.get_undelivered_messages.return_value = [msg1, msg2]
+        mock_message_manager.mark_delivered_batch.return_value = [msg2.id]
+
+        result = await messaging_registry.call(
+            "deliver_pending_messages",
+            {"target_session_id": "s-child"},
+        )
+
+        assert result["success"] is True
+        assert [message["id"] for message in result["messages"]] == ["msg-2"]
+        assert result["count"] == 1
 
 
 # ═══════════════════════════════════════════════════════════════════════
