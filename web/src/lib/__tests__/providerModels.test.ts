@@ -177,17 +177,50 @@ describe("providerModels", () => {
     });
   });
 
-  it("dedupes friendly labels and keeps the newest matching model", () => {
+  it("keeps distinct models whose friendly labels collide", () => {
     const models = getModelsForProvider(catalog, "claude");
 
     expect(models.map((model) => model.label)).toEqual([
       "Opus 4.6",
       "Sonnet 4.5",
+      "Sonnet 4.5",
       "Haiku 4.5",
     ]);
-    expect(models.find((model) => model.label === "Sonnet 4.5")?.value).toBe(
+    expect(
+      models.filter((model) => model.label === "Sonnet 4.5").map((model) => model.value),
+    ).toEqual([
       "claude-sonnet-4-5-20251001",
-    );
+      "claude-sonnet-4-5-20250901",
+    ]);
+  });
+
+  it("honors the provider default ahead of inferred model strength", () => {
+    const defaultCatalog: ProviderModelEntry[] = [{
+      provider: "codex",
+      available: true,
+      source: "live",
+      models: [
+        { value: "gpt-5.4", label: "gpt-5.4" },
+        { value: "gpt-5.4-mini", label: "gpt-5.4-mini", is_default: true },
+      ],
+    }];
+
+    expect(getModelsForProvider(defaultCatalog, "codex")[0]?.value).toBe("gpt-5.4-mini");
+    expect(getPreferredModelForProvider(defaultCatalog, "codex")).toBe("gpt-5.4-mini");
+  });
+
+  it("only applies the Pro tier to Gemini model tokens", () => {
+    const qwenCatalog: ProviderModelEntry[] = [{
+      provider: "qwen",
+      available: true,
+      source: "live",
+      models: [
+        { value: "improved-99", label: "improved-99" },
+        { value: "gemini-2.5-pro", label: "gemini-2.5-pro" },
+      ],
+    }];
+
+    expect(getModelsForProvider(qwenCatalog, "qwen")[0]?.value).toBe("gemini-2.5-pro");
   });
 
   it("derives reasoning options and defaults from the provider catalog", () => {

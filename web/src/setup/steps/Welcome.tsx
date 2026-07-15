@@ -2,11 +2,10 @@ import React, { useState } from "react";
 import { Text, Box } from "ink";
 import SelectInput from "ink-select-input";
 import { Banner } from "../components/Banner.js";
-import { saveState } from "../utils/state.js";
+import { createDefaultState, saveState } from "../utils/state.js";
 import type { StepProps } from "../types.js";
 
-// Read version from package.json at build time, fallback to env
-const VERSION = process.env.GOBBY_VERSION || "0.2.20";
+const VERSION = process.env.GOBBY_VERSION ?? process.env.npm_package_version ?? "unknown";
 
 export function Welcome({ state, setState, onNext }: StepProps): React.ReactElement {
   const hasProgress = state.completed_step_id !== null;
@@ -31,12 +30,8 @@ export function Welcome({ state, setState, onNext }: StepProps): React.ReactElem
             ]}
             onSelect={(item) => {
               if (item.value === "fresh") {
-                setState((prev) => {
-                  const next = {
-                    ...prev,
-                    completed_step_id: null,
-                    started_at: new Date().toISOString(),
-                  };
+                setState(() => {
+                  const next = createDefaultState();
                   saveState(next);
                   return next;
                 });

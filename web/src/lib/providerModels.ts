@@ -9,12 +9,6 @@ export interface ProviderModelOption {
   hidden?: boolean;
   is_default?: boolean;
   canonical_id?: string;
-  context_length?: number | null;
-  context_length_source?:
-    | "provider_reported"
-    | "provider_catalog"
-    | "registry"
-    | "static_default";
   reasoning?: ProviderModelReasoning;
 }
 
@@ -358,7 +352,7 @@ export function getPreferredModelForProvider(
     return matchedModel.value;
   }
 
-  return models[0]?.value ?? null;
+  return models.find((model) => model.is_default)?.value ?? models[0]?.value ?? null;
 }
 
 export function resolveProviderModelPair(
@@ -394,9 +388,12 @@ function resolveVisibleModels(
 
   for (const model of visibleModels) {
     const resolved = resolveModelOption(provider, model);
-    const existing = deduped.get(resolved.label);
+    const identity = normalizeModelIdentifier(
+      resolved.canonical_id ?? resolved.value,
+    ) ?? resolved.value;
+    const existing = deduped.get(identity);
     if (!existing) {
-      deduped.set(resolved.label, resolved);
+      deduped.set(identity, resolved);
       continue;
     }
 
@@ -408,7 +405,7 @@ function resolveVisibleModels(
     );
 
     if (compareResolvedModels(resolved, existing) < 0) {
-      deduped.set(resolved.label, resolved);
+      deduped.set(identity, resolved);
       resolved.match_identifiers = mergedMatchIdentifiers;
     } else {
       existing.match_identifiers = mergedMatchIdentifiers;
@@ -545,6 +542,7 @@ function parseQwenModelInfo(model: ProviderModelOption): ParsedModelInfo {
       ? backendLabel
       : humanizeFallbackModelLabel(modelId);
   const normalized = normalizeModelIdentifier(modelId) ?? "";
+  const tokens = tokenizeModel(modelId);
 
   let strengthRank = 0;
   if (/claude-opus|opus/.test(normalized)) {
@@ -553,7 +551,7 @@ function parseQwenModelInfo(model: ProviderModelOption): ParsedModelInfo {
     strengthRank = 400_000;
   } else if (/gpt-5/.test(normalized)) {
     strengthRank = 350_000;
-  } else if (/pro/.test(normalized)) {
+  } else if (tokens.includes("gemini") && tokens.includes("pro")) {
     strengthRank = 300_000;
   } else if (/flash/.test(normalized)) {
     strengthRank = 200_000;
@@ -587,6 +585,10 @@ function compareResolvedModels(
 
   if (leftIsDefault !== rightIsDefault) {
     return leftIsDefault ? -1 : 1;
+  }
+
+  if (left.is_default !== right.is_default) {
+    return left.is_default ? -1 : 1;
   }
 
   if (leftParsed.strengthRank !== rightParsed.strengthRank) {

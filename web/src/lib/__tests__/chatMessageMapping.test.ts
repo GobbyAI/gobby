@@ -68,19 +68,24 @@ Stay concise and direct.`
     expect(message.toolCalls?.map((tool) => tool.id)).toEqual(['tool-1', 'tool-2'])
   })
 
-  it('creates unique fallback ids when rendered messages omit ids', () => {
+  it('creates stable fallback ids when rendered messages omit ids', () => {
     const first = mapRenderedMessageToChatMessage({
       role: 'assistant',
       content: 'First',
     })
-    const second = mapRenderedMessageToChatMessage({
+    const repeated = mapRenderedMessageToChatMessage({
+      role: 'assistant',
+      content: 'First',
+    })
+    const different = mapRenderedMessageToChatMessage({
       role: 'assistant',
       content: 'Second',
     })
 
-    expect(first.id).not.toBe(second.id)
+    expect(repeated.id).toBe(first.id)
+    expect(different.id).not.toBe(first.id)
     expect(first.id.startsWith('ws-')).toBe(true)
-    expect(second.id.startsWith('ws-')).toBe(true)
+    expect(different.id.startsWith('ws-')).toBe(true)
   })
 
   it('joins thinking blocks in order', () => {

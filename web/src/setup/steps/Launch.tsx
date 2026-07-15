@@ -10,6 +10,7 @@ import { runGobby, checkHealth } from "../utils/gobby.js";
 import { getGobbyHome } from "../utils/state.js";
 import { StatusMessage } from "../components/StatusMessage.js";
 import { saveState } from "../utils/state.js";
+import { readBootstrap } from "../utils/config.js";
 import type { StepProps } from "../types.js";
 
 export function Launch({ state, setState, onNext: _onNext }: StepProps): React.ReactElement {
@@ -156,10 +157,12 @@ function writeInitialSetupMd(state: typeof import("../utils/state.js").loadState
   const versions = state.tool_versions;
   const detected = state.detected_tools;
   const installed = state.installed_clis;
+  const configuredBindHost = readBootstrap().bind_host;
+  const bindHost = typeof configuredBindHost === "string" ? configuredBindHost : "127.0.0.1";
 
   const allTools = [
     "python", "node", "uv", "claude", "tmux",
-    "git", "docker", "tailscale", "qwen", "codex", "droid",
+    "git", "docker", "tailscale", "qwen", "codex", "droid", "clawhub",
   ];
 
   const cliRows = allTools
@@ -221,7 +224,7 @@ Completed: ${now}
 ## Network
 - Firewall: ${state.firewall_configured ? "macOS pf rules installed" : "not configured"}
 - Tailscale: ${state.tailscale_configured ? "configured" : "not configured"}
-- Bind host: 127.0.0.1
+- Bind host: ${bindHost}
 
 ## Installed CLIs
 | CLI | Version | Hooks Installed |

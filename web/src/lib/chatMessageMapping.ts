@@ -12,29 +12,19 @@ type RenderedMessageLike = {
   content_blocks?: ContentBlock[]
 }
 
-function fallbackUuid(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
-    const bytes = new Uint8Array(16)
-    crypto.getRandomValues(bytes)
-    bytes[6] = (bytes[6] & 0x0f) | 0x40
-    bytes[8] = (bytes[8] & 0x3f) | 0x80
-    const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0'))
-    return [
-      hex.slice(0, 4).join(''),
-      hex.slice(4, 6).join(''),
-      hex.slice(6, 8).join(''),
-      hex.slice(8, 10).join(''),
-      hex.slice(10, 16).join(''),
-    ].join('-')
+function createFallbackMessageId(message: RenderedMessageLike): string {
+  const identity = JSON.stringify([
+    message.role ?? null,
+    message.content ?? null,
+    message.timestamp ?? null,
+    message.content_blocks ?? null,
+  ])
+  let hash = 2166136261
+  for (let index = 0; index < identity.length; index += 1) {
+    hash ^= identity.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
   }
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}`
-}
-
-function createFallbackMessageId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return `ws-${crypto.randomUUID()}`
-  }
-  return `ws-${fallbackUuid()}`
+  return `ws-${(hash >>> 0).toString(16).padStart(8, '0')}`
 }
 
 export function isHookFeedback(content: string): boolean {
@@ -124,7 +114,7 @@ export function mapRenderedMessageToChatMessage(
 ): ChatMessage {
   const contentBlocks = message.content_blocks
   const chatMsg: ChatMessage = {
-    id: message.id == null ? createFallbackMessageId() : String(message.id),
+    id: message.id == null ? createFallbackMessageId(message) : String(message.id),
     role: normalizeChatRole(message.role, message.content, contentBlocks),
     content: typeof message.content === 'string' ? message.content : '',
     timestamp: new Date((message.timestamp as string | Date | undefined) ?? Date.now()),

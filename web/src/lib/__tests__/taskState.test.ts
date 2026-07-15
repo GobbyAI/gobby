@@ -53,6 +53,14 @@ describe('taskState helpers', () => {
     )
   })
 
+  it('preserves an explicit open projection when the current stage is done', () => {
+    const state = getCanonicalTaskState({
+      state: { is_closed: false, current_stage: stage('done') },
+    })
+
+    expect(state.is_closed).toBe(false)
+  })
+
   it('counts tasks by display state', () => {
     expect(
       countTasksByState([

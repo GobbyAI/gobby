@@ -8,6 +8,7 @@ import {
   normalizeStagesRegistryResponse,
   normalizeTaskPayload,
   parseReviewerAgentSelector,
+  type RawStagePayload,
 } from '../taskNormalization'
 
 describe('isRawTaskPayload optional field guard', () => {
@@ -157,6 +158,16 @@ describe('normalizeStageRow display_name fallback', () => {
 
     expect(task.current_stage?.name).toBe('development')
     expect(task.stages.map(stage => stage.name)).toEqual(['development'])
+  })
+
+  it('rejects arrays as current-stage records', () => {
+    const task = normalizeTaskPayload({
+      id: 'task-1',
+      current_stage: [] as unknown as RawStagePayload,
+      stages: [{ name: 'development', state: 'ready' }],
+    })
+
+    expect(task.current_stage?.name).toBe('development')
   })
 })
 

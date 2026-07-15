@@ -147,8 +147,7 @@ export function getCanonicalTaskState(task: TaskStateLike): CanonicalTaskState {
     task.state?.owner_session_ref ?? task.owner_session_ref ?? null
   const current = deriveCurrentStage(task)
   const currentState = current?.state ?? null
-  const isClosed =
-    (task.state?.is_closed ?? Boolean(task.closed_at)) || currentState === 'done'
+  const isClosed = task.state?.is_closed ?? (Boolean(task.closed_at) || currentState === 'done')
   const isEscalated =
     !isClosed &&
     (task.state?.is_escalated ?? Boolean(task.escalated_at))
@@ -192,7 +191,7 @@ export function getTaskDisplayState(task: TaskStateLike): TaskDisplayState {
 }
 
 export function getCanonicalStageName(task: TaskStateLike): string | null {
-  return getCanonicalTaskState(task).current_stage?.name ?? task.current_stage?.name ?? null
+  return getCanonicalTaskState(task).current_stage?.name ?? null
 }
 
 export function isTaskClosed(task: TaskStateLike): boolean {

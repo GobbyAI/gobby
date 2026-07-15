@@ -22,7 +22,7 @@ export interface SetupState {
   desktop_shortcut_created: boolean;
 }
 
-function createDefaultState(): SetupState {
+export function createDefaultState(): SetupState {
   return {
     version: 3,
     started_at: new Date().toISOString(),

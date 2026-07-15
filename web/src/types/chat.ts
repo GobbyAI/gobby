@@ -177,16 +177,6 @@ export interface TokenUsage {
   cache_read_tokens?: number;
 }
 
-export interface RenderedMessage {
-  id: string;
-  role: "user" | "assistant" | "system";
-  content: string;
-  timestamp: string;
-  content_blocks?: ContentBlock[];
-  model?: string | null;
-  usage?: TokenUsage | null;
-}
-
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system";
@@ -387,12 +377,6 @@ export interface ConversationState {
   onAcpDeleteSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
   viewingSessionId?: string | null;
   attachedSessionId?: string | null;
-}
-
-export interface ProjectProps {
-  projects: ProjectOption[];
-  selectedProjectId: string | null;
-  onProjectChange: (projectId: string) => void;
 }
 
 export interface VoiceProps {

@@ -84,16 +84,3 @@ export const KNOWN_SOURCES = [
   "grok",
   "unknown",
 ] as const;
-
-export interface SessionFilters {
-  source: string | null;
-  projectId: string | null;
-  search: string;
-  sortOrder: "newest" | "oldest";
-}
-
-export interface ProjectInfo {
-  id: string;
-  name: string;
-  repo_path: string;
-}

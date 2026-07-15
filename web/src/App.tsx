@@ -37,7 +37,6 @@ import { usePersistedSessionsFilters } from "./components/app/usePersistedSessio
 import { useReasoningPreferences } from "./components/app/useReasoningPreferences";
 import { useSessionReconciliation } from "./components/app/useSessionReconciliation";
 import { LogoutIcon, SettingsCogIcon } from "./components/icons";
-import { FilesProvider } from "./contexts/FilesContext";
 import { useSettingsOverlay } from "./components/settings/useSettingsOverlay";
 
 const SettingsOverlay = lazy(
@@ -247,7 +246,7 @@ export default function App() {
     [selectedProvider, selectProvider],
   );
   const { sessionsFilters, setSessionsFilters } =
-    usePersistedSessionsFilters();
+    usePersistedSessionsFilters(effectiveProjectId);
 
   // Two catalog instances: the unfiltered one feeds the resume modal, web-chat
   // sidebar list, and session-reconciliation hook (consumers that must see
@@ -523,22 +522,17 @@ export default function App() {
       </AppErrorBoundary>
 
       <AppErrorBoundary
-        activeTab="files"
+        activeTab={activeTab}
         onReturnToChat={() => setActiveTab("chat")}
       >
-        <FilesProvider>
-          <AppErrorBoundary
-            activeTab={activeTab}
-            onReturnToChat={() => setActiveTab("chat")}
-          >
-            <Suspense
-              fallback={
-                <main className="flex flex-1 items-center justify-center text-muted-foreground">
-                  Loading...
-                </main>
-              }
-            >
-              <ChatPage
+        <Suspense
+          fallback={
+            <main className="flex flex-1 items-center justify-center text-muted-foreground">
+              Loading...
+            </main>
+          }
+        >
+          <ChatPage
                 projectId={effectiveProjectId}
                 showPlanRef={showPlanRef}
                 planPendingVariant={settings.planPendingVariant}
@@ -664,10 +658,8 @@ export default function App() {
                   cancelRecording: voice.cancelRecording,
                   stopTTS: voice.stopTTS,
                 }}
-              />
-            </Suspense>
-          </AppErrorBoundary>
-        </FilesProvider>
+            />
+        </Suspense>
       </AppErrorBoundary>
 
       <AppErrorBoundary
@@ -735,7 +727,6 @@ export default function App() {
           </Suspense>
         )}
       </AppErrorBoundary>
-
       {visibleToastMessage && (
         <button
           type="button"

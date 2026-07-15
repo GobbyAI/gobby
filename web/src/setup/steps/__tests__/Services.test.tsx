@@ -117,6 +117,10 @@ function submit(value: string): void {
   fireEvent.keyDown(input, { key: "Enter" });
 }
 
+function chooseCustomPassword(): void {
+  fireEvent.click(screen.getByRole("button", { name: "Yes, with custom password" }));
+}
+
 function hasRenderedText(text: string): boolean {
   return (
     screen.queryAllByText((_, element) => element?.textContent?.includes(text) ?? false).length > 0
@@ -141,7 +145,7 @@ describe("Services FalkorDB setup", () => {
     (password) => {
       const view = renderServices();
 
-      submit("p");
+      chooseCustomPassword();
       expect(screen.getByText(/Enter .* password/i)).toBeTruthy();
 
       submit(password);
@@ -157,7 +161,7 @@ describe("Services FalkorDB setup", () => {
   it("rejects custom passwords with leading or trailing whitespace without trimming them", () => {
     const view = renderServices();
 
-    submit("p");
+    chooseCustomPassword();
     submit(" ValidPassword123!");
 
     expect(mocks.runGobby).not.toHaveBeenCalled();
@@ -168,7 +172,7 @@ describe("Services FalkorDB setup", () => {
   it("clears the password rejection when the operator edits the value", () => {
     renderServices();
 
-    submit("p");
+    chooseCustomPassword();
     submit("has space");
     expect(hasRenderedText("FalkorDB password must not contain whitespace")).toBe(true);
 
@@ -189,7 +193,7 @@ describe("Services FalkorDB setup", () => {
     (password, message) => {
       renderServices();
 
-      submit("p");
+      chooseCustomPassword();
       submit(password);
 
       expect(hasRenderedText(message)).toBe(true);
@@ -203,7 +207,7 @@ describe("Services FalkorDB setup", () => {
     });
     const view = renderServices();
 
-    submit("p");
+    chooseCustomPassword();
     submit("ValidPassword123!");
 
     expect(view.setState).toHaveBeenCalledTimes(1);
@@ -228,7 +232,7 @@ describe("Services FalkorDB setup", () => {
     });
     const view = renderServices();
 
-    submit("p");
+    chooseCustomPassword();
     submit("ValidPassword123!");
 
     expect(mocks.runGobby).toHaveBeenCalledTimes(1);
