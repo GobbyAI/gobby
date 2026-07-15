@@ -91,34 +91,24 @@
   to `"integration"`.
 - **Confidence:** high
 
-### [IMPORTANT] `gobby comms send` posts to a route that does not exist
+### [NIT] `gobby comms status` expects the wrong response shape
 
-- **Where:** `src/gobby/cli/communications.py:102` posts to `/api/comms/send`;
-  `src/gobby/servers/routes/communications.py:20-174` registers no send route
-- **Failure mode:** The CLI send command 404s on every invocation. (The guide
-  documents this as a known limitation; the CLI surface still ships the
-  command.)
-- **Why it matters:** A shipped CLI command that can never succeed.
-- **Minimal fix:** Add the `POST /api/comms/send` route backed by the
-  manager's outbound path, or remove/hide the CLI command until it exists.
+- **Where:** `src/gobby/cli/communications.py:56-61` requests
+  `/api/comms/channels?status=true` and reads `response.json().get("channels",
+  [])`; `list_channels` at
+  `src/gobby/servers/routes/communications.py:111-118` accepts no query
+  parameter and returns a JSON list directly.
+- **Failure mode:** A successful response raises `AttributeError` when the CLI
+  calls `.get` on the list. The focused CLI test at
+  `tests/cli/test_communications.py:18-44` masks the mismatch by returning a
+  synthetic `{"channels": [...]}` object and expecting the ignored query
+  parameter.
+- **Minimal fix:** Request `/api/comms/channels`, consume the returned list,
+  and keep status rendering tolerant of absent optional fields.
+- **Validation:** Update `test_comms_status_success` to return the route's list
+  shape and assert the query-free path, then run
+  `GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_communications.py -k comms_status -v`.
 - **Confidence:** high
-
-### [NIT] `gobby comms status` sends a query param the route ignores
-
-- **Where:** `src/gobby/cli/communications.py:56` requests `?status=true`;
-  the channels route ignores the `status` param
-  (`src/gobby/servers/routes/communications.py`)
-- **Note:** Harmless today, but the CLI encodes an expectation the API never
-  honors — drift that will bite when someone "fixes" either side alone.
-
-### [NIT] Telegram polling webhook path disagrees with the comms webhook mount
-
-- **Where:** `src/gobby/communications/adapters/telegram.py:83` builds
-  `/v1/comms/webhooks/{config.id}` while inbound comms webhooks mount under
-  `/api/comms/webhooks/...`
-- **Note:** Only relevant when a `webhook_base_url` is configured for
-  Telegram (polling is the default); the constructed registration URL would
-  not match the served route. Documented in the guide as a limitation.
 
 ## Findings — guides B (observability.md → worktrees.md)
 
@@ -176,13 +166,21 @@
   value (e.g. `~/.gobby/services/.env`) so restarts honor it.
 - **Confidence:** high
 
-### [NIT] `NamedRule.to_rule_definition_body` is dead code that can only raise
+### [NIT] `RuleDefinition.to_rule_definition_body` is dead code that can only raise
 
-- **Where:** `src/gobby/workflows/definitions.py:51-65`
-- **Note:** It passes `effect=` to `RuleDefinitionBody`, which has no such
-  field, so any call would fail the "'effects' is required" validator — but
-  it has zero callers in `src/` and `tests/`. Delete it or fix the field
-  name if it is meant to be public API.
+- **Where:** `RuleDefinition.to_rule_definition_body` at
+  `src/gobby/workflows/definitions.py:64-77` passes `effect=` to
+  `RuleDefinitionBody`; that model declares and validates `effects` at
+  `src/gobby/workflows/definitions.py:260-277`.
+- **Failure mode:** Every call fails the `"'effects' is required"` validator.
+  The method has no callers in `src/` or `tests/`, so existing tests do not
+  expose the broken conversion.
+- **Minimal fix:** Pass `effects=[effect]`, or delete the conversion method if
+  it is not part of the supported API.
+- **Validation:** Add a unit test that converts a `RuleDefinition` and asserts
+  the resulting body contains the expected single effect, then run the
+  focused `tests/workflows/test_rule_definitions.py` file.
+- **Confidence:** high
 
 ## Findings — architecture docs (docs/architecture/)
 
@@ -194,7 +192,7 @@
   `src/gobby/servers/routes/dependencies.py:82`
 - **Failure mode:** The module does not exist — `uv run python -c "import
   gobby.storage.mcp_db"` raises `ModuleNotFoundError`. The real class is
-  `LocalMCPManager` at `src/gobby/storage/mcp.py:142`. The phantom import is
+  `LocalMCPManager` at `src/gobby/storage/mcp.py:12`. The phantom import is
   masked by `ignore_missing_imports = true` in mypy config, so the
   annotation is silently unchecked.
 - **Why it matters:** A type annotation referencing a nonexistent module
@@ -203,6 +201,11 @@
   (now corrected to `LocalMCPManager`).
 - **Minimal fix:** Repoint `dependencies.py:23` and `:82` to
   `gobby.storage.mcp.LocalMCPManager`.
+- **Validation:** Add a focused test in
+  `tests/servers/routes/test_dependencies.py` that imports `LocalMCPManager`
+  from `gobby.storage.mcp` and asserts
+  `get_mcp_db_manager`'s return annotation names it; run that focused file
+  plus Ruff on `src/gobby/servers/routes/dependencies.py`.
 - **Confidence:** high
 
 ## Systemic patterns
