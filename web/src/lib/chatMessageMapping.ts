@@ -677,8 +677,8 @@ function mapToolApiMessage(
 export function mapApiMessages(messages: ApiMessage[]): ChatMessage[] {
   const state: ApiMappingState = { result: [], currentAssistant: null }
 
-  for (const message of messages) {
-    const id = message.id || `msg-${message.message_index ?? state.result.length}`
+  for (const [messageIndex, message] of messages.entries()) {
+    const id = message.id || `msg-${message.message_index ?? messageIndex}`
     const timestamp = new Date(message.timestamp)
 
     if (message.content_blocks && message.content_blocks.length > 0) {

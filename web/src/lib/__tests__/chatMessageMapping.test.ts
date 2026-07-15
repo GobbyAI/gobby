@@ -528,4 +528,21 @@ Stay concise and direct.`
       }),
     )
   })
+
+  it('assigns unique fallback ids when flushing a pending assistant message', () => {
+    const messages = mapApiMessages([
+      {
+        role: 'assistant',
+        content: 'Assistant response',
+        timestamp: '2026-05-30T00:00:00.000Z',
+      },
+      {
+        role: 'user',
+        content: 'Follow-up question',
+        timestamp: '2026-05-30T00:01:00.000Z',
+      },
+    ])
+
+    expect(messages.map((message) => message.id)).toEqual(['msg-0', 'msg-1'])
+  })
 })
