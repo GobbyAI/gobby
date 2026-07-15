@@ -583,6 +583,14 @@ class TestLowercaseConstants:
         assert ev.evaluate_value("None") is None
 
 
+class TestBinaryOperations:
+    def test_rejects_multiplication_before_evaluating_operands(self) -> None:
+        ev = SafeExpressionEvaluator({}, {})
+
+        with pytest.raises(ValueError, match="Unsupported binary operator: Mult"):
+            ev.evaluate("'a' * 999999999")
+
+
 # --- Integration: combined expressions ---
 
 

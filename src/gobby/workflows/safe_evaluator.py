@@ -192,13 +192,12 @@ class SafeExpressionEvaluator(ast.NodeVisitor):
     _SAFE_BIN_OPS: dict[type, Callable[..., Any]] = {
         ast.Add: operator.add,
         ast.Sub: operator.sub,
-        ast.Mult: operator.mul,
         ast.FloorDiv: operator.floordiv,
         ast.Mod: operator.mod,
     }
 
     def visit_BinOp(self, node: ast.BinOp) -> Any:
-        """Handle binary arithmetic operations (+, -, *, //, %)."""
+        """Handle binary arithmetic operations (+, -, //, %)."""
         op_func = self._SAFE_BIN_OPS.get(type(node.op))
         if op_func is None:
             raise ValueError(f"Unsupported binary operator: {type(node.op).__name__}")
