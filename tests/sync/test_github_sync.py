@@ -15,8 +15,19 @@ from mcp.types import CallToolResult, TextContent
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import MCPServerConfig
 from gobby.sync.github import GitHubSyncService
+from gobby.sync.tasks import _legacy_github_issue_uuid_seed
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    ("repo", "expected_repo"),
+    [("audit", "audit"), ("gobby.git", "gobby")],
+)
+def test_legacy_github_issue_seed_removes_only_exact_git_suffix(
+    repo: str, expected_repo: str
+) -> None:
+    assert _legacy_github_issue_uuid_seed("Owner", repo, 7) == (f"owner/{expected_repo}/issues/7")
 
 
 @pytest.fixture

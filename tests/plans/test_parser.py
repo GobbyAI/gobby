@@ -747,6 +747,26 @@ def test_source_hash_is_sha256_of_bytes(tmp_path: Path) -> None:
     assert parse_plan(plan).source_hash == hashlib.sha256(plan.read_bytes()).hexdigest()
 
 
+def test_utf8_bom_is_accepted_and_included_in_source_hash(tmp_path: Path) -> None:
+    plan = tmp_path / "plan.md"
+    source = "\ufeff**Plan ID:** bom-plan\n\n## A1\n`kind: framing`\n"
+    plan.write_bytes(source.encode("utf-8"))
+
+    document = parse_plan(plan)
+
+    assert document.plan_id == "bom-plan"
+    assert document.source_lines[0] == "**Plan ID:** bom-plan"
+    assert document.source_hash == hashlib.sha256(plan.read_bytes()).hexdigest()
+
+
+def test_invalid_utf8_raises_plan_parse_error(tmp_path: Path) -> None:
+    plan = tmp_path / "plan.md"
+    plan.write_bytes(b"\xff## A1\n`kind: framing`\n")
+
+    with pytest.raises(PlanParseError, match="invalid UTF-8"):
+        parse_plan(plan)
+
+
 def test_source_span_is_inclusive_1_indexed(tmp_path: Path) -> None:
     plan = _write_plan(
         tmp_path,

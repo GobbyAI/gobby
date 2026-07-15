@@ -415,8 +415,6 @@
 ## Findings — Nits
 
 ### [NIT] plans/: parser and matcher polish
-- `parser.py:161-163` — decode with `utf-8-sig` (BOM breaks line-1 anchored regexes); wrap decode errors in `PlanParseError`.
-- `parser.py:686-690` vs `_artifact_refs.py:146-147` — two divergent `_clean_ref` implementations; behavior differs exactly on corrupted-ref inputs.
 - `parser.py:61-63` — `strip_section_dependencies` leaves doubled whitespace in titles (consumed by expansion title building).
 - `parser.py:409-415,429` — invalid `kind:` value reported as "missing kind:"; non-canonical-heading message hardcodes "framing".
 - `coverage.py:376-384` — a valid leaf masks invalid covers records for the same item (audit loses the bad labels).
@@ -440,24 +438,21 @@
 - `deferral.py:21-23` — `_ACTIVE_TASK_STATES` substitutes "ready" for the documented "open"; harmless today, foot-gun for future `TaskStoreProtocol` impls.
 
 ### [NIT] sync/: polish
-- `linear.py` at 970 lines — 30 under the monolith cap; one class owns discovery, binding, import, push, pull, orchestration, state mapping, and cron wiring. The next feature crosses 1,000; a pre-emptive split (mapping/import/push-pull) is warranted.
 - `github.py:138` — `repo.split("/")[1]` IndexError on malformed repo; `parse_github_repo` is already imported and used elsewhere in the file.
 - `github.py:201-205` — `db.execute(...).fetchone()` fetches from a cursor whose transaction context already exited; works only because psycopg buffers client-side; use `db.fetchone`.
 - `linear.py:266-269` — `title.startswith(ref)` lacks a boundary: `#4` matches `#42:`; compare `f"{ref}:"`. `:262-264` — `seq_num == 0` falls through to UUID ref (truthiness).
 - `linear.py:155-161` — `_extract_record` returns the whole result dict as fallback, masking shape errors; `:578-580` sends both `"id"` and `"issueId"` speculatively; `:534` "Imported N" counts updates.
 - `linear.py:101-103` — module-global mutable failure limiter shared across all projects' cron handlers.
 - `linear.py:907` — `escalated → "Canceled"`: an attention-needed task reads as canceled in Linear.
-- `tasks.py:565` — `repo.rstrip(".git")` strips a character set (`"audit"` → `"aud"`); use `removesuffix(".git")`.
 - `tasks.py:528-536` — `get_sync_status` checks the daemon-cwd-relative `self.export_path` instead of `_get_export_path(project_id)`; reports `no_file` even when the project file exists.
 - `memories.py:204-224` — daemon-side export path can resolve from the daemon's cwd; pass the project repo_path explicitly as tasks' helper does.
 - `memories.py:470-471` — punctuation/emoji-only memories normalize to empty and are silently dropped from both import and export merge.
-- `src/gobby/hooks/git/post-merge:8` — legacy uninstalled hook passes `--auto`, which `sync_tasks` does not define (Click exit 2 if ever run); nothing installs `src/gobby/hooks/git/*`; delete or align the directory.
 
 ## Systemic patterns
 
 1. **Fail-open leniency in gates.** The plan parser degrades malformed grammar-adjacent input (separator typos, unclosed fences, trailing prose, Acceptance under wrong kinds) into prose/truncation instead of errors; the coverage evaluator treats absent data as fine (missing matrix hash → skip check, dangling labels → vanish, empty embedded evidence → vanish); the sweep/lint/ledger layer degrades every missing-scope condition to `valid` with at most a `skip_reason` callers ignore. For contract-enforcement code, every silent degradation is a hole in the gate — roughly a third of all findings are instances of this one pattern.
 2. **Fixture–reality drift.** Both deferral Blockers, the consumer-sweep Blocker, and the CallToolResult Blocker share one root: test doubles model shapes production never produces (hand-fabricated deferred sections with acceptance items, fully-dotted `qualified_name`, `find_direct_*` methods that don't exist on real storage, `call_tool` stubs returning dicts at every level including E2E). Nothing integration-tests the parse→evaluate, sweep→real-index, or sync→real-manager seams.
-3. **Reimplemented grammar/logic drifting.** Two `_clean_ref`s, two fence scanners (emitter vs parser, 4 divergences), two ID grammars (parser bullets vs covers labels — already drifted into a real bug), two Targets-block iterators (sweep vs lint), scattered ref normalization (coverage adds `#`, ledger strips it, deferral compares raw).
+3. **Reimplemented grammar/logic drifting.** Two fence scanners (emitter vs parser, 4 divergences), two ID grammars (parser bullets vs covers labels — already drifted into a real bug), two Targets-block iterators (sweep vs lint), scattered ref normalization (coverage adds `#`, ledger strips it, deferral compares raw).
 4. **Write-then-validate without rollback / no write atomicity.** `_emit_fresh` mutates the plan file before validating and doesn't restore; `coverage_manifest.write_text` and both JSONL exporters write in place with no temp+rename, no fsync, no locks; append-only Yolo/audit sections grow unboundedly and log before the writes they describe.
 5. **External-wins, write-unconditionally sync.** No per-task conflict detection anywhere in tracker sync; reconcile bumps `updated_at` even for identical values, turning every pull into an echo push; LWW has no tombstones, so deletions cannot propagate; "bidirectional" state sync is aspirational in both docstrings (Linear state pull and all GitHub state/label mapping are dead code).
 6. **Errors counted, never typed, success defaulted.** Memories sync swallows everything to `return 0`; the Linear cron converts total failure into a successful run; integrity reports clean on git failure; the coverage CLI leaks tracebacks outside its documented exit-code set; typed exception taxonomies exist but are raised nowhere.
