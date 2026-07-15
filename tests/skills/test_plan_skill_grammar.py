@@ -12,7 +12,8 @@ pytestmark = pytest.mark.unit
 
 CANONICAL_PLAN_HEADING_REGEX = (
     r"^#{2,6}\s+(?:§\s*)?"
-    r"(?P<section_id>(?:\d+(?:\.\d+)*(?:[a-z])?|[A-Z]+[0-9]+(?:\.[0-9]+)*(?:[a-z])?))"
+    r"(?P<section_id>(?:\d+[a-z]?|[A-Z]+[0-9]+[a-z]?)"
+    r"(?:\.(?:\d+[a-z]?|[A-Z]+[0-9]+[a-z]?))*)"
     r"(?=\s|[).:-]|$)"
 )
 

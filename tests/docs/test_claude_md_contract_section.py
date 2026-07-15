@@ -12,7 +12,8 @@ CONTRACT = Path("docs/contracts/plan-coverage.md")
 
 CANONICAL_PLAN_HEADING_REGEX = (
     r"^#{2,6}\s+(?:§\s*)?"
-    r"(?P<section_id>(?:\d+(?:\.\d+)*(?:[a-z])?|[A-Z]+[0-9]+(?:\.[0-9]+)*(?:[a-z])?))"
+    r"(?P<section_id>(?:\d+[a-z]?|[A-Z]+[0-9]+[a-z]?)"
+    r"(?:\.(?:\d+[a-z]?|[A-Z]+[0-9]+[a-z]?))*)"
     r"(?=\s|[).:-]|$)"
 )
 
@@ -45,7 +46,7 @@ def _parser_heading_pattern() -> str:
 
 
 def test_plan_coverage_section_present() -> None:
-    section = _section()
+    section = CONTRACT.read_text(encoding="utf-8")
     required_terms = (
         CANONICAL_PLAN_HEADING_REGEX,
         "deliverable | framing | verification | deferred",
@@ -82,7 +83,7 @@ def test_plan_coverage_section_present() -> None:
         "`7`",
         "`8`",
         "commits | task-diff | worktree-diff | coverage-matrix | none",
-        "Bootstrap-ledger requirement",
+        "## Bootstrap Ledger",
         ".coverage-ledger.yaml",
         "`plans` table",
         "gobby-plans",
@@ -91,26 +92,32 @@ def test_plan_coverage_section_present() -> None:
         "strategy",
         "active",
         "archived",
-        "Table-row decomposition rule",
+        "## Table-Row Decomposition",
     )
     for term in required_terms:
         assert term in section
 
 
-def test_canonical_regex_pinned_in_claude_md() -> None:
+def test_claude_md_points_to_plan_coverage_contract() -> None:
     section = _section()
+
+    assert "docs/contracts/plan-coverage.md" in section
+    assert "src/gobby/install/shared/skills/plan-draft/SKILL.md" in section
+
+
+def test_canonical_regex_pinned_in_contract() -> None:
+    section = CONTRACT.read_text(encoding="utf-8")
     block = _first_regex_block(section)
     assert block == CANONICAL_PLAN_HEADING_REGEX
     assert block == _parser_heading_pattern()
 
 
 def test_table_row_decomposition_rule_documented() -> None:
-    for path in (CLAUDE, CONTRACT):
-        body = path.read_text(encoding="utf-8").lower()
-        assert "table-row decomposition" in body
-        assert "one acceptance item per" in body
-        assert "data row" in body
-        assert "plan-adversary" in body
+    body = CONTRACT.read_text(encoding="utf-8").lower()
+    assert "table-row decomposition" in body
+    assert "one acceptance item per" in body
+    assert "data row" in body
+    assert "plan-adversary" in body
 
 
 def test_no_retired_plan_storage_terms() -> None:
