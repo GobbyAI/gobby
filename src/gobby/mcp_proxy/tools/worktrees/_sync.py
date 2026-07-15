@@ -640,11 +640,13 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             # Treat the transaction as cleanup-required before starting merge and
             # clear the flag only after Git proves the merge command succeeded.
             merge_cleanup_required = True
+            merge_env = {"GOBBY_MERGE": "1"}
             merge_result = await run_thread_to_completion(
                 resolved_git_mgr.run_git_command,
                 ["merge", source_ref, "--no-ff", "--no-edit"],
                 cwd=merge_cwd,
                 timeout=60,
+                env=merge_env,
             )
             if merge_result.returncode == 0:
                 merge_cleanup_required = False
@@ -672,6 +674,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                             ["commit", "--no-edit"],
                             cwd=merge_cwd,
                             timeout=30,
+                            env=merge_env,
                         )
                         if commit_result.returncode != 0:
                             return {
@@ -712,7 +715,11 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                         }
 
                 else:
-                    merge_output = merge_result.stdout + merge_result.stderr
+                    merge_output = "\n".join(
+                        output.strip()
+                        for output in (merge_result.stdout, merge_result.stderr)
+                        if output.strip()
+                    )
                     return {
                         "success": False,
                         "has_conflicts": False,

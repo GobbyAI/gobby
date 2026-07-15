@@ -200,6 +200,19 @@ class TestWorktreeGitManagerRunGit:
         assert call_kwargs["cwd"] == custom_path
 
     @patch("subprocess.run")
+    def test_run_git_merges_environment_overrides(self, mock_run, manager) -> None:
+        """_run_git preserves the process environment and applies overrides."""
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=["git", "status"], returncode=0, stdout="", stderr=""
+        )
+
+        manager.run_git_command(["status"], env={"GOBBY_MERGE": "1"})
+
+        call_env = mock_run.call_args.kwargs["env"]
+        assert call_env["GOBBY_MERGE"] == "1"
+        assert "PATH" in call_env
+
+    @patch("subprocess.run")
     def test_run_git_timeout(self, mock_run, manager) -> None:
         """_run_git raises on timeout."""
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="git", timeout=30)

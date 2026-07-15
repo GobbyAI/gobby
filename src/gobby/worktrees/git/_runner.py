@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import subprocess  # nosec B404 # subprocess needed for git worktree operations
+from collections.abc import Mapping
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -38,6 +40,7 @@ class GitRunner:
         cwd: str | Path | None = None,
         timeout: int = 30,
         check: bool = False,
+        env: Mapping[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """
         Run a git command.
@@ -47,6 +50,7 @@ class GitRunner:
             cwd: Working directory (defaults to repo_path)
             timeout: Command timeout in seconds
             check: Raise exception on non-zero exit
+            env: Environment variables to add or override
 
         Returns:
             CompletedProcess with stdout/stderr
@@ -65,6 +69,7 @@ class GitRunner:
                 text=True,
                 timeout=timeout,
                 check=check,
+                env={**os.environ, **env} if env is not None else None,
             )
             return result
         except subprocess.TimeoutExpired:
@@ -80,8 +85,9 @@ class GitRunner:
         cwd: str | Path | None = None,
         timeout: int = 30,
         check: bool = False,
+        env: Mapping[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        return self._run_git(args, cwd=cwd, timeout=timeout, check=check)
+        return self._run_git(args, cwd=cwd, timeout=timeout, check=check, env=env)
 
     def stage_files(
         self, paths: list[str], *, cwd: str | Path | None = None
