@@ -357,6 +357,21 @@ describe('mobile chrome CSS', () => {
     })
   })
 
+  it('shows an accent focus-visible ring on activity panel search inputs', () => {
+    const activityCss = parseCss('src/components/chat/styles/activity-panel.css')
+    const focusOutlines: string[] = []
+
+    findRule(activityCss, '.activity-panel-search:focus').walkDecls('outline', declaration => {
+      focusOutlines.push(declaration.value)
+    })
+
+    expect(focusOutlines).toEqual([])
+    expectDeclarations(activityCss, '.activity-panel-search:focus-visible', {
+      outline: '2px solid var(--accent)',
+      'outline-offset': '1px',
+    })
+  })
+
   it('keeps the minimum-width chat status bar to one row', () => {
     const inputCss = parseCss('src/components/chat/styles/input.css')
     const narrowChatColumn = 'chat-column (max-width: 360px)'
