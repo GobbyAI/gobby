@@ -241,11 +241,11 @@ async def _write_summary_file(
     content: str,
     output_path: str | None = None,
     session_manager: Any = None,
-    mode: str = "full",
+    mode: str = "clear",
 ) -> str | None:
     """Write summary to file in session_summaries directory.
 
-    Files are named ``{seq_num}-{mode}.md`` (e.g. ``2139-full.md``).
+    Files are named ``{seq_num}-{mode}.md`` (e.g. ``2139-clear.md``).
     Falls back to ``{external_id}-{mode}.md`` or ``{session_id}-{mode}.md``
     when seq_num is unavailable.
 
@@ -254,7 +254,7 @@ async def _write_summary_file(
         content: Summary markdown content
         output_path: Override directory for summary files
         session_manager: Session manager to look up seq_num / external_id
-        mode: "full" or "compact" — used as filename suffix
+        mode: "clear" or "compact" — used as filename suffix
 
     Returns:
         Path to written file, or None on failure

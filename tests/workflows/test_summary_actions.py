@@ -1359,9 +1359,12 @@ class TestGenerateSummary:
                 session_summary_config=summary_config,
                 template="Mode: {mode}\nTranscript:\n{transcript_summary}",
                 mode="clear",
+                write_file=True,
+                output_path=str(tmp_path),
             )
 
         assert result["summary_generated"] is True
+        assert result["summary_file"] == str(tmp_path / "test-session-clear.md")
         prompt = mock_llm_service.call_feature.await_args.args[1]
         assert "Mode: clear" in prompt
 
@@ -1401,9 +1404,12 @@ class TestGenerateSummary:
                 session_summary_config=summary_config,
                 template="Mode: {mode}\nTranscript:\n{transcript_summary}",
                 mode="compact",
+                write_file=True,
+                output_path=str(tmp_path),
             )
 
         assert result["summary_generated"] is True
+        assert result["summary_file"] == str(tmp_path / "test-session-compact.md")
         prompt = mock_llm_service.call_feature.await_args.args[1]
         assert "Mode: compact" in prompt
 
@@ -1844,7 +1850,7 @@ class TestWriteSummaryFile:
         from pathlib import Path
 
         filename = Path(result).name
-        assert filename == "my-session-full.md"
+        assert filename == "my-session-clear.md"
 
     @pytest.mark.asyncio
     async def test_write_summary_file_compact_mode(self, tmp_path: Path) -> None:
