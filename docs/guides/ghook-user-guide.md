@@ -176,6 +176,9 @@ Most users get this configured automatically by the Gobby installer. To wire it 
 Claude Code uses lowercase-hyphenated names internally for some hooks (`session-start`, `pre-compact`, `session-end`) and PascalCase for others (`PreToolUse`, `PostToolUse`). ghook treats `--type` as an opaque string, so pass the exact identifier the daemon expects for that CLI.
 
 Lifecycle hook criticality (`session-start`, `session-end`, `pre-compact`) comes from ghook's per-CLI registry. Tool-use hooks are non-critical — the envelope still spools, but a transient daemon outage won't block your tool call.
+Codex `Stop` is the only provider Stop hook that fails closed when the daemon is
+unavailable. AGY `Stop`, Grok `stop`, Claude `Stop`, Droid `Stop`, and Qwen
+`AfterAgent` fail open after the envelope is safely spooled.
 
 ### Codex, Qwen, Droid, Grok, Antigravity CLI
 
@@ -190,14 +193,14 @@ tmux pane env vars.
 | `codex` | `SessionStart`, `Stop` |
 | `qwen` | `SessionStart` |
 | `droid` | none |
-| `grok` | `session_start`, `session_end`, `pre_compact`, `stop` |
-| `agy` | `SessionStart`, `Stop` |
+| `grok` | `session_start`, `session_end`, `pre_compact` |
+| `agy` | `SessionStart` |
 
 Grok uses native snake_case hook types (e.g. `session_start`, `session_end`, `pre_compact`, `stop`, `pre_tool_use`) — distinct from Claude's hyphenated names and the PascalCase names the other CLIs use. Its malformed-JSON exit code is `2`.
 
 Droid uses PascalCase hook types (`SessionStart`, `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Notification`, `Stop`, `SubagentStop`, `PreCompact`, `SessionEnd`) and ghook forwards droid's stdin payload unchanged to the daemon with `source: "droid"`. Droid-specific block handling differs slightly from the other CLIs: daemon responses containing `continue:false` exit 2, while other meaningful response JSON is written to stdout with exit 0.
 
-Antigravity CLI uses PascalCase hook types (`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`) and ghook forwards them with `source: "agy"`. `SessionStart` and `Stop` are fail-closed critical hooks; prompt and tool hooks are non-critical.
+Antigravity CLI uses PascalCase hook types (`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`) and ghook forwards them with `source: "agy"`. `SessionStart` is fail-closed; `Stop`, prompt, and tool hooks are non-critical.
 
 Gemini CLI support has been removed. Diagnose mode reports `--cli=gemini` as unrecognized, and stale Gobby-owned Gemini hook invocations no-op with `{}` and exit 0 before enqueue or POST.
 
@@ -211,7 +214,7 @@ Unknown `--cli` values fall back to conservative Claude-like dispatch behavior o
 $ ghook --diagnose --cli=claude --type=session-start
 {
   "schema_version": 2,
-  "ghook_version": "0.7.0",
+  "ghook_version": "0.7.2",
   "cli": "claude",
   "hook_type": "session-start",
   "source": "claude",
@@ -220,8 +223,8 @@ $ ghook --diagnose --cli=claude --type=session-start
   "daemon_url": "http://127.0.0.1:60887",
   "daemon_host": "127.0.0.1",
   "daemon_port": 60887,
-  "project_root": "/Users/josh/Projects/gobby-cli",
-  "project_id": "3bf57fe7-2a0c-4074-8912-a83d9cd4df01",
+  "project_root": "/Users/josh/Projects/gobby",
+  "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
   "terminal_context_preview": {
     "parent_pid": 72441,
     "tty": "/dev/ttys005",
@@ -232,7 +235,7 @@ $ ghook --diagnose --cli=claude --type=session-start
   },
   "cli_recognized": true,
   "install_method": "github-release",
-  "install_source_url": "https://github.com/GobbyAI/gobby/releases/download/ghook-v0.7.1/ghook-aarch64-apple-darwin.tar.gz"
+  "install_source_url": "https://github.com/GobbyAI/gobby/releases/download/ghook-v0.7.2/ghook-aarch64-apple-darwin.tar.gz"
 }
 ```
 

@@ -61,8 +61,9 @@ The original Python `hook_dispatcher.py` ran inside the daemon process. That mad
 
 | Module | Responsibility |
 |--------|----------------|
+| `lib.rs` | Crate-level documentation anchor so release-time doctest validation is available; runtime code stays in the binary target. |
 | `main.rs` | Arg parsing (clap), mode dispatch (`--gobby-owned`/`--diagnose`/`--version`), orchestrates the dispatch flow. |
-| `cli_config.rs` | Per-CLI registry (claude/codex/qwen/droid/grok/agy) — which hooks are critical. Compile-time frozen. `grok` uses native snake_case hook names (`session_start`, `session_end`, `pre_compact`, `stop`); `agy` uses Antigravity's PascalCase hook names. |
+| `cli_config.rs` | Per-CLI registry (claude/codex/qwen/droid/grok/agy) — which hooks are critical. Compile-time frozen. `grok` uses native snake_case hook names (`session_start`, `session_end`, `pre_compact`, `stop`); `agy` uses Antigravity's PascalCase hook names. Codex `Stop` is the only provider Stop hook that fails closed when the daemon is unavailable. |
 | `envelope.rs` | `Envelope` struct + `SCHEMA_VERSION = 1`. Serializes to the inbox JSON shape. |
 | `planned_shutdown.rs` | Stop-only planned shutdown markers, daemon health preflight, and post-enqueue daemon-death suppression. |
 | `transport.rs` | Inbox path resolution, atomic write, enqueue, POST + cleanup, quarantine for malformed stdin. |
@@ -159,8 +160,8 @@ Schema:
 ```json
 {
   "install_method": "github-release",
-  "install_source_url": "https://github.com/GobbyAI/gobby/releases/download/ghook-v0.7.1/ghook-aarch64-apple-darwin.tar.gz",
-  "installed_version": "0.7.1",
+  "install_source_url": "https://github.com/GobbyAI/gobby/releases/download/ghook-v0.7.2/ghook-aarch64-apple-darwin.tar.gz",
+  "installed_version": "0.7.2",
   "installed_at": "2026-04-22T18:30:00Z"
 }
 ```
@@ -365,7 +366,7 @@ Almost always config-only. ghook treats `--type` as opaque. To make a hook criti
 
 ## Versioning
 
-ghook is at `0.7.0`. The envelope `SCHEMA_VERSION` is `1`; the diagnose-output schema is `2`. The three version numbers are independent:
+ghook is at `0.7.2`. The envelope `SCHEMA_VERSION` is `1`; the diagnose-output schema is `2`. The three version numbers are independent:
 
 - **Crate version** bumps for any code change (binary behavior, dependencies, perf, etc.).
 - **Envelope `SCHEMA_VERSION`** bumps only when the inbox envelope shape changes in a way the daemon must explicitly handle.

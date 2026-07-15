@@ -167,84 +167,77 @@ fn hooks_disabled_short_circuits_before_dispatch_side_effects() -> TestResult {
 
 #[test]
 fn daemon_down_distinguishes_critical_and_noncritical_hooks() -> TestResult {
-    let critical = run_with_closed_daemon("codex", "SessionStart")?;
-    assert_eq!(critical.status.code(), Some(2));
-    assert!(critical.stdout.is_empty());
-    let critical_stderr = String::from_utf8(critical.stderr)?;
-    assert!(critical_stderr.contains("Daemon connection failed on critical hook 'SessionStart'"));
+    for (cli, hook_type) in [
+        ("codex", "Stop"),
+        ("agy", "SessionStart"),
+        ("grok", "session_start"),
+        ("grok", "session_end"),
+        ("grok", "pre_compact"),
+    ] {
+        let critical = run_with_closed_daemon(cli, hook_type)?;
+        assert_eq!(
+            critical.status.code(),
+            Some(2),
+            "{cli} {hook_type} should fail closed"
+        );
+        assert!(critical.stdout.is_empty());
+        let critical_stderr = String::from_utf8(critical.stderr)?;
+        assert!(
+            critical_stderr.contains(&format!(
+                "Daemon connection failed on critical hook '{hook_type}'"
+            )),
+            "{cli} {hook_type} should report critical daemon failure"
+        );
+    }
 
-    let noncritical = run_with_closed_daemon("codex", "PreToolUse")?;
-    assert_eq!(noncritical.status.code(), Some(1));
-    assert_json_stdout(
-        &noncritical,
-        serde_json::json!({
-            "status": "error",
-            "message": "Daemon unreachable",
-        }),
-    )?;
-    assert_stderr_empty(&noncritical, "noncritical daemon-down")?;
-
-    let grok_critical = run_with_closed_daemon("grok", "session_start")?;
-    assert_eq!(grok_critical.status.code(), Some(2));
-    assert!(grok_critical.stdout.is_empty());
-    let grok_critical_stderr = String::from_utf8(grok_critical.stderr)?;
-    assert!(
-        grok_critical_stderr.contains("Daemon connection failed on critical hook 'session_start'")
-    );
-
-    let grok_noncritical = run_with_closed_daemon("grok", "pre_tool_use")?;
-    assert_eq!(grok_noncritical.status.code(), Some(1));
-    assert_json_stdout(
-        &grok_noncritical,
-        serde_json::json!({
-            "status": "error",
-            "message": "Daemon unreachable",
-        }),
-    )?;
-    assert_stderr_empty(&grok_noncritical, "grok noncritical daemon-down")?;
-
-    let agy_critical = run_with_closed_daemon("agy", "Stop")?;
-    assert_eq!(agy_critical.status.code(), Some(2));
-    assert!(agy_critical.stdout.is_empty());
-    let agy_critical_stderr = String::from_utf8(agy_critical.stderr)?;
-    assert!(agy_critical_stderr.contains("Daemon connection failed on critical hook 'Stop'"));
-
-    let agy_noncritical = run_with_closed_daemon("agy", "PreToolUse")?;
-    assert_eq!(agy_noncritical.status.code(), Some(1));
-    assert_json_stdout(
-        &agy_noncritical,
-        serde_json::json!({
-            "status": "error",
-            "message": "Daemon unreachable",
-        }),
-    )?;
-    assert_stderr_empty(&agy_noncritical, "agy noncritical daemon-down")?;
+    for (cli, hook_type) in [
+        ("agy", "Stop"),
+        ("grok", "stop"),
+        ("claude", "Stop"),
+        ("droid", "Stop"),
+        ("qwen", "AfterAgent"),
+    ] {
+        let noncritical = run_with_closed_daemon(cli, hook_type)?;
+        assert_eq!(
+            noncritical.status.code(),
+            Some(1),
+            "{cli} {hook_type} should fail open"
+        );
+        if cli == "droid" {
+            assert!(noncritical.stdout.is_empty());
+            assert!(String::from_utf8(noncritical.stderr)?.contains("Daemon unreachable"));
+            continue;
+        }
+        assert_json_stdout(
+            &noncritical,
+            serde_json::json!({
+                "status": "error",
+                "message": "Daemon unreachable",
+            }),
+        )?;
+        assert_stderr_empty(&noncritical, &format!("{cli} {hook_type} daemon-down"))?;
+    }
 
     Ok(())
 }
 
 #[test]
-fn diagnose_json_reports_grok_snake_case_contract() -> TestResult {
+fn diagnose_json_reports_terminal_criticality_contract() -> TestResult {
     let home = tempfile::tempdir()?;
     let gobby_home = tempfile::tempdir()?;
     let daemon_url = closed_local_url()?;
 
-    let critical = run_diagnose_with_dirs(
-        home.path(),
-        gobby_home.path(),
-        "grok",
-        "session_start",
-        &daemon_url,
-    )?;
+    let critical =
+        run_diagnose_with_dirs(home.path(), gobby_home.path(), "codex", "Stop", &daemon_url)?;
     assert_eq!(critical.status.code(), Some(0));
-    assert_stderr_empty(&critical, "grok session_start diagnose")?;
+    assert_stderr_empty(&critical, "codex Stop diagnose")?;
     let critical_json: Value = serde_json::from_slice(&critical.stdout)?;
     assert_eq!(critical_json["schema_version"], 2);
-    assert_eq!(critical_json["cli"], "grok");
-    assert_eq!(critical_json["hook_type"], "session_start");
-    assert_eq!(critical_json["source"], "grok");
+    assert_eq!(critical_json["cli"], "codex");
+    assert_eq!(critical_json["hook_type"], "Stop");
+    assert_eq!(critical_json["source"], "codex");
     assert_eq!(critical_json["critical"], true);
-    assert_eq!(critical_json["terminal_context_enabled"], true);
+    assert_eq!(critical_json["terminal_context_enabled"], false);
     assert_eq!(critical_json["cli_recognized"], true);
     assert_eq!(critical_json["recent_failure_count"], 0);
     assert_eq!(critical_json["recent_failures"], serde_json::json!([]));
@@ -254,22 +247,24 @@ fn diagnose_json_reports_grok_snake_case_contract() -> TestResult {
             .is_some_and(|path| path.ends_with("hooks/inbox/failures"))
     );
 
-    let noncritical = run_diagnose_with_dirs(
-        home.path(),
-        gobby_home.path(),
-        "grok",
-        "pre_tool_use",
-        &daemon_url,
-    )?;
-    assert_eq!(noncritical.status.code(), Some(0));
-    assert_stderr_empty(&noncritical, "grok pre_tool_use diagnose")?;
-    let noncritical_json: Value = serde_json::from_slice(&noncritical.stdout)?;
-    assert_eq!(noncritical_json["cli"], "grok");
-    assert_eq!(noncritical_json["hook_type"], "pre_tool_use");
-    assert_eq!(noncritical_json["source"], "grok");
-    assert_eq!(noncritical_json["critical"], false);
-    assert_eq!(noncritical_json["terminal_context_enabled"], false);
-    assert_eq!(noncritical_json["cli_recognized"], true);
+    for (cli, hook_type) in [
+        ("agy", "Stop"),
+        ("grok", "stop"),
+        ("claude", "Stop"),
+        ("droid", "Stop"),
+        ("qwen", "AfterAgent"),
+    ] {
+        let noncritical =
+            run_diagnose_with_dirs(home.path(), gobby_home.path(), cli, hook_type, &daemon_url)?;
+        assert_eq!(noncritical.status.code(), Some(0));
+        assert_stderr_empty(&noncritical, &format!("{cli} {hook_type} diagnose"))?;
+        let noncritical_json: Value = serde_json::from_slice(&noncritical.stdout)?;
+        assert_eq!(noncritical_json["cli"], cli);
+        assert_eq!(noncritical_json["hook_type"], hook_type);
+        assert_eq!(noncritical_json["source"], cli);
+        assert_eq!(noncritical_json["critical"], false);
+        assert_eq!(noncritical_json["cli_recognized"], true);
+    }
 
     Ok(())
 }
