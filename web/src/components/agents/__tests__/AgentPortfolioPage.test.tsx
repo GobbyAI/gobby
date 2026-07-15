@@ -8,6 +8,16 @@ describe('AgentPortfolioPage', () => {
     vi.unstubAllGlobals()
   })
 
+  it('renders the refresh arrow instead of a literal escape sequence', () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => undefined)))
+
+    render(<AgentPortfolioPage />)
+
+    const refreshButton = screen.getByRole('button', { name: 'Refresh agents' })
+    expect(refreshButton).toHaveTextContent('↻')
+    expect(refreshButton).not.toHaveTextContent('\\u21BB')
+  })
+
   it('renders the escalated task metric once with danger styling', async () => {
     const fetchMock = vi.fn((url: string) => {
       const body = url.includes('/api/sessions')

@@ -522,7 +522,7 @@ export function AgentPortfolioPage() {
             onClick={fetchData}
             aria-label="Refresh agents"
           >
-            \u21BB
+            {'↻'}
           </button>
         </div>
       </div>
