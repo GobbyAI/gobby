@@ -37,7 +37,7 @@ export function ChatInputQueuedFiles({
               <span className="max-w-[100px] truncate">{queuedFile.file.name}</span>
             </div>
           )}
-          <div className="px-2 pb-1 text-[10px] text-muted-foreground">
+          <div className="px-2 pb-1 text-[length:var(--text-2xs)] text-muted-foreground">
             <div className="truncate">
               {formatAttachmentSize(queuedFile.attachment?.size_bytes ?? queuedFile.file.size)}
             </div>

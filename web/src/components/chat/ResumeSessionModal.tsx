@@ -105,7 +105,7 @@ export function ResumeSessionModal({
           <Heading level={2} variant="modal">
             Resume Session
           </Heading>
-          <DialogDescription style={{ margin: "4px 0 12px", fontSize: "13px", color: "var(--text-muted)" }}>
+          <DialogDescription style={{ margin: "4px 0 12px", fontSize: "var(--text-md)", color: "var(--text-muted)" }}>
             Pick a session to resume in web chat with full conversation context.
           </DialogDescription>
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
@@ -122,7 +122,7 @@ export function ResumeSessionModal({
                 borderRadius: "6px",
                 background: "var(--bg-secondary)",
                 color: "var(--text-primary)",
-                fontSize: "14px",
+                fontSize: "var(--text-base)",
                 outline: "none",
               }}
             />
@@ -131,7 +131,7 @@ export function ResumeSessionModal({
                 display: "flex",
                 alignItems: "center",
                 gap: "4px",
-                fontSize: "12px",
+                fontSize: "var(--text-sm)",
                 color: "var(--text-muted)",
                 cursor: "pointer",
                 whiteSpace: "nowrap",
@@ -150,11 +150,11 @@ export function ResumeSessionModal({
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px" }}>
           {loading ? (
-            <p style={{ textAlign: "center", color: "var(--text-muted)", padding: "24px 0", fontSize: "14px" }}>
+            <p style={{ textAlign: "center", color: "var(--text-muted)", padding: "24px 0", fontSize: "var(--text-base)" }}>
               Loading...
             </p>
           ) : filteredSessions.length === 0 ? (
-            <p style={{ textAlign: "center", color: "var(--text-muted)", padding: "24px 0", fontSize: "14px" }}>
+            <p style={{ textAlign: "center", color: "var(--text-muted)", padding: "24px 0", fontSize: "var(--text-base)" }}>
               {search ? "No matching sessions" : "No resumable sessions"}
             </p>
           ) : (
@@ -177,7 +177,7 @@ export function ResumeSessionModal({
                   color: "var(--text-primary)",
                   cursor: "pointer",
                   textAlign: "left",
-                  fontSize: "14px",
+                  fontSize: "var(--text-base)",
                 }}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.background = "var(--bg-tertiary)";
@@ -200,7 +200,7 @@ export function ResumeSessionModal({
                   <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {session.seq_num != null ? `#${session.seq_num}: ` : ''}{getSessionTitleText(session.title)}
                   </div>
-                  <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "2px" }}>
+                  <div style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)", marginTop: "2px" }}>
                     {SOURCE_LABELS[session.source] ?? session.source}
                     {" · "}
                     {formatRelativeTime(session.updated_at)}

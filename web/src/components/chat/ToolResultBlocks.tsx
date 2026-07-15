@@ -33,7 +33,7 @@ export function MetadataStrip({ meta, className }: MetadataStripProps) {
   return (
     <div
       className={cn(
-        'flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] font-mono',
+        'flex flex-wrap gap-x-3 gap-y-0.5 text-[length:var(--text-2xs)] font-mono',
         TOOL_CARD_SPACING.metaStrip,
         'border-b border-border/40 text-muted-foreground bg-muted/30',
         className,

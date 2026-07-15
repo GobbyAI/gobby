@@ -231,23 +231,23 @@ export function ProviderPicker({
                         {displayName}
                       </span>
                       {entry?.deprecated && (
-                        <span className="text-[10px] px-1 py-0.5 rounded bg-muted text-muted-foreground">
+                        <span className="text-[length:var(--text-2xs)] px-1 py-0.5 rounded bg-muted text-muted-foreground">
                           deprecated
                         </span>
                       )}
                       {unavailableReason && (
-                        <span className="text-[10px] px-1 py-0.5 rounded bg-muted text-muted-foreground">
+                        <span className="text-[length:var(--text-2xs)] px-1 py-0.5 rounded bg-muted text-muted-foreground">
                           unavailable
                         </span>
                       )}
                       {isActive && (
-                        <span className="text-[10px] px-1 py-0.5 rounded bg-accent/20 text-accent">
+                        <span className="text-[length:var(--text-2xs)] px-1 py-0.5 rounded bg-accent/20 text-accent">
                           active
                         </span>
                       )}
                     </div>
                     {unavailableReason && (
-                      <div className="px-3 pb-1 text-[10px] text-muted-foreground">
+                      <div className="px-3 pb-1 text-[length:var(--text-2xs)] text-muted-foreground">
                         {unavailableReason}
                       </div>
                     )}
@@ -272,7 +272,7 @@ export function ProviderPicker({
                         >
                           {model.label}
                           {isSelected && (
-                            <span className="ml-2 text-[10px]">●</span>
+                            <span className="ml-2 text-[length:var(--text-2xs)]">●</span>
                           )}
                         </button>
                       );

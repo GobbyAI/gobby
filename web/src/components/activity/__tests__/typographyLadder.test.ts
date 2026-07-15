@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
@@ -28,6 +28,16 @@ function readSessionsSurfaceSource(): string {
   ]
     .map(readSource)
     .join('\n')
+}
+
+function readTsxSources(rel: string): Array<[string, string]> {
+  return readdirSync(join(cwd, rel), { withFileTypes: true }).flatMap((entry) => {
+    const child = join(rel, entry.name)
+    if (entry.isDirectory()) {
+      return entry.name === '__tests__' || entry.name === '__visual__' ? [] : readTsxSources(child)
+    }
+    return entry.name.endsWith('.tsx') ? [[child, readSource(child)]] : []
+  })
 }
 
 describe('activity-panel typography ladder (#14245)', () => {
@@ -182,5 +192,14 @@ describe('activity-panel typography ladder (#14245)', () => {
     expect(source).toMatch(
       /\.activity-tab-empty__body\s*{[^}]*font-size:\s*var\(--text-base\)[^}]*color:\s*var\(--text-muted\)/,
     )
+  })
+
+  it('keeps TSX typography on the shared ladder', () => {
+    for (const [path, source] of readTsxSources('src')) {
+      expect(source, path).not.toMatch(/text-\[\d+(?:\.\d+)?px\]/)
+      expect(source, path).not.toMatch(
+        /fontSize:\s*(?:["']\d+(?:\.\d+)?(?:px|rem)["']|\d+)/,
+      )
+    }
   })
 })

@@ -387,7 +387,7 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
         <StatusIcon status={call.status} />
         <span className="font-mono text-foreground">{displayName}</span>
         {call.tool_kind && (
-          <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+          <span className="rounded bg-muted px-1.5 py-0.5 text-[length:var(--text-xs)] text-muted-foreground">
             {call.tool_kind}
           </span>
         )}

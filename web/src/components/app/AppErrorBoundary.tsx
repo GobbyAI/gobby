@@ -49,7 +49,7 @@ export class AppErrorBoundary extends Component<
         >
           <div
             style={{
-              fontSize: "1.25rem",
+              fontSize: "var(--text-2xl)",
               color: "var(--text-primary)",
               fontWeight: 600,
             }}
@@ -58,7 +58,7 @@ export class AppErrorBoundary extends Component<
           </div>
           <div
             style={{
-              fontSize: "0.85rem",
+              fontSize: "var(--text-base)",
               maxWidth: 480,
               textAlign: "center",
               lineHeight: 1.5,
@@ -70,7 +70,7 @@ export class AppErrorBoundary extends Component<
           {this.state.error && (
             <code
               style={{
-                fontSize: "0.75rem",
+                fontSize: "var(--text-sm)",
                 color: "var(--text-muted)",
                 background: "var(--bg-secondary)",
                 padding: "0.5rem 1rem",
@@ -93,7 +93,7 @@ export class AppErrorBoundary extends Component<
                 background: "var(--bg-secondary)",
                 color: "var(--text-primary)",
                 cursor: "pointer",
-                fontSize: "0.8rem",
+                fontSize: "var(--text-md)",
               }}
             >
               Try Again
@@ -107,7 +107,7 @@ export class AppErrorBoundary extends Component<
                 background: "var(--accent)",
                 color: "var(--accent-foreground)",
                 cursor: "pointer",
-                fontSize: "0.8rem",
+                fontSize: "var(--text-md)",
               }}
             >
               Return to Chat

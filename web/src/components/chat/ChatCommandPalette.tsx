@@ -63,7 +63,7 @@ export function ChatCommandPalette({
             <>
               <span className="font-mono">{item.name}</span>
               {item.serverName && (
-                <span className="ml-1.5 text-[10px] px-1 py-0.5 rounded bg-accent/10 text-accent">
+                <span className="ml-1.5 text-[length:var(--text-2xs)] px-1 py-0.5 rounded bg-accent/10 text-accent">
                   {item.serverName}
                 </span>
               )}
