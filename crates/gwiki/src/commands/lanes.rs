@@ -10,7 +10,7 @@ use gobby_core::ai::generation::{
     ToolLoopLimits, ToolPolicy, daemon_agentic_chat, generate_one_shot, profile_for_tier,
     resolve_direct_generation_target, run_tool_loop,
 };
-use gobby_core::ai::{AiNoticeKind, resolve_route_observed};
+use gobby_core::ai::{AiNoticeKind, resolve_route_observed_with_probe};
 use gobby_core::ai_context::{AiContext, AiContextOptions};
 use gobby_core::config::{AiCapability, AiRouting};
 
@@ -75,25 +75,74 @@ fn gwiki_readonly_tool_policy() -> ToolPolicy {
 #[derive(Clone, Copy)]
 pub(crate) struct LaneBInfo {
     pub(crate) route_label: &'static str,
-    pub(crate) fallback: bool,
     pub(crate) notice: Option<AiNoticeKind>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AiSelection {
+    pub(crate) requested: AiRouting,
+    pub(crate) route: AiRouting,
+    pub(crate) selection_reason: &'static str,
+}
+
+pub(crate) fn resolve_ai_selection(
+    requested: AiRouting,
+    command: &'static str,
+    capability: AiCapability,
+    daemon_available: bool,
+) -> AiSelection {
+    let route = if matches!(requested, AiRouting::Auto) {
+        if daemon_available {
+            AiRouting::Daemon
+        } else {
+            match crate::support::config::hub_ai_config_source(command) {
+                Ok(mut source) => {
+                    let context = AiContext::resolve_with_options(
+                        None,
+                        &mut source,
+                        AiContextOptions {
+                            no_ai: false,
+                            forced_routing: Some(requested),
+                        },
+                    );
+                    resolve_route_observed_with_probe(&context, capability, |_| false).route
+                }
+                Err(_) => AiRouting::Off,
+            }
+        }
+    } else {
+        requested
+    };
+    let selection_reason = match (requested, route) {
+        (AiRouting::Auto, AiRouting::Daemon) => "auto_selected_daemon",
+        (AiRouting::Auto, AiRouting::Direct) => "auto_selected_direct",
+        (AiRouting::Auto, _) => "auto_selected_off",
+        (AiRouting::Daemon, _) => "requested_daemon",
+        (AiRouting::Direct, _) => "requested_direct",
+        (AiRouting::Off, _) => "requested_off",
+    };
+    AiSelection {
+        requested,
+        route,
+        selection_reason,
+    }
+}
+
 /// Resolve a Lane B tool-loop generator, mirroring codewiki's
-/// `resolve_tool_loop_generator` (#978). Returns `None` (so the caller falls back
-/// to the Lane A one-shot explainer) when AI is off, no tool-chat route resolves,
+/// `resolve_tool_loop_generator` (#978). Returns `None` (so the caller uses the
+/// Lane A one-shot explainer) when AI is off, no tool-chat route resolves,
 /// a Direct route lacks a usable `api_base`, or a Daemon route lacks a project
 /// root (the daemon's agent investigates with `cwd=project_path`, which topic
 /// scopes cannot supply).
 pub(crate) fn resolve_lane_b_generator(
-    requested: AiRouting,
+    route: AiRouting,
     scope: &ScopeSelection,
     vault_root: PathBuf,
     project_root: Option<PathBuf>,
     scope_identity: ScopeIdentity,
     command: &'static str,
 ) -> Option<LaneB> {
-    if matches!(requested, AiRouting::Off) {
+    if matches!(route, AiRouting::Off | AiRouting::Auto) {
         return None;
     }
     let mut source = crate::support::config::hub_ai_config_source(command).ok()?;
@@ -102,17 +151,12 @@ pub(crate) fn resolve_lane_b_generator(
         &mut source,
         AiContextOptions {
             no_ai: false,
-            forced_routing: Some(requested),
+            forced_routing: Some(route),
         },
     );
-    let observed = resolve_route_observed(&context, AiCapability::ToolChat);
-    let route = observed.route;
-    if matches!(route, AiRouting::Off | AiRouting::Auto) {
-        return None;
-    }
     // A Daemon-route Lane B without a project root (topic scope) cannot give
-    // the daemon's agent an investigation cwd; decline so the caller falls
-    // back to the Lane A one-shot explainer, which needs no project root.
+    // the daemon's agent an investigation cwd; decline so the caller uses the
+    // Lane A one-shot explainer, which needs no project root.
     if matches!(route, AiRouting::Daemon) && project_root.is_none() {
         return None;
     }
@@ -129,11 +173,7 @@ pub(crate) fn resolve_lane_b_generator(
     };
     let info = LaneBInfo {
         route_label: routing_label(route),
-        fallback: observed.fallback,
-        notice: observed.reason.or_else(|| {
-            (observed.fallback && route == AiRouting::Direct)
-                .then_some(AiNoticeKind::AutoFallbackToDirect)
-        }),
+        notice: None,
     };
     let scope = scope.clone();
     let generator: BoxedExplainerGenerator = Box::new(move |prompt: &ExplainerPrompt| {
@@ -185,7 +225,6 @@ fn run_lane_b(
         AiRouting::Daemon => {
             let project_root = project_root
                 .ok_or_else(|| "daemon Lane B requires a project scope root".to_string())?;
-            let binding = context.binding(AiCapability::ToolChat);
             let result = daemon_agentic_chat(
                 context,
                 profile,
@@ -194,7 +233,7 @@ fn run_lane_b(
                 &gwiki_readonly_tool_policy(),
                 &messages,
                 Some(DAEMON_AGENTIC_MAX_TURNS),
-                binding.reasoning_effort.as_deref(),
+                None,
             )
             .map_err(|error| error.to_string())?;
             let text = result
@@ -263,18 +302,15 @@ fn run_lane_b(
 /// request still runs an attempt so the failure is recorded as degradation.
 pub(crate) enum ExplainerTransport {
     Off {
-        fallback: bool,
         notice: Option<AiNoticeKind>,
     },
     Unresolved {
         route: AiRouting,
-        fallback: bool,
         notice: Option<AiNoticeKind>,
         error: String,
     },
     Resolved {
         route: AiRouting,
-        fallback: bool,
         notice: Option<AiNoticeKind>,
         context: Box<AiContext>,
         /// Per-tier direct-generation target resolved for [`ARTICLE_TIER`],
@@ -285,8 +321,8 @@ pub(crate) enum ExplainerTransport {
 }
 
 impl ExplainerTransport {
-    pub(crate) fn off(fallback: bool, notice: Option<AiNoticeKind>) -> Self {
-        Self::Off { fallback, notice }
+    pub(crate) fn off(notice: Option<AiNoticeKind>) -> Self {
+        Self::Off { notice }
     }
 
     pub(crate) fn is_active(&self) -> bool {
@@ -297,13 +333,6 @@ impl ExplainerTransport {
         match self {
             Self::Off { .. } => "off",
             Self::Unresolved { route, .. } | Self::Resolved { route, .. } => routing_label(*route),
-        }
-    }
-
-    pub(crate) fn fallback(&self) -> bool {
-        match self {
-            Self::Off { fallback, .. } => *fallback,
-            Self::Unresolved { fallback, .. } | Self::Resolved { fallback, .. } => *fallback,
         }
     }
 
@@ -352,11 +381,11 @@ impl ExplainerTransport {
 /// routing every other gwiki capability uses. `auto` that resolves to no
 /// usable route degrades to a structural skip rather than a failure.
 pub(crate) fn resolve_explainer_transport(
-    requested: AiRouting,
+    route: AiRouting,
     command: &'static str,
 ) -> ExplainerTransport {
-    if matches!(requested, AiRouting::Off) {
-        return ExplainerTransport::off(false, None);
+    if matches!(route, AiRouting::Off | AiRouting::Auto) {
+        return ExplainerTransport::off(None);
     }
     match crate::support::config::hub_ai_config_source(command) {
         Ok(mut source) => {
@@ -365,11 +394,10 @@ pub(crate) fn resolve_explainer_transport(
                 &mut source,
                 AiContextOptions {
                     no_ai: false,
-                    forced_routing: Some(requested),
+                    forced_routing: Some(route),
                 },
             );
-            let observed = resolve_route_observed(&context, AiCapability::TextGenerate);
-            match observed.route {
+            match route {
                 route @ (AiRouting::Daemon | AiRouting::Direct) => {
                     // The Direct route needs a concrete per-tier target resolved
                     // from the same config source (hub config_store plus any
@@ -387,7 +415,6 @@ pub(crate) fn resolve_explainer_transport(
                     {
                         return ExplainerTransport::Unresolved {
                             route,
-                            fallback: observed.fallback,
                             notice: Some(AiNoticeKind::NoGenerator),
                             error: "direct AI synthesis requires ai.text_generate api_base"
                                 .to_string(),
@@ -395,32 +422,21 @@ pub(crate) fn resolve_explainer_transport(
                     }
                     ExplainerTransport::Resolved {
                         route,
-                        fallback: observed.fallback,
-                        notice: observed.reason.or_else(|| {
-                            (observed.fallback && route == AiRouting::Direct)
-                                .then_some(AiNoticeKind::AutoFallbackToDirect)
-                        }),
+                        notice: None,
                         context: Box::new(context),
                         target,
                     }
                 }
-                _ => ExplainerTransport::off(observed.fallback, observed.reason),
+                _ => ExplainerTransport::off(None),
             }
         }
-        Err(error) => match requested {
+        Err(error) => match route {
             AiRouting::Daemon | AiRouting::Direct => ExplainerTransport::Unresolved {
-                route: requested,
-                fallback: false,
+                route,
                 notice: Some(AiNoticeKind::NoGenerator),
                 error: error.to_string(),
             },
-            AiRouting::Auto => ExplainerTransport::Unresolved {
-                route: AiRouting::Off,
-                fallback: true,
-                notice: Some(AiNoticeKind::NoGenerator),
-                error: error.to_string(),
-            },
-            _ => ExplainerTransport::off(false, None),
+            _ => ExplainerTransport::off(None),
         },
     }
 }
@@ -446,8 +462,8 @@ pub(crate) fn routing_label(route: AiRouting) -> &'static str {
 
 pub(crate) fn ai_notice_label(notice: AiNoticeKind) -> &'static str {
     match notice {
-        AiNoticeKind::AutoFallbackToDirect => "auto_fallback_to_direct",
-        AiNoticeKind::AutoFallbackToOff => "auto_fallback_to_off",
+        AiNoticeKind::AutoFallbackToDirect => "auto_selected_direct",
+        AiNoticeKind::AutoFallbackToOff => "auto_selected_off",
         AiNoticeKind::NoGenerator => "no_generator",
         AiNoticeKind::GenerationFailed => "generation_failed",
     }
@@ -511,6 +527,23 @@ mod tests {
     }
 
     #[test]
+    fn auto_selection_prefers_advertised_daemon_without_loading_direct_config() {
+        assert_eq!(
+            resolve_ai_selection(
+                AiRouting::Auto,
+                "gwiki test",
+                AiCapability::TextGenerate,
+                true,
+            ),
+            AiSelection {
+                requested: AiRouting::Auto,
+                route: AiRouting::Daemon,
+                selection_reason: "auto_selected_daemon",
+            }
+        );
+    }
+
+    #[test]
     fn observed_explicit_daemon_stays_daemon_when_probe_unavailable() {
         let context = ai_context(AiRouting::Daemon, Some("http://direct.test"));
 
@@ -529,16 +562,12 @@ mod tests {
     }
 
     #[test]
-    fn off_transport_preserves_fallback_notice_metadata() {
-        let transport = ExplainerTransport::off(true, Some(AiNoticeKind::AutoFallbackToOff));
+    fn off_transport_preserves_notice_metadata() {
+        let transport = ExplainerTransport::off(Some(AiNoticeKind::NoGenerator));
 
         assert!(!transport.is_active());
         assert_eq!(transport.route_label(), "off");
-        assert!(transport.fallback());
-        assert_eq!(
-            transport.notice_kind(),
-            Some(AiNoticeKind::AutoFallbackToOff)
-        );
+        assert_eq!(transport.notice_kind(), Some(AiNoticeKind::NoGenerator));
     }
 
     #[test]

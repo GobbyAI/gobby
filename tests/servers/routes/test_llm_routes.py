@@ -193,6 +193,69 @@ def test_generate_selects_explicit_provider_model(
     ]
 
 
+def test_generate_caps_and_propagates_timeout_overrides(
+    client: TestClient,
+    server_with_llm: MagicMock,
+) -> None:
+    adapter = _FakeTextAdapter()
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="qwen",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=("qwen3-coder",),
+            )
+        ]
+    )
+    server_with_llm.services.text_generation_service = TextGenerationService(
+        registry,
+        {"qwen": adapter},
+    )
+
+    response = client.post(
+        "/api/llm/generate",
+        json={
+            "prompt": "Summarize this",
+            "provider": "qwen",
+            "model": "qwen3-coder",
+            "candidate_timeout_seconds": 90,
+            "cli_candidate_timeout_seconds": 300,
+            "total_timeout_seconds": 2000,
+        },
+    )
+
+    assert response.status_code == 200
+    assert len(adapter.requests) == 1
+    request = adapter.requests[0]
+    assert request.candidate_timeout_seconds == 30
+    assert request.cli_candidate_timeout_seconds == 60
+    assert request.total_timeout_seconds == 1200
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "candidate_timeout_seconds",
+        "cli_candidate_timeout_seconds",
+        "total_timeout_seconds",
+    ],
+)
+@pytest.mark.parametrize("value", [0, -1])
+def test_generate_rejects_non_positive_timeout_overrides(
+    client: TestClient,
+    field: str,
+    value: int,
+) -> None:
+    response = client.post(
+        "/api/llm/generate",
+        json={"prompt": "Summarize this", field: value},
+    )
+
+    assert response.status_code == 422
+
+
 def test_generate_returns_503_without_text_generation_service(client: TestClient) -> None:
     response = client.post("/api/llm/generate", json={"prompt": "Summarize this"})
 

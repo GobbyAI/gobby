@@ -49,15 +49,18 @@ pub fn generate_one_shot(
     max_tokens: Option<usize>,
 ) -> Result<TextResult, AiError> {
     let profile = profile_for_tier(tier, aggregate_override);
-    match route {
-        AiRouting::Daemon => generate_via_daemon_with_max_tokens(
-            context,
-            prompt,
-            system,
-            max_tokens,
-            Some(profile.as_str()),
-        ),
-        AiRouting::Direct => {
+    dispatch_one_shot(
+        route,
+        || {
+            generate_via_daemon_with_max_tokens(
+                context,
+                prompt,
+                system,
+                max_tokens,
+                Some(profile.as_str()),
+            )
+        },
+        || {
             let target = direct_target.ok_or_else(|| {
                 AiError::not_configured(
                     Some(AiCapability::TextGenerate.as_str().to_string()),
@@ -65,7 +68,18 @@ pub fn generate_one_shot(
                 )
             })?;
             generate_text_with_target(context, target, prompt, system, max_tokens)
-        }
+        },
+    )
+}
+
+fn dispatch_one_shot<T>(
+    route: AiRouting,
+    daemon: impl FnOnce() -> Result<T, AiError>,
+    direct: impl FnOnce() -> Result<T, AiError>,
+) -> Result<T, AiError> {
+    match route {
+        AiRouting::Daemon => daemon(),
+        AiRouting::Direct => direct(),
         AiRouting::Off | AiRouting::Auto => Err(AiError::not_configured(
             Some(AiCapability::TextGenerate.as_str().to_string()),
             "text generation route is off or unresolved (Auto); resolve to Daemon or Direct first",
@@ -174,4 +188,55 @@ pub fn generate_text_with_target(
         usage: chat_completion_usage(&value),
         metadata: BTreeMap::new(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use super::*;
+
+    #[test]
+    fn daemon_failure_never_invokes_direct_lane() {
+        let daemon_calls = Cell::new(0);
+        let direct_calls = Cell::new(0);
+
+        let result = dispatch_one_shot::<()>(
+            AiRouting::Daemon,
+            || {
+                daemon_calls.set(daemon_calls.get() + 1);
+                Err(AiError::not_configured(None, "daemon failed"))
+            },
+            || {
+                direct_calls.set(direct_calls.get() + 1);
+                Ok(())
+            },
+        );
+
+        assert!(result.is_err());
+        assert_eq!(daemon_calls.get(), 1);
+        assert_eq!(direct_calls.get(), 0);
+    }
+
+    #[test]
+    fn direct_failure_never_invokes_daemon_lane() {
+        let daemon_calls = Cell::new(0);
+        let direct_calls = Cell::new(0);
+
+        let result = dispatch_one_shot::<()>(
+            AiRouting::Direct,
+            || {
+                daemon_calls.set(daemon_calls.get() + 1);
+                Ok(())
+            },
+            || {
+                direct_calls.set(direct_calls.get() + 1);
+                Err(AiError::not_configured(None, "direct failed"))
+            },
+        );
+
+        assert!(result.is_err());
+        assert_eq!(daemon_calls.get(), 0);
+        assert_eq!(direct_calls.get(), 1);
+    }
 }

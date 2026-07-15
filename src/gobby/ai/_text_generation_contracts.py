@@ -28,6 +28,7 @@ class TextGenerationRequest:
     cwd: str | None = None
     candidate_timeout_seconds: float | None = None
     cli_candidate_timeout_seconds: float | None = None
+    total_timeout_seconds: float | None = None
 
 
 class TextGenerateAdapter(Protocol):

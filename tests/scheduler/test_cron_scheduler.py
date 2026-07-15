@@ -607,6 +607,7 @@ async def test_stale_tracked_run_is_excluded_from_age_sweep(
         check_interval_seconds=60,
         max_concurrent_jobs=1,
         running_timeout_seconds=60,
+        stale_run_grace_seconds=0,
     )
     scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
     stale_job = cron_storage.create_job(

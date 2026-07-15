@@ -513,10 +513,14 @@ mod tests {
     }
 
     #[test]
-    fn text_generation_outlasts_vision_for_local_reasoning_models() {
+    fn text_generation_uses_the_bounded_daemon_request_timeout() {
         assert_eq!(
             timeout_for(AiCapability::TextGenerate),
-            TEXT_GENERATE_TIMEOUT
+            Duration::from_secs(1200)
+        );
+        assert_eq!(
+            timeout_for(AiCapability::ToolChat),
+            Duration::from_secs(1200)
         );
         assert_eq!(timeout_for(AiCapability::VisionExtract), VISION_TIMEOUT);
         assert!(timeout_for(AiCapability::VisionExtract) < timeout_for(AiCapability::TextGenerate));

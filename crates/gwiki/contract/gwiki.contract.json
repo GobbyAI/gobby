@@ -1,6 +1,6 @@
 {
   "tool": "gwiki",
-  "contract_version": 14,
+  "contract_version": 15,
   "summary": "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
   "global_flags": [
     {
@@ -935,6 +935,14 @@
           "repeatable": false
         },
         {
+          "name": "--time-budget-seconds",
+          "takes_value": true,
+          "value_name": "SECONDS",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
           "name": "--dry-run",
           "takes_value": false,
           "value_name": null,
@@ -970,6 +978,8 @@
         "pages_updated",
         "failures",
         "clusters",
+        "budget_exhausted",
+        "deferred_clusters",
         "skipped_over_budget",
         "reconciled_no_synthesis",
         "notes",

@@ -1,12 +1,14 @@
 use chrono::{NaiveDate, Utc};
-use gobby_core::config::AiRouting;
+use gobby_core::config::{AiCapability, AiRouting};
 
 use crate::explainer::{ExplainerGenerator, ExplainerPrompt};
 use crate::support::scope::resolve_selection_context;
 use crate::support::time::collect_timestamp;
-use crate::{CommandOutcome, RecapOptions, ScopeSelection, WikiError, recap};
+use crate::{CommandOutcome, RecapOptions, ScopeSelection, WikiError, daemon, recap};
 
-use super::lanes::{ai_notice_label, resolve_explainer_transport, routing_label};
+use super::lanes::{
+    ai_notice_label, resolve_ai_selection, resolve_explainer_transport, routing_label,
+};
 
 const COMMAND: &str = "gwiki recap";
 
@@ -19,12 +21,18 @@ pub(crate) fn execute(
     let vault_root = context.scope.root().to_path_buf();
     let timestamp = collect_timestamp()?;
     let date = resolve_date(options.date.as_deref())?;
+    let daemon_report = daemon::probe_daemon_capabilities();
+    let ai_selection = resolve_ai_selection(
+        ai,
+        COMMAND,
+        AiCapability::TextGenerate,
+        daemon_report.synthesis.available,
+    );
 
     // Recap is one bounded completion by design — never the Lane B tool loop —
     // so it survives local models that cannot drive an agent loop.
-    let transport = resolve_explainer_transport(ai, COMMAND);
+    let transport = resolve_explainer_transport(ai_selection.route, COMMAND);
     let route_label = transport.route_label();
-    let fallback = transport.fallback();
     let notice = transport.notice_kind();
     let mut generate = |prompt: &ExplainerPrompt| transport.generate(prompt);
     let generator: Option<ExplainerGenerator<'_>> = if transport.is_active() {
@@ -50,10 +58,10 @@ pub(crate) fn execute(
         object.insert(
             "ai".to_string(),
             serde_json::json!({
-                "requested_mode": routing_label(ai),
+                "requested_mode": routing_label(ai_selection.requested),
                 "lane": "one_shot",
                 "route": route_label,
-                "fallback": fallback,
+                "selection_reason": ai_selection.selection_reason,
                 "notice": notice.map(ai_notice_label),
             }),
         );

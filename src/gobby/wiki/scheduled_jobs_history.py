@@ -235,6 +235,8 @@ def _run_error(
     status: str,
 ) -> str | None:
     """Error text for gwiki results that must record a failed cron run."""
+    if command == "upkeep" and (upkeep_error := _upkeep_failures_error(payload)):
+        return upkeep_error
     if index_handoff_error := _index_handoff_degradation(result):
         return index_handoff_error
     if result.get("ok") is not False and status.lower() not in _FAILED_RUN_STATUSES:
@@ -250,6 +252,28 @@ def _run_error(
     if isinstance(stderr, str) and stderr.strip():
         return stderr.strip()
     return f"gwiki {command} reported status '{status}'"
+
+
+def _upkeep_failures_error(payload: dict[str, Any]) -> str | None:
+    failures = payload.get("failures")
+    if not isinstance(failures, int) or isinstance(failures, bool) or failures <= 0:
+        return None
+    representative_errors: list[str] = []
+    clusters = payload.get("clusters")
+    if isinstance(clusters, list):
+        for cluster in clusters:
+            if not isinstance(cluster, dict):
+                continue
+            error = cluster.get("error")
+            if isinstance(error, str) and error and error not in representative_errors:
+                representative_errors.append(error)
+            if len(representative_errors) == 3:
+                break
+    label = "failure" if failures == 1 else "failures"
+    summary = f"gwiki upkeep reported {failures} synthesis {label}"
+    if representative_errors:
+        summary = f"{summary}: {'; '.join(representative_errors)}"
+    return summary
 
 
 def _index_handoff_degradation(result: dict[str, Any]) -> str | None:

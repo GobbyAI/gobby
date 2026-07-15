@@ -144,7 +144,7 @@ class CronScheduler:
     def _sweep_stale_running_runs(self) -> int:
         """Fail timed-out runs so they stop consuming scheduler capacity."""
         swept = self.storage.fail_stale_running_runs(
-            self.config.running_timeout_seconds,
+            self.config.stale_run_timeout_seconds,
             exclude_run_ids=self._active_run_ids,
         )
         if swept:

@@ -2148,8 +2148,9 @@ class TestGenerationConfig:
 
     def test_candidate_timeout_default(self) -> None:
         config = GenerationConfig()
-        assert config.candidate_timeout_seconds == 60.0
-        assert config.cli_candidate_timeout_seconds == 600.0
+        assert config.timeout_seconds == 1200.0
+        assert config.candidate_timeout_seconds == 30.0
+        assert config.cli_candidate_timeout_seconds == 60.0
         assert config.spawn_cold_max_concurrency == 3
 
     def test_candidate_timeout_validation(self) -> None:

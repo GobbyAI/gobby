@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use gobby_core::local_token::{AUTHORIZATION_HEADER, authorization_bearer, read_local_cli_token};
 use serde::Serialize;
 
 const PROBE_TIMEOUT: Duration = Duration::from_millis(750);
@@ -88,7 +89,12 @@ struct UreqProbeTransport;
 impl DaemonProbeTransport for UreqProbeTransport {
     fn status(&self, base_url: &str, method: &str, path: &str) -> ProbeObservation {
         let url = format!("{}{}", base_url.trim_end_matches('/'), path);
-        match ureq::request(method, &url).timeout(PROBE_TIMEOUT).call() {
+        let request = ureq::request(method, &url).timeout(PROBE_TIMEOUT);
+        let request = match read_local_cli_token() {
+            Ok(token) => request.set(AUTHORIZATION_HEADER, &authorization_bearer(&token)),
+            Err(_) => request,
+        };
+        match request.call() {
             Ok(response) => ProbeObservation::HttpStatus(response.status()),
             Err(ureq::Error::Status(status, _)) => ProbeObservation::HttpStatus(status),
             Err(error) => ProbeObservation::TransportError(error.to_string()),

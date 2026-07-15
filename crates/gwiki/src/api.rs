@@ -183,6 +183,7 @@ pub struct UpkeepOptions {
     pub min_mentions: usize,
     pub max_sources_per_page: usize,
     pub dry_run: bool,
+    pub time_budget_seconds: Option<u64>,
 }
 
 impl UpkeepOptions {
@@ -198,6 +199,7 @@ impl Default for UpkeepOptions {
             min_mentions: Self::DEFAULT_MIN_MENTIONS,
             max_sources_per_page: Self::DEFAULT_MAX_SOURCES_PER_PAGE,
             dry_run: false,
+            time_budget_seconds: None,
         }
     }
 }

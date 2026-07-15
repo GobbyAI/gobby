@@ -6,7 +6,7 @@ use gobby_core::cli_contract::{
 pub fn contract() -> CliContract {
     CliContract {
         tool: "gwiki",
-        contract_version: 14,
+        contract_version: 15,
         summary: "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
         global_flags: vec![format_flag(), FlagContract::switch("--quiet")],
         scope: Some(ScopeContract {
@@ -438,6 +438,7 @@ pub fn contract() -> CliContract {
                     FlagContract::value("--max-pages", "N"),
                     FlagContract::value("--min-mentions", "N"),
                     FlagContract::value("--max-sources-per-page", "N"),
+                    FlagContract::value("--time-budget-seconds", "SECONDS"),
                     FlagContract::switch("--dry-run"),
                     ai_flag("--ai"),
                 ],
@@ -453,6 +454,8 @@ pub fn contract() -> CliContract {
                     "pages_updated",
                     "failures",
                     "clusters",
+                    "budget_exhausted",
+                    "deferred_clusters",
                     "skipped_over_budget",
                     "reconciled_no_synthesis",
                     "notes",

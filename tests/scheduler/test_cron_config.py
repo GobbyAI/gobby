@@ -15,7 +15,9 @@ def test_cron_config_defaults() -> None:
     assert config.enabled is True
     assert config.check_interval_seconds == 60
     assert config.max_concurrent_jobs == 5
-    assert config.running_timeout_seconds == 600
+    assert config.running_timeout_seconds == 1440
+    assert config.stale_run_grace_seconds == 120
+    assert config.stale_run_timeout_seconds == 1560
     assert config.cleanup_after_days == 30
     assert config.backoff_delays == [30, 60, 300, 900, 3600]
 
@@ -27,6 +29,7 @@ def test_cron_config_custom_values() -> None:
         check_interval_seconds=120,
         max_concurrent_jobs=10,
         running_timeout_seconds=900,
+        stale_run_grace_seconds=45,
         cleanup_after_days=7,
         backoff_delays=[10, 30, 60],
     )
@@ -34,6 +37,8 @@ def test_cron_config_custom_values() -> None:
     assert config.check_interval_seconds == 120
     assert config.max_concurrent_jobs == 10
     assert config.running_timeout_seconds == 900
+    assert config.stale_run_grace_seconds == 45
+    assert config.stale_run_timeout_seconds == 945
     assert config.cleanup_after_days == 7
     assert config.backoff_delays == [10, 30, 60]
 
@@ -49,6 +54,11 @@ def test_cron_config_rejects_low_running_timeout() -> None:
     """running_timeout_seconds must be >= 60."""
     with pytest.raises(ValueError, match="at least 60"):
         CronConfig(running_timeout_seconds=59)
+
+
+def test_cron_config_rejects_negative_stale_run_grace() -> None:
+    with pytest.raises(ValueError, match="stale_run_grace_seconds"):
+        CronConfig(stale_run_grace_seconds=-1)
 
 
 def test_cron_config_rejects_zero_max_concurrent() -> None:
