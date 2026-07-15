@@ -63,8 +63,8 @@ class LazyBool:
     Used to avoid expensive operations (git status, DB queries) when
     evaluating block_tools conditions that don't reference certain values.
 
-    The computation is triggered when the value is used in a boolean context
-    (e.g., `if lazy_val:` or `not lazy_val`), which happens during eval().
+    The computation is triggered when the value is used in a boolean context,
+    compared, or hashed. The result is cached after the first computation.
     """
 
     __slots__ = ("_thunk", "_computed", "_value")
@@ -79,6 +79,14 @@ class LazyBool:
             self._value = self._thunk()
             self._computed = True
         return self._value
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, LazyBool):
+            other = bool(other)
+        return bool(self) == other
+
+    def __hash__(self) -> int:
+        return hash(bool(self))
 
     def __repr__(self) -> str:
         if self._computed:

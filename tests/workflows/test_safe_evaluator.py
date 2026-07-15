@@ -12,6 +12,7 @@ from gobby.workflows.safe_evaluator import (
     ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS,
     ASSISTANT_RESPONSE_SCAN_LIMIT,
     MAX_PAYLOAD_DEPTH,
+    LazyBool,
     SafeExpressionEvaluator,
     build_condition_helpers,
 )
@@ -59,6 +60,43 @@ def _build_evaluator(
         context=context,
     )
     return SafeExpressionEvaluator(context, helpers)
+
+
+class TestLazyBool:
+    @pytest.mark.parametrize(("value", "literal"), [(True, "true"), (False, "false")])
+    def test_equality_and_inequality_evaluate_once(self, value: bool, literal: str) -> None:
+        calls = 0
+
+        def thunk() -> bool:
+            nonlocal calls
+            calls += 1
+            return value
+
+        evaluator = SafeExpressionEvaluator({"value": LazyBool(thunk)}, {})
+
+        assert evaluator.evaluate(f"value == {literal}") is True
+        assert evaluator.evaluate(f"value != {literal}") is False
+        assert calls == 1
+
+    def test_lazy_values_compare_by_boolean_value(self) -> None:
+        assert LazyBool(lambda: True) == LazyBool(lambda: True)
+        assert LazyBool(lambda: False) != LazyBool(lambda: True)
+
+    def test_hash_and_containment_use_cached_boolean_value(self) -> None:
+        calls = 0
+
+        def thunk() -> bool:
+            nonlocal calls
+            calls += 1
+            return True
+
+        value = LazyBool(thunk)
+        evaluator = SafeExpressionEvaluator({"value": value}, {})
+
+        assert evaluator.evaluate("value in [true, false]") is True
+        assert hash(value) == hash(True)
+        assert value in {True}
+        assert calls == 1
 
 
 # --- task_tree_complete tests ---
