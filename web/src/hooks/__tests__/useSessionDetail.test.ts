@@ -1130,6 +1130,7 @@ describe('useSessionDetail', () => {
 
     const sessionFetchCounts: Record<string, number> = {}
     const tailFetchCounts: Record<string, number> = {}
+    let releaseSessionBMessages: (() => void) | null = null
     mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
       const url =
         typeof input === 'string'
@@ -1160,7 +1161,7 @@ describe('useSessionDetail', () => {
       if (messagesMatch) {
         const sessionId = messagesMatch[1]
         tailFetchCounts[sessionId] = (tailFetchCounts[sessionId] ?? 0) + 1
-        return new Response(
+        const response = new Response(
           JSON.stringify({
             messages: [
               {
@@ -1176,6 +1177,12 @@ describe('useSessionDetail', () => {
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         )
+        if (sessionId === 'sess-b') {
+          return new Promise<Response>((resolve) => {
+            releaseSessionBMessages = () => resolve(response)
+          })
+        }
+        return response
       }
 
       return new Response(JSON.stringify({ error: 'no mock route matched' }), {
@@ -1212,6 +1219,14 @@ describe('useSessionDetail', () => {
     await act(async () => {
       rerender({ selectedSessionId: 'sess-b' })
       await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(result.current.isLoading).toBe(true)
+    expect(result.current.messages).toEqual([])
+    expect(releaseSessionBMessages).not.toBeNull()
+
+    await act(async () => {
+      releaseSessionBMessages?.()
       await Promise.resolve()
     })
     await act(async () => {

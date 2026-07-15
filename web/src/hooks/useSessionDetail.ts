@@ -113,6 +113,8 @@ export function useSessionDetail(sessionId: string | null) {
   const resetPaging = useCallback(() => {
     const emptyWindow = createEmptyTranscriptWindow<SessionMessage>()
     transcriptWindowRef.current = emptyWindow
+    messagesRef.current = emptyWindow.messages
+    setMessages(emptyWindow.messages)
     setWindowStart(0)
     setWindowEnd(0)
     setRenderedTotal(0)
@@ -166,6 +168,7 @@ export function useSessionDetail(sessionId: string | null) {
       sessionIdRef.current === activeSessionId && detailLoadVersionRef.current === loadVersion
 
     if (showLoading) {
+      resetPaging()
       setIsLoading(true)
     }
     setSessionError(null)
