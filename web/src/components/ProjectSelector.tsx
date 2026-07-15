@@ -264,8 +264,6 @@ export function ProjectSelector({
           size="md"
           disabled={disabled}
           className="project-selector-segmented"
-          // Dense app chrome exception to the .impeccable.md 44px touch-target floor.
-          coarseTouchTarget={false}
         />
       </div>
       <div className="project-selector-compact-wrap">

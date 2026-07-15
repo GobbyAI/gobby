@@ -177,8 +177,9 @@ function hasContainerAncestor(rule: Rule, container: string): boolean {
 
 function findRule(root: Root, selector: string, media?: string): Rule {
   let found: Rule | undefined
-  root.walkRules(selector, rule => {
+  root.walkRules(rule => {
     if (found) return
+    if (!rule.selectors.includes(selector)) return
     const mediaMatches = media ? hasMediaAncestor(rule, media) : !hasAnyMediaAncestor(rule)
     if (mediaMatches) found = rule
   })
@@ -275,7 +276,7 @@ describe('mobile chrome CSS', () => {
     expect(segmentedControlIndex).toBeLessThan(appShellIndex)
   })
 
-  it('keeps the top app chrome compact on mobile touch viewports', () => {
+  it('keeps the top app chrome compact on narrow screens and touch-sized for coarse pointers', () => {
     const appSource = readSource('src/App.tsx')
     const projectSelectorSource = readSource('src/components/ProjectSelector.tsx')
     const segmentedControlCss = parseCss('src/styles/segmented-control.css')
@@ -289,7 +290,7 @@ describe('mobile chrome CSS', () => {
     expectClassToken(appSource, 'app-brand-title')
     expectClassToken(appSource, 'app-header-actions')
     expectClassToken(appSource, 'app-health-badge')
-    expect(projectSelectorSource).toContain('coarseTouchTarget={false}')
+    expect(projectSelectorSource).not.toContain('coarseTouchTarget={false}')
 
     expectDeclarations(
       shellCss,
@@ -323,6 +324,24 @@ describe('mobile chrome CSS', () => {
     })
     expectDeclarations(
       shellCss,
+      '.app-header-actions',
+      { '--control-row-height': '2.75rem' },
+      '(pointer: coarse)',
+    )
+    expectDeclarations(
+      shellCss,
+      '.app-header-actions .app-theme-toggle',
+      { 'min-width': '2.75rem', 'min-height': '2.75rem' },
+      '(pointer: coarse)',
+    )
+    expectDeclarations(
+      shellCss,
+      '.app-header-actions .segmented-control__option',
+      { 'min-width': '2.75rem', 'min-height': '2.75rem' },
+      '(pointer: coarse)',
+    )
+    expectDeclarations(
+      shellCss,
       '.app-brand-title',
       { 'font-size': '1.25rem' },
       '(max-width: 768px)',
@@ -331,6 +350,7 @@ describe('mobile chrome CSS', () => {
 
   it('keeps activity panel filter toolbars to one compact row', () => {
     const activityCss = parseCss('src/components/chat/styles/activity-panel.css')
+    const sessionsCss = parseCss('src/components/chat/styles/sessions-tab.css')
 
     expect(findRule(activityCss, '.activity-panel-toolbar').selector).toBe(
       '.activity-panel-toolbar',
@@ -355,6 +375,36 @@ describe('mobile chrome CSS', () => {
     expectDeclarations(activityCss, '.activity-panel-toolbar-segmented', {
       'font-size': 'var(--text-sm)',
     })
+    expectDeclarations(
+      activityCss,
+      '.activity-panel-search',
+      { 'min-height': '2.75rem' },
+      '(pointer: coarse)',
+    )
+    expectDeclarations(
+      activityCss,
+      '.activity-panel-mobile-trigger',
+      { 'min-height': '2.75rem' },
+      '(pointer: coarse)',
+    )
+    expectDeclarations(
+      activityCss,
+      '.activity-panel-toolbar .btn-sm',
+      { 'min-width': '2.75rem', 'min-height': '2.75rem' },
+      '(pointer: coarse)',
+    )
+    expectDeclarations(
+      activityCss,
+      '.activity-filter-dropdown__item',
+      { 'min-height': '2.75rem' },
+      '(pointer: coarse)',
+    )
+    expectDeclarations(
+      sessionsCss,
+      '.quick-menu-item',
+      { 'min-height': '2.75rem' },
+      '(pointer: coarse)',
+    )
   })
 
   it('shows an accent focus-visible ring on activity panel search inputs', () => {
