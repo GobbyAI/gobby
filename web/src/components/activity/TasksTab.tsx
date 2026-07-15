@@ -466,7 +466,7 @@ export const TasksTab = memo(function TasksTab({
         : null,
     [selectedTaskId, tasks],
   );
-  const headerRef = taskDetail?.ref ?? selectedTaskSummary?.ref ?? null;
+  const headerRef = selectedTaskSummary?.ref ?? taskDetail?.ref ?? null;
   let parentTask: ParentTaskRef | null = null;
   if (taskDetail?.parent_task_id) {
     const parent = tasks.find((t) => t.id === taskDetail.parent_task_id);

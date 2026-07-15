@@ -733,6 +733,26 @@ describe("TasksTab", () => {
     });
   });
 
+  it("shows the selected task ref while its detail is loading", async () => {
+    render(<TasksTab projectId="proj-1" />);
+
+    fireEvent.click(await screen.findByText("Review approved task"));
+    await screen.findByText("Review approved task detail");
+    expect(screen.getByText("Task #401")).toBeInTheDocument();
+
+    const originalFetch = mockFetch.fn.getMockImplementation();
+    const pendingDetail = new Promise<Response>(() => {});
+    mockFetch.fn.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/api/tasks/task-2")) return pendingDetail;
+      return originalFetch?.(input, init);
+    });
+
+    fireEvent.click(screen.getByText("Open task 2"));
+
+    expect(screen.getByText("Task #411")).toBeInTheDocument();
+    expect(screen.queryByText("Task #401")).toBeNull();
+  });
+
   it("renders detail metadata in the lower pane without the old inline summary line", async () => {
     mockFetch.resetRoutes();
     const detailStage = {
