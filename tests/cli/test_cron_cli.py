@@ -14,6 +14,7 @@ from gobby.storage.cron_models import CronJob, CronRun
 pytestmark = pytest.mark.unit
 
 PROJECT_ID = "00000000-0000-0000-0000-000000000000"
+JOB_ID = "11111111-1111-1111-1111-111111111111"
 
 
 def _make_job(**overrides: object) -> CronJob:
@@ -84,7 +85,11 @@ def mock_storage() -> Iterator[MagicMock]:
     mock_db = MagicMock()
     mock_st = MagicMock()
     # Non-uuid job refs (the "cj-abc123" fixtures) resolve by name first.
-    mock_st.get_job_by_name.side_effect = lambda name: _make_job() if name == "cj-abc123" else None
+    jobs_by_name = {
+        "cj-abc123": _make_job(),
+        "Test Job": _make_job(id=JOB_ID),
+    }
+    mock_st.get_job_by_name.side_effect = jobs_by_name.get
     with patch("gobby.cli.cron.get_cron_storage", return_value=(mock_db, mock_st)):
         yield mock_st
 
@@ -285,6 +290,34 @@ class TestCronRun:
         mock_storage.get_job.assert_not_called()
         mock_storage.create_run.assert_not_called()
 
+    def test_run_resolves_job_name(self, runner, mock_storage) -> None:
+        with patch("gobby.cli.cron.get_daemon_client") as get_client:
+            client = get_client.return_value
+            client.call_http_api.return_value = _make_daemon_response()
+
+            result = runner.invoke(cli, ["cron", "run", "Test Job"])
+
+        assert result.exit_code == 0
+        mock_storage.get_job_by_name.assert_called_once_with("Test Job")
+        client.call_http_api.assert_called_once_with(
+            f"/api/cron/jobs/{JOB_ID}/run",
+            method="POST",
+        )
+
+    def test_run_accepts_job_uuid(self, runner, mock_storage) -> None:
+        with patch("gobby.cli.cron.get_daemon_client") as get_client:
+            client = get_client.return_value
+            client.call_http_api.return_value = _make_daemon_response()
+
+            result = runner.invoke(cli, ["cron", "run", JOB_ID])
+
+        assert result.exit_code == 0
+        mock_storage.get_job_by_name.assert_not_called()
+        client.call_http_api.assert_called_once_with(
+            f"/api/cron/jobs/{JOB_ID}/run",
+            method="POST",
+        )
+
     def test_run_not_found(self, runner, mock_storage) -> None:
         response = _make_daemon_response(
             status_code=404,
@@ -383,6 +416,14 @@ class TestCronToggle:
         assert result.exit_code == 0
         assert "disabled" in result.output
 
+    def test_toggle_resolves_job_name(self, runner, mock_storage) -> None:
+        mock_storage.toggle_job.return_value = _make_job(id=JOB_ID)
+
+        result = runner.invoke(cli, ["cron", "toggle", "Test Job"])
+
+        assert result.exit_code == 0
+        mock_storage.toggle_job.assert_called_once_with(JOB_ID)
+
     def test_toggle_not_found(self, runner, mock_storage) -> None:
         mock_storage.toggle_job.return_value = None
         result = runner.invoke(cli, ["cron", "toggle", "cj-nonexistent"])
@@ -409,6 +450,16 @@ class TestCronRuns:
         result = runner.invoke(cli, ["cron", "runs", "cj-abc123"])
         assert result.exit_code == 0
         assert "no runs" in result.output.lower()
+
+    def test_runs_resolves_job_name(self, runner, mock_storage) -> None:
+        mock_storage.get_job.return_value = _make_job(id=JOB_ID)
+        mock_storage.list_runs.return_value = []
+
+        result = runner.invoke(cli, ["cron", "runs", "Test Job"])
+
+        assert result.exit_code == 0
+        mock_storage.get_job.assert_called_once_with(JOB_ID)
+        mock_storage.list_runs.assert_called_once_with(JOB_ID, limit=20)
 
     def test_runs_json_output(self, runner, mock_storage) -> None:
         mock_storage.get_job.return_value = _make_job()
@@ -442,6 +493,14 @@ class TestCronRemove:
         assert result.exit_code == 0
         assert "removed" in result.output.lower()
 
+    def test_remove_resolves_job_name(self, runner, mock_storage) -> None:
+        mock_storage.delete_job.return_value = True
+
+        result = runner.invoke(cli, ["cron", "remove", "Test Job", "--yes"])
+
+        assert result.exit_code == 0
+        mock_storage.delete_job.assert_called_once_with(JOB_ID)
+
     def test_remove_not_found(self, runner, mock_storage) -> None:
         mock_storage.delete_job.return_value = False
         result = runner.invoke(cli, ["cron", "remove", "cj-nonexistent", "--yes"])
@@ -458,6 +517,16 @@ class TestCronEdit:
         assert result.exit_code == 0
         assert "New Name" in result.output
         mock_storage.update_job.assert_called_once()
+
+    def test_edit_resolves_job_name(self, runner, mock_storage) -> None:
+        mock_storage.get_job.return_value = _make_job(id=JOB_ID)
+        mock_storage.update_job.return_value = _make_job(id=JOB_ID, description="Updated")
+
+        result = runner.invoke(cli, ["cron", "edit", "Test Job", "--description", "Updated"])
+
+        assert result.exit_code == 0
+        mock_storage.get_job.assert_called_once_with(JOB_ID)
+        mock_storage.update_job.assert_called_once_with(JOB_ID, description="Updated")
 
     def test_edit_schedule(self, runner, mock_storage) -> None:
         mock_storage.get_job.return_value = _make_job()
