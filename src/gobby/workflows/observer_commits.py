@@ -8,7 +8,11 @@ import shlex
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.normalization import _SHELL_TOOLS
-from gobby.workflows.observer_utils import _extract_shell_output_text
+from gobby.workflows.observer_utils import (
+    _extract_shell_command,
+    _extract_shell_output_text,
+    _shell_tool_succeeded,
+)
 
 if TYPE_CHECKING:
     from gobby.hooks.events import HookEvent
@@ -126,7 +130,8 @@ def detect_bash_commit(event: HookEvent, variables: dict[str, Any], session_id: 
     if tool_name not in _SHELL_TOOLS:
         return
 
-    if event.data.get("is_error"):
+    command = _extract_shell_command(event)
+    if not _is_git_commit_command(command) or _shell_tool_succeeded(event) is False:
         return
 
     raw_output = event.data.get("tool_output")
@@ -145,9 +150,7 @@ def detect_bash_commit(event: HookEvent, variables: dict[str, Any], session_id: 
         logger.debug("Session %s: task_has_commits=true (Bash git commit output)", session_id)
         return
 
-    tool_input = event.data.get("tool_input") or {}
-    command = tool_input.get("command", "") if isinstance(tool_input, dict) else ""
-    if command and _is_git_commit_command(command) and _looks_like_commit_success(output):
+    if _looks_like_commit_success(output):
         variables["task_has_commits"] = True
         logger.debug(
             "Session %s: task_has_commits=true (Bash git commit command fallback)",

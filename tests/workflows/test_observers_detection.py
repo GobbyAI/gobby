@@ -1351,8 +1351,75 @@ class TestDetectBashCommit:
 
     def test_dict_output_with_stdout_key(self, variables) -> None:
         """Some adapters use 'stdout' key."""
-        event = _make_bash_event_dict({"stdout": "[feat/x 1a2b3c4] Add feature\n 2 files changed"})
+        event = _make_bash_event_dict(
+            {
+                "stdout": "[feat/x 1a2b3c4] Add feature\n 2 files changed",
+                "success": True,
+            }
+        )
         detect_bash_commit(event, variables, SESSION_ID)
+        assert variables["task_has_commits"] is True
+
+    @pytest.mark.parametrize(
+        "failure_signal",
+        [
+            {"exitCode": 1},
+            {"exit_code": 1},
+            {"returncode": 1},
+            {"success": False},
+            {"status": "failed"},
+        ],
+    )
+    def test_structured_failure_with_commit_output_is_ignored(
+        self, variables, failure_signal: dict[str, object]
+    ) -> None:
+        event = _make_bash_event_dict(
+            {
+                "output": "[main abc1234] Fix bug\n 1 file changed",
+                **failure_signal,
+            }
+        )
+
+        detect_bash_commit(event, variables, SESSION_ID)
+
+        assert "task_has_commits" not in variables
+
+    def test_unrelated_command_with_commit_output_is_ignored(self, variables) -> None:
+        event = _make_bash_event(
+            "[main abc1234] Fix bug\n 1 file changed",
+            command="cat commit-output.txt",
+        )
+
+        detect_bash_commit(event, variables, SESSION_ID)
+
+        assert "task_has_commits" not in variables
+
+    def test_metadata_failure_with_commit_output_is_ignored(self, variables) -> None:
+        event = _make_bash_event("[main abc1234] Fix bug\n 1 file changed", is_error=None)
+        event.metadata["is_failure"] = True
+
+        detect_bash_commit(event, variables, SESSION_ID)
+
+        assert "task_has_commits" not in variables
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git add file.py && git commit -m 'Fix'",
+            "git -C /repo commit -m 'Fix'",
+            "/usr/bin/git commit -m 'Fix'",
+        ],
+    )
+    def test_supported_commit_commands_with_successful_dict_output(
+        self, variables, command: str
+    ) -> None:
+        event = _make_bash_event_dict(
+            {"output": "[main abc1234] Fix bug\n 1 file changed", "exitCode": 0},
+            command=command,
+        )
+
+        detect_bash_commit(event, variables, SESSION_ID)
+
         assert variables["task_has_commits"] is True
 
     def test_dict_output_without_commit_pattern(self, variables) -> None:
