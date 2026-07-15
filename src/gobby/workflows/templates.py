@@ -3,7 +3,8 @@ import re
 import shlex
 from typing import Any, Protocol, runtime_checkable
 
-from jinja2 import Environment, FileSystemLoader, select_autoescape
+from jinja2 import FileSystemLoader, StrictUndefined, select_autoescape
+from jinja2.sandbox import SandboxedEnvironment
 
 logger = logging.getLogger(__name__)
 
@@ -67,11 +68,12 @@ class TemplateEngine:
         else:
             loader = None
 
-        self.env = Environment(
+        self.env = SandboxedEnvironment(
             loader=loader,
             # Disable autoescape for inline templates (default_for_string=False)
             # We generate markdown, not HTML - escaping breaks apostrophes etc.
             autoescape=select_autoescape(["html", "xml"], default_for_string=False),
+            undefined=StrictUndefined,
             trim_blocks=True,
             lstrip_blocks=True,
         )

@@ -10,7 +10,12 @@ import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
-from gobby.workflows.definitions import PipelineApproval, PipelineDefinition, PipelineStep
+from gobby.workflows.definitions import (
+    MCPStepConfig,
+    PipelineApproval,
+    PipelineDefinition,
+    PipelineStep,
+)
 from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.pipeline_state import ApprovalRequired, ExecutionStatus, StepStatus
 
@@ -415,6 +420,26 @@ class TestRendererInvokePipelineDict:
 
         engine = TemplateEngine()
         return StepRenderer(engine)
+
+    @pytest.mark.parametrize(
+        "step",
+        [
+            PipelineStep(id="missing-exec", exec="echo ${{ inputs.missing }}"),
+            PipelineStep(id="missing-prompt", prompt="Use ${{ inputs.missing }}"),
+            PipelineStep(
+                id="missing-mcp",
+                mcp=MCPStepConfig(
+                    server="test-server",
+                    tool="test-tool",
+                    arguments={"value": "${{ inputs.missing }}"},
+                ),
+            ),
+        ],
+        ids=["exec", "prompt", "mcp-arguments"],
+    )
+    def test_missing_variable_fails_step(self, renderer, step: PipelineStep) -> None:
+        with pytest.raises(ValueError, match=f"Failed to render step {step.id}"):
+            renderer.render_step(step, {"inputs": {}, "steps": {}})
 
     def test_renders_dict_invoke_pipeline_name(self, renderer) -> None:
         """Bug 1: Template vars in invoke_pipeline dict 'name' should be rendered."""
