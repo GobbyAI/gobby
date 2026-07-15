@@ -104,13 +104,13 @@ def test_runtime_process_and_explicit_values_override_canonical(
     assert runtime.profiles == ("qdrant",)
 
 
-def test_service_environment_reads_config_and_secret_store(
+def test_service_environment_restores_persisted_custom_qdrant_port(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     db = _Db()
     _ConfigStore.values = {
-        "databases.qdrant.url": "http://localhost:7000",
-        "databases.qdrant.port": 7000,
+        "databases.qdrant.url": "http://localhost:7333",
+        "databases.qdrant.port": 7333,
         "databases.falkordb.host": "127.0.0.1",
         "databases.falkordb.port": 17000,
         "databases.falkordb.password": "$secret:falkor-test",
@@ -126,8 +126,8 @@ def test_service_environment_reads_config_and_secret_store(
     env, profiles = compose_env._service_environment(tmp_path)
 
     assert env == {
-        "GOBBY_QDRANT_HTTP_PORT": "7000",
-        "GOBBY_QDRANT_GRPC_PORT": "7001",
+        "GOBBY_QDRANT_HTTP_PORT": "7333",
+        "GOBBY_QDRANT_GRPC_PORT": "7334",
         "GOBBY_FALKORDB_PASSWORD": "falkor-secret",
         "GOBBY_FALKORDB_PORT": "17000",
     }
