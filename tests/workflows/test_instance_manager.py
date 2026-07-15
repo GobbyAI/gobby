@@ -80,7 +80,7 @@ def test_get_instance_not_found(db: HubDatabase) -> None:
 
 
 def test_save_instance_upsert(db: HubDatabase) -> None:
-    """Test that save_instance updates existing row on conflict."""
+    """Upserts preserve creation identity and synchronize persisted timestamps."""
     from gobby.workflows.definitions import WorkflowInstance
     from gobby.workflows.state_manager import WorkflowInstanceManager
 
@@ -96,14 +96,24 @@ def test_save_instance_upsert(db: HubDatabase) -> None:
         step_action_count=0,
     )
     mgr.save_instance(instance)
+    created_at = instance.created_at
+    updated_at = instance.updated_at
 
-    # Update
-    instance.current_step = "complete"
-    instance.step_action_count = 5
-    mgr.save_instance(instance)
+    replacement = WorkflowInstance(
+        id=INST_2,
+        session_id=S1,
+        workflow_name="auto-task",
+        current_step="complete",
+        step_action_count=5,
+    )
+    mgr.save_instance(replacement)
 
     result = mgr.get_instance(S1, "auto-task")
     assert result is not None
+    assert replacement.id == result.id == INST_1
+    assert replacement.created_at == result.created_at == created_at
+    assert replacement.updated_at == result.updated_at
+    assert replacement.updated_at > updated_at
     assert result.current_step == "complete"
     assert result.step_action_count == 5
 
@@ -222,7 +232,7 @@ def test_get_active_instances(db: HubDatabase) -> None:
     _ensure_session(db, S1)
     mgr = WorkflowInstanceManager(db)
 
-    # Create 3 instances with different priorities and enabled states
+    # Insert equal-priority instances in reverse lexical order to exercise the tiebreaker.
     mgr.save_instance(
         WorkflowInstance(
             id=INST_1,
@@ -247,7 +257,7 @@ def test_get_active_instances(db: HubDatabase) -> None:
             session_id=S1,
             workflow_name="auto-task",
             enabled=True,
-            priority=25,
+            priority=20,
         )
     )
     mgr.save_instance(
@@ -263,8 +273,8 @@ def test_get_active_instances(db: HubDatabase) -> None:
     active = mgr.get_active_instances(S1)
     assert len(active) == 3  # Disabled one excluded
     assert active[0].workflow_name == "session-lifecycle"  # priority=10
-    assert active[1].workflow_name == "developer"  # priority=20
-    assert active[2].workflow_name == "auto-task"  # priority=25
+    assert active[1].workflow_name == "auto-task"  # priority=20, lexical first
+    assert active[2].workflow_name == "developer"  # priority=20, lexical second
 
 
 def test_get_active_instances_empty(db: HubDatabase) -> None:
@@ -274,38 +284,6 @@ def test_get_active_instances_empty(db: HubDatabase) -> None:
     mgr = WorkflowInstanceManager(db)
     result = mgr.get_active_instances(NONEXISTENT_SESSION_ID)
     assert result == []
-
-
-def test_delete_instance(db: HubDatabase) -> None:
-    """Test deleting a workflow instance."""
-    from gobby.workflows.definitions import WorkflowInstance
-    from gobby.workflows.state_manager import WorkflowInstanceManager
-
-    _ensure_session(db, S1)
-    mgr = WorkflowInstanceManager(db)
-
-    mgr.save_instance(
-        WorkflowInstance(
-            id=INST_1,
-            session_id=S1,
-            workflow_name="auto-task",
-        )
-    )
-
-    assert mgr.get_instance(S1, "auto-task") is not None
-
-    mgr.delete_instance(S1, "auto-task")
-
-    assert mgr.get_instance(S1, "auto-task") is None
-
-
-def test_delete_instance_nonexistent(db: HubDatabase) -> None:
-    """Test that deleting a non-existent instance doesn't raise."""
-    from gobby.workflows.state_manager import WorkflowInstanceManager
-
-    mgr = WorkflowInstanceManager(db)
-    mgr.delete_instance(NONEXISTENT_SESSION_ID, "nonexistent")
-    assert mgr.get_instance(NONEXISTENT_SESSION_ID, "nonexistent") is None
 
 
 def test_delete_instances_for_session(db: HubDatabase) -> None:
@@ -346,45 +324,6 @@ def test_delete_instances_for_session(db: HubDatabase) -> None:
     remaining = mgr.get_active_instances(S2)
     assert len(remaining) == 1
     assert remaining[0].workflow_name == "plan-adversary-steps"
-
-
-def test_set_enabled(db: HubDatabase) -> None:
-    """Test toggling enabled state on an instance."""
-    from gobby.workflows.definitions import WorkflowInstance
-    from gobby.workflows.state_manager import WorkflowInstanceManager
-
-    _ensure_session(db, S1)
-    mgr = WorkflowInstanceManager(db)
-
-    mgr.save_instance(
-        WorkflowInstance(
-            id=INST_1,
-            session_id=S1,
-            workflow_name="auto-task",
-            enabled=True,
-        )
-    )
-
-    # Disable
-    mgr.set_enabled(S1, "auto-task", False)
-    result = mgr.get_instance(S1, "auto-task")
-    assert result is not None
-    assert result.enabled is False
-
-    # Re-enable
-    mgr.set_enabled(S1, "auto-task", True)
-    result = mgr.get_instance(S1, "auto-task")
-    assert result is not None
-    assert result.enabled is True
-
-
-def test_set_enabled_nonexistent(db: HubDatabase) -> None:
-    """Test set_enabled on non-existent instance doesn't raise."""
-    from gobby.workflows.state_manager import WorkflowInstanceManager
-
-    mgr = WorkflowInstanceManager(db)
-    mgr.set_enabled(NONEXISTENT_SESSION_ID, "nonexistent", True)
-    assert mgr.get_instance(NONEXISTENT_SESSION_ID, "nonexistent") is None
 
 
 def test_multiple_sessions_isolated(db: HubDatabase) -> None:

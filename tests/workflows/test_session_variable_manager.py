@@ -312,10 +312,10 @@ def test_delete_variables_nonexistent(db: Any) -> None:
 
 
 def test_variables_persist_across_workflow_changes(db: Any) -> None:
-    """Test that session variables persist when workflows are enabled/disabled.
+    """Test that session variables persist when workflow instances change.
 
     Session variables live in their own table, independent of workflow instances.
-    Enabling/disabling a workflow should not affect session variables.
+    Creating/removing workflow instances should not affect session variables.
     """
     from gobby.workflows.definitions import WorkflowInstance
     from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
@@ -336,7 +336,7 @@ def test_variables_persist_across_workflow_changes(db: Any) -> None:
             workflow_name="auto-task",
         )
     )
-    wi_mgr.delete_instance(S1, "auto-task")
+    wi_mgr.delete_instances_for_session(S1)
 
     # Session variables should be unaffected
     result = sv_mgr.get_variables(S1)

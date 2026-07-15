@@ -52,12 +52,12 @@ class WorkflowInstanceManager:
         return self._row_to_instance(row)
 
     def get_active_instances(self, session_id: str) -> list[WorkflowInstance]:
-        """Get all enabled workflow instances for a session, sorted by priority."""
+        """Get all enabled workflow instances for a session, sorted deterministically."""
         if not is_session_uuid(session_id):
             return []
         rows = self.db.fetchall(
             "SELECT * FROM workflow_instances WHERE session_id = %s AND enabled = %s "
-            "ORDER BY priority ASC",
+            "ORDER BY priority ASC, workflow_name ASC",
             (session_id, True),
         )
         return [self._row_to_instance(row) for row in rows]
@@ -67,7 +67,7 @@ class WorkflowInstanceManager:
         if not is_session_uuid(instance.session_id):
             return
         now = datetime.now(UTC).isoformat()
-        self.db.execute(
+        persisted = self.db.fetchone(
             """
             INSERT INTO workflow_instances (
                 id, session_id, workflow_name, enabled, priority,
@@ -84,6 +84,7 @@ class WorkflowInstanceManager:
                 variables = excluded.variables,
                 context_injected = excluded.context_injected,
                 updated_at = excluded.updated_at
+            RETURNING id, created_at, updated_at
             """,
             (
                 instance.id,
@@ -97,10 +98,15 @@ class WorkflowInstanceManager:
                 instance.total_action_count,
                 json.dumps(instance.variables),
                 instance.context_injected,
-                now,
+                instance.created_at.isoformat(),
                 now,
             ),
         )
+        if persisted is None:  # pragma: no cover - PostgreSQL RETURNING always yields a row.
+            raise RuntimeError("Workflow instance upsert returned no row")
+        instance.id = persisted["id"]
+        instance.created_at = require_stored_datetime(persisted["created_at"], "created_at")
+        instance.updated_at = require_stored_datetime(persisted["updated_at"], "updated_at")
 
     def merge_instance_variables(
         self,
@@ -125,15 +131,6 @@ class WorkflowInstanceManager:
             )
             return cursor.rowcount > 0
 
-    def delete_instance(self, session_id: str, workflow_name: str) -> None:
-        """Delete a workflow instance."""
-        if not is_session_uuid(session_id):
-            return
-        self.db.execute(
-            "DELETE FROM workflow_instances WHERE session_id = %s AND workflow_name = %s",
-            (session_id, workflow_name),
-        )
-
     def delete_instances_for_session(self, session_id: str) -> int:
         """Delete all workflow instances for a session and return deleted row count."""
         if not is_session_uuid(session_id):
@@ -144,17 +141,6 @@ class WorkflowInstanceManager:
                 (session_id,),
             )
             return cursor.rowcount
-
-    def set_enabled(self, session_id: str, workflow_name: str, enabled: bool) -> None:
-        """Toggle the enabled state of a workflow instance."""
-        if not is_session_uuid(session_id):
-            return
-        now = datetime.now(UTC).isoformat()
-        self.db.execute(
-            "UPDATE workflow_instances SET enabled = %s, updated_at = %s "
-            "WHERE session_id = %s AND workflow_name = %s",
-            (enabled, now, session_id, workflow_name),
-        )
 
     @staticmethod
     def _row_to_instance(row: Any) -> WorkflowInstance:
