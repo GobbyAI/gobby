@@ -686,12 +686,15 @@ class TestDiscoverLifecycleWorkflows:
         assert discovered[0].is_project is False
         assert discovered[0].priority == 10
 
+    @pytest.mark.parametrize("project_first", [False, True])
     @pytest.mark.asyncio
     async def test_discover_project_shadows_global(
         self,
         db: HubDatabase,
         project: Project,
         def_manager: LocalWorkflowDefinitionManager,
+        monkeypatch: pytest.MonkeyPatch,
+        project_first: bool,
     ) -> None:
         """Test that project workflows shadow global ones with the same name."""
         global_data = {
@@ -719,6 +722,12 @@ class TestDiscoverLifecycleWorkflows:
         )
 
         loader = WorkflowLoader(db=db)
+        assert loader.def_manager is not None
+        rows = loader.def_manager.list_all(project_id=project.id, workflow_type="workflow")
+        project_row = next(row for row in rows if row.project_id is not None)
+        global_row = next(row for row in rows if row.project_id is None)
+        ordered_rows = [project_row, global_row] if project_first else [global_row, project_row]
+        monkeypatch.setattr(loader.def_manager, "list_all", lambda **_: ordered_rows)
         discovered = await loader.discover_workflows(project_path=project.id)
 
         # Project entry should shadow the global one

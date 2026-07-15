@@ -62,6 +62,9 @@ def _merge_db_workflows(
 
             priority = row.priority
             is_project = row.project_id is not None
+            existing = discovered.get(row.name)
+            if existing is not None and existing.is_project and not is_project:
+                continue
             discovered[row.name] = DiscoveredWorkflow(
                 name=row.name,
                 definition=definition,
@@ -104,6 +107,9 @@ def _merge_db_pipelines(
 
             priority = row.priority
             is_project = row.project_id is not None
+            existing = discovered.get(row.name)
+            if existing is not None and existing.is_project and not is_project:
+                continue
             discovered[row.name] = DiscoveredWorkflow(
                 name=row.name,
                 definition=definition,

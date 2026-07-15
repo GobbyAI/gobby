@@ -936,8 +936,11 @@ class TestDiscoverPipelineWorkflows:
         assert len(project_pipelines) == 1
         assert project_pipelines[0].name == "project-pipeline"
 
+    @pytest.mark.parametrize("project_first", [False, True])
     @pytest.mark.asyncio
-    async def test_project_shadows_global_pipeline(self, loader, def_manager, project) -> None:
+    async def test_project_shadows_global_pipeline(
+        self, loader, def_manager, project, monkeypatch, project_first
+    ) -> None:
         """Test that project pipelines shadow global pipelines with same name."""
         # Global pipeline
         def_manager.create(
@@ -968,11 +971,14 @@ class TestDiscoverPipelineWorkflows:
             project_id=project.id,
         )
 
+        assert loader.def_manager is not None
+        rows = loader.def_manager.list_all(project_id=project.id, workflow_type="pipeline")
+        project_row = next(row for row in rows if row.project_id is not None)
+        global_row = next(row for row in rows if row.project_id is None)
+        ordered_rows = [project_row, global_row] if project_first else [global_row, project_row]
+        monkeypatch.setattr(loader.def_manager, "list_all", lambda **_: ordered_rows)
         result = await loader.discover_pipeline_workflows(project_path=project.id)
 
-        # _merge_db_pipelines uses a dict keyed by name so last write wins.
-        # list_all returns both (project_id=? OR project_id IS NULL) rows.
-        # The project row should shadow the global one.
         deploy_pipelines = [p for p in result if p.name == "deploy"]
         assert len(deploy_pipelines) == 1
         assert deploy_pipelines[0].is_project is True
