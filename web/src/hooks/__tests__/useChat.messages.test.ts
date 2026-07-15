@@ -673,6 +673,18 @@ describe("useChat message and conversation state", () => {
         session_type: "web_chat",
       },
     });
+    mockFetch.mockJsonResponse("/api/sessions/source-session", {
+      session: {
+        id: "source-session",
+        source: "claude",
+        session_type: "cli",
+        status: "active",
+      },
+    });
+    mockFetch.mockJsonResponse(
+      "/api/sessions/source-session/messages?limit=100",
+      { messages: [] },
+    );
 
     await loadModule();
     const { result } = renderHook(() => useChat());
@@ -681,6 +693,10 @@ describe("useChat message and conversation state", () => {
 
     const modeChanged = vi.fn();
     act(() => result.current.setOnModeChanged(modeChanged));
+
+    await act(async () => {
+      await result.current.continueSessionInChat("source-session", undefined);
+    });
 
     act(() => {
       ws.simulateMessage({
@@ -710,6 +726,112 @@ describe("useChat message and conversation state", () => {
     });
 
     expect(modeChanged).toHaveBeenCalledWith("normal");
+  });
+
+  it("ignores session_continued for a different active continuation", async () => {
+    mockFetch.mockJsonResponse("/api/sessions/source-session", {
+      session: {
+        id: "source-session",
+        source: "codex",
+        session_type: "cli",
+        status: "active",
+      },
+    });
+    mockFetch.mockJsonResponse(
+      "/api/sessions/source-session/messages?limit=100",
+      { messages: [] },
+    );
+
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    await act(async () => {
+      await result.current.continueSessionInChat("source-session", undefined);
+    });
+
+    const conversationId = result.current.conversationId;
+    const dbSessionId = result.current.dbSessionId;
+    const storedConversationId = localStorage.getItem("gobby-conversation-id");
+    const storedDbSessionId = localStorage.getItem("gobby-db-session-id");
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_continued",
+        conversation_id: "stale-conversation",
+        db_session_id: "stale-db-session",
+        source_session_id: "different-source-session",
+      });
+    });
+
+    expect(result.current.conversationId).toBe(conversationId);
+    expect(result.current.dbSessionId).toBe(dbSessionId);
+    expect(result.current.isContinuingSession).toBe(true);
+    expect(localStorage.getItem("gobby-conversation-id")).toBe(
+      storedConversationId,
+    );
+    expect(localStorage.getItem("gobby-db-session-id")).toBe(
+      storedDbSessionId,
+    );
+  });
+
+  it("ignores a matching session_continued after the conversation changes", async () => {
+    mockFetch.mockJsonResponse("/api/sessions/source-session", {
+      session: {
+        id: "source-session",
+        source: "codex",
+        session_type: "cli",
+        status: "active",
+      },
+    });
+    mockFetch.mockJsonResponse(
+      "/api/sessions/source-session/messages?limit=100",
+      { messages: [] },
+    );
+    mockFetch.mockJsonResponse(
+      "/api/chat/other-session/messages?limit=100&after_seq=0",
+      { messages: [] },
+    );
+    mockFetch.mockJsonResponse("/api/sessions/other-session", {
+      session: {
+        id: "other-session",
+        source: "claude",
+        session_type: "web_chat",
+        status: "active",
+      },
+    });
+
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    await act(async () => {
+      await result.current.continueSessionInChat("source-session", undefined);
+    });
+    act(() => result.current.switchConversation("other-session"));
+
+    const storedConversationId = localStorage.getItem("gobby-conversation-id");
+    const storedDbSessionId = localStorage.getItem("gobby-db-session-id");
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_continued",
+        conversation_id: "stale-conversation",
+        db_session_id: "stale-db-session",
+        source_session_id: "source-session",
+      });
+    });
+
+    expect(result.current.conversationId).toBe("other-session");
+    expect(result.current.dbSessionId).toBe("other-session");
+    expect(localStorage.getItem("gobby-conversation-id")).toBe(
+      storedConversationId,
+    );
+    expect(localStorage.getItem("gobby-db-session-id")).toBe(
+      storedDbSessionId,
+    );
   });
 
   it("restores the previous chat state when continueSessionInChat fails", async () => {

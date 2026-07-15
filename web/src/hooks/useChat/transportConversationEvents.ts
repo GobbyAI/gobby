@@ -269,6 +269,16 @@ export function handleSessionContinued(
   data: Record<string, unknown>,
   ctx: UseChatTransportParams,
 ) {
+  const sourceSessionId =
+    typeof data.source_session_id === "string" ? data.source_session_id : null;
+  const activeContinuationId = ctx.continuingSessionIdRef.current;
+  if (
+    !sourceSessionId ||
+    sourceSessionId !== activeContinuationId ||
+    ctx.dbSessionIdRef.current !== activeContinuationId
+  ) {
+    return;
+  }
   ctx.clearContinuingSession();
   const nextConversationId = (data.conversation_id as string | undefined) ?? null;
   const nextDbSessionId = (data.db_session_id as string) ?? null;
