@@ -19,13 +19,10 @@ from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager, WorkflowDefinitionRow
 from gobby.workflows.definitions import (
     PipelineDefinition,
-    WorkflowDefinition,
     normalize_workflow_definition_enabled,
 )
 
 logger = logging.getLogger(__name__)
-
-VALID_WORKFLOW_TYPES = {"rule", "variable", "agent", "pipeline"}
 
 
 def get_bundled_pipelines_path() -> Path:
@@ -152,6 +149,14 @@ def sync_bundled_pipelines(db: HubDatabase) -> dict[str, Any]:
                 scan_complete = False
                 continue
 
+            if data.get("type") != "pipeline":
+                logger.warning(
+                    "Skipping non-pipeline YAML file",
+                    extra={"workflow": str(yaml_file), "workflow_type": data.get("type")},
+                )
+                scan_complete = False
+                continue
+
             if "name" not in data:
                 logger.warning(
                     "Skipping YAML without 'name' field", extra={"workflow": str(yaml_file)}
@@ -160,11 +165,8 @@ def sync_bundled_pipelines(db: HubDatabase) -> dict[str, Any]:
                 continue
 
             # Validate against Pydantic schema
-            schema_cls = (
-                PipelineDefinition if data.get("type") == "pipeline" else WorkflowDefinition
-            )
             try:
-                schema_cls(**data)
+                PipelineDefinition(**data)
             except ValidationError as ve:
                 logger.warning(
                     "Skipping invalid workflow",
@@ -177,8 +179,7 @@ def sync_bundled_pipelines(db: HubDatabase) -> dict[str, Any]:
             on_disk.add(name)
             definition_json = json.dumps(data)
 
-            yaml_type = data.get("type", "")
-            workflow_type = yaml_type if yaml_type in VALID_WORKFLOW_TYPES else "pipeline"
+            workflow_type = "pipeline"
             description = data.get("description", "")
             version = str(data.get("version", "1.0"))
             enabled = normalize_workflow_definition_enabled(data, default=False)

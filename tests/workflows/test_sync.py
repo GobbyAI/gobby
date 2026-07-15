@@ -551,6 +551,25 @@ steps: []
             result = sync_bundled_pipelines(db)
             assert result["synced"] == 0
 
+    def test_rejects_non_pipeline_root_yaml(
+        self, db: HubDatabase, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from gobby.workflows.sync_pipelines import sync_bundled_pipelines
+
+        workflows_dir = tmp_path / "workflows"
+        pip_dir = workflows_dir / "pipelines"
+        pip_dir.mkdir(parents=True)
+        (workflows_dir / "rules.yaml").write_text("name: bundled-rules\ntype: step\nsteps: []\n")
+
+        with patch(
+            "gobby.workflows.sync_pipelines.get_bundled_pipelines_path", return_value=pip_dir
+        ):
+            result = sync_bundled_pipelines(db)
+
+        assert result["synced"] == 0
+        assert LocalWorkflowDefinitionManager(db).get_by_name("bundled-rules") is None
+        assert "Skipping non-pipeline YAML file" in caplog.text
+
     def test_syncs_valid_pipeline(self, db: HubDatabase, tmp_path: Path) -> None:
         from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 
