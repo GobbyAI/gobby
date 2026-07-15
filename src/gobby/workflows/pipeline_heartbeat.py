@@ -173,28 +173,50 @@ class PipelineHeartbeat:
 
         Returns 1 if action was taken, 0 otherwise.
         """
-        # Check if any agents are alive for this execution's session
-        has_alive_agents = await self._run_db(self._has_alive_agents, execution)
+        if not execution.session_id:
+            logger.warning(
+                "Heartbeat: skipped stalled execution %s because it has no owning session",
+                execution.id,
+            )
+            return 0
 
-        if has_alive_agents:
-            # Agents still working — touch updated_at so we don't re-flag
-            await self._run_db(
-                self._execution_manager.update_execution_status,
+        has_alive_agents = await self._run_db(self._has_alive_agents, execution)
+        session_alive = False
+        if self._session_manager:
+            session_alive = await self._run_db(self._is_session_alive, execution.session_id)
+
+        if has_alive_agents or session_alive:
+            updated = await self._run_db(
+                self._execution_manager.update_stalled_execution_status,
                 execution.id,
                 ExecutionStatus.RUNNING,
+                execution.updated_at,
             )
+            if updated is None:
+                logger.info(
+                    "Heartbeat: skipped execution %s because its state changed since stall scan",
+                    execution.id,
+                )
+                return 0
             logger.debug(
-                f"Heartbeat: execution {execution.id} has alive agents, touched updated_at",
+                "Heartbeat: execution %s is still alive, touched updated_at",
+                execution.id,
             )
             return 1
 
-        # No alive agents — truly dead
-        await self._run_db(
-            self._execution_manager.update_execution_status,
+        updated = await self._run_db(
+            self._execution_manager.update_stalled_execution_status,
             execution.id,
             ExecutionStatus.FAILED,
+            execution.updated_at,
             outputs_json=json.dumps({"error": "Heartbeat: execution stalled with no alive agents"}),
         )
+        if updated is None:
+            logger.info(
+                "Heartbeat: skipped execution %s because its state changed since stall scan",
+                execution.id,
+            )
+            return 0
         logger.warning(
             f"Heartbeat: marked execution {execution.id} as FAILED (stalled, no agents)",
         )
@@ -208,12 +230,8 @@ class PipelineHeartbeat:
         """
         if not execution.session_id:
             return False
-        try:
-            runs = self._agent_run_manager.list_by_parent(execution.session_id)
-            return len(runs) > 0
-        except Exception:
-            logger.exception(f"Failed to check alive agents for execution {execution.id}")
-            return False
+        runs = self._agent_run_manager.list_by_parent(execution.session_id)
+        return len(runs) > 0
 
     def _is_session_alive(self, session_id: str) -> bool:
         """Check if a session is still alive.

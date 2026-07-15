@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
@@ -82,7 +83,7 @@ def _create_stalled_execution(
     exec_manager: LocalPipelineExecutionManager,
     temp_db: HubDatabase,
     stale_minutes: int = 5,
-    session_id: str = SESSION_ID,
+    session_id: str | None = SESSION_ID,
 ) -> str:
     """Create a running execution with an old updated_at timestamp."""
     exe = exec_manager.create_execution(
@@ -215,6 +216,94 @@ async def test_stalled_with_agents_under_persisted_child_session_survives(
     assert refreshed is not None
     assert refreshed.status == ExecutionStatus.RUNNING
     assert refreshed.session_id == child_session
+
+
+@pytest.mark.asyncio
+async def test_stalled_with_active_session_survives_without_agent_runs(
+    exec_manager: LocalPipelineExecutionManager,
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+) -> None:
+    heartbeat = PipelineHeartbeat(
+        execution_manager=exec_manager,
+        agent_run_manager=agent_run_manager,
+        session_manager=SessionManager(temp_db),
+        stall_threshold_seconds=60,
+    )
+    exe_id = _create_stalled_execution(exec_manager, temp_db)
+
+    count = await heartbeat.check_stalled_executions()
+
+    execution = exec_manager.get_execution(exe_id)
+    assert count == 1
+    assert execution is not None
+    assert execution.status == ExecutionStatus.RUNNING
+
+
+@pytest.mark.asyncio
+async def test_stalled_without_session_is_left_unchanged(
+    heartbeat: PipelineHeartbeat,
+    exec_manager: LocalPipelineExecutionManager,
+    temp_db: HubDatabase,
+) -> None:
+    exe_id = _create_stalled_execution(exec_manager, temp_db, session_id=None)
+
+    count = await heartbeat.check_stalled_executions()
+
+    execution = exec_manager.get_execution(exe_id)
+    assert count == 0
+    assert execution is not None
+    assert execution.status == ExecutionStatus.RUNNING
+
+
+@pytest.mark.asyncio
+async def test_agent_probe_error_does_not_fail_execution(
+    heartbeat: PipelineHeartbeat,
+    exec_manager: LocalPipelineExecutionManager,
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exe_id = _create_stalled_execution(exec_manager, temp_db)
+
+    def fail_probe(_session_id: str) -> list[object]:
+        raise RuntimeError("agent store unavailable")
+
+    monkeypatch.setattr(agent_run_manager, "list_by_parent", fail_probe)
+
+    count = await heartbeat.check_stalled_executions()
+
+    execution = exec_manager.get_execution(exe_id)
+    assert count == 0
+    assert execution is not None
+    assert execution.status == ExecutionStatus.RUNNING
+
+
+@pytest.mark.asyncio
+async def test_stale_snapshot_cannot_overwrite_new_execution_state(
+    heartbeat: PipelineHeartbeat,
+    exec_manager: LocalPipelineExecutionManager,
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    exe_id = _create_stalled_execution(exec_manager, temp_db)
+    caplog.set_level(logging.INFO)
+
+    def transition_during_probe(_session_id: str) -> list[object]:
+        exec_manager.update_execution_status(exe_id, ExecutionStatus.WAITING_APPROVAL)
+        return []
+
+    monkeypatch.setattr(agent_run_manager, "list_by_parent", transition_during_probe)
+
+    count = await heartbeat.check_stalled_executions()
+
+    execution = exec_manager.get_execution(exe_id)
+    assert count == 0
+    assert execution is not None
+    assert execution.status == ExecutionStatus.WAITING_APPROVAL
+    assert "state changed since stall scan" in caplog.text
 
 
 @pytest.mark.asyncio
