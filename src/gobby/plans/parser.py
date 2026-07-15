@@ -13,6 +13,7 @@ from typing import Any, Literal
 import yaml
 
 from gobby.plans._identifiers import DOTTED_ID_PATTERN, is_dotted_id
+from gobby.plans._ref_utils import clean_ref
 from gobby.plans.manifest_parser import ManifestEntry
 from gobby.plans.manifest_parser import resolve_manifest as _resolve_manifest
 
@@ -170,7 +171,10 @@ def parse_plan(
 
     source_bytes = path.read_bytes()
     source_hash = hashlib.sha256(source_bytes).hexdigest()
-    lines = source_bytes.decode("utf-8").splitlines()
+    try:
+        lines = source_bytes.decode("utf-8-sig").splitlines()
+    except UnicodeDecodeError as exc:
+        raise PlanParseError([(1, f"invalid UTF-8: {exc}")], path) from exc
     mask, unclosed_fence_line = compute_fence_mask(lines)
     headings = _collect_headings(lines, mask)
 
@@ -404,7 +408,7 @@ def _resolve_document_plan_id(
 ) -> _PlanIdentity:
     embedded = _parse_plan_id(lines, mask)
     if plan_id_override is not None:
-        override = _clean_ref(plan_id_override)
+        override = clean_ref(plan_id_override)
         if not override:
             errors.append((1, "plan_id_override must not be blank"))
             return _PlanIdentity(None, 1, "override")
@@ -442,7 +446,7 @@ def _parse_plan_id(lines: list[str], mask: list[bool]) -> tuple[str, int] | None
         match = _PLAN_ID_RE.match(line)
         if match is None:
             continue
-        return _clean_ref(match.group("plan_id")), index + 1
+        return clean_ref(match.group("plan_id")), index + 1
     return None
 
 
@@ -650,7 +654,7 @@ def _validate_acceptance_item_id(
 
 def _first_artifact(prose: str) -> tuple[ArtifactKind, str] | None:
     for match in _ARTIFACT_RE.finditer(prose):
-        artifact_ref = _clean_ref(match.group("ref"))
+        artifact_ref = clean_ref(match.group("ref"))
         if not artifact_ref:
             continue
         return ArtifactKind(match.group("kind")), artifact_ref
@@ -782,13 +786,6 @@ def _push_section(section_stack: list[PlanSection], section: PlanSection) -> Non
     while section_stack and section_stack[-1].heading_level >= section.heading_level:
         section_stack.pop()
     section_stack.append(section)
-
-
-def _clean_ref(value: str) -> str:
-    cleaned = value.strip().rstrip(".;,")
-    if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {"`", '"', "'"}:
-        cleaned = cleaned[1:-1]
-    return cleaned.strip()
 
 
 __all__ = [

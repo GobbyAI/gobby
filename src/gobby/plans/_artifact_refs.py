@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from gobby.plans._ref_utils import clean_ref
 from gobby.plans.parser import AcceptanceItem, ArtifactKind
 
 _PATH_RE = re.compile(r"(?P<path>(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.:-]+)")
@@ -90,7 +91,7 @@ def _contains_ref(
     *,
     case_sensitive: bool = True,
 ) -> bool:
-    cleaned_ref = _clean_ref(ref)
+    cleaned_ref = clean_ref(ref)
     if not cleaned_ref:
         return False
     pattern = (
@@ -102,7 +103,7 @@ def _contains_ref(
 
 
 def _contains_path_ref(text: str, ref: str) -> bool:
-    cleaned_ref = _clean_ref(ref)
+    cleaned_ref = clean_ref(ref)
     if not cleaned_ref:
         return False
     pattern = (
@@ -113,7 +114,7 @@ def _contains_path_ref(text: str, ref: str) -> bool:
 
 
 def _path_candidates(artifact_ref: str) -> set[str]:
-    cleaned = _clean_ref(artifact_ref).rstrip(".,;)")
+    cleaned = clean_ref(artifact_ref).rstrip(".,;)")
     candidates = {cleaned}
     if cleaned.startswith("./"):
         candidates.add(cleaned[2:])
@@ -130,7 +131,7 @@ def _path_candidates(artifact_ref: str) -> set[str]:
 
 
 def _test_ref_candidates(artifact_ref: str) -> tuple[tuple[str, str], ...]:
-    cleaned = _clean_ref(artifact_ref)
+    cleaned = clean_ref(artifact_ref)
     matches = tuple(
         (match.group("path"), match.group("name")) for match in _TEST_REF_RE.finditer(cleaned)
     )
@@ -144,7 +145,7 @@ def _test_ref_candidates(artifact_ref: str) -> tuple[tuple[str, str], ...]:
 
 
 def _path_parts_referenced(text: str, path_value: str) -> bool:
-    parts = [part for part in Path(_clean_ref(path_value)).parts if part not in {"", "."}]
+    parts = [part for part in Path(clean_ref(path_value)).parts if part not in {"", "."}]
     if len(parts) < 2:
         return False
     normalized_text = re.sub(r"[`'/\\]+", " ", text.casefold()).replace(chr(34), " ")
@@ -167,10 +168,6 @@ def _bare_file_candidates(text: str) -> set[str]:
 
 def _artifact_markers(text: str) -> tuple[str, ...]:
     return tuple(marker for marker in _ARTIFACT_MARKERS if marker in text)
-
-
-def _clean_ref(value: str) -> str:
-    return value.strip().strip("`").strip(chr(34)).strip("'")
 
 
 def _extract_path_candidates(text: str) -> set[str]:
