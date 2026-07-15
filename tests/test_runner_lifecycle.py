@@ -1464,6 +1464,57 @@ class TestShutdownDaemonServices:
 
         assert shutdown_calls == [(False, True)]
 
+    @pytest.mark.asyncio
+    async def test_hung_db_call_does_not_block_database_close(self) -> None:
+        import threading
+
+        from gobby.storage.executor import DatabaseExecutor
+
+        worker_started = threading.Event()
+        release_worker = threading.Event()
+
+        def blocked_db_call() -> None:
+            worker_started.set()
+            release_worker.wait()
+
+        runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
+        runner.db_executor = DatabaseExecutor(max_workers=1)
+        server = SimpleNamespace(should_exit=False)
+
+        async def completed_server() -> None:
+            return None
+
+        db_call = asyncio.create_task(runner.db_executor.run(blocked_db_call))
+        try:
+            await asyncio.wait_for(asyncio.to_thread(worker_started.wait), timeout=1.0)
+
+            await asyncio.wait_for(
+                runner_lifecycle_shutdown.shutdown_daemon_services(
+                    runner,
+                    server,
+                    asyncio.create_task(completed_server()),
+                    1,
+                    await_critical_stop_hook_grace_window=AsyncMock(),
+                    shutdown_websocket_server=AsyncMock(),
+                    cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
+                    reap_remaining_child_processes=AsyncMock(),
+                    shutdown_telemetry=MagicMock(),
+                    cleanup_pid_file=MagicMock(),
+                ),
+                timeout=0.5,
+            )
+
+            runner.database.close.assert_called_once_with()
+            executor_stats = runner.db_executor.stats()
+            assert executor_stats.shutdown is True
+            assert executor_stats.active == 1
+            assert server.should_exit is True
+            assert release_worker.is_set() is False
+            assert not db_call.done()
+        finally:
+            release_worker.set()
+            await asyncio.wait_for(db_call, timeout=1.0)
+
     def test_db_executor_shutdown_does_not_strand_asyncio_run(self) -> None:
         import subprocess
         import sys

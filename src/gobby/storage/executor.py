@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import functools
 import threading
 from collections.abc import Callable
@@ -64,8 +65,9 @@ class DatabaseExecutor:
             self._submitted += 1
 
         call = functools.partial(self._execute, func, *args, **kwargs)
+        context = contextvars.copy_context()
         loop = asyncio.get_running_loop()
-        return cast(T, await loop.run_in_executor(self._executor, call))
+        return cast(T, await loop.run_in_executor(self._executor, context.run, call))
 
     def _execute(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         with self._lock:
