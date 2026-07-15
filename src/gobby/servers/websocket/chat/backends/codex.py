@@ -237,6 +237,7 @@ class CodexManagedChatSession(
                 for message in parsed
                 if isinstance(message, ParsedMessage)
                 and message.role == "assistant"
+                and isinstance(message.content, str)
                 and message.content.strip()
             ]
             return "\n\n".join(assistant_chunks)

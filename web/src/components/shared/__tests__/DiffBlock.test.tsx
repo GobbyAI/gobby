@@ -61,6 +61,18 @@ describe('DiffBlock — inline variant from synthetic lines', () => {
       />,
     )
 
+    // react-syntax-highlighter may emit padding-only text for an empty diff
+    // row. It is invisible, so keep the snapshot independent of that detail.
+    for (const row of container.querySelectorAll(
+      'span[style*="display: block"]',
+    )) {
+      for (const node of row.childNodes) {
+        if (node.nodeType === 3 && node.textContent?.trim() === '') {
+          node.remove()
+        }
+      }
+    }
+
     expect(container.firstChild).toMatchSnapshot()
   })
 })
