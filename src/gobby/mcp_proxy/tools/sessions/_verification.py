@@ -10,6 +10,7 @@ from gobby.mcp_proxy.tools.workflows._resolution import resolve_session_id
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.verification_evidence import (
+    MAX_VERIFICATION_EVIDENCE_ITEMS,
     VERIFICATION_EVIDENCE_RECORDED_VARIABLE,
     VERIFICATION_EVIDENCE_TYPE_MANUAL_DIFF_REVIEW,
     VERIFICATION_EVIDENCE_VARIABLE,
@@ -98,19 +99,19 @@ def register_verification_tools(
         }
         if error := validate_verification_evidence(evidence):
             return {"success": False, "error": error}
-
-        manager = SessionVariableManager(db)
-        variables = manager.get_variables(resolved_session_id)
-        existing = variables.get(VERIFICATION_EVIDENCE_VARIABLE, [])
-        evidence_items = append_verification_evidence(
-            existing,
+        evidence_item = append_verification_evidence(
+            [],
             evidence,
             session_id=resolved_session_id,
-        )
-        manager.merge_variables(
+        )[0]
+
+        manager = SessionVariableManager(db)
+        evidence_count = manager.append_to_bounded_list_variable(
             resolved_session_id,
-            {
-                VERIFICATION_EVIDENCE_VARIABLE: evidence_items,
+            VERIFICATION_EVIDENCE_VARIABLE,
+            evidence_item,
+            max_items=MAX_VERIFICATION_EVIDENCE_ITEMS,
+            updates={
                 VERIFICATION_EVIDENCE_RECORDED_VARIABLE: True,
             },
         )
@@ -121,14 +122,14 @@ def register_verification_tools(
             task_id,
             evidence_type,
             supports,
-            len(evidence_items),
+            evidence_count,
         )
 
         return {
             "success": True,
             "session_id": resolved_session_id,
             "evidence": evidence,
-            "evidence_count": len(evidence_items),
+            "evidence_count": evidence_count,
         }
 
 

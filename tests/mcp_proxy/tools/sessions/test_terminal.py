@@ -151,6 +151,8 @@ class TestRegisterTerminalTools:
         registry = _TestRegistry(name="test", description="test")
 
         session = MagicMock()
+        session.id = "session-1"
+        session.project_id = "project-1"
         session.terminal_context = {
             "tmux_pane": "%12",
             "tmux_socket_path": "/tmp/tmux-1000/gobby",
@@ -158,6 +160,7 @@ class TestRegisterTerminalTools:
 
         session_manager = MagicMock()
         session_manager.get.return_value = session
+        session_manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
 
         agent_run_manager = MagicMock()
         agent_run_manager.get_by_session.return_value = None
@@ -176,14 +179,113 @@ class TestRegisterTerminalTools:
         send_keys = registry.get_tool("send_keys")
         assert send_keys is not None
 
-        with patch(
-            "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
-            return_value=tmux_manager,
-        ) as mock_get_tmux_manager:
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
+                return_value=tmux_manager,
+            ) as mock_get_tmux_manager,
+            patch(
+                "gobby.utils.session_context.get_current_session_id",
+                return_value="session-1",
+            ),
+        ):
             result = asyncio.run(send_keys(session_id="session-1", keys="hello"))
 
         assert result == {"success": True}
         mock_get_tmux_manager.assert_called_once_with(session.terminal_context)
+        tmux_manager.send_keys.assert_awaited_once_with("%12", "hello", literal=True)
+
+    def test_send_keys_rejects_target_outside_caller_scope(self) -> None:
+        """Cross-project sessions outside the caller's agent tree cannot receive keys."""
+        registry = _TestRegistry(name="test", description="test")
+        caller = MagicMock(id="caller-session", project_id="project-1")
+        target = MagicMock(id="target-session", project_id="project-2")
+
+        session_manager = MagicMock()
+        session_manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
+        session_manager.get.side_effect = {
+            "caller-session": caller,
+            "target-session": target,
+        }.get
+        session_manager.is_ancestor.return_value = False
+
+        agent_run_manager = MagicMock()
+        agent_run_manager.get_by_session.return_value = None
+
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+            return_value=agent_run_manager,
+        ):
+            register_terminal_tools(registry, session_manager, MagicMock())
+
+        send_keys = registry.get_tool("send_keys")
+        assert send_keys is not None
+
+        with patch(
+            "gobby.utils.session_context.get_current_session_id",
+            return_value="caller-session",
+        ):
+            result = asyncio.run(send_keys(session_id="target-session", keys="hello"))
+
+        assert result == {
+            "success": False,
+            "error": "send_keys target is outside the caller's project and agent tree",
+            "error_code": "send_keys_target_forbidden",
+            "caller_session_id": "caller-session",
+            "target_session_id": "target-session",
+        }
+        agent_run_manager.get_by_session.assert_not_called()
+
+    @pytest.mark.parametrize("relationship", ["same_project", "caller_ancestor", "target_ancestor"])
+    def test_send_keys_allows_in_scope_target(self, relationship: str) -> None:
+        """Same-project sessions and either direction of an agent lineage can receive keys."""
+        registry = _TestRegistry(name="test", description="test")
+        caller = MagicMock(id="caller-session", project_id="project-1")
+        target_project = "project-1" if relationship == "same_project" else "project-2"
+        target = MagicMock(
+            id="target-session",
+            project_id=target_project,
+            terminal_context={"tmux_pane": "%12"},
+        )
+
+        session_manager = MagicMock()
+        session_manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
+        session_manager.get.side_effect = {
+            "caller-session": caller,
+            "target-session": target,
+        }.get
+        session_manager.is_ancestor.side_effect = lambda ancestor, descendant: (
+            (relationship == "caller_ancestor" and ancestor == "caller-session")
+            or (relationship == "target_ancestor" and ancestor == "target-session")
+        )
+
+        agent_run_manager = MagicMock()
+        agent_run_manager.get_by_session.return_value = None
+        tmux_manager = MagicMock()
+        tmux_manager.send_keys = AsyncMock(return_value=True)
+
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+            return_value=agent_run_manager,
+        ):
+            register_terminal_tools(registry, session_manager, MagicMock())
+
+        send_keys = registry.get_tool("send_keys")
+        assert send_keys is not None
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
+                return_value=tmux_manager,
+            ),
+            patch(
+                "gobby.utils.session_context.get_current_session_id",
+                return_value="caller-session",
+            ),
+        ):
+            result = asyncio.run(send_keys(session_id="target-session", keys="hello"))
+
+        assert result == {"success": True}
         tmux_manager.send_keys.assert_awaited_once_with("%12", "hello", literal=True)
 
     def test_capture_output_uses_tmux_when_pane_exists(self) -> None:

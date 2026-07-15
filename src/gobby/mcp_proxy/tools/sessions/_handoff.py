@@ -84,10 +84,12 @@ def register_handoff_tools(
             "2. Automated fallback: Omit `content` — uses TranscriptAnalyzer and/or LLM.\n"
             "Optionally sends context to a peer session via `to_session`.\n\n"
             "Args:\n"
-            "    session_id: (REQUIRED) Your session ID. Accepts #N, N, UUID, or prefix."
+            "    session_id: Session to update. Accepts #N, N, UUID, or prefix; "
+            "defaults to the current session."
         ),
     )
     async def set_handoff_context(
+        session_id: str | None = None,
         content: str | None = None,
         to_session: str | None = None,
         notes: str | None = None,
@@ -97,9 +99,10 @@ def register_handoff_tools(
         set_handoff_ready: bool = True,
     ) -> dict[str, Any]:
         """
-        Set handoff context for the current session.
+        Set handoff context for a session.
 
         Args:
+            session_id: Session reference; defaults to the current session
             content: Agent-authored handoff content (fast path, skips transcript analysis)
             to_session: Target session to send handoff context to via P2P message
             notes: Additional notes to include in handoff
@@ -113,7 +116,7 @@ def register_handoff_tools(
         """
         from gobby.utils.session_context import get_current_session_id
 
-        session_id = get_current_session_id()
+        session_id = session_id or get_current_session_id()
         if not session_id:
             return {"success": False, "error": "No session context available"}
 

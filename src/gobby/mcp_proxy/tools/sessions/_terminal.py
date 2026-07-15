@@ -128,6 +128,72 @@ def _resolve_tmux_target(
     )
 
 
+def _authorize_send_keys_target(
+    session_ref: str,
+    session_manager: SessionManager,
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Resolve a send_keys target and verify it is within the caller's scope."""
+    from gobby.utils.session_context import get_current_session_id
+
+    caller_ref = get_current_session_id()
+    if not caller_ref:
+        return None, {
+            "success": False,
+            "error": "send_keys requires current MCP SessionContext",
+            "error_code": "send_keys_caller_required",
+        }
+
+    try:
+        caller_id = session_manager.resolve_session_reference(caller_ref)
+    except ValueError as exc:
+        return None, {
+            "success": False,
+            "error": f"Could not resolve send_keys caller: {exc}",
+            "error_code": "send_keys_caller_not_found",
+        }
+
+    caller = session_manager.get(caller_id)
+    if caller is None:
+        return None, {
+            "success": False,
+            "error": f"Send_keys caller session {caller_id} not found",
+            "error_code": "send_keys_caller_not_found",
+        }
+
+    try:
+        target_id = session_manager.resolve_session_reference(session_ref, caller.project_id)
+    except ValueError as exc:
+        return None, {
+            "success": False,
+            "error": str(exc),
+            "error_code": "send_keys_target_not_found",
+        }
+
+    target = session_manager.get(target_id)
+    if target is None:
+        return None, {
+            "success": False,
+            "error": f"Session {session_ref} not found",
+            "error_code": "send_keys_target_not_found",
+        }
+
+    if (
+        target_id == caller_id
+        or target.project_id == caller.project_id
+        or session_manager.is_ancestor(caller_id, target_id)
+        or session_manager.is_ancestor(target_id, caller_id)
+    ):
+        return target_id, None
+
+    return None, {
+        "success": False,
+        "error": "send_keys target is outside the caller's project and agent tree",
+        "error_code": "send_keys_target_forbidden",
+        "caller_session_id": caller_id,
+        "target_session_id": target_id,
+    }
+
+
 async def _send_terminal_compaction_command(
     tmux: TmuxSessionManager,
     target: str,
@@ -292,6 +358,7 @@ def register_terminal_tools(
         name="send_keys",
         description=(
             "Send keystrokes to a session's tmux terminal. "
+            "Targets must be the caller, in the same project, or in the same agent tree. "
             "Use literal=true (default) to type text — trailing \\n sends Enter. "
             "Use literal=false for tmux key names: C-c, Escape, Enter, C-d."
         ),
@@ -301,7 +368,19 @@ def register_terminal_tools(
         keys: str,
         literal: bool = True,
     ) -> dict[str, Any]:
-        target, tmux, error = _resolve_tmux_target(session_id, session_manager, agent_run_manager)
+        resolved_session_id, authorization_error = _authorize_send_keys_target(
+            session_id,
+            session_manager,
+        )
+        if authorization_error is not None:
+            return authorization_error
+
+        assert resolved_session_id is not None
+        target, tmux, error = _resolve_tmux_target(
+            resolved_session_id,
+            session_manager,
+            agent_run_manager,
+        )
         if error:
             return {"success": False, "error": error}
 

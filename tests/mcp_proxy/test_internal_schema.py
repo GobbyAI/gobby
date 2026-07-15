@@ -158,6 +158,21 @@ async def test_call_coerces_string_args_to_declared_types() -> None:
 
 
 @pytest.mark.asyncio
+async def test_call_rejects_unknown_arguments() -> None:
+    registry = InternalToolRegistry(name="test-registry")
+
+    @registry.tool(name="search", description="Search")
+    def search(query: str) -> dict[str, Any]:
+        return {"query": query}
+
+    with pytest.raises(
+        ValueError,
+        match=r"Unknown argument\(s\) for tool 'search': extra",
+    ):
+        await registry.call("search", {"query": "test", "extra": "ignored before"})
+
+
+@pytest.mark.asyncio
 async def test_call_offloads_sync_tool_from_event_loop_thread() -> None:
     registry = InternalToolRegistry(name="test-registry")
     event_loop_thread = threading.get_ident()

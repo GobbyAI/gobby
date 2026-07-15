@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import ANY, AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -577,7 +577,13 @@ async def test_get_handoff_context_most_recent(mock_session_manager, full_sessio
     mock_session.status = "handoff_ready"
     mock_session_manager.find_parent.return_value = mock_session
 
-    result = await full_sessions_registry.call("get_handoff_context", {"project_id": "proj-123"})
+    with patch(
+        "gobby.utils.machine_id.get_machine_id",
+        return_value="machine-1",
+    ):
+        result = await full_sessions_registry.call(
+            "get_handoff_context", {"project_id": "proj-123"}
+        )
 
     mock_session_manager.find_parent.assert_called_once()
     mock_session_manager.list.assert_not_called()
@@ -597,10 +603,14 @@ async def test_get_handoff_context_links_child(mock_session_manager, full_sessio
     child_session.project_id = "proj-123"
     mock_session_manager.get.side_effect = [mock_session, child_session]
 
-    result = await full_sessions_registry.call(
-        "get_handoff_context",
-        {"session_id": "sess-parent", "link_child_session_id": "sess-child"},
-    )
+    with patch(
+        "gobby.mcp_proxy.tools.sessions._handoff.get_project_context",
+        return_value=None,
+    ):
+        result = await full_sessions_registry.call(
+            "get_handoff_context",
+            {"session_id": "sess-parent", "link_child_session_id": "sess-child"},
+        )
 
     mock_session_manager.update_parent_session_id.assert_called_with("sess-child", "sess-parent")
     assert result["linked_child"] == "sess-child"
@@ -772,6 +782,36 @@ async def test_set_handoff_context_agent_authored(mock_session_manager, full_ses
         "sess-abc", "## My Summary"
     )
     mock_session_manager.update_status.assert_called_once_with("sess-abc", "handoff_ready")
+
+
+@pytest.mark.asyncio
+async def test_set_handoff_context_accepts_explicit_session_id(
+    mock_session_manager, full_sessions_registry
+):
+    mock_session = _make_mock_session("resolved-session")
+    mock_session_manager.resolve_session_reference.return_value = "resolved-session"
+    mock_session_manager.get.return_value = mock_session
+
+    result = await full_sessions_registry.call(
+        "set_handoff_context",
+        {"session_id": "#42", "content": "## Explicit Summary"},
+    )
+
+    assert result["success"] is True
+    assert result["session_id"] == "resolved-session"
+    mock_session_manager.resolve_session_reference.assert_called_once_with("#42", ANY)
+    mock_session_manager.update_summary.assert_called_once_with(
+        "resolved-session", summary_markdown="## Explicit Summary"
+    )
+
+
+def test_set_handoff_context_schema_marks_session_id_optional(full_sessions_registry) -> None:
+    schema = full_sessions_registry.get_schema("set_handoff_context")
+
+    assert schema is not None
+    assert "session_id" in schema["inputSchema"]["properties"]
+    assert "session_id" not in schema["inputSchema"].get("required", [])
+    assert "defaults to the current session" in schema["description"]
 
 
 # --- Get Session Commits Tool Tests ---

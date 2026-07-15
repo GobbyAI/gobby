@@ -317,7 +317,9 @@ class InternalToolRegistry:
                 if p.kind
                 in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
             }
-            coerced_arguments = {k: v for k, v in coerced_arguments.items() if k in accepted}
+            unknown = sorted(coerced_arguments.keys() - accepted)
+            if unknown:
+                raise ValueError(f"Unknown argument(s) for tool '{name}': {', '.join(unknown)}")
 
         return tool, coerced_arguments
 
