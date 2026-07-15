@@ -344,11 +344,20 @@ class PipelineExecutor(
                         span.set_attribute("execution_id", str(execution.id))
                     execution_id = execution.id
 
-                # 2. Update status to RUNNING
-                updated = self.execution_manager.update_execution_status(
-                    execution_id=execution.id,
-                    status=ExecutionStatus.RUNNING,
-                )
+                # 2. Update status to RUNNING. Failed resumes use an atomic claim
+                # so concurrent callers cannot both reset and execute the same rows.
+                if prior_status == ExecutionStatus.FAILED:
+                    updated = self.execution_manager.claim_failed_execution_for_resume(execution.id)
+                    if updated is None:
+                        execution = None
+                        raise ValueError(
+                            f"Cannot resume execution {execution_id}: it is already being resumed"
+                        )
+                else:
+                    updated = self.execution_manager.update_execution_status(
+                        execution_id=execution.id,
+                        status=ExecutionStatus.RUNNING,
+                    )
                 if updated:
                     execution = updated
 
@@ -459,12 +468,14 @@ class PipelineExecutor(
                     "_pipeline_stack": _pipeline_stack,
                 }
 
-                # Fetch existing steps if resuming a non-failed execution.
-                # Failed executions re-execute all steps since completed steps
-                # may reference stale agent sessions or other invalidated state.
+                # Fetch existing steps when resuming. Failed executions reset all
+                # persisted steps so they re-execute without creating duplicate rows.
                 existing_steps: dict[str, StepExecution] = {}
-                if execution_id and prior_status != ExecutionStatus.FAILED:
+                if execution_id:
                     steps = self.execution_manager.get_steps_for_execution(execution_id)
+                    if prior_status == ExecutionStatus.FAILED and steps:
+                        self.execution_manager.reset_steps_from(execution_id, steps[0].step_id)
+                        steps = self.execution_manager.get_steps_for_execution(execution_id)
                     existing_steps = {s.step_id: s for s in steps}
 
                 # 4. Iterate through steps in order

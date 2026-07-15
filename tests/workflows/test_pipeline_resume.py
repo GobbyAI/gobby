@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.workflows.definitions import PipelineApproval, PipelineDefinition, PipelineStep
 from gobby.workflows.pipeline_executor import PipelineExecutor
 from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
@@ -248,49 +250,56 @@ class TestPipelineResume:
             )
 
     @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_failed_execution_reexecutes_all_steps(
-        self, mock_db, mock_execution_manager, mock_llm_service, mock_loader
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, object],
+        mock_llm_service,
+        mock_loader,
     ) -> None:
-        """Failed executions can be resumed but re-execute all steps (no stale caching)."""
+        """Failed executions reset and reuse real step rows before re-executing."""
         pipeline = PipelineDefinition(
             name="spawn-pipeline",
             steps=[PipelineStep(id="spawn_agent", exec="echo spawn")],
         )
-
-        execution = MagicMock()
-        execution.id = "pe-failed-123"
-        execution.pipeline_name = "spawn-pipeline"
-        execution.status = ExecutionStatus.FAILED
-        execution.inputs_json = "{}"
-        execution.project_id = None
-
-        mock_execution_manager.get_execution.return_value = execution
-        mock_execution_manager.update_execution_status.return_value = execution
-        mock_execution_manager.get_failed_steps.return_value = []
-
-        stale_step = MagicMock()
-        stale_step.id = 301
-        stale_step.step_id = "spawn_agent"
-        stale_step.status = StepStatus.COMPLETED
-        stale_step.output_json = json.dumps({"session_id": "stale"})
-        mock_execution_manager.get_steps_for_execution.return_value = [stale_step]
+        project_id = str(sample_project["id"])
+        execution_manager = LocalPipelineExecutionManager(temp_db, project_id=project_id)
+        execution = execution_manager.create_execution(pipeline_name=pipeline.name)
+        execution_manager.update_execution_status(
+            execution.id,
+            status=ExecutionStatus.FAILED,
+            outputs_json=json.dumps({"error": "original failure"}),
+        )
+        stale_step = execution_manager.create_step_execution(
+            execution_id=execution.id,
+            step_id="spawn_agent",
+        )
+        execution_manager.update_step_execution(
+            stale_step.id,
+            status=StepStatus.COMPLETED,
+            output_json=json.dumps({"session_id": "stale"}),
+        )
 
         executor = PipelineExecutor(
-            db=mock_db,
-            execution_manager=mock_execution_manager,
+            db=temp_db,
+            execution_manager=execution_manager,
             llm_service=mock_llm_service,
             loader=mock_loader,
         )
+        executor._execute_step = AsyncMock(return_value={"session_id": "fresh"})
 
-        await executor.execute(
+        resumed = await executor.execute(
             pipeline=pipeline,
             inputs={},
-            project_id="test-project",
-            execution_id="pe-failed-123",
+            project_id=project_id,
+            execution_id=execution.id,
         )
 
-        create_calls = mock_execution_manager.create_step_execution.call_args_list
-        spawn_calls = [c for c in create_calls if c.kwargs.get("step_id") == "spawn_agent"]
-        assert len(spawn_calls) > 0, (
-            "Failed execution should re-execute completed steps, not skip them"
-        )
+        steps = execution_manager.get_steps_for_execution(execution.id)
+        assert resumed.status == ExecutionStatus.COMPLETED
+        assert len(steps) == 1
+        assert steps[0].id == stale_step.id
+        assert steps[0].status == StepStatus.COMPLETED
+        assert json.loads(steps[0].output_json or "null") == {"session_id": "fresh"}
+        executor._execute_step.assert_awaited_once()
