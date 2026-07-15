@@ -141,12 +141,37 @@ export function FilesPage({
   onFetchDiff,
 }: FilesPageProps) {
   const activeFile = activeFileIndex >= 0 ? openFiles[activeFileIndex] : null
-  const [diffContent, setDiffContent] = useState<string | null>(null)
-  const [showDiff, setShowDiff] = useState(false)
+  const activeFileKey = activeFile ? `${activeFile.projectId}\0${activeFile.path}` : null
+  const [diffState, setDiffState] = useState<{
+    activeFileKey: string | null
+    requestId: number
+    content: string | null
+    visible: boolean
+  }>({ activeFileKey, requestId: 0, content: null, visible: false })
   const [pendingDiscard, setPendingDiscard] = useState<
     { action: 'cancel' | 'close'; index: number } | null
   >(null)
   const editorViewRef = useRef<EditorView | null>(null)
+  const showDiff = diffState.activeFileKey === activeFileKey && diffState.visible
+  const diffContent = showDiff ? diffState.content : null
+
+  if (diffState.activeFileKey !== activeFileKey) {
+    setDiffState({
+      activeFileKey,
+      requestId: diffState.requestId + 1,
+      content: null,
+      visible: false,
+    })
+  }
+
+  const hideDiff = useCallback(() => {
+    setDiffState(current => ({
+      ...current,
+      requestId: current.requestId + 1,
+      content: null,
+      visible: false,
+    }))
+  }, [])
 
   const showCancelConfirm = pendingDiscard !== null
 
@@ -155,9 +180,9 @@ export function FilesPage({
       setPendingDiscard({ action: 'cancel', index: activeFileIndex })
     } else {
       onCancelEditing(activeFileIndex)
-      setShowDiff(false)
+      hideDiff()
     }
-  }, [activeFile, activeFileIndex, onCancelEditing])
+  }, [activeFile, activeFileIndex, hideDiff, onCancelEditing])
 
   const confirmCancel = useCallback(() => {
     if (!pendingDiscard) return
@@ -166,9 +191,9 @@ export function FilesPage({
       onCloseFile(pendingDiscard.index)
     } else {
       onCancelEditing(pendingDiscard.index)
-      setShowDiff(false)
+      hideDiff()
     }
-  }, [onCancelEditing, onCloseFile, pendingDiscard])
+  }, [hideDiff, onCancelEditing, onCloseFile, pendingDiscard])
 
   const previousFocusRef = useRef<Element | null>(null)
   useEffect(() => {
@@ -213,14 +238,17 @@ export function FilesPage({
   const handleShowDiff = useCallback(async () => {
     if (!activeFile) return
     if (showDiff) {
-      setShowDiff(false)
-      setDiffContent(null)
+      hideDiff()
       return
     }
+    const requestId = diffState.requestId + 1
+    setDiffState({ activeFileKey, requestId, content: null, visible: false })
     const diff = await onFetchDiff(activeFile.projectId, activeFile.path)
-    setDiffContent(diff)
-    setShowDiff(true)
-  }, [activeFile, showDiff, onFetchDiff])
+    setDiffState(current => {
+      if (current.activeFileKey !== activeFileKey || current.requestId !== requestId) return current
+      return { ...current, content: diff, visible: true }
+    })
+  }, [activeFile, activeFileKey, diffState.requestId, hideDiff, showDiff, onFetchDiff])
 
   const activeGitStatus = activeFile ? gitStatuses.get(activeFile.projectId) : undefined
   const activeFileGitStatus = activeFile && activeGitStatus ? activeGitStatus.files[activeFile.path] : undefined
@@ -345,7 +373,7 @@ export function FilesPage({
                   className={TOOLBAR_BTN_BASE_CLS}
                   onClick={() => {
                     onToggleEditing(activeFileIndex)
-                    setShowDiff(false)
+                    hideDiff()
                   }}
                   disabled={activeFile.truncated}
                   aria-label="Edit"
