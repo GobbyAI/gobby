@@ -73,7 +73,11 @@ function groupByPriority(tasks: GobbyTask[]): Map<string, GobbyTask[]> {
   for (const [, list] of grouped) {
     list.sort((a, b) => {
       if (a.priority !== b.priority) return a.priority - b.priority
-      return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+      const aUpdatedAt = new Date(a.updated_at).getTime()
+      const bUpdatedAt = new Date(b.updated_at).getTime()
+      if (Number.isNaN(aUpdatedAt)) return Number.isNaN(bUpdatedAt) ? 0 : 1
+      if (Number.isNaN(bUpdatedAt)) return -1
+      return bUpdatedAt - aUpdatedAt
     })
   }
 

@@ -371,7 +371,7 @@ function normalizeCurrentStage(
   task: RawTaskPayload,
   stages: StageStateView[],
 ): StageStateView | null {
-  const selected = selectCurrentStage({
+  const selected = selectCurrentStage<RawStagePayload>({
     stages: Array.isArray(task.stages) ? stages : undefined,
     state: {
       current_stage: task.state?.current_stage as RawStagePayload | null | undefined,

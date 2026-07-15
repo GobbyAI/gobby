@@ -79,7 +79,7 @@ interface CurrentStageRow {
 
 interface CurrentStageTask<TStage extends CurrentStageRow> {
   stages?: readonly TStage[] | null
-  state?: { current_stage?: TStage | null } | null
+  state?: object | null
   current_stage?: TStage | null
 }
 
@@ -113,17 +113,20 @@ export function currentStage<TStage extends CurrentStageRow>(
 ): TStage | null {
   if (!task) return null
   if (Array.isArray(task.stages)) {
-    return [...task.stages]
-      .sort((a, b) => {
-        const positionDifference = (a.position ?? 0) - (b.position ?? 0)
-        if (positionDifference !== 0) return positionDifference
-        const aName = a.name ?? a.stage_name ?? ''
-        const bName = b.name ?? b.stage_name ?? ''
-        return aName < bName ? -1 : aName > bName ? 1 : 0
-      })
-      .find(row => row.state !== 'done') ?? null
+    if (task.stages.length > 0) {
+      return [...task.stages]
+        .sort((a, b) => {
+          const positionDifference = (a.position ?? 0) - (b.position ?? 0)
+          if (positionDifference !== 0) return positionDifference
+          const aName = a.name ?? a.stage_name ?? ''
+          const bName = b.name ?? b.stage_name ?? ''
+          return aName < bName ? -1 : aName > bName ? 1 : 0
+        })
+        .find(row => row.state !== 'done') ?? null
+    }
   }
-  return task.state?.current_stage ?? task.current_stage ?? null
+  const state = task.state as { current_stage?: TStage | null } | null | undefined
+  return state?.current_stage ?? task.current_stage ?? null
 }
 
 function sortedStages(task: LifecycleTask): StageStateView[] {
