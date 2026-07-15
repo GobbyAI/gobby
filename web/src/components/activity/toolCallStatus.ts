@@ -1,23 +1,31 @@
-export function isSuccessfulToolCall(result: any): boolean {
-  if (result?.success !== true) {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+export function isSuccessfulToolCall(result: unknown): boolean {
+  if (!isRecord(result) || result.success !== true) {
     return false;
   }
 
-  const inner = result?.result;
-  if (inner && typeof inner === "object" && "success" in inner) {
+  const inner = result.result;
+  if (isRecord(inner) && "success" in inner) {
     return inner.success === true;
   }
 
   return true;
 }
 
-export function getToolCallError(result: any, fallback: string): string {
-  if (typeof result?.error === "string" && result.error) {
+export function getToolCallError(result: unknown, fallback: string): string {
+  if (!isRecord(result)) {
+    return fallback;
+  }
+
+  if (typeof result.error === "string" && result.error) {
     return result.error;
   }
 
-  const inner = result?.result;
-  if (inner && typeof inner === "object" && typeof inner.error === "string") {
+  const inner = result.result;
+  if (isRecord(inner) && typeof inner.error === "string") {
     return inner.error;
   }
 
