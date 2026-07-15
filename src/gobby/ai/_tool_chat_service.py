@@ -61,14 +61,12 @@ class ToolChatService:
         profile_defaults: (
             Mapping[FeatureProfile, Sequence[str | FeatureCandidateConfig]] | None
         ) = None,
-        candidate_timeout_seconds: float | None = None,
-        cli_candidate_timeout_seconds: float | None = None,
+        attempt_timeout_seconds: float | None = None,
     ) -> None:
         self._registry = registry
         self._adapters: dict[AIAdapterStyle, ToolChatAdapter] = dict(adapters or {})
         self._adapter_factories = dict(adapter_factories or {})
-        self._candidate_timeout_seconds = candidate_timeout_seconds
-        self._cli_candidate_timeout_seconds = cli_candidate_timeout_seconds
+        self._attempt_timeout_seconds = attempt_timeout_seconds
         self._profile_defaults = {
             FeatureProfile(profile): candidate_runtime_entries(candidates, profile=profile)
             for profile, candidates in (profile_defaults or {}).items()
@@ -121,24 +119,22 @@ class ToolChatService:
     def _candidate_timeout_for_binding(
         self, request: ToolChatRequest, binding: CapabilityBinding | None
     ) -> float | None:
-        """Select the per-candidate timeout for the lane behind ``binding``.
+        """Select the timeout bounding one tool_chat candidate run.
 
-        Mirrors ``TextGenerationService``: spawn-cold lanes (CLI subprocess,
-        daemon, Claude SDK, ACP) get the larger ``cli_candidate_timeout_seconds``;
-        fast API lanes keep the tight ``candidate_timeout_seconds``. One tool_chat
-        turn is a full reasoning generation, so it shares that candidate budget.
+        A tool_chat candidate is a full multi-turn agentic run, so it is bounded
+        by the overall attempt budget (``ai.generation.timeout_seconds``) — the
+        tight single-generation candidate budgets that ``TextGenerationService``
+        uses for fast failover (#17710) starve legitimate multi-minute agentic
+        investigations (#18285). Request-level overrides can only tighten the
+        bound: spawn-cold lanes read ``cli_candidate_timeout_seconds``, fast API
+        lanes read ``candidate_timeout_seconds``.
         """
         if binding is not None and binding.adapter_style in _SPAWN_COLD_ADAPTER_STYLES:
-            return (
-                request.cli_candidate_timeout_seconds
-                if request.cli_candidate_timeout_seconds is not None
-                else self._cli_candidate_timeout_seconds
-            )
-        return (
-            request.candidate_timeout_seconds
-            if request.candidate_timeout_seconds is not None
-            else self._candidate_timeout_seconds
-        )
+            if request.cli_candidate_timeout_seconds is not None:
+                return request.cli_candidate_timeout_seconds
+        elif request.candidate_timeout_seconds is not None:
+            return request.candidate_timeout_seconds
+        return self._attempt_timeout_seconds
 
     async def _await_chat_candidate(
         self,

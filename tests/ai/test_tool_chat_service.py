@@ -144,14 +144,11 @@ class _FailingAdapter:
         raise RuntimeError("adapter broke")
 
 
-def test_tool_chat_candidate_timeout_selection_by_adapter_style() -> None:
-    # Mirror TextGenerationService: spawn-cold lanes get the larger CLI timeout,
-    # fast API lanes (and no binding) keep the tight candidate timeout.
-    service = ToolChatService(
-        _registry(),
-        candidate_timeout_seconds=60.0,
-        cli_candidate_timeout_seconds=150.0,
-    )
+def test_tool_chat_candidate_timeout_is_attempt_budget_with_request_overrides() -> None:
+    # A tool_chat candidate is a full multi-turn agentic run: every lane is
+    # bounded by the overall attempt budget, not the single-generation candidate
+    # budgets (gobby-#18285). Request-level overrides tighten per lane.
+    service = ToolChatService(_registry(), attempt_timeout_seconds=600.0)
     default_request = _request()
 
     def _binding(style: AIAdapterStyle) -> CapabilityBinding:
@@ -167,11 +164,24 @@ def test_tool_chat_candidate_timeout_selection_by_adapter_style() -> None:
         AIAdapterStyle.DAEMON,
         AIAdapterStyle.LLM_PROVIDER,
         AIAdapterStyle.ACP,
+        AIAdapterStyle.LOCAL,
+        AIAdapterStyle.OPENAI_COMPATIBLE,
     ):
-        assert service._candidate_timeout_for_binding(default_request, _binding(style)) == 150.0
-    for style in (AIAdapterStyle.LOCAL, AIAdapterStyle.OPENAI_COMPATIBLE):
-        assert service._candidate_timeout_for_binding(default_request, _binding(style)) == 60.0
-    assert service._candidate_timeout_for_binding(default_request, None) == 60.0
+        assert service._candidate_timeout_for_binding(default_request, _binding(style)) == 600.0
+    assert service._candidate_timeout_for_binding(default_request, None) == 600.0
+
+    # Spawn-cold lanes honor the request's cli_candidate override; fast lanes
+    # honor candidate_timeout_seconds; neither override leaks to the other lane.
+    override_request = _request(
+        candidate_timeout_seconds=30.0,
+        cli_candidate_timeout_seconds=150.0,
+    )
+    spawn_cold = _binding(AIAdapterStyle.LLM_PROVIDER)
+    fast = _binding(AIAdapterStyle.OPENAI_COMPATIBLE)
+    assert service._candidate_timeout_for_binding(override_request, spawn_cold) == 150.0
+    assert service._candidate_timeout_for_binding(override_request, fast) == 30.0
+    cli_only = _request(cli_candidate_timeout_seconds=150.0)
+    assert service._candidate_timeout_for_binding(cli_only, fast) == 600.0
 
 
 @pytest.mark.asyncio
@@ -184,8 +194,7 @@ async def test_tool_chat_timeout_propagates_without_trying_next_candidate() -> N
             AIAdapterStyle.LLM_PROVIDER: slow,
             AIAdapterStyle.OPENAI_COMPATIBLE: fast,
         },
-        candidate_timeout_seconds=0.05,
-        cli_candidate_timeout_seconds=0.05,
+        attempt_timeout_seconds=0.05,
     )
     with pytest.raises(_CandidateTimeoutError, match="timed out after"):
         await service.chat_result(_request(candidates=("claude/haiku", "local:lm-studio/gemma")))
@@ -216,7 +225,7 @@ async def test_single_timed_out_tool_chat_candidate_raises_timeout() -> None:
     service = ToolChatService(
         _registry(),
         adapters={AIAdapterStyle.LLM_PROVIDER: slow},
-        cli_candidate_timeout_seconds=0.05,
+        attempt_timeout_seconds=0.05,
     )
     with pytest.raises(_CandidateTimeoutError, match="timed out after"):
         await service.chat_result(_request(candidates=("claude/haiku",)))
@@ -234,7 +243,7 @@ def test_builder_threads_generation_timeouts_into_tool_chat_service() -> None:
         ),
     )
     service = build_daemon_tool_chat_service(config)
-    assert service._candidate_timeout_seconds == 33.0
-    # Spawn-cold lanes get the per-candidate cli_candidate_timeout_seconds, not the
-    # overall timeout_seconds attempt budget (gobby-#17710).
-    assert service._cli_candidate_timeout_seconds == 99.0
+    # tool_chat bounds each candidate (a full agentic run) by the overall
+    # timeout_seconds attempt budget; the tight per-candidate budgets stay
+    # text-generation-only for fast failover (gobby-#17710, gobby-#18285).
+    assert service._attempt_timeout_seconds == 600.0
