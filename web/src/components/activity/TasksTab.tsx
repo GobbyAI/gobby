@@ -9,7 +9,7 @@ import {
 import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
 import { useWebSocketEvent } from "../../hooks/useWebSocketEvent";
 import { useStagesRegistry } from "../../hooks/useStagesRegistry";
-import type { DependencyTree, GobbyTask } from "../../hooks/useTasks";
+import type { DependencyTree, GobbyTask } from "../../types/tasks";
 import {
   getCanonicalTaskState,
   getTaskDisplayState,

@@ -1,4 +1,4 @@
-import type { GobbyTask, GobbyTaskDetail } from "../../../hooks/useTasks";
+import type { GobbyTask, GobbyTaskDetail } from "../../../types/tasks";
 import {
   getCanonicalTaskState,
   getTaskDisplayState,

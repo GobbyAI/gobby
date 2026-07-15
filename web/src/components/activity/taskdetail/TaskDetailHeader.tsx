@@ -1,4 +1,4 @@
-import type { GobbyTaskDetail } from "../../../hooks/useTasks";
+import type { GobbyTaskDetail } from "../../../types/tasks";
 import {
   PriorityBadge,
   TaskStateBadges,

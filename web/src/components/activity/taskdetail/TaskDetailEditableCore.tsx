@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { GobbyTaskDetail } from "../../../hooks/useTasks";
+import type { GobbyTaskDetail } from "../../../types/tasks";
 import {
   TASK_CATEGORY_OPTIONS,
   DEFAULT_TASK_PRIORITY,

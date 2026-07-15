@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 
-import type { GobbyTask } from "../../hooks/useTasks";
+import type { GobbyTask } from "../../types/tasks";
 import type { RawTaskPayload } from "../../lib/taskNormalization";
 import {
   isPatchEditableField,

@@ -62,7 +62,6 @@ const SET_STATE_IN_EFFECT_EXEMPTIONS = [
   "src/hooks/useSessions.ts",
   "src/hooks/useSkills.ts",
   "src/hooks/useSourceControl.ts",
-  "src/hooks/useTasks.ts",
   "src/hooks/useTimeStats.ts",
   "src/hooks/useTokenTimeSeries.ts",
   "src/hooks/useTraces.ts",
@@ -79,7 +78,6 @@ const SET_STATE_IN_EFFECT_EXEMPTIONS = [
 const IMMUTABILITY_EXEMPTIONS = [
   "src/App.tsx",
   "src/hooks/useChat.ts",
-  "src/hooks/useTasks.ts",
 ];
 
 export default defineConfig([

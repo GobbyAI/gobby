@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 
-import type { DependencyTree, GobbyTask } from "../../../hooks/useTasks";
+import type { DependencyTree, GobbyTask } from "../../../types/tasks";
 import {
   getTaskDisplayState,
   TASK_STATE_LABELS,

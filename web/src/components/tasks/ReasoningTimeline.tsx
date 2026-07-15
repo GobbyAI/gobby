@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { GobbyTaskDetail } from '../../hooks/useTasks'
+import type { GobbyTaskDetail } from '../../types/tasks'
 import { relativeTime } from '../../utils/formatTime'
 import { getCanonicalTaskState, getTaskDisplayState, type TaskDisplayState } from '../../lib/taskState'
 

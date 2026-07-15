@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import type { GobbyTaskDetail } from '../../hooks/useTasks'
+import type { GobbyTaskDetail } from '../../types/tasks'
 import { cn } from '../../lib/utils'
 
 function getBaseUrl(): string {

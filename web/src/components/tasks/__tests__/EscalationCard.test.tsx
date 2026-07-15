@@ -3,7 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { EscalationCard } from '../EscalationCard'
-import type { GobbyTaskDetail } from '../../../hooks/useTasks'
+import type { GobbyTaskDetail } from '../../../types/tasks'
 
 const SAMPLE_TASK: GobbyTaskDetail = {
   id: 'task-1',

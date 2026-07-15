@@ -1,4 +1,4 @@
-import type { BuildState, GobbyTask } from "../../hooks/useTasks";
+import type { BuildState, GobbyTask } from "../../types/tasks";
 import { getCanonicalTaskState, getTaskDisplayState } from "../../lib/taskState";
 import { QuickMenu, type QuickMenuItem } from "./QuickMenu";
 

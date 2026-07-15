@@ -2,7 +2,7 @@ import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import type { KeyboardEvent, MouseEvent } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 
-import type { GobbyTask } from "../../hooks/useTasks";
+import type { GobbyTask } from "../../types/tasks";
 import {
   useTreeKeyboardNavigation,
   type TreeNavItem,

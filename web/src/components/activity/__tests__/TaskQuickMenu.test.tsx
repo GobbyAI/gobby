@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import type { ComponentProps } from "react";
 
 import { TaskQuickMenu, type TaskContextMenu } from "../TaskQuickMenu";
-import type { BuildState, GobbyTask } from "../../../hooks/useTasks";
+import type { BuildState, GobbyTask } from "../../../types/tasks";
 
 function makeTask(overrides: Partial<GobbyTask> = {}): GobbyTask {
   const base = {

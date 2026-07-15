@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { GobbyTask } from "../../hooks/useTasks";
+import type { GobbyTask } from "../../types/tasks";
 
 interface TaskCloseDialogProps {
   task: GobbyTask | null;

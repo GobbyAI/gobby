@@ -1,7 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
-import type { GobbyTask } from "../../../hooks/useTasks";
+import type { GobbyTask } from "../../../types/tasks";
 import type { RawTaskPayload } from "../../../lib/taskNormalization";
 import type { PatchTaskFields } from "../TasksTabActions";
 import { useTaskInlineEdit } from "../useTaskInlineEdit";
