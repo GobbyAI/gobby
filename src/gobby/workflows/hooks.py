@@ -517,6 +517,7 @@ class WorkflowHookHandler:
 
         Must run BEFORE rule evaluation so conditions have current data.
         """
+        from .observer_context_usage import detect_context_compact_guidance
         from .observers import (
             detect_bash_commit,
             detect_commit_link,
@@ -594,6 +595,13 @@ class WorkflowHookHandler:
                     variables,
                     session_id,
                 )
+            run_observer(
+                "detect_context_compact_guidance",
+                detect_context_compact_guidance,
+                variables,
+                session_id,
+                self._session_manager,
+            )
 
         return failures
 
