@@ -5,7 +5,7 @@ import {
   TasksTabDetailPanel,
   type TaskInlineEditApi,
 } from "../TasksTabDetailPanel";
-import type { DependencyTree } from "../../../hooks/useTasks";
+import type { DependencyTree } from "../../../types/tasks";
 import { makeTask } from "./fixtures";
 
 function makeEdit(

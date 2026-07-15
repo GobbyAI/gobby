@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { GobbyTask } from '../../../hooks/useTasks'
+import type { GobbyTask } from '../../../types/tasks'
 import {
   claimTaskForSession,
   extractResponseErrorMessage,

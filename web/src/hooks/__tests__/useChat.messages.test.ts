@@ -51,6 +51,28 @@ describe("useChat message and conversation state", () => {
     );
   });
 
+  it("clears active chat state when another client clears the conversation", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+    act(() => result.current.sendMessage("Hello"));
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.isStreaming).toBe(true);
+
+    act(() => {
+      ws.simulateMessage({
+        type: "chat_cleared",
+        conversation_id: result.current.conversationId,
+      });
+    });
+
+    expect(result.current.messages).toHaveLength(0);
+    expect(result.current.isStreaming).toBe(false);
+    expect(result.current.isThinking).toBe(false);
+  });
+
   it("keeps conversation and db session storage separate when resuming an external session", async () => {
     await loadModule();
     const { result } = renderHook(() => useChat());
@@ -129,6 +151,130 @@ describe("useChat message and conversation state", () => {
           url.includes("/api/chat/claude-ext-789/messages?after_seq=5"),
         ),
       ).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores reconnect backfill after switching conversations", async () => {
+    vi.useFakeTimers();
+    try {
+      await loadModule();
+      mockFetch.mockJsonResponse(
+        "/api/chat/old-chat/messages?limit=100&after_seq=0",
+        {
+          messages: [
+            {
+              id: "old-message",
+              role: "assistant",
+              content: "Old chat",
+              timestamp: "2026-07-14T00:00:00Z",
+            },
+          ],
+          max_seq: 5,
+        },
+      );
+      mockFetch.mockJsonResponse("/api/sessions/old-chat", {
+        session: { id: "old-chat", seq_num: 1, title: "Old chat" },
+      });
+
+      const { result } = renderHook(() => useChat());
+      const firstWs = mockWs.instances[0];
+      act(() => firstWs.simulateOpen());
+
+      await act(async () => {
+        result.current.switchConversation("old-chat");
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(result.current.messages[0]?.id).toBe("old-message");
+
+      let resolveBackfill!: (response: Response) => void;
+      const pendingBackfill = new Promise<Response>((resolve) => {
+        resolveBackfill = resolve;
+      });
+      mockFetch.fn.mockImplementation((input: RequestInfo | URL) => {
+        const url =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+        if (url.includes("/api/chat/old-chat/messages?after_seq=5")) {
+          return pendingBackfill;
+        }
+        if (url.includes("/api/chat/new-chat/messages?limit=100&after_seq=0")) {
+          return Promise.resolve(
+            Response.json({
+              messages: [
+                {
+                  id: "new-message",
+                  role: "assistant",
+                  content: "New chat",
+                  timestamp: "2026-07-14T00:00:01Z",
+                },
+              ],
+              max_seq: 7,
+            }),
+          );
+        }
+        if (url.includes("/api/sessions/new-chat")) {
+          return Promise.resolve(
+            Response.json({
+              session: { id: "new-chat", seq_num: 2, title: "New chat" },
+            }),
+          );
+        }
+        return Promise.resolve(Response.json({ messages: [] }));
+      });
+
+      act(() => {
+        firstWs.simulateClose();
+        vi.advanceTimersByTime(2000);
+      });
+      const reconnectWs = mockWs.instances[1];
+      act(() => reconnectWs.simulateOpen());
+      expect(mockFetch.fn).toHaveBeenCalledWith(
+        expect.stringContaining("/api/chat/old-chat/messages?after_seq=5"),
+      );
+
+      await act(async () => {
+        result.current.switchConversation("new-chat");
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(result.current.messages[0]?.id).toBe("new-message");
+
+      await act(async () => {
+        resolveBackfill(
+          Response.json({
+            messages: [
+              {
+                id: "stale-message",
+                role: "assistant",
+                content: "Stale old chat",
+                timestamp: "2026-07-14T00:00:02Z",
+              },
+            ],
+            max_seq: 99,
+          }),
+        );
+        await pendingBackfill;
+      });
+
+      expect(result.current.messages.map((message) => message.id)).toEqual([
+        "new-message",
+      ]);
+
+      act(() => {
+        reconnectWs.simulateClose();
+        vi.advanceTimersByTime(2000);
+      });
+      act(() => mockWs.instances[2].simulateOpen());
+
+      expect(mockFetch.fn).toHaveBeenCalledWith(
+        expect.stringContaining("/api/chat/new-chat/messages?after_seq=7"),
+      );
     } finally {
       vi.useRealTimers();
     }
@@ -481,6 +627,44 @@ describe("useChat message and conversation state", () => {
     expect(result.current.messages[0].role).toBe("user");
   });
 
+  it("flushes an offline message once with its inject context", async () => {
+    vi.useFakeTimers();
+    try {
+      await loadModule();
+      const { result } = renderHook(() => useChat());
+      const ws = mockWs.instances[0];
+
+      act(() => {
+        result.current.sendMessage(
+          "Queued prompt",
+          null,
+          undefined,
+          null,
+          "Attached context",
+        );
+      });
+      const queuedMessageId = result.current.messages[0].id;
+
+      act(() => {
+        ws.simulateOpen();
+        vi.advanceTimersByTime(500);
+      });
+
+      expect(result.current.messages).toHaveLength(1);
+      const chatPayloads = ws.send.mock.calls
+        .map(([raw]) => JSON.parse(raw as string))
+        .filter((payload) => payload.type === "chat_message");
+      expect(chatPayloads).toHaveLength(1);
+      expect(chatPayloads[0]).toMatchObject({
+        content: "Queued prompt",
+        inject_context: "Attached context",
+        message_id: queuedMessageId,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("startNewChat clears messages without creating a session", async () => {
     await loadModule();
     const { result } = renderHook(() => useChat());
@@ -673,6 +857,18 @@ describe("useChat message and conversation state", () => {
         session_type: "web_chat",
       },
     });
+    mockFetch.mockJsonResponse("/api/sessions/source-session", {
+      session: {
+        id: "source-session",
+        source: "claude",
+        session_type: "cli",
+        status: "active",
+      },
+    });
+    mockFetch.mockJsonResponse(
+      "/api/sessions/source-session/messages?limit=100",
+      { messages: [] },
+    );
 
     await loadModule();
     const { result } = renderHook(() => useChat());
@@ -681,6 +877,10 @@ describe("useChat message and conversation state", () => {
 
     const modeChanged = vi.fn();
     act(() => result.current.setOnModeChanged(modeChanged));
+
+    await act(async () => {
+      await result.current.continueSessionInChat("source-session", undefined);
+    });
 
     act(() => {
       ws.simulateMessage({
@@ -710,6 +910,112 @@ describe("useChat message and conversation state", () => {
     });
 
     expect(modeChanged).toHaveBeenCalledWith("normal");
+  });
+
+  it("ignores session_continued for a different active continuation", async () => {
+    mockFetch.mockJsonResponse("/api/sessions/source-session", {
+      session: {
+        id: "source-session",
+        source: "codex",
+        session_type: "cli",
+        status: "active",
+      },
+    });
+    mockFetch.mockJsonResponse(
+      "/api/sessions/source-session/messages?limit=100",
+      { messages: [] },
+    );
+
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    await act(async () => {
+      await result.current.continueSessionInChat("source-session", undefined);
+    });
+
+    const conversationId = result.current.conversationId;
+    const dbSessionId = result.current.dbSessionId;
+    const storedConversationId = localStorage.getItem("gobby-conversation-id");
+    const storedDbSessionId = localStorage.getItem("gobby-db-session-id");
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_continued",
+        conversation_id: "stale-conversation",
+        db_session_id: "stale-db-session",
+        source_session_id: "different-source-session",
+      });
+    });
+
+    expect(result.current.conversationId).toBe(conversationId);
+    expect(result.current.dbSessionId).toBe(dbSessionId);
+    expect(result.current.isContinuingSession).toBe(true);
+    expect(localStorage.getItem("gobby-conversation-id")).toBe(
+      storedConversationId,
+    );
+    expect(localStorage.getItem("gobby-db-session-id")).toBe(
+      storedDbSessionId,
+    );
+  });
+
+  it("ignores a matching session_continued after the conversation changes", async () => {
+    mockFetch.mockJsonResponse("/api/sessions/source-session", {
+      session: {
+        id: "source-session",
+        source: "codex",
+        session_type: "cli",
+        status: "active",
+      },
+    });
+    mockFetch.mockJsonResponse(
+      "/api/sessions/source-session/messages?limit=100",
+      { messages: [] },
+    );
+    mockFetch.mockJsonResponse(
+      "/api/chat/other-session/messages?limit=100&after_seq=0",
+      { messages: [] },
+    );
+    mockFetch.mockJsonResponse("/api/sessions/other-session", {
+      session: {
+        id: "other-session",
+        source: "claude",
+        session_type: "web_chat",
+        status: "active",
+      },
+    });
+
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    await act(async () => {
+      await result.current.continueSessionInChat("source-session", undefined);
+    });
+    act(() => result.current.switchConversation("other-session"));
+
+    const storedConversationId = localStorage.getItem("gobby-conversation-id");
+    const storedDbSessionId = localStorage.getItem("gobby-db-session-id");
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_continued",
+        conversation_id: "stale-conversation",
+        db_session_id: "stale-db-session",
+        source_session_id: "source-session",
+      });
+    });
+
+    expect(result.current.conversationId).toBe("other-session");
+    expect(result.current.dbSessionId).toBe("other-session");
+    expect(localStorage.getItem("gobby-conversation-id")).toBe(
+      storedConversationId,
+    );
+    expect(localStorage.getItem("gobby-db-session-id")).toBe(
+      storedDbSessionId,
+    );
   });
 
   it("restores the previous chat state when continueSessionInChat fails", async () => {

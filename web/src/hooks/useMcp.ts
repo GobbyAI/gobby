@@ -266,6 +266,16 @@ export function useMcp() {
           arguments: args,
         }),
       })
+      if (!response.ok) {
+        const data = await response.json().catch(() => null)
+        const detail = typeof data?.detail === 'string' ? data.detail : data?.error
+        return {
+          success: false,
+          error: typeof detail === 'string'
+            ? detail
+            : `Tool call failed with status ${response.status}`,
+        }
+      }
       const data = await response.json()
       return {
         success: data.success,

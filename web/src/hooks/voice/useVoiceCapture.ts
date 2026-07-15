@@ -199,6 +199,7 @@ export function useVoiceCapture({
   const activeTranscriptionRequestRef = useRef<string | null>(null)
   const transcriptionWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mountedRef = useRef(true)
+  const recordingGenerationRef = useRef(0)
 
   const clearTranscriptionWatchdog = useCallback(() => {
     if (transcriptionWatchdogRef.current) {
@@ -280,6 +281,7 @@ export function useVoiceCapture({
   }, [])
 
   const cancelRecording = useCallback(() => {
+    recordingGenerationRef.current += 1
     const hadRecording = recCtxRef.current !== null
       || recordingStartRef.current !== null
       || samplesRef.current.length > 0
@@ -450,6 +452,7 @@ export function useVoiceCapture({
   ])
 
   const stopRecording = useCallback(async () => {
+    recordingGenerationRef.current += 1
     const rec = recCtxRef.current
     if (!rec) return
 
@@ -603,11 +606,27 @@ export function useVoiceCapture({
       return
     }
 
+    const generation = ++recordingGenerationRef.current
+    const isCurrentGeneration = () => (
+      mountedRef.current && recordingGenerationRef.current === generation
+    )
+    const cleanUpStartup = (stream: MediaStream | null, ctx: AudioContext | null) => {
+      stream?.getTracks().forEach((track) => track.stop())
+      if (ctx) {
+        try {
+          void ctx.close().catch(() => {})
+        } catch {
+          // noop
+        }
+      }
+    }
+
     onBargeIn()
     clearTransientError()
     logVoice('ptt_start', {})
 
     let stream: MediaStream | null = null
+    let ctx: AudioContext | null = null
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -619,12 +638,22 @@ export function useVoiceCapture({
         },
       })
 
-      const ctx = new AudioContext({ sampleRate: 16000 })
+      if (!isCurrentGeneration()) {
+        cleanUpStartup(stream, null)
+        return
+      }
+
+      ctx = new AudioContext({ sampleRate: 16000 })
       const source = ctx.createMediaStreamSource(stream)
       if (!ctx.audioWorklet) {
         throw new Error('AudioWorklet is not available in this browser')
       }
       await ctx.audioWorklet.addModule(VOICE_CAPTURE_WORKLET_URL)
+      if (!isCurrentGeneration()) {
+        cleanUpStartup(stream, ctx)
+        return
+      }
+
       const workletNode = new AudioWorkletNode(ctx, 'voice-capture-processor', {
         numberOfInputs: 1,
         numberOfOutputs: 1,
@@ -650,8 +679,9 @@ export function useVoiceCapture({
       logVoice('ptt_started', { sampleRate: ctx.sampleRate })
       if (mountedRef.current) setIsRecording(true)
     } catch (err) {
-      stream?.getTracks().forEach((track) => track.stop())
-      tearDownRecording()
+      cleanUpStartup(stream, ctx)
+      if (!isCurrentGeneration()) return
+
       samplesRef.current = []
       if (mountedRef.current) setIsRecording(false)
       const msg = err instanceof Error ? err.message : 'Microphone access denied'
@@ -665,7 +695,6 @@ export function useVoiceCapture({
     onBargeIn,
     setTransientError,
     sttEnabled,
-    tearDownRecording,
     voiceInputMode,
   ])
 

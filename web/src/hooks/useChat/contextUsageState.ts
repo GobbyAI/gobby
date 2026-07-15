@@ -9,6 +9,11 @@ export interface LiveContextUsageEntry {
   lastSeenAt: number;
 }
 
+export interface PreAttachContextUsageSnapshot {
+  sessionId: string;
+  usage: ContextUsage;
+}
+
 export function createEmptyContextUsage(): ContextUsage {
   return {
     totalInputTokens: 0,
@@ -48,7 +53,8 @@ export function useContextUsageState() {
   const [contextUsageUpdatedAt, setContextUsageUpdatedAt] = useState<
     number | null
   >(null);
-  const preAttachContextUsageRef = useRef<ContextUsage | null>(null);
+  const preAttachContextUsageRef =
+    useRef<PreAttachContextUsageSnapshot | null>(null);
   const didTrackContextUsageRef = useRef(false);
   const lastLiveUsageBySessionRef = useRef<Map<string, LiveContextUsageEntry>>(
     new Map(),

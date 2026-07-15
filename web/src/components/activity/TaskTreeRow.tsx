@@ -1,6 +1,6 @@
 import { memo } from "react";
 import type { KeyboardEvent, MouseEvent } from "react";
-import type { GobbyTask } from "../../hooks/useTasks";
+import type { GobbyTask } from "../../types/tasks";
 import { PriorityGlyph, StatusDot, TypeBadge } from "../tasks/TaskBadges";
 import {
   getCanonicalTaskState,

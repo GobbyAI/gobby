@@ -39,6 +39,7 @@ interface SessionsTabDetailProps {
   selectedEntry: WatchingSessionEntry | null;
   selectedSessionId: string;
   sessionError: string | null;
+  transcriptDownloadUrl: string | null;
   setContentMode: Dispatch<SetStateAction<WatchingContentMode>>;
   setTranscriptAtBottom: (atBottom: boolean) => void;
   showResumeButton: boolean;
@@ -67,6 +68,7 @@ export function SessionsTabDetailPane({
   selectedEntry,
   selectedSessionId,
   sessionError,
+  transcriptDownloadUrl,
   setContentMode,
   setTranscriptAtBottom,
   showResumeButton,
@@ -155,7 +157,17 @@ export function SessionsTabDetailPane({
           role="alert"
           className="flex items-center gap-2 border-b border-border px-3 py-2 text-sm text-[var(--color-error)]"
         >
-          <span className="min-w-0 flex-1">{sessionError}</span>
+          <span className="min-w-0 flex-1">
+            {sessionError}
+            {transcriptDownloadUrl && (
+              <>
+                {" "}
+                <a className="underline" href={transcriptDownloadUrl} download>
+                  Download transcript instead
+                </a>
+              </>
+            )}
+          </span>
           <button
             type="button"
             className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-[var(--color-error)] hover:bg-[color-mix(in_srgb,var(--color-error)_12%,transparent)]"

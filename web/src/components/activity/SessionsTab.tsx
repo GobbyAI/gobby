@@ -325,6 +325,7 @@ export const SessionsTab = memo(function SessionsTab({
   const {
     session: selectedSessionDetail,
     sessionError,
+    transcriptDownloadUrl,
     clearSessionError,
     messages,
     isLoading: isLoadingDetail,
@@ -581,6 +582,7 @@ export const SessionsTab = memo(function SessionsTab({
           selectedEntry={selectedEntry}
           selectedSessionId={selectedSessionId}
           sessionError={sessionError}
+          transcriptDownloadUrl={transcriptDownloadUrl}
           setContentMode={setContentMode}
           setTranscriptAtBottom={setTranscriptAtBottom}
           showResumeButton={showResumeButton}

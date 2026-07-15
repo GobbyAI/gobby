@@ -153,8 +153,17 @@ useEffect(() => {
     clearInterval(heartbeatInterval);
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
     }
-    wsRef.current?.close();
+    const ws = wsRef.current;
+    if (ws) {
+      ws.onopen = null;
+      ws.onclose = null;
+      ws.onerror = null;
+      ws.onmessage = null;
+      wsRef.current = null;
+      ws.close();
+    }
   };
 }, [applyMainSessionMeta, bindActiveSession, connect]);
 }

@@ -1,7 +1,7 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeAll } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import type { GobbyTask } from '../../../hooks/useTasks'
+import type { GobbyTask } from '../../../types/tasks'
 
 // ResizeObserver is not available in jsdom
 beforeAll(() => {

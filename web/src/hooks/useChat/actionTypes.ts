@@ -24,10 +24,12 @@ export interface EnsureMainSessionOptions {
 }
 
 interface PendingChatMessage {
+  messageId: string;
   content: string;
   model?: string | null;
   files?: QueuedFile[];
   projectId?: string | null;
+  injectContext?: string;
   reasoningEffort?: string | null;
   ttsEnabled?: boolean;
 }
@@ -142,7 +144,7 @@ export type DeleteConversationAction = (
   sessionId?: string,
 ) => boolean;
 
-export type SendModeAction = (mode: ChatMode) => void;
+export type SendModeAction = (mode: ChatMode) => boolean;
 
 export type SendAttachedSessionModeAction = (
   targetSessionId: string,
@@ -166,6 +168,7 @@ export type SendMessageAction = (
   injectContext?: string,
   reasoningEffort?: string | null,
   ttsEnabled?: boolean,
+  optimisticMessageId?: string,
 ) => boolean;
 
 export type RespondToQuestionAction = (

@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState, useCallback, useEffect, useLayoutEffect } from 'react'
 import { Tree, TreeApi, NodeRendererProps } from 'react-arborist'
-import type { GobbyTask } from '../../hooks/useTasks'
+import type { GobbyTask } from '../../types/tasks'
 import { StatusDot, PriorityBadge, TypeBadge } from './TaskBadges'
 import { TaskStatusStrip } from './TaskStatusStrip'
 import { getTaskDisplayState } from '../../lib/taskState'

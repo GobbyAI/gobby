@@ -71,9 +71,10 @@ export function connectChatTransport(
             msg.model ?? null,
             msg.files,
             msg.projectId,
-            undefined,
+            msg.injectContext,
             msg.reasoningEffort,
             msg.ttsEnabled,
+            msg.messageId,
           );
         }
       }, 500);
@@ -87,7 +88,12 @@ export function connectChatTransport(
       fetch(`${baseUrl}/api/chat/${convId}/messages?after_seq=${afterSeq}`)
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
-          if (ctx.viewingSessionIdRef.current) return;
+          if (
+            ctx.viewingSessionIdRef.current ||
+            ctx.conversationIdRef.current !== convId
+          ) {
+            return;
+          }
           if (!data?.messages?.length) return;
           const backfilled: ChatMessage[] = data.messages.map(mapStoredChatMessage);
           ctx.setMessages((prev) => {
@@ -142,7 +148,7 @@ export function connectChatTransport(
     // may still be working. Clearing these causes post-reconnect tool_status
     // updates to be dropped as "stale". Only clear on explicit cancel or
     // if reconnect timeout expires (30s).
-    const disconnectTimer = window.setTimeout(() => {
+    window.setTimeout(() => {
       // If still disconnected after 30s, assume the stream is dead
       if (!ctx.wsRef.current || ctx.wsRef.current.readyState !== WebSocket.OPEN) {
         ctx.setIsStreaming(false);
@@ -152,7 +158,6 @@ export function connectChatTransport(
     }, 30_000);
 
     ctx.reconnectTimeoutRef.current = window.setTimeout(() => {
-      clearTimeout(disconnectTimer);
       connectRef.current?.();
     }, RECONNECT_DELAY_MS);
   };

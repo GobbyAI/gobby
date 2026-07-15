@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useRef } from 'react'
-import type { GobbyTask } from '../../hooks/useTasks'
+import type { GobbyTask } from '../../types/tasks'
 import { getTaskDisplayState, TASK_STATE_COLORS } from '../../lib/taskState'
 import { cn } from '../../lib/utils'
 

@@ -182,12 +182,16 @@ export function useTTSPlayback({
   }, [getAudioContext, playNextChunk, setTransientError, ttsEnabled])
 
   const stopLocalPlayback = useCallback(() => {
+    const currentSource = currentSourceRef.current
+    currentSourceRef.current = null
     try {
-      currentSourceRef.current?.stop()
+      if (currentSource) {
+        currentSource.onended = null
+        currentSource.stop()
+      }
     } catch {
       // Already stopped.
     }
-    currentSourceRef.current = null
     audioQueueRef.current = []
     isPlayingRef.current = false
     playbackEpochRef.current += 1
@@ -245,8 +249,12 @@ export function useTTSPlayback({
     return () => {
       mountedRef.current = false
       stopLocalPlayback()
+      const audioContext = audioContextRef.current
+      audioContextRef.current = null
       try {
-        audioContextRef.current?.suspend()
+        if (audioContext) {
+          void audioContext.close().catch(() => {})
+        }
       } catch {
         // noop
       }

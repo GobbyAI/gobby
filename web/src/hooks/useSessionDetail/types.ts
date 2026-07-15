@@ -38,6 +38,7 @@ export interface MessageLoadResult {
   returnedCount: number
   degradedReason: string | null
   ok: boolean
+  status: number
 }
 
 export interface LoadSessionDetailOptions {

@@ -42,6 +42,21 @@ export function handleAttachToSessionResult(
   ctx: UseChatTransportParams,
 ) {
   const sid = data.session_id as string;
+  if (ctx.pendingAttachSessionIdRef.current !== sid) {
+    if (
+      ctx.observedSessionIdRef.current !== sid &&
+      ctx.wsRef.current?.readyState === WebSocket.OPEN
+    ) {
+      ctx.wsRef.current.send(
+        JSON.stringify({
+          type: "detach_from_session",
+          session_id: sid,
+        }),
+      );
+    }
+    return;
+  }
+  ctx.pendingAttachSessionIdRef.current = null;
   const meta = toSessionObservationMeta(data) ?? UNKNOWN_SESSION_META;
   ctx.setObservedSessionId(sid);
   ctx.observedSessionIdRef.current = sid;
@@ -156,6 +171,9 @@ export function handleDetachFromSessionResult(
       ctx.viewingSessionIdRef.current === sid &&
       ctx.viewingSessionMetaRef.current?.sessionType === "terminal";
     if (!isCurrentObserved && !isCurrentAttached && !isCurrentViewedTerminal) {
+      if (ctx.preAttachContextUsageRef.current?.sessionId === sid) {
+        ctx.preAttachContextUsageRef.current = null;
+      }
       return;
     }
   }
@@ -174,8 +192,9 @@ export function handleDetachFromSessionResult(
   ctx.sessionInteractionModeRef.current = "none";
   // Restore main-chat contextUsage snapshot taken at first attach,
   // so the pie stops showing the observed session's percentages.
-  if (ctx.preAttachContextUsageRef.current !== null) {
-    ctx.setContextUsage(ctx.preAttachContextUsageRef.current);
+  const snapshot = ctx.preAttachContextUsageRef.current;
+  if (snapshot !== null && (!sid || snapshot.sessionId === sid)) {
+    ctx.setContextUsage(snapshot.usage);
     ctx.preAttachContextUsageRef.current = null;
   } else {
     ctx.setContextUsage({
@@ -269,10 +288,12 @@ export function handleCliSessionSendResult(
   const clientMessageId =
     typeof data.client_message_id === "string" ? data.client_message_id : null;
   const messageId = typeof data.message_id === "string" ? data.message_id : null;
+  let matchesPendingMessage = clientMessageId === null;
   if (clientMessageId) {
     const pendingProxyMessage =
       ctx.pendingProxyMessagesRef.current.get(clientMessageId) ?? null;
     if (pendingProxyMessage) {
+      matchesPendingMessage = true;
       if (messageId && data.delivered !== false) {
         ctx.setMessages((prev) => {
           const messageIdx = prev.findIndex(
@@ -300,9 +321,11 @@ export function handleCliSessionSendResult(
       }
     }
   }
-  ctx.setProxyDeliveryNotice(
-    data.delivered === false ? "Message queued until the session yields." : null,
-  );
+  if (matchesPendingMessage) {
+    ctx.setProxyDeliveryNotice(
+      data.delivered === false ? "Message queued until the session yields." : null,
+    );
+  }
   if (import.meta.env.DEV) {
     console.debug("Message sent to CLI session:", data.delivery_method);
   }

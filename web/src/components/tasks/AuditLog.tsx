@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import type { GobbyTask } from '../../hooks/useTasks'
+import type { GobbyTask } from '../../types/tasks'
 import { useNow } from '../../hooks/useNow'
 import { StatusDot } from './TaskBadges'
 import { RiskBadge } from './RiskBadges'

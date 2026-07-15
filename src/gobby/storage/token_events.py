@@ -229,7 +229,7 @@ class TokenEventStore:
         params: list[Any] = [session_id]
         since_sql = ""
         if since:
-            since_sql = "AND event_at > %s"
+            since_sql = "AND event_at >= %s"
             params.append(canonicalize_event_timestamp(since))
         params.append(limit)
 

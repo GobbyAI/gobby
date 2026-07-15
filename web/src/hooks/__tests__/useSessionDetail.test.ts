@@ -155,6 +155,59 @@ describe('useSessionDetail', () => {
     expect(result.current.totalMessages).toBe(941)
   })
 
+  it('surfaces a failed messages fetch instead of treating it as an empty transcript', async () => {
+    await loadModule()
+    mockFetch.mockJsonResponse(/^\/api\/sessions\/sess-failed$/, {
+      session: {
+        id: 'sess-failed',
+        external_id: 'failed-ext-1',
+        session_type: 'terminal',
+        transcript_path: '/tmp/failed.jsonl',
+        status: 'paused',
+      },
+    })
+    mockFetch.mockErrorResponse(
+      '/api/sessions/sess-failed/messages?limit=50&offset=0&order=tail',
+      500,
+    )
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const { result } = renderHook(() => useSessionDetail('sess-failed'))
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    expect(result.current.sessionError).toBe('Failed to load session messages')
+    expect(result.current.messages).toHaveLength(0)
+    expect(result.current.transcriptStatus).toBeNull()
+    expect(result.current.transcriptDownloadUrl).toBeNull()
+    expect(warnSpy).toHaveBeenCalledWith('Messages fetch returned 500')
+  })
+
+  it('offers the raw transcript download when rendered messages return 413', async () => {
+    await loadModule()
+    mockFetch.mockJsonResponse(/^\/api\/sessions\/sess-large$/, {
+      session: {
+        id: 'sess-large',
+        external_id: 'large-ext-1',
+        session_type: 'terminal',
+        transcript_path: '/tmp/large.jsonl',
+        status: 'paused',
+      },
+    })
+    mockFetch.mockErrorResponse(
+      '/api/sessions/sess-large/messages?limit=50&offset=0&order=tail',
+      413,
+    )
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const { result } = renderHook(() => useSessionDetail('sess-large'))
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    expect(result.current.sessionError).toBe('Transcript is too large to display.')
+    expect(result.current.transcriptDownloadUrl).toBe('/api/sessions/sess-large/transcript')
+  })
+
   it('upserts rendered session_message websocket events by message id', async () => {
     await loadModule()
     mockFetch.mockJsonResponse(/^\/api\/sessions\/sess-cli$/, {
@@ -201,6 +254,67 @@ describe('useSessionDetail', () => {
     expect(result.current.messages).toHaveLength(1)
     expect(result.current.messages[0].content).toBe('Updated output')
     expect(result.current.totalMessages).toBe(1)
+  })
+
+  it('preserves a live message received during the initial transcript load', async () => {
+    await loadModule()
+
+    let resolveInitialMessages: ((response: Response) => void) | null = null
+    mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/sessions/sess-cli') {
+        return new Response(JSON.stringify({
+          session: {
+            id: 'sess-cli',
+            external_id: 'cli-ext-1',
+            session_type: 'terminal',
+            status: 'active',
+          },
+        }), { status: 200 })
+      }
+      if (url === '/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail') {
+        return new Promise<Response>((resolve) => {
+          resolveInitialMessages = resolve
+        })
+      }
+      throw new Error(`Unhandled fetch: ${url}`)
+    })
+
+    const { result } = renderHook(() => useSessionDetail('sess-cli'))
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    await waitFor(() => expect(resolveInitialMessages).not.toBeNull())
+
+    act(() => {
+      ws.simulateMessage({
+        type: 'session_message',
+        session_id: 'sess-cli',
+        message: {
+          id: 'live-msg',
+          role: 'assistant',
+          content: 'Live output',
+          timestamp: '2026-04-09T00:00:01Z',
+          content_blocks: [{ type: 'text', content: 'Live output' }],
+        },
+      })
+    })
+
+    act(() => {
+      resolveInitialMessages?.(new Response(JSON.stringify({
+        messages: [{
+          id: 'snapshot-msg',
+          role: 'assistant',
+          content: 'Snapshot output',
+          timestamp: '2026-04-09T00:00:00Z',
+          content_blocks: [{ type: 'text', content: 'Snapshot output' }],
+        }],
+        total_count: 1,
+      }), { status: 200 }))
+    })
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    expect(result.current.messages.map((message) => message.id)).toContain('live-msg')
   })
 
   it('fetches newer transcript pages when live messages reveal a tail gap', async () => {
@@ -639,7 +753,7 @@ describe('useSessionDetail', () => {
     expect(result.current.hasNewer).toBe(false)
   })
 
-  it('ignores an older page made stale by a concurrent live append', async () => {
+  it('prepends an older page after concurrent live appends', async () => {
     await loadModule()
 
     let resolveOlderPage: ((response: Response) => void) | null = null
@@ -696,25 +810,6 @@ describe('useSessionDetail', () => {
         })
       }
 
-      if (url.includes('/api/sessions/sess-cli/messages?limit=50&offset=3&order=tail')) {
-        return new Response(
-          JSON.stringify({
-            messages: [
-              {
-                id: 'sess-msg-1',
-                role: 'assistant',
-                content: 'Older output 1',
-                timestamp: '2026-04-09T00:00:01Z',
-              },
-            ],
-            total_count: 4,
-            rendered_count: 4,
-            returned_count: 1,
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
-      }
-
       return new Response(JSON.stringify({ error: 'no mock route matched' }), {
         status: 404,
         headers: { 'Content-Type': 'application/json' },
@@ -745,6 +840,16 @@ describe('useSessionDetail', () => {
           timestamp: '2026-04-09T00:00:04Z',
         },
       })
+      ws.simulateMessage({
+        type: 'session_message',
+        session_id: 'sess-cli',
+        message: {
+          id: 'sess-msg-5',
+          role: 'assistant',
+          content: 'Tail output 5',
+          timestamp: '2026-04-09T00:00:05Z',
+        },
+      })
     })
 
     await act(async () => {
@@ -770,21 +875,11 @@ describe('useSessionDetail', () => {
     })
 
     expect(result.current.messages.map((message) => message.content)).toEqual([
-      'Tail output 2',
-      'Tail output 3',
-      'Tail output 4',
-    ])
-    expect(result.current.hasMore).toBe(true)
-
-    await act(async () => {
-      await result.current.loadMore()
-    })
-
-    expect(result.current.messages.map((message) => message.content)).toEqual([
       'Older output 1',
       'Tail output 2',
       'Tail output 3',
       'Tail output 4',
+      'Tail output 5',
     ])
     expect(result.current.hasMore).toBe(false)
   })
@@ -1130,6 +1225,7 @@ describe('useSessionDetail', () => {
 
     const sessionFetchCounts: Record<string, number> = {}
     const tailFetchCounts: Record<string, number> = {}
+    let releaseSessionBMessages: (() => void) | null = null
     mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
       const url =
         typeof input === 'string'
@@ -1160,7 +1256,7 @@ describe('useSessionDetail', () => {
       if (messagesMatch) {
         const sessionId = messagesMatch[1]
         tailFetchCounts[sessionId] = (tailFetchCounts[sessionId] ?? 0) + 1
-        return new Response(
+        const response = new Response(
           JSON.stringify({
             messages: [
               {
@@ -1176,6 +1272,12 @@ describe('useSessionDetail', () => {
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         )
+        if (sessionId === 'sess-b') {
+          return new Promise<Response>((resolve) => {
+            releaseSessionBMessages = () => resolve(response)
+          })
+        }
+        return response
       }
 
       return new Response(JSON.stringify({ error: 'no mock route matched' }), {
@@ -1212,6 +1314,14 @@ describe('useSessionDetail', () => {
     await act(async () => {
       rerender({ selectedSessionId: 'sess-b' })
       await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(result.current.isLoading).toBe(true)
+    expect(result.current.messages).toEqual([])
+    expect(releaseSessionBMessages).not.toBeNull()
+
+    await act(async () => {
+      releaseSessionBMessages?.()
       await Promise.resolve()
     })
     await act(async () => {

@@ -142,6 +142,46 @@ describe('sessionTranscriptWindow', () => {
     expect(update.state.firstItemIndex).toBe(START_INDEX + 1)
   })
 
+  it('rebases a non-contiguous tail refresh and keeps older pages recoverable', () => {
+    const state = createTailTranscriptWindow(page(50, 100, 100), START_INDEX, 50)
+
+    const update = applyTailRefreshTranscriptPage(
+      state,
+      page(150, 200, 200),
+      false,
+      50,
+    )
+
+    expect(update.state.messages.map((item) => item.id)).toEqual(
+      messages(150, 200).map((item) => item.id),
+    )
+    expect(update.state.windowStart).toBe(150)
+    expect(update.state.windowEnd).toBe(200)
+    expect(update.state.renderedTotal).toBe(200)
+    expect(update.state.firstItemIndex).toBe(START_INDEX)
+    expect(update.addedCount).toBe(50)
+    expect(update.appendedCount).toBe(0)
+    expect(update.needsFetch).toBe(false)
+
+    const recoveredMiddle = prependOlderTranscriptPage(
+      update.state,
+      page(100, 150, 200),
+      150,
+    ).state
+    const recoveredAll = prependOlderTranscriptPage(
+      recoveredMiddle,
+      page(50, 100, 200),
+      150,
+    ).state
+
+    expect(recoveredAll.messages.map((item) => item.id)).toEqual(
+      messages(50, 200).map((item) => item.id),
+    )
+    expect(recoveredAll.windowStart).toBe(50)
+    expect(recoveredAll.windowEnd).toBe(200)
+    expect(recoveredAll.windowEnd < recoveredAll.renderedTotal).toBe(false)
+  })
+
   it('advances live message totals without appending away from tail', () => {
     const tail = createTailTranscriptWindow(page(5, 10, 10), START_INDEX, 5)
     const older = prependOlderTranscriptPage(tail, page(0, 5, 10), 5).state

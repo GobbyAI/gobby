@@ -920,7 +920,7 @@ describe("useChatPageArtifacts", () => {
         ) => void)
       | null = null;
     const showTab = vi.fn();
-    const { result } = renderHook(() =>
+    const { result, unmount } = renderHook(() =>
       useChatPageArtifacts({
         chat: createChat({
           setOnArtifactEvent: (fn) => void (onArtifactEvent = fn),
@@ -944,6 +944,9 @@ describe("useChatPageArtifacts", () => {
     // The artifact surfaces inline (activeArtifact set); the removed activity
     // Artifacts tab must not be selected.
     expect(showTab).not.toHaveBeenCalledWith("artifacts");
+
+    unmount();
+    expect(onArtifactEvent).toBeNull();
   });
 });
 

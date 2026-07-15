@@ -1,7 +1,4 @@
-import {
-  buildContextUsageFromTotals,
-  computeContextUsageFromSessionData,
-} from "./contextUsage";
+import { computeContextUsageFromSessionData } from "./contextUsage";
 import type {
   RawSessionUsageUpdatedMessage,
   RawTokenEventMessage,
@@ -204,7 +201,7 @@ function hasNormalizedContextPayload(data: SessionUsageUpdatedMessage): boolean 
 
 function hasExistingNormalizedSnapshot(prev: ContextUsage): boolean {
   if (prev.contextUsageSource) {
-    return prev.contextUsageSource !== "web_chat";
+    return prev.contextUsageSource !== "web_chat" && prev.contextUsageSource !== "token_event";
   }
   return Boolean(prev.contextUsageConfidence && prev.contextUsageRatio != null);
 }
@@ -300,23 +297,6 @@ export function handleTokenEvent(
   if (!eventData) return;
   const visibleSessionId = ctx.viewingSessionIdRef.current ?? ctx.dbSessionIdRef.current;
   if (eventData.session_id === visibleSessionId) {
-    const totals = eventData.session_totals;
     ctx.markSessionUsageFresh(eventData.session_id, eventData.event_at);
-    ctx.setContextUsage((prev) =>
-      buildContextUsageFromTotals({
-        totalInputTokens:
-          totals?.input_tokens ?? eventData.input_tokens ?? prev.totalInputTokens,
-        outputTokens: totals?.output_tokens ?? eventData.output_tokens ?? prev.outputTokens,
-        cacheReadTokens:
-          totals?.cache_read_tokens ?? eventData.cache_read_tokens ?? prev.cacheReadTokens,
-        cacheCreationTokens:
-          totals?.cache_creation_tokens ??
-          eventData.cache_creation_tokens ??
-          prev.cacheCreationTokens,
-        contextWindow: totals?.context_window ?? eventData.context_window ?? prev.contextWindow,
-        contextUsageSource: "token_event",
-        contextUsageConfidence: "reported",
-      }),
-    );
   }
 }

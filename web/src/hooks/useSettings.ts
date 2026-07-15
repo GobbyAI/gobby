@@ -187,19 +187,30 @@ export function useSettings() {
   })
 
   const initialized = useRef(false)
+  const pendingChanges = useRef<Partial<Settings>>({})
 
-  // On mount: fetch from API and merge (API wins over localStorage)
+  // On mount: fetch from API and merge (API wins over localStorage, while
+  // explicit changes made during the fetch win over the API).
   useEffect(() => {
     let cancelled = false
     fetchUISettings().then((remote) => {
-      if (cancelled || !remote) return
+      if (cancelled) return
+      initialized.current = true
+
+      const changes = pendingChanges.current
+      pendingChanges.current = {}
+      if (!remote && Object.keys(changes).length === 0) return
+
       setSettings((prev) => {
-        const merged = { ...prev, ...normalizePersistedSettings(remote) }
+        const merged = {
+          ...prev,
+          ...normalizePersistedSettings(remote ?? {}),
+          ...changes,
+        }
         // Also update localStorage with the API values
         saveToLocalStorage(merged)
         return merged
       })
-      initialized.current = true
     })
     return () => { cancelled = true }
   }, [])
@@ -238,60 +249,62 @@ export function useSettings() {
   }, [settings.density])
 
   // Persist settings on change (localStorage + API)
-  // Skip the initial render to avoid writing defaults before API fetch
-  const isFirstRender = useRef(true)
   useEffect(() => {
-    if (isFirstRender.current) {
-      isFirstRender.current = false
-      return
-    }
+    if (!initialized.current) return
     saveToLocalStorage(settings)
     saveUISettings(settings)
   }, [settings])
 
-  const updateDefaultChatMode = useCallback((defaultChatMode: ChatMode) => {
-    setSettings((prev) => ({ ...prev, defaultChatMode }))
+  const updateSettings = useCallback((changes: Partial<Settings>) => {
+    if (!initialized.current) {
+      pendingChanges.current = { ...pendingChanges.current, ...changes }
+    }
+    setSettings((prev) => ({ ...prev, ...changes }))
   }, [])
+
+  const updateDefaultChatMode = useCallback((defaultChatMode: ChatMode) => {
+    updateSettings({ defaultChatMode })
+  }, [updateSettings])
 
   const updateFontSize = useCallback((size: number) => {
-    setSettings((prev) => ({ ...prev, fontSize: size }))
-  }, [])
+    updateSettings({ fontSize: size })
+  }, [updateSettings])
 
   const updateModel = useCallback((model: string) => {
-    setSettings((prev) => ({ ...prev, model }))
-  }, [])
+    updateSettings({ model })
+  }, [updateSettings])
 
   const updateChatMode = useCallback((chatMode: ChatMode) => {
-    setSettings((prev) => ({ ...prev, chatMode }))
-  }, [])
+    updateSettings({ chatMode })
+  }, [updateSettings])
 
   const updateTheme = useCallback((theme: Theme) => {
-    setSettings((prev) => ({ ...prev, theme }))
-  }, [])
+    updateSettings({ theme })
+  }, [updateSettings])
 
   const updateSttEnabled = useCallback((sttEnabled: boolean) => {
-    setSettings((prev) => ({ ...prev, sttEnabled }))
-  }, [])
+    updateSettings({ sttEnabled })
+  }, [updateSettings])
 
   const updateTtsEnabled = useCallback((ttsEnabled: boolean) => {
-    setSettings((prev) => ({ ...prev, ttsEnabled }))
-  }, [])
+    updateSettings({ ttsEnabled })
+  }, [updateSettings])
 
   const updateVoiceInputMode = useCallback((voiceInputMode: VoiceInputMode) => {
-    setSettings((prev) => ({ ...prev, voiceInputMode }))
-  }, [])
+    updateSettings({ voiceInputMode })
+  }, [updateSettings])
 
   const updatePlanPendingVariant = useCallback((planPendingVariant: PlanPendingVariant) => {
-    setSettings((prev) => ({ ...prev, planPendingVariant }))
-  }, [])
+    updateSettings({ planPendingVariant })
+  }, [updateSettings])
 
   const updateDensity = useCallback((density: Density) => {
-    setSettings((prev) => ({ ...prev, density }))
-  }, [])
+    updateSettings({ density })
+  }, [updateSettings])
 
   const resetSettings = useCallback(() => {
-    setSettings(DEFAULT_SETTINGS)
-  }, [])
+    updateSettings(DEFAULT_SETTINGS)
+  }, [updateSettings])
 
   return {
     settings,

@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react'
-import type { GobbyTask } from '../../hooks/useTasks'
+import type { GobbyTask } from '../../types/tasks'
 import { StatusDot, PriorityBadge, TypeBadge } from './TaskBadges'
 import { relativeTime } from '../../utils/formatTime'
 import { getTaskDisplayState } from '../../lib/taskState'

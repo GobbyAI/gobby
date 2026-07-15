@@ -139,6 +139,47 @@ describe("useChat proxy session messaging", () => {
     expect(result.current.messages[0].id).toBe("db-msg-later");
   });
 
+  it("keeps a queued delivery notice when an unrelated send result arrives", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => result.current.observeSession?.("sess-proxy", "proxy"));
+    act(() => {
+      ws.simulateMessage({
+        type: "attach_to_session_result",
+        session_id: "sess-proxy",
+        external_id: "proxy-ext",
+        source: "claude",
+        status: "active",
+        session_type: "terminal",
+        messages: [],
+      });
+      result.current.sendMessage("queued message");
+    });
+    const sentMsg = JSON.parse(
+      ws.send.mock.calls[ws.send.mock.calls.length - 1][0],
+    );
+
+    act(() => {
+      ws.simulateMessage({
+        type: "send_to_cli_session_result",
+        client_message_id: sentMsg.client_message_id,
+        delivered: false,
+      });
+      ws.simulateMessage({
+        type: "send_to_cli_session_result",
+        client_message_id: "unrelated-message",
+        delivered: true,
+      });
+    });
+
+    expect(result.current.proxyDeliveryNotice).toBe(
+      "Message queued until the session yields.",
+    );
+  });
+
   it("restores attached terminal chat mode from attach metadata", async () => {
     await loadModule();
     const { result } = renderHook(() => useChat());

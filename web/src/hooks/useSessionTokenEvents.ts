@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { useTokenEventsStream } from './useTokenEventsStream'
+import { tokenEventKey, useTokenEventsStream } from './useTokenEventsStream'
 import type { TokenEvent } from '../types/tokens'
 
 function getBaseUrl(): string {
@@ -59,9 +59,7 @@ export function useSessionTokenEvents(sessionId: string | null, limit = 500) {
           const merged = [...fetchedEvents, ...prev]
           const deduped = new Map<string, TokenEvent>()
           for (const event of merged) {
-            const key = event.message_id
-              ? `${event.session_id}:${event.message_id}`
-              : `${event.session_id}:${event.event_at}:${event.model ?? ''}:${event.input_tokens}:${event.output_tokens}`
+            const key = tokenEventKey(event)
             if (!deduped.has(key)) {
               deduped.set(key, event)
             }

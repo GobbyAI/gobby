@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
 import { CronTab } from '../CronTab'
-import type { CronJob, CronRun } from '../../../hooks/useCronJobs'
+import { useCronJobs, type CronJob, type CronRun } from '../../../hooks/useCronJobs'
 
 const cronMock = vi.hoisted(() => ({
   jobs: [] as CronJob[],
@@ -15,7 +15,7 @@ const cronMock = vi.hoisted(() => ({
 }))
 
 vi.mock('../../../hooks/useCronJobs', () => ({
-  useCronJobs: () => cronMock,
+  useCronJobs: vi.fn(() => cronMock),
 }))
 
 vi.mock('../../chat/artifacts/ResizeHandle', () => ({
@@ -56,6 +56,12 @@ beforeEach(() => {
 })
 
 describe('CronTab', () => {
+  it('passes the active project ID to the cron hook', () => {
+    render(<CronTab projectId="project-123" />)
+
+    expect(useCronJobs).toHaveBeenCalledWith('project-123')
+  })
+
   it('renders an empty state when no jobs are loaded', () => {
     render(<CronTab projectId="p" />)
     expect(screen.getByText(/cron jobs appear here when scheduled/i)).toBeInTheDocument()

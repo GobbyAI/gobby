@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { GobbyTask } from "../../../../hooks/useTasks";
+import type { GobbyTask } from "../../../../types/tasks";
 import {
   computeTaskDetail,
   formatTaskDetailDate,

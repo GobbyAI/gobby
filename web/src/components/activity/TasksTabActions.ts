@@ -1,4 +1,4 @@
-import type { GobbyTask } from "../../hooks/useTasks";
+import type { GobbyTask } from "../../types/tasks";
 import {
   extractTaskPayload,
   type RawTaskPayload,

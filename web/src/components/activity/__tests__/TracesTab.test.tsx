@@ -8,6 +8,7 @@ import type { TraceRecord, SpanRecord } from '../../../hooks/useTraces'
 const tracesMock = vi.hoisted(() => ({
   traces: [] as TraceRecord[],
   isLoading: false,
+  error: null as string | null,
   filters: {},
   setFilters: vi.fn(),
   fetchTraces: vi.fn(),
@@ -18,6 +19,7 @@ const tracesMock = vi.hoisted(() => ({
 const detailMock = vi.hoisted(() => ({
   spans: [] as SpanRecord[],
   isLoading: false,
+  error: null as string | null,
   fetchDetail: vi.fn(),
 }))
 
@@ -65,10 +67,12 @@ function makeSpan(overrides: Partial<SpanRecord> = {}): SpanRecord {
 beforeEach(() => {
   tracesMock.traces = []
   tracesMock.isLoading = false
+  tracesMock.error = null
   tracesMock.selectedTraceId = null
   tracesMock.setSelectedTraceId = vi.fn()
   detailMock.spans = []
   detailMock.isLoading = false
+  detailMock.error = null
 })
 
 describe('TracesTab', () => {
@@ -77,6 +81,16 @@ describe('TracesTab', () => {
     expect(
       screen.getByText(/tool-call traces appear here as agents work/i),
     ).toBeInTheDocument()
+  })
+
+  it('renders a fetch error without hiding loaded traces', () => {
+    tracesMock.traces = [makeTrace({ root_span_name: 'loaded-trace' })]
+    tracesMock.error = 'Failed to fetch traces (500)'
+
+    render(<TracesTab projectId="p" />)
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Failed to fetch traces (500)')
+    expect(screen.getByText('loaded-trace')).toBeInTheDocument()
   })
 
   it('sorts traces newest-first and calls setSelectedTraceId on click', async () => {
@@ -137,5 +151,15 @@ describe('TracesTab', () => {
     detailMock.spans = [makeSpan({ id: 's-a', name: 'inner-span' })]
     render(<TracesTab projectId="p" />)
     expect(screen.getByText('inner-span')).toBeInTheDocument()
+  })
+
+  it('renders a detail fetch error in the selected trace pane', () => {
+    tracesMock.traces = [makeTrace({ trace_id: 'sel' })]
+    tracesMock.selectedTraceId = 'sel'
+    detailMock.error = 'Failed to fetch trace detail (500)'
+
+    render(<TracesTab projectId="p" />)
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Failed to fetch trace detail (500)')
   })
 })

@@ -14,6 +14,7 @@ import type {
   SessionObservationMeta,
 } from "../../types/chat";
 import type { ContinuationRollbackSnapshot } from "./sessionRecords";
+import type { PreAttachContextUsageSnapshot } from "./contextUsageState";
 import type { PendingProxyMessage } from "./pendingProxyMessages";
 import type {
   ChatError,
@@ -26,10 +27,12 @@ import type {
 export type Setter<T> = Dispatch<SetStateAction<T>>;
 
 export interface QueuedTransportMessage {
+  messageId: string;
   content: string;
   model?: string | null;
   files?: QueuedFile[];
   projectId?: string | null;
+  injectContext?: string;
   reasoningEffort?: string | null;
   ttsEnabled?: boolean;
 }
@@ -42,6 +45,7 @@ export type SendMessage = (
   injectContext?: string,
   reasoningEffort?: string | null,
   ttsEnabled?: boolean,
+  optimisticMessageId?: string,
 ) => boolean;
 
 export type ArtifactEventCallback = (
@@ -67,7 +71,7 @@ export interface SessionRefs {
   observedSessionMetaRef: MutableRefObject<SessionObservationMeta | null>;
   planContentRef: MutableRefObject<string | null>;
   planToolCallIdRef: MutableRefObject<string | null>;
-  preAttachContextUsageRef: MutableRefObject<ContextUsage | null>;
+  preAttachContextUsageRef: MutableRefObject<PreAttachContextUsageSnapshot | null>;
   sessionInteractionModeRef: MutableRefObject<SessionInteractionMode>;
   sessionRefRef: MutableRefObject<string | null>;
   viewingSessionIdRef: MutableRefObject<string | null>;
@@ -136,6 +140,7 @@ export interface PendingRefs {
   pendingPlanFeedbackRef: MutableRefObject<string | null>;
   pendingProxyMessagesRef: MutableRefObject<Map<string, PendingProxyMessage>>;
   pendingProxySessionQueuesRef: MutableRefObject<Map<string, string[]>>;
+  pendingAttachSessionIdRef: MutableRefObject<string | null>;
   pendingSessionInteractionModeRef: MutableRefObject<"observe" | "proxy">;
 }
 

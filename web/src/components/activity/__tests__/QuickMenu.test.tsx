@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { McpQuickMenu } from "../mcp/McpQuickMenu";
 import { QuickMenu } from "../QuickMenu";
 import { TaskQuickMenu, type TaskContextMenu } from "../TaskQuickMenu";
-import type { GobbyTask } from "../../../hooks/useTasks";
+import type { GobbyTask } from "../../../types/tasks";
 
 function rect(
   left: number,

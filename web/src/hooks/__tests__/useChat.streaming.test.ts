@@ -132,7 +132,7 @@ describe("useChat streaming and event handling", () => {
     expect(result.current.isStreaming).toBe(false);
   });
 
-  it("handles chat_error messages", async () => {
+  it("gives chat errors a distinct id from streamed assistant content", async () => {
     await loadModule();
     const { result } = renderHook(() => useChat());
 
@@ -147,6 +147,13 @@ describe("useChat streaming and event handling", () => {
 
     act(() => {
       ws.simulateMessage({
+        type: "chat_stream",
+        message_id: "msg-1",
+        request_id: requestId,
+        content: "Partial response",
+        done: false,
+      });
+      ws.simulateMessage({
         type: "chat_error",
         message_id: "msg-1",
         request_id: requestId,
@@ -155,11 +162,20 @@ describe("useChat streaming and event handling", () => {
     });
 
     expect(result.current.isStreaming).toBe(false);
-    // Error should appear in messages
-    const errorMsgs = result.current.messages.filter(
-      (m) => m.role === "system",
+    const assistant = result.current.messages.find(
+      (m) => m.role === "assistant",
     );
-    expect(errorMsgs.length).toBeGreaterThanOrEqual(1);
+    const error = result.current.messages.find((m) => m.role === "system");
+    expect(assistant).toMatchObject({
+      id: "msg-1",
+      content: "Partial response",
+    });
+    expect(error).toMatchObject({ content: "Error: Something went wrong" });
+    expect(error?.id).toMatch(/^error-/);
+    expect(error?.id).not.toBe(assistant?.id);
+    expect(new Set(result.current.messages.map((m) => m.id))).toHaveLength(
+      result.current.messages.length,
+    );
   });
 
   it("handles tool_status messages", async () => {
@@ -239,6 +255,8 @@ describe("useChat streaming and event handling", () => {
         request_id: requestId,
         tool_call_id: "tc-1",
         status: "completed",
+        tool_name: "write_file",
+        server_name: "filesystem",
         arguments: { path: "/tmp/test" },
         content_blocks: [
           {
@@ -264,6 +282,9 @@ describe("useChat streaming and event handling", () => {
     ]);
     expect(updated.toolCalls?.[0].raw_output).toEqual({ stdout: "ok" });
     expect(updated.toolCalls?.[0].arguments).toEqual({ path: "/tmp/test" });
+    expect(updated.toolCalls?.[0].tool_name).toBe("write_file");
+    expect(updated.toolCalls?.[0].server_name).toBe("filesystem");
+    expect(updated.toolCalls?.[0].tool_type).toBe("unknown");
     expect(
       updated.contentBlocks?.[1].type === "tool_chain"
         ? updated.contentBlocks[1].tool_calls[0].arguments
@@ -686,7 +707,7 @@ describe("useChat streaming and event handling", () => {
     expect(result.current.contextUsage.contextUsageRatio).toBeCloseTo(0.2072);
   });
 
-  it("updates context usage from cumulative token_event session totals", async () => {
+  it("does not preserve token_event snapshots across usage merges", async () => {
     await loadModule();
     const { result } = renderHook(() => useChat());
 
@@ -697,10 +718,50 @@ describe("useChat streaming and event handling", () => {
       ws.simulateMessage({
         type: "session_usage_updated",
         session_id: "test-conversation-id",
-        usage_input_tokens: 420,
-        usage_output_tokens: 33,
-        usage_cache_read_tokens: 120,
-        usage_cache_creation_tokens: 10,
+        context_window: 200000,
+        context_used_tokens: 9999,
+        context_usage_ratio: 0.05,
+        context_usage_source: "token_event",
+        context_usage_confidence: "reported",
+      });
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_usage_updated",
+        session_id: "test-conversation-id",
+        usage_input_tokens: 10042,
+        context_window: 200000,
+      });
+    });
+
+    expect(result.current.contextUsage).toMatchObject({
+      totalInputTokens: 10042,
+      contextUsageSource: null,
+    });
+    expect(result.current.contextUsage.contextUsageRatio).toBeCloseTo(0.05021);
+  });
+
+  it("ignores cumulative token_event session totals for context occupancy", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_usage_updated",
+        session_id: "test-conversation-id",
+        context_used_tokens: 420,
+        context_usage_ratio: 0.0021,
+        context_usage_source: "codex_token_event",
+        context_usage_confidence: "reported",
+        last_prompt_input_tokens: 420,
+        last_prompt_uncached_input_tokens: 290,
+        last_prompt_cache_read_tokens: 120,
+        last_prompt_cache_creation_tokens: 10,
+        last_completion_output_tokens: 33,
         context_window: 200000,
       });
     });
@@ -725,16 +786,28 @@ describe("useChat streaming and event handling", () => {
       });
     });
 
+    act(() => {
+      ws.simulateMessage({
+        type: "session_usage_updated",
+        session_id: "test-conversation-id",
+        usage_input_tokens: 10042,
+        usage_output_tokens: 77,
+        usage_cache_read_tokens: 897,
+        usage_cache_creation_tokens: 676,
+        context_window: 200000,
+      });
+    });
+
     expect(result.current.contextUsage).toMatchObject({
-      totalInputTokens: 9999,
-      outputTokens: 44,
-      cacheReadTokens: 777,
-      cacheCreationTokens: 666,
-      uncachedInputTokens: 8556,
-      contextWindow: 2000,
-      contextUsageSource: "token_event",
+      totalInputTokens: 420,
+      outputTokens: 33,
+      cacheReadTokens: 120,
+      cacheCreationTokens: 10,
+      uncachedInputTokens: 290,
+      contextWindow: 200000,
+      contextUsageSource: "codex_token_event",
       contextUsageConfidence: "reported",
     });
-    expect(result.current.contextUsage.contextUsageRatio).toBeCloseTo(1);
+    expect(result.current.contextUsage.contextUsageRatio).toBeCloseTo(0.0021);
   });
 });

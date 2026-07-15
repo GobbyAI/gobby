@@ -41,6 +41,8 @@ let startedSources: StartedSource[] = []
 let mockAudioContextInitialState: AudioContextState = 'running'
 let deferredAudioContextResume: { promise: Promise<void>; resolve: () => void } | null = null
 let audioContextResumeCalls = 0
+let audioContexts: MockAudioContext[] = []
+let deferredAudioWorkletModule: { promise: Promise<void>; resolve: () => void } | null = null
 
 function deferAudioContextResume() {
   let resolve!: () => void
@@ -66,10 +68,12 @@ class MockAudioContext {
   state: AudioContextState = mockAudioContextInitialState
   destination = {}
   audioWorklet = {
-    addModule: vi.fn(async () => {}),
+    addModule: vi.fn(() => deferredAudioWorkletModule?.promise ?? Promise.resolve()),
   }
 
-  constructor(_opts?: AudioContextOptions) {}
+  constructor(_opts?: AudioContextOptions) {
+    audioContexts.push(this)
+  }
 
   resume() {
     audioContextResumeCalls += 1
@@ -167,6 +171,8 @@ describe('useVoice', () => {
     mockAudioContextInitialState = 'running'
     deferredAudioContextResume = null
     audioContextResumeCalls = 0
+    audioContexts = []
+    deferredAudioWorkletModule = null
 
     wsRef = {
       current: {
@@ -627,6 +633,116 @@ describe('useVoice', () => {
       conversationPrefix: 'conv-ptt',
       sampleRate: 16_000,
     })
+  })
+
+  it('abandons a delayed PTT start when recording is stopped', async () => {
+    let resolveStream!: (stream: MediaStream) => void
+    const streamPromise = new Promise<MediaStream>((resolve) => {
+      resolveStream = resolve
+    })
+    const trackStop = vi.fn()
+    getUserMediaMock.mockReturnValueOnce(streamPromise)
+    const { result } = renderHook(() => useVoice(
+      wsRef as any,
+      'conv-stop-startup',
+      0,
+      projectIdRef,
+      { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    let startPromise = Promise.resolve()
+    act(() => {
+      startPromise = result.current.startRecording()
+    })
+    await act(async () => {
+      await result.current.stopRecording()
+      resolveStream({ getTracks: () => [{ stop: trackStop }] } as unknown as MediaStream)
+      await startPromise
+    })
+
+    expect(trackStop).toHaveBeenCalledOnce()
+    expect(audioContexts).toHaveLength(0)
+    expect(result.current.isRecording).toBe(false)
+    expect(voiceLogCalls()).not.toEqual(expect.arrayContaining([
+      expect.arrayContaining(['[Voice] ptt_started']),
+    ]))
+  })
+
+  it('keeps a restarted PTT capture when the previous start resolves late', async () => {
+    let resolveFirstStream!: (stream: MediaStream) => void
+    const firstStreamPromise = new Promise<MediaStream>((resolve) => {
+      resolveFirstStream = resolve
+    })
+    const firstTrackStop = vi.fn()
+    const secondTrackStop = vi.fn()
+    getUserMediaMock
+      .mockReturnValueOnce(firstStreamPromise)
+      .mockResolvedValueOnce({ getTracks: () => [{ stop: secondTrackStop }] })
+    const { result } = renderHook(() => useVoice(
+      wsRef as any,
+      'conv-restart-startup',
+      0,
+      projectIdRef,
+      { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    let firstStart = Promise.resolve()
+    act(() => {
+      firstStart = result.current.startRecording()
+    })
+    await act(async () => {
+      await result.current.startRecording()
+    })
+    await act(async () => {
+      resolveFirstStream({
+        getTracks: () => [{ stop: firstTrackStop }],
+      } as unknown as MediaStream)
+      await firstStart
+    })
+
+    expect(firstTrackStop).toHaveBeenCalledOnce()
+    expect(secondTrackStop).not.toHaveBeenCalled()
+    expect(audioContexts).toHaveLength(1)
+    expect(result.current.isRecording).toBe(true)
+  })
+
+  it('closes startup resources when unmounted during AudioWorklet loading', async () => {
+    let resolveModule!: () => void
+    const modulePromise = new Promise<void>((resolve) => {
+      resolveModule = resolve
+    })
+    deferredAudioWorkletModule = { promise: modulePromise, resolve: resolveModule }
+    const trackStop = vi.fn()
+    getUserMediaMock.mockResolvedValueOnce({ getTracks: () => [{ stop: trackStop }] })
+    const { result, unmount } = renderHook(() => useVoice(
+      wsRef as any,
+      'conv-unmount-startup',
+      0,
+      projectIdRef,
+      { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    let startPromise = Promise.resolve()
+    act(() => {
+      startPromise = result.current.startRecording()
+    })
+    await waitFor(() => {
+      expect(audioContexts).toHaveLength(1)
+    })
+    unmount()
+    await act(async () => {
+      resolveModule()
+      await startPromise
+    })
+
+    expect(trackStop).toHaveBeenCalledOnce()
+    expect(audioContexts[0].state).toBe('closed')
+    expect(voiceLogCalls()).not.toEqual(expect.arrayContaining([
+      expect.arrayContaining(['[Voice] ptt_started']),
+    ]))
   })
 
   it('uses the supplied attached session id for PTT voice audio payloads', async () => {
@@ -1179,6 +1295,76 @@ describe('useVoice', () => {
       return Math.round(sample * 32768)
     })
     expect(playedMarkers).toEqual([1, 2])
+  })
+
+  it('detaches a stopped TTS source before starting replacement playback', () => {
+    const { result } = renderHook(() => useVoice(
+      wsRef as any,
+      'conv-tts-barge-in',
+      0,
+      projectIdRef,
+      { sttEnabled: false, ttsEnabled: true, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    act(() => {
+      result.current.handleVoiceMessage({
+        type: 'tts_audio',
+        sample_rate: 24_000,
+        format: 'pcm_s16le',
+        chunk_index: 1,
+      })
+      result.current.handleBinaryMessage(pcmChunk(1))
+    })
+    const stoppedSource = startedSources[0]
+
+    act(() => {
+      result.current.stopTTS()
+    })
+
+    expect(stoppedSource.stop).toHaveBeenCalledOnce()
+    expect(stoppedSource.onended).toBeNull()
+
+    act(() => {
+      result.current.handleVoiceMessage({
+        type: 'tts_audio',
+        sample_rate: 24_000,
+        format: 'pcm_s16le',
+        chunk_index: 2,
+      })
+      result.current.handleBinaryMessage(pcmChunk(2))
+      stoppedSource.onended?.(new Event('ended'))
+    })
+
+    expect(startedSources).toHaveLength(2)
+    expect(Math.round((startedSources[1].buffer?.getChannelData(0)[0] ?? 0) * 32768)).toBe(2)
+  })
+
+  it('closes each TTS AudioContext when its hook unmounts', () => {
+    for (const marker of [1, 2]) {
+      const { result, unmount } = renderHook(() => useVoice(
+        wsRef as any,
+        `conv-tts-unmount-${marker}`,
+        0,
+        projectIdRef,
+        { sttEnabled: false, ttsEnabled: true, voiceInputMode: 'ptt' },
+        true,
+      ))
+
+      act(() => {
+        result.current.handleVoiceMessage({
+          type: 'tts_audio',
+          sample_rate: 24_000,
+          format: 'pcm_s16le',
+          chunk_index: marker,
+        })
+        result.current.handleBinaryMessage(pcmChunk(marker))
+      })
+      unmount()
+    }
+
+    expect(audioContexts).toHaveLength(2)
+    expect(audioContexts.every((context) => context.state === 'closed')).toBe(true)
   })
 
   it('stops TTS and cancels recording on conversation switch', async () => {

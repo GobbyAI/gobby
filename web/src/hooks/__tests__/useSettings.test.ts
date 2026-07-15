@@ -126,6 +126,51 @@ describe('useSettings', () => {
     expect(result.current.settings.density).toBe('comfortable')
   })
 
+  it('preserves and persists changes made while remote settings are loading', async () => {
+    let resolveRemote!: (response: Response) => void
+    const remoteResponse = new Promise<Response>((resolve) => {
+      resolveRemote = resolve
+    })
+    const fetchMock = vi.fn((url: string | URL | Request, init?: RequestInit) => {
+      if (url === '/api/config/ui-settings' && init?.method === undefined) {
+        return remoteResponse
+      }
+      return Promise.resolve(new Response(null, { status: 204 }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useSettings())
+
+    act(() => {
+      // This matches the initial value but is still an explicit user change.
+      result.current.updateTheme('dark')
+    })
+
+    expect(fetchMock.mock.calls).toHaveLength(1)
+
+    await act(async () => {
+      resolveRemote(
+        new Response(JSON.stringify({ theme: 'light', fontSize: 18 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      await remoteResponse
+    })
+
+    await waitFor(() => {
+      expect(result.current.settings).toMatchObject({ theme: 'dark', fontSize: 18 })
+    })
+    await waitFor(() => {
+      const putCall = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT')
+      expect(putCall).toBeDefined()
+      expect(JSON.parse(putCall?.[1]?.body as string)).toMatchObject({
+        theme: 'dark',
+        fontSize: 18,
+      })
+    })
+  })
+
   it('replaces the icon cache param while preserving other query params and fragments', () => {
     expect(cacheBustedIconHref('/logo.png?theme=dark&v=1#mask')).toBe(
       '/logo.png?theme=dark&v=2#mask',

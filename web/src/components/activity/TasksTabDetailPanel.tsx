@@ -4,7 +4,7 @@ import type {
   DependencyTree,
   GobbyTask,
   GobbyTaskDetail,
-} from "../../hooks/useTasks";
+} from "../../types/tasks";
 import { TaskDetailHeader } from "./taskdetail/TaskDetailHeader";
 import { TaskDetailStatusLine } from "./taskdetail/TaskDetailStatusLine";
 import { TaskDetailEditableCore } from "./taskdetail/TaskDetailEditableCore";

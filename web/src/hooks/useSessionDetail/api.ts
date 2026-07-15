@@ -118,6 +118,7 @@ export async function fetchRenderedSessionMessages(
       returnedCount: 0,
       degradedReason: null,
       ok: false,
+      status: messagesRes.status,
     }
   }
   const messageData = await messagesRes.json()
@@ -137,6 +138,7 @@ export async function fetchRenderedSessionMessages(
       ? ((messageData.degraded_reason as string) ?? 'max_span_exceeded')
       : null,
     ok: true,
+    status: messagesRes.status,
   }
 }
 
@@ -152,6 +154,7 @@ export async function fetchChatSessionMessages(sessionId: string): Promise<Messa
       returnedCount: 0,
       degradedReason: null,
       ok: false,
+      status: chatRes.status,
     }
   }
   const chatData = await chatRes.json()
@@ -166,6 +169,7 @@ export async function fetchChatSessionMessages(sessionId: string): Promise<Messa
     returnedCount: mapped.length,
     degradedReason: null,
     ok: true,
+    status: chatRes.status,
   }
 }
 

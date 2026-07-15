@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import type { GobbyTaskDetail } from '../../hooks/useTasks'
+import type { GobbyTaskDetail } from '../../types/tasks'
 import {
   getCanonicalTaskState,
   getTaskDisplayState,

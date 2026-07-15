@@ -1,4 +1,4 @@
-import type { GobbyTaskDetail } from "../../../hooks/useTasks";
+import type { GobbyTaskDetail } from "../../../types/tasks";
 import type { StageStateView } from "../../../lib/stageActions";
 
 function makeStage(overrides: Partial<StageStateView> = {}): StageStateView {

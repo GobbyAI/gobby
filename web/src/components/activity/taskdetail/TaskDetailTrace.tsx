@@ -1,4 +1,4 @@
-import type { GobbyTaskDetail } from "../../../hooks/useTasks";
+import type { GobbyTaskDetail } from "../../../types/tasks";
 import { isValidGithubRepoSlug } from "../../../lib/githubRepo";
 import { MetaKVRow } from "./TaskDetailKV";
 import { formatTaskDetailDate } from "./taskDetailFormat";

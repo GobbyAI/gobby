@@ -24,6 +24,13 @@ export interface WorkflowDetail extends WorkflowSummary {
   has_template_update?: boolean
 }
 
+interface WorkflowFilters {
+  workflow_type?: string
+  enabled?: boolean
+  project_id?: string
+  include_deleted?: boolean
+}
+
 function getBaseUrl(): string {
   return ''
 }
@@ -33,13 +40,13 @@ export function useWorkflows() {
   const [isLoading, setIsLoading] = useState(true)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedWorkflow, setSelectedWorkflow] = useState<WorkflowDetail | null>(null)
+  const workflowsRequestGenerationRef = useRef(0)
+  const selectionRequestGenerationRef = useRef(0)
+  const workflowFiltersRef = useRef<WorkflowFilters | undefined>(undefined)
 
-  const fetchWorkflows = useCallback(async (params?: {
-    workflow_type?: string
-    enabled?: boolean
-    project_id?: string
-    include_deleted?: boolean
-  }) => {
+  const fetchWorkflows = useCallback(async (params?: WorkflowFilters) => {
+    workflowFiltersRef.current = params
+    const requestGeneration = ++workflowsRequestGenerationRef.current
     try {
       const baseUrl = getBaseUrl()
       const searchParams = new URLSearchParams()
@@ -53,12 +60,21 @@ export function useWorkflows() {
       const response = await fetch(url)
       if (response.ok) {
         const data = await response.json()
-        setWorkflows(data.definitions || [])
+        if (requestGeneration === workflowsRequestGenerationRef.current) {
+          setWorkflows(data.definitions || [])
+        }
       }
     } catch (e) {
-      console.error('Failed to fetch workflows:', e)
+      if (requestGeneration === workflowsRequestGenerationRef.current) {
+        console.error('Failed to fetch workflows:', e)
+      }
     }
   }, [])
+
+  const refetchWorkflows = useCallback(
+    () => fetchWorkflows(workflowFiltersRef.current),
+    [fetchWorkflows],
+  )
 
   const fetchWorkflow = useCallback(async (id: string): Promise<WorkflowDetail | null> => {
     try {
@@ -94,7 +110,7 @@ export function useWorkflows() {
       if (response.ok) {
         const data = await response.json()
         if (data.status === 'success') {
-          await fetchWorkflows()
+          await refetchWorkflows()
           return data.definition
         }
       }
@@ -102,7 +118,7 @@ export function useWorkflows() {
       console.error('Failed to create workflow:', e)
     }
     return null
-  }, [fetchWorkflows])
+  }, [refetchWorkflows])
 
   const updateWorkflow = useCallback(async (
     id: string,
@@ -127,7 +143,7 @@ export function useWorkflows() {
       if (response.ok) {
         const data = await response.json()
         if (data.status === 'success') {
-          await fetchWorkflows()
+          await refetchWorkflows()
           return data.definition
         }
       }
@@ -135,7 +151,7 @@ export function useWorkflows() {
       console.error('Failed to update workflow:', e)
     }
     return null
-  }, [fetchWorkflows])
+  }, [refetchWorkflows])
 
   const deleteWorkflow = useCallback(async (id: string): Promise<boolean> => {
     try {
@@ -150,7 +166,7 @@ export function useWorkflows() {
             setSelectedId(null)
             setSelectedWorkflow(null)
           }
-          await fetchWorkflows()
+          await refetchWorkflows()
           return true
         }
       }
@@ -158,7 +174,7 @@ export function useWorkflows() {
       console.error('Failed to delete workflow:', e)
     }
     return false
-  }, [fetchWorkflows, selectedId])
+  }, [refetchWorkflows, selectedId])
 
   const duplicateWorkflow = useCallback(async (
     id: string,
@@ -174,7 +190,7 @@ export function useWorkflows() {
       if (response.ok) {
         const data = await response.json()
         if (data.status === 'success') {
-          await fetchWorkflows()
+          await refetchWorkflows()
           return data.definition
         }
       }
@@ -182,7 +198,7 @@ export function useWorkflows() {
       console.error('Failed to duplicate workflow:', e)
     }
     return null
-  }, [fetchWorkflows])
+  }, [refetchWorkflows])
 
   const toggleEnabled = useCallback(async (id: string): Promise<WorkflowDetail | null> => {
     try {
@@ -193,7 +209,7 @@ export function useWorkflows() {
       if (response.ok) {
         const data = await response.json()
         if (data.status === 'success') {
-          await fetchWorkflows()
+          await refetchWorkflows()
           return data.definition
         }
       }
@@ -201,7 +217,7 @@ export function useWorkflows() {
       console.error('Failed to toggle workflow:', e)
     }
     return null
-  }, [fetchWorkflows])
+  }, [refetchWorkflows])
 
   const importYaml = useCallback(async (
     yamlContent: string,
@@ -217,7 +233,7 @@ export function useWorkflows() {
       if (response.ok) {
         const data = await response.json()
         if (data.status === 'success') {
-          await fetchWorkflows()
+          await refetchWorkflows()
           return data.definition
         }
       }
@@ -225,7 +241,7 @@ export function useWorkflows() {
       console.error('Failed to import workflow YAML:', e)
     }
     return null
-  }, [fetchWorkflows])
+  }, [refetchWorkflows])
 
   const exportYaml = useCallback(async (id: string): Promise<string | null> => {
     try {
@@ -249,7 +265,7 @@ export function useWorkflows() {
       if (response.ok) {
         const data = await response.json()
         if (data.status === 'success') {
-          await fetchWorkflows()
+          await refetchWorkflows()
           return true
         }
       }
@@ -257,14 +273,17 @@ export function useWorkflows() {
       console.error('Failed to restore workflow:', e)
     }
     return false
-  }, [fetchWorkflows])
+  }, [refetchWorkflows])
 
   // Select a workflow and fetch its details
   const selectWorkflow = useCallback(async (id: string | null) => {
+    const requestGeneration = ++selectionRequestGenerationRef.current
     setSelectedId(id)
     if (id) {
       const detail = await fetchWorkflow(id)
-      setSelectedWorkflow(detail)
+      if (requestGeneration === selectionRequestGenerationRef.current) {
+        setSelectedWorkflow(detail)
+      }
     } else {
       setSelectedWorkflow(null)
     }
@@ -294,14 +313,16 @@ export function useWorkflows() {
   useEffect(() => {
     return () => {
       if (debounceRef.current) window.clearTimeout(debounceRef.current)
+      workflowsRequestGenerationRef.current += 1
+      selectionRequestGenerationRef.current += 1
     }
   }, [])
   useWebSocketEvent(
     'workflow_event',
     useCallback(() => {
       if (debounceRef.current) window.clearTimeout(debounceRef.current)
-      debounceRef.current = window.setTimeout(() => fetchWorkflows(), 500)
-    }, [fetchWorkflows]),
+      debounceRef.current = window.setTimeout(() => refetchWorkflows(), 500)
+    }, [refetchWorkflows]),
   )
 
   return {

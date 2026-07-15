@@ -71,6 +71,21 @@ const SAMPLE_SESSIONS = [
   },
 ];
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+function sessionsResponse(sessions: typeof SAMPLE_SESSIONS) {
+  return new Response(JSON.stringify({ sessions, next_cursor: null }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 beforeEach(() => {
   mockFetch = createMockFetch();
   mockFetch.mockJsonResponse("/api/sessions", { sessions: SAMPLE_SESSIONS });
@@ -103,6 +118,94 @@ describe("useSessionCatalog", () => {
         }),
       ).toBe(true);
     });
+  });
+
+  it("discards a delayed response from the previous project", async () => {
+    mockFetch.resetRoutes();
+    const projectAResponse = deferred<Response>();
+    const projectBSession = {
+      ...SAMPLE_SESSIONS[0],
+      id: "sess-project-b",
+      project_id: "proj-2",
+      title: "Project B Session",
+    };
+    mockFetch.fn.mockImplementation((url) => {
+      if (String(url).includes("project_id=proj-1")) {
+        return projectAResponse.promise;
+      }
+      return Promise.resolve(sessionsResponse([projectBSession]));
+    });
+
+    const { result, rerender } = renderHook(
+      ({ projectId }) => useSessionCatalog(projectId),
+      { initialProps: { projectId: "proj-1" } },
+    );
+    await waitFor(() => expect(mockFetch.fn).toHaveBeenCalledTimes(1));
+
+    rerender({ projectId: "proj-2" });
+    await waitFor(() =>
+      expect(result.current.sessions.map((session) => session.id)).toEqual([
+        "sess-project-b",
+      ]),
+    );
+
+    await act(async () => {
+      projectAResponse.resolve(sessionsResponse(SAMPLE_SESSIONS));
+      await projectAResponse.promise;
+    });
+
+    expect(result.current.sessions.map((session) => session.id)).toEqual([
+      "sess-project-b",
+    ]);
+  });
+
+  it("discards a delayed page-one refresh after filters change", async () => {
+    mockFetch.resetRoutes();
+    const staleRefreshResponse = deferred<Response>();
+    const filteredSession = {
+      ...SAMPLE_SESSIONS[0],
+      id: "sess-filtered",
+      title: "Filtered Session",
+    };
+    let requestCount = 0;
+    mockFetch.fn.mockImplementation(() => {
+      requestCount += 1;
+      if (requestCount === 1) {
+        return Promise.resolve(sessionsResponse([SAMPLE_SESSIONS[0]]));
+      }
+      if (requestCount === 2) {
+        return staleRefreshResponse.promise;
+      }
+      return Promise.resolve(sessionsResponse([filteredSession]));
+    });
+
+    const initialFilters = defaultSessionsFilters();
+    const { result, rerender } = renderHook(
+      ({ filters }) => useSessionCatalog("proj-1", filters),
+      { initialProps: { filters: initialFilters } },
+    );
+    await waitFor(() => expect(result.current.sessions).toHaveLength(1));
+
+    act(() => result.current.refresh());
+    await waitFor(() => expect(mockFetch.fn).toHaveBeenCalledTimes(2));
+
+    rerender({
+      filters: { ...initialFilters, statuses: new Set(["paused"]) },
+    });
+    await waitFor(() =>
+      expect(result.current.sessions.map((session) => session.id)).toEqual([
+        "sess-filtered",
+      ]),
+    );
+
+    await act(async () => {
+      staleRefreshResponse.resolve(sessionsResponse(SAMPLE_SESSIONS));
+      await staleRefreshResponse.promise;
+    });
+
+    expect(result.current.sessions.map((session) => session.id)).toEqual([
+      "sess-filtered",
+    ]);
   });
 
   it("keeps expired and handoff_ready rows but hides deleted rows", async () => {

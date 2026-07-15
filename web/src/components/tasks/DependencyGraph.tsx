@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useRef, useEffect, useId } from 'react'
 import dagre from '@dagrejs/dagre'
-import type { GobbyTask } from '../../hooks/useTasks'
+import type { GobbyTask } from '../../types/tasks'
 import { getTaskDisplayState, TASK_STATE_COLORS } from '../../lib/taskState'
 
 interface GraphNode {
