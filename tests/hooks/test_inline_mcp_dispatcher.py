@@ -133,6 +133,7 @@ async def test_turn_start_delivery_seeds_resolved_caller_context(
         assert call_tool.await_args.kwargs["session_id"] == recipient.id
         proxied_arguments = call_tool.await_args.args[2]
         assert proxied_arguments["project_path"] == str(tmp_path)
+        assert "prompt_text" not in proxied_arguments
         delivered_message = message_manager.get_message(message.id)
         assert delivered_message is not None
         assert delivered_message.delivered_at is not None

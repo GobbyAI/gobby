@@ -376,8 +376,11 @@ class HookManagerFactory:
                 if event:
                     if "session_id" not in args:
                         args["session_id"] = event.metadata.get("_platform_session_id", "")
-                    if "prompt_text" not in args:
-                        args["prompt_text"] = event.data.get("prompt") if event.data else None
+                    if args.get("prompt_text") is None:
+                        args.pop("prompt_text", None)
+                        event_prompt = event.data.get("prompt") if event.data else None
+                        if isinstance(event_prompt, str):
+                            args["prompt_text"] = event_prompt
                     if "project_path" not in args:
                         args["project_path"] = event.metadata.get("project_path") or None
                     # Map prompt_text to query for tools that expect it
