@@ -1,6 +1,7 @@
 """Tests for template_writer.py — YAML write/read/delete for user templates."""
 
 from pathlib import Path
+from typing import TextIO
 
 import pytest
 import yaml
@@ -72,6 +73,36 @@ class TestWriteRuleTemplate:
 
         data = yaml.safe_load((output_dir / "evolving.yaml").read_text())
         assert data["rules"]["evolving"]["effect"]["action"] == "block"
+
+    def test_partial_write_preserves_existing_template(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gobby.workflows import template_writer
+
+        output_dir = tmp_path / "rules"
+        output_dir.mkdir()
+        path = output_dir / "evolving.yaml"
+        original = "rules:\n  evolving:\n    effect:\n      action: allow\n"
+        path.write_text(original, encoding="utf-8")
+
+        def fail_after_partial_write(_data: object, stream: TextIO, **_kwargs: object) -> None:
+            stream.write("rules:\n  evolving:")
+            raise OSError("simulated interrupted write")
+
+        monkeypatch.setattr(template_writer.yaml, "dump", fail_after_partial_write)
+
+        with pytest.raises(OSError, match="simulated interrupted write"):
+            template_writer.write_rule_template(
+                name="evolving",
+                definition={
+                    "event": {"type": "pre_tool_use"},
+                    "effect": {"action": "block"},
+                },
+                output_dir=output_dir,
+            )
+
+        assert path.read_text(encoding="utf-8") == original
+        assert list(output_dir.glob(".evolving.yaml.*.tmp")) == []
 
     def test_preserves_metadata(self, tmp_path):
         from gobby.workflows.template_writer import write_rule_template
