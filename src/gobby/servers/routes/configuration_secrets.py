@@ -59,17 +59,6 @@ def is_secret_reference(value: Any) -> bool:
     return isinstance(value, str) and value.startswith("$secret:")
 
 
-def mark_secret_keys(config_store: ConfigStore, keys: set[str]) -> None:
-    keys = runtime_embedding_config_keys_to_storage(keys)
-    if not keys:
-        return
-    placeholders = ",".join("%s" for _ in keys)
-    config_store.db.execute(
-        f"UPDATE config_store SET is_secret = TRUE WHERE key IN ({placeholders})",
-        tuple(sorted(keys)),
-    )
-
-
 def delete_all_except(
     config_store: ConfigStore,
     secret_store: SecretStore,

@@ -18,6 +18,7 @@ from starlette.concurrency import run_in_threadpool
 from gobby.config.app import DaemonConfig
 from gobby.config.embedding_keys import (
     runtime_embedding_config_entries_to_storage,
+    runtime_embedding_config_keys_to_storage,
     storage_embedding_config_entries_to_runtime,
     storage_embedding_config_key_to_runtime_key,
 )
@@ -32,7 +33,6 @@ from gobby.servers.routes.configuration_models import ImportConfigRequest
 from gobby.servers.routes.configuration_secrets import (
     FALKOR_PASSWORD_KEY,
     add_restart_hint,
-    mark_secret_keys,
     partition_config_entries,
     validate_falkordb_secret,
     validation_flat_for_secret_entries,
@@ -301,8 +301,9 @@ def persist_imported_config(
                     count += 1
         if storage_plain_values:
             count += config_store.set_many(storage_plain_values, source="import")
-        # mark_secret_keys accepts runtime keys and canonicalizes for config_store.
-        mark_secret_keys(config_store, runtime_secret_marker_keys)
+        config_store.mark_secret_keys(
+            runtime_embedding_config_keys_to_storage(runtime_secret_marker_keys)
+        )
 
     return count
 

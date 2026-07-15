@@ -171,8 +171,23 @@ class TestConfigStore:
             getattr(store, method)(*args)
 
     def test_set_allows_secret_reference(self, store: ConfigStore):
+        store.set(AI_EMBEDDING_API_KEY_KEY, None)
         store.set(AI_EMBEDDING_API_KEY_KEY, "$secret:embeddings_api_key")
         assert store.get(AI_EMBEDDING_API_KEY_KEY) == "$secret:embeddings_api_key"
+        assert AI_EMBEDDING_API_KEY_KEY in store.get_secret_keys()
+
+    def test_set_many_marks_canonical_secret_references(self, store: ConfigStore):
+        store.set("service.credential", "configured-externally")
+        store.set_many({"service.credential": "$secret:credential", "daemon_port": 9000})
+
+        assert store.get_secret_keys() == ["service.credential"]
+
+    def test_mark_secret_keys_marks_existing_rows(self, store: ConfigStore):
+        store.set("service.credential", "configured-externally")
+
+        store.mark_secret_keys({"service.credential"})
+
+        assert store.get_secret_keys() == ["service.credential"]
 
     def test_set_rejects_cross_key_secret_reference(self, store: ConfigStore):
         with pytest.raises(ValueError, match=r"Config key 'ai\.embeddings\.api_key'"):
