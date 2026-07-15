@@ -417,7 +417,7 @@ class TestCreateTask:
                 "priority": 0,
                 "task_type": "bug",
                 "labels": ["critical", "backend"],
-                "category": "testing",
+                "category": "test",
                 "validation_criteria": "Tests pass",
             },
         )
@@ -427,7 +427,7 @@ class TestCreateTask:
         assert data["priority"] == 0
         assert data["task_type"] == "bug"
         assert "critical" in data["labels"]
-        assert data["category"] == "testing"
+        assert data["category"] == "test"
 
     def test_create_missing_title(self, client: TestClient) -> None:
         """Missing required field returns 422 (pydantic validation)."""
@@ -559,10 +559,10 @@ class TestUpdateTask:
     def test_update_category(self, client: TestClient, sample_task: dict) -> None:
         response = client.patch(
             f"/api/tasks/{sample_task['id']}",
-            json={"category": "testing"},
+            json={"category": "test"},
         )
         assert response.status_code == 200
-        assert response.json()["category"] == "testing"
+        assert response.json()["category"] == "test"
 
     def test_update_allow_automation(self, client: TestClient, sample_task: dict) -> None:
         response = client.patch(
