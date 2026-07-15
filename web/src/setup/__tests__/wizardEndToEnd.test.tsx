@@ -240,6 +240,51 @@ describe("setup wizard end-to-end", () => {
     delete process.env.GOBBY_SKIP_BOOTSTRAP;
   });
 
+  it("offers to resume a saved setup before advancing to the saved step", async () => {
+    mocks.loadState.mockReturnValue({
+      ...createState(),
+      completed_step_id: "config",
+    });
+
+    render(<App />);
+
+    expect(screen.getByText(/previous setup in progress/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Yes, resume/i })).toBeTruthy();
+
+    await click(/Yes, resume/i);
+
+    expect(screen.getByText(/Network Security/i)).toBeTruthy();
+  });
+
+  it("starts from the beginning when fresh setup is selected", async () => {
+    mocks.loadState.mockReturnValue({
+      ...createState(),
+      completed_step_id: "config",
+    });
+
+    render(<App />);
+    await click(/No, start fresh/i);
+
+    expect(screen.getByText(/About You/i)).toBeTruthy();
+    expect(mocks.saveState).toHaveBeenCalledWith(
+      expect.objectContaining({ completed_step_id: null }),
+    );
+  });
+
+  it("shows a completion summary when setup has already finished", () => {
+    mocks.loadState.mockReturnValue({
+      ...createState(),
+      completed_at: "2026-05-22T01:00:00.000Z",
+      completed_step_id: "launch",
+    });
+
+    render(<App />);
+
+    expect(screen.getByText(/Setup is already complete/i)).toBeTruthy();
+    expect(screen.getByText(/http:\/\/localhost:60889/i)).toBeTruthy();
+    expect(mocks.runGobby).not.toHaveBeenCalled();
+  });
+
   it("completes a cold FalkorDB install path with a custom password and launches", async () => {
     render(<App />);
 
