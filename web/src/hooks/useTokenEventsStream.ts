@@ -13,13 +13,15 @@ interface Options {
 
 const EMPTY_EVENTS: TokenEvent[] = []
 
-function eventKey(event: TokenEvent): string {
+export function tokenEventKey(event: TokenEvent): string {
   if (event.message_id) {
     return `${event.session_id}:${event.message_id}`
   }
+  const eventAtMs = new Date(event.event_at).getTime()
+  const eventAt = Number.isNaN(eventAtMs) ? event.event_at : new Date(eventAtMs).toISOString()
   return [
     event.session_id,
-    event.event_at,
+    eventAt,
     event.model ?? '',
     event.input_tokens,
     event.output_tokens,
@@ -74,7 +76,7 @@ export function useTokenEventsStream({ sessionId = null, limit = 200 }: Options 
     setEventsState((prev) => {
       const baseEvents = prev.sessionId === sessionId ? prev.events : []
       const resolved = typeof next === 'function' ? next(baseEvents) : next
-      seenKeysRef.current = new Set(resolved.map(eventKey))
+      seenKeysRef.current = new Set(resolved.map(tokenEventKey))
       return {
         sessionId,
         events: resolved,
@@ -91,21 +93,21 @@ export function useTokenEventsStream({ sessionId = null, limit = 200 }: Options 
         return
       }
 
-      const key = eventKey(nextEvent)
+      const key = tokenEventKey(nextEvent)
       if (seenKeysRef.current.has(key)) {
         return
       }
 
       setEventsState((prev) => {
         const baseEvents = prev.sessionId === sessionId ? prev.events : []
-        const key = eventKey(nextEvent)
+        const key = tokenEventKey(nextEvent)
         if (seenKeysRef.current.has(key)) {
           return prev
         }
         const merged = [nextEvent, ...baseEvents]
           .sort((a, b) => new Date(b.event_at).getTime() - new Date(a.event_at).getTime())
           .slice(0, limit)
-        seenKeysRef.current = new Set(merged.map(eventKey))
+        seenKeysRef.current = new Set(merged.map(tokenEventKey))
         return {
           sessionId,
           events: merged,

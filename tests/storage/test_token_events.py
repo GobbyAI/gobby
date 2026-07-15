@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Protocol, cast
 
 import pytest
@@ -14,6 +15,18 @@ pytestmark = pytest.mark.unit
 class _ExplodingRow:
     def __getitem__(self, key: str) -> object:
         raise ValueError(f"unexpected failure for {key}")
+
+
+class _ListEventsDb:
+    def __init__(self, row: dict[str, object]) -> None:
+        self.row = row
+        self.sql = ""
+        self.params: tuple[object, ...] = ()
+
+    def fetchall(self, sql: str, params: tuple[object, ...] = ()) -> list[dict[str, object]]:
+        self.sql = sql
+        self.params = params
+        return [self.row]
 
 
 class _TokenMetadataLogRecord(Protocol):
@@ -81,6 +94,25 @@ def test_list_session_events_rejects_non_positive_limit(temp_db: HubDatabase) ->
 
     with pytest.raises(ValueError, match="limit must be a positive integer"):
         store.list_session_events("sess-1", limit=0)
+
+
+def test_list_session_events_includes_events_at_since_boundary() -> None:
+    boundary = datetime(2026, 4, 8, 12, 0, tzinfo=UTC)
+    db = _ListEventsDb(
+        {
+            "id": 1,
+            "session_id": "sess-boundary",
+            "message_id": "msg-boundary",
+            "event_at": boundary.isoformat(),
+        }
+    )
+    store = TokenEventStore(db=cast(HubDatabase, db))
+
+    events = store.list_session_events("sess-boundary", since=boundary.isoformat())
+
+    assert "event_at >= %s" in db.sql
+    assert db.params == ("sess-boundary", boundary, 500)
+    assert [event["message_id"] for event in events] == ["msg-boundary"]
 
 
 def test_merge_event_totals_coerces_invalid_values() -> None:

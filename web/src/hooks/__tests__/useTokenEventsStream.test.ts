@@ -81,6 +81,22 @@ describe("useTokenEventsStream", () => {
     expect(result.current.events).toEqual([event]);
   });
 
+  it("dedupes the same event across REST and websocket timestamp formats", () => {
+    const restEvent = makeEvent({ event_at: "2026-04-08T12:00:00+00:00" });
+    const websocketEvent = makeEvent({ event_at: "2026-04-08T12:00:00Z" });
+
+    const { result } = renderHook(() =>
+      useTokenEventsStream({ sessionId: "sess-1", limit: 50 }),
+    );
+
+    act(() => {
+      result.current.setEvents([restEvent]);
+      result.current.appendEvent(websocketEvent);
+    });
+
+    expect(result.current.events).toEqual([restEvent]);
+  });
+
   it("appends multiple unique events in descending timestamp order", () => {
     const older = makeEvent({
       event_at: "2026-04-08T12:00:00Z",
