@@ -28,7 +28,14 @@ async def test_terminal_compact_self_schedules_pending_marker_fallback() -> None
     session.id = "s1"
     session.session_type = "terminal"
     session.source = "codex"
-    session.summary_markdown = "# Compact Handoff\n\nReady."
+    session.summary_markdown = """## Current State
+
+The compact handoff summary is ready, and the terminal session can proceed with compaction.
+
+## Next Steps
+
+Send the compact command and schedule the pending continuation marker fallback.
+"""
     session.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
 
     session_manager = MagicMock()
