@@ -131,6 +131,34 @@ def test_verify_webhook_get(client):
     assert response.text == "chal123"
 
 
+def test_send_message(client, comms_manager):
+    message = CommsMessage(
+        id="msg1",
+        channel_id="ch1",
+        direction="outbound",
+        content="hello",
+        created_at="2023-01-01T00:00:00Z",
+    )
+    comms_manager.send_message = AsyncMock(return_value=message)
+
+    response = client.post("/api/comms/send", json={"channel_name": "alerts", "content": "hello"})
+
+    assert response.status_code == 200
+    assert response.json()["id"] == "msg1"
+    comms_manager.send_message.assert_awaited_once_with("alerts", "hello")
+
+
+def test_send_message_unknown_channel(client, comms_manager):
+    comms_manager.send_message = AsyncMock(
+        side_effect=ValueError("Channel 'missing' not found or not active")
+    )
+
+    response = client.post("/api/comms/send", json={"channel_name": "missing", "content": "hello"})
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Channel 'missing' not found or not active"}
+
+
 def test_list_channels(client, comms_manager):
     ch = ChannelConfig(
         id="ch1",

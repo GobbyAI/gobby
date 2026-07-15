@@ -30,6 +30,10 @@ def create_communications_router(server: HTTPServer) -> APIRouter:
         enabled: bool | None = Field(None, description="Enable or disable channel")
         secrets: dict[str, Any] | None = Field(None, description="Updated channel secrets")
 
+    class SendMessageRequest(BaseModel):
+        channel_name: str = Field(..., description="Name of the destination channel")
+        content: str = Field(..., description="Message content")
+
     @router.post("/webhooks/{channel_name}")
     async def receive_webhook(
         channel_name: str,
@@ -88,6 +92,20 @@ def create_communications_router(server: HTTPServer) -> APIRouter:
             return Response(content=challenge, media_type="text/plain")
 
         return Response(content="ok", media_type="text/plain")
+
+    @router.post("/send")
+    async def send_message(request: SendMessageRequest) -> dict[str, Any]:
+        """Send a message to a named channel."""
+        comms_manager = server.services.communications_manager
+        if not comms_manager:
+            raise HTTPException(status_code=503, detail="Communications manager not available")
+
+        try:
+            message = await comms_manager.send_message(request.channel_name, request.content)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+        return asdict(message)
 
     @router.get("/channels")
     async def list_channels() -> list[dict[str, Any]]:
