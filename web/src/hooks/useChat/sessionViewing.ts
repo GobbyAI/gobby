@@ -117,6 +117,7 @@ const clearViewingSession = useCallback(() => {
   setViewingSessionId(null);
   setViewingSessionMeta(null);
   setMessages([]);
+  setIsLoadingMessages(false);
   setProxyDeliveryNotice(null);
 
   if (mainSessionMeta) {

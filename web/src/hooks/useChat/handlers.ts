@@ -272,8 +272,16 @@ const handleToolStatus = useCallback((status: ToolStatusMessage) => {
     let callRef: ToolCall;
     if (existingIdx >= 0) {
       const existing = toolCalls[existingIdx];
+      const toolName = status.tool_name ?? existing.tool_name;
       callRef = {
         ...existing,
+        tool_name: toolName,
+        server_name:
+          status.server_name ??
+          (status.tool_name ? extractServerName(toolName) : existing.server_name),
+        tool_type: status.tool_name
+          ? classifyTool(toolName)
+          : existing.tool_type,
         status: status.status,
         arguments: status.arguments ?? existing.arguments,
         result: result ?? existing.result,

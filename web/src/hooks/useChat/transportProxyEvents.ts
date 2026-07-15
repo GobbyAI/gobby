@@ -288,10 +288,12 @@ export function handleCliSessionSendResult(
   const clientMessageId =
     typeof data.client_message_id === "string" ? data.client_message_id : null;
   const messageId = typeof data.message_id === "string" ? data.message_id : null;
+  let matchesPendingMessage = clientMessageId === null;
   if (clientMessageId) {
     const pendingProxyMessage =
       ctx.pendingProxyMessagesRef.current.get(clientMessageId) ?? null;
     if (pendingProxyMessage) {
+      matchesPendingMessage = true;
       if (messageId && data.delivered !== false) {
         ctx.setMessages((prev) => {
           const messageIdx = prev.findIndex(
@@ -319,9 +321,11 @@ export function handleCliSessionSendResult(
       }
     }
   }
-  ctx.setProxyDeliveryNotice(
-    data.delivered === false ? "Message queued until the session yields." : null,
-  );
+  if (matchesPendingMessage) {
+    ctx.setProxyDeliveryNotice(
+      data.delivered === false ? "Message queued until the session yields." : null,
+    );
+  }
   if (import.meta.env.DEV) {
     console.debug("Message sent to CLI session:", data.delivery_method);
   }

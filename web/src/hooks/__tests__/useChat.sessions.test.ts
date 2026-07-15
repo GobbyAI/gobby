@@ -856,6 +856,26 @@ describe("useChat viewed session state", () => {
     expect(result.current.messages[0]?.content).toBe("New conversation transcript");
   });
 
+  it("clears the viewing-session loading state when returning to chat", async () => {
+    await loadModule();
+    mockFetch.fn.mockImplementation((input: RequestInfo | URL) => {
+      const url = requestUrl(input);
+      if (url.includes("/api/sessions/slow-session/messages")) {
+        return new Promise<Response>(() => {});
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+    const { result } = renderHook(() => useChat());
+
+    act(() => result.current.viewSession("slow-session"));
+    expect(result.current.isLoadingMessages).toBe(true);
+
+    act(() => result.current.clearViewingSession?.());
+
+    expect(result.current.isLoadingMessages).toBe(false);
+    expect(result.current.viewingSessionId).toBeNull();
+  });
+
   it("ignores and detaches a late attach result after viewing another session", async () => {
     await loadModule();
     mockFetch.mockJsonResponse(

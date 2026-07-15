@@ -51,6 +51,28 @@ describe("useChat message and conversation state", () => {
     );
   });
 
+  it("clears active chat state when another client clears the conversation", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+    act(() => result.current.sendMessage("Hello"));
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.isStreaming).toBe(true);
+
+    act(() => {
+      ws.simulateMessage({
+        type: "chat_cleared",
+        conversation_id: result.current.conversationId,
+      });
+    });
+
+    expect(result.current.messages).toHaveLength(0);
+    expect(result.current.isStreaming).toBe(false);
+    expect(result.current.isThinking).toBe(false);
+  });
+
   it("keeps conversation and db session storage separate when resuming an external session", async () => {
     await loadModule();
     const { result } = renderHook(() => useChat());

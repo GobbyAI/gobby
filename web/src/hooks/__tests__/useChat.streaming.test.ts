@@ -255,6 +255,8 @@ describe("useChat streaming and event handling", () => {
         request_id: requestId,
         tool_call_id: "tc-1",
         status: "completed",
+        tool_name: "write_file",
+        server_name: "filesystem",
         arguments: { path: "/tmp/test" },
         content_blocks: [
           {
@@ -280,6 +282,9 @@ describe("useChat streaming and event handling", () => {
     ]);
     expect(updated.toolCalls?.[0].raw_output).toEqual({ stdout: "ok" });
     expect(updated.toolCalls?.[0].arguments).toEqual({ path: "/tmp/test" });
+    expect(updated.toolCalls?.[0].tool_name).toBe("write_file");
+    expect(updated.toolCalls?.[0].server_name).toBe("filesystem");
+    expect(updated.toolCalls?.[0].tool_type).toBe("unknown");
     expect(
       updated.contentBlocks?.[1].type === "tool_chain"
         ? updated.contentBlocks[1].tool_calls[0].arguments

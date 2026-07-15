@@ -418,5 +418,11 @@ export function handleChatCleared(
   if (import.meta.env.DEV) {
     console.debug("Chat cleared confirmed:", cid);
   }
+  if (cid === ctx.conversationIdRef.current) {
+    ctx.activeRequestIdRef.current = null;
+    ctx.setIsStreaming(false);
+    ctx.setIsThinking(false);
+    ctx.setMessages([]);
+  }
   ctx.onChatClearedRef.current?.(cid);
 }
