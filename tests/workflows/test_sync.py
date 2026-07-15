@@ -121,7 +121,44 @@ rules:
         assert result["synced"] == 1
         row = manager.get_by_name("single-yml-rule")
         assert row is not None
+        assert row.tags == ["user"]
         assert json.loads(row.definition_json)["event"] == "turn_start"
+
+    def test_imported_rule_survives_bundled_orphan_cleanup(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, tmp_path: Path
+    ) -> None:
+        from gobby.workflows.sync_rules import sync_bundled_rules, sync_rule_file
+
+        imported_file = tmp_path / "imported.yaml"
+        imported_file.write_text(
+            "rules:\n  imported-rule:\n    event: turn_start\n    effect:\n"
+            "      type: inject_context\n      content: imported\n"
+        )
+        sync_rule_file(db, imported_file)
+
+        bundled_dir = tmp_path / "bundled"
+        bundled_dir.mkdir()
+        bundled_file = bundled_dir / "bundled.yaml"
+        bundled_file.write_text(
+            "rules:\n  old-bundled-rule:\n    event: turn_start\n    effect:\n"
+            "      type: inject_context\n      content: old\n"
+        )
+        sync_bundled_rules(db, rules_path=bundled_dir)
+
+        bundled_file.write_text(
+            "rules:\n  new-bundled-rule:\n    event: turn_start\n    effect:\n"
+            "      type: inject_context\n      content: new\n"
+        )
+        result = sync_bundled_rules(db, rules_path=bundled_dir)
+
+        assert result["orphaned"] == 1
+        assert manager.get_by_name("old-bundled-rule") is None
+        imported = manager.get_by_name("imported-rule")
+        assert imported is not None
+        assert imported.tags == ["user"]
+        bundled = manager.get_by_name("new-bundled-rule")
+        assert bundled is not None
+        assert bundled.tags == ["gobby"]
 
     def test_sync_rule_file_does_not_update_sibling_rule(
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, tmp_path: Path

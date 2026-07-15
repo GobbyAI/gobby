@@ -59,9 +59,9 @@ def _iter_active_rule_files(rules_paths: list[Path]) -> list[tuple[Path, Path]]:
 def sync_rule_file(
     db: HubDatabase,
     rule_file: Path,
-    tag: str = "gobby",
+    tag: str = "user",
 ) -> dict[str, Any]:
-    """Sync one rule YAML file without scanning siblings or pruning orphans."""
+    """Sync one user rule YAML file without scanning siblings or pruning orphans."""
     result = _new_rules_sync_result()
     if not rule_file.exists():
         logger.debug("Rule file not found", extra={"file": str(rule_file)})
