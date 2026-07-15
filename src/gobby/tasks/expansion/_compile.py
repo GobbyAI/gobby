@@ -469,10 +469,10 @@ def _build_file_context(self: Any, task: Task, repo_path: Path | None) -> str:
     unique_files: list[tuple[str, Path]] = []
     seen: set[str] = set()
     for file_path in mentioned_files:
-        if ".." in Path(file_path).parts:
+        relative_path = Path(file_path)
+        if ".." in relative_path.parts:
             continue
-        normalized = file_path.lstrip("./")
-        relative_path = Path(normalized)
+        normalized = str(relative_path)
         if normalized in seen:
             continue
         try:
