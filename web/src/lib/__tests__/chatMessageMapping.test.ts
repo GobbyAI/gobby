@@ -235,6 +235,28 @@ Stay concise and direct.`
     ])
   })
 
+  it.each([
+    ['system', 'system'],
+    ['unknown', 'assistant'],
+  ])('renders blockless %s-role messages as %s', (role, expectedRole) => {
+    const [message] = mapApiMessages([
+      {
+        id: `${role}-1`,
+        role,
+        content: `${role} content`,
+        timestamp: '2026-05-30T00:00:00.000Z',
+      },
+    ])
+
+    expect(message).toEqual(
+      expect.objectContaining({
+        id: `${role}-1`,
+        role: expectedRole,
+        content: `${role} content`,
+      }),
+    )
+  })
+
   it('renders unmatched tool results and ends pending calls with an error', () => {
     const [assistant, result] = mapApiMessages([
       {
@@ -267,48 +289,6 @@ Stay concise and direct.`
         id: 'result-1',
         role: 'system',
         content: '{"content":"orphaned","kind":"text","truncated":false}',
-      }),
-    )
-  })
-
-  it('renders orphan tool-role results as system messages', () => {
-    const [message] = mapApiMessages([
-      {
-        id: 'result-1',
-        role: 'tool',
-        content: 'orphaned result',
-        tool_use_id: 'tool-missing',
-        timestamp: '2026-05-30T00:00:00.000Z',
-      },
-    ])
-
-    expect(message).toEqual(
-      expect.objectContaining({
-        id: 'result-1',
-        role: 'system',
-        content: 'orphaned result',
-      }),
-    )
-  })
-
-  it.each([
-    ['system', 'system'],
-    ['unknown', 'assistant'],
-  ])('renders blockless %s-role messages as %s', (role, expectedRole) => {
-    const [message] = mapApiMessages([
-      {
-        id: `${role}-1`,
-        role,
-        content: `${role} content`,
-        timestamp: '2026-05-30T00:00:00.000Z',
-      },
-    ])
-
-    expect(message).toEqual(
-      expect.objectContaining({
-        id: `${role}-1`,
-        role: expectedRole,
-        content: `${role} content`,
       }),
     )
   })
