@@ -112,6 +112,25 @@ class TestToolHandlerEdgeCases:
 
         assert response.decision == "allow"
 
+    def test_before_tool_records_autonomous_tool_start(self, mock_dependencies: dict) -> None:
+        """BEFORE_TOOL marks the call in flight for stagnation detection."""
+        progress_tracker = MagicMock()
+        handlers = EventHandlers(**mock_dependencies, progress_tracker=progress_tracker)
+        event = make_event(
+            HookEventType.BEFORE_TOOL,
+            data={"tool_name": "Bash", "tool_input": {"command": "uv run pytest tests/foo.py"}},
+            metadata={"_platform_session_id": "sess-123"},
+        )
+
+        response = handlers.handle_before_tool(event)
+
+        assert response.decision == "allow"
+        progress_tracker.record_tool_start.assert_called_once_with(
+            session_id="sess-123",
+            tool_name="Bash",
+            tool_args={"command": "uv run pytest tests/foo.py"},
+        )
+
     def test_after_tool_failure_status(self, mock_dependencies: dict) -> None:
         """Test AFTER_TOOL handles is_failure metadata."""
         handlers = EventHandlers(**mock_dependencies)

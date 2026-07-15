@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 def get_worktree_status(
     runner: GitRunner,
     worktree_path: str | Path,
+    comparison_ref: str | None = None,
 ) -> WorktreeStatus | None:
     """
     Get status of a worktree.
@@ -75,10 +76,10 @@ def get_worktree_status(
         ahead = 0
         behind = 0
 
-        if branch:
-            # Try to get upstream info
+        reference = comparison_ref or (f"origin/{branch}" if branch else None)
+        if reference:
             upstream_result = runner._run_git(
-                ["rev-list", "--count", "--left-right", f"origin/{branch}...HEAD"],
+                ["rev-list", "--count", "--left-right", f"{reference}...HEAD"],
                 cwd=worktree_path,
                 timeout=10,
             )

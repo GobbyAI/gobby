@@ -200,6 +200,19 @@ class TestWorktreeGitManagerRunGit:
         assert call_kwargs["cwd"] == custom_path
 
     @patch("subprocess.run")
+    def test_run_git_merges_environment_overrides(self, mock_run, manager) -> None:
+        """_run_git preserves the process environment and applies overrides."""
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=["git", "status"], returncode=0, stdout="", stderr=""
+        )
+
+        manager.run_git_command(["status"], env={"GOBBY_MERGE": "1"})
+
+        call_env = mock_run.call_args.kwargs["env"]
+        assert call_env["GOBBY_MERGE"] == "1"
+        assert "PATH" in call_env
+
+    @patch("subprocess.run")
     def test_run_git_timeout(self, mock_run, manager) -> None:
         """_run_git raises on timeout."""
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="git", timeout=30)
@@ -1446,6 +1459,57 @@ class TestWorktreeGitManagerGetStatusEdgeCases:
         # With malformed output, should not parse correctly
         assert status.ahead == 0
         assert status.behind == 0
+
+    def test_get_status_compares_explicit_base_ref(self, manager, tmp_path) -> None:
+        """Get status compares a diverged worktree branch with its recorded base."""
+        repo_path = tmp_path / "repo"
+        worktree_path = tmp_path / "worktree"
+        subprocess.run(
+            ["git", "init", "--initial-branch=base", str(repo_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(repo_path), "config", "user.name", "Test User"], check=True
+        )
+        subprocess.run(
+            ["git", "-C", str(repo_path), "config", "user.email", "test@example.com"],
+            check=True,
+        )
+        (repo_path / "shared.txt").write_text("initial\n")
+        subprocess.run(["git", "-C", str(repo_path), "add", "shared.txt"], check=True)
+        subprocess.run(
+            ["git", "-C", str(repo_path), "commit", "-m", "initial"],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(repo_path), "worktree", "add", "-b", "feature", str(worktree_path)],
+            check=True,
+            capture_output=True,
+        )
+
+        (worktree_path / "feature.txt").write_text("feature\n")
+        subprocess.run(["git", "-C", str(worktree_path), "add", "feature.txt"], check=True)
+        subprocess.run(
+            ["git", "-C", str(worktree_path), "commit", "-m", "feature"],
+            check=True,
+            capture_output=True,
+        )
+        (repo_path / "base.txt").write_text("base\n")
+        subprocess.run(["git", "-C", str(repo_path), "add", "base.txt"], check=True)
+        subprocess.run(
+            ["git", "-C", str(repo_path), "commit", "-m", "base"],
+            check=True,
+            capture_output=True,
+        )
+
+        status = manager.get_worktree_status(worktree_path, comparison_ref="base")
+
+        assert status is not None
+        assert status.ahead == 1
+        assert status.behind == 1
 
     @patch("subprocess.run")
     def test_get_status_status_porcelain_parsing(self, mock_run, manager, tmp_path) -> None:

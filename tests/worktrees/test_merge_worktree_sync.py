@@ -76,11 +76,11 @@ def _make_registry_context(
     ctx.worktree_storage.get.return_value = wt
     ctx.git_manager = MagicMock()
     ctx.git_manager.repo_path = "/tmp/repo"
-    ctx.git_manager.run_git_command.side_effect = (
-        lambda args, cwd=None, timeout=30, check=False: ctx.git_manager._run_git(
-            args, cwd=cwd, timeout=timeout, check=check
-        )
-    )
+
+    def run_git_command(args, cwd=None, timeout=30, check=False, env=None):
+        return ctx.git_manager._run_git(args, cwd=cwd, timeout=timeout, check=check)
+
+    ctx.git_manager.run_git_command.side_effect = run_git_command
 
     def get_unmerged_files(cwd=None):
         result = ctx.git_manager._run_git(
@@ -177,6 +177,12 @@ async def test_merge_worktree_success_returns_worktree_path_and_merge_sha():
     assert result["merge_sha"] == "abc123def456"
     assert result["target_head_sha"] == "abc123def456"
     assert result["commit_sha"] == "abc123def456"
+    merge_call = next(
+        call
+        for call in ctx.git_manager.run_git_command.call_args_list
+        if call.args[0][:1] == ["merge"]
+    )
+    assert merge_call.kwargs["env"] == {"GOBBY_MERGE": "1"}
 
 
 @pytest.mark.asyncio
@@ -1070,7 +1076,11 @@ async def test_merge_worktree_non_conflict_error_returns_worktree_path():
     ctx = _make_registry_context()
 
     ctx.git_manager._run_git.side_effect = _local_merge_side_effect(
-        merge_result=_make_git_result(128, stdout="fatal: not a git repo", stderr=""),
+        merge_result=_make_git_result(
+            128,
+            stdout="automatic merge failed",
+            stderr="gobby CLI crashed: missing argon2",
+        ),
         unmerged_stdout="",
     )
 
@@ -1086,6 +1096,7 @@ async def test_merge_worktree_non_conflict_error_returns_worktree_path():
     assert result["success"] is False
     assert result["has_conflicts"] is False
     assert result["worktree_path"] == "/tmp/wt"
+    assert result["error"] == ("automatic merge failed\ngobby CLI crashed: missing argon2")
 
 
 @pytest.mark.asyncio

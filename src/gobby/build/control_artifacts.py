@@ -16,6 +16,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.worktrees.events import emit_worktree_event
 from gobby.worktrees.git import WorktreeGitManager
 
 ArtifactFamily = Literal["worktree", "clone"]
@@ -57,6 +58,21 @@ def defer_active_agent_artifacts(
             continue
         artifacts_to_delete.append(artifact)
 
+    return artifacts_to_delete
+
+
+def defer_preserved_worktree_artifacts(
+    artifacts: list[BuildArtifactSummary],
+    worktree_ids: set[str],
+) -> list[BuildArtifactSummary]:
+    """Defer worktrees explicitly retained by the caller."""
+    artifacts_to_delete: list[BuildArtifactSummary] = []
+    for artifact in artifacts:
+        if artifact.family == "worktree" and artifact.artifact_id in worktree_ids:
+            artifact.deferred = True
+            artifact.cleanup_reason = "reused_worktree_preserved"
+            continue
+        artifacts_to_delete.append(artifact)
     return artifacts_to_delete
 
 
@@ -260,7 +276,18 @@ def delete_artifacts(
                             prune()
                 if worktree_id:
                     worktrees.delete(worktree_id)
-                    task_manager.artifacts.clear_worktree_references(worktree_id)
+                    artifact_refs_cleared = task_manager.artifacts.clear_worktree_references(
+                        worktree_id
+                    )
+                    if stored_worktree is not None:
+                        emit_worktree_event(
+                            "worktree_deleted",
+                            worktree_id=worktree_id,
+                            project_id=stored_worktree.project_id,
+                            branch_name=stored_worktree.branch_name,
+                            worktree_path=stored_worktree.worktree_path,
+                            artifact_refs_cleared=artifact_refs_cleared,
+                        )
             else:
                 if path.exists():
                     clone_result = clone_git.delete_clone(path, force=force)

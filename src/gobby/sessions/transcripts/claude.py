@@ -19,10 +19,15 @@ from gobby.sessions.transcripts.base import (
     ParseEvent,
     RawLine,
     TokenUsage,
-    _unknown_block_message,
     annotate_record_source,
 )
-from gobby.sessions.transcripts.claude_records import fallback_content, system_event_content
+from gobby.sessions.transcripts.claude_records import (
+    ClaudeMessageBuilder,
+    expand_message_content,
+    extract_tool_result_content,
+    fallback_content,
+    system_event_content,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -394,52 +399,14 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
         usage, model = self._extract_usage(data)
         message_id = self._message_id_for(data, index)
         results: list[ParsedMessage] = []
-
-        def _make_msg(
-            *,
-            role: str,
-            content: str | dict[str, Any],
-            content_type: str = "text",
-            tool_name: str | None = None,
-            tool_input: dict[str, Any] | None = None,
-            tool_result: dict[str, Any] | None = None,
-            tool_use_id: str | None = None,
-        ) -> ParsedMessage:
-            return ParsedMessage(
-                index=index,  # caller reassigns sequential indices
-                role=role,
-                content=content,
-                content_type=content_type,
-                tool_name=tool_name,
-                tool_input=tool_input,
-                tool_result=tool_result,
-                timestamp=timestamp,
-                raw_json=data,
-                usage=usage,
-                tool_use_id=tool_use_id,
-                model=model,
-                message_id=message_id,
-            )
-
-        def _media_source(block: dict[str, Any], block_type: str) -> dict[str, Any]:
-            source = block.get("source")
-            normalized = dict(source) if isinstance(source, dict) else {"data": str(source or "")}
-            title = block.get("title")
-            if block_type == "document" and isinstance(title, str) and title:
-                normalized.setdefault("name", title)
-            return normalized
-
-        def _make_unknown(*, role: str, block_type: str, raw: dict[str, Any]) -> ParsedMessage:
-            return _unknown_block_message(
-                index=index,
-                block_type=block_type,
-                raw=raw,
-                role=role,
-                timestamp=timestamp,
-                message_id=message_id,
-                model=model,
-                usage=usage,
-            )
+        builder = ClaudeMessageBuilder(
+            index=index,
+            timestamp=timestamp,
+            data=data,
+            usage=usage,
+            model=model,
+            message_id=message_id,
+        )
 
         def _make_compaction_summary() -> ParsedMessage:
             meta = data.get("compactMetadata")
@@ -450,7 +417,7 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             # uuid keys the renderer's content dedup so repeated compactions in
             # one transcript each render their own divider.
             uuid = data.get("uuid")
-            return _make_msg(
+            return builder.make(
                 role="system",
                 content=text,
                 content_type="compaction_summary",
@@ -463,7 +430,7 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             hook_name = hook_block.get("hookName")
             tool_use_id = hook_block.get("toolUseID")
             results.append(
-                _make_msg(
+                builder.make(
                     role="tool",
                     content=content,
                     content_type="tool_result",
@@ -476,142 +443,17 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
         elif msg_type == "user":
             msg_data = data.get("message", {})
             content_val = msg_data.get("content", "")
-
-            if isinstance(content_val, list):
-                text_parts: list[str] = []
-                for block in content_val:
-                    if not isinstance(block, dict):
-                        continue
-                    btype = block.get("type")
-                    if btype == "text":
-                        text_parts.append(block.get("text", ""))
-                    elif btype in ("image", "document"):
-                        if text_parts:
-                            results.append(_make_msg(role="user", content=" ".join(text_parts)))
-                            text_parts = []
-                        results.append(
-                            _make_msg(
-                                role="user",
-                                content=_media_source(block, btype),
-                                content_type=btype,
-                            )
-                        )
-                    elif btype == "tool_result":
-                        # Emit accumulated text first
-                        if text_parts:
-                            results.append(_make_msg(role="user", content=" ".join(text_parts)))
-                            text_parts = []
-                        tr_content = self._extract_tool_result_content(block)
-                        results.append(
-                            _make_msg(
-                                role="user",
-                                content=tr_content,
-                                content_type="tool_result",
-                                tool_result={
-                                    "content": tr_content,
-                                    "is_error": block.get("is_error", False),
-                                },
-                                tool_use_id=block.get("tool_use_id"),
-                            )
-                        )
-                    else:
-                        if text_parts:
-                            results.append(_make_msg(role="user", content=" ".join(text_parts)))
-                            text_parts = []
-                        block_type = str(btype or "<missing>")
-                        results.append(_make_unknown(role="user", block_type=block_type, raw=block))
-                # Remaining text
-                if text_parts:
-                    results.append(_make_msg(role="user", content=" ".join(text_parts)))
-            else:
-                results.append(_make_msg(role="user", content=str(content_val)))
+            results.extend(expand_message_content(builder, content_val, role="user"))
 
         elif msg_type in ("agent", "assistant"):
             msg_data = data.get("message", {})
             content_blocks = msg_data.get("content", [])
-
-            if isinstance(content_blocks, list):
-                text_parts = []
-                thinking_parts: list[str] = []
-                for block in content_blocks:
-                    if not isinstance(block, dict):
-                        continue
-                    btype = block.get("type")
-                    if btype == "text":
-                        text_parts.append(block.get("text", ""))
-                    elif btype in ("image", "document"):
-                        if text_parts:
-                            results.append(
-                                _make_msg(role="assistant", content=" ".join(text_parts))
-                            )
-                            text_parts = []
-                        results.append(
-                            _make_msg(
-                                role="assistant",
-                                content=_media_source(block, btype),
-                                content_type=btype,
-                            )
-                        )
-                    elif btype == "tool_use":
-                        # Emit accumulated text first
-                        if text_parts:
-                            results.append(
-                                _make_msg(role="assistant", content=" ".join(text_parts))
-                            )
-                            text_parts = []
-                        results.append(
-                            _make_msg(
-                                role="assistant",
-                                content="",
-                                content_type="tool_use",
-                                tool_name=block.get("name"),
-                                tool_input=block.get("input"),
-                                tool_use_id=block.get("id"),
-                            )
-                        )
-                    elif btype == "thinking":
-                        val = block.get("thinking") or ""
-                        if val.strip():
-                            thinking_parts.append(val)
-                    elif btype == "fallback":
-                        results.append(_make_msg(role="system", content=fallback_content(block)))
-                    else:
-                        if text_parts:
-                            results.append(
-                                _make_msg(role="assistant", content=" ".join(text_parts))
-                            )
-                            text_parts = []
-                        if thinking_parts:
-                            results.append(
-                                _make_msg(
-                                    role="assistant",
-                                    content="\n".join(thinking_parts),
-                                    content_type="thinking",
-                                )
-                            )
-                            thinking_parts = []
-                        block_type = str(btype or "<missing>")
-                        results.append(
-                            _make_unknown(role="assistant", block_type=block_type, raw=block)
-                        )
-                # Remaining text
-                if text_parts:
-                    results.append(_make_msg(role="assistant", content=" ".join(text_parts)))
-                if thinking_parts:
-                    results.append(
-                        _make_msg(
-                            role="assistant",
-                            content="\n".join(thinking_parts),
-                            content_type="thinking",
-                        )
-                    )
-            else:
-                results.append(_make_msg(role="assistant", content=str(content_blocks)))
+            results.extend(expand_message_content(builder, content_blocks, role="assistant"))
 
         elif msg_type == "tool_result":
             tr = data.get("result")
             results.append(
-                _make_msg(
+                builder.make(
                     role="tool",
                     content=str(tr),
                     content_type="tool_result",
@@ -625,13 +467,13 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             if subtype == "compact_boundary":
                 results.append(_make_compaction_summary())
             elif (event_content := system_event_content(data)) is not None:
-                results.append(_make_msg(role="system", content=event_content))
+                results.append(builder.make(role="system", content=event_content))
 
         elif msg_type == "ai-title":
             ai_title = data.get("aiTitle")
             if isinstance(ai_title, str) and ai_title.strip():
                 results.append(
-                    _make_msg(
+                    builder.make(
                         role="system",
                         content=ai_title,
                         content_type="session_title",
@@ -641,7 +483,7 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
         elif msg_type == "attachment":
             prompt = self._queued_command_prompt(data)
             if prompt is not None:
-                results.append(_make_msg(role="user", content=prompt))
+                results.append(builder.make(role="user", content=prompt))
 
         elif msg_type in self._SKIPPED_RECORD_TYPES:
             # Known session-metadata envelope record — recognized, not rendered.
@@ -656,22 +498,6 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             )
 
         return results
-
-    @staticmethod
-    def _extract_tool_result_content(block: dict[str, Any]) -> str:
-        """Extract string content from a tool_result block."""
-        tr_content = block.get("content", "")
-        if isinstance(tr_content, list):
-            parts = []
-            for sub in tr_content:
-                if isinstance(sub, dict) and sub.get("type") == "text":
-                    parts.append(sub.get("text", ""))
-                elif isinstance(sub, str):
-                    parts.append(sub)
-            return "\n".join(parts) if parts else str(block.get("content", ""))
-        if not isinstance(tr_content, str):
-            return str(tr_content)
-        return tr_content
 
     def parse_line(self, line: str, index: int) -> ParsedMessage | None:
         """Parse one line, returning its first normalized record."""
@@ -724,7 +550,7 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                     content = " ".join(text_parts)
                 elif first_tool_result:
                     content_type = "tool_result"
-                    tr_content = self._extract_tool_result_content(first_tool_result)
+                    tr_content = extract_tool_result_content(first_tool_result)
                     content = tr_content
                     tool_use_id = first_tool_result.get("tool_use_id")
                     tool_result = {

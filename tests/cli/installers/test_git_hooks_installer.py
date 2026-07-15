@@ -932,6 +932,12 @@ class TestHookTemplates:
         }
         assert set(HOOK_TEMPLATES.keys()) == expected_hooks
 
+    def test_pre_merge_hook_preserves_verification_stderr(self) -> None:
+        content = HOOK_TEMPLATES["pre-merge-commit"]
+
+        assert "gobby hooks run pre-merge\n" in content
+        assert "gobby hooks run pre-merge 2>/dev/null" not in content
+
     def test_prepush_template_contains_gobby_sync(self) -> None:
         """Test that pre-push template keeps JSONL export commands."""
         content = HOOK_TEMPLATES["pre-push"]

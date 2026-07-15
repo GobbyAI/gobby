@@ -21,12 +21,12 @@ Parser and coverage implementation surfaces live under `gobby.plans.parser`,
 ## Canonical Heading Regex
 
 ```regex
-^#{2,6}\s+(?:§\s*)?(?P<section_id>(?:\d+(?:\.\d+)*(?:[a-z])?|[A-Z]+[0-9]+(?:\.[0-9]+)*(?:[a-z])?))(?=\s|[).:-]|$)
+^#{2,6}\s+(?:§\s*)?(?P<section_id>(?:\d+[a-z]?|[A-Z]+[0-9]+[a-z]?)(?:\.(?:\d+[a-z]?|[A-Z]+[0-9]+[a-z]?))*)(?=\s|[).:-]|$)
 ```
 
 The regex accepts heading levels `##` through `######`, optional `§`, numeric
 section IDs of any depth, alpha-prefixed IDs such as `A10`, and an optional
-letter suffix on the final segment.
+letter suffix on every segment.
 
 ## Section Kinds
 

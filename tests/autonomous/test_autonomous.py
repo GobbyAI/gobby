@@ -742,6 +742,36 @@ class TestProgressTrackerStagnation:
         assert summary.is_stagnant is True
         assert summary.stagnation_duration_seconds >= 120
 
+    def test_in_flight_tool_call_is_not_stagnant(
+        self, test_db: HubDatabase, session_id: str
+    ) -> None:
+        """A tool call stays active even when it exceeds the stagnation threshold."""
+        tracker = ProgressTracker(test_db, stagnation_threshold=60)
+        tracker.record_tool_start(session_id, "Bash", {"command": "uv run pytest tests/slow.py"})
+        tracker.db.execute(
+            "UPDATE loop_progress SET recorded_at = %s WHERE session_id = %s",
+            ((datetime.now(UTC) - timedelta(seconds=120)).isoformat(), session_id),
+        )
+
+        summary = tracker.get_summary(session_id)
+
+        assert summary.is_stagnant is False
+        assert summary.stagnation_duration_seconds >= 120
+
+    def test_completed_tool_call_can_become_stagnant(
+        self, test_db: HubDatabase, session_id: str
+    ) -> None:
+        """A completion event closes the in-flight state."""
+        tracker = ProgressTracker(test_db, stagnation_threshold=60)
+        tracker.record_tool_start(session_id, "Bash", {"command": "uv run pytest tests/foo.py"})
+        tracker.record_tool_call(session_id, "Bash", {"command": "uv run pytest tests/foo.py"})
+        tracker.db.execute(
+            "UPDATE loop_progress SET recorded_at = %s WHERE session_id = %s",
+            ((datetime.now(UTC) - timedelta(seconds=120)).isoformat(), session_id),
+        )
+
+        assert tracker.is_stagnant(session_id) is True
+
 
 class TestProgressTrackerClearSession:
     """Tests for ProgressTracker.clear_session method."""
@@ -1423,6 +1453,22 @@ class TestStuckDetectorProgressStagnation:
         assert result.reason.startswith("No progress events for ")
         assert result.details is not None
         assert result.details["last_event_at"] is not None
+
+    def test_in_flight_tool_call_is_not_detected_as_stagnant(
+        self, test_db: HubDatabase, session_id: str
+    ) -> None:
+        """StuckDetector preserves workers executing long-running tools."""
+        tracker = ProgressTracker(test_db, stagnation_threshold=60)
+        detector = StuckDetector(test_db, progress_tracker=tracker)
+        tracker.record_tool_start(session_id, "Bash", {"command": "uv run pytest tests/slow.py"})
+        tracker.db.execute(
+            "UPDATE loop_progress SET recorded_at = %s WHERE session_id = %s",
+            ((datetime.now(UTC) - timedelta(seconds=120)).isoformat(), session_id),
+        )
+
+        result = detector.detect_progress_stagnation(session_id)
+
+        assert result.is_stuck is False
 
     def test_no_stagnation_for_read_heavy_session(
         self, test_db: HubDatabase, session_id: str

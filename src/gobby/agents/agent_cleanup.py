@@ -30,20 +30,32 @@ SESSION_STATS_LOOKUP_TIMEOUT_SECONDS = 2.0
 def cleanup_merged_task_artifacts_after_agent_exit(
     db: HubDatabase,
     task_id: str,
+    *,
+    preserve_worktree_id: str | None = None,
 ) -> list[Any]:
     """Retry merge artifact cleanup once the owning agent is no longer active."""
     from gobby.build.controls import cleanup_successful_merge_artifacts
     from gobby.storage.tasks import LocalTaskManager
 
     task_manager = LocalTaskManager(db)
+
+    def cleanup() -> list[Any]:
+        if preserve_worktree_id:
+            return cleanup_successful_merge_artifacts(
+                db,
+                task_id,
+                preserve_worktree_ids={preserve_worktree_id},
+            )
+        return cleanup_successful_merge_artifacts(db, task_id)
+
     merge_stage = task_manager.stage_states.get(task_id, "merge")
     if merge_stage is not None and merge_stage.state == "done":
-        return cleanup_successful_merge_artifacts(db, task_id)
+        return cleanup()
 
     task = task_manager.get_task(task_id)
     if task is None or task.closed_at is None or task.closed_reason != "already_implemented":
         return []
-    return cleanup_successful_merge_artifacts(db, task_id)
+    return cleanup()
 
 
 class AgentCleanupHandler:
@@ -177,10 +189,21 @@ class AgentCleanupHandler:
             )
         if run.task_id:
             try:
+                initial_variables = (run.resume_metadata_json or {}).get("initial_variables")
+                reused_worktree = (
+                    isinstance(initial_variables, dict)
+                    and initial_variables.get("reused_worktree") is True
+                )
+                cleanup_kwargs = (
+                    {"preserve_worktree_id": run.worktree_id}
+                    if reused_worktree and run.worktree_id
+                    else {}
+                )
                 artifacts = await self._run_db(
                     cleanup_merged_task_artifacts_after_agent_exit,
                     self._db,
                     run.task_id,
+                    **cleanup_kwargs,
                 )
                 deleted_count = len([artifact for artifact in artifacts if artifact.deleted])
                 deferred_count = len([artifact for artifact in artifacts if artifact.deferred])

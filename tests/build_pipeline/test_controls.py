@@ -570,6 +570,12 @@ def test_successful_merge_cleanup_deletes_inactive_worktree(
         "WorktreeGitManager",
         DeletingWorktreeGitManager,
     )
+    events: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(
+        control_artifacts,
+        "emit_worktree_event",
+        lambda event_type, **payload: events.append((event_type, payload)),
+    )
     monkeypatch.setattr(controls, "delete_orphan_build_branches", lambda *_args: (0, []))
 
     artifacts = controls.cleanup_successful_merge_artifacts(
@@ -584,9 +590,66 @@ def test_successful_merge_cleanup_deletes_inactive_worktree(
     assert delete_calls == [(worktree_path, True)]
     assert not worktree_path.exists()
     assert LocalWorktreeManager(temp_db).get(worktree.id) is None
+    assert events == [
+        (
+            "worktree_deleted",
+            {
+                "worktree_id": worktree.id,
+                "project_id": sample_project["id"],
+                "branch_name": worktree.branch_name,
+                "worktree_path": str(worktree_path),
+                "artifact_refs_cleared": 1,
+            },
+        )
+    ]
     stored = TaskArtifactManager(temp_db).get_artifacts(task.id)
     assert stored.worktree_id is None
     assert stored.worktree_path is None
+
+
+def test_successful_merge_cleanup_preserves_explicit_reused_worktree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.build import controls
+    from gobby.build.control_artifacts import BuildArtifactSummary
+
+    task = SimpleNamespace(id="task-1", project_id="project-1")
+    task_manager = SimpleNamespace(get_task=lambda _task_id, project_id=None: task)
+    artifact = BuildArtifactSummary(
+        family="worktree",
+        task_id=task.id,
+        path="/tmp/reused-worktree",
+        artifact_id="wt-1",
+        exists=True,
+    )
+    deleted: list[BuildArtifactSummary] = []
+
+    monkeypatch.setattr(controls, "LocalTaskManager", lambda _db: task_manager)
+    monkeypatch.setattr(controls, "_affected_tasks", lambda *_args: [task])
+    monkeypatch.setattr(controls, "collect_clean_artifacts", lambda *_args: [artifact])
+    monkeypatch.setattr(controls, "_active_agents", lambda *_args: [])
+    monkeypatch.setattr(
+        controls,
+        "classify_dirty_descendant_worktree_artifacts",
+        lambda _db, artifacts, **_kwargs: artifacts,
+    )
+    monkeypatch.setattr(
+        controls,
+        "delete_artifacts",
+        lambda _db, _project_id, artifacts, **_kwargs: deleted.extend(artifacts),
+    )
+    monkeypatch.setattr(controls, "delete_orphan_build_branches", lambda *_args: (0, []))
+
+    artifacts = controls.cleanup_successful_merge_artifacts(
+        SimpleNamespace(),
+        task.id,
+        preserve_worktree_ids={"wt-1"},
+    )
+
+    assert artifacts == [artifact]
+    assert artifact.deferred is True
+    assert artifact.cleanup_reason == "reused_worktree_preserved"
+    assert deleted == []
 
 
 def test_successful_merge_cleanup_force_deletes_dirty_inactive_worktree(

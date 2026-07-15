@@ -8,10 +8,10 @@ from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.worktrees._context import RegistryContext
-from gobby.mcp_proxy.tools.worktrees._events import emit_worktree_event
 from gobby.mcp_proxy.tools.worktrees._helpers import resolve_project_context
 from gobby.mcp_proxy.tools.worktrees._merge_state import is_worktree_git_merged
 from gobby.storage.worktrees import WorktreeStatus
+from gobby.worktrees.events import emit_worktree_event
 
 logger = logging.getLogger(__name__)
 

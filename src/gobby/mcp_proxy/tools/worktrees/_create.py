@@ -9,13 +9,13 @@ from typing import Any, Literal
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.worktrees._context import RegistryContext
-from gobby.mcp_proxy.tools.worktrees._events import emit_worktree_event
 from gobby.mcp_proxy.tools.worktrees._helpers import (
     copy_project_json_to_worktree,
     generate_worktree_path,
     install_provider_hooks,
     resolve_project_context,
 )
+from gobby.worktrees.events import emit_worktree_event
 
 logger = logging.getLogger(__name__)
 

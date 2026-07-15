@@ -67,8 +67,12 @@ class WorktreeGitManager(GitRunner):
             source_branch=source_branch,
         )
 
-    def get_worktree_status(self, worktree_path: str | Path) -> WorktreeStatus | None:
-        return _status.get_worktree_status(self, worktree_path)
+    def get_worktree_status(
+        self,
+        worktree_path: str | Path,
+        comparison_ref: str | None = None,
+    ) -> WorktreeStatus | None:
+        return _status.get_worktree_status(self, worktree_path, comparison_ref)
 
     def list_worktrees(self) -> list[WorktreeInfo]:
         return _status.list_worktrees(self)

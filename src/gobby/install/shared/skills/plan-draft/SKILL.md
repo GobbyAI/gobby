@@ -42,7 +42,7 @@ close-time coverage gate prove that every accepted item becomes covered work.
 The canonical heading regex is pinned verbatim here and in the parser:
 
 ```regex
-^#{2,6}\s+(?:§\s*)?(?P<section_id>(?:\d+(?:\.\d+)*(?:[a-z])?|[A-Z]+[0-9]+(?:\.[0-9]+)*(?:[a-z])?))(?=\s|[).:-]|$)
+^#{2,6}\s+(?:§\s*)?(?P<section_id>(?:\d+[a-z]?|[A-Z]+[0-9]+[a-z]?)(?:\.(?:\d+[a-z]?|[A-Z]+[0-9]+[a-z]?))*)(?=\s|[).:-]|$)
 ```
 
 Every section heading at level `##` through `######` carries a first non-blank
