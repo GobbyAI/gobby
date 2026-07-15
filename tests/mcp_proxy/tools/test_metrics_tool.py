@@ -115,6 +115,27 @@ class TestMetricsTools:
             project_id="p1", server_name="s1", tool_name=None
         )
 
+    @pytest.mark.parametrize(
+        ("server_name", "tool_name"),
+        [(None, None), ("", "")],
+    )
+    def test_reset_metrics_requires_filter(
+        self,
+        metrics_tools: InternalToolRegistry,
+        mock_metrics_manager: MagicMock,
+        server_name: str | None,
+        tool_name: str | None,
+    ) -> None:
+        tool = metrics_tools._tools["reset_metrics"]
+
+        result = tool.func(server_name=server_name, tool_name=tool_name)
+
+        assert result == {
+            "success": False,
+            "error": "reset_metrics requires at least one filter",
+        }
+        mock_metrics_manager.reset_metrics.assert_not_called()
+
     def test_reset_tool_metrics(
         self, metrics_tools: InternalToolRegistry, mock_metrics_manager: MagicMock
     ) -> None:
@@ -144,6 +165,23 @@ class TestMetricsTools:
         assert result["success"] is True
         assert result["deleted_count"] == 100
         mock_metrics_manager.cleanup_old_metrics.assert_called_with(retention_days=30)
+
+    @pytest.mark.parametrize("retention_days", [0, -1])
+    def test_cleanup_old_metrics_rejects_invalid_retention(
+        self,
+        metrics_tools: InternalToolRegistry,
+        mock_metrics_manager: MagicMock,
+        retention_days: int,
+    ) -> None:
+        tool = metrics_tools._tools["cleanup_old_metrics"]
+
+        result = tool.func(retention_days=retention_days)
+
+        assert result == {
+            "success": False,
+            "error": "retention_days must be at least 1",
+        }
+        mock_metrics_manager.cleanup_old_metrics.assert_not_called()
 
     def test_get_retention_stats(
         self, metrics_tools: InternalToolRegistry, mock_metrics_manager: MagicMock

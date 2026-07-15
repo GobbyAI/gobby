@@ -207,6 +207,8 @@ def create_metrics_registry(
             Number of rows deleted
         """
         try:
+            if not server_name and not tool_name:
+                raise ValueError("reset_metrics requires at least one filter")
             project_id = require_calling_project_id()
             deleted = metrics_manager.reset_metrics(
                 project_id=project_id,
@@ -268,6 +270,8 @@ def create_metrics_registry(
             Number of rows deleted
         """
         try:
+            if retention_days < 1:
+                raise ValueError("retention_days must be at least 1")
             deleted = metrics_manager.cleanup_old_metrics(
                 retention_days=retention_days,
             )
