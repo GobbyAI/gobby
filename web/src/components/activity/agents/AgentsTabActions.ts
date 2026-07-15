@@ -14,13 +14,41 @@ function requireNonNegativeNumber(value: number, label: string): number {
 }
 
 function workflowPayload(draft: AgentDraft): Record<string, unknown> | null {
-  const workflows: Record<string, unknown> = {};
+  const workflows: Record<string, unknown> = { ...draft.workflows };
+
   if (draft.form.pipeline) workflows.pipeline = draft.form.pipeline;
+  else delete workflows.pipeline;
+
   if (draft.rules.length > 0) workflows.rules = draft.rules;
+  else delete workflows.rules;
+
   if (draft.ruleSelectors) workflows.rule_selectors = draft.ruleSelectors;
+  else delete workflows.rule_selectors;
+
   if (Object.keys(draft.variables).length > 0) workflows.variables = draft.variables;
-  if (draft.skills.length > 0) {
-    workflows.skill_selectors = { include: draft.skills };
+  else delete workflows.variables;
+
+  const existingSkillSelectors = workflows.skill_selectors;
+  const skillSelectors: Record<string, unknown> =
+    existingSkillSelectors &&
+    typeof existingSkillSelectors === "object" &&
+    !Array.isArray(existingSkillSelectors)
+      ? { ...existingSkillSelectors }
+      : {};
+  const existingInclude = Array.isArray(skillSelectors.include) ? skillSelectors.include : [];
+  const include = [
+    ...new Set([
+      ...existingInclude.filter((skill) => skill === "*"),
+      ...draft.skills.filter((skill) => skill !== "*"),
+    ]),
+  ];
+  if (include.length > 0) skillSelectors.include = include;
+  else delete skillSelectors.include;
+
+  if (Object.keys(skillSelectors).length > 0) {
+    workflows.skill_selectors = skillSelectors;
+  } else {
+    delete workflows.skill_selectors;
   }
   return Object.keys(workflows).length > 0 ? workflows : null;
 }
@@ -55,6 +83,24 @@ export function buildAgentDefinitionBody(
     blocked_tools: draft.blockedTools,
     blocked_mcp_tools: draft.blockedMcpTools,
   };
+  if (projectId) body.project_id = projectId;
+  return body;
+}
+
+export function buildDuplicateAgentBody(
+  agent: AgentDefInfo,
+  newName: string,
+  projectId?: string | null,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    ...agent.definition,
+    name: newName.trim(),
+    sandbox_config: agent.definition.sandbox,
+    enabled: agent.enabled,
+    tags: agent.tags ?? [],
+  };
+  delete body.is_local;
+  delete body.sandbox;
   if (projectId) body.project_id = projectId;
   return body;
 }
@@ -114,12 +160,10 @@ export async function duplicateAgentDefinition(
   newName: string,
   projectId?: string | null,
 ): Promise<boolean> {
-  const draft = agentToDraft(agent);
-  draft.form.name = newName;
   await sendJson(
     `${getBaseUrl()}/api/agents/definitions`,
     "POST",
-    buildAgentDefinitionBody(draft, projectId),
+    buildDuplicateAgentBody(agent, newName, projectId),
   );
   return true;
 }

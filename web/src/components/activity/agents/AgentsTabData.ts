@@ -63,6 +63,7 @@ export interface AgentDraft {
   form: AgentFormData;
   enabled: boolean;
   tags: string[];
+  workflows: Record<string, unknown>;
   rules: string[];
   ruleSelectors: RuleSelectors | null;
   variables: Record<string, unknown>;
@@ -122,6 +123,7 @@ export function createAgentDraft(): AgentDraft {
     form: { ...DEFAULT_AGENT_FORM },
     enabled: true,
     tags: [],
+    workflows: {},
     rules: [],
     ruleSelectors: null,
     variables: {},
@@ -239,6 +241,7 @@ export function agentToDraft(agent: AgentDefInfo): AgentDraft {
     },
     enabled: agent.enabled,
     tags: agent.tags ?? [],
+    workflows: { ...workflows },
     rules: Array.isArray(workflows.rules) ? workflows.rules : [],
     ruleSelectors: workflows.rule_selectors ?? null,
     variables:
