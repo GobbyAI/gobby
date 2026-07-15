@@ -248,7 +248,15 @@ vi.mock("../hooks/useAgentDefinitions", () => ({
 }));
 
 vi.mock("../components/ProjectSelector", () => ({
-  ProjectSelector: () => <div data-testid="project-selector" />,
+  ProjectSelector: ({
+    onProjectChange,
+  }: {
+    onProjectChange: (projectId: string) => void;
+  }) => (
+    <button type="button" onClick={() => onProjectChange("personal")}>
+      Switch project
+    </button>
+  ),
 }));
 
 vi.mock("../components/chat/ChatPage", () => ({
@@ -314,6 +322,50 @@ describe("App wiring", () => {
       expect(mockSetProjectIdRef).toHaveBeenCalledWith("repo-project");
       expect(mockSendProjectChange).toHaveBeenCalledWith("repo-project");
     });
+  });
+
+  it("clears a requested activity tab before switching projects", async () => {
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(mockSetProjectIdRef).toHaveBeenCalledWith("repo-project");
+    });
+
+    const currentProps = () =>
+      chatPagePropsSpy.mock.calls[chatPagePropsSpy.mock.calls.length - 1]?.[0] as {
+        projectId: string;
+        requestedActivityTab: string | null;
+        chat: { onPaletteSelect: (item: unknown) => void };
+      };
+
+    act(() => {
+      currentProps().chat.onPaletteSelect({
+        kind: "command",
+        action: "open_mcp",
+      });
+    });
+    expect(currentProps().requestedActivityTab).toBe("mcp");
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch project" }));
+
+    await waitFor(() => {
+      expect(currentProps().projectId).toBe("personal");
+    });
+    expect(currentProps().requestedActivityTab).toBeNull();
+    expect(
+      chatPagePropsSpy.mock.calls.some(([props]) => {
+        const chatPageProps = props as {
+          projectId: string;
+          requestedActivityTab: string | null;
+        };
+        return (
+          chatPageProps.projectId === "personal" &&
+          chatPageProps.requestedActivityTab === "mcp"
+        );
+      }),
+    ).toBe(false);
   });
 
   it("waits for persisted project hydration before syncing the project", async () => {

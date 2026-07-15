@@ -46,6 +46,7 @@ describe("useAppProjectSelection", () => {
       );
       const selection = useAppProjectSelection({
         allProjects: PROJECTS,
+        onProjectSelect: vi.fn(),
         selectedProvider,
         setSelectedProvider,
         startNewChat: vi.fn(),

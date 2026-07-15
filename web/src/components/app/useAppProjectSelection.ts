@@ -12,6 +12,7 @@ const HIDDEN_PROJECTS = new Set(["_orphaned", "_migrated"]);
 
 interface UseAppProjectSelectionArgs {
   allProjects: ProjectWithStats[];
+  onProjectSelect: () => void;
   selectedProvider: string | null;
   setSelectedProvider: (provider: string | null) => void;
   startNewChat: StartNewChatAction;
@@ -21,6 +22,7 @@ interface UseAppProjectSelectionArgs {
 
 export function useAppProjectSelection({
   allProjects,
+  onProjectSelect,
   selectedProvider,
   setSelectedProvider,
   startNewChat,
@@ -35,10 +37,14 @@ export function useAppProjectSelection({
   const projectTouchedRef = useRef(false);
   const providerTouchedRef = useRef(false);
 
-  const selectProject = useCallback((projectId: string | null) => {
-    projectTouchedRef.current = true;
-    setSelectedProjectId(projectId);
-  }, []);
+  const selectProject = useCallback(
+    (projectId: string | null) => {
+      onProjectSelect();
+      projectTouchedRef.current = true;
+      setSelectedProjectId(projectId);
+    },
+    [onProjectSelect],
+  );
 
   const selectProvider = useCallback(
     (provider: string | null) => {

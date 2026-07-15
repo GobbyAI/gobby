@@ -208,6 +208,10 @@ export default function App() {
     setActivityTabRequest(tab);
     setActiveTab("chat");
   }, []);
+  const clearActivityTabRequest = useCallback(
+    () => setActivityTabRequest(null),
+    [],
+  );
 
   useAppKeyboardShortcuts({ setQuickCaptureOpen });
 
@@ -222,6 +226,7 @@ export default function App() {
     selectProvider,
   } = useAppProjectSelection({
     allProjects: projectsHook.allProjects,
+    onProjectSelect: clearActivityTabRequest,
     selectedProvider,
     setSelectedProvider,
     startNewChat,
