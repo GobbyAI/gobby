@@ -460,7 +460,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
           <div>Failed to load knowledge graph</div>
           <button
             type="button"
-            className="mt-2 rounded border border-[var(--border)] px-3 py-1 text-[length:var(--text-sm)] hover:bg-[var(--bg-hover)]"
+            className="mt-2 rounded border border-[var(--border)] px-3 py-1 text-[length:var(--text-sm)] hover:bg-[var(--bg-tertiary)]"
             onClick={() => {
               setLoading(true)
               setLoadAttempt(attempt => attempt + 1)
