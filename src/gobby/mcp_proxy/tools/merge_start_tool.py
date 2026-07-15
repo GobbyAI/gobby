@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -15,6 +16,7 @@ from gobby.mcp_proxy.tools.merge_git_state import (
     resolved_reuse_error,
     source_branch_validation_error,
 )
+from gobby.mcp_proxy.tools.merge_resolve_locks import try_acquire_resolve_lock
 from gobby.storage.merge_resolutions import ConflictStatus, MergeResolutionManager
 from gobby.worktrees.git import WorktreeGitManager
 from gobby.worktrees.merge import MergeResolver, ResolutionTier
@@ -122,6 +124,7 @@ def register_merge_start_tool(
             return {"success": False, "error": validation_error}
 
         resolution = None
+        resolve_lock: asyncio.Lock | None = None
         try:
             existing = merge_storage.get_resolution_for_merge(
                 worktree_id=worktree_id,
@@ -192,6 +195,18 @@ def register_merge_start_tool(
                     status="pending",
                 )
 
+            resolve_lock = await try_acquire_resolve_lock(resolution.id)
+            if resolve_lock is None:
+                return {
+                    "success": False,
+                    "error": (
+                        "Another merge operation is already running for resolution "
+                        f"{resolution.id}. Retry after merge_status."
+                    ),
+                    "retry_later": True,
+                    "resolution_id": resolution.id,
+                }
+
             force_tier = None
             if strategy == "conflict_only":
                 force_tier = ResolutionTier.CONFLICT_ONLY_AI
@@ -241,3 +256,6 @@ def register_merge_start_tool(
                 resolution.id if resolution is not None else "N/A",
             )
             return {"success": False, "error": str(e)}
+        finally:
+            if resolve_lock is not None and resolve_lock.locked():
+                resolve_lock.release()

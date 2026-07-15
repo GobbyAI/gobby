@@ -116,7 +116,7 @@ _FENCED_SOURCE_RESPONSE_RE = re.compile(
     r"\A[ \t\r\n]*```[A-Za-z0-9_+.-]*[ \t]*\r?\n(?P<body>.*?)(?:\r?\n)?```[ \t\r\n]*\Z",
     re.DOTALL,
 )
-_CONFLICT_MARKER_LINE_RE = re.compile(r"(?m)^\s*(<<<<<<<|\|\|\|\|\|\|\||>>>>>>>).*")
+_CONFLICT_MARKER_LINE_RE = re.compile(r"(?m)^\s*(<<<<<<<|\|\|\|\|\|\|\||=======|>>>>>>>).*")
 
 
 def assert_marker_free(content: str) -> None:

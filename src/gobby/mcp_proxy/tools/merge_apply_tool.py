@@ -16,6 +16,7 @@ from gobby.mcp_proxy.tools.merge_git_state import (
     source_branch_validation_error,
 )
 from gobby.mcp_proxy.tools.merge_github_protection import git_output
+from gobby.mcp_proxy.tools.merge_resolve_locks import try_acquire_resolve_lock
 from gobby.storage.merge_resolutions import MergeResolutionManager
 from gobby.worktrees.git import WorktreeGitManager
 from gobby.worktrees.merge.resolver import assert_marker_free
@@ -51,17 +52,30 @@ def register_merge_apply_tool(
         if not resolution:
             return {"success": False, "error": f"Resolution '{resolution_id}' not found"}
 
-        conflicts = merge_storage.list_conflicts(resolution_id=resolution_id)
-
-        pending = [c for c in conflicts if c.status != "resolved"]
-        if pending:
-            return {
-                "success": False,
-                "error": f"Cannot apply: {len(pending)} unresolved conflicts remaining",
-                "pending_conflicts": [{"id": c.id, "file_path": c.file_path} for c in pending],
-            }
-
+        resolve_lock: asyncio.Lock | None = None
         try:
+            resolve_lock = await try_acquire_resolve_lock(resolution.id)
+            if resolve_lock is None:
+                return {
+                    "success": False,
+                    "error": (
+                        "Another merge operation is already running for resolution "
+                        f"{resolution.id}. Retry after merge_status."
+                    ),
+                    "retry_later": True,
+                    "resolution_id": resolution.id,
+                }
+
+            conflicts = merge_storage.list_conflicts(resolution_id=resolution_id)
+
+            pending = [c for c in conflicts if c.status != "resolved"]
+            if pending:
+                return {
+                    "success": False,
+                    "error": f"Cannot apply: {len(pending)} unresolved conflicts remaining",
+                    "pending_conflicts": [{"id": c.id, "file_path": c.file_path} for c in pending],
+                }
+
             if not git_manager or not worktree_manager:
                 return {
                     "success": False,
@@ -245,3 +259,6 @@ def register_merge_apply_tool(
         except Exception as e:
             logger.exception("Error applying merge for resolution %s", resolution_id)
             return {"success": False, "error": str(e)}
+        finally:
+            if resolve_lock is not None and resolve_lock.locked():
+                resolve_lock.release()

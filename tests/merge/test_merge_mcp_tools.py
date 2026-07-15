@@ -10,7 +10,7 @@ Tests for MCP tools in gobby-merge server:
 
 import asyncio
 from pathlib import Path
-from unittest.mock import ANY, AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -206,6 +206,58 @@ class TestMergeStartTool:
         assert result["success"] is True
         assert "resolution_id" in result
         mock_storage.get_or_create_resolution.assert_called_once()
+
+    async def test_merge_start_rejects_parallel_call_for_same_resolution(
+        self, merge_registry, mock_storage, mock_resolver
+    ):
+        """merge_start serializes git operations for one resolution."""
+        from gobby.storage.merge_resolutions import MergeResolution
+        from gobby.worktrees.merge import MergeResult, ResolutionTier
+
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+        resolution = MergeResolution(
+            id="15174726-47f5-57c4-999e-18bf66046857",
+            worktree_id="42771f92-3d33-57b0-8bef-452d7139ad78",
+            source_branch="feature/test",
+            target_branch="main",
+            status="pending",
+            tier_used=None,
+            created_at="2025-01-01T00:00:00+00:00",
+            updated_at="2025-01-01T00:00:00+00:00",
+        )
+        mock_storage.get_or_create_resolution.return_value = (resolution, True)
+
+        async def resolve(**_kwargs: object) -> MergeResult:
+            first_started.set()
+            await release_first.wait()
+            return MergeResult(
+                success=True,
+                tier=ResolutionTier.GIT_AUTO,
+                conflicts=[],
+                resolved_files=[],
+                unresolved_conflicts=[],
+                needs_human_review=False,
+            )
+
+        mock_resolver.resolve.side_effect = resolve
+        arguments = {
+            "worktree_id": "42771f92-3d33-57b0-8bef-452d7139ad78",
+            "source_branch": "feature/test",
+            "target_branch": "main",
+        }
+        first = asyncio.create_task(merge_registry.call("merge_start", arguments))
+        await first_started.wait()
+
+        second = await merge_registry.call("merge_start", arguments)
+        release_first.set()
+        first_result = await first
+
+        assert first_result["success"] is True
+        assert second["success"] is False
+        assert second["retry_later"] is True
+        assert second["resolution_id"] == resolution.id
+        mock_resolver.resolve.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_merge_start_with_conflicts(self, merge_registry, mock_storage, mock_resolver):
@@ -1108,6 +1160,38 @@ class TestMergeApplyTool:
             ["rev-parse", "HEAD"], cwd=str(tmp_path), timeout=10
         )
         assert result["merge_sha"] == "merged-sha"
+
+    async def test_merge_apply_releases_resolution_lock_after_error(
+        self, merge_registry, mock_storage
+    ):
+        """merge_apply releases the per-resolution lock in finally."""
+        from gobby.mcp_proxy.tools.merge_resolve_locks import try_acquire_resolve_lock
+        from gobby.storage.merge_resolutions import MergeResolution
+
+        resolution = MergeResolution(
+            id="15174726-47f5-57c4-999e-18bf66046857",
+            worktree_id="42771f92-3d33-57b0-8bef-452d7139ad78",
+            source_branch="feature/test",
+            target_branch="main",
+            status="pending",
+            tier_used=None,
+            created_at="2025-01-01T00:00:00+00:00",
+            updated_at="2025-01-01T00:00:00+00:00",
+        )
+        mock_storage.get_resolution.return_value = resolution
+        mock_storage.list_conflicts.side_effect = RuntimeError("storage failed")
+
+        with patch(
+            "gobby.mcp_proxy.tools.merge_apply_tool.try_acquire_resolve_lock",
+            wraps=try_acquire_resolve_lock,
+        ) as acquire_lock:
+            result = await merge_registry.call("merge_apply", {"resolution_id": resolution.id})
+
+        assert result == {"success": False, "error": "storage failed"}
+        acquire_lock.assert_awaited_once_with(resolution.id)
+        reacquired = await try_acquire_resolve_lock(resolution.id)
+        assert reacquired is not None
+        reacquired.release()
 
     @pytest.mark.parametrize("marker_line", ["<<<<<<< HEAD", "=======", ">>>>>>> feature"])
     async def test_merge_apply_rejects_markers_before_write_or_stage(
