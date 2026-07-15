@@ -1,8 +1,8 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { RESTART_TIMEOUT_MS } from '../../../lib/api'
 import { ACTIVITY_PANEL_TABS } from '../../activity/ActivityPanelTabs'
+import { RESTART_TIMEOUT_MS } from '../../../lib/api'
 import { useAppCommandPalette } from '../useAppCommandPalette'
 
 function makeHookArgs(addSystemMessage = vi.fn()) {
@@ -106,10 +106,11 @@ describe('useAppCommandPalette', () => {
       ACTIVITY_PANEL_TABS.map(({ id, label }) => ({ id: `nav-${id}`, label })),
     )
 
-    act(() => {
-      navigationActions.find((action) => action.id === 'nav-integrations')?.onSelect()
-    })
+    for (const tab of ACTIVITY_PANEL_TABS) {
+      const action = navigationActions.find(({ id }) => id === `nav-${tab.id}`)
 
-    expect(args.openActivityTab).toHaveBeenCalledWith('integrations')
+      act(() => action?.onSelect())
+      expect(args.openActivityTab).toHaveBeenLastCalledWith(tab.id)
+    }
   })
 })
