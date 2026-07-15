@@ -191,7 +191,7 @@ async def test_stalled_with_alive_agents_touches_updated_at(
     old_updated = old_exe.updated_at
 
     count = await heartbeat.check_stalled_executions()
-    assert count == 1
+    assert count == 0
 
     exe = exec_manager.get_execution(exe_id)
     assert exe is not None
@@ -228,7 +228,7 @@ async def test_stalled_with_agents_under_persisted_child_session_survives(
     )
 
     count = await heartbeat.check_stalled_executions()
-    assert count == 1
+    assert count == 0
 
     refreshed = exec_manager.get_execution(exe.id)
     assert refreshed is not None
@@ -253,7 +253,7 @@ async def test_stalled_with_active_session_survives_without_agent_runs(
     count = await heartbeat.check_stalled_executions()
 
     execution = exec_manager.get_execution(exe_id)
-    assert count == 1
+    assert count == 0
     assert execution is not None
     assert execution.status == ExecutionStatus.RUNNING
 
@@ -435,7 +435,8 @@ async def test_stale_task_scan_recovers_oldest_claim_beyond_default_window(
         ((datetime.now(UTC) - timedelta(days=1)).isoformat(), orphan_task_id),
     )
 
-    assert await heartbeat_with_tasks.check_stale_tasks() == 1
+    result = await heartbeat_with_tasks.check_stale_tasks()
+    assert result == (1, 100)
 
     orphan_task = task_manager.get_task(orphan_task_id)
     assert orphan_task is not None
@@ -467,8 +468,8 @@ async def test_stale_task_with_terminal_agent_run_recovered(
     agent_run_manager.start(run_id)
     agent_run_manager.fail(run_id, error="Agent died")
 
-    recovered = await heartbeat_with_tasks.check_stale_tasks()
-    assert recovered == 1
+    result = await heartbeat_with_tasks.check_stale_tasks()
+    assert result.recovered == 1
 
     task = task_manager.get_task(task_id)
     assert task is not None
@@ -499,7 +500,7 @@ async def test_stale_task_recovery_respects_concurrent_dispatch_mutex(
         ttl_seconds=30,
     )
 
-    assert await heartbeat_with_tasks.check_stale_tasks() == 0
+    assert (await heartbeat_with_tasks.check_stale_tasks()).recovered == 0
 
     task = task_manager.get_task(task_id)
     assert task is not None
@@ -509,7 +510,7 @@ async def test_stale_task_recovery_respects_concurrent_dispatch_mutex(
     assert stage.state == "in_progress"
 
     assert mutexes.release_mutex(task_id, holder)
-    assert await heartbeat_with_tasks.check_stale_tasks() == 1
+    assert (await heartbeat_with_tasks.check_stale_tasks()).recovered == 1
 
 
 @pytest.mark.asyncio
@@ -528,7 +529,7 @@ async def test_stale_task_recovery_rolls_back_stage_when_claim_release_fails(
 
     monkeypatch.setattr(task_manager, "release_task_claim", fail_claim_release)
 
-    assert await heartbeat_with_tasks.check_stale_tasks() == 0
+    assert (await heartbeat_with_tasks.check_stale_tasks()).recovered == 0
 
     task = task_manager.get_task(task_id)
     assert task is not None
@@ -570,8 +571,8 @@ async def test_stale_task_with_commits_promoted_to_needs_review(
     commits.append("abc123de")
     temp_db.execute("UPDATE tasks SET commits = %s WHERE id = %s", (json.dumps(commits), task_id))
 
-    recovered = await heartbeat_with_tasks.check_stale_tasks()
-    assert recovered == 1
+    result = await heartbeat_with_tasks.check_stale_tasks()
+    assert result.recovered == 1
 
     task = task_manager.get_task(task_id)
     assert task is not None
@@ -613,8 +614,8 @@ async def test_stale_review_task_releases_claim_without_status_regression(
         by_session_id=None,
     )
 
-    recovered = await heartbeat_with_tasks.check_stale_tasks()
-    assert recovered == 1
+    result = await heartbeat_with_tasks.check_stale_tasks()
+    assert result.recovered == 1
 
     updated = task_manager.get_task(task.id)
     assert updated is not None
@@ -643,8 +644,8 @@ async def test_task_with_active_agent_run_not_recovered(
     )
     agent_run_manager.start(run.id)
 
-    recovered = await heartbeat_with_tasks.check_stale_tasks()
-    assert recovered == 0
+    result = await heartbeat_with_tasks.check_stale_tasks()
+    assert result.recovered == 0
 
     task = task_manager.get_task(task_id)
     assert task is not None
@@ -656,8 +657,8 @@ async def test_stale_task_no_managers_returns_zero(
     heartbeat: PipelineHeartbeat,
 ) -> None:
     """Heartbeat without task/agent_run managers skips stale task check."""
-    recovered = await heartbeat.check_stale_tasks()
-    assert recovered == 0
+    result = await heartbeat.check_stale_tasks()
+    assert result == (0, 0)
 
 
 # --- Interactive session protection tests ---
@@ -674,8 +675,8 @@ async def test_interactive_session_task_not_recovered(
     # SESSION_ID is seeded as 'active' — simulates an interactive CLI session
     task_id = _create_in_progress_task(task_manager, claimed_by_session_id=SESSION_ID)
 
-    recovered = await heartbeat_with_tasks.check_stale_tasks()
-    assert recovered == 0
+    result = await heartbeat_with_tasks.check_stale_tasks()
+    assert result.recovered == 0
 
     task = task_manager.get_task(task_id)
     assert task is not None
@@ -699,8 +700,8 @@ async def test_expired_session_task_recovered(
         max_work_attempts=1,
     )
 
-    recovered = await heartbeat_with_tasks.check_stale_tasks()
-    assert recovered == 1
+    result = await heartbeat_with_tasks.check_stale_tasks()
+    assert result.recovered == 1
 
     task = task_manager.get_task(task_id)
     assert task is not None
@@ -727,8 +728,8 @@ async def test_paused_agent_session_task_recovered(
     )
     task_id = _create_in_progress_task(task_manager, claimed_by_session_id=SESSION_ID)
 
-    recovered = await heartbeat_with_tasks.check_stale_tasks()
-    assert recovered == 1
+    result = await heartbeat_with_tasks.check_stale_tasks()
+    assert result.recovered == 1
 
     task = task_manager.get_task(task_id)
     assert task is not None
@@ -751,8 +752,8 @@ async def test_paused_interactive_session_task_not_recovered(
     )
     task_id = _create_in_progress_task(task_manager, claimed_by_session_id=SESSION_ID)
 
-    recovered = await heartbeat_with_tasks.check_stale_tasks()
-    assert recovered == 0
+    result = await heartbeat_with_tasks.check_stale_tasks()
+    assert result.recovered == 0
 
     task = task_manager.get_task(task_id)
     assert task is not None
@@ -770,8 +771,8 @@ async def test_inactive_session_task_recovered(
     _seed_db(temp_db)
     task_id = _create_in_progress_task(task_manager, claimed_by_session_id=STOPPED_SESSION_ID)
 
-    recovered = await heartbeat_with_tasks.check_stale_tasks()
-    assert recovered == 1
+    result = await heartbeat_with_tasks.check_stale_tasks()
+    assert result.recovered == 1
 
     task = task_manager.get_task(task_id)
     assert task is not None

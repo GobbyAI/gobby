@@ -82,11 +82,9 @@ class PipelineHeartbeatService(Protocol):
 
     async def check_stalled_executions(self) -> int: ...
 
-    async def check_stale_tasks(self) -> int: ...
+    async def check_stale_tasks(self) -> tuple[int, int]: ...
 
     async def count_running_executions(self) -> int: ...
-
-    async def count_stale_task_candidates(self) -> int: ...
 
 
 class SystemAutomationLoop:
@@ -682,9 +680,8 @@ class SystemAutomationLoop:
         if heartbeat is None:
             return AutomationMaintenanceSummary()
         stalled = await heartbeat.check_stalled_executions()
-        recovered = await heartbeat.check_stale_tasks()
+        recovered, stale_candidates = await heartbeat.check_stale_tasks()
         running = await heartbeat.count_running_executions()
-        stale_candidates = await heartbeat.count_stale_task_candidates()
         return AutomationMaintenanceSummary(
             pipeline_stalled_handled=int(stalled or 0),
             pipeline_stale_tasks_recovered=int(recovered or 0),

@@ -8,10 +8,11 @@ On each maintenance tick:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 from uuid import uuid4
 
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
@@ -29,6 +30,11 @@ if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager, Task
 
 logger = logging.getLogger(__name__)
+
+
+class StaleTaskCheckResult(NamedTuple):
+    recovered: int
+    candidates: int
 
 
 def _submit_current_stage_for_review(
@@ -131,8 +137,6 @@ class PipelineHeartbeat:
 
     async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._db_runner is None:
-            import asyncio
-
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self._db_runner(func, *args, **kwargs)
 
@@ -145,7 +149,7 @@ class PipelineHeartbeat:
         - If agents dead → mark FAILED
 
         Returns:
-            Number of stalled executions handled
+            Number of stalled executions moved to a different status.
         """
         stalled = await self._run_db(
             self._execution_manager.get_stalled_executions,
@@ -165,7 +169,7 @@ class PipelineHeartbeat:
     async def _handle_stalled_execution(self, execution: PipelineExecution) -> int:
         """Handle a single stalled execution.
 
-        Returns 1 if action was taken, 0 otherwise.
+        Returns 1 if the execution status changed, 0 otherwise.
         """
         if execution.status == ExecutionStatus.PENDING:
             updated = await self._run_db(
@@ -219,7 +223,7 @@ class PipelineHeartbeat:
                 "Heartbeat: execution %s is still alive, touched updated_at",
                 execution.id,
             )
-            return 1
+            return 0
 
         updated = await self._run_db(
             self._execution_manager.update_stalled_execution_status,
@@ -275,7 +279,7 @@ class PipelineHeartbeat:
             logger.exception(f"Failed to check session liveness for {session_id}")
             return True  # Err on side of caution — assume alive
 
-    async def check_stale_tasks(self) -> int:
+    async def check_stale_tasks(self) -> StaleTaskCheckResult:
         """Find claimed tasks with no alive agent or session and recover ownership.
 
         For each actively claimed task that has an owning session:
@@ -284,15 +288,16 @@ class PipelineHeartbeat:
         3. If neither, recover the task based on its current stage
 
         Returns:
-            Number of recovered tasks.
+            Recovered-task and scanned-candidate counts.
         """
         task_manager = self._task_manager
         agent_run_manager = self._agent_run_manager
         if not task_manager or not agent_run_manager:
-            return 0
+            return StaleTaskCheckResult(recovered=0, candidates=0)
 
+        candidates = await self._claimed_task_candidates()
         recovered = 0
-        for task in await self._claimed_task_candidates():
+        for task in candidates:
             owner_session_id = get_claimed_session_id(task)
             if owner_session_id is None:
                 continue
@@ -336,7 +341,7 @@ class PipelineHeartbeat:
                     recovered += 1
             except Exception:
                 logger.exception(f"Heartbeat: error checking task {task.id} for staleness")
-        return recovered
+        return StaleTaskCheckResult(recovered=recovered, candidates=len(candidates))
 
     async def count_running_executions(self) -> int:
         """Count running pipeline executions that need heartbeat monitoring."""
@@ -346,10 +351,6 @@ class PipelineHeartbeat:
                 status=ExecutionStatus.RUNNING,
             )
         )
-
-    async def count_stale_task_candidates(self) -> int:
-        """Count active claimed tasks that need stale-claim monitoring."""
-        return len(await self._claimed_task_candidates())
 
     async def _claimed_task_candidates(self) -> list[Task]:
         task_manager = self._task_manager
