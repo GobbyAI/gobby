@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import type { GobbyTask } from '../../types/tasks'
 import { cn } from '../../lib/utils'
 import { useDialogFocus } from '../../hooks/useDialogFocus'
+import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { inputFocusCls } from '../shared/focusStyles'
 import {
   DEFAULT_TASK_PRIORITY,
@@ -71,6 +72,7 @@ const SUBMIT_BTN_CLS =
 
 export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: TaskCreateFormProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
+  const { confirm, ConfirmDialogElement } = useConfirmDialog()
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [taskType, setTaskType] = useState('task')
@@ -82,7 +84,7 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const handleClose = useCallback(() => {
+  const resetAndClose = useCallback(() => {
     setTitle('')
     setDescription('')
     setTaskType('task')
@@ -95,7 +97,32 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
     onClose()
   }, [onClose])
 
-  useDialogFocus({ ref: dialogRef, isOpen, onClose: handleClose })
+  const isDirty =
+    title !== (defaults?.title || '') ||
+    description !== (defaults?.description || '') ||
+    taskType !== (defaults?.taskType || 'task') ||
+    priority !== (defaults?.priority ?? DEFAULT_TASK_PRIORITY) ||
+    category !== (defaults?.category || '') ||
+    parentTaskId !== (defaults?.parentTaskId || '') ||
+    labelsInput !== (defaults?.labels?.join(', ') || '') ||
+    validationCriteria !== (defaults?.validationCriteria || '')
+
+  const requestClose = useCallback(async () => {
+    if (
+      isDirty &&
+      !(await confirm({
+        title: 'Discard task draft?',
+        description: 'Your task draft has unsaved changes.',
+        confirmLabel: 'Discard',
+        destructive: true,
+      }))
+    ) {
+      return
+    }
+    resetAndClose()
+  }, [confirm, isDirty, resetAndClose])
+
+  useDialogFocus({ ref: dialogRef, isOpen, onClose: requestClose })
 
   useEffect(() => {
     if (isOpen) {
@@ -133,21 +160,21 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
 
     try {
       await onSubmit(params)
-      handleClose()
+      resetAndClose()
     } catch (err) {
       console.error('Failed to create task:', err)
       setError(err instanceof Error ? err.message : 'Failed to create task')
     } finally {
       setSubmitting(false)
     }
-  }, [title, description, taskType, priority, category, parentTaskId, labelsInput, validationCriteria, onSubmit, handleClose])
+  }, [title, description, taskType, priority, category, parentTaskId, labelsInput, validationCriteria, onSubmit, resetAndClose])
 
   if (!isOpen) return null
 
   const parentOptions = tasks.filter(t => t.task_type === 'epic' || t.task_type === 'task')
 
   return (
-    <div className={BACKDROP_CLS} onClick={handleClose}>
+    <div className={BACKDROP_CLS} onClick={() => void requestClose()}>
       <div
         ref={dialogRef}
         className={MODAL_CLS}
@@ -162,7 +189,7 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
           <button
             type="button"
             className={TASK_MODAL_CLOSE_BTN_CLS}
-            onClick={handleClose}
+            onClick={() => void requestClose()}
             title="Close"
             aria-label="Close"
           >
@@ -279,7 +306,7 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
             <button
               type="button"
               className={CANCEL_BTN_CLS}
-              onClick={handleClose}
+              onClick={() => void requestClose()}
             >
               Cancel
             </button>
@@ -293,6 +320,7 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
           </div>
         </form>
       </div>
+      {ConfirmDialogElement}
     </div>
   )
 }
