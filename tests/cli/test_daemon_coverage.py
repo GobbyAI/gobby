@@ -43,21 +43,24 @@ class TestServicesStart:
         assert not (tmp_path / "services" / "docker-compose.yml").exists()
 
     @patch("gobby.cli.daemon.subprocess.run")
-    def test_compose_exists_success(self, mock_run: MagicMock, tmp_path: Path) -> None:
+    def test_start_exports_persisted_qdrant_port(self, mock_run: MagicMock, tmp_path: Path) -> None:
         compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
 
         mock_run.return_value = MagicMock(returncode=0)
+        runtime = ComposeRuntime(
+            environment={"GOBBY_QDRANT_HTTP_PORT": "7333"},
+            profiles=("qdrant",),
+        )
 
-        with patch("gobby.cli.daemon.resolve_compose_runtime", return_value=_runtime("falkordb")):
+        with patch("gobby.cli.daemon.resolve_compose_runtime", return_value=runtime):
             _services_start(tmp_path)
         mock_run.assert_called_once()
-        assert mock_run.call_count == 1
         assert mock_run.call_args is not None
         cmd = mock_run.call_args.args[0]
-        assert "falkordb" in cmd
-        assert mock_run.call_args.kwargs["env"]["GOBBY_FALKORDB_PASSWORD"] == "password123"
+        assert "qdrant" in cmd
+        assert mock_run.call_args.kwargs["env"]["GOBBY_QDRANT_HTTP_PORT"] == "7333"
 
     @patch("gobby.cli.daemon.subprocess.run")
     def test_compose_exists_failure(self, mock_run: MagicMock, tmp_path: Path) -> None:

@@ -1,11 +1,25 @@
 """Transport connection factory."""
 
 from gobby.mcp_proxy.models import MCPServerConfig
+from gobby.mcp_proxy.transport_types import SUPPORTED_TRANSPORTS
 from gobby.mcp_proxy.transports.base import BaseTransportConnection
 from gobby.mcp_proxy.transports.http import HTTPTransportConnection
 from gobby.mcp_proxy.transports.sse import SSETransportConnection
 from gobby.mcp_proxy.transports.stdio import StdioTransportConnection
 from gobby.mcp_proxy.transports.websocket import WebSocketTransportConnection
+
+TRANSPORT_CONNECTION_TYPES: dict[str, type[BaseTransportConnection]] = dict(
+    zip(
+        SUPPORTED_TRANSPORTS,
+        (
+            HTTPTransportConnection,
+            SSETransportConnection,
+            StdioTransportConnection,
+            WebSocketTransportConnection,
+        ),
+        strict=True,
+    )
+)
 
 
 def create_transport_connection(
@@ -25,17 +39,10 @@ def create_transport_connection(
     Raises:
         ValueError: If transport type is unsupported
     """
-    transport_map: dict[str, type[BaseTransportConnection]] = {
-        "http": HTTPTransportConnection,
-        "sse": SSETransportConnection,
-        "stdio": StdioTransportConnection,
-        "websocket": WebSocketTransportConnection,
-    }
-
-    transport_class = transport_map.get(config.transport)
+    transport_class = TRANSPORT_CONNECTION_TYPES.get(config.transport)
     if not transport_class:
         raise ValueError(
-            f"Unsupported transport: {config.transport}. Supported: {list(transport_map.keys())}"
+            f"Unsupported transport: {config.transport}. Supported: {list(SUPPORTED_TRANSPORTS)}"
         )
 
     if transport_class is StdioTransportConnection:

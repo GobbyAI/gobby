@@ -14,6 +14,7 @@ from gobby.mcp_proxy.manager import (
     MCPServerConfig,
     _create_transport_connection,
 )
+from gobby.mcp_proxy.transport_types import SUPPORTED_TRANSPORTS
 
 pytestmark = pytest.mark.unit
 
@@ -293,20 +294,21 @@ class TestCreateTransportConnection:
         assert connection.state == ConnectionState.DISCONNECTED
 
     @pytest.mark.parametrize(
-        ("transport", "options"),
-        [
-            ("http", {"url": "https://localhost/mcp"}),
-            ("sse", {"url": "https://localhost/sse"}),
-            ("stdio", {"command": "server"}),
-            ("websocket", {"url": "wss://localhost/mcp"}),
-        ],
+        "transport",
+        SUPPORTED_TRANSPORTS,
     )
     def test_factory_covers_every_valid_transport(
         self,
         transport: str,
-        options: dict[str, str],
     ) -> None:
         """Every transport accepted by config validation has a factory implementation."""
+        if transport == "stdio":
+            options = {"command": "server"}
+        elif transport == "websocket":
+            options = {"url": "wss://localhost/mcp"}
+        else:
+            options = {"url": "https://localhost/mcp"}
+
         config = MCPServerConfig(
             name=f"{transport}-server",
             project_id="test-project-uuid",
