@@ -137,9 +137,10 @@ class PipelineHeartbeat:
         return await self._db_runner(func, *args, **kwargs)
 
     async def check_stalled_executions(self) -> int:
-        """Find stalled RUNNING executions and take corrective action.
+        """Find stalled active executions and take corrective action.
 
         For each stalled execution:
+        - If still PENDING → mark FAILED and release its dispatch mutex
         - If agents still alive → touch updated_at (slow, not stalled)
         - If agents dead → mark FAILED
 
@@ -166,6 +167,28 @@ class PipelineHeartbeat:
 
         Returns 1 if action was taken, 0 otherwise.
         """
+        if execution.status == ExecutionStatus.PENDING:
+            updated = await self._run_db(
+                self._execution_manager.update_stalled_execution_status,
+                execution.id,
+                ExecutionStatus.FAILED,
+                execution.status,
+                execution.updated_at,
+                outputs_json=json.dumps({"error": "Heartbeat: pipeline execution never started"}),
+            )
+            if updated is None:
+                logger.info(
+                    "Heartbeat: skipped pending execution %s because its state changed "
+                    "since stall scan",
+                    execution.id,
+                )
+                return 0
+            logger.warning(
+                "Heartbeat: marked execution %s as FAILED (never started)",
+                execution.id,
+            )
+            return 1
+
         if not execution.session_id:
             logger.warning(
                 "Heartbeat: skipped stalled execution %s because it has no owning session",
@@ -183,6 +206,7 @@ class PipelineHeartbeat:
                 self._execution_manager.update_stalled_execution_status,
                 execution.id,
                 ExecutionStatus.RUNNING,
+                execution.status,
                 execution.updated_at,
             )
             if updated is None:
@@ -201,6 +225,7 @@ class PipelineHeartbeat:
             self._execution_manager.update_stalled_execution_status,
             execution.id,
             ExecutionStatus.FAILED,
+            execution.status,
             execution.updated_at,
             outputs_json=json.dumps({"error": "Heartbeat: execution stalled with no alive agents"}),
         )

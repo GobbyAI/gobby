@@ -763,6 +763,25 @@ class TestInterruptStaleRunningExecutions:
         assert updated is not None
         assert updated.status == ExecutionStatus.INTERRUPTED
 
+    def test_interrupts_only_pending_executions_older_than_threshold(
+        self,
+        manager: LocalPipelineExecutionManager,
+        db: HubDatabase,
+    ) -> None:
+        stale = manager.create_execution(pipeline_name="never-started")
+        recent = manager.create_execution(pipeline_name="starting-now")
+        db.execute(
+            "UPDATE pipeline_executions SET updated_at = NOW() - INTERVAL '5 minutes' "
+            "WHERE id = %s",
+            (stale.id,),
+        )
+
+        count = manager.interrupt_stale_running_executions(pending_stall_threshold_seconds=60)
+
+        assert count == 1
+        assert _get_execution(manager, stale.id).status == ExecutionStatus.INTERRUPTED
+        assert _get_execution(manager, recent.id).status == ExecutionStatus.PENDING
+
     def test_leaves_waiting_approval_alone(self, manager: LocalPipelineExecutionManager) -> None:
         """Waiting-approval executions are not affected."""
         execution = manager.create_execution(pipeline_name="approval-pipeline")
@@ -859,6 +878,23 @@ class TestFailStaleRunningExecutions:
         updated = manager.get_execution(execution.id)
         assert updated is not None
         assert updated.status == ExecutionStatus.FAILED
+
+    def test_marks_stale_pending_execution_as_failed(
+        self,
+        manager: LocalPipelineExecutionManager,
+        db: HubDatabase,
+    ) -> None:
+        execution = manager.create_execution(pipeline_name="never-started")
+        db.execute(
+            "UPDATE pipeline_executions SET updated_at = NOW() - INTERVAL '5 minutes' "
+            "WHERE id = %s",
+            (execution.id,),
+        )
+
+        count = manager.fail_stale_running_executions(pending_stall_threshold_seconds=60)
+
+        assert count == 1
+        assert _get_execution(manager, execution.id).status == ExecutionStatus.FAILED
 
     def test_also_fails_running_steps(self, manager: LocalPipelineExecutionManager) -> None:
         """Running steps belonging to orphaned executions are also failed."""

@@ -131,6 +131,50 @@ async def test_stalled_no_agents_marks_failed(
     assert "stalled" in (exe.outputs_json or "").lower()
 
 
+async def test_stale_pending_execution_fails_and_releases_dispatch_mutex(
+    exec_manager: LocalPipelineExecutionManager,
+    agent_run_manager: LocalAgentRunManager,
+    task_manager: LocalTaskManager,
+    temp_db: HubDatabase,
+) -> None:
+    _seed_db(temp_db)
+    task = task_manager.create_task(
+        title="Pending pipeline task",
+        task_type="task",
+        project_id=PROJECT_ID,
+    )
+    execution = exec_manager.create_execution(
+        pipeline_name="never-started",
+        session_id=SESSION_ID,
+    )
+    temp_db.execute(
+        "UPDATE pipeline_executions SET updated_at = NOW() - INTERVAL '5 minutes' WHERE id = %s",
+        (execution.id,),
+    )
+    mutexes = TaskDispatchMutexManager(temp_db)
+    assert mutexes.acquire_mutex(
+        task.id,
+        holder="pipeline-dispatch",
+        kind="stage-pipeline:development",
+        ttl_seconds=600,
+        run_id=execution.id,
+    )
+    pipeline_heartbeat = PipelineHeartbeat(
+        execution_manager=exec_manager,
+        agent_run_manager=agent_run_manager,
+        stall_threshold_seconds=60,
+        task_manager=task_manager,
+    )
+
+    handled = await pipeline_heartbeat.check_stalled_executions()
+
+    updated = exec_manager.get_execution(execution.id)
+    assert handled == 1
+    assert updated is not None
+    assert updated.status == ExecutionStatus.FAILED
+    assert mutexes.get_mutex_by_run_id(execution.id) is None
+
+
 @pytest.mark.asyncio
 async def test_stalled_with_alive_agents_touches_updated_at(
     heartbeat: PipelineHeartbeat,
