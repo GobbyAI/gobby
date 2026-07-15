@@ -489,6 +489,47 @@ describe("SessionsTab", () => {
     expect(localStorage.getItem("gobby-watching-session-id")).toBe("paused-1");
   });
 
+  it("keeps the watched session selected across a transient search result", async () => {
+    mockUseSessionDetail.mockImplementation((sessionId) => ({
+      session: sessionId === "live-1" ? LIVE_SESSION : PAUSED_SESSION,
+      sessionError: null,
+      clearSessionError: vi.fn(),
+      messages: [
+        {
+          id: `msg-${sessionId ?? "none"}`,
+          role: "assistant",
+          content: `Transcript output for ${sessionId ?? "none"}`,
+          timestamp: "2026-04-08T12:11:00Z",
+        },
+      ],
+      isLoading: false,
+      transcriptStatus: null,
+    }));
+
+    render(<SessionsTab sessions={[LIVE_SESSION, PAUSED_SESSION]} />);
+
+    fireEvent.click(getSessionEntry("#201: Live Terminal"));
+    await waitFor(() => {
+      expect(screen.getByText("Transcript output for live-1")).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("Search"), {
+      target: { value: "paused-ext-1" },
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("#201: Live Terminal")).toBeNull();
+    });
+    expect(localStorage.getItem("gobby-watching-session-id")).toBe("live-1");
+
+    fireEvent.change(screen.getByPlaceholderText("Search"), {
+      target: { value: "" },
+    });
+    await waitFor(() => {
+      expect(screen.getByText("Transcript output for live-1")).toBeInTheDocument();
+    });
+    expect(localStorage.getItem("gobby-watching-session-id")).toBe("live-1");
+  });
+
   it("restores a valid persisted watched session", async () => {
     localStorage.setItem("gobby-watching-session-id", "live-1");
     mockUseSessionDetail.mockImplementation((sessionId) => ({
@@ -1364,10 +1405,11 @@ describe("SessionsTab", () => {
 
     const menu = screen.getByRole("menu", { name: "Session actions" });
     const items = screen.getAllByRole("menuitem");
-    expect(document.activeElement).toBe(items[0]);
+    expect(items[0]).toBeDisabled();
+    expect(document.activeElement).toBe(items[1]);
 
     fireEvent.keyDown(menu, { key: "ArrowDown" });
-    expect(document.activeElement).toBe(items[1]);
+    expect(document.activeElement).toBe(items[2]);
 
     fireEvent.keyDown(menu, { key: "Escape" });
     expect(screen.queryByRole("menu", { name: "Session actions" })).toBeNull();
