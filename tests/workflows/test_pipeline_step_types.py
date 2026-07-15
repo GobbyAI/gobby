@@ -1,8 +1,6 @@
-"""Tests for activate_workflow pipeline step type."""
+"""Tests for removed pipeline step types."""
 
 from __future__ import annotations
-
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -10,28 +8,32 @@ pytestmark = pytest.mark.unit
 
 
 class TestPipelineStepValidation:
-    """Tests for PipelineStep accepting activate_workflow."""
+    """Tests for PipelineStep rejecting removed execution types."""
 
-    def test_activate_workflow_step_accepted(self) -> None:
-        """PipelineStep accepts activate_workflow as a valid execution type."""
-        from gobby.workflows.definitions import PipelineStep
+    @pytest.mark.parametrize(
+        "step",
+        [
+            {"id": "activate", "activate_workflow": {"name": "auto-task"}},
+            {
+                "id": "activate",
+                "prompt": "Do something",
+                "activate_workflow": {"name": "auto-task"},
+            },
+        ],
+    )
+    def test_activate_workflow_rejected_at_definition_load(self, step: dict[str, object]) -> None:
+        """Pipeline definitions reject activate_workflow before execution."""
+        from gobby.workflows.definitions import PipelineDefinition
 
-        step = PipelineStep(
-            id="activate",
-            activate_workflow={"name": "auto-task", "variables": {"x": 1}},
-        )
-        assert step.activate_workflow is not None
-        assert step.activate_workflow["name"] == "auto-task"
-
-    def test_activate_workflow_mutually_exclusive_with_prompt(self) -> None:
-        """activate_workflow cannot be combined with prompt."""
-        from gobby.workflows.definitions import PipelineStep
-
-        with pytest.raises(ValueError, match="mutually exclusive"):
-            PipelineStep(
-                id="bad",
-                prompt="Do something",
-                activate_workflow={"name": "test"},
+        with pytest.raises(
+            ValueError, match="activate_workflow is not a supported pipeline step type"
+        ):
+            PipelineDefinition.model_validate(
+                {
+                    "name": "invalid-pipeline",
+                    "type": "pipeline",
+                    "steps": [step],
+                }
             )
 
     def test_spawn_session_rejected(self) -> None:
@@ -43,54 +45,3 @@ class TestPipelineStepValidation:
                 id="spawn",
                 spawn_session={"cli": "claude", "prompt": "Do work"},
             )
-
-
-class TestActivateWorkflowExecution:
-    """Tests for activate_workflow step execution in pipeline executor.
-
-    activate_workflow pipeline steps are removed — they fail fast.
-    """
-
-    @pytest.mark.asyncio
-    async def test_activate_workflow_step_raises_error(self) -> None:
-        """activate_workflow step raises an error (step type removed)."""
-        from gobby.workflows.definitions import PipelineStep
-        from gobby.workflows.pipeline_executor import PipelineExecutor
-
-        executor = PipelineExecutor(
-            db=MagicMock(),
-            execution_manager=MagicMock(),
-            llm_service=MagicMock(),
-        )
-
-        step = PipelineStep(
-            id="activate",
-            activate_workflow={
-                "name": "auto-task",
-                "session_id": "uuid-sess-1",
-                "variables": {"task": "fix-bug"},
-            },
-        )
-
-        with pytest.raises(RuntimeError, match="activate_workflow"):
-            await executor._execute_step(step, {"inputs": {}, "steps": {}, "env": {}}, "proj-1")
-
-    @pytest.mark.asyncio
-    async def test_activate_workflow_fails_fast_without_loader(self) -> None:
-        """activate_workflow raises before any loader behavior is consulted."""
-        from gobby.workflows.definitions import PipelineStep
-        from gobby.workflows.pipeline_executor import PipelineExecutor
-
-        executor = PipelineExecutor(
-            db=MagicMock(),
-            execution_manager=MagicMock(),
-            llm_service=MagicMock(),
-        )
-
-        step = PipelineStep(
-            id="activate",
-            activate_workflow={"name": "test-wf", "session_id": "sess-1"},
-        )
-
-        with pytest.raises(RuntimeError, match="activate_workflow"):
-            await executor._execute_step(step, {"inputs": {}, "steps": {}, "env": {}}, "proj-1")

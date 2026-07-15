@@ -324,15 +324,17 @@ def start_periodic_tasks(
         )
 
     runner._approval_timeout_task = None
-    if runner.pipeline_execution_manager:
-        runner._approval_timeout_task = asyncio.create_task(
-            loops["expire_approval_timeouts_loop"](
-                runner.pipeline_execution_manager,
-                lambda: runner._shutdown_requested,
-                run_db=getattr(db_executor, "run", None),
-            ),
-            name="approval-timeout-expiry",
-        )
+    from gobby.storage.pipelines import LocalPipelineExecutionManager
+
+    approval_timeout_manager = LocalPipelineExecutionManager(runner.database, project_id=None)
+    runner._approval_timeout_task = asyncio.create_task(
+        loops["expire_approval_timeouts_loop"](
+            approval_timeout_manager,
+            lambda: runner._shutdown_requested,
+            run_db=getattr(db_executor, "run", None),
+        ),
+        name="approval-timeout-expiry",
+    )
 
     runner._tmux_window_repair_task = asyncio.create_task(
         loops["tmux_window_name_repair_loop"](

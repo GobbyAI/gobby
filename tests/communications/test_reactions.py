@@ -10,10 +10,10 @@ from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
 
 
-def make_service_container(approval_manager: MagicMock | None = None) -> SimpleNamespace:
+def make_service_container(pipeline_executor: MagicMock | None = None) -> SimpleNamespace:
     return SimpleNamespace(
         pipeline_execution_manager=MagicMock(spec=LocalPipelineExecutionManager),
-        pipeline_executor=SimpleNamespace(approval_manager=approval_manager),
+        pipeline_executor=pipeline_executor,
     )
 
 
@@ -44,9 +44,9 @@ def make_waiting_pipeline_step(temp_db: HubDatabase) -> tuple[LocalPipelineExecu
 @pytest.mark.asyncio
 async def test_handle_reaction_approve():
     store = MagicMock()
-    approval_manager = MagicMock()
-    approval_manager.approve_step = AsyncMock()
-    service_container = make_service_container(approval_manager)
+    pipeline_executor = MagicMock()
+    pipeline_executor.approve = AsyncMock()
+    service_container = make_service_container(pipeline_executor)
 
     handler = ReactionHandler(store, service_container)
 
@@ -72,17 +72,15 @@ async def test_handle_reaction_approve():
     store.get_identity_by_external.assert_called_with("test_channel", "user_123")
     assert store.get_identity_by_external.call_count >= 1
     assert store.get_identity_by_external.call_args is not None
-    approval_manager.approve_step.assert_awaited_once_with("token_789", approved_by="identity_1")
-    assert approval_manager.approve_step.await_count == 1
-    assert approval_manager.approve_step.await_args is not None
+    pipeline_executor.approve.assert_awaited_once_with("token_789", approved_by="identity_1")
 
 
 @pytest.mark.asyncio
 async def test_handle_reaction_reject():
     store = MagicMock()
-    approval_manager = MagicMock()
-    approval_manager.reject_step = AsyncMock()
-    service_container = make_service_container(approval_manager)
+    pipeline_executor = MagicMock()
+    pipeline_executor.reject = AsyncMock()
+    service_container = make_service_container(pipeline_executor)
 
     handler = ReactionHandler(store, service_container)
 
@@ -102,17 +100,15 @@ async def test_handle_reaction_reject():
 
     await handler.handle_reaction("test_channel", "msg_123", "-1", "user_123")
 
-    approval_manager.reject_step.assert_awaited_once_with("token_789", rejected_by="identity_1")
-    assert approval_manager.reject_step.await_count == 1
-    assert approval_manager.reject_step.await_args is not None
+    pipeline_executor.reject.assert_awaited_once_with("token_789", rejected_by="identity_1")
 
 
 @pytest.mark.asyncio
 async def test_handle_reaction_unknown_message():
     store = MagicMock()
-    approval_manager = MagicMock()
-    approval_manager.approve_step = AsyncMock()
-    service_container = make_service_container(approval_manager)
+    pipeline_executor = MagicMock()
+    pipeline_executor.approve = AsyncMock()
+    service_container = make_service_container(pipeline_executor)
 
     handler = ReactionHandler(store, service_container)
 
@@ -120,9 +116,7 @@ async def test_handle_reaction_unknown_message():
 
     await handler.handle_reaction("test_channel", "msg_123", "+1", "user_123")
 
-    approval_manager.approve_step.assert_not_called()
-    assert approval_manager.approve_step.call_count == 0
-    assert not approval_manager.approve_step.called
+    pipeline_executor.approve.assert_not_awaited()
 
 
 async def test_handle_reaction_lookups_run_off_event_loop():
@@ -156,9 +150,9 @@ async def test_handle_reaction_lookups_run_off_event_loop():
 async def test_handle_reaction_custom_mapping():
     """Custom reaction_mappings in message metadata override defaults."""
     store = MagicMock()
-    approval_manager = MagicMock()
-    approval_manager.approve_step = AsyncMock()
-    service_container = make_service_container(approval_manager)
+    pipeline_executor = MagicMock()
+    pipeline_executor.approve = AsyncMock()
+    service_container = make_service_container(pipeline_executor)
 
     handler = ReactionHandler(store, service_container)
 
@@ -177,9 +171,7 @@ async def test_handle_reaction_custom_mapping():
 
     await handler.handle_reaction("test_channel", "msg_1", "rocket", "user_1")
 
-    approval_manager.approve_step.assert_awaited_once_with("token_1", approved_by="identity_1")
-    assert approval_manager.approve_step.await_count == 1
-    assert approval_manager.approve_step.await_args is not None
+    pipeline_executor.approve.assert_awaited_once_with("token_1", approved_by="identity_1")
 
 
 @pytest.mark.asyncio
@@ -284,7 +276,39 @@ async def test_handle_reaction_thumbsup_approves_waiting_step(temp_db: HubDataba
 
     await handler.handle_reaction("test_channel", "msg_1", "thumbsup", "user_1")
 
-    updated_step = execution_manager.get_step_by_approval_token("token_1")
-    assert updated_step is not None
-    assert updated_step.status == StepStatus.COMPLETED
+    updated_step = execution_manager.get_steps_for_execution(execution_id)[0]
+    assert updated_step.status == StepStatus.PENDING
+    assert updated_step.approval_token is None
     assert updated_step.approved_by == "identity_1"
+
+
+@pytest.mark.asyncio
+async def test_handle_reaction_thumbsdown_rejects_waiting_step(temp_db: HubDatabase):
+    execution_manager, execution_id = make_waiting_pipeline_step(temp_db)
+    store = MagicMock()
+    service_container = SimpleNamespace(
+        pipeline_execution_manager=execution_manager,
+        pipeline_executor=None,
+        run_db=None,
+    )
+    handler = ReactionHandler(store, service_container)
+
+    message = MagicMock()
+    message.channel_id = "test_channel"
+    message.metadata_json = {
+        "approval_context": {"run_id": execution_id, "step_id": "step_1", "token": "token_1"}
+    }
+    store.get_message_by_platform_id.return_value = message
+    identity = MagicMock()
+    identity.id = "identity_1"
+    store.get_identity_by_external.return_value = identity
+
+    await handler.handle_reaction("test_channel", "msg_1", "thumbsdown", "user_1")
+
+    execution = execution_manager.get_execution(execution_id)
+    step = execution_manager.get_steps_for_execution(execution_id)[0]
+    assert execution is not None
+    assert execution.status == ExecutionStatus.CANCELLED
+    assert step.status == StepStatus.FAILED
+    assert step.approval_token is None
+    assert step.error == "Rejected by identity_1"

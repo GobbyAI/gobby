@@ -94,14 +94,33 @@ class TestPipelineStep:
 
     def test_exec_step(self) -> None:
         """Test creating a step with exec field."""
-        step = PipelineStep(id="run_tests", exec="pytest tests/ -v")
+        step = PipelineStep(id="run_tests", exec="pytest tests/ -v", timeout_seconds=120)
         assert step.id == "run_tests"
         assert step.exec == "pytest tests/ -v"
+        assert step.timeout_seconds == 120
         assert step.prompt is None
         assert step.invoke_pipeline is None
         assert step.condition is None
         assert step.approval is None
         assert step.tools == []
+
+    @pytest.mark.parametrize(
+        "timeout_seconds", [0, -1, True, "invalid", float("nan"), float("inf")]
+    )
+    def test_exec_timeout_rejects_invalid_values(self, timeout_seconds: object) -> None:
+        """Exec timeouts must be positive numbers or full template expressions."""
+        with pytest.raises(ValidationError, match="timeout_seconds"):
+            PipelineStep(id="run_tests", exec="pytest", timeout_seconds=timeout_seconds)
+
+    def test_exec_timeout_accepts_template_expression(self) -> None:
+        """Exec timeout templates are retained for runtime rendering."""
+        step = PipelineStep(
+            id="run_tests",
+            exec="pytest",
+            timeout_seconds="${{ inputs.timeout_seconds }}",
+        )
+
+        assert step.timeout_seconds == "${{ inputs.timeout_seconds }}"
 
     def test_prompt_step(self) -> None:
         """Test creating a step with prompt field."""

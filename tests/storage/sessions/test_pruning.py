@@ -235,6 +235,10 @@ class TestSessionManagerPruning:
         session_manager.update_status(expired_nonempty.id, "expired")
         session_manager.update_status(paused_empty.id, "paused")
         session_manager.db.execute(
+            "INSERT INTO session_variables (session_id) VALUES (%s)",
+            (prune_me.id,),
+        )
+        session_manager.db.execute(
             """
             UPDATE sessions
             SET updated_at = CASE
@@ -261,6 +265,13 @@ class TestSessionManagerPruning:
         assert count == 1
 
         assert session_manager.get(prune_me.id) is None
+        assert (
+            session_manager.db.fetchone(
+                "SELECT session_id FROM session_variables WHERE session_id = %s",
+                (prune_me.id,),
+            )
+            is None
+        )
         recent_after = session_manager.get(recent_expired.id)
         nonempty_after = session_manager.get(expired_nonempty.id)
         paused_after = session_manager.get(paused_empty.id)

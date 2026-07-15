@@ -8,9 +8,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from gobby.workflows.definitions import PipelineDefinition, PipelineStep
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.pipelines import LocalPipelineExecutionManager
+from gobby.workflows.definitions import (
+    MCPStepConfig,
+    PipelineApproval,
+    PipelineDefinition,
+    PipelineStep,
+)
 from gobby.workflows.pipeline.renderer import StepRenderer
-from gobby.workflows.pipeline_state import ExecutionStatus
+from gobby.workflows.pipeline_state import ApprovalRequired, ExecutionStatus, StepStatus
 
 pytestmark = pytest.mark.unit
 
@@ -146,6 +153,82 @@ class TestExecuteNestedPipeline:
         context: dict = {"inputs": {}, "steps": {}}
         with pytest.raises(RuntimeError, match="No loader configured"):
             await executor._execute_nested_pipeline("child-pipeline", context, "proj-123")
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_nested_pipeline_propagates_approval_required(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, object],
+        mock_llm_service: AsyncMock,
+    ) -> None:
+        """A child approval gate pauses the caller instead of becoming an error result."""
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        project_id = str(sample_project["id"])
+        child = PipelineDefinition(
+            name="child-pipeline",
+            steps=[
+                PipelineStep(
+                    id="approve",
+                    exec="printf child-approved",
+                    approval=PipelineApproval(required=True, message="Review child"),
+                )
+            ],
+        )
+        loader = AsyncMock()
+        loader.load_pipeline.return_value = child
+        manager = LocalPipelineExecutionManager(temp_db, project_id=project_id)
+        executor = PipelineExecutor(
+            db=temp_db,
+            execution_manager=manager,
+            llm_service=mock_llm_service,
+            loader=loader,
+        )
+
+        with pytest.raises(ApprovalRequired) as exc_info:
+            await executor._execute_nested_pipeline(
+                "child-pipeline", {"inputs": {}, "steps": {}}, project_id
+            )
+
+        execution = manager.get_execution(exc_info.value.execution_id)
+        steps = manager.get_steps_for_execution(exc_info.value.execution_id)
+        assert execution is not None
+        assert execution.status == ExecutionStatus.WAITING_APPROVAL
+        assert len(steps) == 1
+        assert steps[0].status == StepStatus.WAITING_APPROVAL
+        assert steps[0].approval_token == exc_info.value.token
+        assert exc_info.value.message == "Review child"
+
+    @pytest.mark.asyncio
+    async def test_nested_pipeline_error_result_fails_parent_step(
+        self, mock_db, mock_execution_manager, mock_llm_service
+    ) -> None:
+        """An error result from a nested pipeline marks its parent step failed."""
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        pipeline = PipelineDefinition(
+            name="parent-pipeline",
+            steps=[PipelineStep(id="child", invoke_pipeline="child-pipeline")],
+        )
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+        )
+        executor._execute_step = AsyncMock(
+            return_value={"pipeline": "child-pipeline", "error": "child failed"}
+        )
+
+        with pytest.raises(RuntimeError, match="child failed"):
+            await executor.execute(pipeline=pipeline, inputs={}, project_id="proj-123")
+
+        statuses = [
+            call.kwargs.get("status")
+            for call in mock_execution_manager.update_step_execution.call_args_list
+        ]
+        assert StepStatus.FAILED in statuses
+        assert StepStatus.COMPLETED not in statuses
 
 
 class TestExecuteNestedPipelineDictForm:
@@ -338,6 +421,26 @@ class TestRendererInvokePipelineDict:
         engine = TemplateEngine()
         return StepRenderer(engine)
 
+    @pytest.mark.parametrize(
+        "step",
+        [
+            PipelineStep(id="missing-exec", exec="echo ${{ inputs.missing }}"),
+            PipelineStep(id="missing-prompt", prompt="Use ${{ inputs.missing }}"),
+            PipelineStep(
+                id="missing-mcp",
+                mcp=MCPStepConfig(
+                    server="test-server",
+                    tool="test-tool",
+                    arguments={"value": "${{ inputs.missing }}"},
+                ),
+            ),
+        ],
+        ids=["exec", "prompt", "mcp-arguments"],
+    )
+    def test_missing_variable_fails_step(self, renderer, step: PipelineStep) -> None:
+        with pytest.raises(ValueError, match=f"Failed to render step {step.id}"):
+            renderer.render_step(step, {"inputs": {}, "steps": {}})
+
     def test_renders_dict_invoke_pipeline_name(self, renderer) -> None:
         """Bug 1: Template vars in invoke_pipeline dict 'name' should be rendered."""
         step = PipelineStep(
@@ -370,19 +473,59 @@ class TestRendererInvokePipelineDict:
         assert rendered.invoke_pipeline["arguments"]["parent_session_id"] == "sess-abc"
         assert rendered.invoke_pipeline["arguments"]["_current_iteration"] == 3
 
-    def test_renders_dict_invoke_pipeline_coerces_types(self, renderer) -> None:
-        """Arguments should be type-coerced (string '600' -> int 600)."""
+    def test_renders_dict_invoke_pipeline_preserves_expression_types(self, renderer) -> None:
         step = PipelineStep(
             id="next_iteration",
             invoke_pipeline={
                 "name": "command-listener",
-                "arguments": {"wait_timeout": "${{ inputs.wait_timeout }}"},
+                "arguments": {
+                    "enabled": "${{ inputs.enabled }}",
+                    "wait_timeout": "${{ inputs.wait_timeout }}",
+                    "ratio": "${{ inputs.ratio }}",
+                    "items": "${{ inputs.items }}",
+                    "settings": "${{ inputs.settings }}",
+                },
             },
         )
-        context = {"inputs": {"wait_timeout": 600}, "steps": {}}
+        context = {
+            "inputs": {
+                "enabled": True,
+                "wait_timeout": 600,
+                "ratio": 1.5,
+                "items": ["one", "two"],
+                "settings": {"mode": "fast"},
+            },
+            "steps": {},
+        }
         rendered = renderer.render_step(step, context)
 
-        assert rendered.invoke_pipeline["arguments"]["wait_timeout"] == 600
+        assert rendered.invoke_pipeline["arguments"] == context["inputs"]
+
+    def test_renders_dict_invoke_pipeline_preserves_string_intent(self, renderer) -> None:
+        step = PipelineStep(
+            id="next_iteration",
+            invoke_pipeline={
+                "name": "command-listener",
+                "arguments": {
+                    "padded_id": "${{ inputs.padded_id }}",
+                    "scientific_id": "${{ inputs.scientific_id }}",
+                    "nested": {
+                        "values": [
+                            "${{ inputs.padded_id }}",
+                            {"identifier": "id-${{ inputs.scientific_id }}"},
+                        ]
+                    },
+                },
+            },
+        )
+        context = {"inputs": {"padded_id": "007", "scientific_id": "1e3"}, "steps": {}}
+        rendered = renderer.render_step(step, context)
+
+        assert rendered.invoke_pipeline["arguments"] == {
+            "padded_id": "007",
+            "scientific_id": "1e3",
+            "nested": {"values": ["007", {"identifier": "id-1e3"}]},
+        }
 
     def test_string_invoke_pipeline_unchanged(self, renderer) -> None:
         """String-form invoke_pipeline should not be affected by dict rendering."""

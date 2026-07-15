@@ -1,22 +1,20 @@
-"""Tests for PipelineHeartbeat cron handler."""
+"""Tests for pipeline heartbeat maintenance."""
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
 
 import pytest
 
-from gobby.scheduler.executor import CronExecutor
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.cron import CronJobStorage
-from gobby.storage.cron_models import CronJob, CronRun
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._manager import LocalTaskManager
 from gobby.tasks.state_semantics import projected_task_state
-from gobby.workflows.pipeline_heartbeat import PipelineHeartbeat, PipelineHeartbeatResult
+from gobby.workflows.pipeline_heartbeat import PipelineHeartbeat
 from gobby.workflows.pipeline_state import ExecutionStatus
 
 if TYPE_CHECKING:
@@ -82,7 +80,7 @@ def _create_stalled_execution(
     exec_manager: LocalPipelineExecutionManager,
     temp_db: HubDatabase,
     stale_minutes: int = 5,
-    session_id: str = SESSION_ID,
+    session_id: str | None = SESSION_ID,
 ) -> str:
     """Create a running execution with an old updated_at timestamp."""
     exe = exec_manager.create_execution(
@@ -115,30 +113,6 @@ def _add_alive_agent(
     agent_run_manager.start(run_id)
 
 
-def _create_pipeline_heartbeat_job(storage: CronJobStorage) -> CronJob:
-    return storage.create_job(
-        project_id=PROJECT_ID,
-        name="gobby:pipeline-heartbeat",
-        description="Pipeline heartbeat",
-        schedule_type="interval",
-        interval_seconds=60,
-        action_type="handler",
-        action_config={"handler": "pipeline_heartbeat"},
-        enabled=True,
-        is_system=True,
-    )
-
-
-async def _execute_pipeline_heartbeat_cron(
-    storage: CronJobStorage,
-    heartbeat: PipelineHeartbeat,
-    job: CronJob,
-) -> CronRun:
-    executor = CronExecutor(storage)
-    executor.register_handler("pipeline_heartbeat", heartbeat)
-    return await executor.execute(job, storage.create_run(job.id))
-
-
 @pytest.mark.asyncio
 async def test_stalled_no_agents_marks_failed(
     heartbeat: PipelineHeartbeat,
@@ -157,6 +131,50 @@ async def test_stalled_no_agents_marks_failed(
     assert "stalled" in (exe.outputs_json or "").lower()
 
 
+async def test_stale_pending_execution_fails_and_releases_dispatch_mutex(
+    exec_manager: LocalPipelineExecutionManager,
+    agent_run_manager: LocalAgentRunManager,
+    task_manager: LocalTaskManager,
+    temp_db: HubDatabase,
+) -> None:
+    _seed_db(temp_db)
+    task = task_manager.create_task(
+        title="Pending pipeline task",
+        task_type="task",
+        project_id=PROJECT_ID,
+    )
+    execution = exec_manager.create_execution(
+        pipeline_name="never-started",
+        session_id=SESSION_ID,
+    )
+    temp_db.execute(
+        "UPDATE pipeline_executions SET updated_at = NOW() - INTERVAL '5 minutes' WHERE id = %s",
+        (execution.id,),
+    )
+    mutexes = TaskDispatchMutexManager(temp_db)
+    assert mutexes.acquire_mutex(
+        task.id,
+        holder="pipeline-dispatch",
+        kind="stage-pipeline:development",
+        ttl_seconds=600,
+        run_id=execution.id,
+    )
+    pipeline_heartbeat = PipelineHeartbeat(
+        execution_manager=exec_manager,
+        agent_run_manager=agent_run_manager,
+        stall_threshold_seconds=60,
+        task_manager=task_manager,
+    )
+
+    handled = await pipeline_heartbeat.check_stalled_executions()
+
+    updated = exec_manager.get_execution(execution.id)
+    assert handled == 1
+    assert updated is not None
+    assert updated.status == ExecutionStatus.FAILED
+    assert mutexes.get_mutex_by_run_id(execution.id) is None
+
+
 @pytest.mark.asyncio
 async def test_stalled_with_alive_agents_touches_updated_at(
     heartbeat: PipelineHeartbeat,
@@ -173,7 +191,7 @@ async def test_stalled_with_alive_agents_touches_updated_at(
     old_updated = old_exe.updated_at
 
     count = await heartbeat.check_stalled_executions()
-    assert count == 1
+    assert count == 0
 
     exe = exec_manager.get_execution(exe_id)
     assert exe is not None
@@ -181,6 +199,7 @@ async def test_stalled_with_alive_agents_touches_updated_at(
     assert exe.updated_at >= old_updated
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_stalled_with_agents_under_persisted_child_session_survives(
     heartbeat: PipelineHeartbeat,
@@ -209,12 +228,101 @@ async def test_stalled_with_agents_under_persisted_child_session_survives(
     )
 
     count = await heartbeat.check_stalled_executions()
-    assert count == 1
+    assert count == 0
 
     refreshed = exec_manager.get_execution(exe.id)
     assert refreshed is not None
     assert refreshed.status == ExecutionStatus.RUNNING
     assert refreshed.session_id == child_session
+
+
+@pytest.mark.asyncio
+async def test_stalled_with_active_session_survives_without_agent_runs(
+    exec_manager: LocalPipelineExecutionManager,
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+) -> None:
+    heartbeat = PipelineHeartbeat(
+        execution_manager=exec_manager,
+        agent_run_manager=agent_run_manager,
+        session_manager=SessionManager(temp_db),
+        stall_threshold_seconds=60,
+    )
+    exe_id = _create_stalled_execution(exec_manager, temp_db)
+
+    count = await heartbeat.check_stalled_executions()
+
+    execution = exec_manager.get_execution(exe_id)
+    assert count == 0
+    assert execution is not None
+    assert execution.status == ExecutionStatus.RUNNING
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_stalled_without_session_is_left_unchanged(
+    heartbeat: PipelineHeartbeat,
+    exec_manager: LocalPipelineExecutionManager,
+    temp_db: HubDatabase,
+) -> None:
+    exe_id = _create_stalled_execution(exec_manager, temp_db, session_id=None)
+
+    count = await heartbeat.check_stalled_executions()
+
+    execution = exec_manager.get_execution(exe_id)
+    assert count == 0
+    assert execution is not None
+    assert execution.status == ExecutionStatus.RUNNING
+
+
+@pytest.mark.asyncio
+async def test_agent_probe_error_does_not_fail_execution(
+    heartbeat: PipelineHeartbeat,
+    exec_manager: LocalPipelineExecutionManager,
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exe_id = _create_stalled_execution(exec_manager, temp_db)
+
+    def fail_probe(_session_id: str) -> list[object]:
+        raise RuntimeError("agent store unavailable")
+
+    monkeypatch.setattr(agent_run_manager, "list_by_parent", fail_probe)
+
+    count = await heartbeat.check_stalled_executions()
+
+    execution = exec_manager.get_execution(exe_id)
+    assert count == 0
+    assert execution is not None
+    assert execution.status == ExecutionStatus.RUNNING
+
+
+@pytest.mark.asyncio
+async def test_stale_snapshot_cannot_overwrite_new_execution_state(
+    heartbeat: PipelineHeartbeat,
+    exec_manager: LocalPipelineExecutionManager,
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    exe_id = _create_stalled_execution(exec_manager, temp_db)
+    caplog.set_level(logging.INFO)
+
+    def transition_during_probe(_session_id: str) -> list[object]:
+        exec_manager.update_execution_status(exe_id, ExecutionStatus.WAITING_APPROVAL)
+        return []
+
+    monkeypatch.setattr(agent_run_manager, "list_by_parent", transition_during_probe)
+
+    count = await heartbeat.check_stalled_executions()
+
+    execution = exec_manager.get_execution(exe_id)
+    assert count == 0
+    assert execution is not None
+    assert execution.status == ExecutionStatus.WAITING_APPROVAL
+    assert "state changed since stall scan" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -236,79 +344,6 @@ async def test_non_stalled_execution_untouched(
     refreshed = exec_manager.get_execution(exe.id)
     assert refreshed is not None
     assert refreshed.status == ExecutionStatus.RUNNING
-
-
-@pytest.mark.asyncio
-async def test_callable_cron_handler_interface(
-    heartbeat: PipelineHeartbeat,
-) -> None:
-    """Heartbeat is callable with CronJob and returns a string."""
-    mock_job = MagicMock()
-    result = await heartbeat(mock_job)
-    assert isinstance(result, str)
-    assert isinstance(result, PipelineHeartbeatResult)
-    assert "Heartbeat:" in result
-    assert result.should_park is True
-
-
-@pytest.mark.asyncio
-async def test_pipeline_heartbeat_cron_does_not_park_when_idle(
-    heartbeat: PipelineHeartbeat,
-    temp_db: HubDatabase,
-) -> None:
-    """Pipeline heartbeat cron execution no longer parks system rows."""
-    storage = CronJobStorage(temp_db)
-    job = _create_pipeline_heartbeat_job(storage)
-    original_next_run = job.next_run_at
-
-    result = await _execute_pipeline_heartbeat_cron(storage, heartbeat, job)
-
-    assert result.status == "completed"
-    scheduled = storage.get_job(job.id)
-    assert scheduled is not None
-    assert scheduled.enabled is True
-    assert scheduled.next_run_at == original_next_run
-
-
-@pytest.mark.asyncio
-async def test_pipeline_heartbeat_cron_keeps_schedule_after_stalled_execution(
-    heartbeat: PipelineHeartbeat,
-    exec_manager: LocalPipelineExecutionManager,
-    temp_db: HubDatabase,
-) -> None:
-    """A handled stalled execution counts as work and does not park the row."""
-    _create_stalled_execution(exec_manager, temp_db)
-    storage = CronJobStorage(temp_db)
-    job = _create_pipeline_heartbeat_job(storage)
-    original_next_run = job.next_run_at
-
-    result = await _execute_pipeline_heartbeat_cron(storage, heartbeat, job)
-
-    assert result.status == "completed"
-    scheduled = storage.get_job(job.id)
-    assert scheduled is not None
-    assert scheduled.next_run_at == original_next_run
-
-
-@pytest.mark.asyncio
-async def test_pipeline_heartbeat_cron_keeps_schedule_after_stale_task_recovery(
-    heartbeat_with_tasks: PipelineHeartbeat,
-    task_manager: LocalTaskManager,
-    temp_db: HubDatabase,
-) -> None:
-    """A recovered stale claim counts as work and does not park the row."""
-    _seed_db(temp_db)
-    _create_in_progress_task(task_manager, claimed_by_session_id=STOPPED_SESSION_ID)
-    storage = CronJobStorage(temp_db)
-    job = _create_pipeline_heartbeat_job(storage)
-    original_next_run = job.next_run_at
-
-    result = await _execute_pipeline_heartbeat_cron(storage, heartbeat_with_tasks, job)
-
-    assert result.status == "completed"
-    scheduled = storage.get_job(job.id)
-    assert scheduled is not None
-    assert scheduled.next_run_at == original_next_run
 
 
 # --- Stale task recovery tests ---
@@ -382,6 +417,34 @@ def _create_in_progress_task(
 
 
 @pytest.mark.asyncio
+async def test_stale_task_scan_recovers_oldest_claim_beyond_default_window(
+    heartbeat_with_tasks: PipelineHeartbeat,
+    task_manager: LocalTaskManager,
+    temp_db: HubDatabase,
+) -> None:
+    """The oldest orphan is examined even when more than 100 tasks are active."""
+    _seed_db(temp_db)
+    live_session_id = "55555555-5555-4555-8555-555555555555"
+    _seed_session(temp_db, live_session_id, status="active")
+    for _ in range(100):
+        _create_in_progress_task(task_manager, claimed_by_session_id=live_session_id)
+
+    orphan_task_id = _create_in_progress_task(task_manager)
+    temp_db.execute(
+        "UPDATE tasks SET updated_at = %s WHERE id = %s",
+        ((datetime.now(UTC) - timedelta(days=1)).isoformat(), orphan_task_id),
+    )
+
+    result = await heartbeat_with_tasks.check_stale_tasks()
+    assert result == (1, 100)
+
+    orphan_task = task_manager.get_task(orphan_task_id)
+    assert orphan_task is not None
+    assert projected_task_state(orphan_task) == "ready"
+    assert orphan_task.claimed_by_session_id is None
+
+
+@pytest.mark.asyncio
 async def test_stale_task_with_terminal_agent_run_recovered(
     heartbeat_with_tasks: PipelineHeartbeat,
     task_manager: LocalTaskManager,
@@ -405,8 +468,8 @@ async def test_stale_task_with_terminal_agent_run_recovered(
     agent_run_manager.start(run_id)
     agent_run_manager.fail(run_id, error="Agent died")
 
-    recovered = await heartbeat_with_tasks.check_stale_tasks()
-    assert recovered == 1
+    result = await heartbeat_with_tasks.check_stale_tasks()
+    assert result.recovered == 1
 
     task = task_manager.get_task(task_id)
     assert task is not None
@@ -417,6 +480,63 @@ async def test_stale_task_with_terminal_agent_run_recovered(
     stage = task_manager.stage_states.get(task_id, "development")
     assert stage is not None
     assert stage.work_attempt_count == 0
+
+
+@pytest.mark.asyncio
+async def test_stale_task_recovery_respects_concurrent_dispatch_mutex(
+    heartbeat_with_tasks: PipelineHeartbeat,
+    task_manager: LocalTaskManager,
+    temp_db: HubDatabase,
+) -> None:
+    """A concurrent dispatch lease prevents stale-task recovery writes."""
+    _seed_db(temp_db)
+    task_id = _create_in_progress_task(task_manager)
+    mutexes = TaskDispatchMutexManager(temp_db)
+    holder = "concurrent-dispatch"
+    assert mutexes.acquire_mutex(
+        task_id,
+        holder=holder,
+        kind="dispatch",
+        ttl_seconds=30,
+    )
+
+    assert (await heartbeat_with_tasks.check_stale_tasks()).recovered == 0
+
+    task = task_manager.get_task(task_id)
+    assert task is not None
+    assert task.claimed_by_session_id == DEAD_AGENT_SESSION_ID
+    stage = task_manager.stage_states.current_stage(task_id)
+    assert stage is not None
+    assert stage.state == "in_progress"
+
+    assert mutexes.release_mutex(task_id, holder)
+    assert (await heartbeat_with_tasks.check_stale_tasks()).recovered == 1
+
+
+@pytest.mark.asyncio
+async def test_stale_task_recovery_rolls_back_stage_when_claim_release_fails(
+    heartbeat_with_tasks: PipelineHeartbeat,
+    task_manager: LocalTaskManager,
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stage recovery and claim release commit atomically."""
+    _seed_db(temp_db)
+    task_id = _create_in_progress_task(task_manager)
+
+    def fail_claim_release(_task_id: str) -> None:
+        raise RuntimeError("claim release failed")
+
+    monkeypatch.setattr(task_manager, "release_task_claim", fail_claim_release)
+
+    assert (await heartbeat_with_tasks.check_stale_tasks()).recovered == 0
+
+    task = task_manager.get_task(task_id)
+    assert task is not None
+    assert task.claimed_by_session_id == DEAD_AGENT_SESSION_ID
+    stage = task_manager.stage_states.current_stage(task_id)
+    assert stage is not None
+    assert stage.state == "in_progress"
 
 
 @pytest.mark.asyncio
@@ -451,8 +571,8 @@ async def test_stale_task_with_commits_promoted_to_needs_review(
     commits.append("abc123de")
     temp_db.execute("UPDATE tasks SET commits = %s WHERE id = %s", (json.dumps(commits), task_id))
 
-    recovered = await heartbeat_with_tasks.check_stale_tasks()
-    assert recovered == 1
+    result = await heartbeat_with_tasks.check_stale_tasks()
+    assert result.recovered == 1
 
     task = task_manager.get_task(task_id)
     assert task is not None
@@ -494,8 +614,8 @@ async def test_stale_review_task_releases_claim_without_status_regression(
         by_session_id=None,
     )
 
-    recovered = await heartbeat_with_tasks.check_stale_tasks()
-    assert recovered == 1
+    result = await heartbeat_with_tasks.check_stale_tasks()
+    assert result.recovered == 1
 
     updated = task_manager.get_task(task.id)
     assert updated is not None
@@ -524,8 +644,8 @@ async def test_task_with_active_agent_run_not_recovered(
     )
     agent_run_manager.start(run.id)
 
-    recovered = await heartbeat_with_tasks.check_stale_tasks()
-    assert recovered == 0
+    result = await heartbeat_with_tasks.check_stale_tasks()
+    assert result.recovered == 0
 
     task = task_manager.get_task(task_id)
     assert task is not None
@@ -537,8 +657,8 @@ async def test_stale_task_no_managers_returns_zero(
     heartbeat: PipelineHeartbeat,
 ) -> None:
     """Heartbeat without task/agent_run managers skips stale task check."""
-    recovered = await heartbeat.check_stale_tasks()
-    assert recovered == 0
+    result = await heartbeat.check_stale_tasks()
+    assert result == (0, 0)
 
 
 # --- Interactive session protection tests ---
@@ -555,8 +675,8 @@ async def test_interactive_session_task_not_recovered(
     # SESSION_ID is seeded as 'active' — simulates an interactive CLI session
     task_id = _create_in_progress_task(task_manager, claimed_by_session_id=SESSION_ID)
 
-    recovered = await heartbeat_with_tasks.check_stale_tasks()
-    assert recovered == 0
+    result = await heartbeat_with_tasks.check_stale_tasks()
+    assert result.recovered == 0
 
     task = task_manager.get_task(task_id)
     assert task is not None
@@ -580,8 +700,8 @@ async def test_expired_session_task_recovered(
         max_work_attempts=1,
     )
 
-    recovered = await heartbeat_with_tasks.check_stale_tasks()
-    assert recovered == 1
+    result = await heartbeat_with_tasks.check_stale_tasks()
+    assert result.recovered == 1
 
     task = task_manager.get_task(task_id)
     assert task is not None
@@ -608,8 +728,8 @@ async def test_paused_agent_session_task_recovered(
     )
     task_id = _create_in_progress_task(task_manager, claimed_by_session_id=SESSION_ID)
 
-    recovered = await heartbeat_with_tasks.check_stale_tasks()
-    assert recovered == 1
+    result = await heartbeat_with_tasks.check_stale_tasks()
+    assert result.recovered == 1
 
     task = task_manager.get_task(task_id)
     assert task is not None
@@ -632,8 +752,8 @@ async def test_paused_interactive_session_task_not_recovered(
     )
     task_id = _create_in_progress_task(task_manager, claimed_by_session_id=SESSION_ID)
 
-    recovered = await heartbeat_with_tasks.check_stale_tasks()
-    assert recovered == 0
+    result = await heartbeat_with_tasks.check_stale_tasks()
+    assert result.recovered == 0
 
     task = task_manager.get_task(task_id)
     assert task is not None
@@ -651,8 +771,8 @@ async def test_inactive_session_task_recovered(
     _seed_db(temp_db)
     task_id = _create_in_progress_task(task_manager, claimed_by_session_id=STOPPED_SESSION_ID)
 
-    recovered = await heartbeat_with_tasks.check_stale_tasks()
-    assert recovered == 1
+    result = await heartbeat_with_tasks.check_stale_tasks()
+    assert result.recovered == 1
 
     task = task_manager.get_task(task_id)
     assert task is not None

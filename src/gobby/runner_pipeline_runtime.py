@@ -16,7 +16,9 @@ def build_pipeline_runtime(
 ) -> tuple[LocalPipelineExecutionManager, PipelineExecutor]:
     """Build an isolated execution manager and executor for one project."""
     from gobby.storage.pipelines import LocalPipelineExecutionManager
+    from gobby.utils.daemon_url import daemon_url
     from gobby.workflows.pipeline_executor import PipelineExecutor
+    from gobby.workflows.pipeline_webhooks import WebhookNotifier
     from gobby.workflows.templates import TemplateEngine
 
     manager = LocalPipelineExecutionManager(db=runner.database, project_id=project_id)
@@ -26,6 +28,7 @@ def build_pipeline_runtime(
         llm_service=runner.llm_service,
         loader=runner.workflow_loader,
         template_engine=TemplateEngine(),
+        webhook_notifier=WebhookNotifier(base_url=daemon_url()),
         session_manager=runner.session_manager,
         completion_registry=runner.completion_registry,
         run_db=runner.db_executor.run,

@@ -13,7 +13,11 @@ from gobby.config import DaemonConfig
 from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.config.tasks import GobbyTasksConfig, TaskExpansionConfig, TaskValidationConfig
 from gobby.runner import GobbyRunner
-from gobby.runner_init.orchestration import _send_tmux_pane_wake, _send_tmux_session_wake
+from gobby.runner_init.orchestration import (
+    RETIRED_SYSTEM_CRON_JOBS,
+    _send_tmux_pane_wake,
+    _send_tmux_session_wake,
+)
 from gobby.runner_lifecycle_subsystems import _start_system_automation_loop
 from gobby.telemetry.span_store import GobbySpanExporter
 from tests.runner_helpers import (
@@ -848,6 +852,9 @@ class TestGobbyRunnerInitialization:
 
 
 class TestCronInitializationFailures:
+    def test_legacy_pipeline_heartbeat_job_is_retired(self) -> None:
+        assert "gobby:pipeline-heartbeat" in RETIRED_SYSTEM_CRON_JOBS
+
     @pytest.mark.parametrize(
         ("failed_target", "expected_message"),
         [

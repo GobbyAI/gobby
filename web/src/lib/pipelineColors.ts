@@ -38,7 +38,6 @@ export const STEP_TYPE_COLORS: Record<string, PipelineColorPair> = {
   prompt: { dark: "oklch(70% 0.16 290)", light: "oklch(42% 0.18 290)" },
   mcp: { dark: "oklch(70% 0.14 240)", light: "oklch(42% 0.16 240)" },
   invoke_pipeline: { dark: "oklch(72% 0.16 310)", light: "oklch(45% 0.18 310)" },
-  activate_workflow: { dark: "oklch(72% 0.13 180)", light: "oklch(42% 0.15 180)" },
 };
 
 /** Pipeline-execution status dot colours.

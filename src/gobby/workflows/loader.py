@@ -169,7 +169,7 @@ class WorkflowLoader(WorkflowLoaderSyncMixin):
                 return WorkflowDefinition(**data)
         except Exception as e:
             logger.error(f"Failed to parse DB workflow '{name}': {e}", exc_info=True)
-            return None
+            raise ValueError(f"Failed to parse DB workflow '{name}': {e}") from e
 
     async def load_workflow(
         self,

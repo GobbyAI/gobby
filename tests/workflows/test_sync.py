@@ -681,6 +681,7 @@ steps:
         ):
             result = sync_bundled_pipelines(db)
 
+        assert result["errors"] == []
         assert result["updated"] == 1
         row = manager.get_by_name("spawn-developer")
         assert row is not None
@@ -695,6 +696,10 @@ steps:
 
         pipelines_dir = tmp_path / "pipelines"
         pipelines_dir.mkdir()
+        (pipelines_dir / "current.yaml").write_text(
+            "name: current-pipeline\ntype: pipeline\n"
+            "steps:\n  - id: current\n    exec: echo current\n"
+        )
         installed = manager.create(
             name="installed-pipeline",
             definition_json=json.dumps(
@@ -727,6 +732,61 @@ steps:
         assert duplicated_row.deleted_at is None
         assert duplicated_row.source == "custom"
         assert "gobby" not in (duplicated_row.tags or [])
+
+    def test_orphan_cleanup_skips_empty_directory(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, tmp_path: Path
+    ) -> None:
+        from gobby.workflows.sync_pipelines import sync_bundled_pipelines
+
+        pipelines_dir = tmp_path / "pipelines"
+        pipelines_dir.mkdir()
+        installed = manager.create(
+            name="installed-pipeline",
+            definition_json=json.dumps(
+                {"name": "installed-pipeline", "type": "pipeline", "steps": []}
+            ),
+            workflow_type="pipeline",
+            source="installed",
+            tags=["gobby"],
+        )
+
+        with patch(
+            "gobby.workflows.sync_pipelines.get_bundled_pipelines_path",
+            return_value=pipelines_dir,
+        ):
+            result = sync_bundled_pipelines(db)
+
+        assert result["orphaned"] == 0
+        assert manager.get(installed.id).deleted_at is None
+
+    @pytest.mark.integration
+    def test_orphan_cleanup_skips_parse_failure(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, tmp_path: Path
+    ) -> None:
+        from gobby.workflows.sync_pipelines import sync_bundled_pipelines
+
+        pipelines_dir = tmp_path / "pipelines"
+        pipelines_dir.mkdir()
+        (pipelines_dir / "broken.yaml").write_text("name: [unterminated\n")
+        installed = manager.create(
+            name="installed-pipeline",
+            definition_json=json.dumps(
+                {"name": "installed-pipeline", "type": "pipeline", "steps": []}
+            ),
+            workflow_type="pipeline",
+            source="installed",
+            tags=["gobby"],
+        )
+
+        with patch(
+            "gobby.workflows.sync_pipelines.get_bundled_pipelines_path",
+            return_value=pipelines_dir,
+        ):
+            result = sync_bundled_pipelines(db)
+
+        assert result["errors"]
+        assert result["orphaned"] == 0
+        assert manager.get(installed.id).deleted_at is None
 
 
 # ═══════════════════════════════════════════════════════════════════════

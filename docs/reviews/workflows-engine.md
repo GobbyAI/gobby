@@ -293,6 +293,11 @@
 - **Minimal fix:** Executor↔storage integration tests (isolated test DB) for: approve→gated action runs; FAILED resume against existing rows; token replay/double-spend; nested `ApprovalRequired` propagation; heartbeat with child-session agent topology and NULL session; sync parse-failure sparing rows.
 - **Confidence:** high.
 
+> **Nit-sweep status (2026-07-15):** This section is the original review snapshot.
+> The current, revalidated ledger is maintained in
+> [`workflows-engine-nit-sweep.md`](workflows-engine-nit-sweep.md). Use that ledger
+> and its focused leaves for implementation.
+
 ### [NIT] Pipeline child session leaks on reject and approval-timeout
 - **Where:** `pipeline_executor.py:599-601,660` (close only on completed/failed paths); `reject()` (`:836-842`) and the expiry loop never close the `pipeline-{execution_id}` session created at `:343`.
 - **Note:** Violates the method's own "should not linger" contract; close in `reject()` and the timeout loop.
@@ -338,9 +343,6 @@
 
 ### [NIT] `append_to_set_variable` edge handling
 - **Where:** `state_manager.py:264-269` — falsy scalar stored value silently discarded; `sorted(set(...))` raises on mixed-type/unhashable elements.
-
-### [NIT] `constants.py` is dead weight with vacuous tests
-- **Where:** `constants.py:9-12` — `PIPELINE_TEST_1..4` (retired conductor naming) have zero production users; the only consumer asserts the literals equal themselves; the docstring describes contents that don't exist.
 
 ### [NIT] dry-run `workflow_type` values contradict the dataclass contract and its tests
 - **Where:** `dry_run.py:91` (comment: `"step"|"lifecycle"|"pipeline"`) vs `:192` (assigns `"enabled"`/`"on-demand"`); `tests/workflows/test_dry_run.py:529` still constructs `workflow_type="step"`.

@@ -414,7 +414,7 @@ class TestLoadPipeline:
 
     @pytest.mark.asyncio
     async def test_load_pipeline_invalid_json(self, loader, db) -> None:
-        """Test that an invalid JSON shape in the DB returns None."""
+        """Test that an invalid pipeline definition raises a load error."""
         with db.transaction() as conn:
             conn.execute(
                 """INSERT INTO workflow_definitions
@@ -435,8 +435,8 @@ class TestLoadPipeline:
                 ),
             )
 
-        result = await loader.load_pipeline("invalid")
-        assert result is None
+        with pytest.raises(ValueError, match="Failed to parse DB workflow 'invalid'"):
+            await loader.load_pipeline("invalid")
 
     @pytest.mark.asyncio
     async def test_load_pipeline_missing_type(self, loader, def_manager) -> None:
@@ -751,10 +751,7 @@ class TestLoadWorkflowPipelineIntegration:
 
     @pytest.mark.asyncio
     async def test_load_workflow_validates_pipeline_references(self, loader, def_manager) -> None:
-        """Test that load_workflow() returns None for pipeline with forward refs.
-
-        The _load_from_db method catches ValueError from validation and returns None.
-        """
+        """Test that load_workflow() reports invalid pipeline references."""
         def_manager.create(
             name="validate-refs",
             definition_json=json.dumps(
@@ -770,9 +767,8 @@ class TestLoadWorkflowPipelineIntegration:
             workflow_type="pipeline",
         )
 
-        # Should return None - forward reference is caught and logged
-        result = await loader.load_workflow("validate-refs")
-        assert result is None
+        with pytest.raises(ValueError, match="appears later in the pipeline"):
+            await loader.load_workflow("validate-refs")
 
     @pytest.mark.asyncio
     async def test_load_workflow_returns_workflow_definition_for_step(

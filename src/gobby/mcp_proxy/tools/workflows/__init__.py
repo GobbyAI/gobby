@@ -219,7 +219,7 @@ def create_workflows_registry(
         """
         from gobby.workflows.dry_run import evaluate_agent_definition, evaluate_workflow
 
-        mcp_inventory = _workflow_mcp_inventory(internal_manager, mcp_manager)
+        mcp_inventory = workflow_mcp_inventory(internal_manager, mcp_manager)
 
         project_ctx = get_project_context()
         project_id = project_ctx.get("id") if project_ctx else None
@@ -750,7 +750,7 @@ def create_workflows_registry(
     return registry
 
 
-def _workflow_mcp_inventory(
+def workflow_mcp_inventory(
     internal_manager: _InternalRegistryInventory | None,
     mcp_manager: _ExternalMCPInventory | None,
 ) -> "_WorkflowMCPInventory | None":

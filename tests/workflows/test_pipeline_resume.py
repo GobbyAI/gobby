@@ -5,9 +5,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.workflows.definitions import PipelineApproval, PipelineDefinition, PipelineStep
 from gobby.workflows.pipeline_executor import PipelineExecutor
-from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
+from gobby.workflows.pipeline_state import ApprovalRequired, ExecutionStatus, StepStatus
 
 pytestmark = [pytest.mark.unit, pytest.mark.no_config_protection]
 
@@ -97,18 +99,16 @@ class TestPipelineResume:
         mock_execution_manager.get_execution.return_value = execution
         mock_execution_manager.get_failed_steps.return_value = []
 
-        # Mock get_steps_for_execution to return the history so execute() can skip completed steps
-        # When execute() runs, it should see step1 is COMPLETED (because approve() marks it so)
-
-        # Create the completed step object that execute() will see
-        completed_step1 = MagicMock()
-        completed_step1.id = 101
-        completed_step1.step_id = "step1"
-        completed_step1.status = StepStatus.COMPLETED
-        completed_step1.output_json = json.dumps({"status": "approved"})
+        # Create the approved pending step object that execute() will run on resume.
+        approved_step1 = MagicMock()
+        approved_step1.id = 101
+        approved_step1.step_id = "step1"
+        approved_step1.status = StepStatus.PENDING
+        approved_step1.approved_at = "2026-07-15T00:00:00Z"
+        approved_step1.output_json = None
 
         # Configure the mock to return this step when execute() checks for existing steps
-        mock_execution_manager.get_steps_for_execution.return_value = [completed_step1]
+        mock_execution_manager.get_steps_for_execution.return_value = [approved_step1]
 
         executor = PipelineExecutor(
             db=mock_db,
@@ -126,7 +126,7 @@ class TestPipelineResume:
         # Verify step1's token was atomically consumed while marking it approved.
         mock_execution_manager.consume_step_approval.assert_called_once_with(
             "valid-token",
-            status=StepStatus.COMPLETED,
+            status=StepStatus.PENDING,
             approved_by=None,
         )
 
@@ -135,6 +135,55 @@ class TestPipelineResume:
         step2_calls = [c for c in calls if c.kwargs.get("step_id") == "step2"]
 
         assert len(step2_calls) > 0, "Pipeline execution did not resume to step2 after approval"
+
+    @pytest.mark.integration
+    async def test_approve_runs_gated_action_and_output_conditioned_step(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, object],
+        mock_llm_service: AsyncMock,
+        mock_loader: MagicMock,
+    ) -> None:
+        project_id = str(sample_project["id"])
+        pipeline = PipelineDefinition(
+            name="approval-action-pipeline",
+            steps=[
+                PipelineStep(
+                    id="gated",
+                    exec="printf approved-output",
+                    approval=PipelineApproval(required=True),
+                ),
+                PipelineStep(
+                    id="downstream",
+                    exec="printf downstream-output",
+                    condition=("${{ steps['gated']['output']['stdout'] == 'approved-output' }}"),
+                ),
+            ],
+        )
+        mock_loader.load_pipeline.return_value = pipeline
+        manager = LocalPipelineExecutionManager(temp_db, project_id=project_id)
+        executor = PipelineExecutor(
+            db=temp_db,
+            execution_manager=manager,
+            llm_service=mock_llm_service,
+            loader=mock_loader,
+        )
+
+        with pytest.raises(ApprovalRequired) as exc_info:
+            await executor.execute(pipeline=pipeline, inputs={}, project_id=project_id)
+
+        completed = await executor.approve(exc_info.value.token, approved_by="reviewer")
+        steps = {step.step_id: step for step in manager.get_steps_for_execution(completed.id)}
+
+        assert completed.status == ExecutionStatus.COMPLETED
+        assert steps["gated"].status == StepStatus.COMPLETED
+        assert steps["gated"].approved_by == "reviewer"
+        assert steps["gated"].approved_at is not None
+        assert json.loads(steps["gated"].output_json or "null")["stdout"] == "approved-output"
+        assert steps["downstream"].status == StepStatus.COMPLETED
+        assert json.loads(steps["downstream"].output_json or "null")["stdout"] == (
+            "downstream-output"
+        )
 
     async def test_approve_disabled_pipeline_cancels_execution(
         self, mock_db, mock_execution_manager, mock_llm_service, mock_loader
@@ -248,49 +297,56 @@ class TestPipelineResume:
             )
 
     @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_failed_execution_reexecutes_all_steps(
-        self, mock_db, mock_execution_manager, mock_llm_service, mock_loader
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, object],
+        mock_llm_service,
+        mock_loader,
     ) -> None:
-        """Failed executions can be resumed but re-execute all steps (no stale caching)."""
+        """Failed executions reset and reuse real step rows before re-executing."""
         pipeline = PipelineDefinition(
             name="spawn-pipeline",
             steps=[PipelineStep(id="spawn_agent", exec="echo spawn")],
         )
-
-        execution = MagicMock()
-        execution.id = "pe-failed-123"
-        execution.pipeline_name = "spawn-pipeline"
-        execution.status = ExecutionStatus.FAILED
-        execution.inputs_json = "{}"
-        execution.project_id = None
-
-        mock_execution_manager.get_execution.return_value = execution
-        mock_execution_manager.update_execution_status.return_value = execution
-        mock_execution_manager.get_failed_steps.return_value = []
-
-        stale_step = MagicMock()
-        stale_step.id = 301
-        stale_step.step_id = "spawn_agent"
-        stale_step.status = StepStatus.COMPLETED
-        stale_step.output_json = json.dumps({"session_id": "stale"})
-        mock_execution_manager.get_steps_for_execution.return_value = [stale_step]
+        project_id = str(sample_project["id"])
+        execution_manager = LocalPipelineExecutionManager(temp_db, project_id=project_id)
+        execution = execution_manager.create_execution(pipeline_name=pipeline.name)
+        execution_manager.update_execution_status(
+            execution.id,
+            status=ExecutionStatus.FAILED,
+            outputs_json=json.dumps({"error": "original failure"}),
+        )
+        stale_step = execution_manager.create_step_execution(
+            execution_id=execution.id,
+            step_id="spawn_agent",
+        )
+        execution_manager.update_step_execution(
+            stale_step.id,
+            status=StepStatus.COMPLETED,
+            output_json=json.dumps({"session_id": "stale"}),
+        )
 
         executor = PipelineExecutor(
-            db=mock_db,
-            execution_manager=mock_execution_manager,
+            db=temp_db,
+            execution_manager=execution_manager,
             llm_service=mock_llm_service,
             loader=mock_loader,
         )
+        executor._execute_step = AsyncMock(return_value={"session_id": "fresh"})
 
-        await executor.execute(
+        resumed = await executor.execute(
             pipeline=pipeline,
             inputs={},
-            project_id="test-project",
-            execution_id="pe-failed-123",
+            project_id=project_id,
+            execution_id=execution.id,
         )
 
-        create_calls = mock_execution_manager.create_step_execution.call_args_list
-        spawn_calls = [c for c in create_calls if c.kwargs.get("step_id") == "spawn_agent"]
-        assert len(spawn_calls) > 0, (
-            "Failed execution should re-execute completed steps, not skip them"
-        )
+        steps = execution_manager.get_steps_for_execution(execution.id)
+        assert resumed.status == ExecutionStatus.COMPLETED
+        assert len(steps) == 1
+        assert steps[0].id == stale_step.id
+        assert steps[0].status == StepStatus.COMPLETED
+        assert json.loads(steps[0].output_json or "null") == {"session_id": "fresh"}
+        executor._execute_step.assert_awaited_once()

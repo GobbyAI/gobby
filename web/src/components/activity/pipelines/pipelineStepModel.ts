@@ -5,7 +5,6 @@ export const STEP_TYPES: { value: StepType; label: string; color: string }[] = [
   { value: 'prompt', label: 'Prompt', color: 'var(--step-type-prompt)' },
   { value: 'mcp', label: 'MCP', color: 'var(--step-type-mcp)' },
   { value: 'invoke_pipeline', label: 'Pipeline', color: 'var(--step-type-invoke_pipeline)' },
-  { value: 'activate_workflow', label: 'Workflow', color: 'var(--step-type-activate_workflow)' },
 ]
 
 const STEP_TYPE_VALUES = STEP_TYPES.map((type) => type.value)
@@ -24,7 +23,6 @@ export function detectStepType(step: PipelineStep): StepType {
   if (step.prompt != null) return 'prompt'
   if (step.mcp != null) return 'mcp'
   if (step.invoke_pipeline != null) return 'invoke_pipeline'
-  if (step.activate_workflow != null) return 'activate_workflow'
   return 'exec'
 }
 
@@ -48,9 +46,6 @@ export function getStepPreview(step: PipelineStep): string {
       typeof invokePipeline === 'string'
         ? invokePipeline
         : (((invokePipeline as Record<string, unknown>)?.name as string) ?? '')
-  } else if (type === 'activate_workflow') {
-    const activateWorkflow = step.activate_workflow as Record<string, unknown> | undefined
-    preview = (activateWorkflow?.name as string) ?? ''
   }
   return preview.length > 60 ? `${preview.slice(0, 57)}...` : preview
 }
@@ -72,8 +67,5 @@ export function changeStepPayload(step: PipelineStep, type: StepType): PipelineS
   else if (type === 'prompt') cleaned.prompt = ''
   else if (type === 'mcp') cleaned.mcp = { server: '', tool: '', arguments: {} }
   else if (type === 'invoke_pipeline') cleaned.invoke_pipeline = ''
-  else if (type === 'activate_workflow') {
-    cleaned.activate_workflow = { name: '', session_id: '' }
-  }
   return cleaned
 }

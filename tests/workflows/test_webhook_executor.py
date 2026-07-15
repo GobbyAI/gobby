@@ -5,21 +5,43 @@ TDD Red Phase: These tests should FAIL initially because WebhookExecutor doesn't
 """
 
 import asyncio
+import socket
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
 import pytest
 
-from gobby.workflows.webhook_executor import WebhookExecutor, WebhookResult
+from gobby.workflows.webhook_executor import MAX_RESPONSE_BYTES, WebhookExecutor, WebhookResult
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def public_dns_resolution():
+    """Resolve test webhook hosts to a deterministic public address."""
+    result = {
+        "hostname": "api.example.com",
+        "host": "93.184.216.34",
+        "port": 443,
+        "family": socket.AF_INET,
+        "proto": 0,
+        "flags": 0,
+    }
+    with patch(
+        "gobby.workflows.webhook_executor.DefaultResolver.resolve",
+        new=AsyncMock(return_value=[result]),
+    ):
+        yield
 
 
 def create_mock_response(status=200, body="{}", headers=None):
     """Create a mock aiohttp response with proper async context manager support."""
     mock_response = MagicMock()
     mock_response.status = status
-    mock_response.text = AsyncMock(return_value=body)
+    mock_response.content.readexactly = AsyncMock(
+        return_value=body.encode()[: MAX_RESPONSE_BYTES + 1]
+    )
+    mock_response.get_encoding.return_value = "utf-8"
     mock_response.headers = headers or {}
     mock_response.__aenter__ = AsyncMock(return_value=mock_response)
     mock_response.__aexit__ = AsyncMock(return_value=None)
@@ -115,6 +137,7 @@ class TestWebhookExecutorSuccessPath:
             call_args = mock_session.request.call_args
             assert call_args[1]["method"] == "PUT"
             assert call_args[1]["url"] == "https://api.example.com/events"
+            assert call_args[1]["allow_redirects"] is False
 
     async def test_executor_sends_headers_from_config(self, executor):
         """Executor should send configured headers including interpolated values."""
@@ -238,6 +261,95 @@ class TestWebhookExecutorFailureHandling:
             assert mock_session.request.call_count == 3
             assert result.success is True
 
+    async def test_retry_attempts_reuse_one_pinned_session(self, executor):
+        """All attempts in one execution should share one bounded, DNS-pinned session."""
+        responses = [
+            create_mock_response(status=500),
+            create_mock_response(status=500),
+            create_mock_response(status=200),
+        ]
+        mock_session = create_mock_session(responses)
+        connector = MagicMock()
+
+        with (
+            patch(
+                "gobby.workflows.webhook_executor.aiohttp.ClientSession",
+                return_value=mock_session,
+            ) as session_factory,
+            patch(
+                "gobby.workflows.webhook_executor.aiohttp.TCPConnector",
+                return_value=connector,
+            ) as connector_factory,
+        ):
+            result = await executor.execute(
+                url="https://api.example.com/webhook",
+                timeout=17,
+                retry_config={"max_attempts": 3, "backoff_seconds": 0, "retry_on_status": [500]},
+            )
+
+        assert result.success is True
+        session_factory.assert_called_once()
+        connector_factory.assert_called_once()
+        assert session_factory.call_args.kwargs["connector"] is connector
+        assert session_factory.call_args.kwargs["timeout"].total == 17
+        resolver = connector_factory.call_args.kwargs["resolver"]
+        assert resolver._hostname == "api.example.com"
+        assert resolver._addresses[0]["host"] == "93.184.216.34"
+        assert mock_session.request.call_count == 3
+        assert all(
+            call.kwargs["allow_redirects"] is False for call in mock_session.request.call_args_list
+        )
+        mock_session.__aexit__.assert_awaited_once()
+
+    async def test_session_closes_when_retries_are_exhausted(self, executor):
+        """The retry session should close after the final failed attempt."""
+        mock_session = create_mock_session(create_mock_response(status=503))
+
+        with patch(
+            "gobby.workflows.webhook_executor.aiohttp.ClientSession", return_value=mock_session
+        ):
+            result = await executor.execute(
+                url="https://api.example.com/webhook",
+                retry_config={"max_attempts": 2, "backoff_seconds": 0, "retry_on_status": [503]},
+            )
+
+        assert result.success is False
+        mock_session.__aexit__.assert_awaited_once()
+
+    async def test_session_closes_when_execution_is_cancelled(self, executor):
+        """Cancellation should propagate after closing the retry session."""
+        mock_session = create_mock_session(create_mock_response())
+        mock_session.request.side_effect = asyncio.CancelledError
+
+        with (
+            patch(
+                "gobby.workflows.webhook_executor.aiohttp.ClientSession",
+                return_value=mock_session,
+            ),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await executor.execute(url="https://api.example.com/webhook")
+
+        mock_session.request.assert_called_once()
+        mock_session.__aexit__.assert_awaited_once()
+
+    async def test_separate_executions_use_separate_sessions(self, executor):
+        """A session should never leak into a later webhook execution."""
+        sessions = [
+            create_mock_session(create_mock_response(status=200)),
+            create_mock_session(create_mock_response(status=200)),
+        ]
+
+        with patch(
+            "gobby.workflows.webhook_executor.aiohttp.ClientSession", side_effect=sessions
+        ) as session_factory:
+            await executor.execute(url="https://api.example.com/first")
+            await executor.execute(url="https://api.example.com/second")
+
+        assert session_factory.call_count == 2
+        for session in sessions:
+            session.__aexit__.assert_awaited_once()
+
     async def test_retries_use_exponential_backoff(self, executor):
         """Retries should use exponential backoff (backoff_seconds * 2^attempt)."""
         call_times = []
@@ -272,6 +384,27 @@ class TestWebhookExecutorFailureHandling:
             if len(call_times) >= 3:
                 second_delay = call_times[2] - call_times[1]
                 assert second_delay >= first_delay  # Second delay should be longer
+
+    async def test_retry_backoff_is_capped(self, executor):
+        """Exponential retry delays should never exceed the configured safety cap."""
+        failure = WebhookResult(success=False, status_code=503, error="HTTP 503")
+        request = AsyncMock(return_value=failure)
+        with (
+            patch.object(executor, "_make_request", new=request),
+            patch("gobby.workflows.webhook_executor.asyncio.sleep", new=AsyncMock()) as sleep,
+        ):
+            result = await executor.execute(
+                url="https://api.example.com/webhook",
+                retry_config={
+                    "max_attempts": 3,
+                    "backoff_seconds": 60,
+                    "retry_on_status": [503],
+                },
+            )
+
+        assert result == failure
+        assert request.await_count == 3
+        assert [call.args[0] for call in sleep.await_args_list] == [60, 60]
 
     async def test_max_attempts_exhausted_calls_on_failure(self, executor):
         """After max_attempts exhausted, on_failure handler should be called."""
@@ -333,6 +466,83 @@ class TestWebhookExecutorFailureHandling:
 
 class TestWebhookExecutorEdgeCases:
     """Tests for edge cases and special handling."""
+
+    @pytest.mark.parametrize("method", ["delete", "GET", "Patch", "POST", "put"])
+    async def test_supported_methods_are_normalized(self, executor, method):
+        mock_response = create_mock_response(status=200)
+        mock_session = create_mock_session(mock_response)
+
+        with patch(
+            "gobby.workflows.webhook_executor.aiohttp.ClientSession", return_value=mock_session
+        ):
+            await executor.execute(url="https://api.example.com/webhook", method=method)
+
+        assert mock_session.request.call_args.kwargs["method"] == method.upper()
+
+    @pytest.mark.parametrize("method", ["", "CONNECT", "OPTIONS", "TRACE"])
+    async def test_unsupported_methods_are_rejected_before_network_io(self, executor, method):
+        with (
+            patch("gobby.workflows.webhook_executor.aiohttp.ClientSession") as client_session,
+            pytest.raises(ValueError, match="Unsupported webhook method"),
+        ):
+            await executor.execute(url="https://api.example.com/webhook", method=method)
+
+        client_session.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "headers",
+        [
+            {"Bad Header": "value"},
+            {"X-Test": "value\r\ninjected: true"},
+        ],
+    )
+    async def test_invalid_headers_are_rejected_before_network_io(self, executor, headers):
+        with (
+            patch("gobby.workflows.webhook_executor.aiohttp.ClientSession") as client_session,
+            pytest.raises(ValueError, match="Invalid webhook header"),
+        ):
+            await executor.execute(url="https://api.example.com/webhook", headers=headers)
+
+        client_session.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "address",
+        ["10.0.0.1", "127.0.0.1", "169.254.169.254", "::1"],
+    )
+    async def test_non_public_resolved_addresses_are_rejected(self, executor, address):
+        """DNS results must not permit private, loopback, link-local, or metadata targets."""
+        resolved = {
+            "hostname": "unsafe.example",
+            "host": address,
+            "port": 443,
+            "family": socket.AF_INET6 if ":" in address else socket.AF_INET,
+            "proto": 0,
+            "flags": 0,
+        }
+        with (
+            patch(
+                "gobby.workflows.webhook_executor.DefaultResolver.resolve",
+                new=AsyncMock(return_value=[resolved]),
+            ),
+            patch("gobby.workflows.webhook_executor.aiohttp.ClientSession") as client_session,
+            pytest.raises(ValueError, match="non-public address"),
+        ):
+            await executor.execute(url="https://unsafe.example/webhook")
+
+        client_session.assert_not_called()
+
+    @pytest.mark.parametrize("url", ["file:///etc/passwd", "ftp://example.com/hook", "https://"])
+    async def test_invalid_webhook_urls_are_rejected(self, executor, url):
+        """Webhook URLs must use HTTP(S) and include a hostname."""
+        with pytest.raises(ValueError, match="http or https"):
+            await executor.execute(url=url)
+
+    def test_retry_config_uses_canonical_bounds(self, executor):
+        """Executor retry parsing should enforce shared attempt and backoff limits."""
+        with pytest.raises(ValueError, match="max_attempts"):
+            executor._parse_retry_config({"max_attempts": 100_000})
+        with pytest.raises(ValueError, match="backoff_seconds"):
+            executor._parse_retry_config({"backoff_seconds": 61})
 
     async def test_webhook_id_resolves_to_url(self, executor, mock_webhook_registry):
         """webhook_id should resolve to URL from webhook registry."""
@@ -403,8 +613,8 @@ class TestWebhookExecutorEdgeCases:
             )
 
             assert result.success is True
-            # Body might be truncated for safety
-            assert len(result.body) > 0
+            assert len(result.body) == MAX_RESPONSE_BYTES
+            mock_response.content.readexactly.assert_awaited_once_with(MAX_RESPONSE_BYTES + 1)
 
 
 class TestWebhookResult:

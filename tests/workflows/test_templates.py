@@ -1,5 +1,5 @@
 import pytest
-from jinja2 import Environment, FileSystemLoader, TemplateNotFound
+from jinja2 import Environment, FileSystemLoader, StrictUndefined, TemplateNotFound, UndefinedError
 from jinja2.exceptions import SecurityError
 from jinja2.sandbox import SandboxedEnvironment
 
@@ -14,6 +14,8 @@ class TestTemplateEngine:
         assert isinstance(engine.env, SandboxedEnvironment)
         assert engine.env.loader is None
         assert engine.env.autoescape
+        assert isinstance(engine.env, SandboxedEnvironment)
+        assert engine.env.undefined is StrictUndefined
 
     def test_init_with_dirs(self, tmp_path) -> None:
         template_dir = tmp_path / "templates"
@@ -31,9 +33,7 @@ class TestTemplateEngine:
 
     def test_render_string_error(self) -> None:
         engine = TemplateEngine()
-        # Create a template that raises an error during rendering
-        # Using a variable that doesn't exist won't raise by default unless we set undefined
-        # But we can force an error by doing an operation that fails
+        # Exercise a rendering error independent of undefined-variable handling.
         template_str = "{{ x + 1 }}"
 
         with pytest.raises(TypeError):
@@ -44,6 +44,12 @@ class TestTemplateEngine:
 
         with pytest.raises(SecurityError):
             engine.render("{{ [].__class__.__mro__ }}", {})
+
+    def test_render_string_undefined_variable(self) -> None:
+        engine = TemplateEngine()
+
+        with pytest.raises(UndefinedError, match="missing"):
+            engine.render("{{ missing }}", {})
 
     def test_render_file_success(self, tmp_path) -> None:
         template_dir = tmp_path / "templates"

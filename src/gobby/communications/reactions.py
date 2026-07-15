@@ -123,12 +123,22 @@ class ReactionHandler:
             logger.debug("Message does not contain pipeline approval context")
             return
 
+        approver_id = str(identity.id)
+        executor = self._services.pipeline_executor
+        if executor:
+            if approved:
+                logger.info(f"Approving pipeline {pipeline_run_id} step {step_id}")
+                await executor.approve(token, approved_by=approver_id)
+            else:
+                logger.info(f"Rejecting pipeline {pipeline_run_id} step {step_id}")
+                await executor.reject(token, rejected_by=approver_id)
+            return
+
         approval_manager = self._get_approval_manager()
         if not approval_manager:
             logger.error("Pipeline approval manager not available to process approval")
             return
 
-        approver_id = str(identity.id)
         if approved:
             logger.info(f"Approving pipeline {pipeline_run_id} step {step_id}")
             await approval_manager.approve_step(token, approved_by=approver_id)
@@ -137,11 +147,7 @@ class ReactionHandler:
             await approval_manager.reject_step(token, rejected_by=approver_id)
 
     def _get_approval_manager(self) -> Any | None:
-        """Return the pipeline gatekeeper used for token-based approvals."""
-        executor = self._services.pipeline_executor
-        if executor and getattr(executor, "approval_manager", None):
-            return executor.approval_manager
-
+        """Build the fallback gatekeeper used when no pipeline executor is available."""
         execution_manager = self._services.pipeline_execution_manager
         if not execution_manager:
             return None
