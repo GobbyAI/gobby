@@ -13,6 +13,15 @@ from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import AgentDefinitionBody
 
 
+@pytest.fixture(autouse=True)
+def _mock_spawn_machine_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep spawn tests isolated from the user's machine-ID file."""
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.get_machine_id",
+        lambda: "test-machine-id",
+    )
+
+
 @pytest.fixture
 def db(temp_db: HubDatabase) -> HubDatabase:
     database = temp_db

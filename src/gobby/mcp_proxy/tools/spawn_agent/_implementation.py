@@ -13,7 +13,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from gobby.agents.isolation import (
+    CloneIsolationHandler,
     SpawnConfig,
+    WorktreeIsolationHandler,
     get_isolation_handler,
     provider_mcp_config_error,
     repair_isolation_environment,
@@ -418,6 +420,7 @@ async def spawn_agent_impl(
                 main_repo_path=resolved_project_path,
             )
             effective_isolation = "worktree"
+            context_handler = WorktreeIsolationHandler(git_manager, worktree_storage)
         except Exception as e:
             return {"success": False, "error": f"Failed to prepare reused worktree: {e}"}
     elif clone_id and clone_storage:
@@ -453,6 +456,7 @@ async def spawn_agent_impl(
         )
         effective_isolation = "clone"
         handler = get_isolation_handler("none")
+        context_handler = CloneIsolationHandler(clone_manager, clone_storage, git_manager)
     else:
         # Normal isolation flow
         handler = get_isolation_handler(
@@ -462,6 +466,7 @@ async def spawn_agent_impl(
             clone_manager=clone_manager,
             clone_storage=clone_storage,
         )
+        context_handler = handler
 
     cleanup_isolation_on_failure = not (worktree_id or clone_id)
     if isolation_ctx is None:
@@ -497,7 +502,7 @@ async def spawn_agent_impl(
     code_index_preflight_env = code_index_preflight.env or {}
 
     # 8. Build enhanced prompt with isolation context
-    enhanced_prompt = handler.build_context_prompt(prompt, isolation_ctx)
+    enhanced_prompt = context_handler.build_context_prompt(prompt, isolation_ctx)
     if code_index_preflight_warning is not None:
         enhanced_prompt = append_code_index_warning(enhanced_prompt, code_index_preflight_warning)
 
