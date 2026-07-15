@@ -394,10 +394,12 @@ export function useFiles() {
                 originalContent: f.editContent,
                 dirty: false,
                 saving: false,
+                error: null,
               }
             : f
         )
       )
+      await fetchGitStatus(file.projectId)
     } catch (e) {
       setOpenFiles(prev =>
         prev.map((f, i) =>
@@ -405,7 +407,7 @@ export function useFiles() {
         )
       )
     }
-  }, [baseUrl])
+  }, [baseUrl, fetchGitStatus])
 
   const fetchDiff = useCallback(async (projectId: string, path: string): Promise<string> => {
     try {
