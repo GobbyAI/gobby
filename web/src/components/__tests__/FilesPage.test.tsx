@@ -76,6 +76,62 @@ describe('FilesPage save errors', () => {
   })
 })
 
+describe('FilesPage tab closing', () => {
+  it('confirms dirty tabs, preserves them on cancel, and closes clean tabs directly', async () => {
+    const user = userEvent.setup()
+    const onCloseFile = vi.fn()
+    const cleanFile: OpenFile = {
+      ...FAILED_FILE,
+      path: 'clean.txt',
+      name: 'clean.txt',
+      editContent: 'original',
+      dirty: false,
+      editing: false,
+      saveError: null,
+    }
+
+    render(
+      <FilesPage
+        projects={[]}
+        expandedDirs={new Map()}
+        expandedProjects={new Set()}
+        openFiles={[FAILED_FILE, cleanFile]}
+        activeFileIndex={0}
+        loadingDirs={new Set()}
+        onExpandProject={vi.fn()}
+        onExpandDir={vi.fn()}
+        onOpenFile={vi.fn()}
+        onCloseFile={onCloseFile}
+        onSetActiveFile={vi.fn()}
+        getImageUrl={vi.fn(() => '')}
+        onToggleEditing={vi.fn()}
+        onCancelEditing={vi.fn()}
+        onUpdateEditContent={vi.fn()}
+        onClearSaveError={vi.fn()}
+        onSaveFile={vi.fn()}
+        gitStatuses={new Map()}
+        onFetchDiff={vi.fn(async () => '')}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Close notes.txt' }))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(onCloseFile).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: 'Keep Editing' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(onCloseFile).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: 'Close notes.txt' }))
+    await user.click(screen.getByRole('button', { name: 'Discard' }))
+    expect(onCloseFile).toHaveBeenCalledWith(0)
+
+    await user.click(screen.getByRole('button', { name: 'Close clean.txt' }))
+    expect(onCloseFile).toHaveBeenLastCalledWith(1)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+})
+
 describe('FilesPage keyboard operation', () => {
   it('activates open-file tabs and tree rows with Enter and Space', async () => {
     const user = userEvent.setup()

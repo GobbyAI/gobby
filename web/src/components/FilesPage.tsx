@@ -143,15 +143,16 @@ export function FilesPage({
   const activeFile = activeFileIndex >= 0 ? openFiles[activeFileIndex] : null
   const [diffContent, setDiffContent] = useState<string | null>(null)
   const [showDiff, setShowDiff] = useState(false)
-  const [showCancelConfirm, setShowCancelConfirm] = useState(false)
+  const [pendingDiscard, setPendingDiscard] = useState<
+    { action: 'cancel' | 'close'; index: number } | null
+  >(null)
   const editorViewRef = useRef<EditorView | null>(null)
 
-  const cancelIndexRef = useRef(activeFileIndex)
+  const showCancelConfirm = pendingDiscard !== null
 
   const handleCancel = useCallback(() => {
     if (activeFile?.dirty) {
-      cancelIndexRef.current = activeFileIndex
-      setShowCancelConfirm(true)
+      setPendingDiscard({ action: 'cancel', index: activeFileIndex })
     } else {
       onCancelEditing(activeFileIndex)
       setShowDiff(false)
@@ -159,10 +160,15 @@ export function FilesPage({
   }, [activeFile, activeFileIndex, onCancelEditing])
 
   const confirmCancel = useCallback(() => {
-    setShowCancelConfirm(false)
-    onCancelEditing(cancelIndexRef.current)
-    setShowDiff(false)
-  }, [onCancelEditing])
+    if (!pendingDiscard) return
+    setPendingDiscard(null)
+    if (pendingDiscard.action === 'close') {
+      onCloseFile(pendingDiscard.index)
+    } else {
+      onCancelEditing(pendingDiscard.index)
+      setShowDiff(false)
+    }
+  }, [onCancelEditing, onCloseFile, pendingDiscard])
 
   const previousFocusRef = useRef<Element | null>(null)
   useEffect(() => {
@@ -172,7 +178,7 @@ export function FilesPage({
     dialog?.focus()
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        setShowCancelConfirm(false)
+        setPendingDiscard(null)
       } else if (e.key === 'Tab' && dialog) {
         const focusable = dialog.querySelectorAll<HTMLElement>('button, [tabindex]')
         if (focusable.length === 0) return
@@ -269,8 +275,13 @@ export function FilesPage({
                     className={cn(TAB_CLOSE_CLS, isActive && 'opacity-100')}
                     onClick={(e) => {
                       e.stopPropagation()
-                      onCloseFile(i)
+                      if (file.dirty) {
+                        setPendingDiscard({ action: 'close', index: i })
+                      } else {
+                        onCloseFile(i)
+                      }
                     }}
+                    aria-label={`Close ${file.name}`}
                   >
                     &times;
                   </button>
@@ -385,7 +396,7 @@ export function FilesPage({
             className={CONFIRM_OVERLAY_CLS}
             role="presentation"
             onMouseDown={(event) => {
-              if (event.button === 0) setShowCancelConfirm(false)
+              if (event.button === 0) setPendingDiscard(null)
             }}
           >
             <div
@@ -400,7 +411,7 @@ export function FilesPage({
               <p className={CONFIRM_TITLE_CLS} id="cancel-dialog-title">Discard unsaved changes?</p>
               <p className={CONFIRM_MESSAGE_CLS} id="cancel-dialog-desc">Your changes to this file will be lost.</p>
               <div className={CONFIRM_ACTIONS_CLS}>
-                <button className={CONFIRM_KEEP_CLS} onClick={() => setShowCancelConfirm(false)}>
+                <button className={CONFIRM_KEEP_CLS} onClick={() => setPendingDiscard(null)}>
                   Keep Editing
                 </button>
                 <button className={CONFIRM_DISCARD_CLS} onClick={confirmCancel}>
