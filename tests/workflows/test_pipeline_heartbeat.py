@@ -474,6 +474,33 @@ def _create_in_progress_task(
 
 
 @pytest.mark.asyncio
+async def test_stale_task_scan_recovers_oldest_claim_beyond_default_window(
+    heartbeat_with_tasks: PipelineHeartbeat,
+    task_manager: LocalTaskManager,
+    temp_db: HubDatabase,
+) -> None:
+    """The oldest orphan is examined even when more than 100 tasks are active."""
+    _seed_db(temp_db)
+    live_session_id = "55555555-5555-4555-8555-555555555555"
+    _seed_session(temp_db, live_session_id, status="active")
+    for _ in range(100):
+        _create_in_progress_task(task_manager, claimed_by_session_id=live_session_id)
+
+    orphan_task_id = _create_in_progress_task(task_manager)
+    temp_db.execute(
+        "UPDATE tasks SET updated_at = %s WHERE id = %s",
+        ((datetime.now(UTC) - timedelta(days=1)).isoformat(), orphan_task_id),
+    )
+
+    assert await heartbeat_with_tasks.check_stale_tasks() == 1
+
+    orphan_task = task_manager.get_task(orphan_task_id)
+    assert orphan_task is not None
+    assert projected_task_state(orphan_task) == "ready"
+    assert orphan_task.claimed_by_session_id is None
+
+
+@pytest.mark.asyncio
 async def test_stale_task_with_terminal_agent_run_recovered(
     heartbeat_with_tasks: PipelineHeartbeat,
     task_manager: LocalTaskManager,

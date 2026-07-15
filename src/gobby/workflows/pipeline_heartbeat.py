@@ -401,6 +401,8 @@ class PipelineHeartbeat:
                 current_stage_state=list(ACTIVE_STAGE_STATES),
                 closed=False,
                 limit=100,
+                sort_by="updated_at",
+                sort_order="asc",
             )
         except Exception:
             logger.exception("Heartbeat: failed to query claimed tasks")
