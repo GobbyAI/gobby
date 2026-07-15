@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Literal, cast
@@ -594,6 +595,25 @@ class PipelineStep(BaseModel):
     approval: PipelineApproval | None = None  # Approval gate
     tools: list[str] = Field(default_factory=list)  # Tool restrictions for prompt steps
     input: str | None = None  # Explicit input reference (e.g., $prev_step.output)
+    timeout_seconds: float | str | None = None  # Positive exec timeout or template
+
+    @field_validator("timeout_seconds", mode="before")
+    @classmethod
+    def validate_timeout_seconds(cls, value: Any) -> float | str | None:
+        """Validate a positive timeout or a full template expression."""
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            raise ValueError("timeout_seconds must be a positive number")
+        if isinstance(value, (int, float)):
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError("timeout_seconds must be greater than 0")
+            return float(value)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped.startswith("${{") and stripped.endswith("}}") and stripped[3:-2].strip():
+                return value
+        raise ValueError("timeout_seconds must be a positive number or template expression")
 
     @model_validator(mode="before")
     @classmethod

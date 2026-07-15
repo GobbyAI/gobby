@@ -142,6 +142,12 @@ class StepRenderer:
             if rendered_step.exec:
                 rendered_step.exec = self.render_string(rendered_step.exec, render_context)
 
+            if isinstance(rendered_step.timeout_seconds, str):
+                rendered_timeout = self.render_string(rendered_step.timeout_seconds, render_context)
+                rendered_data = rendered_step.model_dump()
+                rendered_data["timeout_seconds"] = self._coerce_value(rendered_timeout)
+                rendered_step = type(step).model_validate(rendered_data)
+
             if rendered_step.prompt:
                 rendered_step.prompt = self.render_string(rendered_step.prompt, render_context)
 

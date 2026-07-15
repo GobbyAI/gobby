@@ -75,7 +75,13 @@ class PipelineExecutorStepMixin:
                     return await self._execute_wait_step(rendered_step, context)
                 elif step.exec:
                     # Execute shell command
-                    return await _facade_attr("execute_exec_step")(rendered_step.exec, context)
+                    exec_context = context
+                    if rendered_step.timeout_seconds is not None:
+                        exec_context = {
+                            **context,
+                            "timeout_seconds": rendered_step.timeout_seconds,
+                        }
+                    return await _facade_attr("execute_exec_step")(rendered_step.exec, exec_context)
                 elif step.prompt:
                     # Execute LLM prompt
                     return await _facade_attr("execute_prompt_step")(

@@ -3,8 +3,9 @@
 Split from the test_pipeline_executor monolith (#12210).
 """
 
+import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -453,6 +454,109 @@ class TestPipelineExecutorStepExecution:
         update_calls = mock_execution_manager.update_step_execution.call_args_list
         has_output = any(call.kwargs.get("output_json") is not None for call in update_calls)
         assert has_output
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("timeout_seconds", "inputs", "expected_timeout"),
+        [
+            (45, {}, 45),
+            ("${{ inputs.exec_timeout }}", {"exec_timeout": 12.5}, 12.5),
+        ],
+    )
+    async def test_exec_step_passes_rendered_timeout_to_handler(
+        self,
+        mock_db,
+        mock_execution_manager,
+        mock_llm_service,
+        timeout_seconds,
+        inputs,
+        expected_timeout,
+    ) -> None:
+        """Configured exec timeouts reach the handler without mutating shared context."""
+        from gobby.workflows.definitions import PipelineStep
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+        from gobby.workflows.templates import TemplateEngine
+
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            template_engine=TemplateEngine(),
+        )
+        step = PipelineStep(id="exec", exec="echo ok", timeout_seconds=timeout_seconds)
+        context = {"inputs": inputs, "steps": {}}
+        handler = AsyncMock(return_value={"exit_code": 0})
+
+        with patch("gobby.workflows.pipeline_executor.execute_exec_step", handler):
+            await executor._execute_step(step, context, "project")
+
+        assert handler.await_args.args[1]["timeout_seconds"] == expected_timeout
+        assert "timeout_seconds" not in context
+
+    @pytest.mark.asyncio
+    async def test_exec_step_omits_timeout_to_preserve_handler_default(
+        self, mock_db, mock_execution_manager, mock_llm_service
+    ) -> None:
+        """Omitted step timeout leaves the handler's 300-second default in effect."""
+        from gobby.workflows.definitions import PipelineStep
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+        )
+        context = {"inputs": {}, "steps": {}}
+        observed_timeouts = []
+        wait_for = asyncio.wait_for
+
+        async def capture_timeout(awaitable, timeout):
+            observed_timeouts.append(timeout)
+            return await wait_for(awaitable, timeout=timeout)
+
+        with patch(
+            "gobby.workflows.pipeline.handlers.asyncio.wait_for",
+            side_effect=capture_timeout,
+        ):
+            await executor._execute_step(
+                PipelineStep(id="exec", exec="echo ok"), context, "project"
+            )
+
+        assert observed_timeouts == [300]
+        assert "timeout_seconds" not in context
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("rendered_timeout", [0, -1, "invalid"])
+    async def test_exec_step_rejects_invalid_rendered_timeout(
+        self,
+        mock_db,
+        mock_execution_manager,
+        mock_llm_service,
+        rendered_timeout,
+    ) -> None:
+        """Templated exec timeouts are revalidated after rendering."""
+        from gobby.workflows.definitions import PipelineStep
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+        from gobby.workflows.templates import TemplateEngine
+
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            template_engine=TemplateEngine(),
+        )
+        step = PipelineStep(
+            id="exec",
+            exec="echo ok",
+            timeout_seconds="${{ inputs.exec_timeout }}",
+        )
+
+        with pytest.raises(ValueError, match="timeout_seconds"):
+            await executor._execute_step(
+                step,
+                {"inputs": {"exec_timeout": rendered_timeout}, "steps": {}},
+                "project",
+            )
 
 
 class TestExecuteExecStep:
