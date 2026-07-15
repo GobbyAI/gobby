@@ -121,4 +121,25 @@ describe('CSS token integrity', () => {
 
     expect(unresolved).toEqual([])
   })
+
+  it('keeps review and inactive colors in sanctioned palette lanes', () => {
+    const tokens = readFileSync(join(process.cwd(), 'src/styles/tokens.css'), 'utf8')
+
+    expect(tokens.match(/--color-review:\s*var\(--color-info\);/g)).toHaveLength(2)
+    expect(tokens.match(/--color-review-bg:\s*var\(--color-info-bg\);/g)).toHaveLength(2)
+    expect(tokens.match(/--color-review-soft:\s*var\(--color-info-soft\);/g)).toHaveLength(2)
+
+    const inactiveValues = [...tokens.matchAll(
+      /--color-inactive:\s*oklch\(([\d.]+)%\s+([\d.]+)\s+([\d.]+)\);/g,
+    )].map(([, lightness, chroma, hue]) => ({
+      lightness: Number(lightness),
+      chroma: Number(chroma),
+      hue: Number(hue),
+    }))
+
+    expect(inactiveValues).toEqual([
+      { lightness: 60, chroma: 0.008, hue: 125 },
+      { lightness: 45, chroma: 0.008, hue: 125 },
+    ])
+  })
 })
