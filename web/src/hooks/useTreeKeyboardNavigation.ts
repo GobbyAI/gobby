@@ -22,6 +22,8 @@ interface UseTreeKeyboardNavigationOptions {
   selectedId: string | null;
   onSelect: (id: string) => void;
   onToggle: (id: string) => void;
+  /** Ensure a virtualized row is mounted before DOM focus is applied. */
+  onFocusRequest?: (id: string) => void;
   /**
    * When true (default), arrow navigation also selects the row it lands on
    * (selection-follows-focus, used by the Tasks tree). Set false when selecting
@@ -52,9 +54,11 @@ export function useTreeKeyboardNavigation({
   selectedId,
   onSelect,
   onToggle,
+  onFocusRequest,
   selectionFollowsFocus = true,
 }: UseTreeKeyboardNavigationOptions): TreeKeyboardNavigation {
   const rowRefs = useRef<Map<string, HTMLElement>>(new Map());
+  const pendingFocusRef = useRef<string | null>(null);
   // Roving anchor. Kept as state so tabIndex re-resolves when focus moves via
   // arrows without a selection change (the selectionFollowsFocus=false case).
   const [focusedId, setFocusedId] = useState<string | null>(selectedId);
@@ -69,8 +73,15 @@ export function useTreeKeyboardNavigation({
   }
 
   const setRowRef = useCallback((id: string, node: HTMLElement | null) => {
-    if (node) rowRefs.current.set(id, node);
-    else rowRefs.current.delete(id);
+    if (node) {
+      rowRefs.current.set(id, node);
+      if (pendingFocusRef.current === id) {
+        pendingFocusRef.current = null;
+        node.focus();
+      }
+    } else {
+      rowRefs.current.delete(id);
+    }
   }, []);
 
   // Keyboard-initiated focus moves land in a layout effect after the commit
@@ -78,20 +89,21 @@ export function useTreeKeyboardNavigation({
   // queued focus moves would then fire all at once on the next paint). Only
   // focusRow arms this; external selection sync never steals DOM focus.
   const [focusSeq, setFocusSeq] = useState(0);
-  const pendingFocusRef = useRef<string | null>(null);
-
   const focusRow = useCallback((id: string) => {
     setFocusedId(id);
     pendingFocusRef.current = id;
+    onFocusRequest?.(id);
     setFocusSeq((seq) => seq + 1);
-  }, []);
+  }, [onFocusRequest]);
 
   useLayoutEffect(() => {
     if (focusSeq === 0) return;
     const id = pendingFocusRef.current;
     if (id === null) return;
+    const node = rowRefs.current.get(id);
+    if (!node) return;
     pendingFocusRef.current = null;
-    rowRefs.current.get(id)?.focus();
+    node.focus();
   }, [focusSeq]);
 
   // Move focus to another row, also selecting it when selection follows focus.

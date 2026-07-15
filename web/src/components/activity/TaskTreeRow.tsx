@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { KeyboardEvent, MouseEvent } from "react";
 import type { GobbyTask } from "../../hooks/useTasks";
 import { PriorityGlyph, StatusDot, TypeBadge } from "../tasks/TaskBadges";
@@ -23,9 +24,9 @@ interface TaskTreeRowProps {
   onSelect: (taskId: string) => void;
   onToggleOpen: (taskId: string) => void;
   onMenuButtonClick: (event: MouseEvent<HTMLButtonElement>, task: GobbyTask) => void;
-  rowRef: (node: HTMLDivElement | null) => void;
+  setRowRef: (taskId: string, node: HTMLDivElement | null) => void;
   tabIndex: number;
-  onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
+  onRowKeyDown: (taskId: string, event: KeyboardEvent<HTMLDivElement>) => void;
 }
 
 const TASK_ROW_BASE_INDENT_REM = 0.75;
@@ -72,16 +73,16 @@ function deriveSafeTaskState(task: GobbyTask): {
   }
 }
 
-export function TaskTreeRow({
+function TaskTreeRowComponent({
   row,
   isSelected,
   isBusy,
   onSelect,
   onToggleOpen,
   onMenuButtonClick,
-  rowRef,
+  setRowRef,
   tabIndex,
-  onKeyDown,
+  onRowKeyDown,
 }: TaskTreeRowProps) {
   const task = row.node.task;
   const { taskState, displayState, stateSummary, failed } = deriveSafeTaskState(task);
@@ -104,7 +105,7 @@ export function TaskTreeRow({
 
   return (
     <div
-      ref={rowRef}
+      ref={(node) => setRowRef(task.id, node)}
       style={{
         paddingLeft: `${row.depth * TASK_ROW_DEPTH_INDENT_REM + TASK_ROW_BASE_INDENT_REM}rem`,
       }}
@@ -117,7 +118,7 @@ export function TaskTreeRow({
       aria-label={`${labelRef} ${labelTitle}: ${stateSummary}`}
       title={stateSummary}
       onClick={() => onSelect(task.id)}
-      onKeyDown={onKeyDown}
+      onKeyDown={(event) => onRowKeyDown(task.id, event)}
     >
       {row.isInternal ? (
         <button
@@ -190,3 +191,20 @@ export function TaskTreeRow({
     </div>
   );
 }
+
+export const TaskTreeRow = memo(TaskTreeRowComponent, (previous, next) => {
+  return (
+    previous.row.node.task === next.row.node.task &&
+    previous.row.depth === next.row.depth &&
+    previous.row.isInternal === next.row.isInternal &&
+    previous.row.isOpen === next.row.isOpen &&
+    previous.isSelected === next.isSelected &&
+    previous.isBusy === next.isBusy &&
+    previous.tabIndex === next.tabIndex &&
+    previous.onSelect === next.onSelect &&
+    previous.onToggleOpen === next.onToggleOpen &&
+    previous.onMenuButtonClick === next.onMenuButtonClick &&
+    previous.setRowRef === next.setRowRef &&
+    previous.onRowKeyDown === next.onRowKeyDown
+  );
+});
