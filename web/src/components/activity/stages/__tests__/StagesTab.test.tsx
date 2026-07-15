@@ -317,6 +317,34 @@ describe("Stages activity tab", () => {
     );
   });
 
+  it("surfaces profile save and row-action failures", async () => {
+    const { fetchMock } = installStagesFetch();
+    const user = userEvent.setup();
+
+    render(<StagesTab projectId="project-1" />);
+    await user.click(screen.getByRole("radio", { name: "Profiles" }));
+    await user.click(await screen.findByRole("button", { name: "Select Fast build" }));
+
+    await user.clear(screen.getByLabelText("Profile description"));
+    await user.type(screen.getByLabelText("Profile description"), "Updated description");
+    fetchMock.mockRejectedValueOnce(new Error("Profile save failed"));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(
+      await screen.findByRole("button", { name: "Dismiss error: Profile save failed" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+
+    const row = screen.getByRole("listitem", { name: /Fast build profile/i });
+    await user.click(within(row).getByRole("button", { name: "Open actions for Fast build" }));
+    fetchMock.mockRejectedValueOnce(new Error("Profile action failed"));
+    await user.click(await screen.findByRole("menuitem", { name: "Set as default" }));
+
+    expect(
+      await screen.findByRole("button", { name: "Dismiss error: Profile action failed" }),
+    ).toBeInTheDocument();
+  });
+
   it("requires confirmation before deleting stages and profiles", async () => {
     const { calls } = installStagesFetch();
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
@@ -351,12 +379,23 @@ describe("Stages activity tab", () => {
 
     await user.click(screen.getByRole("radio", { name: "Profiles" }));
     const profileRow = await screen.findByRole("listitem", { name: /Fast build profile/i });
+    confirm.mockReturnValue(false);
     await user.click(
       within(profileRow).getByRole("button", { name: "Open actions for Fast build" }),
     );
     await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
 
     expect(confirm).toHaveBeenCalledWith('Delete "Fast build"?');
+    expect(
+      calls.some((call) => call.url.includes("/api/profiles/fast") && call.method === "DELETE"),
+    ).toBe(false);
+
+    confirm.mockReturnValue(true);
+    await user.click(
+      within(profileRow).getByRole("button", { name: "Open actions for Fast build" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+
     await waitFor(() =>
       expect(
         calls.some(
