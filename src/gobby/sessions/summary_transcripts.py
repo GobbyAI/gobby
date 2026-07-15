@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections import deque
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -21,7 +22,11 @@ TRANSCRIPT_FALLBACK_MAX_CHARS = 24_000
 DIGEST_FALLBACK_MAX_CHARS = 24_000
 
 
-async def _read_transcript(path: Path, source: str = "claude") -> list[dict[str, Any]]:
+async def _read_transcript(
+    path: Path,
+    source: str = "claude",
+    max_turns: int | None = None,
+) -> list[dict[str, Any]]:
     """Read and parse a transcript file in its native format.
 
     Claude, Codex, and Droid use JSONL (one JSON object per line).
@@ -31,15 +36,19 @@ async def _read_transcript(path: Path, source: str = "claude") -> list[dict[str,
 
     Args:
         path: Path to the transcript file.
-        source: Session source (``"claude"``, ``"qwen"``, ``"codex"``, ``"droid"``).
+        source: Session source (``"claude"``, ``"gemini"``, ``"qwen"``, ``"codex"``,
+            ``"droid"``).
     """
     # Typed JSON session files are a single JSON object, not JSONL. Legacy
     # registrations may have source="unknown" even when the file shape is typed.
-    if path.suffix == ".json" and source in {"qwen", "unknown"}:
-        return await _read_typed_json_transcript(path)
+    if path.suffix == ".json" and source in {"gemini", "qwen", "unknown"}:
+        typed_turns = await _read_typed_json_transcript(path)
+        return typed_turns[-max_turns:] if max_turns is not None else typed_turns
 
     # JSONL format (Claude, Codex, default)
-    turns: list[dict[str, Any]] = []
+    turns: list[dict[str, Any]] | deque[dict[str, Any]] = (
+        deque(maxlen=max_turns) if max_turns is not None else []
+    )
     async with aiofiles.open(path, encoding="utf-8") as f:
         async for idx, line in async_enumerate(f):
             if line.strip():
@@ -57,7 +66,7 @@ async def _read_transcript(path: Path, source: str = "claude") -> list[dict[str,
                         "Skipping malformed JSONL line",
                         extra={"line": idx + 1, "path": str(path)},
                     )
-    return turns
+    return list(turns)
 
 
 def _summary_source_text(value: str | None) -> str:

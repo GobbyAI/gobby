@@ -1423,6 +1423,17 @@ class TestReadTranscript:
         assert len(turns) == 2
 
     @pytest.mark.asyncio
+    async def test_streams_only_requested_jsonl_tail(self, tmp_path: Path) -> None:
+        from gobby.sessions.summarize import _read_transcript
+
+        path = tmp_path / "transcript.jsonl"
+        path.write_text("\n".join(json.dumps({"index": index}) for index in range(200)))
+
+        turns = await _read_transcript(path, max_turns=10)
+
+        assert [turn["index"] for turn in turns] == list(range(190, 200))
+
+    @pytest.mark.asyncio
     async def test_skips_malformed_lines(self, tmp_path: Path) -> None:
         from gobby.sessions.summarize import _read_transcript
 

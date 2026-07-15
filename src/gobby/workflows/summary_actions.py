@@ -6,7 +6,7 @@ These functions handle session summary generation, title synthesis, and handoff 
 
 from __future__ import annotations
 
-import json
+import asyncio
 import logging
 import re
 from pathlib import Path
@@ -15,8 +15,17 @@ from typing import TYPE_CHECKING, Any, Literal
 import aiofiles
 
 from gobby.memory.title_heuristics import normalize_title_candidate
+from gobby.sessions.summary_transcripts import (
+    DIGEST_FALLBACK_MAX_CHARS,
+    TRANSCRIPT_FALLBACK_MAX_CHARS,
+    TRANSCRIPT_FALLBACK_MAX_TURNS,
+    _format_transcript_fallback_summary,
+    _read_transcript,
+    _truncate_markdown,
+)
 from gobby.sessions.summary_validity import is_summary_markdown_valid
 from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
+from gobby.sessions.workspace_context import resolve_session_workspace
 from gobby.workflows.git_utils import (
     get_file_changes,
     get_git_diff_summary,
@@ -647,7 +656,7 @@ async def generate_summary(
         logger.warning("generate_summary: Missing LLM service, transcript processor, or config")
         return {"error": "Missing services"}
 
-    current_session = session_manager.get(session_id)
+    current_session = await asyncio.to_thread(session_manager.get, session_id)
     if not current_session:
         return {"error": "Session not found"}
 
@@ -670,11 +679,12 @@ async def generate_summary(
             logger.warning(f"Transcript file not found: {transcript_path}")
             return {"error": "Transcript not found"}
 
-        turns = []
-        async with aiofiles.open(transcript_file, encoding="utf-8") as f:
-            async for line in f:
-                if line.strip():
-                    turns.append(json.loads(line))
+        source = getattr(current_session, "source", None) or "claude"
+        turns = await _read_transcript(
+            transcript_file,
+            source=source,
+            max_turns=150,
+        )
 
         # Turn extraction is deliberately mode-agnostic: we always extract the most
         # recent turns since the last /clear and let the prompt control summarization
@@ -683,25 +693,36 @@ async def generate_summary(
         recent_turns = transcript_processor.extract_turns_since_clear(turns, max_turns=100)
 
         # Format turns for LLM
-        transcript_summary = format_turns_for_llm(recent_turns)
+        transcript_summary = _format_transcript_fallback_summary(
+            recent_turns,
+            format_turns_for_llm,
+        )
     except Exception as e:
         logger.error(f"Failed to process transcript: {e}")
         return {"error": str(e)}
 
     # 2. Gather context variables for template
     last_messages = transcript_processor.extract_last_messages(recent_turns, num_pairs=2)
-    last_messages_str = format_turns_for_llm(last_messages) if last_messages else ""
+    last_messages_str = (
+        _truncate_markdown(format_turns_for_llm(last_messages), TRANSCRIPT_FALLBACK_MAX_CHARS)
+        if last_messages
+        else ""
+    )
 
     # Get git status and file changes
-    git_status = get_git_status()
-    file_changes = get_file_changes()
-    git_diff_summary = get_git_diff_summary()
+    project_path = str(resolve_session_workspace(current_session, transcript_path))
+    git_status, file_changes, git_diff_summary = await asyncio.gather(
+        asyncio.to_thread(get_git_status, project_path),
+        asyncio.to_thread(get_file_changes, project_path),
+        asyncio.to_thread(get_git_diff_summary, 8000, project_path),
+    )
 
     # Use digest as structured context if available (cheaper than transcript analysis)
     digest_markdown = getattr(current_session, "digest_markdown", None)
     if isinstance(digest_markdown, str) and digest_markdown.strip():
-        structured_context = f"Session Digest:\n{digest_markdown}"
-        real_commits = get_recent_git_commits()
+        bounded_digest = _truncate_markdown(digest_markdown, DIGEST_FALLBACK_MAX_CHARS)
+        structured_context = f"Session Digest:\n{bounded_digest}"
+        real_commits = await asyncio.to_thread(get_recent_git_commits, 10, project_path)
         if real_commits:
             commit_lines = [
                 f"  - {c.get('hash', '')[:7]} {c.get('message', '')}" for c in real_commits[:10]
@@ -713,17 +734,22 @@ async def generate_summary(
 
         analyzer = TranscriptAnalyzer()
         handoff_ctx = analyzer.extract_handoff_context(turns, max_turns=150)
-        real_commits = get_recent_git_commits()
+        real_commits = await asyncio.to_thread(get_recent_git_commits, 10, project_path)
         if real_commits:
             handoff_ctx.git_commits = real_commits
         if not handoff_ctx.git_status:
             handoff_ctx.git_status = git_status
         structured_context = _format_structured_context(handoff_ctx)
 
+    structured_context = _truncate_markdown(
+        structured_context,
+        TRANSCRIPT_FALLBACK_MAX_CHARS,
+    )
+
     # 3. Call LLM
     try:
         llm_context = {
-            "turns": recent_turns,
+            "turns": recent_turns[-TRANSCRIPT_FALLBACK_MAX_TURNS:],
             "transcript_summary": transcript_summary,
             "session": current_session,
             "last_messages": last_messages_str,
@@ -755,7 +781,11 @@ async def generate_summary(
         return {"error": "LLM returned invalid summary"}
 
     # 4. Save to session
-    session_manager.update_summary(session_id, summary_markdown=summary_content)
+    await asyncio.to_thread(
+        session_manager.update_summary,
+        session_id,
+        summary_markdown=summary_content,
+    )
 
     # 5. Write to file if requested
     summary_file_path = None
