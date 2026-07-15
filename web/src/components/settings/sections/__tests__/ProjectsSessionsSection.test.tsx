@@ -221,6 +221,35 @@ it('reads verification defaults: command fields and the custom map editor', () =
     expect(screen.getByLabelText('Preview Command')).toBeInTheDocument()
   })
 
+  it('blocks Save for invalid validation-detection JSON and saves corrected JSON', async () => {
+    const ctx = makeContext()
+    renderSection(ctx)
+
+    const matcherConfig = screen.getByLabelText('Matcher Config')
+    const save = screen.getByRole('button', { name: 'Save' })
+
+    fireEvent.change(matcherConfig, { target: { value: '{"enabled": false}' } })
+    await waitFor(() => expect(save).toBeEnabled())
+
+    fireEvent.change(matcherConfig, { target: { value: '{"enabled":' } })
+    await waitFor(() => expect(save).toBeDisabled())
+    fireEvent.click(save)
+    expect(ctx.saveConfig).not.toHaveBeenCalled()
+
+    const correctedJson = '{"enabled": true, "custom_matchers": []}'
+    fireEvent.change(matcherConfig, { target: { value: correctedJson } })
+    await waitFor(() => expect(save).toBeEnabled())
+    fireEvent.click(save)
+
+    await waitFor(() => expect(ctx.saveConfig).toHaveBeenCalledTimes(1))
+    expect(ctx.saveConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        validation_detection: { enabled: true, custom_matchers: [] },
+      }),
+    )
+    expect(matcherConfig).toHaveValue(correctedJson)
+  })
+
   it('persists an edited config row through the section draft Save', async () => {
     const ctx = makeContext()
     renderSection(ctx)

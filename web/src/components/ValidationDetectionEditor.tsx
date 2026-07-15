@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 // Class tokens hoisted from the now-deleted legacy configuration-page styles
 // module. This is the only surviving consumer (reused by the settings overlay's
@@ -32,6 +32,7 @@ const DEFAULT_DETECTION_CONFIG = {
 interface ValidationDetectionEditorProps {
   value: unknown
   onChange: (value: Record<string, unknown>) => void
+  onValidityChange?: (isValid: boolean) => void
   title?: string
 }
 
@@ -53,6 +54,7 @@ function normalizeValue(value: unknown): Record<string, unknown> {
 export function ValidationDetectionEditor({
   value,
   onChange,
+  onValidityChange,
   title = 'Validation Detection',
 }: ValidationDetectionEditorProps) {
   const normalized = useMemo(() => normalizeValue(value), [value])
@@ -78,6 +80,10 @@ export function ValidationDetectionEditor({
       editorJsonError = null
     }
   }
+
+  useEffect(() => {
+    onValidityChange?.(!editorJsonError)
+  }, [editorJsonError, onValidityChange])
 
   const handleJsonChange = (next: string) => {
     setSyncedValue(incoming)
