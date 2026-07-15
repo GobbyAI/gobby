@@ -5,7 +5,8 @@ Split from the test_pipeline_executor monolith (#12210).
 
 import asyncio
 from collections.abc import Callable
-from unittest.mock import AsyncMock, MagicMock
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -13,7 +14,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.workflows.definitions import PipelineDefinition, PipelineStep
 from gobby.workflows.pipeline.gatekeeper import ApprovalManager
-from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
+from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution, StepStatus
 
 pytestmark = pytest.mark.unit
 
@@ -744,6 +745,54 @@ class TestApproveReject:
 
         with pytest.raises(ValueError, match="Pipeline 'deleted' not found for resume"):
             await executor.approve("tok-1")
+
+    @pytest.mark.asyncio
+    async def test_approve_returns_failed_execution_after_resume_error(
+        self, mock_db: MagicMock, mock_execution_manager: MagicMock, mock_llm_service: MagicMock
+    ) -> None:
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        pipeline = PipelineDefinition(
+            name="deploy",
+            steps=[PipelineStep(id="deploy", exec="echo deploy")],
+        )
+        now = datetime.now(UTC)
+        waiting = PipelineExecution(
+            id="pe-1",
+            pipeline_name="deploy",
+            project_id="project-1",
+            status=ExecutionStatus.WAITING_APPROVAL,
+            created_at=now,
+            updated_at=now,
+            definition_json=pipeline.model_dump_json(),
+        )
+        failed = PipelineExecution(
+            id="pe-1",
+            pipeline_name="deploy",
+            project_id="project-1",
+            status=ExecutionStatus.FAILED,
+            created_at=now,
+            updated_at=now,
+        )
+
+        approval_mgr = AsyncMock()
+        approval_mgr.approve_step.return_value = waiting
+        mock_execution_manager.get_execution.return_value = failed
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+        )
+        executor.approval_manager = approval_mgr
+
+        execute = AsyncMock(side_effect=RuntimeError("boom"))
+        with patch.object(executor, "execute", new=execute):
+            result = await executor.approve("tok-1")
+
+        assert result is failed
+        approval_mgr.approve_step.assert_awaited_once_with("tok-1", None)
+        execute.assert_awaited_once()
+        mock_execution_manager.get_execution.assert_called_once_with("pe-1")
 
     @pytest.mark.asyncio
     async def test_reject_delegates_to_approval_manager(

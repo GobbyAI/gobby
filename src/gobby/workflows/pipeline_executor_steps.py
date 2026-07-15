@@ -208,7 +208,7 @@ class PipelineExecutorStepMixin:
             # Pipeline paused again for another approval - this is expected
             # Refresh execution to get latest status
             exec_id = execution.id  # Save before get_execution may return None
-            refreshed = self.execution_manager.get_execution(exec_id)
+            refreshed = await cast(Any, self)._run_db(self.execution_manager.get_execution, exec_id)
             if not refreshed:
                 raise ValueError(f"Execution {exec_id} not found after resume") from None
             execution = refreshed
@@ -216,9 +216,12 @@ class PipelineExecutorStepMixin:
             if pipeline is None or not pipeline.enabled:
                 raise
             logger.error(f"Failed to resume execution after approval: {e}", exc_info=True)
-            refreshed = self.execution_manager.get_execution(execution.id)
-            if refreshed:
-                execution = refreshed
+            refreshed = await cast(Any, self)._run_db(
+                self.execution_manager.get_execution, execution.id
+            )
+            if not refreshed:
+                raise
+            execution = refreshed
             # Preserve approval state when execution itself fails after resolution.
 
         return execution
