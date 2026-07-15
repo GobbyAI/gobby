@@ -1141,9 +1141,9 @@ class TestWorktreeGitManagerDeleteWorktreeEdgeCases:
 
         result = manager.delete_worktree(worktree_path, delete_branch=True)
 
-        # Worktree was removed, so success is True, but message indicates branch issue
-        assert result.success is True
+        assert result.success is False
         assert "failed to delete branch" in result.message
+        assert result.error == "error: branch not fully merged"
 
     @patch("subprocess.run")
     def test_delete_branch_with_no_status(self, mock_run, manager, tmp_path) -> None:

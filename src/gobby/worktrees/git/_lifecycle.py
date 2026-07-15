@@ -248,7 +248,7 @@ def delete_worktree(
 
             if branch_result.returncode != 0:
                 return GitOperationResult(
-                    success=True,  # Worktree removed, but branch deletion failed
+                    success=False,
                     message=f"Worktree removed, but failed to delete branch: {branch_result.stderr}",
                     error=branch_result.stderr,
                 )
