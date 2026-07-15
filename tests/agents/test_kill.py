@@ -149,6 +149,42 @@ class TestPidMatchesAgentIdentity:
             is False
         )
 
+    @pytest.mark.asyncio
+    async def test_lookup_failure_returns_unverifiable_result(self):
+        async def failing_runner(*args, timeout=2.0):
+            raise TimeoutError
+
+        for expected in (False, True):
+            assert (
+                await pid_matches_agent_identity(
+                    1234,
+                    provider="codex",
+                    session_id=self.SESSION_ID,
+                    run_subprocess=failing_runner,
+                    unverifiable_result=expected,
+                )
+                is expected
+            )
+
+    @pytest.mark.asyncio
+    async def test_unreadable_environment_returns_unverifiable_result(self):
+        import psutil
+
+        cmdline = "codex --model gpt-5.6-sol"
+        with patch("gobby.agents.kill.psutil.Process") as process_cls:
+            process_cls.return_value.environ.side_effect = psutil.AccessDenied(1234)
+            for expected in (False, True):
+                assert (
+                    await pid_matches_agent_identity(
+                        1234,
+                        provider="codex",
+                        session_id=self.SESSION_ID,
+                        run_subprocess=self._runner(cmdline),
+                        unverifiable_result=expected,
+                    )
+                    is expected
+                )
+
 
 class TestValidateTerminalValue:
     def test_valid_patterns(self):

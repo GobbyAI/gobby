@@ -176,6 +176,7 @@ class TmuxPaneMonitor:
                     agent.pid,
                     provider=agent.provider,
                     session_id=session_id,
+                    unverifiable_result=True,
                 ):
                     pid_dead = True
                     logger.info(

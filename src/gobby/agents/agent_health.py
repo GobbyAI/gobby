@@ -166,6 +166,7 @@ class AgentHealthMonitor:
                                 run.pid,
                                 provider=run.provider,
                                 session_id=session_id,
+                                unverifiable_result=True,
                             ):
                                 reason = f"PID {run.pid} no longer matches agent identity"
                                 logger.info(f"Agent {run.id} {reason} - cleaning up")

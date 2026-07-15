@@ -160,6 +160,7 @@ async def test_alive_tmux_reused_pid_triggers_callback() -> None:
         999,
         provider="test",
         session_id="sess-1",
+        unverifiable_result=True,
     )
     callback.assert_called_once()
     event: HookEvent = callback.call_args[0][0]

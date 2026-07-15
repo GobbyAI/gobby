@@ -643,6 +643,7 @@ class TestCheckDeadAgents:
             999,
             provider="claude",
             session_id=sample_session["id"],
+            unverifiable_result=True,
         )
         mock_kill.assert_not_called()
         updated = agent_run_manager.get(run.id)
