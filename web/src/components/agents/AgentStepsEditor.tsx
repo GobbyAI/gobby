@@ -378,6 +378,16 @@ export function AgentStepsEditor({ steps, onChange }: AgentStepsEditorProps) {
     onChange(steps.map((s, i) => i === idx ? { ...s, ...updates } : s))
   }, [steps, onChange])
 
+  const renameStep = useCallback((idx: number, newName: string) => {
+    const oldName = steps[idx].name
+    onChange(steps.map((step, i) => ({
+      ...step,
+      ...(i === idx ? { name: newName } : {}),
+      transitions: step.transitions?.map(transition =>
+        transition.to === oldName ? { ...transition, to: newName } : transition),
+    })))
+  }, [steps, onChange])
+
   const deleteStep = useCallback((idx: number) => {
     const name = steps[idx].name
     onChange(steps.filter((_, i) => i !== idx))
@@ -439,7 +449,7 @@ export function AgentStepsEditor({ steps, onChange }: AgentStepsEditorProps) {
                     value={step.name}
                     onChange={e => {
                       const newName = e.target.value
-                      updateStep(idx, { name: newName })
+                      renameStep(idx, newName)
                       setExpandedName(newName)
                     }}
                   />

@@ -5,6 +5,55 @@ import { describe, expect, it, vi } from 'vitest'
 import { AgentStepsEditor, type WorkflowStep } from '../AgentStepsEditor'
 
 describe('AgentStepsEditor advanced JSON fields', () => {
+  it('remaps every transition targeting a renamed step', () => {
+    const steps: WorkflowStep[] = [
+      {
+        name: 'source-one',
+        allowed_tools: [],
+        blocked_tools: [],
+        allowed_mcp_tools: [],
+        blocked_mcp_tools: [],
+        transitions: [{ to: 'target', when: 'first' }],
+      },
+      {
+        name: 'target',
+        allowed_tools: [],
+        blocked_tools: [],
+        allowed_mcp_tools: [],
+        blocked_mcp_tools: [],
+        transitions: [{ to: 'target', when: 'loop' }],
+      },
+      {
+        name: 'source-two',
+        allowed_tools: [],
+        blocked_tools: [],
+        allowed_mcp_tools: [],
+        blocked_mcp_tools: [],
+        transitions: [
+          { to: 'target', when: 'second' },
+          { to: 'source-one', when: 'unchanged' },
+        ],
+      },
+    ]
+    const onChange = vi.fn()
+
+    render(<AgentStepsEditor steps={steps} onChange={onChange} />)
+    fireEvent.click(screen.getByRole('button', { name: /target/ }))
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'renamed' } })
+
+    expect(onChange).toHaveBeenCalledWith([
+      { ...steps[0], transitions: [{ to: 'renamed', when: 'first' }] },
+      { ...steps[1], name: 'renamed', transitions: [{ to: 'renamed', when: 'loop' }] },
+      {
+        ...steps[2],
+        transitions: [
+          { to: 'renamed', when: 'second' },
+          { to: 'source-one', when: 'unchanged' },
+        ],
+      },
+    ])
+  })
+
   it('expands and collapses a step card from the keyboard', async () => {
     const user = userEvent.setup()
     const steps: WorkflowStep[] = [{
