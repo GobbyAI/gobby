@@ -1,6 +1,6 @@
 import type { WorkflowDetail } from '../../../hooks/useWorkflows'
 
-export type StepType = 'exec' | 'prompt' | 'mcp' | 'invoke_pipeline' | 'activate_workflow'
+export type StepType = 'exec' | 'prompt' | 'mcp' | 'invoke_pipeline'
 
 export interface PipelineStep {
   id: string

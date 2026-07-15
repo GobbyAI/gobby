@@ -587,7 +587,6 @@ class PipelineStep(BaseModel):
     prompt: str | None = None  # LLM prompt template
     invoke_pipeline: str | dict[str, Any] | None = None  # Name of pipeline to invoke
     mcp: MCPStepConfig | None = None  # Call MCP tool directly
-    activate_workflow: dict[str, Any] | None = None  # Activate workflow on session
     wait: dict[str, Any] | None = None  # Block until completion event fires
 
     # Optional fields
@@ -596,6 +595,14 @@ class PipelineStep(BaseModel):
     tools: list[str] = Field(default_factory=list)  # Tool restrictions for prompt steps
     input: str | None = None  # Explicit input reference (e.g., $prev_step.output)
 
+    @model_validator(mode="before")
+    @classmethod
+    def reject_activate_workflow(cls, data: Any) -> Any:
+        """Reject the removed pipeline-only workflow activation step."""
+        if isinstance(data, dict) and "activate_workflow" in data:
+            raise ValueError("activate_workflow is not a supported pipeline step type")
+        return data
+
     def model_post_init(self, __context: Any) -> None:
         """Validate that exactly one execution type is specified."""
         exec_types = [
@@ -603,7 +610,6 @@ class PipelineStep(BaseModel):
             self.prompt,
             self.invoke_pipeline,
             self.mcp,
-            self.activate_workflow,
             self.wait,
         ]
         specified = [t for t in exec_types if t is not None]
@@ -611,12 +617,12 @@ class PipelineStep(BaseModel):
         if len(specified) == 0:
             raise ValueError(
                 "PipelineStep requires at least one execution type: "
-                "exec, prompt, invoke_pipeline, mcp, activate_workflow, or wait"
+                "exec, prompt, invoke_pipeline, mcp, or wait"
             )
         if len(specified) > 1:
             raise ValueError(
-                "PipelineStep exec, prompt, invoke_pipeline, mcp, activate_workflow, "
-                "and wait are mutually exclusive - only one allowed"
+                "PipelineStep exec, prompt, invoke_pipeline, mcp, and wait are mutually "
+                "exclusive - only one allowed"
             )
 
 

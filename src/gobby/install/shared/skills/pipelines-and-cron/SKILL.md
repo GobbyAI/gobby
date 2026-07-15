@@ -31,7 +31,7 @@ tests and manifest handling.
 
 A pipeline needs `type: pipeline`, a unique kebab-case name, and at least one
 step. Each step has exactly one execution type: `exec`, `prompt`, `mcp`,
-`invoke_pipeline`, `activate_workflow`, or `wait`.
+`invoke_pipeline`, or `wait`.
 
 ```yaml
 name: release-check

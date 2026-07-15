@@ -155,54 +155,6 @@ export function InvokePipelineFields({ step, onChange }: StepFieldsProps) {
   )
 }
 
-export function ActivateWorkflowFields({ step, onChange }: StepFieldsProps) {
-  const activateWorkflow = (step.activate_workflow as Record<string, unknown>) ?? {}
-  const vars = (activateWorkflow.variables as Record<string, string>) ?? {}
-
-  const setActivateWorkflowField = (key: string, value: unknown) => {
-    onChange({ activate_workflow: { ...activateWorkflow, [key]: value } })
-  }
-
-  const varPairs: KVPair[] = Object.entries(vars).map(([key, value]) => ({
-    key,
-    value: String(value),
-  }))
-
-  const setVars = (pairs: KVPair[]) => {
-    const obj: Record<string, string> = {}
-    for (const pair of pairs) if (pair.key.trim()) obj[pair.key] = pair.value
-    setActivateWorkflowField('variables', obj)
-  }
-
-  return (
-    <>
-      <label className={FIELD_CLS}>
-        <span className={FIELD_LABEL_CLS}>Workflow Name</span>
-        <input
-          type="text"
-          className={FIELD_INPUT_CLS}
-          value={(activateWorkflow.name as string) ?? ''}
-          onChange={(e) => setActivateWorkflowField('name', e.target.value)}
-        />
-      </label>
-      <label className={FIELD_CLS}>
-        <span className={FIELD_LABEL_CLS}>Session ID</span>
-        <input
-          type="text"
-          className={FIELD_INPUT_CLS}
-          value={(activateWorkflow.session_id as string) ?? ''}
-          onChange={(e) => setActivateWorkflowField('session_id', e.target.value)}
-          placeholder="Optional"
-        />
-      </label>
-      <div className={FIELD_CLS} role="group" aria-label="Variables">
-        <span className={FIELD_LABEL_CLS}>Variables</span>
-        <KeyValueEditor sectionName="Variables" pairs={varPairs} onChange={setVars} />
-      </div>
-    </>
-  )
-}
-
 export function CommonFields({
   step,
   type,

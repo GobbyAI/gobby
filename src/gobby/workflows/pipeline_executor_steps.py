@@ -49,7 +49,6 @@ class PipelineExecutorStepMixin:
                 "prompt",
                 "invoke_pipeline",
                 "mcp",
-                "activate_workflow",
             )
             if getattr(step, f, None)
         ]
@@ -97,8 +96,6 @@ class PipelineExecutorStepMixin:
                         self.tool_proxy_getter,
                         self.session_manager,
                     )
-                elif step.activate_workflow:
-                    raise RuntimeError("activate_workflow pipeline steps are not supported")
                 else:
                     logger.warning(f"Step {step.id} has no action defined")
                     return None
