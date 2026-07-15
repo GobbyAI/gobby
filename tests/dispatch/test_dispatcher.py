@@ -395,6 +395,11 @@ class _RuntimeErrorPipelineLoader:
         raise RuntimeError("loader unavailable")
 
 
+class _DisabledPipelineLoader:
+    async def load_pipeline(self, _name: str, _project_id: str) -> SimpleNamespace:
+        return SimpleNamespace(enabled=False, deprecated=False)
+
+
 async def _wait_for_executor_calls(
     executor: _FakePipelineExecutor,
 ) -> list[dict[str, object]]:
@@ -463,6 +468,52 @@ async def test_stage_pipeline_loader_value_error_escalates() -> None:
     assert escalations == [
         ("7d34e462-6ba3-5a6c-b1c6-1584b855cb83", True, True, "pipeline_invalid:bad pipeline")
     ]
+
+
+@pytest.mark.asyncio
+async def test_stage_pipeline_disabled_definition_escalates() -> None:
+    from gobby.dispatch.stage_pipeline import start_pipeline_action
+
+    action = _pipeline_action("7d34e462-6ba3-5a6c-b1c6-1584b855cb83")
+    mutex = object()
+    db = object()
+    escalations: list[str] = []
+
+    def escalate(
+        _action: StartPipelineAction,
+        _mutex: object,
+        _db: object,
+        reason: str,
+    ) -> dict[str, object]:
+        escalations.append(reason)
+        return {"success": False, "reason": reason}
+
+    def unexpected_sync_call(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("disabled pipeline dispatch should stop before execution")
+
+    async def unexpected_async_call(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("disabled pipeline dispatch should stop before execution")
+
+    result = await start_pipeline_action(
+        action,
+        mutex=mutex,
+        db=db,
+        context=SimpleNamespace(project_id="0e27d5b7-167e-5a64-8bd9-6b980bd88f06"),
+        services=SimpleNamespace(
+            pipeline_executor=SimpleNamespace(loader=_DisabledPipelineLoader())
+        ),
+        field=lambda obj, key, default=None: getattr(obj, key, default),
+        escalate_pipeline_dispatch=escalate,
+        retry_neutral_pipeline_dispatch=unexpected_sync_call,
+        render_dispatch_inputs=unexpected_sync_call,
+        create_stage_pipeline_execution=unexpected_sync_call,
+        execute_pipeline_background=unexpected_async_call,
+        register_background_task=unexpected_sync_call,
+    )
+
+    expected_reason = f"pipeline_disabled:{action.pipeline_name}"
+    assert result == {"success": False, "reason": expected_reason}
+    assert escalations == [expected_reason]
 
 
 @pytest.mark.asyncio
