@@ -14,6 +14,7 @@ import type {
   SessionObservationMeta,
 } from "../../types/chat";
 import type { ContinuationRollbackSnapshot } from "./sessionRecords";
+import type { PreAttachContextUsageSnapshot } from "./contextUsageState";
 import type { PendingProxyMessage } from "./pendingProxyMessages";
 import type {
   ChatError,
@@ -67,7 +68,7 @@ export interface SessionRefs {
   observedSessionMetaRef: MutableRefObject<SessionObservationMeta | null>;
   planContentRef: MutableRefObject<string | null>;
   planToolCallIdRef: MutableRefObject<string | null>;
-  preAttachContextUsageRef: MutableRefObject<ContextUsage | null>;
+  preAttachContextUsageRef: MutableRefObject<PreAttachContextUsageSnapshot | null>;
   sessionInteractionModeRef: MutableRefObject<SessionInteractionMode>;
   sessionRefRef: MutableRefObject<string | null>;
   viewingSessionIdRef: MutableRefObject<string | null>;

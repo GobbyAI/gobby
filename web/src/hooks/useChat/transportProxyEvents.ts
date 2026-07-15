@@ -171,6 +171,9 @@ export function handleDetachFromSessionResult(
       ctx.viewingSessionIdRef.current === sid &&
       ctx.viewingSessionMetaRef.current?.sessionType === "terminal";
     if (!isCurrentObserved && !isCurrentAttached && !isCurrentViewedTerminal) {
+      if (ctx.preAttachContextUsageRef.current?.sessionId === sid) {
+        ctx.preAttachContextUsageRef.current = null;
+      }
       return;
     }
   }
@@ -189,8 +192,9 @@ export function handleDetachFromSessionResult(
   ctx.sessionInteractionModeRef.current = "none";
   // Restore main-chat contextUsage snapshot taken at first attach,
   // so the pie stops showing the observed session's percentages.
-  if (ctx.preAttachContextUsageRef.current !== null) {
-    ctx.setContextUsage(ctx.preAttachContextUsageRef.current);
+  const snapshot = ctx.preAttachContextUsageRef.current;
+  if (snapshot !== null && (!sid || snapshot.sessionId === sid)) {
+    ctx.setContextUsage(snapshot.usage);
     ctx.preAttachContextUsageRef.current = null;
   } else {
     ctx.setContextUsage({

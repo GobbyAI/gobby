@@ -333,9 +333,13 @@ const attachToSession = useCallback(
 
     // Don't reset messages if already viewing this session
     if (viewingSessionIdRef.current !== sessionId) {
-      if (preAttachContextUsageRef.current === null) {
-        preAttachContextUsageRef.current = contextUsage;
-      }
+      preAttachContextUsageRef.current =
+        preAttachContextUsageRef.current !== null && observedSessionId
+          ? {
+              ...preAttachContextUsageRef.current,
+              sessionId,
+            }
+          : { sessionId, usage: contextUsage };
       activeRequestIdRef.current = null;
       setIsStreaming(false);
       setIsThinking(false);

@@ -942,6 +942,86 @@ describe("useChat viewed session state", () => {
     expect(result.current.attachedSessionId).toBeNull();
   });
 
+  it("restores the current usage snapshot after a superseded detach result", async () => {
+    await loadModule();
+    mockFetch.mockJsonResponse(
+      "/api/sessions/sess-view/messages?limit=100&offset=0",
+      { messages: [] },
+    );
+    mockFetch.mockJsonResponse("/api/sessions/sess-view", {
+      session: {
+        id: "sess-view",
+        source: "codex",
+        status: "active",
+        session_type: "terminal",
+        usage_input_tokens: 320,
+        usage_output_tokens: 40,
+        usage_cache_read_tokens: 120,
+        usage_cache_creation_tokens: 50,
+        context_window: 200000,
+      },
+    });
+
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_usage_updated",
+        session_id: "test-conversation-id",
+        usage_input_tokens: 100,
+        context_window: 200000,
+      });
+      result.current.observeSession?.("sess-old", "observe");
+      ws.simulateMessage({
+        type: "attach_to_session_result",
+        session_id: "sess-old",
+        source: "codex",
+        status: "active",
+        session_type: "terminal",
+        usage_input_tokens: 200,
+        context_window: 200000,
+        messages: [],
+        total_count: 0,
+      });
+    });
+
+    await act(async () => {
+      result.current.viewSession("sess-view");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(result.current.contextUsage.totalInputTokens).toBe(320);
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "detach_from_session_result",
+        session_id: "sess-old",
+      });
+      result.current.observeSession?.("sess-next", "observe");
+      ws.simulateMessage({
+        type: "attach_to_session_result",
+        session_id: "sess-next",
+        source: "codex",
+        status: "active",
+        session_type: "terminal",
+        usage_input_tokens: 640,
+        context_window: 200000,
+        messages: [],
+        total_count: 0,
+      });
+      ws.simulateMessage({
+        type: "detach_from_session_result",
+        session_id: "sess-next",
+      });
+    });
+
+    expect(result.current.contextUsage.totalInputTokens).toBe(320);
+  });
+
   it("resets viewed context usage when switching to a zero-usage session", async () => {
     await loadModule();
     mockFetch.mockJsonResponse("/api/sessions/sess-old/messages?limit=100&offset=0", {
