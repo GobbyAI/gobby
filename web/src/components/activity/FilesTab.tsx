@@ -1,5 +1,6 @@
 import { memo, useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from 'react'
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
+import { useDialogFocus } from '../../hooks/useDialogFocus'
 import { useIsMobile } from '../../hooks/useIsMobile'
 import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
 import { CodeBlock } from '../shared/CodeBlock'
@@ -148,11 +149,16 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null)
   const ctxMenuRef = useRef<HTMLDivElement>(null)
   const [renaming, setRenaming] = useState<{ path: string; name: string } | null>(null)
+  const [moving, setMoving] = useState<FileEntry | null>(null)
+  const [movePath, setMovePath] = useState('')
+  const [moveError, setMoveError] = useState<string | null>(null)
   const [gitStatus, setGitStatus] = useState<Record<string, string>>({})
   const renameInputRef = useRef<HTMLInputElement>(null)
+  const moveDialogRef = useRef<HTMLFormElement>(null)
   const childRequestControllers = useRef(new Set<AbortController>())
   const openFileController = useRef<AbortController | null>(null)
   const { confirm, ConfirmDialogElement } = useConfirmDialog()
+  useDialogFocus({ ref: moveDialogRef, isOpen: moving !== null, onClose: () => setMoving(null) })
 
   useEffect(() => () => {
     childRequestControllers.current.forEach((controller) => controller.abort())
@@ -342,22 +348,34 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
   const handleMove = useCallback(async (entry: FileEntry) => {
     closeCtxMenu()
     if (!projectId) return
-    const newPath = window.prompt('Move to path:', entry.path)
-    if (!newPath || newPath === entry.path) return
+    setMoving(entry)
+    setMovePath(entry.path)
+    setMoveError(null)
+  }, [projectId, closeCtxMenu])
+
+  const submitMove = useCallback(async () => {
+    if (!projectId || !moving) return
+    const newPath = movePath.trim()
+    if (!newPath || newPath === moving.path) return
     const baseUrl = getBaseUrl()
     const response = await fetch(`${baseUrl}/api/files/move`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_id: projectId, path: entry.path, new_path: newPath }),
+      body: JSON.stringify({ project_id: projectId, path: moving.path, new_path: newPath }),
     })
     if (!response.ok) {
-      console.error(`Move failed (${response.status}):`, await response.text().catch(() => ''))
+      const detail = await response.text().catch(() => '')
+      console.error(`Move failed (${response.status}):`, detail)
+      setMoveError(detail || `Move failed (${response.status})`)
       return
     }
-    const parentPath = entry.path.includes('/') ? entry.path.substring(0, entry.path.lastIndexOf('/')) : ''
+    const parentPath = moving.path.includes('/') ? moving.path.substring(0, moving.path.lastIndexOf('/')) : ''
+    setMoving(null)
+    setMovePath('')
+    setMoveError(null)
     setChildrenMap((prev) => { const next = new Map(prev); next.delete(parentPath); return next })
     loadChildren(parentPath)
-  }, [projectId, closeCtxMenu, loadChildren])
+  }, [projectId, moving, movePath, loadChildren])
 
   const handleDuplicate = useCallback(async (entry: FileEntry) => {
     closeCtxMenu()
@@ -698,6 +716,55 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
             <button role="menuitem" className="file-ctx-item file-ctx-item--danger" onClick={() => handleDelete(ctxMenu.entry)}>Delete</button>
           </div>
         </>
+      )}
+      {moving && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setMoving(null)
+          }}
+        >
+          <form
+            ref={moveDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="files-move-title"
+            className="w-full max-w-md rounded-lg border border-border bg-background p-4 shadow-xl"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void submitMove()
+            }}
+          >
+            <h2 id="files-move-title" className="mb-3 text-base font-semibold text-foreground">
+              Move {moving.name}
+            </h2>
+            <label className="grid gap-1.5 text-sm text-foreground">
+              Move to path
+              <input
+                autoFocus
+                value={movePath}
+                onChange={(event) => {
+                  setMovePath(event.target.value)
+                  setMoveError(null)
+                }}
+                className="min-h-10 rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              />
+            </label>
+            {moveError && <p className="mt-2 text-sm text-destructive-foreground" role="alert">{moveError}</p>}
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" className="min-h-9 rounded-md border border-border px-3 text-sm" onClick={() => setMoving(null)}>
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="min-h-9 rounded-md bg-accent px-3 text-sm text-accent-foreground disabled:opacity-50"
+                disabled={!movePath.trim() || movePath.trim() === moving.path}
+              >
+                Move file
+              </button>
+            </div>
+          </form>
+        </div>
       )}
       {ConfirmDialogElement}
     </div>

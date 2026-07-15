@@ -316,6 +316,29 @@ describe("Integrations activity tab", () => {
     );
   });
 
+  it("encodes channel names in webhook URLs", async () => {
+    setupFetch([
+      makeChannel({
+        id: "ch-slack",
+        name: "Release alerts/primary",
+        channel_type: "slack",
+        config_json: { channel_id: "C123" },
+      }),
+    ]);
+
+    const user = userEvent.setup();
+    render(<IntegrationsTab />);
+    await user.click(
+      await screen.findByRole("button", { name: "Select Release alerts/primary" }),
+    );
+
+    expect(
+      await screen.findByText(
+        `${window.location.origin}/api/comms/webhooks/Release%20alerts%2Fprimary`,
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("swaps the selected channel detail pane to recent messages", async () => {
     setupFetch(
       [

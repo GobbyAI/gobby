@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -58,7 +58,7 @@ vi.mock('../../../hooks/useConfirmDialog', () => ({
   }),
 }))
 
-const defaultFetchImpl = async (_input?: RequestInfo | URL) =>
+const defaultFetchImpl = async (_input?: RequestInfo | URL, _init?: RequestInit) =>
   new Response(JSON.stringify([]), {
     status: 200,
     headers: { 'Content-Type': 'application/json' },
@@ -362,6 +362,43 @@ describe('FilesTab', () => {
     expect(await screen.findByText('new-name.ts')).toBeInTheDocument()
     expect(screen.queryByText('old-name.ts')).not.toBeInTheDocument()
     expect(rootFetches).toBe(2)
+  })
+
+  it('moves files through an accessible in-app path dialog', async () => {
+    vi.mocked(useIsMobile).mockReturnValue(false)
+    fetchMock.mockImplementation(async (input?: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/files/git-status')) return Response.json({ files: {} })
+      if (url.includes('/api/files/move')) return Response.json({})
+      if (url.endsWith('path=')) {
+        return Response.json([
+          { name: 'move-me.ts', path: 'move-me.ts', is_dir: false, extension: 'ts' },
+        ])
+      }
+      return Response.json([])
+    })
+
+    render(<FilesTab projectId="test-project" />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Actions for move-me.ts' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Move' }))
+
+    const dialog = screen.getByRole('dialog', { name: 'Move move-me.ts' })
+    const input = within(dialog).getByRole('textbox', { name: 'Move to path' })
+    expect(input).toHaveFocus()
+    await userEvent.clear(input)
+    await userEvent.type(input, 'nested/moved.ts')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Move file' }))
+
+    await waitFor(() => {
+      const request = fetchMock.mock.calls.find(([url]) => String(url).includes('/api/files/move'))
+      expect(request).toBeDefined()
+      expect(JSON.parse(String(request?.[1]?.body))).toEqual({
+        project_id: 'test-project',
+        path: 'move-me.ts',
+        new_path: 'nested/moved.ts',
+      })
+    })
+    expect(screen.queryByRole('dialog', { name: 'Move move-me.ts' })).not.toBeInTheDocument()
   })
 
   it('operates tree rows and reaches file actions with the keyboard', async () => {

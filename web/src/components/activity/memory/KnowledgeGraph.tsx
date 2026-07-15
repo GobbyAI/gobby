@@ -81,19 +81,26 @@ function getEntityColorCss(type: string): string {
   return `var(${entityColorVar(type)})`
 }
 
-function hashToHue(str: string): number {
+const EDGE_COLOR_VARS = [
+  '--color-info',
+  '--color-success-foreground',
+  '--color-warning-foreground',
+  '--color-error',
+  '--color-review',
+  '--accent',
+] as const
+
+function hashString(str: string): number {
   let hash = 0
   for (let i = 0; i < str.length; i++) {
     hash = str.charCodeAt(i) + ((hash << 5) - hash)
   }
-  return Math.abs(hash) % 360
+  return Math.abs(hash)
 }
 
 function edgeColor(relType: string): string {
-  // Open-ended relationship types — hashed hue keeps adjacent edges distinguishable
-  // while staying mid-saturation/mid-lightness to harmonize with the design palette.
-  const hue = hashToHue(relType)
-  return `hsl(${hue}, 45%, 50%)`
+  const colorVar = EDGE_COLOR_VARS[hashString(relType) % EDGE_COLOR_VARS.length]
+  return `var(${colorVar})`
 }
 
 function mergeGraphData(
