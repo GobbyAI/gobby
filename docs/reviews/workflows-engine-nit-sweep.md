@@ -28,7 +28,7 @@ The following original findings no longer belong in the active sweep:
 
 ## Current residuals
 
-Each independent residual is owned by an unclaimed implementation leaf under #16909:
+Each independent residual is owned by an unclaimed implementation leaf under #16969:
 
 | Task | Current evidence | Validation focus |
 | --- | --- | --- |
