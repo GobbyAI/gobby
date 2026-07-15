@@ -574,6 +574,24 @@ describe('ChatInput', () => {
     expect(onCancelRecording).toHaveBeenCalledTimes(1)
   })
 
+  it('uses the semantic error token for the recording ring', () => {
+    render(
+      <ChatInput
+        {...defaultProps}
+        sttEnabled={true}
+        voiceInputMode="ptt"
+        isRecording={true}
+        startRecording={vi.fn(async () => {})}
+        stopRecording={vi.fn(async () => {})}
+        cancelRecording={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByLabelText('Push to talk recording')).toHaveClass(
+      'ring-[var(--color-error)]/70',
+    )
+  })
+
   it('enables PTT from the toolbar mic without starting recording', async () => {
     const callOrder: string[] = []
     const startRecording = vi.fn(async () => {})

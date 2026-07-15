@@ -7,7 +7,7 @@ describe('cn', () => {
   })
 
   it('passes through a single class', () => {
-    expect(cn('text-red-500')).toBe('text-red-500')
+    expect(cn('text-green-500')).toBe('text-green-500')
   })
 
   it('merges multiple classes', () => {
@@ -18,9 +18,9 @@ describe('cn', () => {
   })
 
   it('resolves conflicting Tailwind classes (last wins)', () => {
-    const result = cn('text-red-500', 'text-blue-500')
+    const result = cn('text-green-500', 'text-blue-500')
     expect(result).toBe('text-blue-500')
-    expect(result).not.toContain('text-red-500')
+    expect(result).not.toContain('text-green-500')
   })
 
   it('handles conditional classes via clsx', () => {
@@ -32,8 +32,8 @@ describe('cn', () => {
   })
 
   it('handles object syntax', () => {
-    const result = cn({ 'text-red-500': true, 'bg-blue-500': false })
-    expect(result).toBe('text-red-500')
+    const result = cn({ 'text-green-500': true, 'bg-blue-500': false })
+    expect(result).toBe('text-green-500')
   })
 
   it('handles array syntax', () => {
