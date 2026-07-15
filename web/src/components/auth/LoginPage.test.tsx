@@ -4,6 +4,13 @@ import { describe, expect, it, vi } from 'vitest'
 import { LoginPage } from './LoginPage'
 
 describe('LoginPage', () => {
+  it('leaves input outlines available for the global focus indicator', () => {
+    render(<LoginPage credentialsConfigured onLogin={vi.fn()} />)
+
+    expect(screen.getByLabelText('Username').style.outline).toBe('')
+    expect(screen.getByLabelText('Password').style.outline).toBe('')
+  })
+
   it('shows daemon-host setup guidance when credentials are not configured', () => {
     render(<LoginPage credentialsConfigured={false} onLogin={vi.fn()} />)
 

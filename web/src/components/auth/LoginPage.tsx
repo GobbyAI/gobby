@@ -176,7 +176,6 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--bg-primary)',
     color: 'var(--text-primary)',
     fontSize: '0.95rem',
-    outline: 'none',
   },
   checkboxLabel: {
     display: 'flex',
