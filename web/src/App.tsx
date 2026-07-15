@@ -25,9 +25,6 @@ import { ChatPage } from "./components/chat/ChatPage";
 import { LoginPage } from "./components/auth/LoginPage";
 import { ProjectSelector } from "./components/ProjectSelector";
 import { ThemeToggle } from "./components/ThemeToggle";
-import { QuickCaptureTask } from "./components/tasks/QuickCaptureTask";
-import { SlashCommandModal } from "./components/command-browser/SlashCommandModal";
-import { ResumeSessionModal } from "./components/chat/ResumeSessionModal";
 import { Badge } from "./components/chat/ui/Badge";
 import { AppErrorBoundary } from "./components/app/AppErrorBoundary";
 import { GobbyLogo } from "./components/shared/GobbyLogo";
@@ -45,6 +42,21 @@ import { useSettingsOverlay } from "./components/settings/useSettingsOverlay";
 
 const SettingsOverlay = lazy(
   () => import("./components/settings/SettingsOverlay"),
+);
+const QuickCaptureTask = lazy(() =>
+  import("./components/tasks/QuickCaptureTask").then((module) => ({
+    default: module.QuickCaptureTask,
+  })),
+);
+const ResumeSessionModal = lazy(() =>
+  import("./components/chat/ResumeSessionModal").then((module) => ({
+    default: module.ResumeSessionModal,
+  })),
+);
+const SlashCommandModal = lazy(() =>
+  import("./components/command-browser/SlashCommandModal").then((module) => ({
+    default: module.SlashCommandModal,
+  })),
 );
 
 export default function App() {
@@ -672,33 +684,45 @@ export default function App() {
         </Suspense>
       )}
 
-      <QuickCaptureTask
-        isOpen={quickCaptureOpen}
-        onClose={() => setQuickCaptureOpen(false)}
-      />
+      {quickCaptureOpen && (
+        <Suspense fallback={null}>
+          <QuickCaptureTask
+            isOpen
+            onClose={() => setQuickCaptureOpen(false)}
+          />
+        </Suspense>
+      )}
 
-      <ResumeSessionModal
-        isOpen={resumeModalOpen}
-        onClose={() => setResumeModalOpen(false)}
-        sessions={allProjectSessions}
-        onResume={handleContinueInChat}
-      />
+      {resumeModalOpen && (
+        <Suspense fallback={null}>
+          <ResumeSessionModal
+            isOpen
+            onClose={() => setResumeModalOpen(false)}
+            sessions={allProjectSessions}
+            onResume={handleContinueInChat}
+          />
+        </Suspense>
+      )}
 
-      <SlashCommandModal
-        modal={activeModal}
-        onClose={() => setActiveModal(null)}
-        onSendMessage={(content, context) => {
-          sendMessage(
-            content,
-            settings.model,
-            undefined,
-            effectiveProjectId,
-            context,
-            currentMainReasoning,
-            settings.ttsEnabled,
-          );
-        }}
-      />
+      {activeModal && (
+        <Suspense fallback={null}>
+          <SlashCommandModal
+            modal={activeModal}
+            onClose={() => setActiveModal(null)}
+            onSendMessage={(content, context) => {
+              sendMessage(
+                content,
+                settings.model,
+                undefined,
+                effectiveProjectId,
+                context,
+                currentMainReasoning,
+                settings.ttsEnabled,
+              );
+            }}
+          />
+        </Suspense>
+      )}
 
       {visibleToastMessage && (
         <button

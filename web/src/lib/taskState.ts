@@ -95,7 +95,7 @@ export const TASK_STATE_LABELS: Record<TaskDisplayState | StageState5, string> =
 export const TASK_STATE_COLORS: Record<TaskDisplayState, string> = {
   ready: 'var(--color-info)',
   in_progress: 'var(--color-warning-foreground)',
-  needs_review: 'var(--color-info)',
+  needs_review: 'var(--color-review)',
   blocked: 'var(--color-error)',
   review_approved: 'var(--color-review)',
   closed: 'var(--text-muted)',

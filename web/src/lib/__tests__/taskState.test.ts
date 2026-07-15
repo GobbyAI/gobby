@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  TASK_STATE_COLORS,
   countTasksByState,
   getCanonicalTaskState,
   getTaskDisplayState,
@@ -18,6 +19,10 @@ function stage(state: 'ready' | 'in_progress' | 'needs_review' | 'review_approve
 }
 
 describe('taskState helpers', () => {
+  it('uses distinct colors for ready and needs-review states', () => {
+    expect(TASK_STATE_COLORS.ready).not.toBe(TASK_STATE_COLORS.needs_review)
+  })
+
   it('derives ready and in-progress states from ownership and stage rows', () => {
     expect(getTaskDisplayState({ stages: [stage('ready')] })).toBe('ready')
     expect(
