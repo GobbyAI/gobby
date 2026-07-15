@@ -1122,6 +1122,60 @@ class TestStepTransitions:
         assert instance.current_step == "done"
 
     @pytest.mark.asyncio
+    async def test_exit_condition_uses_merged_variables_for_both_aliases(
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
+    ) -> None:
+        workflow = {
+            "name": "merged-exit-vars",
+            "version": "1.0",
+            "enabled": False,
+            "variables": {"handler_var": False, "collision": False},
+            "steps": [
+                {
+                    "name": "waiting",
+                    "allowed_tools": "all",
+                    "on_mcp_success": [
+                        {
+                            "server": "gobby-tasks",
+                            "tool": "get_task",
+                            "action": "set_variable",
+                            "variable": "handler_var",
+                            "value": True,
+                        }
+                    ],
+                    "transitions": [{"to": "done", "when": "vars.handler_var"}],
+                },
+                {"name": "done", "allowed_tools": "all"},
+            ],
+            "exit_condition": (
+                "current_step == 'done' and vars.exit_ready and variables.exit_ready "
+                "and vars.collision == variables.collision"
+            ),
+        }
+        _setup_step_workflow(
+            db, manager, instance_mgr, current_step="waiting", workflow_data=workflow
+        )
+        variables: dict[str, Any] = {"exit_ready": True, "collision": True}
+        event = _make_event(
+            event_type=HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "get_task",
+                },
+            },
+        )
+
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+
+        assert variables["step_workflow_complete"] is True
+
+    @pytest.mark.asyncio
     async def test_send_keys_bypasses_step_allow_list(
         self,
         db: "HubDatabase",

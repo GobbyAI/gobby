@@ -410,10 +410,11 @@ class EnforcementCompletionMixin:
 
                 # Evaluate exit_condition after transition
                 if definition.exit_condition:
+                    merged_vars = {**variables, **instance.variables}
                     exit_ctx = {
                         "current_step": instance.current_step,
-                        "vars": instance.variables,
-                        "variables": variables,
+                        "vars": merged_vars,
+                        "variables": merged_vars,
                     }
                     exit_met = await asyncio.to_thread(
                         self._evaluate_condition,
