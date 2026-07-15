@@ -209,7 +209,7 @@ def add_messaging_tools(
                     logger.warning(f"Failed to write to agent_runs.result: {e}")
 
             # Broadcast agent_message event
-            failed_broadcasts: list[dict[str, Any]] = []
+            failed_ws_broadcasts: list[dict[str, Any]] = []
             if broadcast_fn:
                 for recipient_id in send_result.recipient_session_ids:
                     try:
@@ -229,15 +229,15 @@ def add_messaging_tools(
                             },
                             exc_info=True,
                         )
-                        failed_broadcasts.append(
+                        failed_ws_broadcasts.append(
                             {
                                 "recipient_session_id": recipient_id,
                                 "error": str(e),
                             }
                         )
             payload = send_result.to_dict()
-            payload["failed_broadcasts"] = failed_broadcasts
-            payload["success"] = bool(payload.get("success")) and not failed_broadcasts
+            payload["failed_ws_broadcasts"] = failed_ws_broadcasts
+            payload["success"] = send_result.success
             payload["message"] = msg.to_dict() if msg is not None else None
             return payload
 
