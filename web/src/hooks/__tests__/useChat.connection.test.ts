@@ -128,6 +128,35 @@ describe("useChat connection lifecycle", () => {
     expect(result.current.isStreaming).toBe(false);
   });
 
+  it("clears streaming state after 30 seconds of failed reconnects", async () => {
+    vi.useFakeTimers();
+    try {
+      await loadModule();
+      const { result } = renderHook(() => useChat());
+
+      act(() => mockWs.instances[0].simulateOpen());
+      act(() => result.current.sendMessage("Hello"));
+      act(() => mockWs.instances[0].simulateClose());
+
+      for (let attempt = 0; attempt < 14; attempt += 1) {
+        act(() => vi.advanceTimersByTime(2_000));
+        act(() =>
+          mockWs.instances[mockWs.instances.length - 1]?.simulateClose(),
+        );
+      }
+
+      expect(result.current.isStreaming).toBe(true);
+      expect(result.current.isThinking).toBe(true);
+
+      act(() => vi.advanceTimersByTime(2_000));
+
+      expect(result.current.isStreaming).toBe(false);
+      expect(result.current.isThinking).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not reconnect when a close event races with unmount", async () => {
     vi.useFakeTimers();
     try {
