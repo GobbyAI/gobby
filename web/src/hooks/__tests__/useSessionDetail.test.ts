@@ -639,7 +639,7 @@ describe('useSessionDetail', () => {
     expect(result.current.hasNewer).toBe(false)
   })
 
-  it('ignores an older page made stale by a concurrent live append', async () => {
+  it('prepends an older page after concurrent live appends', async () => {
     await loadModule()
 
     let resolveOlderPage: ((response: Response) => void) | null = null
@@ -696,25 +696,6 @@ describe('useSessionDetail', () => {
         })
       }
 
-      if (url.includes('/api/sessions/sess-cli/messages?limit=50&offset=3&order=tail')) {
-        return new Response(
-          JSON.stringify({
-            messages: [
-              {
-                id: 'sess-msg-1',
-                role: 'assistant',
-                content: 'Older output 1',
-                timestamp: '2026-04-09T00:00:01Z',
-              },
-            ],
-            total_count: 4,
-            rendered_count: 4,
-            returned_count: 1,
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
-      }
-
       return new Response(JSON.stringify({ error: 'no mock route matched' }), {
         status: 404,
         headers: { 'Content-Type': 'application/json' },
@@ -745,6 +726,16 @@ describe('useSessionDetail', () => {
           timestamp: '2026-04-09T00:00:04Z',
         },
       })
+      ws.simulateMessage({
+        type: 'session_message',
+        session_id: 'sess-cli',
+        message: {
+          id: 'sess-msg-5',
+          role: 'assistant',
+          content: 'Tail output 5',
+          timestamp: '2026-04-09T00:00:05Z',
+        },
+      })
     })
 
     await act(async () => {
@@ -770,21 +761,11 @@ describe('useSessionDetail', () => {
     })
 
     expect(result.current.messages.map((message) => message.content)).toEqual([
-      'Tail output 2',
-      'Tail output 3',
-      'Tail output 4',
-    ])
-    expect(result.current.hasMore).toBe(true)
-
-    await act(async () => {
-      await result.current.loadMore()
-    })
-
-    expect(result.current.messages.map((message) => message.content)).toEqual([
       'Older output 1',
       'Tail output 2',
       'Tail output 3',
       'Tail output 4',
+      'Tail output 5',
     ])
     expect(result.current.hasMore).toBe(false)
   })

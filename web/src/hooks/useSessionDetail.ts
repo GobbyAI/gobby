@@ -374,7 +374,6 @@ export function useSessionDetail(sessionId: string | null) {
     if (currentWindow.windowStart <= 0) return
 
     const loadVersion = detailLoadVersionRef.current
-    const windowVersion = tailWindowVersionRef.current
     const requestedOffset = currentWindow.renderedTotal - currentWindow.windowStart
     if (requestedOffset <= 0) return
 
@@ -388,8 +387,7 @@ export function useSessionDetail(sessionId: string | null) {
       )
       if (
         sessionIdRef.current !== activeSessionId ||
-        detailLoadVersionRef.current !== loadVersion ||
-        tailWindowVersionRef.current !== windowVersion
+        detailLoadVersionRef.current !== loadVersion
       ) {
         return
       }
