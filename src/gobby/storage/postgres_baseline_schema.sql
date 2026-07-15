@@ -749,7 +749,7 @@ CREATE INDEX idx_workflow_instances_session ON workflow_instances(session_id);
 CREATE INDEX idx_workflow_instances_enabled ON workflow_instances(session_id, enabled);
 
 CREATE TABLE session_variables (
-    session_id UUID PRIMARY KEY,
+    session_id UUID PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     variables JSONB DEFAULT '{}'::jsonb,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
