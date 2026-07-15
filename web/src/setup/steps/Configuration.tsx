@@ -103,11 +103,16 @@ export function Configuration({ state, setState, onNext }: StepProps): React.Rea
               if (!isNaN(port) && port > 0 && port < 65536) {
                 const newPorts = { ...ports, [field]: port };
                 setPorts(newPorts);
+                setError(null);
 
                 if (editingIdx < FIELD_ORDER.length - 1) {
                   const nextIdx = editingIdx + 1;
                   setEditingIdx(nextIdx);
                   setEditValue(String(newPorts[FIELD_ORDER[nextIdx]]));
+                } else if (new Set(Object.values(newPorts)).size !== FIELD_ORDER.length) {
+                  setError("Ports must be unique.");
+                  setEditingIdx(0);
+                  setEditValue(String(newPorts[FIELD_ORDER[0]]));
                 } else {
                   commit(newPorts);
                 }
@@ -116,6 +121,7 @@ export function Configuration({ state, setState, onNext }: StepProps): React.Rea
           />
         </Box>
         <Text dimColor>  Current: {ports[field]}</Text>
+        {error && <StatusMessage level="error">{error}</StatusMessage>}
       </Box>
     );
   }

@@ -5,6 +5,7 @@ import type { SetupState } from "../../utils/state.js";
 import { Configuration } from "../Configuration.js";
 
 const mocks = vi.hoisted(() => ({
+  patchPorts: vi.fn(),
   runGobby: vi.fn(),
   saveState: vi.fn(),
 }));
@@ -32,14 +33,33 @@ vi.mock("ink-select-input", () => ({
   ),
 }));
 
-vi.mock("ink-text-input", () => ({ default: () => <input /> }));
-vi.mock("../../utils/config.js", () => ({ patchPorts: vi.fn() }));
+vi.mock("ink-text-input", () => ({
+  default: ({
+    value,
+    onChange,
+    onSubmit,
+  }: {
+    value: string;
+    onChange: (value: string) => void;
+    onSubmit: (value: string) => void;
+  }) => (
+    <input
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") onSubmit(value);
+      }}
+    />
+  ),
+}));
+vi.mock("../../utils/config.js", () => ({ patchPorts: mocks.patchPorts }));
 vi.mock("../../utils/gobby.js", () => ({ runGobby: mocks.runGobby }));
 vi.mock("../../utils/state.js", () => ({ saveState: mocks.saveState }));
 
 function createState(): SetupState {
   return {
     ports: { http: 60887, ws: 60888, ui: 60889 },
+    firewall_configured: false,
     completed_step_id: null,
   } as unknown as SetupState;
 }
@@ -58,6 +78,7 @@ function renderConfiguration() {
 describe("Configuration", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    mocks.patchPorts.mockReset();
     mocks.runGobby.mockReset();
     mocks.saveState.mockReset();
   });
@@ -73,6 +94,7 @@ describe("Configuration", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "No, use defaults" }));
 
+    expect(mocks.patchPorts).toHaveBeenCalledWith(60887, 60888, 60889, false);
     expect(mocks.runGobby).toHaveBeenCalledWith(["install", "--config-only"], {
       timeout: 30000,
     });
@@ -111,6 +133,24 @@ describe("Configuration", () => {
     expect(screen.getByText(/failed or timed out/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Exit setup" })).toBeTruthy();
+    expect(view.setState).not.toHaveBeenCalled();
+  });
+
+  it("rejects duplicate custom ports with a visible error", () => {
+    mocks.runGobby.mockReturnValue({ success: true, output: "" });
+    const view = renderConfiguration();
+
+    fireEvent.click(screen.getByRole("button", { name: "Yes, customize" }));
+
+    const input = screen.getByRole("textbox");
+    for (const value of ["62000", "62000", "62001"]) {
+      fireEvent.change(input, { target: { value } });
+      fireEvent.keyDown(input, { key: "Enter" });
+    }
+
+    expect(screen.getByText(/ports must be unique/i)).toBeTruthy();
+    expect(mocks.patchPorts).not.toHaveBeenCalled();
+    expect(mocks.runGobby).not.toHaveBeenCalled();
     expect(view.setState).not.toHaveBeenCalled();
   });
 });
