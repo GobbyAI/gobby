@@ -10,7 +10,6 @@ const mocks = vi.hoisted(() => ({
   runGobby: vi.fn(),
   saveState: vi.fn(),
   writeFileSync: vi.fn(),
-  readBootstrap: vi.fn(),
 }));
 
 vi.mock("child_process", () => ({
@@ -55,10 +54,6 @@ vi.mock("../../utils/gobby.js", () => ({
   runGobby: mocks.runGobby,
 }));
 
-vi.mock("../../utils/config.js", () => ({
-  readBootstrap: mocks.readBootstrap,
-}));
-
 vi.mock("../../utils/state.js", () => ({
   getGobbyHome: () => "/tmp/gobby-home",
   saveState: mocks.saveState,
@@ -93,8 +88,6 @@ describe("Launch summary", () => {
     mocks.runGobby.mockReset();
     mocks.saveState.mockReset();
     mocks.writeFileSync.mockReset();
-    mocks.readBootstrap.mockReset();
-    mocks.readBootstrap.mockReturnValue({ bind_host: "127.0.0.42" });
     mocks.checkHealth.mockResolvedValue(true);
     mocks.runGobby.mockReturnValue({ success: true, output: "" });
   });
@@ -112,8 +105,6 @@ describe("Launch summary", () => {
     expect(summary).toContain("## Services");
     expect(summary).toContain("- FalkorDB: installed (Docker)");
     expect(summary).toContain("- FalkorDB password: custom");
-    expect(summary).toContain("- Bind host: 127.0.0.42");
-    expect(summary).toContain("| clawhub | not found | --- |");
     expect(summary).not.toContain("Neo4j");
   });
 

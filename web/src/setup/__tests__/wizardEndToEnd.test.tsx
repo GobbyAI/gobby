@@ -106,7 +106,7 @@ vi.mock("ink-text-input", () => ({
 
 vi.mock("../utils/config.js", () => ({
   patchPorts: mocks.patchPorts,
-  readBootstrap: () => ({ bind_host: "127.0.0.1" }),
+  readBootstrap: () => ({}),
 }));
 
 vi.mock("../utils/detect.js", () => ({
@@ -316,7 +316,7 @@ describe("setup wizard end-to-end", () => {
     await waitFor(() =>
       expect(screen.getByText(/Install FalkorDB knowledge graph/i)).toBeTruthy(),
     );
-    await click(/Yes, with custom password/i);
+    await submit("p");
     await waitFor(() => expect(screen.getByText(/Enter FalkorDB password/i)).toBeTruthy());
     await submit("ValidPassword123!");
     await flush(300);

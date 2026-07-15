@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Text, Box } from "ink";
 import Spinner from "ink-spinner";
-import SelectInput from "ink-select-input";
 import TextInput from "ink-text-input";
 import SelectInput from "ink-select-input";
 import { runGobby } from "../utils/gobby.js";
@@ -130,17 +129,22 @@ export function Services({ state: _state, setState, onNext }: StepProps): React.
           {"  "}FalkorDB enables relationship-based memory search across sessions.
         </Text>
         <Text> </Text>
+        <Text>
+          {"  "}
+          <Text bold>[y]</Text> Yes, install{"  "}
+          <Text bold>[n]</Text> No, skip{"  "}
+          <Text bold>[p]</Text> Yes, with custom password
+        </Text>
         <Box marginTop={1}>
-          <SelectInput
-            items={[
-              { label: "Yes, install", value: "install" },
-              { label: "No, skip", value: "skip" },
-              { label: "Yes, with custom password", value: "password" },
-            ]}
-            onSelect={(item) => {
-              if (item.value === "install") {
+          <Text dimColor>{"  "}</Text>
+          <TextInput
+            value=""
+            onChange={() => {}}
+            onSubmit={(val) => {
+              const choice = val.trim().toLowerCase();
+              if (choice === "y" || choice === "yes") {
                 install();
-              } else if (item.value === "password") {
+              } else if (choice === "p" || choice === "password") {
                 setPasswordError(null);
                 setPhase("password");
               } else {

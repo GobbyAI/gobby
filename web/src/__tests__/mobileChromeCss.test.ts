@@ -290,7 +290,7 @@ describe('mobile chrome CSS', () => {
     expectClassToken(appSource, 'app-brand-title')
     expectClassToken(appSource, 'app-header-actions')
     expectClassToken(appSource, 'app-health-badge')
-    expect(projectSelectorSource).not.toContain('coarseTouchTarget={false}')
+    expect(projectSelectorSource).toContain('coarseTouchTarget={false}')
 
     expectDeclarations(
       shellCss,

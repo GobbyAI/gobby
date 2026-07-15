@@ -25,6 +25,16 @@ export function writeBootstrap(data: Record<string, unknown>): void {
   writeFileSync(bootstrapPath(), stringify(data), { mode: 0o600 });
 }
 
+/** @deprecated Use readBootstrap() instead */
+export function readConfig(): Record<string, unknown> {
+  return readBootstrap();
+}
+
+/** @deprecated Use writeBootstrap() instead */
+export function writeConfig(data: Record<string, unknown>): void {
+  writeBootstrap(data);
+}
+
 export function patchPorts(
   httpPort: number,
   wsPort: number,

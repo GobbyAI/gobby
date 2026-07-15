@@ -38,6 +38,11 @@ class MockXMLHttpRequest {
   }
 }
 
+async function waitForUpload(): Promise<MockXMLHttpRequest> {
+  await waitFor(() => expect(MockXMLHttpRequest.instances.length).toBeGreaterThan(0))
+  return MockXMLHttpRequest.instances[0]
+}
+
 describe('ChatInput attachments', () => {
   const originalXHR = globalThis.XMLHttpRequest
   const originalFileReader = globalThis.FileReader
@@ -49,7 +54,14 @@ describe('ChatInput attachments', () => {
     vi.spyOn(crypto, 'randomUUID').mockReturnValue(
       '00000000-0000-4000-8000-000000000001',
     )
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 200 })))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(async (input: RequestInfo | URL) =>
+        String(input).includes('/api/chat/attachments/limits')
+          ? Response.json({ max_file_bytes: 10 * 1024 * 1024 })
+          : new Response(null, { status: 200 }),
+      ),
+    )
   })
 
   afterEach(() => {
@@ -97,7 +109,7 @@ describe('ChatInput attachments', () => {
       'pointer-coarse:w-11',
     )
 
-    const xhr = MockXMLHttpRequest.instances[0]
+    const xhr = await waitForUpload()
     expect(xhr.requestBody).toBeInstanceOf(FormData)
     expect((xhr.requestBody as FormData).get('project_id')).toBe('proj-1')
     expect(readAsDataURL).not.toHaveBeenCalled()
@@ -139,7 +151,7 @@ describe('ChatInput attachments', () => {
     fireEvent.click(sendButton)
     expect(onSend).not.toHaveBeenCalled()
 
-    MockXMLHttpRequest.instances[0].respond({
+    ;(await waitForUpload()).respond({
       id: 'att-1',
       project_id: 'proj-1',
       filename: 'note.txt',
@@ -158,7 +170,7 @@ describe('ChatInput attachments', () => {
     const file = new File(['hello'], 'note.txt', { type: 'text/plain' })
 
     fireEvent.change(input, { target: { files: [file] } })
-    MockXMLHttpRequest.instances[0].respond({
+    ;(await waitForUpload()).respond({
       id: 'att-1',
       project_id: 'proj-1',
       filename: 'note.txt',
@@ -186,7 +198,7 @@ describe('ChatInput attachments', () => {
     const file = new File(['hello'], 'note.txt', { type: 'text/plain' })
 
     fireEvent.change(input, { target: { files: [file] } })
-    MockXMLHttpRequest.instances[0].respond({
+    ;(await waitForUpload()).respond({
       id: 'att-1',
       project_id: 'proj-1',
       filename: 'note.txt',
@@ -212,7 +224,7 @@ describe('ChatInput attachments', () => {
     const file = new File(['hello'], 'note.txt', { type: 'text/plain' })
 
     fireEvent.change(input, { target: { files: [file] } })
-    const xhr = MockXMLHttpRequest.instances[0]
+    const xhr = await waitForUpload()
     const abortSpy = vi.spyOn(xhr, 'abort')
 
     rerender(<ChatInput onSend={onSend} projectId="proj-1" attachmentsDisabled />)

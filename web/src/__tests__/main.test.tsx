@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppErrorBoundary } from "../components/app/AppErrorBoundary";
@@ -23,8 +24,10 @@ describe("application root", () => {
 
     expect(renderRoot).toHaveBeenCalledOnce();
     const rootElement = renderRoot.mock.calls[0][0];
-    expect(rootElement.type).toBe(AppErrorBoundary);
-    expect(rootElement.props.activeTab).toBe("application");
-    expect(rootElement.props.children).toBeTruthy();
+    expect(rootElement.type).toBe(StrictMode);
+    const boundary = rootElement.props.children;
+    expect(boundary.type).toBe(AppErrorBoundary);
+    expect(boundary.props.activeTab).toBe("application");
+    expect(boundary.props.children).toBeTruthy();
   });
 });

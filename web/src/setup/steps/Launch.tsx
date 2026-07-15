@@ -7,10 +7,10 @@ import { writeFileSync } from "fs";
 import { join } from "path";
 import { homedir, hostname, platform, arch, release, userInfo } from "os";
 import { runGobby, checkHealth } from "../utils/gobby.js";
+import { readBootstrap } from "../utils/config.js";
 import { getGobbyHome } from "../utils/state.js";
 import { StatusMessage } from "../components/StatusMessage.js";
 import { saveState } from "../utils/state.js";
-import { readBootstrap } from "../utils/config.js";
 import type { StepProps } from "../types.js";
 
 export function Launch({ state, setState, onNext: _onNext }: StepProps): React.ReactElement {
@@ -157,6 +157,7 @@ function writeInitialSetupMd(state: typeof import("../utils/state.js").loadState
   const versions = state.tool_versions;
   const detected = state.detected_tools;
   const installed = state.installed_clis;
+
   const configuredBindHost = readBootstrap().bind_host;
   const bindHost = typeof configuredBindHost === "string" ? configuredBindHost : "127.0.0.1";
 

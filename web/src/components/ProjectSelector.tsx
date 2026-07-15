@@ -263,6 +263,7 @@ export function ProjectSelector({
           ariaLabel="Project scope"
           size="md"
           disabled={disabled}
+          coarseTouchTarget={false}
           className="project-selector-segmented"
         />
       </div>
