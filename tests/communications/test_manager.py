@@ -19,6 +19,7 @@ from gobby.communications.manager import CommunicationsManager
 from gobby.communications.models import ChannelConfig, CommsIdentity, CommsMessage
 from gobby.communications.rate_limiter import RateLimitWaitExceeded
 from gobby.config.communications import ChannelDefaults, CommunicationsConfig
+from gobby.storage.communications import LocalCommunicationsStore
 from gobby.storage.secrets import SecretStore
 
 
@@ -113,9 +114,9 @@ async def test_start_loads_channels():
 
     assert "test-channel" in manager._adapters
     mock_adapter.initialize.assert_called_once()
-    # start() calls list_channels twice: once for _ensure_gobby_chat_channel (enabled_only=False)
-    # and once for loading active channels (enabled_only=True)
-    assert store.list_channels.call_count == 2
+    # start() lists all channels for secret migration and gobby_chat creation,
+    # then loads enabled channels for activation.
+    assert store.list_channels.call_count == 3
     store.list_channels.assert_any_call(enabled_only=False)
     store.list_channels.assert_any_call(enabled_only=True)
 
@@ -549,7 +550,9 @@ async def test_handle_inbound_webhook_verification_failure():
     """handle_inbound() raises ValueError if webhook signature fails."""
     channel = make_channel(webhook_secret="mysecret")
     store = make_store([channel])
-    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    secret_store = make_secret_store()
+    secret_store.get.return_value = "mysecret"
+    manager = CommunicationsManager(make_config(), store, secret_store, MagicMock())
 
     mock_adapter = make_adapter()
     mock_adapter.verify_webhook.return_value = False
@@ -858,6 +861,74 @@ async def test_add_channel_stores_secrets_in_secret_store():
     assert "webhook_secret" not in created_channel.config_json
     assert created_channel.webhook_secret == "$secret:COMMS_SLACK_WEBHOOK_SECRET_MY_SLACK"
     assert secret_store.set.call_args_list[-1].kwargs["plaintext_value"] == "whsec_keep_separate"
+
+
+async def test_add_channel_persists_webhook_secret_reference(temp_db, mock_machine_id: str):
+    """New channel rows contain a SecretStore reference instead of plaintext."""
+    assert mock_machine_id
+    store = LocalCommunicationsStore(temp_db)
+    secret_store = SecretStore(temp_db)
+    manager = CommunicationsManager(make_config(), store, secret_store, MagicMock())
+    mock_adapter = make_adapter(channel_type="slack")
+
+    with patch(
+        "gobby.communications.manager.get_adapter_class",
+        return_value=MagicMock(return_value=mock_adapter),
+    ):
+        channel = await manager.add_channel(
+            "slack",
+            "db-backed-slack",
+            {},
+            secrets={"webhook_secret": "plaintext-webhook-secret"},
+        )
+
+    stored = store.get_channel(channel.id)
+    assert stored is not None
+    assert stored.webhook_secret == "$secret:COMMS_SLACK_WEBHOOK_SECRET_DB_BACKED_SLACK"
+    assert (
+        secret_store.get("COMMS_SLACK_WEBHOOK_SECRET_DB_BACKED_SLACK") == "plaintext-webhook-secret"
+    )
+
+
+async def test_start_migrates_plaintext_webhook_secret_before_verification(
+    temp_db, mock_machine_id: str
+):
+    """Legacy plaintext rows are migrated and resolved for webhook verification."""
+    assert mock_machine_id
+    store = LocalCommunicationsStore(temp_db)
+    legacy = make_channel(
+        name="legacy-slack",
+        channel_type="slack",
+        channel_id="11111111-1111-4111-8111-111111111111",
+        webhook_secret="legacy-plaintext-secret",
+    )
+    store.create_channel(legacy)
+    secret_store = SecretStore(temp_db)
+    manager = CommunicationsManager(make_config(), store, secret_store, MagicMock())
+    mock_adapter = make_adapter(channel_type="slack")
+    mock_adapter.verify_webhook.side_effect = (
+        lambda _payload, _headers, secret: secret == "legacy-plaintext-secret"
+    )
+
+    def adapter_class(channel_type: str):
+        if channel_type == "slack":
+            return MagicMock(return_value=mock_adapter)
+        return None
+
+    with patch("gobby.communications.manager.get_adapter_class", side_effect=adapter_class):
+        await manager.start()
+
+    stored = store.get_channel(legacy.id)
+    assert stored is not None
+    assert stored.webhook_secret == "$secret:COMMS_SLACK_WEBHOOK_SECRET_LEGACY_SLACK"
+    assert secret_store.get("COMMS_SLACK_WEBHOOK_SECRET_LEGACY_SLACK") == "legacy-plaintext-secret"
+
+    messages = await manager.handle_inbound("legacy-slack", b"payload", {"X-Signature": "ok"})
+
+    assert messages == []
+    mock_adapter.verify_webhook.assert_called_once_with(
+        b"payload", {"X-Signature": "ok"}, "legacy-plaintext-secret"
+    )
 
 
 @pytest.mark.asyncio
