@@ -575,7 +575,11 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
             return self._agent_def_cache[cache_key]
 
         agent: AgentDefinitionBody | None = None
-        row = self.definition_manager.get_by_name(agent_type, project_id=project_id)
+        row = self.definition_manager.get_by_name(
+            agent_type,
+            project_id=project_id,
+            workflow_type="agent",
+        )
         if row is not None and row.workflow_type == "agent" and row.definition_json:
             try:
                 data = json.loads(row.definition_json)

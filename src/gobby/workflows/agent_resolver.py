@@ -40,7 +40,7 @@ def resolve_agent(
     """
     manager = LocalWorkflowDefinitionManager(db)
 
-    row = manager.get_by_name(name, project_id=project_id)
+    row = manager.get_by_name(name, project_id=project_id, workflow_type="agent")
     if not row or row.workflow_type != "agent" or not row.definition_json:
         if name == "default":
             return AgentDefinitionBody(name="default", mode="inherit")

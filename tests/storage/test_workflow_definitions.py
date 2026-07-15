@@ -275,6 +275,35 @@ def test_get_by_name_fallback_to_global(
     assert result.project_id is None
 
 
+def test_get_by_name_filters_type_before_project_fallback(
+    db: HubDatabase, manager: LocalWorkflowDefinitionManager
+) -> None:
+    db.execute(
+        "INSERT INTO projects (id, name, created_at, updated_at) "
+        "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        (PROJECT_ID, "Test Project"),
+    )
+    manager.create(
+        name="shared-name",
+        definition_json=SAMPLE_DEFINITION,
+        workflow_type="agent",
+        description="global agent",
+    )
+    manager.create(
+        name="shared-name",
+        definition_json=SAMPLE_DEFINITION,
+        workflow_type="rule",
+        project_id=PROJECT_ID,
+        description="project rule",
+    )
+
+    result = manager.get_by_name("shared-name", project_id=PROJECT_ID, workflow_type="agent")
+
+    assert result is not None
+    assert result.workflow_type == "agent"
+    assert result.description == "global agent"
+
+
 def test_get_by_name_not_found(manager: LocalWorkflowDefinitionManager) -> None:
     """Test get_by_name returns None when not found."""
     result = manager.get_by_name("nonexistent")

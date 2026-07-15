@@ -9,6 +9,7 @@ import pytest
 
 from gobby.agents.sync import sync_bundled_agents
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.agent_resolver import resolve_agent
 from gobby.workflows.definitions import AgentDefinitionBody
@@ -96,6 +97,30 @@ class TestResolveAgentLookup:
         )
         result = resolve_agent("my-rule", db)
         assert result is None
+
+    def test_project_rule_does_not_shadow_global_agent(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        project = LocalProjectManager(db).create(name="agent-collision", repo_path="/tmp/collision")
+        manager.create(
+            name="shared-name",
+            workflow_type="agent",
+            definition_json=json.dumps({"name": "shared-name", "provider": "codex"}),
+            source="test",
+        )
+        manager.create(
+            name="shared-name",
+            workflow_type="rule",
+            definition_json=json.dumps({"event": "before_tool", "effects": []}),
+            project_id=project.id,
+            source="test",
+        )
+
+        result = resolve_agent("shared-name", db, project_id=project.id)
+
+        assert result is not None
+        assert result.name == "shared-name"
+        assert result.provider == "codex"
 
     def test_invalid_agent_definition_logs_warning_with_traceback(
         self,

@@ -2845,6 +2845,29 @@ class TestLiveActiveRuleSelection:
         assert second_variables.get("new_matched") is True
         assert second_variables.get("old_matched") is None
 
+    def test_project_rule_does_not_cache_missing_global_agent(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        project = LocalProjectManager(db).create(name="agent-collision", repo_path="/tmp/collision")
+        _insert_agent(manager, "shared-name", include=["tag:shared"])
+        manager.create(
+            name="shared-name",
+            workflow_type="rule",
+            definition_json=RuleDefinitionBody(
+                event=RuleTriggerEvent.BEFORE_TOOL,
+                effects=[RuleEffect(type="set_variable", variable="matched", value=True)],
+            ).model_dump_json(),
+            project_id=project.id,
+            source="test",
+        )
+        engine = RuleEngine(db)
+
+        first = engine._load_active_agent_definition("shared-name", project_id=project.id)
+        second = engine._load_active_agent_definition("shared-name", project_id=project.id)
+
+        assert first is not None
+        assert second is first
+
     @pytest.mark.asyncio
     async def test_active_rule_names_remain_fallback_when_agent_cannot_resolve(
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
