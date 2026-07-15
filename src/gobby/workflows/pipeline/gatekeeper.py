@@ -225,4 +225,9 @@ class ApprovalManager:
         if not execution:
             raise ValueError(f"Execution {step.execution_id} not found")
 
+        await self._run_db(
+            self.execution_manager.close_pipeline_child_session,
+            execution.id,
+        )
+
         return execution

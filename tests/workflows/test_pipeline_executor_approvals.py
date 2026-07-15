@@ -12,6 +12,7 @@ import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
+from gobby.storage.sessions import SessionManager
 from gobby.workflows.definitions import (
     PipelineDefinition,
     PipelineStep,
@@ -356,25 +357,26 @@ class TestApprovalGateHandling:
         pipeline_with_approval.webhooks = WebhookConfig(
             on_approval_pending=WebhookEndpoint(url="https://example.com/approval")
         )
+        notifier = WebhookNotifier(base_url="http://127.0.0.1:7778")
+        send_webhook = AsyncMock(return_value=MagicMock(success=True))
+        notifier.executor.execute = send_webhook
         executor = PipelineExecutor(
             db=mock_db,
             execution_manager=mock_execution_manager,
             llm_service=mock_llm_service,
-            webhook_notifier=WebhookNotifier(base_url="http://127.0.0.1:7778"),
+            webhook_notifier=notifier,
         )
-        response = MagicMock(status_code=200)
 
-        with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)) as post:
-            with pytest.raises(ApprovalRequired):
-                await executor.execute(
-                    pipeline=pipeline_with_approval,
-                    inputs={},
-                    project_id="proj-123",
-                )
+        with pytest.raises(ApprovalRequired):
+            await executor.execute(
+                pipeline=pipeline_with_approval,
+                inputs={},
+                project_id="proj-123",
+            )
 
-        post.assert_awaited_once()
-        assert post.call_args.kwargs["url"] == "https://example.com/approval"
-        assert post.call_args.kwargs["json"]["step_id"] == "deploy"
+        send_webhook.assert_awaited_once()
+        assert send_webhook.await_args.kwargs["url"] == "https://example.com/approval"
+        assert send_webhook.await_args.kwargs["payload"]["step_id"] == "deploy"
 
 
 class TestApproveMethod:
@@ -908,6 +910,37 @@ class TestApprovalReplayIntegration:
         assert execution.status == ExecutionStatus.COMPLETED
         assert step.status == StepStatus.PENDING
         assert step.approval_token is None
+
+    async def test_reject_closes_pipeline_child_session_once(
+        self,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        token = "reject-closes-child"
+        manager, execution_id = _create_waiting_approval(temp_db, token)
+        sessions = SessionManager(temp_db)
+        caller = sessions.register(
+            external_id="reject-caller",
+            machine_id="test-machine",
+            source="codex",
+            project_id=_REPLAY_PROJECT_ID,
+        )
+        child = sessions.register(
+            external_id=f"pipeline-{execution_id}",
+            machine_id="pipeline",
+            source="pipeline",
+            project_id=_REPLAY_PROJECT_ID,
+            parent_session_id=caller.id,
+        )
+        update_status = MagicMock(wraps=manager._session_manager.update_status)
+        monkeypatch.setattr(manager._session_manager, "update_status", update_status)
+
+        assert sessions.get(child.id).status == "active"
+        await ApprovalManager(manager).reject_step(token, rejected_by="reviewer")
+
+        update_status.assert_called_once_with(child.id, "deleted")
+        assert sessions.get(child.id).status == "deleted"
+        assert sessions.get(caller.id).status == "active"
 
     async def test_approve_after_reject_cannot_rewrite_rejected_step(
         self,

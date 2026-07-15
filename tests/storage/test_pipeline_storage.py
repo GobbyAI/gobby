@@ -13,6 +13,7 @@ import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
+from gobby.storage.sessions import SessionManager
 from gobby.workflows.pipeline_state import (
     ExecutionStatus,
     PipelineExecution,
@@ -989,6 +990,44 @@ class TestApprovalTimeout:
         assert expired_step.error == "Approval timed out"
         assert expired_execution is not None
         assert expired_execution.status == ExecutionStatus.CANCELLED
+
+    def test_expiry_closes_pipeline_child_session_once(
+        self,
+        manager: LocalPipelineExecutionManager,
+        db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        execution = manager.create_execution(pipeline_name="timeout-pipeline")
+        manager.update_execution_status(execution.id, ExecutionStatus.WAITING_APPROVAL)
+        step = manager.create_step_execution(execution.id, "approval-step")
+        manager.update_step_execution(step.id, status=StepStatus.WAITING_APPROVAL)
+
+        sessions = SessionManager(db)
+        caller = sessions.register(
+            external_id="timeout-caller",
+            machine_id="test-machine",
+            source="codex",
+            project_id=PROJECT_ID,
+        )
+        child = sessions.register(
+            external_id=f"pipeline-{execution.id}",
+            machine_id="pipeline",
+            source="pipeline",
+            project_id=PROJECT_ID,
+            parent_session_id=caller.id,
+        )
+        update_status = MagicMock(wraps=manager._session_manager.update_status)
+        monkeypatch.setattr(manager._session_manager, "update_status", update_status)
+
+        assert sessions.get(child.id).status == "active"
+        manager.expire_approval_timeout(
+            step_execution_id=step.id,
+            execution_id=execution.id,
+        )
+
+        update_status.assert_called_once_with(child.id, "deleted")
+        assert sessions.get(child.id).status == "deleted"
+        assert sessions.get(caller.id).status == "active"
 
     def test_get_expired_approval_steps(
         self, manager: LocalPipelineExecutionManager, db: HubDatabase

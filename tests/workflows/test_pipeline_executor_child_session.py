@@ -7,8 +7,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from gobby.workflows.definitions import MCPStepConfig, PipelineDefinition, PipelineStep
-from gobby.workflows.pipeline_state import ExecutionStatus
+from gobby.workflows.definitions import (
+    MCPStepConfig,
+    PipelineApproval,
+    PipelineDefinition,
+    PipelineStep,
+)
+from gobby.workflows.pipeline_state import ApprovalRequired, ExecutionStatus
 
 pytestmark = pytest.mark.unit
 
@@ -54,6 +59,59 @@ class TestPipelineChildSession:
         assert call_kwargs["title"] == "pipeline:test-pipeline"
         assert call_kwargs["agent_depth"] == 0
         assert mock_session_manager.register in [call.args[0] for call in run_db.await_args_list]
+
+    async def test_approval_gate_keeps_child_session_active(
+        self,
+        temp_db,
+        mock_llm_service,
+    ) -> None:
+        from gobby.storage.pipelines import LocalPipelineExecutionManager
+        from gobby.storage.projects import LocalProjectManager
+        from gobby.storage.sessions import SessionManager
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        project = LocalProjectManager(temp_db).create("pipeline-approval-child")
+        execution_manager = LocalPipelineExecutionManager(temp_db, project_id=project.id)
+        session_manager = SessionManager(temp_db)
+        caller = session_manager.register(
+            external_id="approval-caller",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project.id,
+        )
+        pipeline = PipelineDefinition(
+            name="approval-child-test",
+            steps=[
+                PipelineStep(
+                    id="gate",
+                    exec="echo gated",
+                    approval=PipelineApproval(required=True),
+                ),
+            ],
+        )
+        executor = PipelineExecutor(
+            db=temp_db,
+            execution_manager=execution_manager,
+            llm_service=mock_llm_service,
+            session_manager=session_manager,
+        )
+
+        with pytest.raises(ApprovalRequired):
+            await executor.execute(
+                pipeline=pipeline,
+                inputs={},
+                project_id=project.id,
+                session_id=caller.id,
+            )
+
+        execution = execution_manager.list_executions(limit=1)[0]
+        child = session_manager.find_active_by_external_id(
+            f"pipeline-{execution.id}",
+            "pipeline",
+        )
+        assert child is not None
+        assert child.parent_session_id == caller.id
+        assert session_manager.get(caller.id).status == "active"
 
     @pytest.mark.asyncio
     async def test_context_session_id_is_child(
