@@ -50,8 +50,8 @@ class Worktree:
     status: str
     created_at: datetime
     updated_at: datetime
-    last_activity_at: datetime | None
-    merged_at: datetime | None
+    last_activity_at: datetime | None = None
+    merged_at: datetime | None = None
     merge_state: str | None = None  # "pending", "resolved", or None
     cleanup_after: datetime | None = None  # ISO timestamp for auto-cleanup after merge
     workspace_role: str = "task"

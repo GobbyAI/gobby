@@ -39,6 +39,7 @@ def _run(
     status: str = "success",
     tool_calls_count: int = 0,
     turns_used: int = 0,
+    reused_worktree: bool = False,
 ) -> AgentRun:
     return AgentRun(
         id="run-1",
@@ -53,6 +54,9 @@ def _run(
         worktree_id="wt-1",
         tool_calls_count=tool_calls_count,
         turns_used=turns_used,
+        resume_metadata_json={"initial_variables": {"reused_worktree": True}}
+        if reused_worktree
+        else None,
     )
 
 
@@ -128,6 +132,34 @@ def test_cleanup_merged_task_artifacts_runs_for_already_implemented_close() -> N
     cleanup.assert_called_once_with(db, "task-1")
 
 
+def test_cleanup_merged_task_artifacts_preserves_reused_worktree() -> None:
+    db = MagicMock()
+    artifacts = [SimpleNamespace(deleted=False, deferred=True)]
+    task_manager = MagicMock()
+    task_manager.stage_states.get.return_value = SimpleNamespace(state="in_progress")
+    task_manager.get_task.return_value = SimpleNamespace(
+        closed_at="2026-05-20T00:00:00+00:00",
+        closed_reason="already_implemented",
+    )
+
+    with (
+        patch("gobby.storage.tasks.LocalTaskManager", return_value=task_manager),
+        patch(
+            "gobby.build.controls.cleanup_successful_merge_artifacts",
+            return_value=artifacts,
+        ) as cleanup,
+    ):
+        result = cleanup_merged_task_artifacts_after_agent_exit(
+            db,
+            "task-1",
+            preserve_worktree_id="wt-1",
+        )
+
+    assert result == artifacts
+    assert result[0].deferred is True
+    cleanup.assert_called_once_with(db, "task-1", preserve_worktree_ids={"wt-1"})
+
+
 def test_cleanup_merged_task_artifacts_runs_when_merge_stage_done() -> None:
     db = MagicMock()
     artifacts = [SimpleNamespace(deleted=True, deferred=False)]
@@ -175,6 +207,39 @@ async def test_post_terminal_cleanup_retries_merge_artifact_cleanup_for_task_run
     assert db.executed == [
         ("DELETE FROM completion_subscribers WHERE completion_id = %s", ("run-1",))
     ]
+
+
+async def test_post_terminal_cleanup_preserves_reused_worktree_after_no_commit_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = RecordingDb()
+    calls: list[tuple[object, str, str | None]] = []
+
+    def retry_cleanup(
+        cleanup_db: object,
+        task_id: str,
+        *,
+        preserve_worktree_id: str | None = None,
+    ) -> list[SimpleNamespace]:
+        calls.append((cleanup_db, task_id, preserve_worktree_id))
+        return [SimpleNamespace(deleted=False, deferred=True)]
+
+    monkeypatch.setattr(
+        agent_cleanup,
+        "cleanup_merged_task_artifacts_after_agent_exit",
+        retry_cleanup,
+    )
+    monkeypatch.setattr(
+        "gobby.agents.runtime_cleanup.cleanup_agent_runtime_state",
+        lambda *args, **kwargs: SimpleNamespace(dispatch_mutex_rows=0, workflow_instance_rows=0),
+    )
+
+    await _handler(db).post_terminal_cleanup(
+        _run(reused_worktree=True),
+        allow_parent_session_fallback=False,
+    )
+
+    assert calls == [(db, "task-1", "wt-1")]
 
 
 @pytest.mark.asyncio

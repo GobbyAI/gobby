@@ -538,6 +538,8 @@ async def spawn_agent_impl(
         effective_initial_variables["clone_id"] = isolation_ctx.clone_id
     if isolation_ctx.worktree_id:
         effective_initial_variables["worktree_id"] = isolation_ctx.worktree_id
+    if isolation_ctx.extra.get("reused_worktree") is True:
+        effective_initial_variables["reused_worktree"] = True
     if isolation_ctx.branch_name:
         effective_initial_variables["branch_name"] = isolation_ctx.branch_name
     base_commit_sha = isolation_ctx.extra.get("base_commit_sha")

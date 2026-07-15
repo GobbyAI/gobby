@@ -14,6 +14,7 @@ from gobby.build.control_artifacts import (
     classify_dirty_descendant_worktree_artifacts,
     collect_clean_artifacts,
     defer_active_agent_artifacts,
+    defer_preserved_worktree_artifacts,
     delete_artifacts,
     get_project_path,
 )
@@ -270,6 +271,7 @@ def cleanup_successful_merge_artifacts(
     task_id: str,
     *,
     project_id: str | None = None,
+    preserve_worktree_ids: set[str] | None = None,
 ) -> list[BuildArtifactSummary]:
     """Best-effort cleanup for build artifacts after a merge stage succeeds."""
     task_manager = LocalTaskManager(db)
@@ -282,6 +284,11 @@ def cleanup_successful_merge_artifacts(
 
     active_agents = _active_agents(db, [task.id for task in tasks])
     artifacts_to_delete = defer_active_agent_artifacts(artifacts, active_agents)
+    if preserve_worktree_ids:
+        artifacts_to_delete = defer_preserved_worktree_artifacts(
+            artifacts_to_delete,
+            preserve_worktree_ids,
+        )
     artifacts_to_delete = classify_dirty_descendant_worktree_artifacts(
         db,
         artifacts_to_delete,

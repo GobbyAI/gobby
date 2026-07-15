@@ -957,6 +957,10 @@ class TestSpawnAgentImplErrorBranches:
                 new=AsyncMock(side_effect=RuntimeError("gcode_index_timeout:120s")),
             ),
             patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_machine_id",
+                return_value="machine-1",
+            ),
+            patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
                 new=AsyncMock(return_value=spawn_result),
             ) as mock_execute,
@@ -981,6 +985,8 @@ class TestSpawnAgentImplErrorBranches:
         ]
         mock_execute.assert_awaited_once()
         spawn_request = mock_execute.await_args.args[0]
+        assert spawn_request.initial_variables["reused_worktree"] is True
+        assert spawn_request.resume_metadata_json["initial_variables"]["reused_worktree"] is True
         assert "Code-index preflight failed: gcode_index_timeout:120s" in spawn_request.prompt
         assert (
             spawn_request.initial_variables["code_index_preflight_warning"] == result["warnings"][0]
