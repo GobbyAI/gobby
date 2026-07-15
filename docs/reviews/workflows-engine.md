@@ -293,6 +293,11 @@
 - **Minimal fix:** Executor↔storage integration tests (isolated test DB) for: approve→gated action runs; FAILED resume against existing rows; token replay/double-spend; nested `ApprovalRequired` propagation; heartbeat with child-session agent topology and NULL session; sync parse-failure sparing rows.
 - **Confidence:** high.
 
+> **Nit-sweep status (2026-07-15):** This section is the original review snapshot.
+> The current, revalidated ledger is maintained in
+> [`workflows-engine-nit-sweep.md`](workflows-engine-nit-sweep.md). Use that ledger
+> and its focused leaves for implementation.
+
 ### [NIT] Pipeline child session leaks on reject and approval-timeout
 - **Where:** `pipeline_executor.py:599-601,660` (close only on completed/failed paths); `reject()` (`:836-842`) and the expiry loop never close the `pipeline-{execution_id}` session created at `:343`.
 - **Note:** Violates the method's own "should not linger" contract; close in `reject()` and the timeout loop.
