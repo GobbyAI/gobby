@@ -10,14 +10,19 @@ Each tool gets a happy-path test plus at least one failure mode.
 from __future__ import annotations
 
 import asyncio
+import logging
 import subprocess
 import sys
 from unittest.mock import MagicMock
 
+import psycopg
 import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.mcp_proxy.tools.merge_landscape import register_merge_landscape_tools
+from gobby.mcp_proxy.tools.merge_landscape import (
+    _active_merge_resolution_payload,
+    register_merge_landscape_tools,
+)
 from gobby.storage.worktrees import Worktree
 from tests._timing import wait_forever
 
@@ -906,6 +911,42 @@ else:
 
 
 # --- inspect_merge_state ---
+
+
+def test_active_merge_resolution_payload_ignores_duplicate_conflict_row(caplog) -> None:
+    caplog.set_level(logging.DEBUG)
+    resolution = MagicMock(id="mr-test123")
+    merge_storage = MagicMock()
+    merge_storage.get_active_resolution.return_value = resolution
+    merge_storage.list_conflicts.return_value = []
+    merge_storage.create_conflict.side_effect = psycopg.IntegrityError("duplicate row")
+
+    payload = _active_merge_resolution_payload(
+        merge_storage,
+        "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+        conflicted_files=["src/conflicted.py"],
+    )
+
+    assert payload["conflicts"] == []
+    assert "Failed to hydrate merge conflict row" in caplog.text
+    assert merge_storage.list_conflicts.call_count == 2
+
+
+def test_active_merge_resolution_payload_surfaces_non_integrity_db_error(caplog) -> None:
+    resolution = MagicMock(id="mr-test123")
+    merge_storage = MagicMock()
+    merge_storage.get_active_resolution.return_value = resolution
+    merge_storage.list_conflicts.return_value = []
+    merge_storage.create_conflict.side_effect = psycopg.OperationalError("database unavailable")
+
+    with pytest.raises(psycopg.OperationalError, match="database unavailable"):
+        _active_merge_resolution_payload(
+            merge_storage,
+            "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+            conflicted_files=["src/conflicted.py"],
+        )
+
+    assert "Failed to hydrate merge conflict row" in caplog.text
 
 
 @pytest.mark.asyncio

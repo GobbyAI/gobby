@@ -20,6 +20,8 @@ import signal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+import psycopg
+
 from gobby.config.validation_detection import (
     ValidationCommandMatch,
     classify_validation_command,
@@ -812,13 +814,21 @@ def _active_merge_resolution_payload(
                 file_path=file_path,
                 status="pending",
             )
-        except Exception as exc:
+        except psycopg.IntegrityError as exc:
             logger.debug(
                 "Failed to hydrate merge conflict row for %s in %s: %s",
                 file_path,
                 resolution.id,
                 exc,
             )
+        except psycopg.Error:
+            logger.warning(
+                "Failed to hydrate merge conflict row for %s in %s",
+                file_path,
+                resolution.id,
+                exc_info=True,
+            )
+            raise
     if missing_paths:
         conflicts = merge_storage.list_conflicts(resolution_id=resolution.id)
     payload.update(
