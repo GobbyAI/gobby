@@ -57,6 +57,7 @@ async def test_show_file_python(registry, artifact_bc, tmp_path):
     result = await tool(file_path=str(f), conversation_id="conv_1")
 
     assert result["success"] is True
+    assert result["broadcast"] is True
     assert result["type"] == "code"
     assert result["language"] == "python"
     assert result["title"] == "app.py"
