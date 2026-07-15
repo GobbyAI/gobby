@@ -16,6 +16,7 @@ import asyncio
 import logging
 import os
 import shlex
+import signal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -650,11 +651,12 @@ def register_merge_landscape_tools(
                 env=safe_env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                start_new_session=True,
             )
             try:
                 stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
             except TimeoutError:
-                proc.kill()
+                os.killpg(proc.pid, signal.SIGKILL)
                 await proc.wait()
                 return {
                     "success": False,
