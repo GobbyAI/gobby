@@ -47,7 +47,10 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         git_status = None
         if ctx.git_manager and Path(worktree.worktree_path).exists():
-            status = ctx.git_manager.get_worktree_status(worktree.worktree_path)
+            status = ctx.git_manager.get_worktree_status(
+                worktree.worktree_path,
+                worktree.base_branch,
+            )
             if status:
                 git_status = {
                     "has_uncommitted_changes": status.has_uncommitted_changes,

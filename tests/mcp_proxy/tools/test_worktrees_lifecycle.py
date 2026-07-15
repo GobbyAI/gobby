@@ -107,6 +107,7 @@ async def test_get_worktree_found(registry, mock_worktree_storage, mock_git_mana
         updated_at=_VALID_TIMESTAMP,
         task_id=None,
         agent_session_id=None,
+        last_activity_at=None,
         merged_at=None,
     )
     mock_worktree_storage.get.return_value = wt
@@ -121,6 +122,7 @@ async def test_get_worktree_found(registry, mock_worktree_storage, mock_git_mana
         assert result["success"] is True
         assert result["worktree"]["id"] == "wt-123"
         assert result["git_status"]["has_uncommitted_changes"] is True
+        mock_git_manager.get_worktree_status.assert_called_once_with("/tmp/wt1", "main")
 
 
 @pytest.mark.asyncio
