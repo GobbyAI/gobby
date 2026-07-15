@@ -259,6 +259,14 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
     """Create routes for chat attachment upload and retrieval."""
     router = APIRouter(prefix="/api/chat/attachments", tags=["chat"])
 
+    @router.get("/limits")
+    async def get_attachment_limits() -> dict[str, int]:
+        limits = resolve_chat_attachment_limits(
+            config_store=_get_config_store(server),
+            daemon_config=server.config,
+        )
+        return {"max_file_bytes": limits.max_file_bytes}
+
     @router.post("")
     async def upload_attachment(
         file: UploadFile = File(...),
