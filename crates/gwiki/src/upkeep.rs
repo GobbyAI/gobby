@@ -20,6 +20,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
@@ -55,6 +56,7 @@ pub(crate) const REPORT_RELATIVE_PATH: &str = "meta/upkeep/last-run.json";
 /// Default days a page stays `stale` before upkeep archives it. A starting
 /// point until Part A loop distributions tune the threshold (strategy §3.4).
 pub(crate) const DEFAULT_ARCHIVE_AFTER_DAYS: u64 = 45;
+const MIN_CLUSTER_REMAINING_SECONDS: u64 = 1210;
 
 /// Durable registry of concept mentions the heal pass unwrapped from digest
 /// bodies. It preserves the concept-synthesis work-queue signal across runs so
@@ -77,6 +79,8 @@ pub struct Options {
     /// Days a page stays `stale` (per its `stale_at` demotion timestamp)
     /// before upkeep archives it.
     pub archive_after_days: u64,
+    /// Optional wall-clock budget for the whole upkeep operation.
+    pub time_budget_seconds: Option<u64>,
 }
 
 impl Default for Options {
@@ -89,6 +93,7 @@ impl Default for Options {
             daemon_synthesis_available: false,
             hard_fail_on_generation_failure: false,
             archive_after_days: DEFAULT_ARCHIVE_AFTER_DAYS,
+            time_budget_seconds: None,
         }
     }
 }
@@ -154,6 +159,9 @@ pub struct UpkeepReport {
     pub pages_updated: usize,
     pub failures: usize,
     pub clusters: Vec<ClusterOutcome>,
+    pub budget_exhausted: bool,
+    /// Candidate clusters deferred by the wall-clock budget.
+    pub deferred_clusters: Vec<SkippedCluster>,
     /// Candidate clusters beyond the page budget; their sources stay pending.
     pub skipped_over_budget: Vec<SkippedCluster>,
     /// Pending sources reviewed without joining any cluster, flipped to
@@ -203,10 +211,34 @@ pub fn run(
     research_scope: ResearchScope,
     scope: ScopeIdentity,
     options: &Options,
+    semantic: Option<SemanticProbe<'_>>,
+    generator: Option<ExplainerGenerator<'_>>,
+    timestamp: &str,
+) -> Result<UpkeepReport, WikiError> {
+    run_with_clock(
+        research_scope,
+        scope,
+        options,
+        semantic,
+        generator,
+        timestamp,
+        Instant::now,
+    )
+}
+
+fn run_with_clock(
+    research_scope: ResearchScope,
+    scope: ScopeIdentity,
+    options: &Options,
     mut semantic: Option<SemanticProbe<'_>>,
     mut generator: Option<ExplainerGenerator<'_>>,
     timestamp: &str,
+    mut now: impl FnMut() -> Instant,
 ) -> Result<UpkeepReport, WikiError> {
+    let started_at = now();
+    let deadline = options
+        .time_budget_seconds
+        .and_then(|seconds| started_at.checked_add(Duration::from_secs(seconds)));
     let vault_root = research_scope.root().to_path_buf();
     let mut notes: Vec<String> = Vec::new();
 
@@ -352,12 +384,51 @@ pub fn run(
         .map(|page| (page.relative_path.clone(), page_match_keys(page)))
         .collect();
 
-    let mut clusters: Vec<ClusterOutcome> = Vec::new();
-    let mut pages_created = 0usize;
-    let mut pages_updated = 0usize;
-    let mut failures = 0usize;
+    let mut report = UpkeepReport {
+        command: "upkeep",
+        scope: scope.clone(),
+        timestamp: timestamp.to_string(),
+        dry_run: options.dry_run,
+        max_pages: options.max_pages,
+        min_mentions: options.min_mentions,
+        max_sources_per_page: options.max_sources_per_page,
+        pending_before,
+        pending_after: pending_before,
+        pages_created: 0,
+        pages_updated: 0,
+        failures: 0,
+        clusters: Vec::new(),
+        budget_exhausted: false,
+        deferred_clusters: Vec::new(),
+        skipped_over_budget: skipped_over_budget.clone(),
+        reconciled_no_synthesis: Vec::new(),
+        archived_pages: Vec::new(),
+        candidates_promoted: Vec::new(),
+        candidates_discarded: Vec::new(),
+        notes: Vec::new(),
+    };
 
-    for cluster in &candidates[..processed_count] {
+    for (cluster_index, cluster) in candidates[..processed_count].iter().enumerate() {
+        let budget_exhausted = deadline.is_some_and(|deadline| {
+            deadline.saturating_duration_since(now())
+                < Duration::from_secs(MIN_CLUSTER_REMAINING_SECONDS)
+        });
+        if budget_exhausted {
+            report.budget_exhausted = true;
+            report.deferred_clusters = candidates[cluster_index..processed_count]
+                .iter()
+                .map(|cluster| SkippedCluster {
+                    target: cluster.primary.clone(),
+                    mentions: cluster.mentions,
+                })
+                .collect();
+            if !options.dry_run {
+                report.notes = notes.clone();
+                report.pending_after = pending_source_count(&vault_root)?;
+                write_report(&vault_root, &report)?;
+            }
+            break;
+        }
         let disposition = resolve_page_disposition(cluster, &existing_pages, &mut semantic);
         let (target_page, near_duplicate, review_flag, note) = match disposition {
             PageDisposition::Update {
@@ -406,7 +477,7 @@ pub fn run(
             } else {
                 "planned_create".to_string()
             };
-            clusters.push(outcome);
+            report.clusters.push(outcome);
             continue;
         }
 
@@ -428,11 +499,11 @@ pub fn run(
                 outcome.page_path = Some(page_path.clone());
                 outcome.action = match write_kind {
                     PageWriteKind::Created => {
-                        pages_created += 1;
+                        report.pages_created += 1;
                         "created".to_string()
                     }
                     PageWriteKind::Overwritten => {
-                        pages_updated += 1;
+                        report.pages_updated += 1;
                         "updated".to_string()
                     }
                 };
@@ -480,12 +551,17 @@ pub fn run(
             Err(error) => {
                 // Per-page failure: record it and keep draining. The cluster's
                 // sources stay pending for the next run.
-                failures += 1;
+                report.failures += 1;
                 outcome.action = "failed".to_string();
                 outcome.error = Some(error.to_string());
             }
         }
-        clusters.push(outcome);
+        report.clusters.push(outcome);
+        if !options.dry_run {
+            report.notes = notes.clone();
+            report.pending_after = pending_source_count(&vault_root)?;
+            write_report(&vault_root, &report)?;
+        }
     }
 
     // Heal the vault's broken-link debt: any `[[Entity]]` concept link still
@@ -571,27 +647,12 @@ pub fn run(
             .count()
     };
 
-    let report = UpkeepReport {
-        command: "upkeep",
-        scope: scope.clone(),
-        timestamp: timestamp.to_string(),
-        dry_run: options.dry_run,
-        max_pages: options.max_pages,
-        min_mentions: options.min_mentions,
-        max_sources_per_page: options.max_sources_per_page,
-        pending_before,
-        pending_after,
-        pages_created,
-        pages_updated,
-        failures,
-        clusters,
-        skipped_over_budget,
-        reconciled_no_synthesis,
-        archived_pages,
-        candidates_promoted,
-        candidates_discarded,
-        notes,
-    };
+    report.pending_after = pending_after;
+    report.reconciled_no_synthesis = reconciled_no_synthesis;
+    report.archived_pages = archived_pages;
+    report.candidates_promoted = candidates_promoted;
+    report.candidates_discarded = candidates_discarded;
+    report.notes = notes;
 
     if !options.dry_run {
         catalog::regenerate(&vault_root, &scope)?;
@@ -1294,8 +1355,17 @@ fn unwrap_unresolved_concept_links(
     Ok(recorded)
 }
 
+fn pending_source_count(vault_root: &Path) -> Result<usize, WikiError> {
+    Ok(SourceManifest::read(vault_root)?
+        .entries
+        .iter()
+        .filter(|entry| entry.compile_status == CompileStatus::Pending)
+        .count())
+}
+
 fn write_report(vault_root: &Path, report: &UpkeepReport) -> Result<(), WikiError> {
     let path = vault_root.join(REPORT_RELATIVE_PATH);
+    let temp_path = path.with_extension("json.tmp");
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| WikiError::Io {
             action: "create upkeep report directory",
@@ -1308,8 +1378,13 @@ fn write_report(vault_root: &Path, report: &UpkeepReport) -> Result<(), WikiErro
         path: Some(path.clone()),
         source: error,
     })?;
-    fs::write(&path, json).map_err(|error| WikiError::Io {
-        action: "write upkeep report",
+    fs::write(&temp_path, json).map_err(|error| WikiError::Io {
+        action: "write upkeep report checkpoint",
+        path: Some(temp_path.clone()),
+        source: error,
+    })?;
+    fs::rename(&temp_path, &path).map_err(|error| WikiError::Io {
+        action: "publish upkeep report checkpoint",
         path: Some(path),
         source: error,
     })
@@ -1351,6 +1426,17 @@ pub fn render_text(report: &UpkeepReport) -> String {
             "Skipped over budget: {}\n",
             report
                 .skipped_over_budget
+                .iter()
+                .map(|cluster| cluster.target.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if report.budget_exhausted {
+        text.push_str(&format!(
+            "Time budget exhausted; deferred clusters: {}\n",
+            report
+                .deferred_clusters
                 .iter()
                 .map(|cluster| cluster.target.as_str())
                 .collect::<Vec<_>>()
@@ -2285,6 +2371,60 @@ mod tests {
         assert_eq!(compile_status_of(root, "src-b"), CompileStatus::Pending);
         assert_eq!(compile_status_of(root, "src-c"), CompileStatus::Pending);
         assert!(report.reconciled_no_synthesis.is_empty());
+    }
+
+    #[test]
+    fn time_budget_checkpoints_completed_clusters_and_defers_pending_work() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        seed_source(root, "src-a1", "On [[alpha]].\n");
+        seed_source(root, "src-a2", "On [[alpha]].\n");
+        seed_source(root, "src-b1", "On [[beta]].\n");
+        seed_source(root, "src-b2", "On [[beta]].\n");
+
+        let started_at = Instant::now();
+        let clock_calls = std::cell::Cell::new(0_usize);
+        let report = run_with_clock(
+            research_scope(root),
+            scope(),
+            &Options {
+                time_budget_seconds: Some(1320),
+                ..Options::default()
+            },
+            None,
+            None,
+            TIMESTAMP,
+            || {
+                let call = clock_calls.get();
+                clock_calls.set(call + 1);
+                if call < 2 {
+                    started_at
+                } else {
+                    started_at + Duration::from_secs(111)
+                }
+            },
+        )
+        .expect("time-budgeted upkeep run");
+
+        assert_eq!(report.clusters.len(), 1);
+        assert_eq!(report.clusters[0].target, "alpha");
+        assert!(report.budget_exhausted);
+        assert_eq!(report.deferred_clusters.len(), 1);
+        assert_eq!(report.deferred_clusters[0].target, "beta");
+        assert_eq!(compile_status_of(root, "src-a1"), CompileStatus::Compiled);
+        assert_eq!(compile_status_of(root, "src-a2"), CompileStatus::Compiled);
+        assert_eq!(compile_status_of(root, "src-b1"), CompileStatus::Pending);
+        assert_eq!(compile_status_of(root, "src-b2"), CompileStatus::Pending);
+
+        let report_path = root.join(REPORT_RELATIVE_PATH);
+        let checkpoint: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(&report_path).expect("read upkeep checkpoint"),
+        )
+        .expect("parse upkeep checkpoint");
+        assert_eq!(checkpoint["clusters"].as_array().map(Vec::len), Some(1));
+        assert_eq!(checkpoint["budget_exhausted"], true);
+        assert_eq!(checkpoint["deferred_clusters"][0]["target"], "beta");
+        assert!(!report_path.with_extension("json.tmp").exists());
     }
 
     #[test]

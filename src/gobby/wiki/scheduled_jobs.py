@@ -41,9 +41,11 @@ WIKI_LIBRARIAN_INTERVAL_SECONDS = 24 * 60 * 60
 # Recaps run just after UTC midnight for the day that just ended; gwiki recap
 # attributes sessions to UTC days, so the schedule stays in UTC.
 WIKI_RECAP_SCHEDULE_CRON = "10 0 * * *"
+WIKI_RECAP_TIMEOUT_SECONDS = 60 * 60
 # Maintenance commands (librarian check sweeps, upkeep/recap synthesis) run
 # far past the gateway's 30s interactive default; cron has no caller waiting.
-WIKI_SCHEDULED_GATEWAY_TIMEOUT_SECONDS = 600.0
+WIKI_UPKEEP_TIME_BUDGET_SECONDS = 1320
+WIKI_SCHEDULED_GATEWAY_TIMEOUT_SECONDS = 1380.0
 WIKI_LIBRARIAN_TASK_LABEL_PREFIX = "wiki-librarian"
 _LIBRARIAN_DEDUP_LOOKUP_LIMIT = 20
 _LIBRARIAN_FILED_TITLE_SAMPLE_SIZE = 10
@@ -83,7 +85,14 @@ class WikiGatewayProtocol(Protocol):
         limit: int | None = None,
     ) -> dict[str, Any]: ...
 
-    async def upkeep(self, *, dry_run: bool = False) -> dict[str, Any]: ...
+    async def upkeep(
+        self,
+        *,
+        dry_run: bool = False,
+        ai: str | None = None,
+        max_pages: int | None = None,
+        time_budget_seconds: int | None = None,
+    ) -> dict[str, Any]: ...
 
     async def librarian(self) -> dict[str, Any]: ...
 
@@ -205,7 +214,11 @@ def create_wiki_upkeep_handler(
     scope: str,
 ) -> CronHandler:
     async def upkeep_handler(job: CronJob) -> str:
-        result = await gateway.upkeep()
+        result = await gateway.upkeep(
+            ai="auto",
+            max_pages=10,
+            time_budget_seconds=WIKI_UPKEEP_TIME_BUDGET_SECONDS,
+        )
         coordinated = await coordinator.handle_write_result(result)
         return _history_output(
             purpose="Drain pending wiki sources into concept pages",
@@ -626,12 +639,14 @@ def _ensure_wiki_cron_job(
         raise ValueError("provide exactly one of interval_seconds or cron_expr")
     schedule_type: Literal["cron", "interval"] = "cron" if cron_expr else "interval"
     job_name = wiki_job_name(command, scope)
-    action_config = {
+    action_config: dict[str, object] = {
         "handler": handler_name,
         "purpose": purpose,
         "scope": scope,
         "command": command,
     }
+    if command == "recap":
+        action_config["timeout_seconds"] = WIKI_RECAP_TIMEOUT_SECONDS
     description = f"{purpose} for wiki scope {scope}"
     existing = cron_storage.get_job_by_name(job_name)
     if existing is None:

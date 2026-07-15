@@ -241,13 +241,9 @@ def test_pg_audit_export_script_filters_audit_lines_by_window(
 
 
 def test_sync_copies_complete_tree_at_install_time(tmp_path: Path) -> None:
-    from gobby.cli.installers.postgres import (
-        _sync_postgres_pgsearch_assets,
-        _write_compose_env,
-    )
+    from gobby.cli.installers.postgres import _sync_postgres_pgsearch_assets
 
     _sync_postgres_pgsearch_assets(gobby_home=tmp_path)
-    _write_compose_env(gobby_home=tmp_path, postgres_password="packaging-test-password")
 
     resource_root = resources.files("gobby").joinpath("data/postgres-pgsearch")
     target_root = tmp_path / "services/postgres-pgsearch"
@@ -260,13 +256,7 @@ def test_sync_copies_complete_tree_at_install_time(tmp_path: Path) -> None:
             == resource_root.joinpath(relative_path).read_bytes()
         )
 
-    from gobby.cli.installers.postgres import _read_pgsearch_version_manifest
-
-    manifest = _read_pgsearch_version_manifest()
-    env_text = (tmp_path / "services/.env").read_text()
-    assert "GOBBY_POSTGRES_PASSWORD=packaging-test-password" in env_text
-    assert f"GOBBY_PG_SEARCH_VERSION={manifest['pg_search_version']}" in env_text
-    assert f"GOBBY_PG_SEARCH_SHA256={manifest['pg_search_sha256']}" in env_text
+    assert not (tmp_path / "services/.env").exists()
 
 
 def test_sync_copies_pg_audit_export_script_at_install_time(tmp_path: Path) -> None:

@@ -2832,6 +2832,46 @@ async def test_text_generation_service_terminal_candidate_timeout_raises() -> No
         )
 
 
+async def test_text_generation_service_total_timeout_cancels_active_generation() -> None:
+    cancelled = asyncio.Event()
+
+    class CancelAwareAdapter:
+        async def generate(self, request: TextGenerationRequest) -> str:
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local:slow",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("slow-model",),
+            )
+        ]
+    )
+    service = TextGenerationService(registry, {"local:slow": CancelAwareAdapter()})
+
+    with pytest.raises(
+        FeatureGenerationUnavailableError,
+        match=r"exceeded total timeout \(0\.01s\)",
+    ):
+        await service.generate_result(
+            TextGenerationRequest(
+                prompt="summarize",
+                provider="local:slow",
+                model="slow-model",
+                total_timeout_seconds=0.01,
+            )
+        )
+
+    assert cancelled.is_set()
+
+
 @pytest.mark.asyncio
 async def test_text_generation_service_no_candidate_timeout_when_unset() -> None:
     registry = AICapabilityRegistry(

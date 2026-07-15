@@ -643,6 +643,8 @@ fn upkeep_cli_flags_map_to_command_options() {
         "3",
         "--max-sources-per-page",
         "6",
+        "--time-budget-seconds",
+        "1320",
         "--dry-run",
         "--ai",
         "off",
@@ -654,6 +656,7 @@ fn upkeep_cli_flags_map_to_command_options() {
     assert_eq!(args.max_pages, 4);
     assert_eq!(args.min_mentions, 3);
     assert_eq!(args.max_sources_per_page, 6);
+    assert_eq!(args.time_budget_seconds, Some(1320));
     assert!(args.dry_run);
     assert_eq!(args.ai, AiRouting::Off);
 
@@ -665,6 +668,7 @@ fn upkeep_cli_flags_map_to_command_options() {
     assert_eq!(options.max_pages, 4);
     assert_eq!(options.min_mentions, 3);
     assert_eq!(options.max_sources_per_page, 6);
+    assert_eq!(options.time_budget_seconds, Some(1320));
     assert!(options.dry_run);
     assert_eq!(ai, AiRouting::Off);
 
@@ -675,6 +679,7 @@ fn upkeep_cli_flags_map_to_command_options() {
     assert_eq!(default_args.max_pages, 10);
     assert_eq!(default_args.min_mentions, 2);
     assert_eq!(default_args.max_sources_per_page, 12);
+    assert_eq!(default_args.time_budget_seconds, None);
     assert!(!default_args.dry_run);
     assert_eq!(default_args.ai, AiRouting::Auto);
 }

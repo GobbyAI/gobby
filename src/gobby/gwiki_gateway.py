@@ -339,10 +339,23 @@ class GwikiGateway:
             args.extend(["--limit", str(limit)])
         return await self._run_json("sync_sessions", args)
 
-    async def upkeep(self, *, dry_run: bool = False) -> dict[str, Any]:
+    async def upkeep(
+        self,
+        *,
+        dry_run: bool = False,
+        ai: str | None = None,
+        max_pages: int | None = None,
+        time_budget_seconds: int | None = None,
+    ) -> dict[str, Any]:
         args = ["upkeep"]
         if dry_run:
             args.append("--dry-run")
+        if ai is not None:
+            args.extend(["--ai", ai])
+        if max_pages is not None:
+            args.extend(["--max-pages", str(max_pages)])
+        if time_budget_seconds is not None:
+            args.extend(["--time-budget-seconds", str(time_budget_seconds)])
         return await self._run_json("upkeep", args)
 
     async def librarian(self) -> dict[str, Any]:

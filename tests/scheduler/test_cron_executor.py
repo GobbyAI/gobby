@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -147,6 +147,73 @@ async def test_execute_bounds_long_running_actions(
     assert cancelled.is_set()
     assert result.status == "failed"
     assert result.error == f"{action_type} cron action timed out after 0.01s"
+
+
+@pytest.mark.asyncio
+async def test_handler_timeout_override_outlives_global_budget(
+    cron_storage: CronJobStorage,
+    executor: CronExecutor,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen_timeouts: list[float | None] = []
+
+    async def capture_wait_for(action: Any, *, timeout: float | None) -> object:
+        seen_timeouts.append(timeout)
+        return await action
+
+    async def long_recap(_job: CronJob) -> str:
+        return "recap complete"
+
+    monkeypatch.setattr(executor.config, "running_timeout_seconds", 0.01)
+    monkeypatch.setattr(asyncio, "wait_for", capture_wait_for)
+    executor.register_handler("wiki:recap:project:alpha", long_recap)
+    job = _make_job(
+        cron_storage,
+        "handler",
+        {
+            "handler": "wiki:recap:project:alpha",
+            "timeout_seconds": 0.1,
+        },
+    )
+    run = cron_storage.create_run(job.id)
+
+    result = await executor.execute(job, run)
+
+    assert result.status == "completed"
+    assert result.output == "recap complete"
+    assert seen_timeouts == [0.1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("timeout", [0, -1, True, "60"])
+async def test_handler_timeout_override_rejects_invalid_values(
+    cron_storage: CronJobStorage,
+    executor: CronExecutor,
+    timeout: object,
+) -> None:
+    called = False
+
+    async def handler(_job: CronJob) -> str:
+        nonlocal called
+        called = True
+        return "unexpected"
+
+    executor.register_handler("wiki:recap:project:alpha", handler)
+    job = _make_job(
+        cron_storage,
+        "handler",
+        {
+            "handler": "wiki:recap:project:alpha",
+            "timeout_seconds": timeout,
+        },
+    )
+    run = cron_storage.create_run(job.id)
+
+    result = await executor.execute(job, run)
+
+    assert result.status == "failed"
+    assert result.error == "action_config.timeout_seconds must be a positive finite number"
+    assert called is False
 
 
 @pytest.mark.asyncio

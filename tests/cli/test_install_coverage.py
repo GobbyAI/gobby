@@ -9,6 +9,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
+from gobby.cli._install_state import (
+    EmbeddingInstallState,
+    InstallSectionState,
+    InstallState,
+    VoiceInstallState,
+    empty_install_state,
+)
 from gobby.cli.install import (
     _echo_install_details,
     _echo_uninstall_details,
@@ -28,6 +35,21 @@ def runner(monkeypatch: pytest.MonkeyPatch) -> CliRunner:
         lambda: [],
     )
     return CliRunner()
+
+
+def _configured_install_state() -> InstallState:
+    return InstallState(
+        embedding=EmbeddingInstallState(
+            configured=True,
+            summary="disabled",
+            provider="none",
+            dim=0,
+        ),
+        voice=VoiceInstallState(configured=True, summary="disabled", enabled=False),
+        qdrant=InstallSectionState(configured=True, summary="localhost:6333"),
+        falkordb=InstallSectionState(configured=True, summary="localhost:16379"),
+        has_existing_values=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +279,7 @@ class TestInstallCommand:
             patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
             patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
             patch("gobby.cli.install.install_claude", return_value=claude_result),
+            patch("gobby.cli.install.prepare_install_state", return_value=empty_install_state()),
             patch("gobby.cli.install._run_git_hooks_install") as mock_hooks,
             patch(
                 "gobby.cli.install._run_embedding_install", return_value="lmstudio"
@@ -298,6 +321,7 @@ class TestInstallCommand:
             patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
             patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
             patch("gobby.cli.install.install_agy", return_value=agy_result) as mock_agy,
+            patch("gobby.cli.install.prepare_install_state", return_value=empty_install_state()),
             patch("gobby.cli.install._run_git_hooks_install") as mock_hooks,
             patch("gobby.cli.install._run_embedding_install", return_value="none"),
             patch("gobby.cli.install._maybe_start_daemon_after_install"),
@@ -334,6 +358,7 @@ class TestInstallCommand:
             patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
             patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
             patch("gobby.cli.install.install_claude", return_value=claude_result),
+            patch("gobby.cli.install.prepare_install_state", return_value=empty_install_state()),
             patch("gobby.cli.install._run_git_hooks_install") as mock_hooks,
             patch(
                 "gobby.cli.install._run_embedding_install", return_value="lmstudio"
@@ -354,6 +379,119 @@ class TestInstallCommand:
         mock_embedding.assert_called_once()
         mock_qdrant.assert_not_called()
         mock_falkordb.assert_not_called()
+
+    def test_repeat_noninteractive_install_preserves_optional_sections(
+        self, runner: CliRunner
+    ) -> None:
+        """Configured sections perform no setup work when a repeat install keeps them."""
+        with (
+            patch("gobby.cli.install.run_daemon_setup"),
+            patch(
+                "gobby.cli.install._ensure_daemon_config",
+                return_value={"created": False, "path": "/fake"},
+            ),
+            patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install")),
+            patch.multiple(
+                "gobby.cli.install",
+                _is_claude_code_installed=MagicMock(return_value=True),
+                _is_grok_cli_installed=MagicMock(return_value=False),
+                _is_agy_cli_installed=MagicMock(return_value=False),
+                _is_qwen_cli_installed=MagicMock(return_value=False),
+                _is_codex_cli_installed=MagicMock(return_value=False),
+                _is_droid_cli_installed=MagicMock(return_value=False),
+            ),
+            patch(
+                "gobby.cli.install.install_claude",
+                return_value={
+                    "success": True,
+                    "hooks_installed": [],
+                    "mcp_configured": True,
+                },
+            ),
+            patch(
+                "gobby.cli.install.prepare_install_state",
+                return_value=_configured_install_state(),
+            ),
+            patch("gobby.cli.install._run_git_hooks_install"),
+            patch("gobby.cli.install._run_embedding_install") as embedding,
+            patch("gobby.cli.install._run_voice_install") as voice,
+            patch("gobby.cli.install._run_qdrant_install") as qdrant,
+            patch("gobby.cli.install._run_falkordb_install") as falkordb,
+            patch("gobby.cli.install._maybe_start_daemon_after_install"),
+        ):
+            result = runner.invoke(
+                install,
+                ["--all", "--no-interactive"],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0
+        assert "Change embedding provider/model/endpoint?" not in result.output
+        assert "Change voice setting?" not in result.output
+        assert "Change Qdrant?" not in result.output
+        assert "Change FalkorDB?" not in result.output
+        embedding.assert_not_called()
+        voice.assert_not_called()
+        qdrant.assert_not_called()
+        falkordb.assert_not_called()
+
+    def test_repeat_interactive_install_prompts_for_each_optional_section(
+        self, runner: CliRunner
+    ) -> None:
+        with (
+            patch("gobby.cli.install.run_daemon_setup"),
+            patch(
+                "gobby.cli.install._ensure_daemon_config",
+                return_value={"created": False, "path": "/fake"},
+            ),
+            patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install")),
+            patch.multiple(
+                "gobby.cli.install",
+                _is_claude_code_installed=MagicMock(return_value=True),
+                _is_grok_cli_installed=MagicMock(return_value=False),
+                _is_agy_cli_installed=MagicMock(return_value=False),
+                _is_qwen_cli_installed=MagicMock(return_value=False),
+                _is_codex_cli_installed=MagicMock(return_value=False),
+                _is_droid_cli_installed=MagicMock(return_value=False),
+            ),
+            patch(
+                "gobby.cli.install.install_claude",
+                return_value={
+                    "success": True,
+                    "hooks_installed": [],
+                    "mcp_configured": True,
+                },
+            ),
+            patch(
+                "gobby.cli.install.prepare_install_state",
+                return_value=_configured_install_state(),
+            ),
+            patch("gobby.cli.install._run_git_hooks_install"),
+            patch("gobby.cli.install._run_embedding_install") as embedding,
+            patch("gobby.cli.install._run_voice_install") as voice,
+            patch("gobby.cli.install._run_qdrant_install") as qdrant,
+            patch("gobby.cli.install._run_falkordb_install") as falkordb,
+            patch("gobby.cli.install._maybe_start_daemon_after_install"),
+        ):
+            result = runner.invoke(
+                install,
+                ["--all"],
+                input="n\nn\nn\nn\n",
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0
+        for prompt in (
+            "Change embedding provider/model/endpoint?",
+            "Change voice setting?",
+            "Change Qdrant?",
+            "Change FalkorDB?",
+        ):
+            assert prompt in result.output
+        embedding.assert_not_called()
+        voice.assert_not_called()
+        qdrant.assert_not_called()
+        falkordb.assert_not_called()
 
     @patch("gobby.cli.install.run_daemon_setup")
     @patch(

@@ -43,7 +43,7 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
         options.language,
         &expanded_paths,
         fetch_limit,
-    );
+    )?;
     let mut visible_search_degraded = exact_outcome.degraded;
     let exact_results = exact_outcome.results;
     let exact_ids: Vec<String> = exact_results.iter().map(|s| s.id.clone()).collect();
@@ -57,7 +57,7 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
         options.language,
         &expanded_paths,
         fetch_limit,
-    );
+    )?;
     visible_search_degraded |= fts_outcome.degraded;
     let mut fts_results = fts_outcome.results;
     if fts_results.is_empty() {
@@ -69,7 +69,7 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
             options.language,
             &expanded_paths,
             fetch_limit,
-        );
+        )?;
         visible_search_degraded |= fts_outcome.degraded;
         fts_results = fts_outcome.results;
     }
@@ -223,7 +223,7 @@ pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> 
         options.language,
         &expanded_paths,
         fetch_limit,
-    );
+    )?;
     let visible_search_degraded = exact_outcome.degraded;
     let exact_results = exact_outcome.results;
 
@@ -440,7 +440,7 @@ pub fn search_text(
         language,
         &expanded_paths,
         fetch_limit,
-    );
+    )?;
     let visible_search_degraded = all_results.degraded;
     let all_results = all_results.results;
     let cap_hint = (has_path_filters && all_results.len() >= fts::FILTERED_FETCH_CAP)
@@ -458,7 +458,7 @@ pub fn search_text(
     let total = if has_path_filters {
         all_results.len()
     } else {
-        fts::count_text_visible(&mut conn, query, ctx, language, &expanded_paths)
+        fts::count_text_visible(&mut conn, query, ctx, language, &expanded_paths)?
     };
     let results: Vec<_> = all_results.into_iter().skip(offset).take(limit).collect();
 
@@ -546,7 +546,7 @@ pub fn search_content(
         language,
         &expanded_paths,
         fetch_limit,
-    );
+    )?;
     let cap_hint = (has_path_filters && all_results.len() >= fts::FILTERED_FETCH_CAP)
         .then(filtered_fetch_cap_hint);
     let path_hint =
@@ -563,7 +563,7 @@ pub fn search_content(
     let total = if has_path_filters {
         all_results.len()
     } else {
-        fts::count_content_visible(&mut conn, query, ctx, language, &expanded_paths)
+        fts::count_content_visible(&mut conn, query, ctx, language, &expanded_paths)?
     };
     let results: Vec<_> = all_results.into_iter().skip(offset).take(limit).collect();
 

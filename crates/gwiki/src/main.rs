@@ -507,6 +507,14 @@ struct UpkeepArgs {
     #[arg(long = "dry-run")]
     dry_run: bool,
 
+    /// Stop scheduling synthesis clusters after this maintenance budget.
+    #[arg(
+        long = "time-budget-seconds",
+        value_name = "SECONDS",
+        value_parser = clap::value_parser!(u64).range(1..)
+    )]
+    time_budget_seconds: Option<u64>,
+
     /// AI routing for concept-page synthesis.
     #[arg(long, default_value = "auto", value_name = "auto|daemon|direct|off")]
     ai: AiRouting,
@@ -935,6 +943,7 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
                 min_mentions: args.min_mentions,
                 max_sources_per_page: args.max_sources_per_page,
                 dry_run: args.dry_run,
+                time_budget_seconds: args.time_budget_seconds,
             },
             ai: args.ai,
         }),

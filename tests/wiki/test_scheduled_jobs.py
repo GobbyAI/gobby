@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from gobby.config.cron import CronConfig
 from gobby.gwiki_gateway import GwikiGateway
 from gobby.scheduler.executor import CronExecutor
 from gobby.storage.cron import CronJobStorage
@@ -17,6 +18,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.wiki.scheduled_jobs import (
     WIKI_RECAP_SCHEDULE_CRON,
     WIKI_SCHEDULED_GATEWAY_TIMEOUT_SECONDS,
+    WIKI_UPKEEP_TIME_BUDGET_SECONDS,
     _create_gateway,
     _previous_utc_day,
     create_wiki_audit_handler,
@@ -104,8 +106,25 @@ class RecordingGateway:
         self.index_calls += 1
         return _result("index", {"status": "indexed"})
 
-    async def upkeep(self, *, dry_run: bool = False) -> dict[str, Any]:
-        self.calls.append(("upkeep", {"dry_run": dry_run}))
+    async def upkeep(
+        self,
+        *,
+        dry_run: bool = False,
+        ai: str | None = None,
+        max_pages: int | None = None,
+        time_budget_seconds: int | None = None,
+    ) -> dict[str, Any]:
+        self.calls.append(
+            (
+                "upkeep",
+                {
+                    "dry_run": dry_run,
+                    "ai": ai,
+                    "max_pages": max_pages,
+                    "time_budget_seconds": time_budget_seconds,
+                },
+            )
+        )
         return _result(
             "upkeep",
             {
@@ -524,7 +543,14 @@ async def test_gwiki_ok_false_envelope_marks_history_failed() -> None:
 @pytest.mark.asyncio
 async def test_gwiki_degraded_payload_status_marks_history_failed() -> None:
     class DegradedUpkeepGateway(RecordingGateway):
-        async def upkeep(self, *, dry_run: bool = False) -> dict[str, Any]:
+        async def upkeep(
+            self,
+            *,
+            dry_run: bool = False,
+            ai: str | None = None,
+            max_pages: int | None = None,
+            time_budget_seconds: int | None = None,
+        ) -> dict[str, Any]:
             return _result("upkeep", {"status": "degraded", "clusters": []})
 
     gateway = DegradedUpkeepGateway()
@@ -599,6 +625,61 @@ async def test_gwiki_timeout_envelope_records_failed_cron_run(
     assert updated.error == "gwiki command timed out"
     assert updated.output is not None
     assert json.loads(updated.output)["status"] == "degraded"
+
+
+async def test_upkeep_synthesis_failures_record_failed_cron_run(
+    cron_storage: CronJobStorage, project_id: str
+) -> None:
+    class FailedSynthesisGateway(RecordingGateway):
+        async def upkeep(
+            self,
+            *,
+            dry_run: bool = False,
+            ai: str | None = None,
+            max_pages: int | None = None,
+            time_budget_seconds: int | None = None,
+        ) -> dict[str, Any]:
+            return _result(
+                "upkeep",
+                {
+                    "status": "completed",
+                    "failures": 2,
+                    "clusters": [
+                        {"action": "failed", "error": "daemon candidate timed out"},
+                        {"action": "failed", "error": "provider unavailable"},
+                    ],
+                },
+            )
+
+    gateway = FailedSynthesisGateway()
+    handler = create_wiki_upkeep_handler(
+        gateway=gateway,
+        coordinator=WikiUpdateCoordinator(gateway),
+        scope="project:alpha",
+    )
+    executor = CronExecutor(storage=cron_storage)
+    executor.register_handler("wiki:upkeep:project:alpha", handler)
+    job = cron_storage.create_job(
+        project_id=project_id,
+        name="gobby:wiki-upkeep:project:alpha",
+        schedule_type="interval",
+        interval_seconds=86_400,
+        action_type="handler",
+        action_config={"handler": "wiki:upkeep:project:alpha", "scope": "project:alpha"},
+    )
+    run = cron_storage.create_run(job.id)
+
+    updated = await executor.execute(job, run)
+
+    assert updated.status == "failed"
+    assert updated.error == (
+        "gwiki upkeep reported 2 synthesis failures: "
+        "daemon candidate timed out; provider unavailable"
+    )
+    assert updated.output is not None
+    output = json.loads(updated.output)
+    assert output["result"]["failures"] == 2
+    assert len(output["result"]["clusters"]) == 2
 
 
 @pytest.mark.asyncio
@@ -757,6 +838,21 @@ async def test_create_gateway_uses_scheduled_timeout(
     # Cron maintenance commands (librarian sweeps, upkeep/recap synthesis)
     # overrun the 30s interactive default.
     assert gateway._timeout_seconds == WIKI_SCHEDULED_GATEWAY_TIMEOUT_SECONDS
+
+
+def test_upkeep_deadline_hierarchy_has_distinct_grace_windows() -> None:
+    config = CronConfig()
+
+    assert WIKI_UPKEEP_TIME_BUDGET_SECONDS == 1320
+    assert WIKI_SCHEDULED_GATEWAY_TIMEOUT_SECONDS == 1380
+    assert config.running_timeout_seconds == 1440
+    assert config.stale_run_timeout_seconds == 1560
+    assert (
+        WIKI_UPKEEP_TIME_BUDGET_SECONDS
+        < WIKI_SCHEDULED_GATEWAY_TIMEOUT_SECONDS
+        < config.running_timeout_seconds
+        < config.stale_run_timeout_seconds
+    )
 
 
 @pytest.mark.asyncio
@@ -1287,7 +1383,17 @@ async def test_upkeep_job_routes_through_write_coordinator() -> None:
 
     output = json.loads(await handler(_job("upkeep")))
 
-    assert gateway.calls == [("upkeep", {"dry_run": False})]
+    assert gateway.calls == [
+        (
+            "upkeep",
+            {
+                "dry_run": False,
+                "ai": "auto",
+                "max_pages": 10,
+                "time_budget_seconds": 1320,
+            },
+        )
+    ]
     assert len(coordinator.results) == 1
     assert coordinator.results[0]["command"] == "upkeep"
     assert output["command"] == "upkeep"

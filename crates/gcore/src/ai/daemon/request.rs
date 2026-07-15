@@ -59,6 +59,9 @@ pub(super) struct TextRequestOptions<'a> {
     pub profile: Option<&'a str>,
     pub candidates: Option<&'a [FeatureCandidate]>,
     pub reasoning_effort: Option<&'a str>,
+    pub candidate_timeout_seconds: Option<u64>,
+    pub cli_candidate_timeout_seconds: Option<u64>,
+    pub total_timeout_seconds: Option<u64>,
 }
 
 pub(super) fn text_request_body(
@@ -106,6 +109,24 @@ pub(super) fn text_request_body(
     insert_optional(&mut body, "project_id", options.project_id);
     if let Some(max_tokens) = options.max_tokens.filter(|value| *value > 0) {
         body.insert("max_tokens".to_string(), Value::from(max_tokens));
+    }
+    if let Some(timeout) = options.candidate_timeout_seconds.filter(|value| *value > 0) {
+        body.insert(
+            "candidate_timeout_seconds".to_string(),
+            Value::from(timeout),
+        );
+    }
+    if let Some(timeout) = options
+        .cli_candidate_timeout_seconds
+        .filter(|value| *value > 0)
+    {
+        body.insert(
+            "cli_candidate_timeout_seconds".to_string(),
+            Value::from(timeout),
+        );
+    }
+    if let Some(timeout) = options.total_timeout_seconds.filter(|value| *value > 0) {
+        body.insert("total_timeout_seconds".to_string(), Value::from(timeout));
     }
     Value::Object(body)
 }

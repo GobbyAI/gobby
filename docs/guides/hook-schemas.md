@@ -101,13 +101,14 @@ failure posture. Once a request reaches the daemon, every `Stop` / `stop` hook
 fails closed on an evaluation exception or timeout, regardless of source. Any
 hook whose envelope explicitly carries `critical: true` also fails closed.
 
-`ghook` is versioned in the external
-[`GobbyAI/gobby-cli`](https://github.com/GobbyAI/gobby-cli/tree/main/crates/ghook)
-repository; there is no `gobby-cli/crates` tree in this repository. As of
-2026-07-12, that external source still marks AGY `Stop` and Grok `stop` as
-critical. Gobby task #17962 tracks aligning the external binary and release with
-the policy above. Gemini is retired and is not a supported source or a `ghook`
-CLI.
+`ghook` is versioned and released from the authoritative
+[`GobbyAI/gobby`](https://github.com/GobbyAI/gobby/tree/0.5.0/crates/ghook)
+monorepo. The retired `gobby-cli` checkout and repository preserve audit history
+only. In `ghook 0.7.2`, Codex `Stop` is the only provider Stop hook marked
+critical for daemon transport failure. AGY `Stop`, Grok `stop`, Claude `Stop`,
+Droid `Stop`, and Qwen `AfterAgent` fail open when the daemon is unreachable;
+startup, session, and pre-compact criticality remains unchanged. Gemini is
+retired and is not a supported source or a `ghook` CLI.
 
 ### Runtime Schema Compatibility
 

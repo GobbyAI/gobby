@@ -13,15 +13,22 @@ import time
 from importlib import resources
 from pathlib import Path
 from typing import Any, cast
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import click
 import psycopg
 
 from gobby.cli import postgres_bootstrap as _bootstrap
 from gobby.cli.postgres_bootstrap import InstallMode
+from gobby.code_index.bm25_health import (
+    render_bm25_status,
+    unavailable_bm25_status,
+    verify_bm25_indexes,
+)
 from gobby.config.bootstrap import BootstrapConfigError
 from gobby.utils.postgres_extensions import BASELINE_POSTGRES_EXTENSIONS
+
+from .compose_env import ComposeEnvironmentError, resolve_compose_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -59,14 +66,16 @@ def _install_docker(*, gobby_home: Path | None, port: int) -> dict[str, Any]:
     services_dir = home / "services"
     compose_file = _ensure_unified_compose(services_dir)
     _sync_postgres_pgsearch_assets(gobby_home=home)
-    postgres_password = _resolve_postgres_password(gobby_home=home)
-    _write_compose_env(gobby_home=home, postgres_password=postgres_password)
-
-    env = dict(os.environ)
-    env["GOBBY_POSTGRES_PORT"] = str(port)
-    env.setdefault("GOBBY_POSTGRES_DB", DEFAULT_POSTGRES_DB)
-    env.setdefault("GOBBY_POSTGRES_USER", DEFAULT_POSTGRES_USER)
-    env["GOBBY_POSTGRES_PASSWORD"] = postgres_password
+    try:
+        database_url = _resolve_postgres_install_database_url(gobby_home=home, port=port)
+        env = resolve_compose_runtime(
+            home,
+            database_url=database_url,
+            include_services=False,
+        ).environment
+        database_url = _database_url_from_compose_environment(env)
+    except (BootstrapConfigError, ComposeEnvironmentError, click.ClickException) as exc:
+        return {"success": False, "error": str(exc)}
 
     try:
         result = subprocess.run(  # nosec B603 B607 # fixed docker compose command
@@ -98,10 +107,13 @@ def _install_docker(*, gobby_home: Path | None, port: int) -> dict[str, Any]:
             "error": f"Docker compose up failed: {result.stderr or result.stdout}",
         }
 
-    if not _wait_for_pg_isready(compose_file=compose_file, services_dir=services_dir):
+    if not _wait_for_pg_isready(
+        compose_file=compose_file,
+        services_dir=services_dir,
+        env=env,
+    ):
         return {"success": False, "error": "PostgreSQL did not become ready before timeout"}
 
-    database_url = _docker_database_url(port, password=postgres_password)
     for extension in BASELINE_POSTGRES_EXTENSIONS:
         _probe_create_extension(
             dsn=database_url,
@@ -146,11 +158,21 @@ async def get_postgres_status(
             "error": bootstrap_error,
             "extensions": dict.fromkeys(BASELINE_POSTGRES_EXTENSIONS, False),
             "preload_libraries": [],
+            "code_index": unavailable_bm25_status(bootstrap_error),
         }
-    database_url = database_url or _docker_database_url(
-        DEFAULT_POSTGRES_PORT,
-        gobby_home=home,
-    )
+    if database_url is None:
+        error = f"{home / 'bootstrap.yaml'} does not define database_url"
+        return {
+            "available": False,
+            "mode": active_mode,
+            "dsn_host": None,
+            "dsn_db": None,
+            "healthy": False,
+            "error": error,
+            "extensions": dict.fromkeys(BASELINE_POSTGRES_EXTENSIONS, False),
+            "preload_libraries": [],
+            "code_index": unavailable_bm25_status(error),
+        }
 
     payload: dict[str, Any] = {
         "mode": active_mode,
@@ -163,6 +185,7 @@ async def get_postgres_status(
         ),
         "extensions": dict.fromkeys(BASELINE_POSTGRES_EXTENSIONS, False),
         "preload_libraries": [],
+        "code_index": unavailable_bm25_status("PostgreSQL status connection unavailable"),
     }
     if bootstrap_error:
         payload["error"] = bootstrap_error
@@ -174,8 +197,10 @@ async def get_postgres_status(
                 for extension in BASELINE_POSTGRES_EXTENSIONS
             }
             payload["preload_libraries"] = _preload_libraries(conn)
+            payload["code_index"] = verify_bm25_indexes(conn)
     except psycopg.Error as exc:
         logger.debug("PostgreSQL status connection failed: %s", exc)
+        payload["code_index"] = unavailable_bm25_status(str(exc))
 
     return payload
 
@@ -196,6 +221,9 @@ def render_postgres_status(payload: dict[str, Any]) -> str:
         lines.append(
             f"Ownership:   {'present' if ownership.get('sentinel_present') else 'missing'}"
         )
+    code_index = payload.get("code_index")
+    if isinstance(code_index, dict):
+        lines.extend(render_bm25_status(code_index))
     error = payload.get("error")
     if error:
         lines.append(f"Error:       {error}")
@@ -222,21 +250,6 @@ def _sync_postgres_pgsearch_assets(*, gobby_home: Path | None = None) -> Path:
     return target_root
 
 
-def _write_compose_env(*, gobby_home: Path | None = None, postgres_password: str) -> Path:
-    """Write the secret and deterministic pg_search build values used by Compose."""
-    home = gobby_home or Path("~/.gobby").expanduser()
-    manifest = _read_pgsearch_version_manifest()
-    env_path = home / "services" / ".env"
-    updates = {
-        "GOBBY_POSTGRES_PASSWORD": postgres_password,
-        "GOBBY_PG_SEARCH_VERSION": manifest["pg_search_version"],
-        "GOBBY_PG_SEARCH_SHA256": manifest["pg_search_sha256"],
-    }
-    _update_env_file(env_path, updates)
-    env_path.chmod(0o600)
-    return env_path
-
-
 def _read_pgsearch_version_manifest() -> dict[str, str]:
     manifest_ref = resources.files("gobby").joinpath("data/postgres-pgsearch/version.json")
     data = json.loads(manifest_ref.read_text(encoding="utf-8"))
@@ -252,39 +265,23 @@ def _read_pgsearch_version_manifest() -> dict[str, str]:
     }
 
 
-def _update_env_file(path: Path, updates: dict[str, str]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    lines: list[str] = []
-    if path.exists():
-        lines = [
-            line
-            for line in path.read_text(encoding="utf-8").splitlines()
-            if line.split("=", 1)[0] not in updates
-        ]
-    if lines and lines[-1].strip():
-        lines.append("")
-    lines.extend(f"{key}={value}" for key, value in updates.items())
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+def _resolve_postgres_install_database_url(*, gobby_home: Path, port: int) -> str:
+    bootstrap_path = gobby_home / "bootstrap.yaml"
+    if bootstrap_path.exists():
+        database_url = _read_bootstrap_database_url(gobby_home)
+        if not database_url:
+            raise click.ClickException(
+                f"{bootstrap_path} is missing database_url; repair it before reinstalling PostgreSQL"
+            )
+        resolve_compose_runtime(
+            gobby_home,
+            database_url=database_url,
+            include_services=False,
+        )
+        return database_url
 
-
-def _resolve_postgres_password(*, gobby_home: Path | None = None) -> str:
-    home = gobby_home or Path("~/.gobby").expanduser()
-    persisted = _read_env_value(home / "services" / ".env", "GOBBY_POSTGRES_PASSWORD")
-    if persisted:
-        return persisted
-    configured = os.environ.get("GOBBY_POSTGRES_PASSWORD")
-    return configured or secrets.token_urlsafe(32)
-
-
-def _read_env_value(path: Path, key: str) -> str | None:
-    if not path.exists():
-        return None
-    for line in path.read_text(encoding="utf-8").splitlines():
-        candidate, separator, value = line.partition("=")
-        if separator and candidate.strip() == key:
-            resolved = value.strip()
-            return resolved or None
-    return None
+    password = os.environ.get("GOBBY_POSTGRES_PASSWORD") or secrets.token_urlsafe(32)
+    return _docker_database_url(port, password=password)
 
 
 def _write_bootstrap_defaults(
@@ -318,6 +315,7 @@ def _wait_for_pg_isready(
     *,
     compose_file: Path,
     services_dir: Path,
+    env: dict[str, str],
     retries: int = 30,
     interval: float = 2.0,
 ) -> bool:
@@ -343,6 +341,7 @@ def _wait_for_pg_isready(
                 capture_output=True,
                 text=True,
                 timeout=10,
+                env=env,
                 cwd=str(services_dir),
             )
             if result.returncode == 0:
@@ -413,22 +412,24 @@ def _debian_arch(machine: str) -> str:
 
 def _docker_database_url(
     port: int,
-    password: str | None = None,
-    *,
-    gobby_home: Path | None = None,
+    password: str,
 ) -> str:
-    resolved_password = password or _read_env_value(
-        (gobby_home or Path("~/.gobby").expanduser()) / "services" / ".env",
-        "GOBBY_POSTGRES_PASSWORD",
-    )
-    if not resolved_password:
+    if not password:
         raise click.ClickException(
             "PostgreSQL credentials are unavailable; run `gobby install` to configure them."
         )
     return (
-        f"postgresql://{DEFAULT_POSTGRES_USER}:{resolved_password}"
+        f"postgresql://{quote(DEFAULT_POSTGRES_USER, safe='')}:{quote(password, safe='')}"
         f"@localhost:{port}/{DEFAULT_POSTGRES_DB}"
     )
+
+
+def _database_url_from_compose_environment(env: dict[str, str]) -> str:
+    user = quote(env["GOBBY_POSTGRES_USER"], safe="")
+    password = quote(env["GOBBY_POSTGRES_PASSWORD"], safe="")
+    port = env["GOBBY_POSTGRES_PORT"]
+    database = quote(env["GOBBY_POSTGRES_DB"], safe="")
+    return f"postgresql://{user}:{password}@localhost:{port}/{database}"
 
 
 def _read_bootstrap_database_url(gobby_home: Path) -> str | None:

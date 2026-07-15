@@ -230,6 +230,10 @@ class TelemetryMetrics:
             "agent_lifecycle_dispatch_mutex_skipped_runs_total",
             "Agent runs skipped during dispatch mutex lease refresh",
         )
+        self._register_counter(
+            "agent_lifecycle_autonomous_stuck_detected_total",
+            "Autonomous stuck-agent detections handled by the lifecycle monitor",
+        )
         self._register_histogram(
             "agent_lifecycle_dispatch_mutex_refresh_seconds",
             "Duration of active agent dispatch mutex refresh batches",

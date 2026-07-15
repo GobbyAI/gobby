@@ -1,0 +1,254 @@
+"""Resolve canonical runtime values for managed-service Compose commands."""
+
+from __future__ import annotations
+
+import json
+import os
+import platform
+from dataclasses import dataclass
+from importlib import resources
+from pathlib import Path
+from typing import Any
+from urllib.parse import unquote, urlparse
+
+
+class ComposeEnvironmentError(ValueError):
+    """Raised when canonical managed-service configuration is unusable."""
+
+
+@dataclass(frozen=True)
+class ComposeRuntime:
+    """Resolved subprocess environment and enabled optional service profiles."""
+
+    environment: dict[str, str]
+    profiles: tuple[str, ...]
+
+
+def resolve_compose_runtime(
+    gobby_home: Path,
+    *,
+    database_url: str | None = None,
+    include_services: bool = True,
+    overrides: dict[str, str] | None = None,
+) -> ComposeRuntime:
+    """Resolve the environment required by the unified managed-services Compose file.
+
+    Canonical values come from ``bootstrap.yaml``, ``config_store``, ``SecretStore``,
+    and the bundled pg_search manifest. Process environment values override those
+    values, while explicit caller overrides take final precedence.
+    """
+    home = gobby_home.expanduser()
+    canonical = _postgres_environment(home, database_url=database_url)
+    canonical.update(_pgsearch_environment())
+
+    profiles: tuple[str, ...] = ()
+    if include_services:
+        service_values, profiles = _service_environment(home)
+        canonical.update(service_values)
+
+    environment = canonical | dict(os.environ)
+    if overrides:
+        environment.update(overrides)
+    _validate_effective_environment(environment, profiles)
+    return ComposeRuntime(environment=environment, profiles=profiles)
+
+
+def _postgres_environment(gobby_home: Path, *, database_url: str | None) -> dict[str, str]:
+    dsn = database_url or _bootstrap_database_url(gobby_home)
+    parsed = urlparse(dsn)
+    if parsed.scheme not in {"postgres", "postgresql"}:
+        raise ComposeEnvironmentError(
+            "bootstrap.yaml database_url must use postgresql:// for managed services"
+        )
+
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ComposeEnvironmentError(
+            f"bootstrap.yaml database_url has an invalid PostgreSQL port: {exc}"
+        ) from exc
+
+    database = unquote(parsed.path.lstrip("/"))
+    username = unquote(parsed.username or "")
+    password = unquote(parsed.password or "")
+    missing = [
+        name
+        for name, value in (
+            ("username", username),
+            ("password", password),
+            ("port", port),
+            ("database", database),
+        )
+        if not value
+    ]
+    if missing:
+        fields = ", ".join(missing)
+        raise ComposeEnvironmentError(
+            f"bootstrap.yaml database_url is missing PostgreSQL {fields}; "
+            "run `gobby postgres install` or repair the DSN"
+        )
+
+    return {
+        "GOBBY_POSTGRES_DB": database,
+        "GOBBY_POSTGRES_USER": username,
+        "GOBBY_POSTGRES_PASSWORD": password,
+        "GOBBY_POSTGRES_PORT": str(port),
+    }
+
+
+def _bootstrap_database_url(gobby_home: Path) -> str:
+    from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
+
+    bootstrap_path = gobby_home / "bootstrap.yaml"
+    if not bootstrap_path.exists():
+        raise ComposeEnvironmentError(
+            f"Managed-service credentials are unavailable because {bootstrap_path} is missing; "
+            "run `gobby postgres install` first"
+        )
+    try:
+        config = load_bootstrap(str(bootstrap_path), resolve_database_url=True)
+    except BootstrapConfigError as exc:
+        raise ComposeEnvironmentError(f"Invalid {bootstrap_path}: {exc}") from exc
+    if config.hub_backend != "postgres" or not config.database_url:
+        raise ComposeEnvironmentError(
+            f"{bootstrap_path} must define a PostgreSQL database_url for managed services"
+        )
+    return config.database_url
+
+
+def _service_environment(gobby_home: Path) -> tuple[dict[str, str], tuple[str, ...]]:
+    from gobby.storage.config_store import ConfigStore
+    from gobby.storage.hub.runtime import open_runtime_hub_database
+    from gobby.storage.secrets import SecretStore
+
+    try:
+        db = open_runtime_hub_database(
+            str(gobby_home / "bootstrap.yaml"),
+            apply_migrations=False,
+        )
+    except Exception as exc:
+        raise ComposeEnvironmentError(
+            f"Could not read managed-service config_store values: {exc}"
+        ) from exc
+
+    try:
+        store = ConfigStore(db)
+        secret_store = SecretStore(db)
+        keys = set(store.list_keys())
+        values: dict[str, str] = {}
+        profiles: list[str] = []
+
+        qdrant_keys = {"databases.qdrant.url", "databases.qdrant.port"}
+        present_qdrant = keys & qdrant_keys
+        if present_qdrant:
+            if present_qdrant != qdrant_keys:
+                raise ComposeEnvironmentError(
+                    "Qdrant config is incomplete; databases.qdrant.url and "
+                    "databases.qdrant.port must both be set"
+                )
+            qdrant_port = _positive_port(
+                store.get("databases.qdrant.port"),
+                "databases.qdrant.port",
+            )
+            values["GOBBY_QDRANT_HTTP_PORT"] = str(qdrant_port)
+            values["GOBBY_QDRANT_GRPC_PORT"] = str(qdrant_port + 1)
+            profiles.append("qdrant")
+
+        falkor_keys = {
+            "databases.falkordb.host",
+            "databases.falkordb.port",
+            "databases.falkordb.password",
+        }
+        present_falkor = keys & falkor_keys
+        if present_falkor:
+            if present_falkor != falkor_keys:
+                raise ComposeEnvironmentError(
+                    "FalkorDB config is incomplete; host, port, and password must all be set"
+                )
+            falkor_port = _positive_port(
+                store.get("databases.falkordb.port"),
+                "databases.falkordb.port",
+            )
+            password_ref = store.get("databases.falkordb.password")
+            if not isinstance(password_ref, str) or not password_ref.startswith("$secret:"):
+                raise ComposeEnvironmentError(
+                    "databases.falkordb.password must be a SecretStore reference"
+                )
+            secret_name = password_ref.removeprefix("$secret:")
+            if not secret_name or not secret_store.exists(secret_name):
+                raise ComposeEnvironmentError(
+                    f"FalkorDB SecretStore entry {secret_name or '<empty>'!r} is missing"
+                )
+            password = secret_store.get(secret_name)
+            if not password:
+                raise ComposeEnvironmentError(
+                    f"FalkorDB SecretStore entry {secret_name!r} is empty"
+                )
+            values["GOBBY_FALKORDB_PASSWORD"] = password
+            values["GOBBY_FALKORDB_PORT"] = str(falkor_port)
+            profiles.append("falkordb")
+
+        return values, tuple(profiles)
+    finally:
+        db.close()
+
+
+def _positive_port(value: Any, key: str) -> int:
+    if isinstance(value, bool):
+        raise ComposeEnvironmentError(f"{key} must be a valid TCP port")
+    try:
+        port = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ComposeEnvironmentError(f"{key} must be a valid TCP port") from exc
+    if not 1 <= port <= 65535:
+        raise ComposeEnvironmentError(f"{key} must be between 1 and 65535")
+    return port
+
+
+def _validate_effective_environment(environment: dict[str, str], profiles: tuple[str, ...]) -> None:
+    for key in (
+        "GOBBY_POSTGRES_DB",
+        "GOBBY_POSTGRES_USER",
+        "GOBBY_POSTGRES_PASSWORD",
+        "GOBBY_PG_SEARCH_VERSION",
+        "GOBBY_PG_SEARCH_SHA256",
+    ):
+        if not environment.get(key):
+            raise ComposeEnvironmentError(f"{key} must not be empty")
+    _positive_port(environment.get("GOBBY_POSTGRES_PORT"), "GOBBY_POSTGRES_PORT")
+
+    if "qdrant" in profiles:
+        _positive_port(environment.get("GOBBY_QDRANT_HTTP_PORT"), "GOBBY_QDRANT_HTTP_PORT")
+        _positive_port(environment.get("GOBBY_QDRANT_GRPC_PORT"), "GOBBY_QDRANT_GRPC_PORT")
+    if "falkordb" in profiles:
+        _positive_port(environment.get("GOBBY_FALKORDB_PORT"), "GOBBY_FALKORDB_PORT")
+        if not environment.get("GOBBY_FALKORDB_PASSWORD"):
+            raise ComposeEnvironmentError("GOBBY_FALKORDB_PASSWORD must not be empty")
+
+
+def _pgsearch_environment() -> dict[str, str]:
+    manifest_ref = resources.files("gobby").joinpath("data/postgres-pgsearch/version.json")
+    try:
+        data = json.loads(manifest_ref.read_text(encoding="utf-8"))
+        sha_by_arch = data.get("pg_search_sha256_by_arch", {})
+        arch = _debian_arch(platform.machine())
+        sha256 = (sha_by_arch.get(arch) if isinstance(sha_by_arch, dict) else None) or data[
+            "pg_search_sha256"
+        ]
+        return {
+            "GOBBY_PG_SEARCH_VERSION": str(data["pg_search_version"]),
+            "GOBBY_PG_SEARCH_SHA256": str(sha256),
+        }
+    except (KeyError, OSError, TypeError, ValueError) as exc:
+        raise ComposeEnvironmentError(
+            f"Bundled pg_search version manifest is invalid: {exc}"
+        ) from exc
+
+
+def _debian_arch(machine: str) -> str:
+    normalized = machine.strip().lower()
+    if normalized in {"arm64", "aarch64"}:
+        return "arm64"
+    if normalized in {"x86_64", "amd64"}:
+        return "amd64"
+    return normalized

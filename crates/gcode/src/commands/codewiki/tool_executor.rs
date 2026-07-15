@@ -99,7 +99,8 @@ impl<'a> CodewikiToolExecutor<'a> {
             language.as_deref(),
             &paths,
             limit,
-        );
+        )
+        .map_err(|error| tool_err(error.to_string()))?;
         if outcome.results.is_empty() {
             return Ok(format!("No symbols matched `{query}`."));
         }

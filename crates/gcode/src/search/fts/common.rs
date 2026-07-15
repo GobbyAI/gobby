@@ -329,7 +329,7 @@ pub(super) fn query_symbols_by_conditions(
     filters: SymbolFilters<'_>,
     limit: usize,
     order: SymbolOrder,
-) -> Vec<Symbol> {
+) -> Result<Vec<Symbol>, postgres::Error> {
     let path_filter_requires_post_filter =
         push_symbol_filters(&mut conditions, &mut params, "cs", filters);
     let query_limit = if path_filter_requires_post_filter {
@@ -355,21 +355,16 @@ pub(super) fn query_symbols_by_conditions(
         order_by = order.sql()
     );
     let refs = param_refs(&params);
-    let mut symbols = match conn.query(&sql, &refs) {
-        Ok(rows) => rows
-            .iter()
-            .filter_map(|row| Symbol::from_row(row).ok())
-            .collect(),
-        Err(error) => {
-            log::error!("symbol query failed: {error}");
-            return Vec::new();
-        }
-    };
+    let mut symbols = conn
+        .query(&sql, &refs)?
+        .iter()
+        .filter_map(|row| Symbol::from_row(row).ok())
+        .collect();
     if path_filter_requires_post_filter {
         symbols = symbols_matching_paths(symbols, filters.paths);
         symbols.truncate(limit);
     }
-    symbols
+    Ok(symbols)
 }
 
 #[cfg(test)]

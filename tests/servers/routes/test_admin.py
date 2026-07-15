@@ -514,6 +514,50 @@ class TestAdminRoutes:
             connect_timeout=1,
         )
 
+    @patch("gobby.cli.installers.postgres.get_postgres_status", new_callable=AsyncMock)
+    @patch("gobby.servers.routes.admin._health.psutil")
+    @patch("gobby.servers.routes.admin._health.asyncio.to_thread")
+    def test_status_endpoint_degrades_for_damaged_bm25_index(
+        self,
+        mock_to_thread,
+        mock_psutil,
+        mock_get_postgres_status,
+        client,
+        mock_server,
+    ) -> None:
+        mock_process = MagicMock()
+        mock_process.memory_info.return_value = MagicMock(
+            rss=1024 * 1024 * 100, vms=1024 * 1024 * 200
+        )
+        mock_process.num_threads.return_value = 10
+        mock_psutil.Process.return_value = mock_process
+        mock_to_thread.return_value = 0.5
+        mock_server.services.database.dialect = "postgres"
+        mock_server.services.config.hub_backend = "postgres"
+        mock_get_postgres_status.return_value = {
+            "healthy": True,
+            "code_index": {
+                "healthy": False,
+                "repair_command": "gobby postgres repair-code-index",
+                "indexes": [
+                    {
+                        "name": "public.code_symbols_search_bm25",
+                        "state": "damaged",
+                        "repaired": False,
+                        "checks": [],
+                        "error": "invalid chunk style tag: 254",
+                    }
+                ],
+            },
+        }
+
+        response = client.get("/api/admin/status")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "degraded"
+        assert data["postgres"]["code_index"]["healthy"] is False
+
     @patch("gobby.servers.routes.admin._health.get_all_metrics")
     @patch("gobby.servers.routes.admin._health.generate_latest")
     @patch("gobby.servers.routes.admin._health.psutil")

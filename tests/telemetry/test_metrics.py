@@ -80,6 +80,13 @@ def test_statusline_bake_counters_registered(metrics_collector):
     assert all_metrics["counters"]["statusline_usage_gap_warnings_total"]["value"] == 0
 
 
+def test_autonomous_stuck_lifecycle_counter_registered(metrics_collector):
+    metrics_collector.inc_counter("agent_lifecycle_autonomous_stuck_detected_total")
+
+    all_metrics = metrics_collector.get_all_metrics()
+    assert all_metrics["counters"]["agent_lifecycle_autonomous_stuck_detected_total"]["value"] == 1
+
+
 def test_set_gauge(metrics_collector, meter_provider):
     _, reader = meter_provider
     metrics_collector.set_gauge("mcp_active_connections", value=5.0)

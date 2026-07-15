@@ -43,7 +43,7 @@ class TestWorkflowHookHandlerInit:
         handler = WorkflowHookHandler()
 
         assert handler._enabled is True
-        assert handler.timeout == 30.0
+        assert handler.timeout == 15.0
         assert handler.rule_engine is None
 
     def test_init_with_custom_timeout(self) -> None:

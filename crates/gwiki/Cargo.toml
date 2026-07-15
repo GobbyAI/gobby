@@ -26,7 +26,7 @@ name = "gwiki"
 path = "src/main.rs"
 
 [dependencies]
-gobby-core = { path = "../gcore", version = "0.8.0", features = ["postgres", "falkor", "qdrant", "indexing", "search", "graph-analytics", "ai"] }
+gobby-core = { path = "../gcore", version = "0.8.1", features = ["postgres", "falkor", "qdrant", "indexing", "search", "graph-analytics", "ai"] }
 clap = { version = "4", features = ["derive"] }
 aho-corasick = "1"
 anyhow = "1"
@@ -71,5 +71,5 @@ libc = "0.2"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
-gobby-core = { path = "../gcore", version = "0.8.0", features = ["postgres", "falkor", "qdrant", "indexing", "search", "graph-analytics", "ai"] }
+gobby-core = { path = "../gcore", version = "0.8.1", features = ["postgres", "falkor", "qdrant", "indexing", "search", "graph-analytics", "ai"] }
 serial_test = "3"

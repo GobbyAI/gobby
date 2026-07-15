@@ -1,4 +1,4 @@
-use gobby_core::config::AiRouting;
+use gobby_core::config::{AiCapability, AiRouting};
 
 use crate::explainer::{ExplainerGenerator, ExplainerPrompt};
 use crate::support::scope::resolve_selection_context;
@@ -7,7 +7,8 @@ use crate::support::time::collect_timestamp;
 use crate::{CommandOutcome, ScopeSelection, UpkeepOptions, WikiError, daemon, session, upkeep};
 
 use super::lanes::{
-    ai_notice_label, resolve_explainer_transport, resolve_lane_b_generator, routing_label,
+    ai_notice_label, resolve_ai_selection, resolve_explainer_transport, resolve_lane_b_generator,
+    routing_label,
 };
 
 const COMMAND: &str = "gwiki upkeep";
@@ -22,6 +23,12 @@ pub(crate) fn execute(
     let vault_root = research_scope.root().to_path_buf();
     let timestamp = collect_timestamp()?;
     let daemon_report = daemon::probe_daemon_capabilities();
+    let ai_selection = resolve_ai_selection(
+        ai,
+        COMMAND,
+        AiCapability::TextGenerate,
+        daemon_report.synthesis.available,
+    );
 
     let mut notes: Vec<String> = Vec::new();
     // A configured-but-unreachable hub only degrades the near-duplicate layer;
@@ -51,9 +58,10 @@ pub(crate) fn execute(
         daemon_synthesis_available: daemon_report.synthesis.available,
         hard_fail_on_generation_failure: false,
         archive_after_days: upkeep::DEFAULT_ARCHIVE_AFTER_DAYS,
+        time_budget_seconds: options.time_budget_seconds,
     };
 
-    // Dry runs never generate, so skip AI route resolution entirely.
+    // Dry runs never generate, so report the selected transport as inactive.
     let (mut report, ai_payload) = if options.dry_run {
         let report = upkeep::run(
             research_scope,
@@ -69,12 +77,12 @@ pub(crate) fn execute(
                 "requested_mode": routing_label(ai),
                 "lane": "none",
                 "route": "off",
-                "fallback": false,
+                "selection_reason": "dry_run",
                 "notice": Option::<&str>::None,
             }),
         )
     } else if let Some(mut lane_b) = resolve_lane_b_generator(
-        ai,
+        ai_selection.route,
         &selection,
         vault_root,
         context.scope.project_root().map(|root| root.to_path_buf()),
@@ -99,14 +107,13 @@ pub(crate) fn execute(
                 "requested_mode": routing_label(ai),
                 "lane": "tool_loop",
                 "route": info.route_label,
-                "fallback": info.fallback,
+                "selection_reason": ai_selection.selection_reason,
                 "notice": info.notice.map(ai_notice_label),
             }),
         )
     } else {
-        let transport = resolve_explainer_transport(ai, COMMAND);
+        let transport = resolve_explainer_transport(ai_selection.route, COMMAND);
         let route_label = transport.route_label();
-        let fallback = transport.fallback();
         let notice = transport.notice_kind();
         let mut generate = |prompt: &ExplainerPrompt| transport.generate(prompt);
         let generator: Option<ExplainerGenerator<'_>> = if transport.is_active() {
@@ -128,7 +135,7 @@ pub(crate) fn execute(
                 "requested_mode": routing_label(ai),
                 "lane": "one_shot",
                 "route": route_label,
-                "fallback": fallback,
+                "selection_reason": ai_selection.selection_reason,
                 "notice": notice.map(ai_notice_label),
             }),
         )

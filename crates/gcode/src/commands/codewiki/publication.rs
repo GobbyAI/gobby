@@ -20,7 +20,7 @@ use super::{
 };
 use crate::index::hasher;
 
-const STAGE_VERSION: u32 = 1;
+const STAGE_VERSION: u32 = 2;
 const STAGE_DIR: &str = "_meta/codewiki-stage";
 const STAGE_MANIFEST: &str = "manifest.json";
 const STAGE_VAULT: &str = "vault";
@@ -41,6 +41,12 @@ pub(crate) struct PublicationFingerprint {
     since_changed: Vec<String>,
     source_hashes: BTreeMap<String, String>,
     index_snapshot_hash: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct StageManifest {
+    fingerprint: PublicationFingerprint,
+    force_full_hash_scan: bool,
 }
 
 impl PublicationFingerprint {
@@ -133,6 +139,7 @@ pub(crate) struct CodewikiPublication {
     stage_root: PathBuf,
     stage_out: PathBuf,
     recovered_changed: BTreeSet<String>,
+    force_full_hash_scan: bool,
 }
 
 impl CodewikiPublication {
@@ -149,20 +156,40 @@ impl CodewikiPublication {
             recovered_changed.extend(publish_staged(live_out, &stage_root, None)?);
             remove_stage(&stage_root)?;
         }
-        if !stage_is_compatible(&stage_root, fingerprint)? {
-            seed_stage(live_out, &stage_root, fingerprint)?;
-        }
+        let force_full_hash_scan = match read_stage_manifest(&stage_root) {
+            Some(mut manifest)
+                if manifest.fingerprint.version == fingerprint.version
+                    && manifest.fingerprint.project_root == fingerprint.project_root
+                    && manifest.fingerprint.scopes == fingerprint.scopes =>
+            {
+                if manifest.fingerprint != *fingerprint {
+                    manifest.fingerprint = fingerprint.clone();
+                    manifest.force_full_hash_scan = true;
+                    atomic_write_json(&stage_root.join(STAGE_MANIFEST), &manifest)?;
+                }
+                manifest.force_full_hash_scan
+            }
+            _ => {
+                seed_stage(live_out, &stage_root, fingerprint)?;
+                false
+            }
+        };
         Ok(Self {
             _live_lock: live_lock,
             live_out: live_out.to_path_buf(),
             stage_root,
             stage_out,
             recovered_changed,
+            force_full_hash_scan,
         })
     }
 
     pub(crate) fn stage_out(&self) -> &Path {
         &self.stage_out
+    }
+
+    pub(crate) fn requires_full_hash_scan(&self) -> bool {
+        self.force_full_hash_scan
     }
 
     pub(crate) fn publish(mut self) -> anyhow::Result<Vec<String>> {
@@ -181,23 +208,15 @@ impl CodewikiPublication {
     }
 }
 
-fn stage_is_compatible(
-    stage_root: &Path,
-    fingerprint: &PublicationFingerprint,
-) -> anyhow::Result<bool> {
+fn read_stage_manifest(stage_root: &Path) -> Option<StageManifest> {
     let manifest_path = stage_root.join(STAGE_MANIFEST);
     let stage_out = stage_root.join(STAGE_VAULT);
     if !stage_out.is_dir() || !manifest_path.is_file() {
-        return Ok(false);
+        return None;
     }
-    let manifest = match fs::read(&manifest_path)
+    fs::read(&manifest_path)
         .ok()
-        .and_then(|content| serde_json::from_slice::<PublicationFingerprint>(&content).ok())
-    {
-        Some(manifest) => manifest,
-        None => return Ok(false),
-    };
-    Ok(&manifest == fingerprint)
+        .and_then(|content| serde_json::from_slice(&content).ok())
 }
 
 fn seed_stage(
@@ -227,7 +246,13 @@ fn seed_stage(
             atomic_copy(&source, &seed_out.join(meta_path))?;
         }
     }
-    atomic_write_json(&seed_root.join(STAGE_MANIFEST), fingerprint)?;
+    atomic_write_json(
+        &seed_root.join(STAGE_MANIFEST),
+        &StageManifest {
+            fingerprint: fingerprint.clone(),
+            force_full_hash_scan: false,
+        },
+    )?;
     fs::rename(&seed_root, stage_root)?;
     Ok(())
 }

@@ -100,8 +100,15 @@ async def pid_matches_agent_identity(
     provider: str,
     session_id: str | None,
     run_subprocess: Callable[..., Awaitable[tuple[int, str, str]]] | None = None,
+    unverifiable_result: bool = False,
 ) -> bool:
-    """Verify a recorded PID still belongs to the expected provider/session."""
+    """Verify a recorded PID still belongs to the expected provider/session.
+
+    unverifiable_result is returned when identity cannot be determined at all
+    (the ps lookup itself fails, e.g. times out under load). Signal/kill paths
+    keep the False default (never signal an unverified PID); liveness checks
+    must pass True so a failed lookup is not mistaken for a dead agent.
+    """
     if not session_id or not _validate_terminal_value("session_id", session_id):
         logger.warning("Refusing to signal PID %s: missing or invalid session id", pid)
         return False
@@ -115,8 +122,13 @@ async def pid_matches_agent_identity(
     try:
         rc, stdout, _ = await runner("ps", "-p", str(pid), "-o", "args=", timeout=2.0)
     except Exception as e:
-        logger.warning("Refusing to signal PID %s: cmdline lookup failed: %s", pid, e)
-        return False
+        logger.warning(
+            "PID %s identity unverifiable (cmdline lookup failed: %s); treating as %s",
+            pid,
+            e or type(e).__name__,
+            "alive" if unverifiable_result else "unsafe to signal",
+        )
+        return unverifiable_result
 
     cmdline = stdout.strip()
     if rc != 0 or provider_marker not in cmdline.lower():
@@ -129,8 +141,16 @@ async def pid_matches_agent_identity(
         return True
     # Providers like codex carry no session marker in argv; the spawn-time
     # GOBBY_SESSION_ID environment variable is the identity there.
-    if await _process_env_matches_session(pid, session_id):
+    env_match = await _process_env_matches_session(pid, session_id)
+    if env_match:
         return True
+    if env_match is None:
+        logger.warning(
+            "PID %s identity unverifiable (environment unreadable); treating as %s",
+            pid,
+            "alive" if unverifiable_result else "unsafe to signal",
+        )
+        return unverifiable_result
     logger.warning(
         "Refusing to signal PID %s: cmdline does not match provider/session identity",
         pid,
@@ -138,14 +158,16 @@ async def pid_matches_agent_identity(
     return False
 
 
-async def _process_env_matches_session(pid: int, session_id: str) -> bool:
-    """Check whether a process's environment carries GOBBY_SESSION_ID=session_id."""
+async def _process_env_matches_session(pid: int, session_id: str) -> bool | None:
+    """Check the process environment for GOBBY_SESSION_ID; None means unreadable."""
 
-    def _read_env() -> bool:
+    def _read_env() -> bool | None:
         try:
             env = psutil.Process(pid).environ()
-        except (psutil.Error, OSError):
+        except psutil.NoSuchProcess:
             return False
+        except (psutil.Error, OSError):
+            return None
         return bool(env.get("GOBBY_SESSION_ID") == session_id)
 
     return await asyncio.to_thread(_read_env)

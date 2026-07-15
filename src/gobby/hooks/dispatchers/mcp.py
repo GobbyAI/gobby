@@ -452,8 +452,11 @@ def dispatch_mcp_calls(
         # Inject event context into arguments
         if "session_id" not in arguments:
             arguments["session_id"] = event.metadata.get("_platform_session_id", "")
-        if "prompt_text" not in arguments:
-            arguments["prompt_text"] = event.data.get("prompt") if event.data else None
+        if arguments.get("prompt_text") is None:
+            arguments.pop("prompt_text", None)
+            event_prompt = event.data.get("prompt") if event.data else None
+            if isinstance(event_prompt, str):
+                arguments["prompt_text"] = event_prompt
         if "project_path" not in arguments:
             arguments["project_path"] = event.metadata.get("project_path") or None
         # Map prompt_text to query for tools that expect it (e.g., search_memories)

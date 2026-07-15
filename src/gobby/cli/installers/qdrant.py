@@ -14,6 +14,8 @@ from typing import Any
 
 import httpx
 
+from .compose_env import ComposeEnvironmentError, resolve_compose_runtime
+
 logger = logging.getLogger(__name__)
 
 # Bundled unified compose template
@@ -60,6 +62,13 @@ def install_qdrant(
     services_dir = home / "services"
     compose_file = _ensure_unified_compose(services_dir)
 
+    configured_url = f"http://localhost:{port}"
+    try:
+        _update_config(qdrant_url=configured_url, qdrant_port=port, gobby_home=home)
+        runtime = resolve_compose_runtime(home)
+    except (ComposeEnvironmentError, ImportError, OSError, RuntimeError, ValueError) as exc:
+        return {"success": False, "error": f"Failed to resolve Qdrant config: {exc}"}
+
     # Run docker compose up with qdrant profile
     try:
         result = subprocess.run(  # nosec B603 B607
@@ -77,6 +86,7 @@ def install_qdrant(
             capture_output=True,
             text=True,
             timeout=120,
+            env=runtime.environment,
             cwd=str(services_dir),
         )
 
@@ -91,15 +101,13 @@ def install_qdrant(
         return {"success": False, "error": f"Docker compose execution failed: {e}"}
 
     # Wait for health check
-    url = f"http://localhost:{port}"
+    effective_port = int(runtime.environment["GOBBY_QDRANT_HTTP_PORT"])
+    url = f"http://localhost:{effective_port}"
     if not _wait_for_health(url):
         return {
             "success": False,
             "error": "Health check failed: Qdrant did not become healthy in time",
         }
-
-    # Update daemon config
-    _update_config(qdrant_url=url, qdrant_port=port)
 
     return {
         "success": True,
@@ -131,23 +139,25 @@ async def _wait_for_health_async(url: str, retries: int = 30, interval: float = 
 def _update_config(
     qdrant_url: str | None = None,
     qdrant_port: int | None = None,
+    *,
+    gobby_home: Path,
 ) -> None:
     """Update daemon config with Qdrant settings via ConfigStore."""
-    try:
-        from gobby.storage.config_store import ConfigStore
-        from gobby.storage.hub.runtime import open_runtime_hub_database
+    from gobby.storage.config_store import ConfigStore
+    from gobby.storage.hub.runtime import open_runtime_hub_database
 
-        db = open_runtime_hub_database(apply_migrations=False)
-        try:
-            store = ConfigStore(db)
-            if qdrant_url:
-                store.set("databases.qdrant.url", qdrant_url, source="install")
-                if qdrant_port:
-                    store.set("databases.qdrant.port", str(qdrant_port), source="install")
-            else:
-                store.delete("databases.qdrant.url")
-                store.delete("databases.qdrant.port")
-        finally:
-            db.close()
-    except (ImportError, OSError, RuntimeError, ValueError) as e:
-        logger.warning(f"Failed to update config: {e}")
+    db = open_runtime_hub_database(
+        str(gobby_home / "bootstrap.yaml"),
+        apply_migrations=False,
+    )
+    try:
+        store = ConfigStore(db)
+        if qdrant_url:
+            store.set("databases.qdrant.url", qdrant_url, source="install")
+            if qdrant_port:
+                store.set("databases.qdrant.port", qdrant_port, source="install")
+        else:
+            store.delete("databases.qdrant.url")
+            store.delete("databases.qdrant.port")
+    finally:
+        db.close()

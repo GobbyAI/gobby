@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.cli.installers.compose_env import ComposeEnvironmentError, ComposeRuntime
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.status import format_status_message
@@ -93,15 +94,14 @@ class TestDaemonDockerFlag:
         with (
             patch("gobby.cli.daemon.subprocess.run") as mock_run,
             patch("shutil.which", return_value="/usr/bin/docker"),
-            patch("gobby.cli.daemon._open_services_config_db", return_value=MagicMock()),
-            patch("gobby.config.app.load_config") as mock_config,
-        ):
-            mock_config.return_value = MagicMock(
-                databases=MagicMock(
-                    falkordb=MagicMock(password="password"),
-                    qdrant=MagicMock(url=None),
+            patch(
+                "gobby.cli.daemon.resolve_compose_runtime",
+                return_value=ComposeRuntime(
+                    environment={"GOBBY_FALKORDB_PASSWORD": "password"},
+                    profiles=("falkordb",),
                 ),
-            )
+            ),
+        ):
             mock_run.return_value = MagicMock(returncode=0)
             result = _services_start(tmp_path)
 
@@ -128,7 +128,10 @@ class TestDaemonDockerFlag:
 
         with (
             patch("shutil.which", return_value="/usr/bin/docker"),
-            patch("gobby.cli.daemon._open_services_config_db", side_effect=RuntimeError("db")),
+            patch(
+                "gobby.cli.daemon.resolve_compose_runtime",
+                side_effect=ComposeEnvironmentError("db"),
+            ),
             patch("gobby.cli.daemon.subprocess.run") as mock_run,
         ):
             result = _services_start(tmp_path)
@@ -146,12 +149,19 @@ class TestDaemonDockerFlag:
         with (
             patch("shutil.which", return_value="/usr/bin/docker"),
             patch("gobby.cli.daemon.subprocess.run") as mock_run,
+            patch(
+                "gobby.cli.daemon.resolve_compose_runtime",
+                return_value=ComposeRuntime(environment={"PATH": "test"}, profiles=()),
+            ),
         ):
             mock_run.return_value = MagicMock(returncode=0)
             _services_stop(tmp_path)
 
         compose_calls = [call for call in mock_run.call_args_list if "down" in str(call)]
         assert compose_calls
+        assert mock_run.call_args.args[0][-1] == "down"
+        assert mock_run.call_args.kwargs["cwd"] == str(svc_dir)
+        assert mock_run.call_args.kwargs["env"] == {"PATH": "test"}
 
     def test_services_stop_skips_when_no_docker(self, tmp_path: Path) -> None:
         from gobby.cli.daemon import _services_stop

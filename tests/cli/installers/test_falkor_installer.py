@@ -110,8 +110,9 @@ class TestInstallFalkorDB:
             ),
             patch("gobby.cli.installers.falkor._wait_for_health", return_value=True),
             patch("gobby.cli.installers.falkor._update_config"),
-            patch("gobby.cli.installers.falkor._write_bootstrap_password", return_value=True),
+            patch("gobby.cli.installers.falkor.resolve_compose_runtime") as resolve,
         ):
+            resolve.return_value.environment = {"GOBBY_FALKORDB_PASSWORD": "password123"}
             mock_subprocess.run.return_value = MagicMock(returncode=0)
             mock_subprocess.TimeoutExpired = TimeoutError
 
@@ -134,8 +135,9 @@ class TestInstallFalkorDB:
             ),
             patch("gobby.cli.installers.falkor._wait_for_health", return_value=True),
             patch("gobby.cli.installers.falkor._update_config"),
-            patch("gobby.cli.installers.falkor._write_bootstrap_password", return_value=True),
+            patch("gobby.cli.installers.falkor.resolve_compose_runtime") as resolve,
         ):
+            resolve.return_value.environment = {"GOBBY_FALKORDB_PASSWORD": "password123"}
             mock_subprocess.run.return_value = MagicMock(returncode=0)
             mock_subprocess.TimeoutExpired = TimeoutError
 
@@ -163,8 +165,9 @@ class TestInstallFalkorDB:
             ),
             patch("gobby.cli.installers.falkor._wait_for_health", return_value=True),
             patch("gobby.cli.installers.falkor._update_config") as mock_update,
-            patch("gobby.cli.installers.falkor._write_bootstrap_password", return_value=True),
+            patch("gobby.cli.installers.falkor.resolve_compose_runtime") as resolve,
         ):
+            resolve.return_value.environment = {"GOBBY_FALKORDB_PASSWORD": "password123"}
             mock_subprocess.run.return_value = MagicMock(returncode=0)
             mock_subprocess.TimeoutExpired = TimeoutError
 
@@ -222,7 +225,10 @@ class TestInstallFalkorDB:
                 "gobby.cli.installers.falkor._resolve_falkordb_password",
                 return_value=ResolvedFalkorPassword("password123", "provided", False),
             ),
+            patch("gobby.cli.installers.falkor._update_config"),
+            patch("gobby.cli.installers.falkor.resolve_compose_runtime") as resolve,
         ):
+            resolve.return_value.environment = {"GOBBY_FALKORDB_PASSWORD": "password123"}
             mock_subprocess.run.return_value = MagicMock(
                 returncode=1, stderr="container failed", stdout=""
             )

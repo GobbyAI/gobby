@@ -218,6 +218,11 @@ pub fn run(
     )?;
     let publication = CodewikiPublication::prepare(out_path, &fingerprint)?;
     let stage_path = publication.stage_out().to_path_buf();
+    let effective_since_changed = if publication.requires_full_hash_scan() {
+        None
+    } else {
+        since_changed
+    };
     let previous_meta = if doc_scope.is_unscoped() {
         Some(io::read_codewiki_meta(&stage_path)?)
     } else {
@@ -232,7 +237,7 @@ pub fn run(
         &ctx.project_root,
         &stage_path,
         ai_mode,
-        since_changed.clone(),
+        effective_since_changed.clone(),
         ai_outcome,
     )?
     .with_ai_settings(ai_settings.clone());
@@ -240,7 +245,7 @@ pub fn run(
         DocSink::open_with_prune_scope(&ctx.project_root, &stage_path, ai_mode, doc_scope.clone())?
             .with_ai_outcome(ai_outcome)
             .with_ai_settings(ai_settings)
-            .with_since(since_changed);
+            .with_since(effective_since_changed);
     let mut generated_pages = 0_usize;
     let mut module_count = 0_usize;
     let mut file_count = 0_usize;

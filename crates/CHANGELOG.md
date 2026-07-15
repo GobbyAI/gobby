@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] — gobby-core — 2026-07-14
+
+Patch release required by daemon-authenticated Rust clients, including
+`gobby-hooks 0.7.2`.
+
+### Added
+
+#### gobby-core
+
+- **Local daemon token primitives** — expose the shared token path, bearer
+  formatting, and token reader used by ghook, gcode, gwiki, and daemon AI
+  transports.
+
+### Fixed
+
+#### gobby-core
+
+- **Daemon and search hardening** — bound daemon request behavior, secure native
+  service provisioning, and reject malformed or boolean search syntax.
+
+## [0.7.2] — ghook — 2026-07-14
+
+### Fixed
+
+#### ghook
+
+- **Daemon-down Stop-hook posture** — Codex `Stop` remains fail-closed. AGY
+  `Stop`, Grok `stop`, Claude `Stop`, Droid `Stop`, and Qwen `AfterAgent` now
+  fail open when the daemon is unreachable. Existing startup, session, and
+  pre-compact critical hooks remain fail-closed.
+
 ## [1.5.0] — gcode — 2026-07-09
 
 First gcode release published from the `GobbyAI/gobby` monorepo

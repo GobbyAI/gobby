@@ -18,9 +18,7 @@ import psycopg
 
 from gobby import __version__
 from gobby.cli.installers.postgres import (
-    DEFAULT_POSTGRES_PORT,
     _active_install_mode,
-    _docker_database_url,
     _extension_present,
     _preload_libraries,
     _read_bootstrap_database_url,
@@ -32,6 +30,8 @@ from gobby.cli.installers.service import get_service_status
 from gobby.cli.postgres_backup import create_postgres_backup, restore_postgres_backup
 from gobby.cli.postgres_bootstrap import InstallMode, set_bootstrap_field
 from gobby.cli.utils import _is_process_alive, _redact_dsn, get_gobby_home
+from gobby.code_index.bm25_health import render_bm25_status, repair_bm25_indexes
+from gobby.config.app import load_config
 from gobby.utils.json_helpers import json_dumps
 
 _TICKET_CAPTURE_KINDS = {"pgaudit-managed"}
@@ -78,6 +78,30 @@ def status_cmd(as_json: bool) -> None:
         click.echo(json_dumps(payload, indent=2, sort_keys=True))
     else:
         click.echo(render_postgres_status(payload))
+
+
+@postgres_cli.command("repair-code-index")
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit the repair payload as JSON on stdout.",
+)
+def repair_code_index_cmd(as_json: bool) -> None:
+    """Verify and selectively rebuild damaged code-index BM25 indexes."""
+    database_url = _read_bootstrap_database_url(get_gobby_home())
+    if not database_url:
+        raise click.ClickException(
+            "PostgreSQL credentials are unavailable; run `gobby postgres install` first."
+        )
+    timeout = load_config(resolve_database_url=False).code_index.maintenance_index_timeout_seconds
+    payload = repair_bm25_indexes(database_url, timeout_seconds=timeout)
+    if as_json:
+        click.echo(json_dumps(payload, indent=2, sort_keys=True))
+    else:
+        click.echo("\n".join(render_bm25_status(payload)))
+    if not payload["healthy"]:
+        raise click.exceptions.Exit(1)
 
 
 @postgres_cli.command("backup")
@@ -328,9 +352,11 @@ printf '%s\\n%s\\n' "$audit_file" "$audit_line"
 
 
 def _postgres_connection() -> Any:
-    database_url = _read_bootstrap_database_url(get_gobby_home()) or _docker_database_url(
-        DEFAULT_POSTGRES_PORT
-    )
+    database_url = _read_bootstrap_database_url(get_gobby_home())
+    if not database_url:
+        raise click.ClickException(
+            "PostgreSQL credentials are unavailable; run `gobby postgres install` first."
+        )
     try:
         return psycopg.connect(database_url, connect_timeout=5)
     except psycopg.Error as exc:

@@ -159,6 +159,25 @@ class TestDispatchMcpCallsContextInjection:
         finally:
             loop.close()
 
+    def test_omits_null_prompt_without_event_string(self) -> None:
+        proxy = AsyncMock()
+        stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy)
+        event = _make_event()
+        event.data = {}
+        calls = [
+            {
+                "server": "gobby-memory",
+                "tool": "digest",
+                "arguments": {"prompt_text": None},
+                "background": False,
+            }
+        ]
+
+        stub._dispatch_mcp_calls(calls, event)
+
+        assert proxy.call_tool.called
+        assert "prompt_text" not in proxy.call_tool.call_args.args[2]
+
 
 class TestDispatchMcpCallsBackgroundMode:
     """Tests for background (fire-and-forget) dispatch."""

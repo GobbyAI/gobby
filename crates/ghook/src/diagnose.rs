@@ -182,13 +182,33 @@ mod tests {
             ("UserPromptSubmit", false),
             ("PreToolUse", false),
             ("PostToolUse", false),
-            ("Stop", true),
+            ("Stop", false),
         ] {
             let d = diagnose("agy", hook_type);
             assert!(d.cli_recognized);
             assert_eq!(d.source.as_deref(), Some("agy"));
             assert_eq!(d.critical, critical, "{hook_type}");
         }
+    }
+
+    #[test]
+    fn terminal_hook_criticality_matches_supported_cli_contracts() {
+        for (cli, hook_type, critical) in [
+            ("codex", "Stop", true),
+            ("agy", "Stop", false),
+            ("grok", "stop", false),
+            ("claude", "Stop", false),
+            ("claude", "session-end", true),
+            ("droid", "Stop", false),
+            ("qwen", "AfterAgent", false),
+        ] {
+            let output = diagnose(cli, hook_type);
+            assert!(output.cli_recognized, "{cli} should be recognized");
+            assert_eq!(output.source.as_deref(), Some(cli));
+            assert_eq!(output.critical, critical, "{cli} {hook_type}");
+        }
+
+        assert!(!diagnose("gemini", "Stop").cli_recognized);
     }
 
     #[test]
@@ -305,8 +325,8 @@ mod tests {
             f,
             r#"{{
                 "install_method": "github-release",
-                "install_source_url": "https://github.com/GobbyAI/gobby-cli/releases/download/ghook-v0.3.0/ghook-aarch64-apple-darwin.tar.gz",
-                "installed_version": "0.3.0",
+                "install_source_url": "https://github.com/GobbyAI/gobby/releases/download/ghook-v0.7.2/ghook-aarch64-apple-darwin.tar.gz",
+                "installed_version": "0.7.2",
                 "installed_at": "2026-04-22T18:30:00Z"
             }}"#
         )
@@ -316,7 +336,7 @@ mod tests {
         assert_eq!(
             url.as_deref(),
             Some(
-                "https://github.com/GobbyAI/gobby-cli/releases/download/ghook-v0.3.0/ghook-aarch64-apple-darwin.tar.gz"
+                "https://github.com/GobbyAI/gobby/releases/download/ghook-v0.7.2/ghook-aarch64-apple-darwin.tar.gz"
             )
         );
     }

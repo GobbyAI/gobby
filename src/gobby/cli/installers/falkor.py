@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import secrets
 import shutil
 import string
@@ -13,9 +12,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from gobby.config.persistence import validate_falkordb_password
+
+from .compose_env import ComposeEnvironmentError, resolve_compose_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -77,18 +76,31 @@ def _resolve_falkordb_password(
         from gobby.storage.config_store import ConfigStore
         from gobby.storage.secrets import SecretStore
 
-        configured = ConfigStore(db).get("databases.falkordb.password")
-        if isinstance(configured, str) and configured:
-            if configured.startswith("$secret:"):
-                secret = SecretStore(db).get(configured.removeprefix("$secret:"))
-                if secret:
-                    return ResolvedFalkorPassword(
-                        value=validate_falkordb_password(secret),
-                        source="reused",
-                        expose_value=False,
-                    )
+        store = ConfigStore(db)
+        secret_store = SecretStore(db)
+        keys = set(store.list_keys())
+        required = {
+            "databases.falkordb.host",
+            "databases.falkordb.port",
+            "databases.falkordb.password",
+        }
+        present = keys & required
+        if present:
+            if present != required:
+                raise ValueError(
+                    "stored FalkorDB config is incomplete; host, port, and password must all be set"
+                )
+            configured = store.get("databases.falkordb.password")
+            if not isinstance(configured, str) or not configured.startswith("$secret:"):
+                raise ValueError("stored FalkorDB password must be a SecretStore reference")
+            secret_name = configured.removeprefix("$secret:")
+            if not secret_name or not secret_store.exists(secret_name):
+                raise ValueError(f"stored FalkorDB secret {secret_name or '<empty>'!r} is missing")
+            secret = secret_store.get(secret_name)
+            if not secret:
+                raise ValueError(f"stored FalkorDB secret {secret_name!r} is empty")
             return ResolvedFalkorPassword(
-                value=validate_falkordb_password(configured),
+                value=validate_falkordb_password(secret),
                 source="reused",
                 expose_value=False,
             )
@@ -102,7 +114,7 @@ def _resolve_falkordb_password(
     )
 
 
-def _refresh_unified_compose(services_dir: Path) -> Path:
+def _refresh_unified_compose(services_dir: Path, env: dict[str, str]) -> Path:
     """Overwrite the services compose file with the current FalkorDB template."""
     services_dir.mkdir(parents=True, exist_ok=True)
     compose_file = services_dir / "docker-compose.yml"
@@ -114,6 +126,7 @@ def _refresh_unified_compose(services_dir: Path) -> Path:
                 capture_output=True,
                 text=True,
                 timeout=60,
+                env=env,
                 cwd=str(services_dir),
                 check=False,
             )
@@ -140,10 +153,23 @@ def install_falkordb(
     except (OSError, RuntimeError, ValueError) as exc:
         return {"success": False, "error": f"Failed to read FalkorDB config: {exc}"}
 
+    try:
+        _update_config(
+            host=DEFAULT_FALKORDB_HOST,
+            port=DEFAULT_FALKORDB_PORT,
+            password=resolved.value,
+            gobby_home=home,
+        )
+    except Exception as exc:
+        logger.warning("Failed to persist FalkorDB config: %s", exc)
+        return {"success": False, "error": f"Failed to persist FalkorDB config: {exc}"}
+    try:
+        runtime = resolve_compose_runtime(home)
+    except ComposeEnvironmentError as exc:
+        return {"success": False, "error": f"Failed to resolve FalkorDB config: {exc}"}
+
     services_dir = home / "services"
-    compose_file = _refresh_unified_compose(services_dir)
-    env = dict(os.environ)
-    env["GOBBY_FALKORDB_PASSWORD"] = resolved.value
+    compose_file = _refresh_unified_compose(services_dir, runtime.environment)
 
     try:
         result = subprocess.run(  # nosec B603 B607
@@ -161,7 +187,7 @@ def install_falkordb(
             capture_output=True,
             text=True,
             timeout=120,
-            env=env,
+            env=runtime.environment,
             cwd=str(services_dir),
         )
         if result.returncode != 0:
@@ -174,39 +200,10 @@ def install_falkordb(
     except (OSError, subprocess.SubprocessError) as exc:
         return {"success": False, "error": f"Docker compose execution failed: {exc}"}
 
-    if not _wait_for_health(compose_file, services_dir, resolved.value):
+    if not _wait_for_health(compose_file, services_dir, runtime.environment):
         return {
             "success": False,
             "error": "Health check failed: FalkorDB did not become healthy in time",
-        }
-
-    try:
-        _update_config(
-            host=DEFAULT_FALKORDB_HOST,
-            port=DEFAULT_FALKORDB_PORT,
-            password=resolved.value,
-            gobby_home=home,
-        )
-    except Exception as exc:
-        logger.warning("Failed to persist FalkorDB config: %s", exc)
-        return {
-            "success": False,
-            "error": (
-                "Failed to persist FalkorDB credentials to config_store; run "
-                "'gobby uninstall' to clean up the Gobby containers, then retry."
-            ),
-            "compose_running": True,
-        }
-
-    if not _write_bootstrap_password(resolved.value, home):
-        return {
-            "success": False,
-            "error": (
-                "FalkorDB is running and credentials are persisted to config_store, but the "
-                "bootstrap.yaml write failed. Run 'gobby uninstall' to roll back the "
-                "Gobby containers and config_store, then retry."
-            ),
-            "compose_running": True,
         }
 
     response: dict[str, Any] = {
@@ -236,6 +233,7 @@ def uninstall_falkordb(*, gobby_home: Path | None = None) -> dict[str, Any]:
             error = "Docker not found. Install Docker to remove the FalkorDB container."
         else:
             try:
+                runtime = resolve_compose_runtime(home)
                 result = subprocess.run(  # nosec B603 B607
                     [
                         "docker",
@@ -249,6 +247,7 @@ def uninstall_falkordb(*, gobby_home: Path | None = None) -> dict[str, Any]:
                     capture_output=True,
                     text=True,
                     timeout=120,
+                    env=runtime.environment,
                     cwd=str(services_dir),
                 )
                 if result.returncode == 0:
@@ -257,36 +256,34 @@ def uninstall_falkordb(*, gobby_home: Path | None = None) -> dict[str, Any]:
                     error = f"Docker compose down failed: {result.stderr or result.stdout}"
             except subprocess.TimeoutExpired:
                 error = "Docker compose down timed out after 120s"
-            except (OSError, subprocess.SubprocessError) as exc:
+            except (ComposeEnvironmentError, OSError, subprocess.SubprocessError) as exc:
                 error = f"Docker compose execution failed: {exc}"
 
-    _clear_config(gobby_home=home)
-    _clear_bootstrap_password(home)
+    if error is None:
+        _clear_config(gobby_home=home)
     return {
         "success": error is None,
         "error": error,
         "compose_stopped": compose_stopped,
         "compose_file": str(compose_file) if compose_file.exists() else None,
-        "config_cleared": True,
+        "config_cleared": error is None,
     }
 
 
 def _wait_for_health(
     compose_file: Path,
     services_dir: Path,
-    password: str,
+    env: dict[str, str],
     retries: int = 30,
     interval: float = 2.0,
 ) -> bool:
-    return asyncio.run(
-        _wait_for_health_async(compose_file, services_dir, password, retries, interval)
-    )
+    return asyncio.run(_wait_for_health_async(compose_file, services_dir, env, retries, interval))
 
 
 async def _wait_for_health_async(
     compose_file: Path,
     services_dir: Path,
-    password: str,
+    env: dict[str, str],
     retries: int = 30,
     interval: float = 2.0,
 ) -> bool:
@@ -301,14 +298,14 @@ async def _wait_for_health_async(
                     "exec",
                     "-T",
                     "falkordb",
-                    "redis-cli",
-                    "-a",
-                    password,
-                    "PING",
+                    "sh",
+                    "-c",
+                    'redis-cli -a "$GOBBY_FALKORDB_PASSWORD" PING',
                 ],
                 capture_output=True,
                 text=True,
                 timeout=10,
+                env=env,
                 cwd=str(services_dir),
             )
             if result.returncode == 0 and "PONG" in result.stdout:
@@ -359,37 +356,3 @@ def _clear_config(*, gobby_home: Path) -> None:
         logger.warning("Failed to clear FalkorDB config: %s", exc)
     finally:
         db.close()
-
-
-def _write_bootstrap_password(password: str, gobby_home: Path) -> bool:
-    bootstrap_path = gobby_home / "bootstrap.yaml"
-    try:
-        data: dict[str, Any] = {}
-        if bootstrap_path.exists():
-            with open(bootstrap_path, encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
-        data["falkordb_password"] = password
-        gobby_home.mkdir(parents=True, exist_ok=True)
-        with open(bootstrap_path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(data, f, default_flow_style=False)
-        bootstrap_path.chmod(0o600)
-        return True
-    except (OSError, yaml.YAMLError) as exc:
-        logger.warning("Failed to write FalkorDB password to bootstrap.yaml: %s", exc)
-        return False
-
-
-def _clear_bootstrap_password(gobby_home: Path) -> None:
-    bootstrap_path = gobby_home / "bootstrap.yaml"
-    if not bootstrap_path.exists():
-        return
-    try:
-        with open(bootstrap_path, encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-        if isinstance(data, dict):
-            data.pop("falkordb_password", None)
-            with open(bootstrap_path, "w", encoding="utf-8") as f:
-                yaml.safe_dump(data, f, default_flow_style=False)
-            bootstrap_path.chmod(0o600)
-    except (OSError, yaml.YAMLError) as exc:
-        logger.warning("Failed to clear FalkorDB password from bootstrap.yaml: %s", exc)

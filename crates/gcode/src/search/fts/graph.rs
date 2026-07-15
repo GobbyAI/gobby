@@ -148,7 +148,7 @@ pub fn resolve_graph_symbol(
         None,
         &[],
         FUZZY_NAME_MATCH_LIMIT,
-    )) {
+    )?) {
         return Ok(result);
     }
 
@@ -160,6 +160,6 @@ pub fn resolve_graph_symbol(
         None,
         &[],
         FUZZY_NAME_MATCH_LIMIT,
-    );
+    )?;
     Ok(resolve_from_candidates(fts_results))
 }

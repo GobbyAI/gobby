@@ -192,8 +192,8 @@ fn push_ai_notice_warning(output: &mut AskOutput, notice: AiNoticeKind) {
 
 fn ai_notice_label(notice: AiNoticeKind) -> &'static str {
     match notice {
-        AiNoticeKind::AutoFallbackToDirect => "ai_auto_fallback_to_direct",
-        AiNoticeKind::AutoFallbackToOff => "ai_auto_fallback_to_off",
+        AiNoticeKind::AutoFallbackToDirect => "ai_auto_selected_direct",
+        AiNoticeKind::AutoFallbackToOff => "ai_auto_selected_off",
         AiNoticeKind::NoGenerator => "ai_no_generator",
         AiNoticeKind::GenerationFailed => "ai_generation_failed",
     }

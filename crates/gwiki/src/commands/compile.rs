@@ -2,7 +2,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use gobby_core::ai::AiNoticeKind;
-use gobby_core::config::AiRouting;
+use gobby_core::config::{AiCapability, AiRouting};
 
 use crate::explainer::{ExplainerGenerator, ExplainerPrompt, ExplainerReport};
 use crate::sources::SourceManifest;
@@ -13,8 +13,8 @@ use crate::{
 };
 
 use super::lanes::{
-    ai_notice_label, notice_for_explainer_status, resolve_explainer_transport,
-    resolve_lane_b_generator, routing_label,
+    ai_notice_label, notice_for_explainer_status, resolve_ai_selection,
+    resolve_explainer_transport, resolve_lane_b_generator, routing_label,
 };
 
 const COMMAND: &str = "gwiki compile";
@@ -48,6 +48,12 @@ pub(crate) fn execute(
     let topic = resolve_compile_topic(topic_seed, &session);
     let daemon_report = daemon::probe_daemon_capabilities();
     let daemon_synthesis_available = daemon_report.synthesis.available;
+    let ai_selection = resolve_ai_selection(
+        ai,
+        COMMAND,
+        AiCapability::TextGenerate,
+        daemon_synthesis_available,
+    );
     let output_scope = resolved_scope_identity(&resolved_scope);
     let vault_root = session.scope.root().to_path_buf();
 
@@ -65,7 +71,7 @@ pub(crate) fn execute(
     // to the Lane A one-shot explainer.
     let project_root = resolved_scope.project_root().map(|root| root.to_path_buf());
     if let Some(mut lane_b) = resolve_lane_b_generator(
-        ai,
+        ai_selection.route,
         &scope,
         vault_root,
         project_root,
@@ -85,10 +91,10 @@ pub(crate) fn execute(
             Some(lane_b.generator.as_mut()),
         )?;
         return Ok(compile_command_outcome(
-            ai,
+            ai_selection.requested,
             "tool_loop",
             info.route_label,
-            info.fallback,
+            ai_selection.selection_reason,
             info.notice,
             &output_scope,
             target_kind,
@@ -99,10 +105,9 @@ pub(crate) fn execute(
     }
 
     // Lane A one-shot explainer (no tool-chat route resolved).
-    let transport = resolve_explainer_transport(ai, COMMAND);
+    let transport = resolve_explainer_transport(ai_selection.route, COMMAND);
     let route_label = transport.route_label();
     let notice = transport.notice_kind();
-    let fallback = transport.fallback();
     let mut generate = |prompt: &ExplainerPrompt| transport.generate(prompt);
     let generator: Option<ExplainerGenerator<'_>> = if transport.is_active() {
         Some(&mut generate)
@@ -121,10 +126,10 @@ pub(crate) fn execute(
         generator,
     )?;
     Ok(compile_command_outcome(
-        ai,
+        ai_selection.requested,
         "one_shot",
         route_label,
-        fallback,
+        ai_selection.selection_reason,
         notice,
         &output_scope,
         target_kind,
@@ -141,7 +146,7 @@ fn compile_command_outcome(
     ai: AiRouting,
     lane: &'static str,
     route_label: &'static str,
-    fallback: bool,
+    selection_reason: &'static str,
     notice: Option<AiNoticeKind>,
     output_scope: &ScopeIdentity,
     target_kind: synthesis::ArticleKind,
@@ -171,7 +176,7 @@ fn compile_command_outcome(
             "requested_mode": routing_label(ai),
             "lane": lane,
             "route": route_label,
-            "fallback": fallback,
+            "selection_reason": selection_reason,
             "notice": notice.map(ai_notice_label),
             "status": explainer.status,
             "model": explainer.model,

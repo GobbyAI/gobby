@@ -21,10 +21,12 @@ class CronConfig(BaseModel):
         description="Maximum number of concurrently running cron jobs",
     )
     running_timeout_seconds: int = Field(
-        default=600,
-        description=(
-            "Maximum duration for bounded cron actions and stale running cron-run records"
-        ),
+        default=1440,
+        description="Maximum duration for bounded cron actions",
+    )
+    stale_run_grace_seconds: int = Field(
+        default=120,
+        description="Additional grace before running cron records are considered stale",
     )
     cleanup_after_days: int = Field(
         default=30,
@@ -63,6 +65,17 @@ class CronConfig(BaseModel):
         if v < 60:
             raise ValueError("running_timeout_seconds must be at least 60")
         return v
+
+    @field_validator("stale_run_grace_seconds")
+    @classmethod
+    def validate_stale_run_grace(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("stale_run_grace_seconds must be non-negative")
+        return v
+
+    @property
+    def stale_run_timeout_seconds(self) -> int:
+        return self.running_timeout_seconds + self.stale_run_grace_seconds
 
     @field_validator("run_output_max_chars", "run_error_max_chars")
     @classmethod

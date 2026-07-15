@@ -72,6 +72,7 @@ from ._install_prompts import (
     _run_standard_cli_uninstall,
     _run_voice_install,
 )
+from ._install_state import empty_install_state, prepare_install_state, should_configure_section
 from .install_setup import ensure_daemon_config, run_daemon_setup
 from .installers import (
     install_agy,
@@ -532,10 +533,8 @@ def install(
         all_flag = True
     is_full_install = all_flag
 
-    # Build list of CLIs to install
     clis_to_install: list[str] = []
 
-    # Local copy of hooks_flag — mutated by auto-detection below
     install_hooks = hooks_flag
 
     if all_flag:
@@ -672,7 +671,10 @@ def install(
     _provision_local_api_token(config_store)
 
     try:
-        # Standard CLIs (claude, grok, agy, qwen, codex, droid)
+        install_state = empty_install_state()
+        if is_full_install:
+            install_state = prepare_install_state(config_store, secret_store)
+
         _standard_installers: dict[str, Callable[..., dict[str, Any]]] = {
             "agy": install_agy,
             "claude": install_claude,
@@ -685,14 +687,21 @@ def install(
             if cli_name in clis_to_install:
                 _run_standard_cli_install(cli_name, installer_fn, project_path, mode, results)
 
-        # Git hooks
         if install_hooks:
             _run_git_hooks_install(install_git_hooks, project_path, results)
 
-        # Embedding provider setup runs only for full installs. Targeted hook installs
-        # should not depend on local embedding or Docker service health.
         selected_embedding_provider = "none"
-        if is_full_install:
+        embedding_override = any(
+            value is not None
+            for value in (embedding_url, embedding_provider, embedding_model, embedding_dim)
+        )
+        configure_embedding = is_full_install and should_configure_section(
+            install_state.embedding,
+            label="embedding provider/model/endpoint",
+            no_interactive=no_interactive_flag,
+            explicit=embedding_override,
+        )
+        if configure_embedding:
             selected_embedding_provider = _run_embedding_install(
                 install_embedding,
                 results,
@@ -702,23 +711,50 @@ def install(
                 dim_override=embedding_dim,
                 provider_override=embedding_provider,
             )
+        elif is_full_install:
+            selected_embedding_provider = install_state.embedding.provider
 
-        # Voice chat (optional — installs ~500MB of deps including PyTorch)
-        _run_voice_install(
-            results,
-            voice_flag=voice_flag,
+        configure_voice = not is_full_install or should_configure_section(
+            install_state.voice,
+            label="voice setting",
             no_interactive=no_interactive_flag,
-            db=db,
-            secret_store=secret_store,
+            explicit=voice_flag,
         )
+        if configure_voice:
+            _run_voice_install(
+                results,
+                voice_flag=voice_flag,
+                no_interactive=no_interactive_flag,
+                db=db,
+                secret_store=secret_store,
+                reconfigure=install_state.voice.configured,
+                current_enabled=install_state.voice.enabled,
+            )
 
-        # Docker services (Qdrant + FalkorDB, installed by default if Docker available)
-        # Skipped if user chose "none" for embeddings (no semantic search = no vector store needed)
-        if is_full_install:
-            if not no_ext_services_flag and selected_embedding_provider != "none":
-                _run_qdrant_install(install_qdrant, results)
-                _run_falkordb_install(install_falkordb, falkordb_password, results)
-            elif selected_embedding_provider == "none":
+        if is_full_install and not no_ext_services_flag:
+            services_enabled = selected_embedding_provider != "none"
+            if services_enabled or install_state.qdrant.configured:
+                if should_configure_section(
+                    install_state.qdrant,
+                    label="Qdrant",
+                    no_interactive=no_interactive_flag,
+                ):
+                    _run_qdrant_install(install_qdrant, results)
+            if (
+                services_enabled
+                or install_state.falkordb.configured
+                or falkordb_password is not None
+            ):
+                if should_configure_section(
+                    install_state.falkordb,
+                    label="FalkorDB",
+                    no_interactive=no_interactive_flag,
+                    explicit=falkordb_password is not None,
+                ):
+                    _run_falkordb_install(install_falkordb, falkordb_password, results)
+            if not services_enabled and not (
+                install_state.qdrant.configured or install_state.falkordb.configured
+            ):
                 click.echo("Skipping Qdrant/FalkorDB install (embeddings disabled)")
                 click.echo("")
 

@@ -64,7 +64,7 @@ def install(verbose: bool) -> None:
 
     # Upgrade instructions
     if mode == "dev":
-        click.echo("To upgrade: git pull && uv sync && gobby restart")
+        click.echo("To upgrade: git pull && uv sync && uv run gobby service install")
     else:
         click.echo("To upgrade: uv tool upgrade gobby && gobby service install")
 

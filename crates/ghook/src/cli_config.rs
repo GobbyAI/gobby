@@ -39,12 +39,12 @@ impl CliConfig {
             }),
             "agy" => Some(Self {
                 source: "agy",
-                critical_hooks: ["SessionStart", "Stop"].into_iter().collect(),
+                critical_hooks: ["SessionStart"].into_iter().collect(),
                 json_error_exit_code: 2,
             }),
             "grok" => Some(Self {
                 source: "grok",
-                critical_hooks: ["session_start", "session_end", "pre_compact", "stop"]
+                critical_hooks: ["session_start", "session_end", "pre_compact"]
                     .into_iter()
                     .collect(),
                 json_error_exit_code: 2,
@@ -76,7 +76,9 @@ mod tests {
         let c = CliConfig::for_cli("claude").unwrap();
         assert_eq!(c.source, "claude");
         assert!(c.critical_hooks.contains("session-start"));
+        assert!(c.critical_hooks.contains("session-end"));
         assert!(c.critical_hooks.contains("pre-compact"));
+        assert!(!c.critical_hooks.contains("Stop"));
         assert!(!c.critical_hooks.contains("SessionStart"));
     }
 
@@ -88,9 +90,20 @@ mod tests {
     #[test]
     fn codex_stop_is_critical() {
         let c = CliConfig::for_cli("codex").unwrap();
+        assert!(c.is_critical_hook("SessionStart"));
         assert!(c.is_critical_hook("Stop"));
         assert!(!c.is_critical_hook("PreToolUse"));
         assert_eq!(c.json_error_exit_code, 2);
+    }
+
+    #[test]
+    fn qwen_after_agent_is_noncritical() {
+        let c = CliConfig::for_cli("qwen").unwrap();
+        assert_eq!(c.source, "qwen");
+        assert!(c.is_critical_hook("SessionStart"));
+        assert!(!c.is_critical_hook("AfterAgent"));
+        assert!(!c.is_critical_hook("Stop"));
+        assert_eq!(c.json_error_exit_code, 1);
     }
 
     #[test]
@@ -98,7 +111,7 @@ mod tests {
         let c = CliConfig::for_cli("agy").unwrap();
         assert_eq!(c.source, "agy");
         assert!(c.is_critical_hook("SessionStart"));
-        assert!(c.is_critical_hook("Stop"));
+        assert!(!c.is_critical_hook("Stop"));
         assert!(!c.is_critical_hook("PreToolUse"));
         assert_eq!(c.json_error_exit_code, 2);
     }
@@ -108,9 +121,10 @@ mod tests {
         let c = CliConfig::for_cli("grok").unwrap();
         assert_eq!(c.source, "grok");
         assert_eq!(c.json_error_exit_code, 2);
-        for hook in ["session_start", "session_end", "pre_compact", "stop"] {
+        for hook in ["session_start", "session_end", "pre_compact"] {
             assert!(c.is_critical_hook(hook), "{hook} should be critical");
         }
+        assert!(!c.is_critical_hook("stop"));
         assert!(!c.is_critical_hook("pre_tool_use"));
         assert!(!c.is_critical_hook("Stop"));
     }

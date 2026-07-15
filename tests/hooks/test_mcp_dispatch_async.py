@@ -97,6 +97,46 @@ class TestContextInjection:
         assert call_tool.call_args.args[2]["query"] == "remember this"
 
     @pytest.mark.asyncio
+    async def test_omits_null_prompt_without_event_string(self) -> None:
+        call_tool = AsyncMock(return_value={"success": True})
+        event = _make_event()
+        event.data = {"prompt": None}
+
+        await dispatch_mcp_calls(
+            [
+                {
+                    "server": "gobby-memory",
+                    "tool": "digest",
+                    "arguments": {"prompt_text": None},
+                }
+            ],
+            event,
+            call_tool,
+            logging.getLogger("test"),
+        )
+
+        assert "prompt_text" not in call_tool.call_args.args[2]
+
+    @pytest.mark.asyncio
+    async def test_preserves_explicit_non_null_prompt(self) -> None:
+        call_tool = AsyncMock(return_value={"success": True})
+
+        await dispatch_mcp_calls(
+            [
+                {
+                    "server": "gobby-memory",
+                    "tool": "digest",
+                    "arguments": {"prompt_text": "explicit prompt"},
+                }
+            ],
+            _make_event(prompt="event prompt"),
+            call_tool,
+            logging.getLogger("test"),
+        )
+
+        assert call_tool.call_args.args[2]["prompt_text"] == "explicit prompt"
+
+    @pytest.mark.asyncio
     async def test_seeds_session_context_for_internal_callers(self) -> None:
         seen_contexts: list[str | None] = []
 

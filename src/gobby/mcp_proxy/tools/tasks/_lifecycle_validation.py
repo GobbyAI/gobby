@@ -326,6 +326,7 @@ def gather_validation_context(
                 task_manager=task_manager,
                 include_uncommitted=False,
                 cwd=repo_path,
+                max_chars=None,
             )
             if diff_result.diff:
                 raw_diff = diff_result.diff

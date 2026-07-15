@@ -55,6 +55,7 @@ from gobby.servers.routes.mcp.hooks import (
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.workflows.hooks import WorkflowEvaluationTimeout
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -3278,11 +3279,19 @@ class TestHooksEndpoints:
         )
         server.app.state.hook_manager = _mock_hook_manager()
 
-        timeout_mock = AsyncMock(side_effect=TimeoutError())
+        timeout_error = WorkflowEvaluationTimeout(
+            event_type=hook_type,
+            session_id="test-stop",
+            timeout_seconds=15,
+        )
+        timeout_error.queue_duration_seconds = 0.125
+        timeout_error.execution_duration_seconds = 15.0
+        timeout_mock = AsyncMock(side_effect=timeout_error)
         with (
             TestClient(server.app) as client,
             patch(adapter_patch) as MockAdapter,
             patch("gobby.servers.routes.mcp.hooks._run_adapter_hook", new=timeout_mock),
+            patch("gobby.servers.routes.mcp.hooks.logger") as mock_logger,
         ):
             mock_adapter = MagicMock()
             mock_adapter.translate_from_hook_response.return_value = {
@@ -3317,6 +3326,23 @@ class TestHooksEndpoints:
             "Try again after the daemon recovers."
         )
         assert hook_response.system_message is None
+        timeout_log = next(
+            call
+            for call in mock_logger.error.call_args_list
+            if call.args and call.args[0] == "Critical hook timed out: %s"
+        )
+        assert timeout_log.kwargs["extra"]["exception_type"] == "WorkflowEvaluationTimeout"
+        expected_timeout_fields = {
+            "exception_type": "WorkflowEvaluationTimeout",
+            "evaluation_event": hook_type,
+            "evaluation_session_id": "test-stop",
+            "evaluation_timeout_seconds": 15,
+            "adapter_queue_duration_seconds": 0.125,
+            "adapter_execution_duration_seconds": 15.0,
+        }
+        assert {
+            key: timeout_log.kwargs["extra"][key] for key in expected_timeout_fields
+        } == expected_timeout_fields
 
     @pytest.mark.parametrize("handler_layer", ["value_error", "exception", "outer"])
     @pytest.mark.parametrize(

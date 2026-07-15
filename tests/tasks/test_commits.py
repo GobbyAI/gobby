@@ -336,6 +336,22 @@ diff --git a/file2.py b/file2.py
         assert result.diff.endswith("... [task diff truncated] ...")
         assert result.file_count == 1
 
+    def test_can_return_complete_diff_for_file_aware_validation(self, mock_task_manager) -> None:
+        mock_task = MagicMock()
+        mock_task.commits = ["abc123"]
+        mock_task_manager.get_task.return_value = mock_task
+        large_diff = "diff --git a/source.py b/source.py\n" + (
+            "+large payload\n" * TASK_DIFF_MAX_CHARS
+        )
+        large_diff += "diff --git a/tests/test_source.py b/tests/test_source.py\n+test\n"
+
+        with patch("gobby.tasks.commits.run_git_command", return_value=large_diff):
+            result = get_task_diff("gt-test123", mock_task_manager, max_chars=None)
+
+        assert result.diff == large_diff
+        assert "tests/test_source.py" in result.diff
+        assert result.file_count == 2
+
 
 class TestExtractTaskIdsFromMessage:
     """Tests for task ID extraction from commit messages.

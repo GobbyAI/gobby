@@ -706,6 +706,52 @@ async def test_timeout_degrades(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result["error"]["elapsed_seconds"] >= 0
 
 
+async def test_cancellation_terminates_and_reaps_subprocess(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = FakeProcess(timeout=True)
+    wait_started = asyncio.Event()
+    original_wait = process.wait
+
+    async def signaling_wait() -> None:
+        wait_started.set()
+        await original_wait()
+
+    process.wait = signaling_wait
+    _patch_subprocess(monkeypatch, [process])
+    task = asyncio.create_task(_gateway().health())
+    await asyncio.wait_for(wait_started.wait(), timeout=0.2)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert process.terminated is True
+    assert process.killed is False
+    assert process.waited is True
+
+
+async def test_process_cleanup_escalates_to_kill() -> None:
+    class StubbornProcess(FakeProcess):
+        def __init__(self) -> None:
+            super().__init__(timeout=True)
+            self.wait_count = 0
+
+        async def wait(self) -> None:
+            self.waited = True
+            self.wait_count += 1
+            if self.wait_count == 1:
+                raise TimeoutError
+
+    process = StubbornProcess()
+
+    await _gateway()._kill_process(process)
+
+    assert process.terminated is True
+    assert process.killed is True
+    assert process.wait_count == 2
+
+
 async def test_read_status_payloads_are_not_subprocess_failures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

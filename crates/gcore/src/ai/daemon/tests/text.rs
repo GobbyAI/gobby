@@ -2,7 +2,7 @@ use super::*;
 use crate::config::FeatureCandidate;
 
 #[test]
-fn forwards_provider_model_and_optional_project_id() {
+fn daemon_profile_request_omits_standalone_binding_fields() {
     let (port, request) = spawn_server(
         r#"{"text":"ok","model":"qwen/qwen3.6-35b-a3b","usage":{"input_tokens":3,"output_tokens":4,"total_tokens":7}}"#,
     );
@@ -25,14 +25,17 @@ fn forwards_provider_model_and_optional_project_id() {
     let body = request_body_json(&request);
 
     assert!(request.starts_with("POST /api/llm/generate HTTP/1.1"));
-    assert_eq!(body["provider"], "local:lm-studio");
-    assert_eq!(body["model"], "qwen/qwen3.6-35b-a3b");
+    assert!(body.get("provider").is_none());
+    assert!(body.get("model").is_none());
     assert_eq!(body["project_id"], "project-123");
     assert_eq!(body["prompt"], "Write a title");
     assert_eq!(body["system_prompt"], "Be brief");
     assert!(body.get("system").is_none());
-    assert!(body.get("profile").is_none());
+    assert_eq!(body["profile"], "feature_low");
     assert_eq!(body["max_tokens"], 64);
+    assert_eq!(body["candidate_timeout_seconds"], 30);
+    assert_eq!(body["cli_candidate_timeout_seconds"], 60);
+    assert_eq!(body["total_timeout_seconds"], 1200);
     assert_eq!(result.text, "ok");
     assert_eq!(
         result.usage.as_ref().and_then(|usage| usage.token_count()),
@@ -49,10 +52,10 @@ fn forwards_provider_model_and_optional_project_id() {
     let request = request.join().unwrap().unwrap();
     let body = request_body_json(&request);
 
-    assert_eq!(body["provider"], "local:lm-studio");
-    assert_eq!(body["model"], "qwen/qwen3.6-35b-a3b");
+    assert!(body.get("provider").is_none());
+    assert!(body.get("model").is_none());
     assert!(body.get("project_id").is_none());
-    assert!(body.get("profile").is_none());
+    assert_eq!(body["profile"], "feature_low");
 }
 
 #[test]
@@ -78,7 +81,7 @@ fn text_generation_defaults_to_feature_low_without_provider_model() {
 }
 
 #[test]
-fn configured_binding_profile_replaces_feature_low_default() {
+fn configured_binding_profile_does_not_override_daemon_feature_profile() {
     let (port, request) = spawn_server(r#"{"text":"ok"}"#);
     let home = temp_home();
     let _env = EnvGuard::set_home(home.path());
@@ -92,13 +95,13 @@ fn configured_binding_profile_replaces_feature_low_default() {
     let request = request.join().unwrap().unwrap();
     let body = request_body_json(&request);
 
-    assert_eq!(body["profile"], "feature_high");
+    assert_eq!(body["profile"], "feature_low");
     assert!(body.get("provider").is_none());
     assert!(body.get("model").is_none());
 }
 
 #[test]
-fn lopsided_binding_falls_back_to_profile_routing() {
+fn lopsided_standalone_binding_is_ignored_by_daemon_routing() {
     // A direct-route binding (api_base + model, no provider) forced onto the
     // daemon route must not be forwarded as explicit routing: the daemon 400s
     // a lone model ("provider and model must be supplied together"), which
@@ -120,8 +123,8 @@ fn lopsided_binding_falls_back_to_profile_routing() {
     assert!(body.get("model").is_none());
     assert_eq!(body["profile"], "feature_low");
 
-    // Provider-only is the mirror image and follows the same fallback; a
-    // configured binding profile still supersedes the feature_low default.
+    // Provider-only is the mirror image; incidental binding profile data is
+    // also isolated from the daemon request.
     let (port, request) = spawn_server(r#"{"text":"ok"}"#);
     write_daemon_files(home.path(), port, "text-token");
     let mut cfg = test_context(None);
@@ -135,7 +138,7 @@ fn lopsided_binding_falls_back_to_profile_routing() {
 
     assert!(body.get("provider").is_none());
     assert!(body.get("model").is_none());
-    assert_eq!(body["profile"], "feature_mid");
+    assert_eq!(body["profile"], "feature_low");
 }
 
 #[test]
@@ -192,11 +195,14 @@ fn pinned_one_shot_forwards_explicit_candidates_and_omits_profile() {
     assert_eq!(body["system_prompt"], "Be brief");
     assert_eq!(body["max_tokens"], 64);
     assert_eq!(body["project_id"], "project-123");
+    assert_eq!(body["candidate_timeout_seconds"], 30);
+    assert_eq!(body["cli_candidate_timeout_seconds"], 60);
+    assert_eq!(body["total_timeout_seconds"], 1200);
     assert_eq!(result.text, "ok");
 }
 
 #[test]
-fn forwards_candidates_and_reasoning_effort_from_binding() {
+fn daemon_profile_request_ignores_incidental_candidates_and_reasoning_pin() {
     let (port, request) = spawn_server(r#"{"text":"ok","applied_reasoning_effort":"high"}"#);
     let home = temp_home();
     let _env = EnvGuard::set_home(home.path());
@@ -222,15 +228,9 @@ fn forwards_candidates_and_reasoning_effort_from_binding() {
     let body = request_body_json(&request);
 
     assert_eq!(body["prompt"], "Use candidates");
-    assert!(body.get("profile").is_none());
-    assert_eq!(body["reasoning_effort"], "medium");
-    assert_eq!(
-        body["candidates"],
-        serde_json::json!([
-            {"candidate":"codex/gpt-5.5","reasoning_effort":"high"},
-            {"candidate":"droid/qwen3.6"}
-        ])
-    );
+    assert_eq!(body["profile"], "feature_low");
+    assert!(body.get("reasoning_effort").is_none());
+    assert!(body.get("candidates").is_none());
     assert_eq!(result.applied_reasoning_effort.as_deref(), Some("high"));
 }
 
@@ -254,7 +254,7 @@ fn per_call_profile_overrides_configured_binding_profile() {
 }
 
 #[test]
-fn explicit_provider_model_suppresses_profile_override() {
+fn per_call_profile_is_the_only_daemon_routing_override() {
     let (port, request) = spawn_server(r#"{"text":"ok"}"#);
     let home = temp_home();
     let _env = EnvGuard::set_home(home.path());
@@ -266,7 +266,7 @@ fn explicit_provider_model_suppresses_profile_override() {
     let request = request.join().unwrap().unwrap();
     let body = request_body_json(&request);
 
-    assert_eq!(body["provider"], "daemon-provider");
-    assert_eq!(body["model"], "daemon-model");
-    assert!(body.get("profile").is_none());
+    assert!(body.get("provider").is_none());
+    assert!(body.get("model").is_none());
+    assert_eq!(body["profile"], "feature_mid");
 }

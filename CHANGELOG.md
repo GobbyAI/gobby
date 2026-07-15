@@ -33,6 +33,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Set `auth_mode: disabled` in `bootstrap.yaml`, or run `gobby install --auth-mode
 disabled`, only for an explicitly trusted isolated environment.
 
+## [0.8.1] — gobby-core — 2026-07-14
+
+### Added
+
+#### gobby-core
+
+- **Authenticated daemon clients** — shared local-token primitives let Rust
+  helpers authenticate daemon HTTP requests using `~/.gobby/local_cli_token`.
+
+### Fixed
+
+#### gobby-core
+
+- **Daemon and search hardening** — bound daemon request behavior, secure native
+  service provisioning, and reject malformed or boolean search syntax.
+
+## [0.7.2] — ghook — 2026-07-14
+
+### Fixed
+
+#### ghook
+
+- **Daemon-down Stop-hook posture** — Codex `Stop` remains fail-closed. AGY
+  `Stop`, Grok `stop`, Claude `Stop`, Droid `Stop`, and Qwen `AfterAgent` now
+  fail open when the daemon is unreachable. Existing startup, session, and
+  pre-compact critical hooks remain fail-closed.
+
 ## [0.4.9] - 2026-05-26
 
 0.4.9 focuses on PostgreSQL-only runtime hardening, build/review completion

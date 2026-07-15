@@ -342,6 +342,7 @@ async def stream_codex_turn(
                     if (
                         isinstance(record, ParsedMessage)
                         and record.role == "assistant"
+                        and isinstance(record.content, str)
                         and record.content.strip()
                     ):
                         transcript_assistant_text.append(record.content.strip())

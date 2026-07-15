@@ -515,6 +515,11 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             database_status["executor"] = executor_stats
 
         postgres_status = await _get_postgres_dashboard_status(server, database_status)
+        postgres_code_index_healthy = True
+        if postgres_status is not None:
+            code_index_status = postgres_status.get("code_index")
+            if isinstance(code_index_status, dict):
+                postgres_code_index_healthy = bool(code_index_status.get("healthy"))
         automation_loop = getattr(server.services, "system_automation_loop", None)
         system_services: dict[str, Any] = {}
         if automation_loop is not None:
@@ -526,7 +531,12 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
         payload: dict[str, Any] = {
             "status": (
                 "healthy"
-                if server._running and not hook_runtime.is_degraded and not degraded_services
+                if (
+                    server._running
+                    and not hook_runtime.is_degraded
+                    and not degraded_services
+                    and postgres_code_index_healthy
+                )
                 else "degraded"
             ),
             "degraded_services": degraded_services,

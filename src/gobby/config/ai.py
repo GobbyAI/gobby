@@ -96,12 +96,12 @@ class GenerationConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     timeout_seconds: float = Field(
-        default=600.0,
+        default=1200.0,
         gt=0.0,
         description="Maximum seconds to wait for a daemon-owned text generation attempt.",
     )
     candidate_timeout_seconds: float = Field(
-        default=60.0,
+        default=30.0,
         gt=0.0,
         description=(
             "Maximum seconds for a single text-generation candidate attempt on a "
@@ -110,7 +110,7 @@ class GenerationConfig(BaseModel):
         ),
     )
     cli_candidate_timeout_seconds: float = Field(
-        default=600.0,
+        default=60.0,
         gt=0.0,
         description=(
             "Maximum seconds for a single candidate attempt on a spawn-cold lane "
@@ -141,14 +141,17 @@ class GenerationConfig(BaseModel):
         budget is meaningless, so clamp (with a warning) instead of failing — this
         keeps small-timeout test/dev configs valid.
         """
-        if self.cli_candidate_timeout_seconds > self.timeout_seconds:
+        for field_name in ("candidate_timeout_seconds", "cli_candidate_timeout_seconds"):
+            candidate_timeout = getattr(self, field_name)
+            if candidate_timeout <= self.timeout_seconds:
+                continue
             logger.warning(
-                "cli_candidate_timeout_seconds (%.3g) exceeds timeout_seconds (%.3g); "
-                "clamping to timeout_seconds",
-                self.cli_candidate_timeout_seconds,
+                "%s (%.3g) exceeds timeout_seconds (%.3g); clamping to timeout_seconds",
+                field_name,
+                candidate_timeout,
                 self.timeout_seconds,
             )
-            self.cli_candidate_timeout_seconds = self.timeout_seconds
+            setattr(self, field_name, self.timeout_seconds)
         return self
 
     @field_validator("profile_defaults")

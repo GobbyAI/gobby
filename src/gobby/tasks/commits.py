@@ -91,6 +91,7 @@ def get_task_diff(
     task_manager: "LocalTaskManager",
     include_uncommitted: bool = False,
     cwd: str | Path | None = None,
+    max_chars: int | None = TASK_DIFF_MAX_CHARS,
 ) -> TaskDiffResult:
     """Get the combined diff for all commits linked to a task.
 
@@ -99,6 +100,8 @@ def get_task_diff(
         task_manager: LocalTaskManager instance to fetch task data.
         include_uncommitted: If True, include uncommitted changes in diff.
         cwd: Working directory for git commands. Defaults to current directory.
+        max_chars: Maximum returned diff length. Set to None when the caller
+            performs its own file-aware bounding and needs every file header.
 
     Returns:
         TaskDiffResult with combined diff and metadata.
@@ -141,11 +144,12 @@ def get_task_diff(
     # Combine all diff parts and count files before bounding the returned payload.
     combined_diff = "\n".join(diff_parts)
     file_count = _count_unique_diff_paths(combined_diff)
-    combined_diff = _safe_truncate(
-        combined_diff,
-        TASK_DIFF_MAX_CHARS,
-        _TASK_DIFF_TRUNCATION_MARKER,
-    )
+    if max_chars is not None:
+        combined_diff = _safe_truncate(
+            combined_diff,
+            max_chars,
+            _TASK_DIFF_TRUNCATION_MARKER,
+        )
 
     return TaskDiffResult(
         diff=combined_diff,

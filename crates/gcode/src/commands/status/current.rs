@@ -1,6 +1,7 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
+use crate::bm25_health;
 use crate::config::Context;
 use crate::db;
 use crate::models::IndexedProject;
@@ -12,6 +13,7 @@ use super::shared::{format_coverage, format_timestamp, indexed_project_from_row}
 
 pub fn run(ctx: &Context, format: Format) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
+    let code_index = bm25_health::verify(&mut conn);
 
     let stats: Option<IndexedProject> = db::id_param(&ctx.project_id)
         .ok()
@@ -39,6 +41,7 @@ pub fn run(ctx: &Context, format: Format) -> anyhow::Result<()> {
                 if let Some(overlay) = overlay_status_json(ctx, &mut conn) {
                     value["overlay"] = overlay;
                 }
+                value["code_index"] = serde_json::to_value(&code_index)?;
                 output::print_json(&value)
             }
             Format::Text => {
@@ -76,16 +79,25 @@ pub fn run(ctx: &Context, format: Format) -> anyhow::Result<()> {
                         write!(text, "  Deletes:  {tombstones}")?;
                     }
                 }
+                writeln!(text)?;
+                write!(text, "{}", code_index.render_text())?;
                 output::print_text(&text)
             }
         },
-        None => {
-            eprintln!(
-                "No index found for project {}. Run `gcode index` first.",
-                ctx.project_id
-            );
-            Ok(())
-        }
+        None => match format {
+            Format::Json => output::print_json(&serde_json::json!({
+                "project_id": ctx.project_id,
+                "indexed": false,
+                "code_index": code_index,
+            })),
+            Format::Text => {
+                eprintln!(
+                    "No index found for project {}. Run `gcode index` first.",
+                    ctx.project_id
+                );
+                output::print_text(&code_index.render_text())
+            }
+        },
     }
 }
 

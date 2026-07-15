@@ -15,6 +15,9 @@ use super::types::{DaemonEmbeddingResult, DaemonTranscriptionOptions};
 const VOICE_TRANSCRIBE_PATH: &str = "/api/voice/transcribe";
 const VISION_EXTRACT_PATH: &str = "/api/llm/vision/extract";
 pub(super) const TEXT_GENERATE_PATH: &str = "/api/llm/generate";
+const FAST_CANDIDATE_TIMEOUT_SECONDS: u64 = 30;
+const SPAWN_COLD_CANDIDATE_TIMEOUT_SECONDS: u64 = 60;
+const TOTAL_GENERATION_TIMEOUT_SECONDS: u64 = 1200;
 const EMBEDDINGS_PATH: &str = "/api/embeddings";
 
 pub fn transcribe_via_daemon(
@@ -157,14 +160,12 @@ fn generate_text_via_daemon(
     candidates_override: Option<&[FeatureCandidate]>,
 ) -> Result<TextResult, AiError> {
     let capability = AiCapability::TextGenerate;
-    let binding = cfg.binding(capability);
     let client = daemon_client()?;
     let token = read_local_cli_token()?;
     let url = daemon_url(TEXT_GENERATE_PATH);
-    // An explicit candidate chain pins the exact provider/model sequence: it
-    // supersedes the binding's profile/provider/model so the daemon routes to
-    // the requested candidates only (each candidate carries its own reasoning
-    // pin). Otherwise fall back to the binding's provider/model/profile.
+    // An explicit daemon candidate chain pins the exact provider/model
+    // sequence. Otherwise the daemon selects candidates from the requested
+    // feature profile; standalone binding fields never cross this boundary.
     let options = match candidates_override {
         Some(candidates) => TextRequestOptions {
             provider: None,
@@ -174,15 +175,21 @@ fn generate_text_via_daemon(
             profile: None,
             candidates: Some(candidates),
             reasoning_effort: None,
+            candidate_timeout_seconds: Some(FAST_CANDIDATE_TIMEOUT_SECONDS),
+            cli_candidate_timeout_seconds: Some(SPAWN_COLD_CANDIDATE_TIMEOUT_SECONDS),
+            total_timeout_seconds: Some(TOTAL_GENERATION_TIMEOUT_SECONDS),
         },
         None => TextRequestOptions {
-            provider: binding.provider.as_deref(),
-            model: binding.model.as_deref(),
+            provider: None,
+            model: None,
             project_id: cfg.project_id.as_deref(),
             max_tokens,
-            profile: profile.or(binding.profile.as_deref()),
-            candidates: binding.candidates.as_deref(),
-            reasoning_effort: binding.reasoning_effort.as_deref(),
+            profile,
+            candidates: None,
+            reasoning_effort: None,
+            candidate_timeout_seconds: Some(FAST_CANDIDATE_TIMEOUT_SECONDS),
+            cli_candidate_timeout_seconds: Some(SPAWN_COLD_CANDIDATE_TIMEOUT_SECONDS),
+            total_timeout_seconds: Some(TOTAL_GENERATION_TIMEOUT_SECONDS),
         },
     };
     let body = text_request_body(prompt, system, options);
