@@ -294,6 +294,12 @@ class TestRetryConfig:
         with pytest.raises(ValueError, match="max_attempts|1.*10"):
             RetryConfig.from_dict({"max_attempts": 15})
 
+    @pytest.mark.parametrize("backoff_seconds", [-1, 61, True, "slow"])
+    def test_retry_config_backoff_validation(self, backoff_seconds: object) -> None:
+        """backoff_seconds should be numeric and bounded to one minute."""
+        with pytest.raises(ValueError, match="backoff_seconds|0.*60"):
+            RetryConfig.from_dict({"backoff_seconds": backoff_seconds})
+
 
 class TestCaptureConfig:
     """Tests for CaptureConfig model."""

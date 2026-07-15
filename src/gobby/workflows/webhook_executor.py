@@ -8,20 +8,29 @@ variable interpolation, and response capture.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
 import re
+import socket
 import time
 from collections.abc import Callable, Coroutine
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 if TYPE_CHECKING:
     from gobby.workflows.templates import TemplateRenderer
 
 import aiohttp
+from aiohttp.abc import AbstractResolver, ResolveResult
+from aiohttp.resolver import DefaultResolver
+
+from gobby.workflows.webhook import MAX_RETRY_BACKOFF_SECONDS, RetryConfig
 
 logger = logging.getLogger(__name__)
+
+MAX_RESPONSE_BYTES = 1024 * 1024
 
 
 @dataclass
@@ -49,13 +58,25 @@ class WebhookResult:
             return None
 
 
-@dataclass
-class RetryConfig:
-    """Configuration for retry behavior."""
+class _PinnedResolver(AbstractResolver):
+    """Resolve one hostname to a previously validated set of public addresses."""
 
-    max_attempts: int = 3
-    backoff_seconds: float = 1.0
-    retry_on_status: list[int] = field(default_factory=lambda: [429, 500, 502, 503, 504])
+    def __init__(self, hostname: str, addresses: list[ResolveResult]) -> None:
+        self._hostname = hostname.rstrip(".").lower()
+        self._addresses = addresses
+
+    async def resolve(
+        self,
+        host: str,
+        port: int = 0,
+        family: socket.AddressFamily = socket.AF_INET,
+    ) -> list[ResolveResult]:
+        if host.rstrip(".").lower() != self._hostname:
+            raise OSError(f"Unexpected webhook hostname: {host}")
+        return self._addresses.copy()
+
+    async def close(self) -> None:
+        return None
 
 
 class WebhookExecutor:
@@ -267,11 +288,7 @@ class WebhookExecutor:
         if not config:
             return RetryConfig(max_attempts=1)  # No retry by default
 
-        return RetryConfig(
-            max_attempts=config.get("max_attempts", 3),
-            backoff_seconds=config.get("backoff_seconds", 1.0),
-            retry_on_status=config.get("retry_on_status", [429, 500, 502, 503, 504]),
-        )
+        return RetryConfig.from_dict(config)
 
     async def _execute_with_retry(
         self,
@@ -301,7 +318,10 @@ class WebhookExecutor:
         for attempt in range(retry.max_attempts):
             if attempt > 0:
                 # Exponential backoff
-                delay = retry.backoff_seconds * (2 ** (attempt - 1))
+                delay = min(
+                    retry.backoff_seconds * (2 ** (attempt - 1)),
+                    MAX_RETRY_BACKOFF_SECONDS,
+                )
                 logger.debug(f"Webhook retry {attempt + 1}/{retry.max_attempts}, backoff {delay}s")
                 await asyncio.sleep(delay)
 
@@ -368,14 +388,17 @@ class WebhookExecutor:
         Returns:
             WebhookResult with response data.
         """
+        hostname, addresses = await self._resolve_public_host(url)
         client_timeout = aiohttp.ClientTimeout(total=timeout)
+        connector = aiohttp.TCPConnector(resolver=_PinnedResolver(hostname, addresses))
 
-        async with aiohttp.ClientSession(timeout=client_timeout) as session:
+        async with aiohttp.ClientSession(timeout=client_timeout, connector=connector) as session:
             # Prepare request kwargs
             kwargs: dict[str, Any] = {
                 "method": method,
                 "url": url,
                 "headers": headers,
+                "allow_redirects": False,
             }
 
             # Add payload
@@ -386,7 +409,7 @@ class WebhookExecutor:
                     kwargs["data"] = payload
 
             async with session.request(**kwargs) as response:
-                body = await response.text()
+                body = await self._read_response_body(response)
 
                 # Convert headers to dict
                 response_headers = dict(response.headers)
@@ -400,3 +423,47 @@ class WebhookExecutor:
                     headers=response_headers,
                     error=None if success else f"HTTP {response.status}",
                 )
+
+    async def _resolve_public_host(self, url: str) -> tuple[str, list[ResolveResult]]:
+        """Resolve an HTTP URL and reject every non-public destination address."""
+        parsed = urlsplit(url)
+        if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
+            raise ValueError("Webhook URL must use http or https and include a hostname")
+
+        try:
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        except ValueError as exc:
+            raise ValueError("Webhook URL has an invalid port") from exc
+
+        resolver = DefaultResolver()
+        try:
+            addresses = await resolver.resolve(parsed.hostname, port, family=socket.AF_UNSPEC)
+        finally:
+            await resolver.close()
+
+        if not addresses:
+            raise ValueError(f"Webhook hostname did not resolve: {parsed.hostname}")
+
+        for address in addresses:
+            try:
+                resolved_ip = ipaddress.ip_address(address["host"].split("%", 1)[0])
+            except ValueError as exc:
+                raise ValueError(
+                    f"Webhook hostname resolved to an invalid address: {address['host']}"
+                ) from exc
+            if not resolved_ip.is_global:
+                raise ValueError(
+                    f"Webhook hostname resolves to a non-public address: {resolved_ip.compressed}"
+                )
+
+        return parsed.hostname, addresses
+
+    async def _read_response_body(self, response: aiohttp.ClientResponse) -> str:
+        """Read and decode at most MAX_RESPONSE_BYTES from a response."""
+        try:
+            raw_body = await response.content.readexactly(MAX_RESPONSE_BYTES + 1)
+        except asyncio.IncompleteReadError as exc:
+            raw_body = exc.partial
+
+        raw_body = raw_body[:MAX_RESPONSE_BYTES]
+        return raw_body.decode(response.get_encoding(), errors="replace")

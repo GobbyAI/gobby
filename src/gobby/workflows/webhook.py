@@ -16,6 +16,7 @@ VALID_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE"})
 
 # Default retry status codes (server errors and rate limiting)
 DEFAULT_RETRY_STATUS_CODES = [429, 500, 502, 503, 504]
+MAX_RETRY_BACKOFF_SECONDS = 60.0
 
 
 @dataclass
@@ -23,7 +24,7 @@ class RetryConfig:
     """Configuration for webhook retry behavior."""
 
     max_attempts: int = 3
-    backoff_seconds: int = 1
+    backoff_seconds: float = 1.0
     retry_on_status: list[int] = field(default_factory=lambda: DEFAULT_RETRY_STATUS_CODES.copy())
 
     @classmethod
@@ -40,15 +41,24 @@ class RetryConfig:
             ValueError: If max_attempts is outside 1-10 range.
         """
         max_attempts = data.get("max_attempts", 3)
+        if isinstance(max_attempts, bool) or not isinstance(max_attempts, int):
+            raise ValueError("max_attempts must be an integer between 1 and 10")
         if not (1 <= max_attempts <= 10):
             raise ValueError(f"max_attempts must be between 1 and 10, got {max_attempts}")
 
-        backoff_seconds = data.get("backoff_seconds", 1)
+        backoff_seconds = data.get("backoff_seconds", 1.0)
+        if isinstance(backoff_seconds, bool) or not isinstance(backoff_seconds, int | float):
+            raise ValueError(f"backoff_seconds must be between 0 and {MAX_RETRY_BACKOFF_SECONDS:g}")
+        if not (0 <= backoff_seconds <= MAX_RETRY_BACKOFF_SECONDS):
+            raise ValueError(
+                f"backoff_seconds must be between 0 and {MAX_RETRY_BACKOFF_SECONDS:g}, "
+                f"got {backoff_seconds}"
+            )
         retry_on_status = data.get("retry_on_status", DEFAULT_RETRY_STATUS_CODES.copy())
 
         return cls(
             max_attempts=max_attempts,
-            backoff_seconds=backoff_seconds,
+            backoff_seconds=float(backoff_seconds),
             retry_on_status=list(retry_on_status),
         )
 
