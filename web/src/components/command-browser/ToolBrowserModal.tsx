@@ -22,6 +22,7 @@ export function ToolBrowserModal({ filter, onSendMessage, onClose }: ToolBrowser
   const [schema, setSchema] = useState<McpToolSchema | null>(null)
   const [schemaLoading, setSchemaLoading] = useState(false)
   const [formValues, setFormValues] = useState<Record<string, unknown>>({})
+  const [formValid, setFormValid] = useState(true)
   const [executing, setExecuting] = useState(false)
   const [result, setResult] = useState<{ success: boolean; data?: unknown; error?: string } | null>(null)
   const [collapsedServers, setCollapsedServers] = useState<Set<string>>(new Set())
@@ -77,6 +78,7 @@ export function ToolBrowserModal({ filter, onSendMessage, onClose }: ToolBrowser
     setSelectedTool(toolName)
     setSchema(null)
     setFormValues({})
+    setFormValid(true)
     setResult(null)
     setSchemaLoading(true)
     const fetched = await fetchToolSchema(serverName, toolName)
@@ -112,6 +114,7 @@ export function ToolBrowserModal({ filter, onSendMessage, onClose }: ToolBrowser
     setSelectedTool(null)
     setSchema(null)
     setFormValues({})
+    setFormValid(true)
     setResult(null)
   }, [])
 
@@ -247,6 +250,7 @@ export function ToolBrowserModal({ filter, onSendMessage, onClose }: ToolBrowser
                       schema={schema?.inputSchema ?? null}
                       values={formValues}
                       onChange={setFormValues}
+                      onValidityChange={setFormValid}
                       disabled={executing}
                     />
 
@@ -254,7 +258,7 @@ export function ToolBrowserModal({ filter, onSendMessage, onClose }: ToolBrowser
                       <Button
                         variant="accent"
                         onClick={handleExecute}
-                        disabled={executing || schemaLoading}
+                        disabled={executing || schemaLoading || !formValid}
                       >
                         {executing ? 'Executing...' : 'Execute'}
                       </Button>

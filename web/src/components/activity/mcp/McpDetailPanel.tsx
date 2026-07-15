@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import type {
   McpServer,
   McpStatus,
@@ -45,6 +47,8 @@ export function McpDetailPanel({
   status,
   toolsByServer,
 }: McpDetailPanelProps) {
+  const [formValid, setFormValid] = useState(true);
+
   if (!selection) {
     return (
       <div className="activity-mcp-detail">
@@ -120,7 +124,7 @@ export function McpDetailPanel({
               type="button"
               className="btn btn-accent btn-sm activity-panel-action-btn"
               onClick={onCallTool}
-              disabled={executing}
+              disabled={executing || !formValid}
               aria-label="Call tool"
               title="Call tool"
             >
@@ -159,6 +163,7 @@ export function McpDetailPanel({
                 schema={schema.inputSchema}
                 values={argumentValues}
                 onChange={onArgumentValuesChange}
+                onValidityChange={setFormValid}
                 disabled={executing}
               />
             </section>
