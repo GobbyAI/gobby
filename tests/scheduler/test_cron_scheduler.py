@@ -598,11 +598,11 @@ async def test_due_jobs_skip_removed_automation_jobs_returned_after_cleanup(
 
 
 @pytest.mark.asyncio
-async def test_stale_tracked_run_is_failed_and_slot_reused(
+async def test_stale_tracked_run_is_excluded_from_age_sweep(
     cron_storage: CronJobStorage,
     mock_executor: CronExecutor,
 ) -> None:
-    """The scheduler heartbeat reclaims stale runs even when locally tracked."""
+    """The age sweep leaves locally tracked runs to their owning task."""
     config = CronConfig(
         check_interval_seconds=60,
         max_concurrent_jobs=1,
@@ -633,17 +633,13 @@ async def test_stale_tracked_run_is_failed_and_slot_reused(
     cron_storage.update_job(due_job.id, next_run_at=old)
 
     await scheduler._check_due_jobs()
-    await wait_for_async_condition(
-        lambda: mock_executor.execute.await_count >= 1,
-        description="dispatch after stale cron run sweep",
-    )
 
     refreshed_stale_run = cron_storage.get_run(stale_run.id)
     assert refreshed_stale_run is not None
-    assert refreshed_stale_run.status == "failed"
-    assert refreshed_stale_run.error == "Cron run exceeded running timeout (60s)"
-    assert refreshed_stale_run.completed_at is not None
-    mock_executor.execute.assert_awaited_once()
+    assert refreshed_stale_run.status == "running"
+    assert refreshed_stale_run.error is None
+    assert stale_run.id in scheduler._active_run_ids
+    mock_executor.execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -1411,3 +1407,25 @@ async def test_on_run_complete_not_called_without_result(
     callback.assert_not_called()
     assert callback.call_count == 0
     assert not callback.called
+
+
+def test_stale_sweep_excludes_runs_tracked_by_local_scheduler() -> None:
+    storage = MagicMock()
+    storage.fail_stale_running_runs.return_value = 0
+    config = MagicMock()
+    config.running_timeout_seconds = 60
+    config.stale_run_timeout_seconds = 60
+    scheduler = CronScheduler(
+        storage=storage,
+        executor=MagicMock(),
+        config=config,
+    )
+    scheduler._active_run_ids.update({"run-a", "run-b"})
+
+    swept = scheduler._sweep_stale_running_runs()
+
+    assert swept == 0
+    storage.fail_stale_running_runs.assert_called_once_with(
+        60,
+        exclude_run_ids={"run-a", "run-b"},
+    )

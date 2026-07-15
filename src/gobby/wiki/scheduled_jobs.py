@@ -41,6 +41,7 @@ WIKI_LIBRARIAN_INTERVAL_SECONDS = 24 * 60 * 60
 # Recaps run just after UTC midnight for the day that just ended; gwiki recap
 # attributes sessions to UTC days, so the schedule stays in UTC.
 WIKI_RECAP_SCHEDULE_CRON = "10 0 * * *"
+WIKI_RECAP_TIMEOUT_SECONDS = 60 * 60
 # Maintenance commands (librarian check sweeps, upkeep/recap synthesis) run
 # far past the gateway's 30s interactive default; cron has no caller waiting.
 WIKI_SCHEDULED_GATEWAY_TIMEOUT_SECONDS = 600.0
@@ -626,12 +627,14 @@ def _ensure_wiki_cron_job(
         raise ValueError("provide exactly one of interval_seconds or cron_expr")
     schedule_type: Literal["cron", "interval"] = "cron" if cron_expr else "interval"
     job_name = wiki_job_name(command, scope)
-    action_config = {
+    action_config: dict[str, Any] = {
         "handler": handler_name,
         "purpose": purpose,
         "scope": scope,
         "command": command,
     }
+    if command == "recap":
+        action_config["timeout_seconds"] = WIKI_RECAP_TIMEOUT_SECONDS
     description = f"{purpose} for wiki scope {scope}"
     existing = cron_storage.get_job_by_name(job_name)
     if existing is None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Collection
 from datetime import timedelta
 from typing import Any
 
@@ -230,7 +231,12 @@ class CronRunStorageMixin:
         )
         return row["cnt"] if row else 0
 
-    def fail_stale_running_runs(self, timeout_seconds: int) -> int:
+    def fail_stale_running_runs(
+        self,
+        timeout_seconds: int,
+        *,
+        exclude_run_ids: Collection[str] | None = None,
+    ) -> int:
         """Fail running cron rows older than the configured execution timeout."""
         if (
             not isinstance(timeout_seconds, int)
@@ -241,6 +247,7 @@ class CronRunStorageMixin:
 
         now = utc_now()
         cutoff = now - timedelta(seconds=timeout_seconds)
+        excluded = list(dict.fromkeys(exclude_run_ids or ()))
         cursor = self.db.execute(
             """
             UPDATE cron_runs
@@ -249,11 +256,13 @@ class CronRunStorageMixin:
                    error = %s
              WHERE status = 'running'
                AND COALESCE(started_at, triggered_at, created_at) < %s
+               AND NOT (id = ANY(%s::uuid[]))
             """,
             (
                 now,
                 f"Cron run exceeded running timeout ({timeout_seconds}s)",
                 cutoff,
+                excluded,
             ),
         )
         return cursor.rowcount

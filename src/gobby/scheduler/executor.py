@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -101,13 +102,33 @@ class CronExecutor:
 
         self._background_tasks.clear()
 
-    async def _wait_for_action(self, action_type: str, action: Awaitable[object]) -> object:
-        """Await a cron action within the scheduler's steady-state timeout."""
-        timeout = self.config.running_timeout_seconds
+    def _action_timeout_seconds(self, job: CronJob) -> float:
+        """Resolve and validate the outer timeout for a bounded cron action."""
+        configured = job.action_config.get("timeout_seconds")
+        if configured is None:
+            return float(self.config.running_timeout_seconds)
+        if (
+            isinstance(configured, bool)
+            or not isinstance(configured, (int, float))
+            or not math.isfinite(configured)
+            or configured <= 0
+        ):
+            raise ValueError("action_config.timeout_seconds must be a positive finite number")
+        return float(configured)
+
+    async def _wait_for_action(
+        self,
+        job: CronJob,
+        action_factory: Callable[[], Awaitable[object]],
+    ) -> object:
+        """Await a bounded cron action within its configured outer timeout."""
+        timeout = self._action_timeout_seconds(job)
         try:
-            return await asyncio.wait_for(action, timeout=timeout)
+            return await asyncio.wait_for(action_factory(), timeout=timeout)
         except TimeoutError as exc:
-            raise RuntimeError(f"{action_type} cron action timed out after {timeout}s") from exc
+            raise RuntimeError(
+                f"{job.action_type} cron action timed out after {timeout:g}s"
+            ) from exc
 
     async def execute(self, job: CronJob, run: CronRun) -> CronRun:
         """Execute a cron job and update the run record.
@@ -127,20 +148,20 @@ class CronExecutor:
             raw_output: object
             if job.action_type == "agent_spawn":
                 raw_output = await self._wait_for_action(
-                    job.action_type,
-                    self._execute_agent_spawn(job),
+                    job,
+                    lambda: self._execute_agent_spawn(job),
                 )
             elif job.action_type == "pipeline":
                 raw_output = await self._wait_for_action(
-                    job.action_type,
-                    self._execute_pipeline(job, run),
+                    job,
+                    lambda: self._execute_pipeline(job, run),
                 )
             elif job.action_type == "shell":
                 raw_output = await self._execute_shell(job)
             elif job.action_type == "handler":
                 raw_output = await self._wait_for_action(
-                    job.action_type,
-                    self._execute_handler(job),
+                    job,
+                    lambda: self._execute_handler(job),
                 )
             elif job.action_type == "dispatcher":
                 raw_output = await self._execute_dispatcher(job)
@@ -434,6 +455,7 @@ class CronExecutor:
 
         def _background() -> Coroutine[Any, Any, None]:
             return self._run_pipeline_background(
+                job=job,
                 pipeline_executor=pipeline_executor,
                 pipeline=pipeline,
                 inputs=inputs,
@@ -466,6 +488,7 @@ class CronExecutor:
     async def _run_pipeline_background(
         self,
         *,
+        job: CronJob,
         pipeline_executor: PipelineExecutor,
         pipeline: Any,
         inputs: dict[str, Any],
@@ -484,8 +507,8 @@ class CronExecutor:
         try:
             try:
                 completed_execution = await self._wait_for_action(
-                    "pipeline",
-                    pipeline_executor.execute(
+                    job,
+                    lambda: pipeline_executor.execute(
                         pipeline=pipeline,
                         inputs=inputs,
                         project_id=project_id,

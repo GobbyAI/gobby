@@ -908,6 +908,53 @@ def test_fail_stale_running_runs_uses_configured_cutoff(
     assert refreshed_fresh.status == "running"
 
 
+def test_fail_stale_running_runs_excludes_locally_tracked_run(
+    cron_storage: CronJobStorage,
+) -> None:
+    tracked_job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Tracked long run",
+        schedule_type="cron",
+        action_type="handler",
+        action_config={"handler": "tracked"},
+        cron_expr="0 * * * *",
+    )
+    orphaned_job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Orphaned long run",
+        schedule_type="cron",
+        action_type="handler",
+        action_config={"handler": "orphaned"},
+        cron_expr="0 * * * *",
+    )
+    tracked_run = cron_storage.create_run(tracked_job.id)
+    orphaned_run = cron_storage.create_run(orphaned_job.id)
+    stale_started_at = datetime.now(UTC) - timedelta(hours=2)
+    cron_storage.update_run(
+        tracked_run.id,
+        status="running",
+        started_at=stale_started_at,
+    )
+    cron_storage.update_run(
+        orphaned_run.id,
+        status="running",
+        started_at=stale_started_at,
+    )
+
+    failed = cron_storage.fail_stale_running_runs(
+        60,
+        exclude_run_ids={tracked_run.id},
+    )
+
+    refreshed_tracked = cron_storage.get_run(tracked_run.id)
+    refreshed_orphaned = cron_storage.get_run(orphaned_run.id)
+    assert failed == 1
+    assert refreshed_tracked is not None
+    assert refreshed_tracked.status == "running"
+    assert refreshed_orphaned is not None
+    assert refreshed_orphaned.status == "failed"
+
+
 @pytest.mark.parametrize("timeout_seconds", [0, -1, True, 1.5, "60"])
 def test_fail_stale_running_runs_rejects_invalid_timeout(
     cron_storage: CronJobStorage,
