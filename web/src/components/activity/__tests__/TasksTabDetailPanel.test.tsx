@@ -136,14 +136,14 @@ describe("TasksTabDetailPanel — D5 IA (#14772)", () => {
   it("links the PR inside Trace when repo metadata is present", () => {
     const { getByText } = render(
       <TasksTabDetailPanel
-        task={makeTask({ github_pr_number: 42, github_repo: "example/repo" })}
+        task={makeTask({ github_pr_number: 42, github_repo: "example/repo--name" })}
       />,
     );
-    const link = getByText("example/repo#42");
+    const link = getByText("example/repo--name#42");
     expect(link.tagName).toBe("A");
     expect(link).toHaveAttribute(
       "href",
-      "https://github.com/example/repo/pull/42",
+      "https://github.com/example/repo--name/pull/42",
     );
   });
 
