@@ -229,7 +229,7 @@ class TestSyncBundledAgents:
                 "description: Discovery analyst\n"
                 "enabled: true\n"
                 "provider: codex\n"
-                "model: gpt-5.5\n"
+                "model: gpt-5.6-sol\n"
                 "reasoning_effort: high\n"
                 "instructions: Real ideation agent\n"
             )

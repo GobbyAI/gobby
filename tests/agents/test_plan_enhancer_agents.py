@@ -55,10 +55,10 @@ class TestSharedEnhancerContract:
         assert agent.name == path.stem
 
     @pytest.mark.parametrize("fixture", ["taskless", "stage_native"])
-    def test_uses_codex_gpt55_xhigh(self, fixture: str, request: pytest.FixtureRequest) -> None:
+    def test_uses_codex_gpt56_sol_xhigh(self, fixture: str, request: pytest.FixtureRequest) -> None:
         agent: AgentDefinitionBody = request.getfixturevalue(fixture)
         assert agent.provider == "codex"
-        assert agent.model == "gpt-5.5"
+        assert agent.model == "gpt-5.6-sol"
         assert agent.reasoning_effort == "xhigh"
 
     @pytest.mark.parametrize("fixture", ["taskless", "stage_native"])

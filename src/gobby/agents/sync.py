@@ -68,7 +68,6 @@ def _build_agent_update_fields(
         fields["definition_json"] = body_json
         fields["description"] = body.description
     if existing.source != "installed":
-        fields["source"] = "installed"
         fields["tags"] = ["gobby"]
         fields["enabled"] = body.enabled
     elif force_enable or restore:
@@ -180,6 +179,8 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
                     if not _definition_json_equal(existing.definition_json, body_json):
                         with db.transaction():
                             manager.restore(existing.id)
+                            if existing.source != "installed":
+                                manager.move_to_global(existing.id)
                             manager.update(
                                 existing.id,
                                 **_build_agent_update_fields(
@@ -207,7 +208,10 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
                     force_enable=force_enable,
                 )
                 if update_fields:
-                    manager.update(existing.id, **update_fields)
+                    with db.transaction():
+                        if existing.source != "installed":
+                            manager.move_to_global(existing.id)
+                        manager.update(existing.id, **update_fields)
                     _refresh_step_workflow(body, db)
                     result["updated"] += 1
                     logger.debug(

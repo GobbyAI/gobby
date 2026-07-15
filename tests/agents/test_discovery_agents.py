@@ -93,7 +93,7 @@ def test_discovery_agent_yaml_validates_and_is_enabled(slug: str, spec: dict[str
     assert agent.name == slug
     assert agent.enabled is True
     assert agent.provider == "codex"
-    assert agent.model == "gpt-5.5"
+    assert agent.model == "gpt-5.6-sol"
     assert agent.reasoning_effort == "high"
     assert agent.isolation == "none"
     assert len(agent.surfaces) == len(set(agent.surfaces))
