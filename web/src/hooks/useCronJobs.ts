@@ -210,6 +210,9 @@ export function useCronJobs(projectId?: string | null) {
 
   // Delete a job
   const deleteJob = useCallback(async (jobId: string): Promise<boolean> => {
+    if (!projectId || !jobs.some(job => job.id === jobId && job.project_id === projectId)) {
+      return false
+    }
     try {
       const baseUrl = getBaseUrl()
       const response = await fetch(`${baseUrl}/api/cron/jobs/${encodeURIComponent(jobId)}`, {
@@ -227,7 +230,7 @@ export function useCronJobs(projectId?: string | null) {
       console.error('Failed to delete cron job:', e)
     }
     return false
-  }, [selectedJob])
+  }, [jobs, projectId, selectedJob])
 
   // Toggle a job
   const toggleJob = useCallback(async (jobId: string): Promise<CronJob | null> => {
@@ -251,6 +254,9 @@ export function useCronJobs(projectId?: string | null) {
 
   // Run a job immediately
   const runNow = useCallback(async (jobId: string): Promise<CronRun | null> => {
+    if (!projectId || !jobs.some(job => job.id === jobId && job.project_id === projectId)) {
+      return null
+    }
     try {
       const baseUrl = getBaseUrl()
       const response = await fetch(`${baseUrl}/api/cron/jobs/${encodeURIComponent(jobId)}/run`, {
@@ -266,7 +272,7 @@ export function useCronJobs(projectId?: string | null) {
       console.error('Failed to run cron job:', e)
     }
     return null
-  }, [])
+  }, [jobs, projectId])
 
   // Select a job and load its runs
   const selectJob = useCallback((job: CronJob | null) => {

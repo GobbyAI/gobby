@@ -94,6 +94,20 @@ describe('selection fetch race protection', () => {
     expect(result.current.isRunsLoading).toBe(false)
   })
 
+  it('rejects cron mutations for jobs outside the active project', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({ jobs: [cronJob('job-a', 'project-a')] }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useCronJobs('project-a'))
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    await expect(result.current.runNow('job-b')).resolves.toBeNull()
+    await expect(result.current.deleteJob('job-b')).resolves.toBe(false)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('keeps the latest workflow filter results and detail selection', async () => {
     const initialList = deferredResponse()
     const filteredA = deferredResponse()
