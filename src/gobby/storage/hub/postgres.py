@@ -450,10 +450,19 @@ class PostgresHubDatabase:
             if state == "already_baselined":
                 return
             if state == "corrupt_partial":
-                raise MigrationUnsupportedError(
-                    f"Pre-0.5 PostgreSQL hub databases below schema version {BASELINE_VERSION} "
-                    f"require backup/export and recreation under Gobby baseline {BASELINE_VERSION}."
-                )
+                tables = _schema_tables(conn)
+                if "schema_migrations" in tables:  # Flattened baseline has no upgrade path.
+                    row = conn.execute(
+                        "SELECT MAX(version) AS version FROM schema_migrations"
+                    ).fetchone()
+                    version = None if row is None else _row_value(row, "version")
+                    observed_tables = sorted(tables - _BASELINE_BOOKKEEPING_TABLES)
+                    raise MigrationUnsupportedError(
+                        f"Unsupported pre-{BASELINE_VERSION} PostgreSQL baseline lineage: "
+                        f"observed max schema version {version!r} with tables {observed_tables!r}. "
+                        "Back up/export the database and recreate it."
+                    )
+                raise MigrationUnsupportedError("Unrecognized PostgreSQL schema.")
             _require_baseline_extensions(conn)
             _verify_adopted_table_columns(conn, state)
 
@@ -656,10 +665,7 @@ class _PostgresSavepoint:
 
 
 def _classify_baseline_state(conn: Any) -> _BaselineState:
-    rows = conn.execute(
-        "SELECT tablename FROM pg_tables WHERE schemaname = current_schema()"
-    ).fetchall()
-    tables = {str(_row_value(row, "tablename")) for row in rows}
+    tables = _schema_tables(conn)
     has_bookkeeping = "schema_migrations" in tables
     application_tables = tables - _PRE_BASELINE_INFRA_TABLES - _BASELINE_BOOKKEEPING_TABLES
 
@@ -790,6 +796,13 @@ def _add_index_if_not_exists(statement: str) -> str:
 
 def _is_gwiki_table(table: str) -> bool:
     return table.startswith("gwiki_")
+
+
+def _schema_tables(conn: Any) -> set[str]:
+    rows = conn.execute(
+        "SELECT tablename FROM pg_tables WHERE schemaname=CURRENT_SCHEMA"
+    ).fetchall()
+    return {str(_row_value(row, "tablename")) for row in rows}
 
 
 def _has_baseline_version(conn: Any, version: int) -> bool:
