@@ -140,6 +140,19 @@ class TestWorkflowResolution:
         assert result.effective_workflow == "my-pipeline"
 
     @pytest.mark.asyncio
+    async def test_pipeline_warns_when_workflow_loader_is_unavailable(
+        self, temp_db: HubDatabase
+    ) -> None:
+        db = _setup_db(temp_db)
+        _create_agent(db, pipeline="my-pipeline")
+
+        result = await evaluate_spawn(agent="test-agent", db=db)
+
+        skipped = [item for item in result.items if item.code == "WORKFLOW_VALIDATION_SKIPPED"]
+        assert len(skipped) == 1
+        assert skipped[0].level == "warning"
+
+    @pytest.mark.asyncio
     async def test_explicit_workflow_overrides_pipeline(
         self, temp_db: HubDatabase, mock_workflow_loader: MagicMock
     ) -> None:

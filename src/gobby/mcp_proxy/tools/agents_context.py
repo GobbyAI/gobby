@@ -21,6 +21,8 @@ if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
+    from gobby.workflows.dry_run import MCPInventoryProtocol
+    from gobby.workflows.loader import WorkflowLoader
     from gobby.worktrees.git import WorktreeGitManager
 
 
@@ -38,6 +40,8 @@ class AgentsRegistryContext:
     clone_storage: LocalCloneManager | None = None
     clone_manager: CloneGitManager | None = None
     db: HubDatabase | None = None
+    workflow_loader: WorkflowLoader | None = None
+    mcp_inventory: MCPInventoryProtocol | None = None
     hook_manager_resolver: Callable[[], HookManager | None] | None = None
     completion_registry: CompletionEventRegistry | None = None
     lifecycle_monitor: AgentLifecycleMonitor | None = None

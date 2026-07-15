@@ -16,8 +16,8 @@ from gobby.workflows.dry_run import EvaluationItem, WorkflowEvaluation
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
-    from gobby.mcp_proxy.manager import MCPClientManager
     from gobby.storage.hub.protocol import HubDatabase
+    from gobby.workflows.dry_run import MCPInventoryProtocol
     from gobby.workflows.loader import WorkflowLoader
 
 logger = logging.getLogger(__name__)
@@ -106,7 +106,7 @@ async def evaluate_spawn(
     clone_storage: Any | None = None,
     clone_manager: Any | None = None,
     task_manager: Any | None = None,
-    mcp_manager: MCPClientManager | None = None,
+    mcp_manager: MCPInventoryProtocol | None = None,
 ) -> SpawnEvaluation:
     """
     Evaluate a spawn_agent call without executing.
@@ -193,6 +193,15 @@ async def evaluate_spawn(
                         or f"Workflow '{effective_workflow}' is not valid for agent spawning",
                     )
                 )
+        else:
+            result.items.append(
+                EvaluationItem(
+                    layer="workflow_resolution",
+                    level="warning",
+                    code="WORKFLOW_VALIDATION_SKIPPED",
+                    message="Workflow validation skipped because the workflow loader is unavailable",
+                )
+            )
     else:
         result.items.append(
             EvaluationItem(

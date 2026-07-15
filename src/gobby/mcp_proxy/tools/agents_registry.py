@@ -26,6 +26,8 @@ if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
+    from gobby.workflows.dry_run import MCPInventoryProtocol
+    from gobby.workflows.loader import WorkflowLoader
     from gobby.worktrees.git import WorktreeGitManager
 
 
@@ -40,6 +42,8 @@ def create_agents_registry(
     clone_manager: CloneGitManager | None = None,
     # For mode=self (workflow activation on caller session)
     db: HubDatabase | None = None,
+    workflow_loader: WorkflowLoader | None = None,
+    mcp_inventory: MCPInventoryProtocol | None = None,
     # For firing synthetic stop events on agent kill
     hook_manager_resolver: Callable[[], HookManager | None] | None = None,
     completion_registry: CompletionEventRegistry | None = None,
@@ -60,6 +64,8 @@ def create_agents_registry(
         clone_storage: Clone storage for spawn_agent isolation.
         clone_manager: Clone git manager for spawn_agent isolation.
         db: Database instance for agent definition lookups.
+        workflow_loader: Workflow loader used by spawn dry-run validation.
+        mcp_inventory: Combined internal and external MCP tool inventory.
         hook_manager_resolver: Resolver for the active HookManager.
         completion_registry: CompletionEventRegistry for auto-subscribing parent sessions.
         lifecycle_monitor: Agent lifecycle monitor for termination cleanup.
@@ -91,6 +97,8 @@ def create_agents_registry(
         clone_storage=clone_storage,
         clone_manager=clone_manager,
         db=db,
+        workflow_loader=workflow_loader,
+        mcp_inventory=mcp_inventory,
         hook_manager_resolver=hook_manager_resolver,
         completion_registry=completion_registry,
         lifecycle_monitor=lifecycle_monitor,
