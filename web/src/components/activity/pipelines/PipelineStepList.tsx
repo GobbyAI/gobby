@@ -134,7 +134,10 @@ function PipelineStepCard({
       >
         <span
           className={TYPE_BADGE_CLS}
-          style={{ background: `${typeColor}22`, color: typeColor }}
+          style={{
+            background: `color-mix(in srgb, ${typeColor} 12%, transparent)`,
+            color: typeColor,
+          }}
         >
           {type}
         </span>

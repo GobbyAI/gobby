@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import type { PipelineStep } from '../PipelineEditor.types'
 import { PipelineStepList } from '../PipelineStepList'
@@ -71,5 +71,28 @@ describe('PipelineStepList row identity', () => {
     expect(headers[0]).toHaveAttribute('aria-expanded', 'false')
     expect(headers[1]).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByLabelText('Step ID')).toHaveValue('duplicate')
+  })
+})
+
+describe('PipelineStepList step-type badge', () => {
+  it('renders a tokenized tinted background for the step-type badge', () => {
+    render(
+      <PipelineStepList
+        steps={[{ id: 'run-command', exec: 'echo hello' }]}
+        expandedIndex={null}
+        onExpandedIndexChange={vi.fn()}
+        onUpdateStep={vi.fn()}
+        onDeleteStep={vi.fn()}
+        onMoveStep={vi.fn()}
+        onChangeStepType={vi.fn()}
+        onAddStep={vi.fn()}
+      />,
+    )
+
+    const badge = screen.getByText('exec')
+    expect(badge.style.color).toBe('var(--step-type-exec)')
+    expect(badge.style.background).toBe(
+      'color-mix(in srgb, var(--step-type-exec) 12%, transparent)',
+    )
   })
 })
