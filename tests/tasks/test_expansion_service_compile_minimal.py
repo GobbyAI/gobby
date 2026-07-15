@@ -320,6 +320,7 @@ def test_apply_contract_spec_persists_covers_labels_without_extra_phase_wrappers
         input_source="plan",
         plan_file=str(plan_doc.source_path),
     )
+    service.run_manager.start(run.id)
     service.run_manager.save_compiled_spec(run.id, spec)
 
     applied = service.apply_run(run.id, session_id=None)

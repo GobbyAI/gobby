@@ -14,6 +14,7 @@ import logging
 from typing import Any, cast
 
 from gobby.prompts.models import PromptTemplate
+from gobby.prompts.rendering import delimit_untrusted_content
 from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
@@ -148,6 +149,7 @@ class PromptLoader:
             )
 
             env.filters["default"] = lambda v, d="": d if v is None else v
+            env.filters["untrusted"] = delimit_untrusted_content
 
             template = env.from_string(template_str)
             rendered: str = template.render(**context)
