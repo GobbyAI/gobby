@@ -1,7 +1,7 @@
 """Tests for git worktree operations manager."""
 
 import subprocess
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -1735,6 +1735,35 @@ class TestWorktreeGitManagerBranchCoverage:
     def manager(self, tmp_path):
         """Create manager with temp directory."""
         return WorktreeGitManager(tmp_path)
+
+    @pytest.mark.parametrize(
+        ("count", "expected"),
+        [("1\n", (True, 1)), ("0\n", (False, 0))],
+    )
+    def test_has_unpushed_commits_without_upstream_compares_default_branch(
+        self, manager, count, expected
+    ) -> None:
+        """Local-only branches count commits ahead of the default branch."""
+        manager._run_git = Mock(
+            side_effect=[
+                subprocess.CompletedProcess(args=[], returncode=128, stdout="", stderr=""),
+                subprocess.CompletedProcess(
+                    args=[],
+                    returncode=0,
+                    stdout="refs/remotes/origin/main\n",
+                    stderr="",
+                ),
+                subprocess.CompletedProcess(args=[], returncode=0, stdout=count, stderr=""),
+            ]
+        )
+
+        result = manager.has_unpushed_commits("feature/local")
+
+        assert result == expected
+        manager._run_git.assert_called_with(
+            ["rev-list", "--count", "main..feature/local"],
+            timeout=5,
+        )
 
     @patch("subprocess.run")
     def test_has_unpushed_commits_missing_branch_is_not_local_only(self, mock_run, manager) -> None:

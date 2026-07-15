@@ -110,10 +110,10 @@ def has_unpushed_commits(runner: GitRunner, branch: str | None = None) -> tuple[
             timeout=5,
         )
         if result.returncode != 0:
-            # No remote tracking branch - all local commits are "unpushed"
-            # Count commits on the branch
+            # No remote tracking branch - count commits ahead of the default branch.
+            base_branch = get_default_branch(runner)
             count_result = runner._run_git(
-                ["rev-list", "--count", branch],
+                ["rev-list", "--count", f"{base_branch}..{branch}"],
                 timeout=5,
             )
             if count_result.returncode == 0:
