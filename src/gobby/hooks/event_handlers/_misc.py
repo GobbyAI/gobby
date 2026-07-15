@@ -309,9 +309,24 @@ class MiscEventHandlerMixin(EventHandlersBase):
         if repo_path is None:
             repo_path = Path(event.cwd or worktree_path)
 
+        existing = None
+        record_cleanup_succeeded = True
+        if self._worktree_manager:
+            try:
+                existing = self._worktree_manager.get_by_path(worktree_path)
+            except Exception as e:
+                self.logger.warning(f"WORKTREE_REMOVE record lookup failed: {e}")
+                record_cleanup_succeeded = False
+
         try:
             git_manager = WorktreeGitManager(repo_path)
-            result = git_manager.delete_worktree(worktree_path=worktree_path, force=True)
+            result = git_manager.delete_worktree(
+                worktree_path=worktree_path,
+                force=True,
+                delete_branch=True,
+                force_delete_branch=True,
+                branch_name=getattr(existing, "branch_name", None),
+            )
             if not result.success:
                 self.logger.warning(f"WORKTREE_REMOVE failed: {result.message}")
             git_delete_succeeded = result.success
@@ -319,10 +334,8 @@ class MiscEventHandlerMixin(EventHandlersBase):
             self.logger.warning(f"WORKTREE_REMOVE cleanup failed: {e}")
             git_delete_succeeded = False
 
-        record_cleanup_succeeded = True
-        if self._worktree_manager:
+        if self._worktree_manager and record_cleanup_succeeded:
             try:
-                existing = self._worktree_manager.get_by_path(worktree_path)
                 if existing:
                     self._worktree_manager.delete(existing.id)
             except Exception as e:

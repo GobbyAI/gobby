@@ -27,6 +27,7 @@ from gobby.agents.isolation import (
     provider_mcp_config_error,
     repair_isolation_environment,
 )
+from gobby.worktrees.git import WorktreeGitManager
 
 pytestmark = pytest.mark.unit
 
@@ -880,8 +881,83 @@ class TestWorktreeIsolationHandler:
         mock_git_manager.delete_worktree.assert_called_once()
         delete_kwargs = mock_git_manager.delete_worktree.call_args.kwargs
         assert delete_kwargs["force"] is True
+        assert delete_kwargs["delete_branch"] is True
+        assert delete_kwargs["force_delete_branch"] is True
+        assert delete_kwargs["branch_name"] == "my-branch"
         assert "my-branch" in str(delete_kwargs["worktree_path"])
         mock_worktree_storage.delete.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_after_storage_failure_deletes_created_branch(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Failed setup removes both the worktree and its newly created branch."""
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        subprocess.run(
+            ["git", "init", "-b", "main"],
+            cwd=repo_path,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=repo_path,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=repo_path,
+            check=True,
+        )
+        (repo_path / "README.md").write_text("test\n")
+        subprocess.run(["git", "add", "README.md"], cwd=repo_path, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=repo_path,
+            check=True,
+            capture_output=True,
+        )
+
+        git_manager = WorktreeGitManager(repo_path)
+        monkeypatch.setattr(git_manager, "has_unpushed_commits", lambda _branch: (True, 1))
+        worktree_path = tmp_path / "worktree"
+
+        worktree_storage = MagicMock()
+        worktree_storage.get_by_branch.return_value = None
+        worktree_storage.create.side_effect = RuntimeError("DB error")
+        handler = WorktreeIsolationHandler(
+            git_manager=git_manager,
+            worktree_storage=worktree_storage,
+        )
+        monkeypatch.setattr(handler, "_generate_worktree_path", lambda *_args: str(worktree_path))
+        config = SpawnConfig(
+            prompt="Test",
+            task_id=None,
+            task_title=None,
+            task_seq_num=None,
+            branch_name="my-branch",
+            branch_prefix=None,
+            base_branch="main",
+            project_id="proj-123",
+            project_path=str(repo_path),
+            provider="claude",
+            parent_session_id="sess-456",
+        )
+
+        with pytest.raises(RuntimeError, match="DB error"):
+            await handler.prepare_environment(config)
+        await handler.cleanup_environment(config)
+
+        assert not worktree_path.exists()
+        branch_check = subprocess.run(
+            ["git", "show-ref", "--verify", "refs/heads/my-branch"],
+            cwd=repo_path,
+            capture_output=True,
+        )
+        assert branch_check.returncode != 0
 
     @pytest.mark.asyncio
     async def test_cleanup_after_hook_copy_failure(self) -> None:

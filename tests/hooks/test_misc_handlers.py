@@ -314,7 +314,10 @@ class TestWorktreeHandlers:
         assert mock_dependencies["worktree_manager"].create.call_args is not None
 
     def test_worktree_remove_deletes_git_worktree_and_record(self, mock_dependencies: dict) -> None:
-        mock_dependencies["worktree_manager"].get_by_path.return_value = MagicMock(id="wt-123")
+        mock_dependencies["worktree_manager"].get_by_path.return_value = MagicMock(
+            id="wt-123",
+            branch_name="feature-auth",
+        )
 
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -338,6 +341,9 @@ class TestWorktreeHandlers:
         mock_git_manager.delete_worktree.assert_called_once_with(
             worktree_path="/tmp/worktrees/feature-auth",
             force=True,
+            delete_branch=True,
+            force_delete_branch=True,
+            branch_name="feature-auth",
         )
         assert mock_git_manager.delete_worktree.call_count == 1
         assert mock_git_manager.delete_worktree.call_args is not None

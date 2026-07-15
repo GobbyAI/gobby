@@ -795,7 +795,13 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
 
             target = git_mgr or server.services.git_manager
             try:
-                result = target.delete_worktree(wt.worktree_path, force=True)
+                result = target.delete_worktree(
+                    wt.worktree_path,
+                    force=True,
+                    delete_branch=True,
+                    force_delete_branch=True,
+                    branch_name=wt.branch_name,
+                )
                 git_deleted = result.success
                 if not result.success:
                     logger.warning(f"Git worktree deletion failed: {result.message}")

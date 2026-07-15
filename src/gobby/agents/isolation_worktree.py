@@ -58,10 +58,11 @@ class WorktreeIsolationHandler(IsolationHandler):
         """
         # Reset partial state
         state_key = spawn_state_key(config)
-        partial_state: dict[str, str | None] = {"path": None, "id": None}
+        partial_state: dict[str, str | None] = {"path": None, "id": None, "branch": None}
         self._partial_worktrees[state_key] = partial_state
 
         branch_name = generate_branch_name(config)
+        partial_state["branch"] = branch_name
         base_branch = config.base_branch
         current_branch = await asyncio.to_thread(self._git_manager.get_current_branch)
         if current_branch and base_branch == "main" and current_branch != "main":
@@ -211,6 +212,7 @@ class WorktreeIsolationHandler(IsolationHandler):
             return
         worktree_path = partial_state.get("path")
         worktree_id = partial_state.get("id")
+        branch_name = partial_state.get("branch")
 
         if worktree_path:
             try:
@@ -218,6 +220,9 @@ class WorktreeIsolationHandler(IsolationHandler):
                     self._git_manager.delete_worktree,
                     worktree_path=worktree_path,
                     force=True,
+                    delete_branch=True,
+                    force_delete_branch=True,
+                    branch_name=branch_name,
                 )
                 logger.info(f"Cleaned up partial worktree: {worktree_path}")
             except Exception as e:
