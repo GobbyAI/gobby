@@ -192,7 +192,8 @@ def create_artifacts_registry() -> InternalToolRegistry:
         actual_title = title or resolved_source.name
 
         bc = _artifact_broadcaster
-        if bc:
+        broadcast = False
+        if bc is not None:
             await bc(
                 event="show_file",
                 conversation_id=actual_convo_id,
@@ -201,9 +202,11 @@ def create_artifacts_registry() -> InternalToolRegistry:
                 language=language,
                 title=actual_title,
             )
+            broadcast = True
 
         return {
             "success": True,
+            "broadcast": broadcast,
             "type": artifact_type,
             "language": language,
             "title": actual_title,

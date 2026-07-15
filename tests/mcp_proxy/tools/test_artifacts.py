@@ -61,6 +61,7 @@ async def test_show_file_allows_explicit_artifact_root(tmp_path: Path) -> None:
 
     assert result == {
         "success": True,
+        "broadcast": False,
         "type": "text",
         "language": "plaintext",
         "title": "note.txt",
