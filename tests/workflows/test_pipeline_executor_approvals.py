@@ -401,9 +401,9 @@ class TestApproveMethod:
             status=StepStatus.PENDING,
             approved_by="user@example.com",
         )
-        assert mock_execution_manager.get_execution in [
-            call.args[0] for call in run_db.await_args_list
-        ]
+        offloaded = [call.args[0] for call in run_db.await_args_list]
+        assert mock_execution_manager.consume_step_approval in offloaded
+        assert mock_execution_manager.get_execution in offloaded
 
     @pytest.mark.asyncio
     async def test_approve_invalid_token_raises_error(
