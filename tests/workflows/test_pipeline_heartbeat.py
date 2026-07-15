@@ -1,24 +1,20 @@
-"""Tests for PipelineHeartbeat cron handler."""
+"""Tests for pipeline heartbeat maintenance."""
 
 from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
 
 import pytest
 
-from gobby.scheduler.executor import CronExecutor
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.cron import CronJobStorage
-from gobby.storage.cron_models import CronJob, CronRun
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._manager import LocalTaskManager
 from gobby.tasks.state_semantics import projected_task_state
-from gobby.workflows.pipeline_heartbeat import PipelineHeartbeat, PipelineHeartbeatResult
+from gobby.workflows.pipeline_heartbeat import PipelineHeartbeat
 from gobby.workflows.pipeline_state import ExecutionStatus
 
 if TYPE_CHECKING:
@@ -115,30 +111,6 @@ def _add_alive_agent(
         prompt="test agent",
     )
     agent_run_manager.start(run_id)
-
-
-def _create_pipeline_heartbeat_job(storage: CronJobStorage) -> CronJob:
-    return storage.create_job(
-        project_id=PROJECT_ID,
-        name="gobby:pipeline-heartbeat",
-        description="Pipeline heartbeat",
-        schedule_type="interval",
-        interval_seconds=60,
-        action_type="handler",
-        action_config={"handler": "pipeline_heartbeat"},
-        enabled=True,
-        is_system=True,
-    )
-
-
-async def _execute_pipeline_heartbeat_cron(
-    storage: CronJobStorage,
-    heartbeat: PipelineHeartbeat,
-    job: CronJob,
-) -> CronRun:
-    executor = CronExecutor(storage)
-    executor.register_handler("pipeline_heartbeat", heartbeat)
-    return await executor.execute(job, storage.create_run(job.id))
 
 
 @pytest.mark.asyncio
@@ -328,79 +300,6 @@ async def test_non_stalled_execution_untouched(
     refreshed = exec_manager.get_execution(exe.id)
     assert refreshed is not None
     assert refreshed.status == ExecutionStatus.RUNNING
-
-
-@pytest.mark.asyncio
-async def test_callable_cron_handler_interface(
-    heartbeat: PipelineHeartbeat,
-) -> None:
-    """Heartbeat is callable with CronJob and returns a string."""
-    mock_job = MagicMock()
-    result = await heartbeat(mock_job)
-    assert isinstance(result, str)
-    assert isinstance(result, PipelineHeartbeatResult)
-    assert "Heartbeat:" in result
-    assert result.should_park is True
-
-
-@pytest.mark.asyncio
-async def test_pipeline_heartbeat_cron_does_not_park_when_idle(
-    heartbeat: PipelineHeartbeat,
-    temp_db: HubDatabase,
-) -> None:
-    """Pipeline heartbeat cron execution no longer parks system rows."""
-    storage = CronJobStorage(temp_db)
-    job = _create_pipeline_heartbeat_job(storage)
-    original_next_run = job.next_run_at
-
-    result = await _execute_pipeline_heartbeat_cron(storage, heartbeat, job)
-
-    assert result.status == "completed"
-    scheduled = storage.get_job(job.id)
-    assert scheduled is not None
-    assert scheduled.enabled is True
-    assert scheduled.next_run_at == original_next_run
-
-
-@pytest.mark.asyncio
-async def test_pipeline_heartbeat_cron_keeps_schedule_after_stalled_execution(
-    heartbeat: PipelineHeartbeat,
-    exec_manager: LocalPipelineExecutionManager,
-    temp_db: HubDatabase,
-) -> None:
-    """A handled stalled execution counts as work and does not park the row."""
-    _create_stalled_execution(exec_manager, temp_db)
-    storage = CronJobStorage(temp_db)
-    job = _create_pipeline_heartbeat_job(storage)
-    original_next_run = job.next_run_at
-
-    result = await _execute_pipeline_heartbeat_cron(storage, heartbeat, job)
-
-    assert result.status == "completed"
-    scheduled = storage.get_job(job.id)
-    assert scheduled is not None
-    assert scheduled.next_run_at == original_next_run
-
-
-@pytest.mark.asyncio
-async def test_pipeline_heartbeat_cron_keeps_schedule_after_stale_task_recovery(
-    heartbeat_with_tasks: PipelineHeartbeat,
-    task_manager: LocalTaskManager,
-    temp_db: HubDatabase,
-) -> None:
-    """A recovered stale claim counts as work and does not park the row."""
-    _seed_db(temp_db)
-    _create_in_progress_task(task_manager, claimed_by_session_id=STOPPED_SESSION_ID)
-    storage = CronJobStorage(temp_db)
-    job = _create_pipeline_heartbeat_job(storage)
-    original_next_run = job.next_run_at
-
-    result = await _execute_pipeline_heartbeat_cron(storage, heartbeat_with_tasks, job)
-
-    assert result.status == "completed"
-    scheduled = storage.get_job(job.id)
-    assert scheduled is not None
-    assert scheduled.next_run_at == original_next_run
 
 
 # --- Stale task recovery tests ---

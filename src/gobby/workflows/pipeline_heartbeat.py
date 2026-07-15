@@ -1,6 +1,6 @@
-"""Pipeline heartbeat — safety net for event-driven pipeline execution.
+"""Pipeline heartbeat maintenance for the daemon-owned system automation loop.
 
-Registered as a cron handler. On each tick:
+On each maintenance tick:
 1. Detects stalled RUNNING executions (no updated_at change)
 2. Checks if associated agents are alive
 3. Marks truly dead executions as FAILED
@@ -24,57 +24,11 @@ from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
 
 if TYPE_CHECKING:
     from gobby.storage.agents import LocalAgentRunManager
-    from gobby.storage.cron_models import CronJob
     from gobby.storage.pipelines import LocalPipelineExecutionManager
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager, Task
 
 logger = logging.getLogger(__name__)
-
-
-class PipelineHeartbeatResult(str):
-    """String result with structured idle-state fields for the cron executor."""
-
-    stalled_handled: int
-    stale_tasks_recovered: int
-    running_pipeline_executions: int
-    stale_task_candidates: int
-
-    def __new__(
-        cls,
-        *,
-        stalled_handled: int,
-        stale_tasks_recovered: int,
-        running_pipeline_executions: int,
-        stale_task_candidates: int,
-    ) -> PipelineHeartbeatResult:
-        parts = [
-            f"{stalled_handled} stalled handled",
-            f"{stale_tasks_recovered} stale tasks recovered",
-            f"{running_pipeline_executions} running executions",
-            f"{stale_task_candidates} stale task candidates",
-        ]
-        obj = str.__new__(cls, f"Heartbeat: {', '.join(parts)}")
-        obj.stalled_handled = stalled_handled
-        obj.stale_tasks_recovered = stale_tasks_recovered
-        obj.running_pipeline_executions = running_pipeline_executions
-        obj.stale_task_candidates = stale_task_candidates
-        return obj
-
-    @property
-    def found_work(self) -> bool:
-        return any(
-            (
-                self.stalled_handled,
-                self.stale_tasks_recovered,
-                self.running_pipeline_executions,
-                self.stale_task_candidates,
-            )
-        )
-
-    @property
-    def should_park(self) -> bool:
-        return not self.found_work
 
 
 def _submit_current_stage_for_review(
@@ -157,11 +111,7 @@ def _recover_stale_task(
 
 
 class PipelineHeartbeat:
-    """Safety net for event-driven pipeline execution.
-
-    Callable cron handler that detects stalled pipelines and marks
-    dead executions as failed.
-    """
+    """Maintenance service that detects stalled pipelines and stale task claims."""
 
     def __init__(
         self,
@@ -185,19 +135,6 @@ class PipelineHeartbeat:
 
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self._db_runner(func, *args, **kwargs)
-
-    async def __call__(self, job: CronJob) -> PipelineHeartbeatResult:
-        """Cron handler entry point."""
-        stalled = await self.check_stalled_executions()
-        recovered = await self.check_stale_tasks()
-        running = await self.count_running_executions()
-        stale_candidates = await self.count_stale_task_candidates()
-        return PipelineHeartbeatResult(
-            stalled_handled=stalled,
-            stale_tasks_recovered=recovered,
-            running_pipeline_executions=running,
-            stale_task_candidates=stale_candidates,
-        )
 
     async def check_stalled_executions(self) -> int:
         """Find stalled RUNNING executions and take corrective action.
