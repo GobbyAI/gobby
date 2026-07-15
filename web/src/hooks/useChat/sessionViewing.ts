@@ -5,7 +5,7 @@ import type { SessionObservationMeta } from "../../types/chat";
 import { normalizeChatMode } from "../../types/chat";
 import {
   mapApiMessages,
-  mapRenderedMessageToChatMessage,
+  mapStoredChatMessage,
 } from "../../lib/chatMessageMapping";
 import { clearFreshChatDraft } from "../../lib/sessionPersistence";
 import {
@@ -158,9 +158,7 @@ const clearViewingSession = useCallback(() => {
         if (!data?.messages?.length) {
           return;
         }
-        const mapped = data.messages.map((m: Record<string, unknown>) =>
-          mapRenderedMessageToChatMessage(m),
-        );
+        const mapped = data.messages.map(mapStoredChatMessage);
         if (mapped.length > 0) setMessages(mapped);
       })
       .catch((err) => console.error("Failed to restore messages:", err));

@@ -610,6 +610,42 @@ describe("useChat message and conversation state", () => {
     expect(result.current.selectedProvider).toBe("codex");
   });
 
+  it("switchConversation preserves stored message created_at timestamps", async () => {
+    const createdAt = "2026-04-08T13:14:15Z";
+    mockFetch.mockJsonResponse(
+      "/api/chat/db-session-2/messages?limit=100&after_seq=0",
+      {
+        messages: [
+          {
+            id: "stored-message",
+            role: "assistant",
+            content: "Restored response",
+            created_at: createdAt,
+          },
+        ],
+        max_seq: 5,
+      },
+    );
+    mockFetch.mockJsonResponse("/api/sessions/db-session-2", {
+      session: {
+        id: "db-session-2",
+        source: "codex",
+        session_type: "web_chat",
+      },
+    });
+
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+
+    await act(async () => {
+      result.current.switchConversation("db-session-2");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(result.current.messages[0]?.timestamp).toEqual(new Date(createdAt));
+  });
+
   it("sendMessage queues message when WS not connected", async () => {
     await loadModule();
     const { result } = renderHook(() => useChat());
