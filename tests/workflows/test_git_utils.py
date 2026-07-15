@@ -6,6 +6,7 @@ pure utility functions for git operations without ActionContext dependency.
 
 import logging
 import subprocess
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -104,7 +105,21 @@ class TestGetGitStatus:
                 capture_output=True,
                 text=True,
                 timeout=5,
+                cwd=None,
             )
+
+    def test_uses_explicit_project_path_from_different_cwd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target_repo = tmp_path / "target"
+        target_repo.mkdir()
+        subprocess.run(["git", "init"], cwd=target_repo, check=True, capture_output=True)
+        (target_repo / "target.txt").write_text("target\n")
+        other_cwd = tmp_path / "other"
+        other_cwd.mkdir()
+        monkeypatch.chdir(other_cwd)
+
+        assert get_git_status(str(target_repo)) == "?? target.txt"
 
     def test_returns_no_changes_when_empty(self) -> None:
         """Test that 'No changes' is returned when status is empty."""
@@ -211,6 +226,7 @@ class TestGetRecentGitCommits:
                 capture_output=True,
                 text=True,
                 timeout=5,
+                cwd=None,
             )
             assert mock_run.call_count == 1
             assert mock_run.call_args is not None
@@ -226,9 +242,41 @@ class TestGetRecentGitCommits:
                 capture_output=True,
                 text=True,
                 timeout=5,
+                cwd=None,
             )
             assert mock_run.call_count == 1
             assert mock_run.call_args is not None
+
+    def test_uses_explicit_project_path_from_different_cwd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target_repo = tmp_path / "target"
+        target_repo.mkdir()
+        subprocess.run(["git", "init"], cwd=target_repo, check=True, capture_output=True)
+        (target_repo / "tracked.txt").write_text("tracked\n")
+        subprocess.run(["git", "add", "tracked.txt"], cwd=target_repo, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Test User",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "target commit",
+            ],
+            cwd=target_repo,
+            check=True,
+            capture_output=True,
+        )
+        other_cwd = tmp_path / "other"
+        other_cwd.mkdir()
+        monkeypatch.chdir(other_cwd)
+
+        commits = get_recent_git_commits(project_path=str(target_repo))
+
+        assert commits[0]["message"] == "target commit"
 
     def test_returns_empty_list_on_non_zero_returncode(self) -> None:
         """Test that empty list is returned when git command fails."""
@@ -324,6 +372,7 @@ class TestGetRecentGitCommits:
                 capture_output=True,
                 text=True,
                 timeout=5,
+                cwd=None,
             )
             assert result == []
 
@@ -338,6 +387,7 @@ class TestGetRecentGitCommits:
                 capture_output=True,
                 text=True,
                 timeout=5,
+                cwd=None,
             )
             assert mock_run.call_count == 1
             assert mock_run.call_args is not None

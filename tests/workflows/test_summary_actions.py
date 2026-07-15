@@ -1448,6 +1448,59 @@ class TestGenerateSummary:
         assert "file.py" in prompt
 
     @pytest.mark.asyncio
+    async def test_generate_summary_uses_session_project_from_different_cwd(
+        self,
+        mock_session_manager,
+        mock_llm_service,
+        mock_transcript_processor,
+        summary_config,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        project_path = tmp_path / "target"
+        project_path.mkdir()
+        transcript_file = project_path / "transcript.jsonl"
+        transcript_file.write_text(
+            json.dumps({"message": {"role": "user", "content": "Test"}}) + "\n"
+        )
+        other_cwd = tmp_path / "other"
+        other_cwd.mkdir()
+        monkeypatch.chdir(other_cwd)
+        session = MagicMock(
+            transcript_path=str(transcript_file),
+            terminal_context={"cwd": str(project_path)},
+            digest_markdown="Existing digest",
+        )
+        mock_session_manager.get.return_value = session
+        mock_transcript_processor.extract_turns_since_clear.return_value = []
+        mock_transcript_processor.extract_last_messages.return_value = []
+
+        with (
+            patch("gobby.workflows.summary_actions.get_git_status", return_value="clean") as status,
+            patch(
+                "gobby.workflows.summary_actions.get_file_changes", return_value="No changes"
+            ) as changes,
+            patch("gobby.workflows.summary_actions.get_git_diff_summary", return_value="") as diff,
+            patch(
+                "gobby.workflows.summary_actions.get_recent_git_commits", return_value=[]
+            ) as commits,
+        ):
+            result = await generate_summary(
+                session_manager=mock_session_manager,
+                session_id="test-session",
+                llm_service=mock_llm_service,
+                transcript_processor=mock_transcript_processor,
+                session_summary_config=summary_config,
+            )
+
+        assert result is not None
+        assert result["summary_generated"] is True
+        status.assert_called_once_with(str(project_path))
+        changes.assert_called_once_with(str(project_path))
+        diff.assert_called_once_with(project_path=str(project_path))
+        commits.assert_called_once_with(project_path=str(project_path))
+
+    @pytest.mark.asyncio
     async def test_generate_summary_includes_last_messages(
         self,
         mock_session_manager,

@@ -16,6 +16,7 @@ import aiofiles
 
 from gobby.memory.title_heuristics import normalize_title_candidate
 from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
+from gobby.sessions.workspace_context import resolve_session_workspace
 from gobby.workflows.git_utils import (
     get_file_changes,
     get_git_diff_summary,
@@ -692,15 +693,16 @@ async def generate_summary(
     last_messages_str = format_turns_for_llm(last_messages) if last_messages else ""
 
     # Get git status and file changes
-    git_status = get_git_status()
-    file_changes = get_file_changes()
-    git_diff_summary = get_git_diff_summary()
+    project_path = str(resolve_session_workspace(current_session, transcript_path))
+    git_status = get_git_status(project_path)
+    file_changes = get_file_changes(project_path)
+    git_diff_summary = get_git_diff_summary(project_path=project_path)
 
     # Use digest as structured context if available (cheaper than transcript analysis)
     digest_markdown = getattr(current_session, "digest_markdown", None)
     if isinstance(digest_markdown, str) and digest_markdown.strip():
         structured_context = f"Session Digest:\n{digest_markdown}"
-        real_commits = get_recent_git_commits()
+        real_commits = get_recent_git_commits(project_path=project_path)
         if real_commits:
             commit_lines = [
                 f"  - {c.get('hash', '')[:7]} {c.get('message', '')}" for c in real_commits[:10]
@@ -712,7 +714,7 @@ async def generate_summary(
 
         analyzer = TranscriptAnalyzer()
         handoff_ctx = analyzer.extract_handoff_context(turns, max_turns=150)
-        real_commits = get_recent_git_commits()
+        real_commits = get_recent_git_commits(project_path=project_path)
         if real_commits:
             handoff_ctx.git_commits = real_commits
         if not handoff_ctx.git_status:
