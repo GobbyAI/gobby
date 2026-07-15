@@ -19,6 +19,7 @@ from gobby.workflows.definitions import (
     WorkflowDefinition,
     WorkflowStep,
 )
+from gobby.workflows.dry_run_validation import analyze_condition, runtime_resolution_mismatches
 from gobby.workflows.native_tools import is_known_native_tool
 
 if TYPE_CHECKING:
@@ -197,6 +198,17 @@ async def evaluate_workflow(
 
     result.workflow_type = "enabled" if definition.enabled else "on-demand"
 
+    for mismatch in runtime_resolution_mismatches(name, workflow_loader, project_id):
+        result.items.append(
+            EvaluationItem(
+                layer="structure",
+                level="warning",
+                code="RUNTIME_DEFINITION_MISMATCH",
+                message=f"Dry-run uses {mismatch}",
+                detail={"workflow": name, "mismatch": mismatch},
+            )
+        )
+
     # Always-on workflows get info notice
     if definition.enabled:
         result.items.append(
@@ -339,9 +351,27 @@ def _check_structure(definition: WorkflowDefinition, result: WorkflowEvaluation)
 
     step_name_set = set(step_names)
 
+    if definition.exit_condition:
+        _check_condition(
+            definition.exit_condition,
+            "exit_condition",
+            {"current_step", "vars", "variables"},
+            result,
+        )
+
     # Undefined transition targets
     for step in steps:
+        _warn_unexecuted_actions(step.name, "on_enter", step.on_enter, result)
+        _warn_unexecuted_actions(step.name, "on_exit", step.on_exit, result)
         for transition in step.transitions:
+            _check_condition(
+                transition.when,
+                "transition",
+                {"vars"},
+                result,
+                step=step.name,
+            )
+            _warn_unexecuted_actions(step.name, "on_transition", transition.on_transition, result)
             if transition.to not in step_name_set:
                 result.items.append(
                     EvaluationItem(
@@ -351,6 +381,25 @@ def _check_structure(definition: WorkflowDefinition, result: WorkflowEvaluation)
                         message=f"Step '{step.name}' transitions to undefined step '{transition.to}'",
                         detail={"from": step.name, "to": transition.to},
                     )
+                )
+
+        for handler in step.on_mcp_before:
+            if isinstance(handler, dict) and isinstance(handler.get("when"), str):
+                _check_condition(
+                    handler["when"],
+                    "on_mcp_before",
+                    {"vars", "variables", "tool_input"},
+                    result,
+                    step=step.name,
+                )
+        for handler in [*step.on_mcp_success, *step.on_mcp_error]:
+            if isinstance(handler, dict) and isinstance(handler.get("when"), str):
+                _check_condition(
+                    handler["when"],
+                    "on_mcp_handler",
+                    {"vars", "tool_input", "tool_output"},
+                    result,
+                    step=step.name,
                 )
 
     # Unreachable steps (BFS from first step)
@@ -455,6 +504,71 @@ def _check_structure(definition: WorkflowDefinition, result: WorkflowEvaluation)
                         detail={"step": step.name, "mcp_tools": sorted(overlap)},
                     )
                 )
+
+
+def _check_condition(
+    condition: str,
+    condition_type: str,
+    runtime_names: set[str],
+    result: WorkflowEvaluation,
+    *,
+    step: str | None = None,
+) -> None:
+    """Validate condition syntax and names against its runtime context."""
+    detail: dict[str, Any] = {"condition": condition, "condition_type": condition_type}
+    if step is not None:
+        detail["step"] = step
+
+    syntax_error, unknown_names = analyze_condition(condition, runtime_names)
+    if syntax_error:
+        detail["error"] = syntax_error
+        result.items.append(
+            EvaluationItem(
+                layer="structure",
+                level="error",
+                code="INVALID_CONDITION_SYNTAX",
+                message=f"Invalid {condition_type} condition syntax: {syntax_error}",
+                detail=detail,
+            )
+        )
+        return
+
+    if not unknown_names:
+        return
+
+    detail["names"] = unknown_names
+    result.items.append(
+        EvaluationItem(
+            layer="structure",
+            level="warning",
+            code="CONDITION_UNKNOWN_NAME",
+            message=(
+                f"{condition_type} condition references names absent from its runtime context: "
+                f"{unknown_names}"
+            ),
+            detail=detail,
+        )
+    )
+
+
+def _warn_unexecuted_actions(
+    step_name: str,
+    field_name: str,
+    actions: list[dict[str, Any]],
+    result: WorkflowEvaluation,
+) -> None:
+    """Warn about lifecycle action lists that the runtime does not execute."""
+    if not actions:
+        return
+    result.items.append(
+        EvaluationItem(
+            layer="structure",
+            level="warning",
+            code="ACTION_NOT_EXECUTED",
+            message=f"Step '{step_name}' {field_name} actions are not executed by the runtime",
+            detail={"step": step_name, "field": field_name, "action_count": len(actions)},
+        )
+    )
 
 
 def check_step_tool_gates(step: WorkflowStep, result: WorkflowEvaluation) -> None:
@@ -696,37 +810,7 @@ async def _check_semantics(
             level="error",
         )
 
-        # Check on_enter call_mcp_tool actions
-        for action in step.on_enter:
-            if isinstance(action, dict) and action.get("type") == "call_mcp_tool":
-                server_name = action.get("server_name", "")
-                tool_name = action.get("tool_name", "")
-                if server_name and server_name not in available_servers:
-                    result.items.append(
-                        EvaluationItem(
-                            layer="semantics",
-                            level="warning",
-                            code="UNKNOWN_MCP_ACTION_TARGET",
-                            message=f"Step '{step.name}' on_enter calls unknown MCP server '{server_name}'",
-                            detail={"step": step.name, "server": server_name, "tool": tool_name},
-                        )
-                    )
-                elif (
-                    server_name
-                    and tool_name
-                    and tool_name not in server_tools.get(server_name, set())
-                ):
-                    result.items.append(
-                        EvaluationItem(
-                            layer="semantics",
-                            level="warning",
-                            code="UNKNOWN_MCP_ACTION_TARGET",
-                            message=f"Step '{step.name}' on_enter calls unknown tool '{server_name}:{tool_name}'",
-                            detail={"step": step.name, "server": server_name, "tool": tool_name},
-                        )
-                    )
-
-        for handler in [*step.on_mcp_success, *step.on_mcp_error]:
+        for handler in [*step.on_mcp_before, *step.on_mcp_success, *step.on_mcp_error]:
             _check_mcp_handler_ref(step.name, handler, available_servers, server_tools, result)
 
 
@@ -764,7 +848,7 @@ def _check_mcp_tool_refs(
                     detail={"owner": owner, "server": server, "ref": ref},
                 )
             )
-        elif tool and tool != "*" and tool not in server_tools.get(server, set()):
+        elif server in server_tools and tool and tool != "*" and tool not in server_tools[server]:
             result.items.append(
                 EvaluationItem(
                     layer="semantics",
@@ -803,7 +887,7 @@ def _check_mcp_handler_ref(
                 detail={"step": step_name, "server": server, "ref": ref},
             )
         )
-    elif tool != "*" and tool not in server_tools.get(server, set()):
+    elif server in server_tools and tool not in server_tools[server]:
         result.items.append(
             EvaluationItem(
                 layer="semantics",

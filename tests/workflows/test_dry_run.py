@@ -20,6 +20,7 @@ def _make_step(
     name: str,
     transitions: list[dict[str, str]] | None = None,
     on_enter: list[dict[str, str]] | None = None,
+    on_exit: list[dict[str, str]] | None = None,
     description: str | None = None,
     allowed_tools: list[str] | str = "all",
     blocked_tools: list[str] | None = None,
@@ -27,6 +28,7 @@ def _make_step(
     blocked_mcp_tools: list[str] | None = None,
     on_mcp_success: list[dict[str, str]] | None = None,
     on_mcp_error: list[dict[str, str]] | None = None,
+    on_mcp_before: list[dict[str, str]] | None = None,
 ) -> WorkflowStep:
     """Helper to create a WorkflowStep."""
     return WorkflowStep(
@@ -34,12 +36,14 @@ def _make_step(
         description=description,
         transitions=[WorkflowTransition(**t) for t in (transitions or [])],
         on_enter=on_enter or [],
+        on_exit=on_exit or [],
         allowed_tools=allowed_tools,
         blocked_tools=blocked_tools or [],
         allowed_mcp_tools=allowed_mcp_tools,
         blocked_mcp_tools=blocked_mcp_tools or [],
         on_mcp_success=on_mcp_success or [],
         on_mcp_error=on_mcp_error or [],
+        on_mcp_before=on_mcp_before or [],
     )
 
 
@@ -125,6 +129,27 @@ class TestPipelineType:
         assert result.valid is True
         assert result.workflow_type == "pipeline"
         assert any(i.code == "PIPELINE_TYPE" for i in result.items)
+
+
+class TestRuntimeResolution:
+    @pytest.mark.asyncio
+    async def test_warns_when_loader_resolution_differs_from_runtime(self) -> None:
+        loader = MagicMock()
+        loader.load_workflow = AsyncMock(return_value=_make_definition(steps=[_make_step("done")]))
+        loader._db_project_scope.return_value = "project-id"
+        loader.def_manager.get_by_name.return_value = MagicMock(
+            project_id="project-id",
+            definition_json='{"name":"child","extends":"base","steps":[]}',
+        )
+
+        result = await evaluate_workflow("child", loader, project_id="project-id")
+
+        findings = [item for item in result.warnings if item.code == "RUNTIME_DEFINITION_MISMATCH"]
+        assert len(findings) == 2
+        assert {item.detail["mismatch"].split(";")[0] for item in findings} == {
+            "project-scoped override",
+            "resolved extends inheritance",
+        }
 
 
 class TestStructuralValidation:
@@ -293,6 +318,54 @@ class TestStructuralValidation:
         assert len(circular_items) == 1
 
 
+class TestConditionValidation:
+    @pytest.mark.asyncio
+    async def test_transition_rejects_name_outside_runtime_context(
+        self, mock_loader: MagicMock
+    ) -> None:
+        steps = [
+            _make_step("start", transitions=[{"to": "done", "when": "variables.ready"}]),
+            _make_step("done"),
+        ]
+        mock_loader.load_workflow.return_value = _make_definition(steps=steps)
+
+        result = await evaluate_workflow("test", mock_loader)
+
+        finding = next(item for item in result.items if item.code == "CONDITION_UNKNOWN_NAME")
+        assert finding.detail == {
+            "condition": "variables.ready",
+            "condition_type": "transition",
+            "names": ["variables"],
+            "step": "start",
+        }
+
+    @pytest.mark.asyncio
+    async def test_broken_exit_condition_is_error(self, mock_loader: MagicMock) -> None:
+        mock_loader.load_workflow.return_value = _make_definition(
+            steps=[_make_step("done")], exit_condition="current_step =="
+        )
+
+        result = await evaluate_workflow("test", mock_loader)
+
+        assert not result.valid
+        assert [item.code for item in result.errors] == ["INVALID_CONDITION_SYNTAX"]
+
+    @pytest.mark.asyncio
+    async def test_runtime_condition_contexts_are_accepted(self, mock_loader: MagicMock) -> None:
+        steps = [
+            _make_step("start", transitions=[{"to": "done", "when": "vars.ready"}]),
+            _make_step("done"),
+        ]
+        mock_loader.load_workflow.return_value = _make_definition(
+            steps=steps,
+            exit_condition="current_step == 'done' and variables.finished and vars.ready",
+        )
+
+        result = await evaluate_workflow("test", mock_loader)
+
+        assert not [item for item in result.items if item.code.startswith("CONDITION_")]
+
+
 class TestSemanticValidation:
     @pytest.mark.asyncio
     async def test_semantic_checks_skipped(self, mock_loader: MagicMock) -> None:
@@ -357,8 +430,9 @@ class TestSemanticValidation:
         assert len(unknown_items) == 1
 
     @pytest.mark.asyncio
-    async def test_unknown_mcp_action_target(self, mock_loader: MagicMock) -> None:
-        """UNKNOWN_MCP_ACTION_TARGET warning for on_enter call_mcp_tool."""
+    async def test_on_enter_mcp_action_is_reported_as_not_executed(
+        self, mock_loader: MagicMock
+    ) -> None:
         steps = [
             _make_step(
                 "start",
@@ -374,18 +448,10 @@ class TestSemanticValidation:
         definition = _make_definition(steps=steps)
         mock_loader.load_workflow.return_value = definition
 
-        mcp_manager = MagicMock()
-        mcp_manager.get_available_servers.return_value = ["gobby-tasks"]
-        mcp_manager.list_tools = AsyncMock(
-            return_value={
-                "gobby-tasks": [{"name": "create_task"}],
-            }
-        )
+        result = await evaluate_workflow("test", mock_loader)
 
-        result = await evaluate_workflow("test", mock_loader, mcp_manager=mcp_manager)
-
-        unknown_items = [i for i in result.warnings if i.code == "UNKNOWN_MCP_ACTION_TARGET"]
-        assert len(unknown_items) == 1
+        findings = [i for i in result.warnings if i.code == "ACTION_NOT_EXECUTED"]
+        assert [item.detail["field"] for item in findings] == ["on_enter"]
 
     @pytest.mark.asyncio
     async def test_unknown_mcp_handler_target(self, mock_loader: MagicMock) -> None:
@@ -418,6 +484,100 @@ class TestSemanticValidation:
         unknown_items = [i for i in result.warnings if i.code == "UNKNOWN_MCP_HANDLER_TARGET"]
         assert len(unknown_items) == 1
 
+    @pytest.mark.asyncio
+    async def test_on_mcp_before_handler_target_is_checked(self, mock_loader: MagicMock) -> None:
+        steps = [
+            _make_step(
+                "start",
+                on_mcp_before=[
+                    {"server": "gobby-merge", "tool": "missing_tool", "action": "block"}
+                ],
+            )
+        ]
+        mock_loader.load_workflow.return_value = _make_definition(steps=steps)
+        mcp_manager = MagicMock()
+        mcp_manager.get_available_servers.return_value = ["gobby-merge"]
+        mcp_manager.list_tools = AsyncMock(
+            return_value={"gobby-merge": [{"name": "verify_in_worktree"}]}
+        )
+
+        result = await evaluate_workflow("test", mock_loader, mcp_manager=mcp_manager)
+
+        assert len([i for i in result.warnings if i.code == "UNKNOWN_MCP_HANDLER_TARGET"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_handler_star_is_checked_as_exact_tool_name(self, mock_loader: MagicMock) -> None:
+        steps = [
+            _make_step(
+                "start",
+                on_mcp_success=[{"server": "gobby-merge", "tool": "*", "action": "set_variable"}],
+            )
+        ]
+        mock_loader.load_workflow.return_value = _make_definition(steps=steps)
+        mcp_manager = MagicMock()
+        mcp_manager.get_available_servers.return_value = ["gobby-merge"]
+        mcp_manager.list_tools = AsyncMock(return_value={"gobby-merge": [{"name": "merge"}]})
+
+        result = await evaluate_workflow("test", mock_loader, mcp_manager=mcp_manager)
+
+        assert len([i for i in result.warnings if i.code == "UNKNOWN_MCP_HANDLER_TARGET"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_disconnected_server_skips_tool_inventory_checks(
+        self, mock_loader: MagicMock
+    ) -> None:
+        steps = [
+            _make_step(
+                "start",
+                allowed_mcp_tools=["gobby-merge:missing_tool"],
+                on_mcp_success=[
+                    {
+                        "server": "gobby-merge",
+                        "tool": "missing_tool",
+                        "action": "set_variable",
+                    }
+                ],
+            )
+        ]
+        mock_loader.load_workflow.return_value = _make_definition(steps=steps)
+        mcp_manager = MagicMock()
+        mcp_manager.get_available_servers.return_value = ["gobby-merge"]
+        mcp_manager.list_tools = AsyncMock(return_value={})
+
+        result = await evaluate_workflow("test", mock_loader, mcp_manager=mcp_manager)
+
+        assert not [
+            i for i in result.items if i.code in {"UNKNOWN_MCP_TOOL", "UNKNOWN_MCP_HANDLER_TARGET"}
+        ]
+
+
+class TestUnsupportedLifecycleActions:
+    @pytest.mark.asyncio
+    async def test_dead_action_lists_are_reported(self, mock_loader: MagicMock) -> None:
+        steps = [
+            _make_step(
+                "start",
+                on_enter=[{"type": "set_variable"}],
+                on_exit=[{"type": "set_variable"}],
+                transitions=[
+                    {
+                        "to": "done",
+                        "when": "true",
+                        "on_transition": [{"type": "set_variable"}],
+                    }
+                ],
+            ),
+            _make_step("done"),
+        ]
+        mock_loader.load_workflow.return_value = _make_definition(steps=steps)
+
+        result = await evaluate_workflow("test", mock_loader)
+
+        fields = {
+            item.detail["field"] for item in result.warnings if item.code == "ACTION_NOT_EXECUTED"
+        }
+        assert fields == {"on_enter", "on_exit", "on_transition"}
+
 
 class TestStepTrace:
     @pytest.mark.asyncio
@@ -439,9 +599,7 @@ class TestStepTrace:
             _make_step(
                 "work",
                 description="Do the work",
-                transitions=[
-                    {"to": "report", "when": "task_tree_complete(variables.session_task)"}
-                ],
+                transitions=[{"to": "report", "when": "task_tree_complete(vars.session_task)"}],
             ),
             _make_step(
                 "report",
