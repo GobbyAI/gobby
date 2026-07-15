@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -9,7 +10,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.wiki.scheduled_jobs import (
     WIKI_RECAP_SCHEDULE_CRON,
     WIKI_RECAP_TIMEOUT_SECONDS,
-    _ensure_wiki_cron_job,
+    register_wiki_cron_jobs_for_projects,
     wiki_handler_name,
     wiki_job_name,
 )
@@ -27,11 +28,15 @@ def cron_storage(temp_db: Any) -> CronJobStorage:
     return CronJobStorage(temp_db)
 
 
-def test_startup_reconciles_recap_timeout_without_affecting_other_wiki_jobs(
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_startup_reconciles_installed_recap_timeout(
     cron_storage: CronJobStorage,
     project_id: str,
+    temp_db: Any,
+    enabled: bool,
 ) -> None:
-    scope = "project:alpha"
+    scope = f"project:{project_id}"
     recap_name = wiki_job_name("recap", scope)
     existing = cron_storage.create_job(
         project_id=project_id,
@@ -45,33 +50,38 @@ def test_startup_reconciles_recap_timeout_without_affecting_other_wiki_jobs(
             "scope": scope,
             "command": "recap",
         },
-        enabled=True,
+        enabled=enabled,
+        is_system=True,
+    )
+    refresh = cron_storage.create_job(
+        project_id=project_id,
+        name=wiki_job_name("refresh", scope),
+        description="existing refresh definition",
+        schedule_type="interval",
+        interval_seconds=300,
+        action_type="handler",
+        action_config={
+            "handler": wiki_handler_name("refresh", scope),
+            "scope": scope,
+            "command": "refresh",
+        },
+        enabled=False,
         is_system=True,
     )
 
-    _ensure_wiki_cron_job(
+    await register_wiki_cron_jobs_for_projects(
         cron_storage=cron_storage,
-        project_id=project_id,
-        command="recap",
-        scope=scope,
-        handler_name=wiki_handler_name("recap", scope),
-        purpose="Nightly wiki session recap",
-        cron_expr=WIKI_RECAP_SCHEDULE_CRON,
-    )
-    _ensure_wiki_cron_job(
-        cron_storage=cron_storage,
-        project_id=project_id,
-        command="refresh",
-        scope=scope,
-        handler_name=wiki_handler_name("refresh", scope),
-        purpose="Scheduled wiki source refresh",
-        interval_seconds=300,
+        cron_executor=MagicMock(),
+        project_scopes=((project_id, []),),
+        db=temp_db,
+        gateway_factory=MagicMock(return_value=MagicMock()),
     )
 
     recap = cron_storage.get_job_by_name(recap_name)
-    refresh = cron_storage.get_job_by_name(wiki_job_name("refresh", scope))
+    persisted_refresh = cron_storage.get_job(refresh.id)
     assert recap is not None
     assert recap.id == existing.id
+    assert recap.enabled is enabled
     assert recap.action_config["timeout_seconds"] == WIKI_RECAP_TIMEOUT_SECONDS == 3600
-    assert refresh is not None
-    assert "timeout_seconds" not in refresh.action_config
+    assert persisted_refresh is not None
+    assert "timeout_seconds" not in persisted_refresh.action_config

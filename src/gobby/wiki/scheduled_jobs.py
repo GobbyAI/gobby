@@ -352,6 +352,8 @@ async def register_wiki_cron_jobs_for_projects(
             "register_wiki_cron_jobs_for_projects requires db when gateway_factory is not provided"
         )
 
+    await _run_sync(run_sync, _reconcile_installed_wiki_recap_timeouts, cron_storage)
+
     scope_projects: dict[str, str] = {}
     fallback_project_id = ""
     for project_id, scopes in project_scopes:
@@ -594,6 +596,26 @@ def wiki_handler_name(command: str, scope: str) -> str:
 
 def wiki_job_name(command: str, scope: str) -> str:
     return f"{WIKI_JOB_NAME_PREFIX}{command}:{scope}"
+
+
+def _reconcile_installed_wiki_recap_timeouts(cron_storage: CronJobStorage) -> int:
+    """Repair the outer timeout on every installed system recap row."""
+    recap_prefix = f"{WIKI_JOB_NAME_PREFIX}recap:"
+    updated = 0
+    for job in cron_storage.list_system_jobs_by_name_prefix(WIKI_JOB_NAME_PREFIX):
+        if not job.name.startswith(recap_prefix):
+            continue
+        action_config = dict(job.action_config)
+        if action_config.get("timeout_seconds") == WIKI_RECAP_TIMEOUT_SECONDS:
+            continue
+        action_config["timeout_seconds"] = WIKI_RECAP_TIMEOUT_SECONDS
+        cron_storage.reconcile_system_job_definition(
+            job.id,
+            action_type="handler",
+            action_config=action_config,
+        )
+        updated += 1
+    return updated
 
 
 async def _create_gateway(
