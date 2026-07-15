@@ -50,6 +50,45 @@ class TestWorktreeRootResolution:
         ] == []
 
 
+class TestGetDirtyFilesCategorized:
+    def test_parses_porcelain_paths_without_truncation(self, tmp_path) -> None:
+        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=tmp_path,
+            check=True,
+        )
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=tmp_path, check=True)
+
+        for path in ("modified.txt", "deleted.txt", "old name.txt"):
+            (tmp_path / path).write_text("original\n")
+        subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "initial"], cwd=tmp_path, check=True, capture_output=True
+        )
+
+        (tmp_path / "modified.txt").write_text("modified\n")
+        (tmp_path / "deleted.txt").unlink()
+        subprocess.run(
+            ["git", "mv", "old name.txt", 'renamed "café" file.txt'],
+            cwd=tmp_path,
+            check=True,
+        )
+        (tmp_path / "added file.txt").write_text("added\n")
+        subprocess.run(["git", "add", "added file.txt"], cwd=tmp_path, check=True)
+        (tmp_path / "untracked ünicode.txt").write_text("untracked\n")
+
+        dirty = get_dirty_files_categorized(str(tmp_path))
+
+        assert dirty.tracked == {
+            "added file.txt",
+            "deleted.txt",
+            "modified.txt",
+            'renamed "café" file.txt',
+        }
+        assert dirty.untracked == {"untracked ünicode.txt"}
+
+
 class TestGetGitStatus:
     """Tests for get_git_status function."""
 
