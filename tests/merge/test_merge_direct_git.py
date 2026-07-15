@@ -682,6 +682,33 @@ async def test_merge_apply_fast_forwards_reused_clean_resolution(temp_db, tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_merge_apply_restores_detached_head_after_direct_merge(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    branch = "feature/direct-detached"
+    _init_repo(repo)
+    original_sha = _git(repo, "rev-parse", "HEAD")
+    worktree_path, feature_sha = _create_feature_worktree(repo, tmp_path, branch)
+    registry, _merge_storage, worktree = _create_registry(temp_db, repo, worktree_path, branch)
+    _git(repo, "checkout", "--detach", original_sha)
+
+    started = await registry.call(
+        "merge_start",
+        {"worktree_id": worktree.id, "source_branch": branch, "target_branch": "main"},
+    )
+    result = await registry.call("merge_apply", {"resolution_id": started["resolution_id"]})
+
+    assert result["success"] is True
+    assert result["direct_merge"] is True
+    assert _git(repo, "rev-parse", "--abbrev-ref", "HEAD") == "HEAD"
+    assert _git(repo, "rev-parse", "HEAD") == original_sha
+    assert _git(repo, "rev-parse", "main") == feature_sha
+
+
+@pytest.mark.asyncio
 async def test_no_ff_strategy_bypasses_reuse_and_creates_merge_commit(
     temp_db,
     tmp_path: Path,

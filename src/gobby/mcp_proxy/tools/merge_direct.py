@@ -102,6 +102,17 @@ async def _complete_direct_merge(
     target_branch = resolution.target_branch
     source_branch = resolution.source_branch
     restore_original = original_branch and original_branch != target_branch
+    restore_args = ["checkout", original_branch]
+    restore_description = f"branch {original_branch}"
+    if original_branch == "HEAD":
+        original_sha = await rev_parse_head(git_manager, repo_path)
+        if not original_sha:
+            return {
+                "success": False,
+                "error": "Failed to determine current commit for detached HEAD",
+            }
+        restore_args = ["checkout", "--detach", original_sha]
+        restore_description = f"detached HEAD at {original_sha}"
     strategy_name = "no-ff" if resolution.tier_used == _GIT_NO_FF_TIER else "ff-only"
 
     try:
@@ -173,14 +184,14 @@ async def _complete_direct_merge(
         if restore_original:
             restore_result = await asyncio.to_thread(
                 git_manager.run_git_command,
-                ["checkout", original_branch],
+                restore_args,
                 cwd=repo_path,
                 timeout=30,
             )
             if restore_result.returncode != 0:
                 logger.warning(
-                    "Failed to restore branch %s after direct merge: %s",
-                    original_branch,
+                    "Failed to restore %s after direct merge: %s",
+                    restore_description,
                     git_output(restore_result),
                 )
 
