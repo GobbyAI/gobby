@@ -64,6 +64,16 @@ class ToolEventHandlerMixin(EventHandlersBase):
                 )
                 return HookResponse(decision="allow")
 
+        if session_id and self._progress_tracker is not None:
+            try:
+                self._progress_tracker.record_tool_start(
+                    session_id=session_id,
+                    tool_name=tool_name,
+                    tool_args=input_data.get("tool_input", {}),
+                )
+            except Exception as e:
+                self.logger.warning(f"Failed to record autonomous tool start: {e}")
+
         return HookResponse(decision="allow")
 
     def _resolve_skill_tool_call(

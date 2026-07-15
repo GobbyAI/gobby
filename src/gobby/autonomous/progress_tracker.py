@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 class ProgressType(str, Enum):
     """Types of progress events."""
 
+    TOOL_STARTED = "tool_started"  # A tool call is currently in flight
     TOOL_CALL = "tool_call"  # Any tool was called
     FILE_MODIFIED = "file_modified"  # A file was modified (Edit, Write)
     FILE_READ = "file_read"  # A file was read
@@ -380,6 +381,23 @@ class ProgressTracker:
             details=details,
         )
 
+    def record_tool_start(
+        self,
+        session_id: str,
+        tool_name: str,
+        tool_args: dict[str, Any] | None = None,
+    ) -> ProgressEvent:
+        """Record that a tool call started and remains in flight."""
+        return self.record_event(
+            session_id=session_id,
+            progress_type=ProgressType.TOOL_STARTED,
+            tool_name=tool_name,
+            details={
+                "tool_args_keys": list((tool_args or {}).keys()),
+                "tool_args_fingerprint": _hash_tool_args(tool_args),
+            },
+        )
+
     def get_summary(self, session_id: str) -> ProgressSummary:
         """Get a summary of progress for a session.
 
@@ -424,7 +442,7 @@ class ProgressTracker:
             SELECT recorded_at
             FROM loop_progress
             WHERE session_id = %s AND is_high_value IS TRUE
-            ORDER BY recorded_at DESC
+            ORDER BY recorded_at DESC, id DESC
             LIMIT 1
             """,
             (session_id,),
@@ -436,10 +454,10 @@ class ProgressTracker:
         # Get last event time
         last_event_result = self.db.fetchone(
             """
-            SELECT recorded_at
+            SELECT progress_type, recorded_at
             FROM loop_progress
             WHERE session_id = %s
-            ORDER BY recorded_at DESC
+            ORDER BY recorded_at DESC, id DESC
             LIMIT 1
             """,
             (session_id,),
@@ -447,10 +465,13 @@ class ProgressTracker:
         last_event_at = (
             parse_stored_datetime(last_event_result["recorded_at"]) if last_event_result else None
         )
+        last_event_type = (
+            ProgressType(last_event_result["progress_type"]) if last_event_result else None
+        )
 
         # Calculate stagnation
         is_stagnant, stagnation_duration = self._check_stagnation(
-            session_id, total_events, last_event_at
+            session_id, total_events, last_event_at, last_event_type
         )
 
         return ProgressSummary(
@@ -484,6 +505,7 @@ class ProgressTracker:
         session_id: str,
         total_events: int,
         last_event_at: datetime | None,
+        last_event_type: ProgressType | None,
     ) -> tuple[bool, float]:
         """Check whether the session has gone quiet.
 
@@ -495,6 +517,7 @@ class ProgressTracker:
             session_id: The session to check
             total_events: Total event count
             last_event_at: Timestamp of the most recent event
+            last_event_type: Type of the most recent event
 
         Returns:
             Tuple of (is_stagnant, seconds_since_last_event)
@@ -504,6 +527,9 @@ class ProgressTracker:
             return False, 0.0
 
         duration = (datetime.now(UTC) - last_event_at).total_seconds()
+        if last_event_type is ProgressType.TOOL_STARTED:
+            return False, duration
+
         if duration > self.stagnation_threshold:
             logger.info(f"Session {session_id} stagnant: {duration:.0f}s since last progress event")
             return True, duration
