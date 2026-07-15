@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -27,8 +28,16 @@ def detect_mcp_call(event: HookEvent, variables: dict[str, Any], session_id: str
     tool_output = event.data.get("tool_output") or {}
 
     tracked = _track_mcp_call(variables, server_name, inner_tool, tool_output, session_id)
-    if tracked and server_name == "gobby-skills" and inner_tool == "get_skill":
-        _track_loaded_skill(variables, tool_output, session_id)
+    if server_name == "gobby-skills" and inner_tool == "get_skill":
+        if tracked:
+            _track_loaded_skill(variables, tool_output, session_id)
+        else:
+            _track_unresolvable_required_skill(
+                variables,
+                event.data.get("tool_input") or {},
+                tool_output,
+                session_id,
+            )
 
 
 def _track_loaded_skill(
@@ -75,6 +84,58 @@ def _extract_loaded_skill_name(tool_output: dict[str, Any] | Any) -> str | None:
             name = skill.get("name")
             if isinstance(name, str) and name:
                 return name
+    return None
+
+
+def _track_unresolvable_required_skill(
+    variables: dict[str, Any],
+    tool_input: dict[str, Any] | Any,
+    tool_output: dict[str, Any] | Any,
+    session_id: str,
+) -> None:
+    """Record a required skill after get_skill definitively reports it missing."""
+    name = _requested_skill_name(tool_input)
+    required = variables.get("claimed_task_required_skills") or []
+    if not name or not isinstance(required, list) or name not in required:
+        return
+
+    error = _skill_error(tool_output)
+    if error != f"Skill not found: {name}":
+        return
+
+    unresolvable = variables.get("unresolvable_required_skills") or []
+    if not isinstance(unresolvable, list):
+        unresolvable = []
+    if name not in unresolvable:
+        unresolvable.append(name)
+        logger.warning("Session %s: dropping unresolvable required skill %s", session_id, name)
+    variables["unresolvable_required_skills"] = unresolvable
+
+
+def _requested_skill_name(tool_input: dict[str, Any] | Any) -> str | None:
+    if not isinstance(tool_input, dict):
+        return None
+    arguments = tool_input.get("arguments", tool_input.get("args", tool_input))
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except (json.JSONDecodeError, TypeError):
+            return None
+    if not isinstance(arguments, dict):
+        return None
+    name = arguments.get("name")
+    return name if isinstance(name, str) and name else None
+
+
+def _skill_error(tool_output: dict[str, Any] | Any) -> str | None:
+    candidate = tool_output
+    for _ in range(3):
+        if not isinstance(candidate, dict):
+            return None
+        error = candidate.get("error")
+        if isinstance(error, str):
+            return error
+        candidate = candidate.get("result")
     return None
 
 

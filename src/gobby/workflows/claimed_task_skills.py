@@ -120,8 +120,19 @@ def first_unloaded_claimed_task_required_skill(variables: dict[str, Any]) -> str
         return ""
 
     loaded_set = {skill for skill in loaded if isinstance(skill, str)}
+    unresolvable = variables.get("unresolvable_required_skills") or []
+    unresolvable_set = (
+        {skill for skill in unresolvable if isinstance(skill, str)}
+        if isinstance(unresolvable, list)
+        else set()
+    )
     for skill in required:
-        if isinstance(skill, str) and skill and skill not in loaded_set:
+        if (
+            isinstance(skill, str)
+            and skill
+            and skill not in loaded_set
+            and skill not in unresolvable_set
+        ):
             return skill
     return ""
 

@@ -14,6 +14,7 @@ from gobby.workflows.claimed_task_skills import (
     _criteria_require_tdd,
     _load_task,
     _task_files,
+    first_unloaded_claimed_task_required_skill,
 )
 
 pytestmark = pytest.mark.unit
@@ -178,3 +179,16 @@ def test_load_task_propagates_unexpected_errors() -> None:
 def test_criteria_require_tdd_matches_cycle_keywords_as_whole_words() -> None:
     assert _criteria_require_tdd("TDD evidence required: red, green, refactor/final-green.")
     assert not _criteria_require_tdd("Redirection and evergreen refactoring notes are enough.")
+
+
+def test_first_unloaded_required_skill_skips_unresolvable_names() -> None:
+    variables = {
+        "claimed_task_required_skills": ["typo-skill", "python"],
+        "unresolvable_required_skills": ["typo-skill"],
+        "loaded_skills": [],
+    }
+
+    assert first_unloaded_claimed_task_required_skill(variables) == "python"
+
+    variables["unresolvable_required_skills"].append("python")
+    assert first_unloaded_claimed_task_required_skill(variables) == ""

@@ -1068,6 +1068,26 @@ class TestDetectMcpCall:
 
         assert "loaded_skills" not in variables
 
+    def test_missing_required_skill_is_recorded_as_unresolvable(
+        self, variables, make_after_tool_event, caplog
+    ) -> None:
+        variables["claimed_task_required_skills"] = ["typo-skill"]
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-skills",
+                "tool_name": "get_skill",
+                "arguments": {"name": "typo-skill"},
+            },
+            tool_output={"result": {"success": False, "error": "Skill not found: typo-skill"}},
+        )
+
+        with caplog.at_level(logging.WARNING, logger="gobby.workflows.observers"):
+            detect_mcp_call(event, variables, SESSION_ID)
+
+        assert variables["unresolvable_required_skills"] == ["typo-skill"]
+        assert "dropping unresolvable required skill typo-skill" in caplog.text
+
     def test_ignores_missing_server_or_tool(self, variables, make_after_tool_event) -> None:
         event = make_after_tool_event(
             "mcp__gobby__call_tool",
@@ -1427,6 +1447,13 @@ class TestDetectBashCommit:
 
 class TestDetectVerificationEvidence:
     """Verify validation commands record completion-readiness evidence."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_codex_machine_id(self, monkeypatch) -> None:
+        monkeypatch.setattr(
+            "gobby.adapters.codex_impl.app_server_adapter._get_daemon_machine_id",
+            lambda: "test-machine-id",
+        )
 
     @pytest.mark.parametrize(
         "command,normalized_argv,wrapper_chain",
