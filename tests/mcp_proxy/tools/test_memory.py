@@ -866,6 +866,45 @@ class TestMemoryDreamTools:
         service_factory.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_memory_dream_start_failure_releases_background_slot(
+        self,
+        mock_memory_manager: MagicMock,
+        mock_llm_service: MagicMock,
+    ) -> None:
+        config = SimpleNamespace(memory=SimpleNamespace(dream=SimpleNamespace()))
+        service = MagicMock()
+        service.start_async = AsyncMock(
+            side_effect=[
+                *[
+                    RuntimeError("database unavailable")
+                    for _ in range(memory_dream_tools.MAX_BACKGROUND_DREAM_TASKS)
+                ],
+                {"success": True, "run_id": "dream-1"},
+            ]
+        )
+        service.execute_run = AsyncMock(return_value={"success": True})
+        registry = create_memory_registry(
+            mock_memory_manager,
+            llm_service=mock_llm_service,
+            config=config,
+        )
+
+        with patch(
+            "gobby.mcp_proxy.tools.memory_dream.MemoryDreamService",
+            return_value=service,
+        ):
+            for _ in range(memory_dream_tools.MAX_BACKGROUND_DREAM_TASKS):
+                with pytest.raises(RuntimeError, match="database unavailable"):
+                    await registry.call("memory_dream", {"wait": False})
+
+            result = await registry.call("memory_dream", {"wait": False})
+            background_tasks = memory_dream_tools.get_background_tasks()
+            await asyncio.gather(*background_tasks)
+
+        assert result == {"success": True, "run_id": "dream-1", "status": "started"}
+        assert service.start_async.await_count == memory_dream_tools.MAX_BACKGROUND_DREAM_TASKS + 1
+
+    @pytest.mark.asyncio
     async def test_memory_dream_background_start_respects_task_cap(
         self,
         mock_memory_manager: MagicMock,
