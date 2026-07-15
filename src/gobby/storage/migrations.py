@@ -94,8 +94,18 @@ class MigrationRunner:
         for migration in self._discover_migrations():
             if migration.version in applied:
                 continue
-            logger.info("Applying PostgreSQL migration %s_%s", migration.version, migration.name)
             with self._hub.transaction() as txn:
+                txn.execute("SELECT pg_advisory_xact_lock(hashtext('postgres_migrations_apply'))")
+                row = txn.execute(
+                    "SELECT version FROM schema_migrations WHERE version = %s",
+                    (migration.version,),
+                ).fetchone()
+                if row is not None:
+                    applied.add(migration.version)
+                    continue
+                logger.info(
+                    "Applying PostgreSQL migration %s_%s", migration.version, migration.name
+                )
                 self._run_migration(txn, migration)
                 self._record_applied_version(txn, migration.version)
             applied.add(migration.version)
