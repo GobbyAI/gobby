@@ -314,6 +314,46 @@ class SessionVariableManager:
                 )
         return count
 
+    def append_to_bounded_list_variable(
+        self,
+        session_id: str,
+        name: str,
+        item: Any,
+        *,
+        max_items: int,
+        updates: dict[str, Any] | None = None,
+    ) -> int:
+        """Atomically append an item to a bounded list and merge related updates."""
+        if max_items < 1:
+            raise ValueError("max_items must be positive")
+        now = datetime.now(UTC).isoformat()
+        with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
+            row = conn.execute(
+                "SELECT variables FROM session_variables WHERE session_id = %s",
+                (session_id,),
+            ).fetchone()
+            current_vars = _decode_variables_payload(row["variables"]) if row else {}
+            stored = current_vars.get(name, [])
+            items = stored if isinstance(stored, list) else []
+            bounded_items = [*items, item][-max_items:]
+            current_vars[name] = bounded_items
+            if updates:
+                current_vars.update(updates)
+
+            if row:
+                conn.execute(
+                    "UPDATE session_variables SET variables = %s, updated_at = %s "
+                    "WHERE session_id = %s",
+                    (json.dumps(current_vars), now, session_id),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO session_variables (session_id, variables, updated_at) "
+                    "VALUES (%s, %s, %s)",
+                    (session_id, json.dumps(current_vars), now),
+                )
+        return len(bounded_items)
+
     def append_to_set_variable(self, session_id: str, name: str, values: list[str]) -> bool:
         """Atomically append values to a list variable (deduped, sorted).
 

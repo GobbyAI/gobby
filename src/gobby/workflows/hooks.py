@@ -770,6 +770,27 @@ class WorkflowHookHandler:
                     changed = {
                         k: v for k, v in variables.items() if k not in pre_eval or pre_eval[k] != v
                     }
+                    from gobby.workflows.verification_evidence import (
+                        MAX_VERIFICATION_EVIDENCE_ITEMS,
+                        VERIFICATION_EVIDENCE_RECORDED_VARIABLE,
+                        VERIFICATION_EVIDENCE_VARIABLE,
+                    )
+
+                    evidence = changed.get(VERIFICATION_EVIDENCE_VARIABLE)
+                    if isinstance(evidence, list) and evidence:
+                        readiness_update = {}
+                        if VERIFICATION_EVIDENCE_RECORDED_VARIABLE in changed:
+                            readiness_update[VERIFICATION_EVIDENCE_RECORDED_VARIABLE] = changed.pop(
+                                VERIFICATION_EVIDENCE_RECORDED_VARIABLE
+                            )
+                        changed.pop(VERIFICATION_EVIDENCE_VARIABLE)
+                        self._session_var_manager.append_to_bounded_list_variable(
+                            session_id,
+                            VERIFICATION_EVIDENCE_VARIABLE,
+                            evidence[-1],
+                            max_items=MAX_VERIFICATION_EVIDENCE_ITEMS,
+                            updates=readiness_update,
+                        )
                     if changed:
                         self._session_var_manager.merge_variables(session_id, changed)
 

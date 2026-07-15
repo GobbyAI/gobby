@@ -859,6 +859,68 @@ class TestVariablePersistence:
         assert isinstance(evidence, list)
         assert evidence[-1]["command"] == "uv run pytest tests/workflows/test_hooks.py -v"
 
+    async def test_hook_and_tool_evidence_appends_are_atomic(
+        self, db, session_manager, sample_project
+    ) -> None:
+        """A tool write during hook evaluation must survive hook persistence."""
+        from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
+        from gobby.workflows.engine.core import RuleEngine
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        session = session_manager.register(
+            external_id="atomic-verification",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+            title="Atomic verification",
+        )
+        rule_engine = RuleEngine(db=db)
+        observer_finished = asyncio.Event()
+        release_hook = asyncio.Event()
+
+        async def pause_after_observers(**_kwargs: object) -> HookResponse:
+            observer_finished.set()
+            await release_hook.wait()
+            return HookResponse(decision="allow")
+
+        rule_engine.evaluate = AsyncMock(side_effect=pause_after_observers)
+        handler = WorkflowHookHandler(rule_engine=rule_engine)
+        registry = create_session_messages_registry(session_manager=session_manager, db=db)
+        event = HookEvent(
+            event_type=HookEventType.AFTER_TOOL,
+            session_id=session.external_id,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={
+                "tool_name": "Bash",
+                "tool_input": {"command": "uv run pytest tests/workflows/test_hooks.py -v"},
+                "tool_output": {"output": "passed", "exitCode": 0},
+            },
+            cwd="/repo",
+            metadata={"_platform_session_id": session.id},
+        )
+
+        hook_task = asyncio.create_task(handler._evaluate_rules(event))
+        await asyncio.wait_for(observer_finished.wait(), timeout=1)
+        tool_result = await registry.call(
+            "record_verification_evidence",
+            {
+                "session_id": session.id,
+                "summary": "Reviewed the diff",
+                "evidence_type": "manual_diff_review",
+                "supports": "completion readiness",
+            },
+        )
+        release_hook.set()
+        await asyncio.wait_for(hook_task, timeout=1)
+
+        assert tool_result["success"] is True
+        evidence = SessionVariableManager(db).get_variables(session.id)["verification_evidence"]
+        assert [item["evidence_type"] for item in evidence] == [
+            "manual_diff_review",
+            "validation_command",
+        ]
+
     @pytest.mark.asyncio
     async def test_turn_end_reconciles_claimed_tasks_for_after_agent(
         self, db, session_var_manager
