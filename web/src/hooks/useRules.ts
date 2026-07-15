@@ -51,6 +51,12 @@ interface RuleUpdateOptions extends RuleMutationOptions {
   newName?: string
 }
 
+interface RuleFilters {
+  event?: string
+  group?: string
+  enabled?: boolean
+}
+
 async function parseRuleError(response: Response): Promise<RuleApiError> {
   let message = `Rule request failed with status ${response.status}`
   try {
@@ -73,12 +79,10 @@ export function useRules() {
   const [groups, setGroups] = useState<string[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [enforcementEnabled, setEnforcementEnabled] = useState(true)
+  const ruleFiltersRef = useRef<RuleFilters | undefined>(undefined)
 
-  const fetchRules = useCallback(async (params?: {
-    event?: string
-    group?: string
-    enabled?: boolean
-  }) => {
+  const fetchRules = useCallback(async (params?: RuleFilters) => {
+    ruleFiltersRef.current = params
     try {
       const baseUrl = getBaseUrl()
       const searchParams = new URLSearchParams()
@@ -100,6 +104,11 @@ export function useRules() {
       console.error('Failed to fetch rules:', e)
     }
   }, [])
+
+  const refetchRules = useCallback(
+    () => fetchRules(ruleFiltersRef.current),
+    [fetchRules],
+  )
 
   const fetchGroups = useCallback(async () => {
     try {
@@ -139,7 +148,7 @@ export function useRules() {
       if (response.ok) {
         const data = await response.json()
         if (data.status === 'success') {
-          await fetchRules()
+          await refetchRules()
           return true
         }
       }
@@ -147,7 +156,7 @@ export function useRules() {
       console.error('Failed to toggle rule:', e)
     }
     return false
-  }, [fetchRules])
+  }, [refetchRules])
 
   const createRule = useCallback(async (
     name: string,
@@ -163,7 +172,7 @@ export function useRules() {
       })
       if (response.ok) {
         const data = await response.json()
-        await fetchRules()
+        await refetchRules()
         return data.rule || null
       }
       if (options?.throwOnError) throw await parseRuleError(response)
@@ -172,7 +181,7 @@ export function useRules() {
       console.error('Failed to create rule:', e)
     }
     return null
-  }, [fetchRules])
+  }, [refetchRules])
 
   const updateRule = useCallback(async (
     name: string,
@@ -193,7 +202,7 @@ export function useRules() {
         body: JSON.stringify(body),
       })
       if (response.ok) {
-        await fetchRules()
+        await refetchRules()
         return true
       }
       if (options?.throwOnError) throw await parseRuleError(response)
@@ -202,7 +211,7 @@ export function useRules() {
       console.error('Failed to update rule:', e)
     }
     return false
-  }, [fetchRules])
+  }, [refetchRules])
 
   const bulkToggleRules = useCallback(async (source: string, enabled: boolean): Promise<boolean> => {
     try {
@@ -213,14 +222,14 @@ export function useRules() {
         body: JSON.stringify({ source, enabled }),
       })
       if (response.ok) {
-        await fetchRules()
+        await refetchRules()
         return true
       }
     } catch (e) {
       console.error('Failed to bulk toggle rules:', e)
     }
     return false
-  }, [fetchRules])
+  }, [refetchRules])
 
   const setEnforcement = useCallback(async (enabled: boolean): Promise<boolean> => {
     try {
@@ -249,14 +258,14 @@ export function useRules() {
         method: 'DELETE',
       })
       if (response.ok) {
-        await fetchRules()
+        await refetchRules()
         return true
       }
     } catch (e) {
       console.error('Failed to delete rule:', e)
     }
     return false
-  }, [fetchRules])
+  }, [refetchRules])
 
   // Computed values
   const ruleCount = rules.length
@@ -292,10 +301,10 @@ export function useRules() {
     useCallback(() => {
       if (debounceRef.current) window.clearTimeout(debounceRef.current)
       debounceRef.current = window.setTimeout(() => {
-        fetchRules()
+        refetchRules()
         fetchGroups()
       }, 500)
-    }, [fetchRules, fetchGroups]),
+    }, [refetchRules, fetchGroups]),
   )
 
   return {
