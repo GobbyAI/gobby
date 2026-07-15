@@ -53,7 +53,10 @@ def test_build_file_context_rejects_parent_traversal(tmp_path: Path) -> None:
     (tmp_path / "secret.txt").write_text("secret content", encoding="utf-8")
     task = SimpleNamespace(
         title="Read src/safe.txt",
-        description="Also read ../../decoy.txt and src/../../secret.txt",
+        description=(
+            "Also read ../../decoy.txt, src/../../secret.txt, and "
+            "src/../../../../../../../etc/ssh/sshd_config"
+        ),
         validation_criteria="",
     )
 
@@ -62,6 +65,7 @@ def test_build_file_context_rejects_parent_traversal(tmp_path: Path) -> None:
     assert "safe content" in context
     assert "decoy content" not in context
     assert "secret content" not in context
+    assert "sshd_config" not in context
 
 
 def test_build_file_context_rejects_symlink_outside_repo(tmp_path: Path) -> None:
