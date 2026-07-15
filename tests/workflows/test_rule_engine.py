@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import threading
 import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -105,6 +108,84 @@ def _insert_agent(
         project_id=project_id,
     )
     return row.id
+
+
+@pytest.mark.asyncio
+async def test_project_context_resolves_once_off_loop_for_multiple_rules(
+    db: HubDatabase,
+    manager: LocalWorkflowDefinitionManager,
+) -> None:
+    for name in ("project-context-one", "project-context-two"):
+        _insert_rule(
+            manager,
+            name,
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.BEFORE_TOOL,
+                effects=[RuleEffect(type="observe", message=name)],
+            ),
+        )
+
+    loop_thread_id = threading.get_ident()
+    resolver_threads: list[int] = []
+    engine = RuleEngine(db)
+
+    def resolve_project(_event: HookEvent, _existing: object) -> dict[str, str]:
+        resolver_threads.append(threading.get_ident())
+        return {"id": "project-id", "name": "project", "path": "/tmp/project"}
+
+    event = _make_event()
+    with patch.object(engine, "_resolve_project_info", side_effect=resolve_project):
+        variables: dict[str, Any] = {}
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+
+    assert response.decision == "allow"
+    assert len(resolver_threads) == 1
+    assert resolver_threads[0] != loop_thread_id
+    assert variables["project"] == {
+        "id": "project-id",
+        "name": "project",
+        "path": "/tmp/project",
+    }
+
+
+@pytest.mark.asyncio
+async def test_task_tree_condition_runs_outside_event_loop_thread(
+    db: HubDatabase,
+    manager: LocalWorkflowDefinitionManager,
+) -> None:
+    loop_thread_id = threading.get_ident()
+    task_access_threads: list[int] = []
+
+    class TaskManager:
+        def get_task(self, task_id: str) -> SimpleNamespace:
+            task_access_threads.append(threading.get_ident())
+            return SimpleNamespace(id=task_id, closed_at=datetime.now(UTC))
+
+        def list_tasks(self, parent_task_id: str) -> list[object]:
+            task_access_threads.append(threading.get_ident())
+            assert parent_task_id == "root"
+            return []
+
+    _insert_rule(
+        manager,
+        "off-loop-task-tree",
+        RuleDefinitionBody(
+            event=RuleTriggerEvent.BEFORE_TOOL,
+            when="task_tree_complete('root')",
+            effects=[RuleEffect(type="block", reason="tree complete")],
+        ),
+    )
+    engine = RuleEngine(db, task_manager=TaskManager())
+
+    response = await engine.evaluate(
+        _make_event(),
+        session_id=SESSION_ID,
+        variables={"project": {"id": "project-id", "path": "/tmp/project"}},
+    )
+
+    assert response.decision == "block"
+    assert len(task_access_threads) == 2
+    assert all(thread_id != loop_thread_id for thread_id in task_access_threads)
 
 
 async def _assert_evaluation(
@@ -384,6 +465,7 @@ class TestInjectContextEffect:
         rule_data = document["rules"]["inject-user-profile"]
         priority = rule_data.pop("priority")
         enabled = rule_data.pop("enabled")
+        rule_data.pop("description", None)
         _insert_rule(
             manager,
             "inject-user-profile",

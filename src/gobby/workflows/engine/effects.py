@@ -4,6 +4,7 @@ Handles applying rule effects: set_variable, inject_context, observe,
 mcp_call, rewrite_input, load_skill, and block matching.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -103,7 +104,7 @@ class EffectsMixin:
             blocking outcome, otherwise None.
         """
         if effect.type == "set_variable":
-            self._apply_set_variable(effect, variables, ctx)
+            await asyncio.to_thread(self._apply_set_variable, effect, variables, ctx)
 
         elif effect.type == "inject_context":
             # NOTE: inject_context templates render with rule evaluation context:
@@ -112,7 +113,12 @@ class EffectsMixin:
             # variables by the SESSION_START handler before rules evaluate, making
             # them available as {{ session_summary }}, {{ task_context }} in templates.
             if effect.template:
-                template_text = self._render_template(effect.template, ctx, allowed_funcs)
+                template_text = await asyncio.to_thread(
+                    self._render_template,
+                    effect.template,
+                    ctx,
+                    allowed_funcs,
+                )
                 # Injected-context fencing lives in the handoff/compact templates
                 # themselves (session_start only), not here, so per-turn injections
                 # (brevity, memory, task context) stay un-tagged. See
@@ -122,7 +128,7 @@ class EffectsMixin:
         elif effect.type == "observe":
             obs_list = variables.get("_observations", [])
             msg = effect.message or ""
-            msg = self._render_template(msg, ctx, allowed_funcs)
+            msg = await asyncio.to_thread(self._render_template, msg, ctx, allowed_funcs)
             obs_list.append(
                 {
                     "category": effect.category or "general",
@@ -135,10 +141,12 @@ class EffectsMixin:
 
         elif effect.type == "mcp_call":
             raw_args = effect.arguments or {}
-            rendered_args = {
-                k: self._render_template(v, ctx, allowed_funcs) if isinstance(v, str) else v
-                for k, v in raw_args.items()
-            }
+            rendered_args = await asyncio.to_thread(
+                lambda: {
+                    k: self._render_template(v, ctx, allowed_funcs) if isinstance(v, str) else v
+                    for k, v in raw_args.items()
+                }
+            )
 
             # Inline dispatch for inject_result calls — ensures atomicity with
             # sibling effects (e.g. set_variable that tracks injection state).
@@ -166,7 +174,8 @@ class EffectsMixin:
                         ) == ("gobby-agents", "deliver_pending_messages") and isinstance(
                             raw_result, dict
                         ):
-                            formatted = self._format_delivery_result(
+                            formatted = await asyncio.to_thread(
+                                self._format_delivery_result,
                                 raw_result,
                                 platform_session_id,
                                 variables,
@@ -175,7 +184,8 @@ class EffectsMixin:
                             effect.server,
                             effect.tool,
                         ) == ("gobby-memory", "search_memories") and isinstance(raw_result, dict):
-                            formatted = self._format_search_memories_result(
+                            formatted = await asyncio.to_thread(
+                                self._format_search_memories_result,
                                 raw_result,
                                 platform_session_id,
                                 variables,
@@ -184,7 +194,8 @@ class EffectsMixin:
                             "gobby-review-learning",
                             "recall_review_lessons_for_files",
                         ) and isinstance(raw_result, dict):
-                            formatted = self._format_review_lessons_result(
+                            formatted = await asyncio.to_thread(
+                                self._format_review_lessons_result,
                                 raw_result,
                                 platform_session_id,
                                 variables,
@@ -246,7 +257,8 @@ class EffectsMixin:
 
         elif effect.type == "rewrite_input":
             if effect.input_updates:
-                rendered_updates = self._render_nested_value(
+                rendered_updates = await asyncio.to_thread(
+                    self._render_nested_value,
                     effect.input_updates,
                     ctx,
                     allowed_funcs,
@@ -282,7 +294,8 @@ class EffectsMixin:
             if effect.permission_decision:
                 permission_meta["permission_decision"] = effect.permission_decision
             if effect.input_updates is not None:
-                permission_meta["input_updates"] = self._render_nested_value(
+                permission_meta["input_updates"] = await asyncio.to_thread(
+                    self._render_nested_value,
                     effect.input_updates,
                     ctx,
                     allowed_funcs,
@@ -316,7 +329,8 @@ class EffectsMixin:
                 ):
                     variables["_worktree_path"] = effect.worktree_path
                 else:
-                    variables["_worktree_path"] = self._render_nested_value(
+                    variables["_worktree_path"] = await asyncio.to_thread(
+                        self._render_nested_value,
                         effect.worktree_path,
                         ctx,
                         allowed_funcs,
@@ -327,13 +341,15 @@ class EffectsMixin:
             if effect.elicitation_action:
                 elicitation_meta["action"] = effect.elicitation_action
             if effect.elicitation_content is not None:
-                elicitation_meta["content"] = self._render_nested_value(
+                elicitation_meta["content"] = await asyncio.to_thread(
+                    self._render_nested_value,
                     effect.elicitation_content,
                     ctx,
                     allowed_funcs,
                 )
             if effect.elicitation_error is not None:
-                elicitation_meta["error"] = self._render_nested_value(
+                elicitation_meta["error"] = await asyncio.to_thread(
+                    self._render_nested_value,
                     effect.elicitation_error,
                     ctx,
                     allowed_funcs,

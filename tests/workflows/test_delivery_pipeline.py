@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -121,6 +123,49 @@ def _insert_rule(
         priority=10,
         enabled=True,
     )
+
+
+@pytest.mark.asyncio
+async def test_inline_memory_formatter_runs_outside_event_loop_thread(
+    db: HubDatabase,
+) -> None:
+    async def dispatcher(
+        _server: str,
+        _tool: str,
+        _args: dict[str, Any],
+        _event: HookEvent,
+    ) -> dict[str, Any]:
+        return {"success": True, "result": {"memories": [_memory("m1")]}}
+
+    manager = LocalWorkflowDefinitionManager(db)
+    _insert_rule(
+        manager,
+        "off-loop-memory-formatting",
+        RuleEffect(
+            type="mcp_call",
+            server="gobby-memory",
+            tool="search_memories",
+            inject_result=True,
+        ),
+    )
+    engine = RuleEngine(db, mcp_dispatcher=dispatcher)
+    loop_thread_id = threading.get_ident()
+    formatter_threads: list[int] = []
+
+    def format_result(*_args: object) -> str:
+        formatter_threads.append(threading.get_ident())
+        return "formatted memory"
+
+    with patch.object(engine, "_format_search_memories_result", side_effect=format_result):
+        response = await engine.evaluate(
+            _event(),
+            session_id=PLATFORM_SESSION_ID,
+            variables={"project": {"id": PROJECT_ID, "path": "/tmp/project"}},
+        )
+
+    assert response.decision == "allow"
+    assert len(formatter_threads) == 1
+    assert formatter_threads[0] != loop_thread_id
 
 
 def test_is_empty_inject_payload_shapes() -> None:

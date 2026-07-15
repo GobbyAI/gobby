@@ -631,7 +631,12 @@ class WorkflowHookHandler:
                 variable_load_failed = False
                 if self._session_var_manager and session_id:
                     try:
-                        variables = dict(self._session_var_manager.get_variables(session_id))
+                        variables = dict(
+                            await asyncio.to_thread(
+                                self._session_var_manager.get_variables,
+                                session_id,
+                            )
+                        )
                     except Exception as e:
                         if event.event_type == HookEventType.STOP:
                             logger.warning(
@@ -693,7 +698,12 @@ class WorkflowHookHandler:
 
                         def_manager = LocalWorkflowDefinitionManager(self.rule_engine.db)
                         enabled_variables = [
-                            v for v in def_manager.list_all(workflow_type="variable") if v.enabled
+                            v
+                            for v in await asyncio.to_thread(
+                                def_manager.list_all,
+                                workflow_type="variable",
+                            )
+                            if v.enabled
                         ]
                         defaults: dict[str, Any] = {}
                         for var_row in enabled_variables:
@@ -712,7 +722,11 @@ class WorkflowHookHandler:
                         defaults["_variable_defaults_loaded"] = True
                         variables.update(defaults)
                         if self._session_var_manager and session_id and not variable_load_failed:
-                            self._session_var_manager.merge_variables(session_id, defaults)
+                            await asyncio.to_thread(
+                                self._session_var_manager.merge_variables,
+                                session_id,
+                                defaults,
+                            )
                     except Exception as e:
                         logger.warning(
                             "Could not lazy-load variable defaults session=%s project=%s: %s",
@@ -725,7 +739,7 @@ class WorkflowHookHandler:
                 from gobby.workflows.git_utils import get_dirty_files_categorized
                 from gobby.workflows.safe_evaluator import LazyBool
 
-                project_path = self._resolve_project_path(event)
+                project_path = await asyncio.to_thread(self._resolve_project_path, event)
                 if not project_path:
                     message = (
                         f"_evaluate_rules: no project_path resolved for session={session_id} "
@@ -744,16 +758,19 @@ class WorkflowHookHandler:
                     else:
                         logger.warning(message)
 
+                dirty_files = await asyncio.to_thread(get_dirty_files_categorized, project_path)
+
                 # Lazy-init baseline on first evaluation (rule template may not have fired)
                 if "baseline_dirty_files" not in variables:
-                    initial_dirty = sorted(get_dirty_files_categorized(project_path).all)
+                    initial_dirty = sorted(dirty_files.all)
                     variables["baseline_dirty_files"] = initial_dirty
                     variables.setdefault("session_edited_files", [])
                     variables.setdefault("active_task_id", None)
                     variables.setdefault("task_edited_files", {})
                     # Persist so future evaluations have it
                     if self._session_var_manager and session_id and not variable_load_failed:
-                        self._session_var_manager.merge_variables(
+                        await asyncio.to_thread(
+                            self._session_var_manager.merge_variables,
                             session_id,
                             {
                                 "baseline_dirty_files": initial_dirty,
@@ -776,24 +793,20 @@ class WorkflowHookHandler:
 
                 def _check_dirty(
                     _edited: set[str] = session_edited,
-                    _path: str | None = project_path,
                 ) -> bool:
-                    result = get_dirty_files_categorized(_path)
                     # Only count files this session actually touched
-                    dirty_tracked = result.tracked
-                    dirty_untracked = result.untracked
+                    dirty_tracked = dirty_files.tracked
+                    dirty_untracked = dirty_files.untracked
                     session_dirty_tracked = _edited & dirty_tracked
                     session_dirty_untracked = _edited & dirty_untracked
                     return bool(session_dirty_tracked or session_dirty_untracked)
 
                 def _check_target_task_dirty(
                     _edited: set[str] = target_task_edited,
-                    _path: str | None = project_path,
                 ) -> bool:
                     if not _edited:
                         return False
-                    result = get_dirty_files_categorized(_path)
-                    return bool(_edited & result.all)
+                    return bool(_edited & dirty_files.all)
 
                 eval_context = {
                     "has_dirty_files": LazyBool(_check_dirty),
@@ -805,7 +818,12 @@ class WorkflowHookHandler:
                 pre_eval = deepcopy(variables)
 
                 # Run built-in observers BEFORE rule evaluation
-                observer_failures = self._run_observers(event, session_id, variables)
+                observer_failures = await asyncio.to_thread(
+                    self._run_observers,
+                    event,
+                    session_id,
+                    variables,
+                )
                 if (
                     event.event_type == HookEventType.STOP
                     and "reconcile_claimed_tasks" in observer_failures
@@ -842,7 +860,8 @@ class WorkflowHookHandler:
                                 VERIFICATION_EVIDENCE_RECORDED_VARIABLE
                             )
                         changed.pop(VERIFICATION_EVIDENCE_VARIABLE)
-                        self._session_var_manager.append_to_bounded_list_variable(
+                        await asyncio.to_thread(
+                            self._session_var_manager.append_to_bounded_list_variable,
                             session_id,
                             VERIFICATION_EVIDENCE_VARIABLE,
                             evidence[-1],
@@ -850,7 +869,11 @@ class WorkflowHookHandler:
                             updates=readiness_update,
                         )
                     if changed:
-                        self._session_var_manager.merge_variables(session_id, changed)
+                        await asyncio.to_thread(
+                            self._session_var_manager.merge_variables,
+                            session_id,
+                            changed,
+                        )
 
                 return response
             finally:

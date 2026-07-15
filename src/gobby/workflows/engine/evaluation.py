@@ -1,5 +1,6 @@
 """Evaluation helpers for the rule engine."""
 
+import asyncio
 import logging
 import time
 from collections.abc import Callable
@@ -239,19 +240,21 @@ class EvaluationMixin:
                     continue
 
             # Build fresh eval context with current variables
-            ctx = self._build_eval_context(
+            ctx = await asyncio.to_thread(
+                self._build_eval_context,
                 evaluation.event,
                 evaluation.variables,
                 evaluation.eval_context,
             )
 
             # Build allowed_funcs once per iteration - shared by condition and templates
-            allowed_funcs = self._build_allowed_funcs(ctx)
+            allowed_funcs = await asyncio.to_thread(self._build_allowed_funcs, ctx)
 
             # Check rule-level `when` condition
             if body.when:
                 fail_closed = any(effect.type == "block" for effect in body.resolved_effects)
-                if not self._evaluate_condition(
+                if not await asyncio.to_thread(
+                    self._evaluate_condition,
                     body.when,
                     ctx,
                     allowed_funcs=allowed_funcs,
@@ -265,23 +268,28 @@ class EvaluationMixin:
                         effect, evaluation.event
                     ):
                         continue
-                    if effect.when and not self._evaluate_condition(
-                        effect.when,
+                    if effect.when:
+                        condition_matches = await asyncio.to_thread(
+                            self._evaluate_condition,
+                            effect.when,
+                            ctx,
+                            effect.type,
+                            allowed_funcs,
+                        )
+                        if not condition_matches:
+                            continue
+                    reason = await asyncio.to_thread(
+                        self._render_rule_block_reason,
+                        evaluation,
+                        row,
+                        effect,
                         ctx,
-                        effect.type,
                         allowed_funcs,
-                    ):
-                        continue
+                    )
                     block_gates.append(
                         BlockGate(
                             rule_name=row.name,
-                            reason=self._render_rule_block_reason(
-                                evaluation,
-                                row,
-                                effect,
-                                ctx,
-                                allowed_funcs,
-                            ),
+                            reason=reason,
                             acknowledge_variable=effect.acknowledge_variable,
                         )
                     )
@@ -300,7 +308,8 @@ class EvaluationMixin:
 
                 # Check per-effect `when` condition
                 if effect.when:
-                    if not self._evaluate_condition(
+                    if not await asyncio.to_thread(
+                        self._evaluate_condition,
                         effect.when,
                         ctx,
                         effect.type,
@@ -331,7 +340,8 @@ class EvaluationMixin:
             if deferred_block is not None:
                 if self._effect_matches_event(deferred_block, evaluation.event):
                     rule_blocked = True
-                    rendered_block_reason = self._render_rule_block_reason(
+                    rendered_block_reason = await asyncio.to_thread(
+                        self._render_rule_block_reason,
                         evaluation,
                         row,
                         deferred_block,
@@ -359,7 +369,8 @@ class EvaluationMixin:
             if self._event_store:
                 rule_latency = (time.perf_counter() - rule_start) * 1000
                 try:
-                    self._event_store.record_event(
+                    await asyncio.to_thread(
+                        self._event_store.record_event,
                         event_type="rule_eval",
                         name=row.name,
                         session_id=evaluation.session_id,

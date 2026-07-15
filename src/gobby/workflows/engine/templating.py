@@ -38,6 +38,57 @@ class TemplatingMixin:
 
     db: HubDatabase
 
+    def _resolve_project_info(
+        self,
+        event: HookEvent,
+        project_from_vars: Any = None,
+    ) -> dict[str, Any]:
+        """Resolve project context once before evaluating an event's rules."""
+        if isinstance(project_from_vars, dict) and project_from_vars.get("path"):
+            return dict(project_from_vars)
+
+        project_info = (
+            dict(project_from_vars)
+            if isinstance(project_from_vars, dict)
+            else {"name": "Unknown", "id": "unknown", "path": ""}
+        )
+        project_info.setdefault("name", "Unknown")
+        project_info.setdefault("id", "unknown")
+        project_info.setdefault("path", "")
+
+        try:
+            from gobby.storage.projects import LocalProjectManager
+            from gobby.storage.sessions import SessionManager
+
+            project_manager = LocalProjectManager(self.db)
+            project_id = event.project_id
+            session_id = event.metadata.get("_platform_session_id")
+            if isinstance(session_id, str) and session_id:
+                session_db = SessionManager(self.db).get(session_id)
+                if session_db and session_db.project_id:
+                    project_id = session_db.project_id
+
+            if project_id:
+                proj = project_manager.get(project_id)
+                if proj:
+                    project_info.update(
+                        {
+                            "name": proj.name,
+                            "id": proj.id,
+                            "path": proj.repo_path or project_info.get("path", ""),
+                        }
+                    )
+        except (OSError, psycopg.Error) as e:
+            logger.warning("Storage failure resolving project info for template context: %s", e)
+        except (AttributeError, KeyError, TypeError, ValueError) as e:
+            logger.debug("Failed to resolve project info for template context: %s", e)
+
+        if not project_info.get("path"):
+            cwd = event.cwd or event.data.get("cwd")
+            if cwd:
+                project_info["path"] = cwd
+        return project_info
+
     def _build_eval_context(
         self,
         event: HookEvent,
@@ -82,47 +133,7 @@ class TemplatingMixin:
         if isinstance(project_from_vars, dict) and project_from_vars.get("path"):
             ctx["project"] = project_from_vars
         else:
-            project_info = (
-                dict(project_from_vars)
-                if isinstance(project_from_vars, dict)
-                else {"name": "Unknown", "id": "unknown", "path": ""}
-            )
-            project_info.setdefault("name", "Unknown")
-            project_info.setdefault("id", "unknown")
-            project_info.setdefault("path", "")
-
-            try:
-                from gobby.storage.projects import LocalProjectManager
-                from gobby.storage.sessions import SessionManager
-
-                project_manager = LocalProjectManager(self.db)
-                project_id = event.project_id
-                session_id = event.metadata.get("_platform_session_id")
-                if isinstance(session_id, str) and session_id:
-                    session_db = SessionManager(self.db).get(session_id)
-                    if session_db and session_db.project_id:
-                        project_id = session_db.project_id
-
-                if project_id:
-                    proj = project_manager.get(project_id)
-                    if proj:
-                        project_info.update(
-                            {
-                                "name": proj.name,
-                                "id": proj.id,
-                                "path": proj.repo_path or project_info.get("path", ""),
-                            }
-                        )
-            except (OSError, psycopg.Error) as e:
-                logger.warning("Storage failure resolving project info for template context: %s", e)
-            except (AttributeError, KeyError, TypeError, ValueError) as e:
-                logger.debug("Failed to resolve project info for template context: %s", e)
-
-            if not project_info.get("path"):
-                cwd = event.cwd or event.data.get("cwd")
-                if cwd:
-                    project_info["path"] = cwd
-            ctx["project"] = project_info
+            ctx["project"] = self._resolve_project_info(event, project_from_vars)
 
         # Flatten variables at top level for convenience
         for key, val in variables.items():

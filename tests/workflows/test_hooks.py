@@ -1793,3 +1793,80 @@ class TestProjectPathResolution:
         mock_get_dirty.assert_called_once_with("/tmp/codex-project")
         assert event.metadata["project_path"] == "/tmp/codex-project"
         assert "no project_path resolved" not in caplog.text
+
+
+class TestHookBlockingWorkOffload:
+    @pytest.mark.asyncio
+    async def test_sync_hook_collaborators_run_outside_event_loop_thread(self) -> None:
+        loop_thread_id = threading.get_ident()
+        collaborator_threads: dict[str, int] = {}
+
+        session_var_manager = MagicMock()
+
+        def get_variables(_session_id: str) -> dict[str, object]:
+            collaborator_threads["get_variables"] = threading.get_ident()
+            return {
+                "_variable_defaults_loaded": True,
+                "baseline_dirty_files": [],
+            }
+
+        def merge_variables(_session_id: str, _updates: dict[str, object]) -> None:
+            collaborator_threads["merge_variables"] = threading.get_ident()
+
+        session_var_manager.get_variables.side_effect = get_variables
+        session_var_manager.merge_variables.side_effect = merge_variables
+
+        rule_engine = MagicMock()
+        rule_engine.db = MagicMock()
+
+        async def evaluate(**kwargs: object) -> HookResponse:
+            variables = kwargs["variables"]
+            assert isinstance(variables, dict)
+            variables["rule_changed"] = True
+            return HookResponse(decision="allow")
+
+        rule_engine.evaluate = AsyncMock(side_effect=evaluate)
+
+        handler = WorkflowHookHandler(loop=None)
+        handler.rule_engine = rule_engine
+        handler._session_var_manager = session_var_manager
+
+        def resolve_project(_event: HookEvent) -> str:
+            collaborator_threads["resolve_project"] = threading.get_ident()
+            return "/tmp/project"
+
+        def run_observers(*_args: object) -> set[str]:
+            collaborator_threads["observers"] = threading.get_ident()
+            return set()
+
+        handler._resolve_project_path = MagicMock(side_effect=resolve_project)
+        handler._run_observers = MagicMock(side_effect=run_observers)
+
+        def dirty_files(_project_path: str | None) -> DirtyFiles:
+            collaborator_threads["git_status"] = threading.get_ident()
+            return DirtyFiles(set(), set())
+
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={"tool_name": "Read"},
+            metadata={"_platform_session_id": SESSION_ID},
+        )
+
+        with patch(
+            "gobby.workflows.git_utils.get_dirty_files_categorized",
+            side_effect=dirty_files,
+        ):
+            response = await handler._evaluate_rules(event)
+
+        assert response.decision == "allow"
+        assert set(collaborator_threads) == {
+            "get_variables",
+            "merge_variables",
+            "resolve_project",
+            "observers",
+            "git_status",
+        }
+        assert all(thread_id != loop_thread_id for thread_id in collaborator_threads.values())
