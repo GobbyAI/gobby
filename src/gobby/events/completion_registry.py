@@ -14,8 +14,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Type for the wake callback: (session_id, message, result) -> None
-WakeCallback = Callable[[str, str, dict[str, Any]], Coroutine[Any, Any, None]]
+# Type for the wake callback: (session_id, message, result) -> structured outcome
+WakeCallback = Callable[[str, str, dict[str, Any]], Coroutine[Any, Any, object]]
 
 
 class CompletionResultEvictedError(RuntimeError):
@@ -140,7 +140,11 @@ class CompletionEventRegistry:
         if event is None:
             raise KeyError(f"Completion event {completion_id!r} not registered")
 
-        await asyncio.wait_for(event.wait(), timeout=timeout)
+        try:
+            await asyncio.wait_for(event.wait(), timeout=timeout)
+        except TimeoutError:
+            self.cleanup(completion_id)
+            raise
         try:
             return self._results[completion_id]
         except KeyError:

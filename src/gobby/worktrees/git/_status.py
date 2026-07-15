@@ -86,8 +86,15 @@ def get_worktree_status(
             if upstream_result.returncode == 0:
                 parts = upstream_result.stdout.strip().split("\t")
                 if len(parts) == 2:
-                    behind = int(parts[0])
-                    ahead = int(parts[1])
+                    try:
+                        behind = int(parts[0])
+                        ahead = int(parts[1])
+                    except ValueError:
+                        logger.warning(
+                            "Ignoring invalid ahead/behind counts for %s: %r",
+                            worktree_path,
+                            upstream_result.stdout.strip(),
+                        )
 
         return WorktreeStatus(
             has_uncommitted_changes=has_uncommitted,

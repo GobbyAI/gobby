@@ -554,7 +554,7 @@ class TestWorktreeGitManagerDeleteWorktree:
             subprocess.CompletedProcess(
                 args=["git", "worktree", "prune"],
                 returncode=0,
-                stdout="",
+                stdout="pruned stale entry\n",
                 stderr="",
             ),
         ]
@@ -562,6 +562,7 @@ class TestWorktreeGitManagerDeleteWorktree:
         result = manager.delete_worktree(worktree_path, force=True)
 
         assert result.success is True
+        assert result.output == "pruned stale entry\n"
         assert not worktree_path.exists()
 
 
@@ -1470,16 +1471,17 @@ class TestWorktreeGitManagerGetStatusEdgeCases:
             ),
             # status --porcelain
             subprocess.CompletedProcess(args=["git", "status"], returncode=0, stdout="", stderr=""),
-            # rev-list with single tab (malformed output) - should not crash
+            # rev-list with non-numeric counts should not discard the status
             subprocess.CompletedProcess(
-                args=["git", "rev-list"], returncode=0, stdout="5\t", stderr=""
+                args=["git", "rev-list"], returncode=0, stdout="five\t2\n", stderr=""
             ),
         ]
 
         status = manager.get_worktree_status(worktree_path)
 
         assert status is not None
-        # With malformed output, should not parse correctly
+        assert status.branch == "main"
+        assert status.commit == "abc1234"
         assert status.ahead == 0
         assert status.behind == 0
 

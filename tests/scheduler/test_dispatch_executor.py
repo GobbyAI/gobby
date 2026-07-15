@@ -172,8 +172,9 @@ async def test_dispatcher_cron_burst_aggregates_reason_and_cap(
 
     result = await CronExecutor(storage).execute(job, run)
 
-    assert result.status == "completed"
+    assert result.status == "failed"
     assert result.output is not None
+    assert result.error == "Dispatcher heartbeat stopped: spawn_unavailable"
     assert "ticks=2" in result.output
     assert "scanned=5" in result.output
     assert "executed=2" in result.output
@@ -181,6 +182,44 @@ async def test_dispatcher_cron_burst_aggregates_reason_and_cap(
     assert "cap_reached=True" in result.output
     assert "reason=spawn_unavailable" in result.output
     assert len(results) == 1
+
+
+@pytest.mark.parametrize(
+    ("cap_reached", "reason", "expected_error"),
+    [
+        (True, None, "Dispatcher heartbeat stopped: cap_reached"),
+        (False, "spawn_unavailable", "Dispatcher heartbeat stopped: spawn_unavailable"),
+    ],
+)
+async def test_dispatcher_stop_or_cap_outcome_marks_cron_run_failed(
+    temp_db,
+    monkeypatch: pytest.MonkeyPatch,
+    cap_reached: bool,
+    reason: str | None,
+    expected_error: str,
+) -> None:
+    from gobby.dispatch import dispatcher
+
+    async def run_heartbeat(**_kwargs):
+        return dispatcher.HeartbeatResult(cap_reached=cap_reached, reason=reason)
+
+    monkeypatch.setattr(dispatcher, "run_heartbeat", run_heartbeat)
+    _seed_project(temp_db)
+    storage = CronJobStorage(temp_db)
+    job = storage.create_job(
+        project_id="11111111-1111-4111-8111-111111110001",
+        name="gobby:dispatcher",
+        schedule_type="interval",
+        action_type="dispatcher",
+        action_config={"project_id": "11111111-1111-4111-8111-111111110001"},
+        interval_seconds=60,
+        is_system=True,
+    )
+
+    result = await CronExecutor(storage).execute(job, storage.create_run(job.id))
+
+    assert result.status == "failed"
+    assert result.error == expected_error
 
 
 async def test_disabled_dispatcher_tick_reports_hard_stop(temp_db) -> None:

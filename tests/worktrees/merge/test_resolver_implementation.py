@@ -192,7 +192,12 @@ async def test_auto_resolve_trivial_only_jsonl():
 @pytest.mark.asyncio
 async def test_auto_resolve_trivial_mixed():
     """Mix of trivial and real conflicts — returns only real ones."""
-    files = [".gobby/tasks.jsonl", "src/gobby/communications/manager.py", ".gobby/memories.jsonl"]
+    files = [
+        ".gobby/tasks.jsonl",
+        "src/gobby/communications/manager.py",
+        "vendor/x/.gobby/tasks.jsonl",
+        ".gobby/memories.jsonl",
+    ]
 
     with patch("asyncio.create_subprocess_exec") as mock_exec:
         mock_proc = AsyncMock()
@@ -202,7 +207,10 @@ async def test_auto_resolve_trivial_mixed():
 
         remaining = await auto_resolve_trivial_conflicts(files, "/tmp/wt")
 
-    assert remaining == ["src/gobby/communications/manager.py"]
+    assert remaining == [
+        "src/gobby/communications/manager.py",
+        "vendor/x/.gobby/tasks.jsonl",
+    ]
     # 2 trivial files x 2 calls each
     assert mock_exec.call_count == 4
 

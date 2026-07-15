@@ -190,11 +190,13 @@ def delete_worktree(
 
         path_existed_before_remove = worktree_path.exists()
         result = runner._run_git(args, timeout=30)
+        output = result.stdout
         remove_warning = ""
 
         if result.returncode != 0:
             if not path_existed_before_remove:
                 prune_result = runner._run_git(["worktree", "prune"], timeout=10)
+                output = prune_result.stdout
                 detail = result.stderr.strip() or result.stdout.strip()
                 remove_warning = f"; git remove reported: {detail}" if detail else ""
                 if prune_result.returncode != 0:
@@ -206,6 +208,7 @@ def delete_worktree(
                     )
             elif path_existed_before_remove and not worktree_path.exists():
                 prune_result = runner._run_git(["worktree", "prune"], timeout=10)
+                output = prune_result.stdout
                 detail = result.stderr.strip() or result.stdout.strip()
                 remove_warning = f"; git remove reported: {detail}" if detail else ""
                 if prune_result.returncode != 0:
@@ -221,7 +224,8 @@ def delete_worktree(
                     result.stderr.strip(),
                 )
                 shutil.rmtree(worktree_path, ignore_errors=True)
-                runner._run_git(["worktree", "prune"], timeout=10)
+                prune_result = runner._run_git(["worktree", "prune"], timeout=10)
+                output = prune_result.stdout
                 if not worktree_path.exists():
                     logger.info(
                         f"Removed worktree via fallback (rmtree + prune): {worktree_path}",
@@ -258,7 +262,7 @@ def delete_worktree(
             message=f"Deleted worktree at {worktree_path}"
             + (f" and branch {branch_name}" if delete_branch and branch_name else "")
             + remove_warning,
-            output=result.stdout,
+            output=output,
         )
 
     except subprocess.TimeoutExpired:
