@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from gobby.agents.isolation import (
     CloneIsolationHandler,
+    IsolationHandler,
     SpawnConfig,
     WorktreeIsolationHandler,
     get_isolation_handler,
@@ -420,7 +421,9 @@ async def spawn_agent_impl(
                 main_repo_path=resolved_project_path,
             )
             effective_isolation = "worktree"
-            context_handler = WorktreeIsolationHandler(git_manager, worktree_storage)
+            context_handler: IsolationHandler = WorktreeIsolationHandler(
+                git_manager, worktree_storage
+            )
         except Exception as e:
             return {"success": False, "error": f"Failed to prepare reused worktree: {e}"}
     elif clone_id and clone_storage:
