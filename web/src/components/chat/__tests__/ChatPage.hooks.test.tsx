@@ -10,6 +10,7 @@ import {
   createVoice,
 } from "./chatPageTestSetup";
 import { useChatPageArtifacts } from "../useChatPageArtifacts";
+import { useChatPageCommandPalette } from "../useChatPageCommandPalette";
 import { useChatPageProviderState } from "../useChatPageProviderState";
 import { useChatPageSessionRouting } from "../useChatPageSessionRouting";
 import { useChatPageVoiceStatus } from "../useChatPageVoiceStatus";
@@ -129,6 +130,61 @@ function stubProviderFetch() {
     }),
   );
 }
+
+describe("useChatPageCommandPalette", () => {
+  function renderPaletteHook(
+    confirm: (options: {
+      title: string;
+      description?: string;
+      confirmLabel?: string;
+      destructive?: boolean;
+    }) => Promise<boolean>,
+    onDeleteSession: (session: GobbySession) => void,
+  ) {
+    return renderHook(() =>
+      useChatPageCommandPalette({
+        allProjectSessions: [],
+        activityPanelChatSessionId: null,
+        conversations: {
+          ...createConversations(),
+          onDeleteSession,
+        },
+        confirm,
+        handleSwapSession: vi.fn(),
+        toggleFromChat: vi.fn(),
+        toggleFromPanel: vi.fn(),
+      }),
+    );
+  }
+
+  it("does not delete a session when confirmation is declined", async () => {
+    const confirm = vi.fn(async () => false);
+    const onDeleteSession = vi.fn();
+    const { result } = renderPaletteHook(confirm, onDeleteSession);
+    const session = makeSession({ ref: "#42" });
+
+    await result.current.handleCommandPaletteDeleteSession(session);
+
+    expect(confirm).toHaveBeenCalledWith({
+      title: "Delete session?",
+      description: "This will permanently delete #42.",
+      confirmLabel: "Delete",
+      destructive: true,
+    });
+    expect(onDeleteSession).not.toHaveBeenCalled();
+  });
+
+  it("deletes a session after confirmation", async () => {
+    const confirm = vi.fn(async () => true);
+    const onDeleteSession = vi.fn();
+    const { result } = renderPaletteHook(confirm, onDeleteSession);
+    const session = makeSession({ ref: "#42" });
+
+    await result.current.handleCommandPaletteDeleteSession(session);
+
+    expect(onDeleteSession).toHaveBeenCalledWith(session);
+  });
+});
 
 describe("useChatPageSessionRouting", () => {
   it("swaps to a web chat by selecting the target session and parking the current chat", () => {

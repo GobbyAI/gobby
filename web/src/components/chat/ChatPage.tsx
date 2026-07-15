@@ -109,6 +109,7 @@ export function ChatPage({
     allProjectSessions,
     activityPanelChatSessionId: routing.activityPanelChatSessionId,
     conversations,
+    confirm,
     onPaletteSelect: chat.onPaletteSelect,
     handleSwapSession: routing.handleSwapSession,
     toggleFromChat,
