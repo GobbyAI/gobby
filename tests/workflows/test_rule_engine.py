@@ -2403,6 +2403,14 @@ class TestRuleEngineHelpers:
         )
         assert result == "gobby-memory:store"
 
+    def test_get_tool_identity_native_mcp_tool(self) -> None:
+        """Native mcp__server__tool names return 'server:tool' identity."""
+        from gobby.workflows.engine.core import _get_tool_identity
+
+        result = _get_tool_identity({"tool_name": "mcp__gobby-tasks__list_tasks"})
+
+        assert result == "gobby-tasks:list_tasks"
+
     def test_get_tool_identity_mcp_missing_fields(self) -> None:
         """MCP call_tool without server/tool returns tool_name."""
         from gobby.workflows.engine.core import _get_tool_identity

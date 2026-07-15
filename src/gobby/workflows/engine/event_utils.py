@@ -25,9 +25,9 @@ _MANUAL_COMPACT_TRIGGERS = frozenset({"manual", "user", "clear", "compact", "com
 def _get_tool_identity(event_data: dict[str, Any]) -> str:
     """Return effective tool identity for consecutive-block tracking.
 
-    For MCP calls (mcp__gobby__call_tool / call_tool), returns 'server:tool'
-    so different MCP tools are tracked independently. This prevents one failing
-    MCP tool from blocking all other MCP tools.
+    For proxied and native MCP calls, returns 'server:tool' so different MCP
+    tools are tracked independently. This prevents one failing MCP tool from
+    blocking all other MCP tools.
     """
     tool_name = event_data.get("tool_name", "")
     if tool_name in ("call_tool", "mcp__gobby__call_tool"):
@@ -37,6 +37,11 @@ def _get_tool_identity(event_data: dict[str, Any]) -> str:
             tool = tool_input.get("tool_name", "")
             if server and tool:
                 return f"{server}:{tool}"
+        return str(tool_name)
+    if isinstance(tool_name, str) and tool_name.startswith("mcp__"):
+        parts = tool_name.split("__", 2)
+        if len(parts) == 3 and parts[1] and parts[2]:
+            return f"{parts[1]}:{parts[2]}"
     return str(tool_name)
 
 
