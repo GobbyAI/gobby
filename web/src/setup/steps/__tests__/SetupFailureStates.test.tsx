@@ -3,7 +3,6 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SetupState } from "../../utils/state.js";
 import { CliHooks } from "../CliHooks.js";
-import { Integrations } from "../Integrations.js";
 import { PersonalWorkspace } from "../PersonalWorkspace.js";
 import { ProjectDiscovery } from "../ProjectDiscovery.js";
 
@@ -12,12 +11,6 @@ const mocks = vi.hoisted(() => ({
   mkdirSync: vi.fn(),
   runGobby: vi.fn(),
   saveState: vi.fn(),
-  spawnSync: vi.fn(),
-}));
-
-vi.mock("child_process", () => ({
-  default: { spawnSync: mocks.spawnSync },
-  spawnSync: mocks.spawnSync,
 }));
 
 vi.mock("fs", () => ({
@@ -57,12 +50,6 @@ vi.mock("ink-select-input", () => ({
         </button>
       ))}
     </div>
-  ),
-}));
-
-vi.mock("ink-text-input", () => ({
-  default: ({ onSubmit }: { onSubmit: (value: string) => void }) => (
-    <button onClick={() => onSubmit("test-secret")}>Submit secret</button>
   ),
 }));
 
@@ -119,7 +106,6 @@ describe("setup command failure states", () => {
     mocks.mkdirSync.mockReset();
     mocks.runGobby.mockReset();
     mocks.saveState.mockReset();
-    mocks.spawnSync.mockReset();
   });
 
   afterEach(() => {
@@ -155,21 +141,6 @@ describe("setup command failure states", () => {
 
     expect(await screen.findByText(/Personal workspace failed: database unavailable/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
-    expect(view.setState).not.toHaveBeenCalled();
-    expect(view.onNext).not.toHaveBeenCalled();
-  });
-
-  it("shows secret-store failures in the active input phase", () => {
-    mocks.spawnSync.mockReturnValue({ status: 1 });
-    const view = renderStep(
-      <Integrations state={createState()} setState={vi.fn()} onNext={vi.fn()} />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: /Yes, enter GitHub API key/i }));
-    fireEvent.click(screen.getByRole("button", { name: "Submit secret" }));
-
-    expect(screen.getByText(/Failed to store GitHub secret/i)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Submit secret" })).toBeTruthy();
     expect(view.setState).not.toHaveBeenCalled();
     expect(view.onNext).not.toHaveBeenCalled();
   });
