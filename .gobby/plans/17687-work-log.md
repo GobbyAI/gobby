@@ -404,3 +404,17 @@ Daemon restarted 03:34:38 CDT (deliberate, self) to load the fix. Attempt-11
 launched 03:35 CDT (gcode pid 53361, ARM_O_START 2026-07-15T08:35:38Z); its
 seed re-discards the stage (live index drift, #18252 evidence — also stamped in
 arm-opus.log at 23:56 CDT for attempt-10's reseed) and re-pays the sweep.
+
+## 2026-07-15 ~06:50 CDT — #18288 closed with live proof; arm-O aggregates healed
+Attempt-11 (post-#18285) published at 04:48 with real opus repo.md but 24
+degraded aggregates: the generate route's spawn-cold candidate budget (60s,
+#17710) bounded opus@xhigh aggregate prose. #18288 (commit 0e12b3ae8) fixed it
+two-sided: the route now caps payload per-candidate timeouts at the total
+budget only, and gcore sends LongForm (1200s) budgets for Aggregate-tier
+generations on both pinned and profile paths (file/module/verifier stay
+Interactive). Binary transition #9; daemon restarted 05:01 CDT. Attempt-12
+(heal, 05:01-06:40 CDT) ENDed exit=0: all 10 opus narrative chapters (a new
+10-build-packaging.md appeared) + concepts + architecture generated,
+zero frontmatter-degraded aggregates. Residue: _ownership.md reused its
+attempt-11 degraded copy — reuse keys on module-link set and ignores the
+degraded flag; filed as a follow-up bug under #17713.
