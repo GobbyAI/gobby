@@ -384,10 +384,12 @@ export function useFiles() {
   const saveFile = useCallback(async (index: number) => {
     const file = openFilesRef.current[index]
     if (!file || file.truncated || !file.dirty || file.editContent === null) return
+    const matchesFile = (candidate: OpenFile) =>
+      candidate.projectId === file.projectId && candidate.path === file.path
 
     setOpenFiles(prev =>
-      prev.map((f, i) =>
-        i === index ? { ...f, saving: true, saveError: null } : f
+      prev.map(f =>
+        matchesFile(f) ? { ...f, saving: true, saveError: null } : f
       )
     )
 
@@ -408,8 +410,8 @@ export function useFiles() {
       }
 
       setOpenFiles(prev =>
-        prev.map((f, i) =>
-          i === index
+        prev.map(f =>
+          matchesFile(f)
             ? {
                 ...f,
                 content: f.editContent,
@@ -425,8 +427,8 @@ export function useFiles() {
       await fetchGitStatus(file.projectId)
     } catch (e) {
       setOpenFiles(prev =>
-        prev.map((f, i) =>
-          i === index ? { ...f, saving: false, saveError: String(e) } : f
+        prev.map(f =>
+          matchesFile(f) ? { ...f, saving: false, saveError: String(e) } : f
         )
       )
     }

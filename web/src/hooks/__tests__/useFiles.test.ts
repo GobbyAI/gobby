@@ -7,7 +7,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe('useFiles save failures', () => {
+describe('useFiles saves', () => {
   it('preserves unsaved edits and clears the error after a successful retry', async () => {
     let writeAttempts = 0
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -79,5 +79,74 @@ describe('useFiles save failures', () => {
       saveError: null,
     })
     expect(writeAttempts).toBe(2)
+  })
+
+  it('finishes saving the same file when an earlier tab closes', async () => {
+    let resolveWrite!: (response: Response) => void
+    const writeResponse = new Promise<Response>(resolve => {
+      resolveWrite = resolve
+    })
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/api/files/projects')) {
+        return { ok: true, json: async () => [] } as Response
+      }
+      if (url.includes('/api/files/read?')) {
+        return {
+          ok: true,
+          json: async () => ({
+            content: 'original',
+            image: false,
+            binary: false,
+            mime_type: 'text/plain',
+            size: 8,
+          }),
+        } as Response
+      }
+      if (url.endsWith('/api/files/write')) {
+        return writeResponse
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useFiles())
+
+    await act(async () => {
+      await result.current.openFile('project-1', 'first.txt', 'first.txt')
+      await result.current.openFile('project-1', 'second.txt', 'second.txt')
+    })
+    await waitFor(() => expect(result.current.openFiles).toHaveLength(2))
+
+    act(() => {
+      result.current.toggleEditing(1)
+      result.current.updateEditContent(1, 'saved content')
+    })
+
+    let savePromise!: Promise<void>
+    act(() => {
+      savePromise = result.current.saveFile(1)
+    })
+    await waitFor(() => expect(result.current.openFiles[1]?.saving).toBe(true))
+
+    act(() => result.current.closeFile(0))
+    expect(result.current.openFiles[0]).toMatchObject({
+      path: 'second.txt',
+      saving: true,
+    })
+
+    await act(async () => {
+      resolveWrite({ ok: true, json: async () => ({}) } as Response)
+      await savePromise
+    })
+
+    expect(result.current.openFiles[0]).toMatchObject({
+      path: 'second.txt',
+      content: 'saved content',
+      originalContent: 'saved content',
+      dirty: false,
+      saving: false,
+      saveError: null,
+    })
   })
 })
