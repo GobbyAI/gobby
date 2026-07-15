@@ -113,6 +113,7 @@ export async function updateSkill(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(updates),
   });
+  if (!response.ok) throw await responseError(response, "Failed to update skill");
   return parseSkillResponse(response);
 }
 
@@ -147,9 +148,9 @@ export async function moveSkillToInstalled(skillId: string): Promise<ActivitySki
   return parseSkillResponse(response);
 }
 
-export async function exportSkill(skillId: string): Promise<{ filename: string; content: string } | null> {
+export async function exportSkill(skillId: string): Promise<{ filename: string; content: string }> {
   const response = await fetch(`${getBaseUrl()}/api/skills/${encodeURIComponent(skillId)}/export`);
-  if (!response.ok) return null;
+  if (!response.ok) throw await responseError(response, "Failed to export skill");
   return response.json() as Promise<{ filename: string; content: string }>;
 }
 
