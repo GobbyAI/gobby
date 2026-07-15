@@ -25,7 +25,7 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
   const { traces, isLoading, error, selectedTraceId, setSelectedTraceId } = useTraces(
     projectId ?? undefined,
   )
-  const { spans, isLoading: isDetailLoading } = useTraceDetail(selectedTraceId)
+  const { spans, isLoading: isDetailLoading, error: detailError } = useTraceDetail(selectedTraceId)
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [topHeight, setTopHeight] = useState(50)
   const [displayLimitState, setDisplayLimitState] = useState<{
@@ -165,7 +165,9 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
             </div>
           </div>
           <div className="flex-1 overflow-y-auto">
-            {isDetailLoading && spans.length === 0 ? (
+            {detailError ? (
+              <p role="alert" className="text-xs text-destructive p-2">{detailError}</p>
+            ) : isDetailLoading && spans.length === 0 ? (
               <p className="text-xs text-muted-foreground p-2">Loading spans...</p>
             ) : spans.length === 0 ? (
               <p className="text-xs text-muted-foreground p-2">No spans</p>

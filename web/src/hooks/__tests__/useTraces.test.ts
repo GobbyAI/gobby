@@ -63,6 +63,36 @@ describe('useTraces request lifecycle', () => {
     expect(result.current.isLoading).toBe(false)
   })
 
+  it('clears detail state on selection and exposes only the current request error', async () => {
+    const traceB = deferredResponse()
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error',
+      } as Response)
+      .mockReturnValueOnce(traceB.promise)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result, rerender } = renderHook(
+      ({ traceId }) => useTraceDetail(traceId),
+      { initialProps: { traceId: 'trace-a' } },
+    )
+    await act(async () => undefined)
+    expect(result.current.error).toBe('Failed to fetch trace detail (500)')
+
+    rerender({ traceId: 'trace-b' })
+    expect(result.current.error).toBeNull()
+    expect(result.current.spans).toEqual([])
+
+    await act(async () => {
+      traceB.resolve(jsonResponse({ spans: [{ id: 'span-b' }] }))
+    })
+    expect(result.current.error).toBeNull()
+    expect(result.current.spans).toEqual([{ id: 'span-b' }])
+  })
+
   it('clears a pending detail debounce when the trace changes', async () => {
     const fetchMock = vi.fn(async (_url: string) => jsonResponse({ spans: [] }))
     vi.stubGlobal('fetch', fetchMock)
@@ -103,6 +133,34 @@ describe('useTraces request lifecycle', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
+  it('ignores a stale list failure after the query changes', async () => {
+    const projectA = deferredResponse()
+    const projectB = deferredResponse()
+    vi.stubGlobal('fetch', vi.fn((url: string) => (
+      url.includes('project-a') ? projectA.promise : projectB.promise
+    )))
+
+    const { result, rerender } = renderHook(
+      ({ projectId }) => useTraces(projectId),
+      { initialProps: { projectId: 'project-a' } },
+    )
+
+    rerender({ projectId: 'project-b' })
+    await act(async () => {
+      projectB.resolve(jsonResponse({ traces: [{ trace_id: 'trace-b' }] }))
+    })
+    await act(async () => {
+      projectA.resolve({
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error',
+      } as Response)
+    })
+
+    expect(result.current.traces).toEqual([{ trace_id: 'trace-b' }])
+    expect(result.current.error).toBeNull()
+  })
+
   it('keeps loaded traces and exposes an error when refetch fails', async () => {
     const fetchMock = vi
       .fn()
@@ -123,5 +181,33 @@ describe('useTraces request lifecycle', () => {
 
     expect(result.current.traces).toEqual([{ trace_id: 'trace-1' }])
     expect(result.current.error).toBe('Failed to fetch traces (500)')
+  })
+
+  it('clears a list error when a retry starts', async () => {
+    const retry = deferredResponse()
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        statusText: 'Service Unavailable',
+      } as Response)
+      .mockReturnValueOnce(retry.promise)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useTraces('project-123'))
+    await act(async () => undefined)
+    expect(result.current.error).toBe('Failed to fetch traces (503)')
+
+    let retryPromise!: Promise<void>
+    act(() => {
+      retryPromise = result.current.fetchTraces()
+    })
+    expect(result.current.error).toBeNull()
+
+    await act(async () => {
+      retry.resolve(jsonResponse({ traces: [] }))
+      await retryPromise
+    })
   })
 })

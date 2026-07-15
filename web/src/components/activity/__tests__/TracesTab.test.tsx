@@ -19,6 +19,7 @@ const tracesMock = vi.hoisted(() => ({
 const detailMock = vi.hoisted(() => ({
   spans: [] as SpanRecord[],
   isLoading: false,
+  error: null as string | null,
   fetchDetail: vi.fn(),
 }))
 
@@ -71,6 +72,7 @@ beforeEach(() => {
   tracesMock.setSelectedTraceId = vi.fn()
   detailMock.spans = []
   detailMock.isLoading = false
+  detailMock.error = null
 })
 
 describe('TracesTab', () => {
@@ -149,5 +151,15 @@ describe('TracesTab', () => {
     detailMock.spans = [makeSpan({ id: 's-a', name: 'inner-span' })]
     render(<TracesTab projectId="p" />)
     expect(screen.getByText('inner-span')).toBeInTheDocument()
+  })
+
+  it('renders a detail fetch error in the selected trace pane', () => {
+    tracesMock.traces = [makeTrace({ trace_id: 'sel' })]
+    tracesMock.selectedTraceId = 'sel'
+    detailMock.error = 'Failed to fetch trace detail (500)'
+
+    render(<TracesTab projectId="p" />)
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Failed to fetch trace detail (500)')
   })
 })
