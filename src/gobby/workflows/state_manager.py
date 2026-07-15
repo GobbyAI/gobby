@@ -192,8 +192,6 @@ class SessionVariableManager:
         This ensures presets are always available even if they were never
         explicitly materialized into the session row.
         """
-        defaults = self._get_variable_defaults()
-
         row = self.db.fetchone(
             "SELECT variables FROM session_variables WHERE session_id = %s",
             (session_id,),
@@ -202,9 +200,7 @@ class SessionVariableManager:
         if row:
             session_vars = _decode_variables_payload(row["variables"])
 
-        if not defaults:
-            return session_vars
-        return {**defaults, **session_vars}
+        return self._apply_variable_defaults(session_vars)
 
     def _get_variable_defaults(self) -> dict[str, Any]:
         """Load default values from enabled, installed variable definitions.
@@ -236,6 +232,13 @@ class SessionVariableManager:
         self._defaults_cache = defaults
         self._defaults_cache_time = now
         return deepcopy(defaults)
+
+    def _apply_variable_defaults(self, variables: dict[str, Any]) -> dict[str, Any]:
+        """Layer stored variables over installed definition defaults."""
+        defaults = self._get_variable_defaults()
+        if not defaults:
+            return variables
+        return {**defaults, **variables}
 
     def set_variable(self, session_id: str, name: str, value: Any) -> None:
         """Set a single session variable (atomic read-modify-write)."""
@@ -377,7 +380,8 @@ class SessionVariableManager:
                 "SELECT variables FROM session_variables WHERE session_id = %s",
                 (session_id,),
             ).fetchone()
-            current_vars = _decode_variables_payload(row["variables"]) if row else {}
+            stored_vars = _decode_variables_payload(row["variables"]) if row else {}
+            current_vars = self._apply_variable_defaults(stored_vars)
             stored = current_vars.get(name, [])
             if not isinstance(stored, list):
                 stored = [stored] if stored else []
@@ -472,7 +476,8 @@ class SessionVariableManager:
                 "SELECT variables FROM session_variables WHERE session_id = %s",
                 (session_id,),
             ).fetchone()
-            current_vars = _decode_variables_payload(row["variables"]) if row else {}
+            stored_vars = _decode_variables_payload(row["variables"]) if row else {}
+            current_vars = self._apply_variable_defaults(stored_vars)
 
             if values:
                 stored = current_vars.get(name, [])
@@ -519,7 +524,8 @@ class SessionVariableManager:
                 "SELECT variables FROM session_variables WHERE session_id = %s",
                 (session_id,),
             ).fetchone()
-            current_vars = _decode_variables_payload(row["variables"]) if row else {}
+            stored_vars = _decode_variables_payload(row["variables"]) if row else {}
+            current_vars = self._apply_variable_defaults(stored_vars)
 
             stored = current_vars.get("session_edited_files", [])
             if not isinstance(stored, list):
@@ -572,7 +578,8 @@ class SessionVariableManager:
                 "SELECT variables FROM session_variables WHERE session_id = %s",
                 (session_id,),
             ).fetchone()
-            current_vars = _decode_variables_payload(row["variables"]) if row else {}
+            stored_vars = _decode_variables_payload(row["variables"]) if row else {}
+            current_vars = self._apply_variable_defaults(stored_vars)
 
             if current_vars.get("_startup_context_injected") is True:
                 return "live"

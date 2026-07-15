@@ -46,6 +46,26 @@ def _ensure_session(db: HubDatabase, session_id: str) -> None:
     )
 
 
+def _install_variable_default(db: HubDatabase, name: str, value: Any) -> None:
+    from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+
+    LocalWorkflowDefinitionManager(db).create(
+        name=name,
+        definition_json=json.dumps({"variable": name, "value": value}),
+        workflow_type="variable",
+    )
+
+
+def _stored_variables(db: HubDatabase, session_id: str) -> dict[str, Any]:
+    row = db.fetchone(
+        "SELECT variables FROM session_variables WHERE session_id = %s",
+        (session_id,),
+    )
+    assert row is not None
+    variables = row["variables"]
+    return json.loads(variables) if isinstance(variables, str) else dict(variables)
+
+
 class _DictVariablesConnection:
     def __init__(self, variables: dict[str, Any]) -> None:
         self.variables = variables
@@ -72,6 +92,9 @@ class _DictVariablesDB:
 
     def transaction_immediate(self, _mutation: object) -> _DictVariablesConnection:
         return self.connection
+
+    def fetchall(self, _query: str, _params: tuple[Any, ...]) -> list[dict[str, Any]]:
+        return []
 
 
 def test_get_variables_empty(db: Any) -> None:
@@ -366,6 +389,17 @@ def test_append_to_set_variable_creates_new(db: Any) -> None:
     assert result["session_edited_files"] == ["a.py"]
 
 
+def test_append_to_set_variable_persists_installed_default_entries(db: Any) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    _install_variable_default(db, "listed_servers", ["gobby-tasks"])
+    mgr = SessionVariableManager(db)
+
+    mgr.append_to_set_variable(S1, "listed_servers", ["gobby-memory"])
+
+    assert _stored_variables(db, S1)["listed_servers"] == ["gobby-memory", "gobby-tasks"]
+
+
 def test_append_to_set_variable_deduplicates(db: Any) -> None:
     """Duplicate values are ignored, result is sorted."""
     from gobby.workflows.state_manager import SessionVariableManager
@@ -468,6 +502,23 @@ def test_append_to_set_variable_and_conditional_merge_resets_evidence(db: Any) -
     assert variables["kept"] == "value"
 
 
+def test_conditional_append_persists_installed_default_entries(db: Any) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    _install_variable_default(db, "listed_servers", ["gobby-tasks"])
+    mgr = SessionVariableManager(db)
+
+    mgr.append_to_set_variable_and_conditional_merge(
+        S1,
+        "listed_servers",
+        ["gobby-memory"],
+        condition_name="verification_evidence_recorded",
+        updates={},
+    )
+
+    assert _stored_variables(db, S1)["listed_servers"] == ["gobby-memory", "gobby-tasks"]
+
+
 def test_append_to_set_variable_and_conditional_merge_preserves_unrecorded_evidence(
     db: Any,
 ) -> None:
@@ -515,6 +566,36 @@ def test_record_edited_file_tracks_sole_claimed_task(db: Any) -> None:
     variables = mgr.get_variables(S1)
     assert variables["session_edited_files"] == ["src/app.py"]
     assert variables["task_edited_files"] == {"task-1": ["src/app.py"]}
+
+
+def test_record_edited_file_persists_installed_default_entries(db: Any) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    _install_variable_default(db, "session_edited_files", ["seed.py"])
+    mgr = SessionVariableManager(db)
+
+    mgr.record_edited_file(
+        S1,
+        "src/app.py",
+        condition_name="verification_evidence_recorded",
+        updates={},
+    )
+
+    assert _stored_variables(db, S1)["session_edited_files"] == ["seed.py", "src/app.py"]
+
+
+def test_claim_startup_context_persists_installed_defaults(db: Any) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    _install_variable_default(db, "listed_servers", ["gobby-tasks"])
+    mgr = SessionVariableManager(db)
+
+    assert mgr.claim_startup_context(S1) == "full"
+
+    assert _stored_variables(db, S1) == {
+        "_startup_context_injected": True,
+        "listed_servers": ["gobby-tasks"],
+    }
 
 
 def test_record_edited_file_without_claim_has_no_task_scoped_entry(db: Any) -> None:
