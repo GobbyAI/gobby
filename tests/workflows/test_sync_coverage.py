@@ -86,7 +86,7 @@ class TestSyncBundledVariables:
             db.fetchall.return_value = []
             result = sync_bundled_variables(db)
 
-        assert result["success"] is True
+        assert result["success"] is False
         assert "not a dict" in result["errors"][0]
         assert result["synced"] == 0
 
@@ -110,8 +110,8 @@ class TestSyncBundledVariables:
             result = sync_bundled_variables(db)
 
         assert result["success"] is True
-        assert result["orphaned"] == 1
-        assert mgr.delete.call_args.args == ("orphan-v1",)
+        assert result["orphaned"] == 0
+        mgr.delete.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

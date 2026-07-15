@@ -184,7 +184,7 @@ class TemplatingMixin:
             return template
         try:
             render_ctx = {**ctx, **allowed_funcs}
-            engine = TemplateEngine()
+            engine = TemplateEngine(strict_undefined=False)
             return engine.render(template, render_ctx)
         except SecurityError:
             raise

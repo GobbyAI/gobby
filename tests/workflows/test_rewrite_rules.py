@@ -91,9 +91,15 @@ def _load_bundled_rule(
         rules = data.get("rules") or {}
         if rule_name not in rules:
             continue
-        body = RuleDefinitionBody.model_validate(rules[rule_name])
-        priority = rules[rule_name].get("priority", 100)
-        enabled = rules[rule_name].get("enabled", True)
+        rule_data = rules[rule_name]
+        body_data = {
+            key: value
+            for key, value in rule_data.items()
+            if key not in {"description", "enabled", "priority"}
+        }
+        body = RuleDefinitionBody.model_validate(body_data)
+        priority = rule_data.get("priority", 100)
+        enabled = rule_data.get("enabled", True)
         return _insert_rule(manager, rule_name, body, priority=priority, enabled=enabled)
     raise AssertionError(f"Bundled rule {rule_name!r} not found under {rules_path}")
 

@@ -161,6 +161,7 @@ class RuleEffect(BaseModel):
     inject_result: bool = False  # Capture result and inject as agent context
     block_on_failure: bool = False  # Block original tool call if this mcp_call fails
     block_on_success: bool = False  # Block original tool call if this mcp_call succeeds
+    success_variable: str | None = None  # Set to true after successful inline dispatch
 
     # observe — append structured entry to _observations session variable
     category: str | None = None
@@ -210,6 +211,9 @@ class RuleEffect(BaseModel):
             fields = ", ".join(missing)
             raise ValueError(f"RuleEffect(type='{self.type}') requires: {fields}")
 
+        if self.success_variable is not None and (not self.inject_result or self.background):
+            raise ValueError("mcp_call success_variable requires inline result injection")
+
         if self.type == "set_permission_response" and all(
             value is None
             for value in (
@@ -255,6 +259,7 @@ class RuleEffect(BaseModel):
                 "inject_result",
                 "block_on_failure",
                 "block_on_success",
+                "success_variable",
                 *selector_fields,
             },
             "observe": {"category", "message", *selector_fields},

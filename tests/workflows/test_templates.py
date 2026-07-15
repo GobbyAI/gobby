@@ -1,5 +1,12 @@
 import pytest
-from jinja2 import Environment, FileSystemLoader, StrictUndefined, TemplateNotFound, UndefinedError
+from jinja2 import (
+    Environment,
+    FileSystemLoader,
+    StrictUndefined,
+    TemplateNotFound,
+    Undefined,
+    UndefinedError,
+)
 from jinja2.exceptions import SecurityError
 from jinja2.sandbox import SandboxedEnvironment
 
@@ -50,6 +57,12 @@ class TestTemplateEngine:
 
         with pytest.raises(UndefinedError, match="missing"):
             engine.render("{{ missing }}", {})
+
+    def test_render_string_lenient_undefined_variable(self) -> None:
+        engine = TemplateEngine(strict_undefined=False)
+
+        assert engine.env.undefined is Undefined
+        assert engine.render("before {{ missing }} after", {}) == "before  after"
 
     def test_render_file_success(self, tmp_path) -> None:
         template_dir = tmp_path / "templates"

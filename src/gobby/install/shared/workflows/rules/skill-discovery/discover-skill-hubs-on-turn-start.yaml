@@ -16,6 +16,4 @@ rules:
         arguments: {}
         background: false
         inject_result: true
-      - type: set_variable
-        variable: skill_discovery_instructions_shown
-        value: true
+        success_variable: skill_discovery_instructions_shown

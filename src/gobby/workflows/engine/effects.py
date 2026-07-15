@@ -165,6 +165,11 @@ class EffectsMixin:
                         effect.server, effect.tool, rendered_args, event
                     )
                     success = isinstance(dr, dict) and dr.get("success", False)
+                    if success and effect.success_variable:
+                        if is_internal_rule(row) or not is_reserved_workflow_variable(
+                            effect.success_variable
+                        ):
+                            variables[effect.success_variable] = True
                     if success and dr.get("result"):
                         raw_result = dr["result"]
                         formatted: str | None = None

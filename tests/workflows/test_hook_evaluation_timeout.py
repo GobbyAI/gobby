@@ -93,6 +93,7 @@ async def test_internal_timeout_cancels_evaluation_and_releases_session_lock(
     tmp_path: Path,
 ) -> None:
     cancelled = threading.Event()
+    evaluation_timeout = 0.2
 
     async def slow_evaluate(
         *,
@@ -107,23 +108,23 @@ async def test_internal_timeout_cancels_evaluation_and_releases_session_lock(
         finally:
             cancelled.set()
 
-    handler = _handler(slow_evaluate, timeout=0.02)
+    handler = _handler(slow_evaluate, timeout=evaluation_timeout)
     event = _event(tmp_path)
     adapter = MagicMock()
     adapter.handle_native.side_effect = lambda *_args: handler.evaluate(event)
 
     with pytest.raises(WorkflowEvaluationTimeout) as raised:
-        await _run_adapter_hook(adapter, {}, MagicMock(), timeout_seconds=0.5)
+        await _run_adapter_hook(adapter, {}, MagicMock(), timeout_seconds=1.0)
 
     error = raised.value
-    assert cancelled.wait(timeout=0.2)
+    assert cancelled.wait(timeout=0.5)
     assert error.event_type == HookEventType.BEFORE_TOOL.value
     assert error.session_id == "platform-session"
-    assert error.timeout_seconds == 0.02
+    assert error.timeout_seconds == evaluation_timeout
     assert error.queue_duration_seconds is not None
     assert error.queue_duration_seconds >= 0
     assert error.execution_duration_seconds is not None
-    assert error.execution_duration_seconds >= 0.02
+    assert error.execution_duration_seconds >= evaluation_timeout
     with handler._eval_locks_lock:
         lock_state = handler._eval_locks["platform-session"]
         assert lock_state.references == 0

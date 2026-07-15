@@ -224,6 +224,27 @@ class TestRuleEffect:
         assert effect.inject_result is True
         assert effect.block_on_failure is False
 
+    def test_mcp_call_success_variable_requires_inline_result(self) -> None:
+        from gobby.workflows.definitions import RuleEffect
+
+        effect = RuleEffect(
+            type="mcp_call",
+            server="gobby-skills",
+            tool="list_hubs",
+            inject_result=True,
+            success_variable="skill_discovery_instructions_shown",
+        )
+
+        assert effect.success_variable == "skill_discovery_instructions_shown"
+
+        with pytest.raises(ValueError, match="requires inline result injection"):
+            RuleEffect(
+                type="mcp_call",
+                server="gobby-skills",
+                tool="list_hubs",
+                success_variable="skill_discovery_instructions_shown",
+            )
+
     def test_mcp_call_inject_result_defaults_false(self) -> None:
         from gobby.workflows.definitions import RuleEffect
 
