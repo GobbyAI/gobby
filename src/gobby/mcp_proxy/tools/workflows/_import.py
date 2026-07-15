@@ -2,7 +2,6 @@
 Import and cache tools for workflows.
 """
 
-import json
 import logging
 import re
 import shutil
@@ -12,64 +11,11 @@ from typing import Any
 import yaml
 
 from gobby.paths import get_global_workflows_dir
-from gobby.storage.workflow_definitions import (
-    LocalWorkflowDefinitionManager,
-    WorkflowDefinitionRow,
-)
 from gobby.utils.project_context import get_workflow_project_path
-from gobby.workflows.definitions import (
-    WorkflowDefinition,
-    normalize_workflow_definition_enabled,
-    validate_workflow_definition_data,
-)
+from gobby.workflows.imports import sync_imported_definition, sync_imported_workflows
 from gobby.workflows.loader import WorkflowLoader
 
 logger = logging.getLogger(__name__)
-
-_WORKFLOW_KINDS = frozenset({"step", "lifecycle"})
-
-
-def _sync_imported_definition(
-    db: Any,
-    data: dict[str, Any],
-    project_id: str | None,
-) -> WorkflowDefinitionRow:
-    """Validate and upsert an imported definition into the runtime database."""
-    declared_type = data.get("type")
-    if declared_type in _WORKFLOW_KINDS:
-        WorkflowDefinition.model_validate(data)
-        workflow_type = "workflow"
-    else:
-        workflow_type = validate_workflow_definition_data(data)
-
-    manager = LocalWorkflowDefinitionManager(db)
-    name = str(data["name"])
-    existing = manager.get_by_name(name, project_id=project_id)
-    if existing is not None and existing.project_id != project_id:
-        existing = None
-    if existing is not None and existing.workflow_type != workflow_type:
-        raise ValueError(
-            f"Cannot change imported definition '{name}' from "
-            f"{existing.workflow_type!r} to {workflow_type!r}"
-        )
-
-    fields: dict[str, Any] = {
-        "definition_json": json.dumps(data),
-        "description": data.get("description", ""),
-        "version": str(data.get("version", "1.0")),
-        "enabled": normalize_workflow_definition_enabled(data),
-        "priority": data.get("priority", 100),
-        "sources": data.get("sources"),
-        "source": "installed",
-    }
-    if existing is not None:
-        return manager.update(existing.id, **fields)
-    return manager.create(
-        name=name,
-        workflow_type=workflow_type,
-        project_id=project_id,
-        **fields,
-    )
 
 
 def import_workflow(
@@ -160,7 +106,7 @@ def import_workflow(
         dest_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
     try:
-        row = _sync_imported_definition(db, data, None if is_global else project_id)
+        row = sync_imported_definition(db, data, None if is_global else project_id)
     except Exception as e:
         if previous_contents is None:
             dest_path.unlink(missing_ok=True)
@@ -183,13 +129,16 @@ def import_workflow(
 def reload_cache(
     loader: WorkflowLoader,
     db: Any | None = None,
+    *,
+    project_path: str | None = None,
+    project_id: str | None = None,
 ) -> dict[str, Any]:
     """
-    Clear the workflow loader cache and optionally re-sync bundled definitions to the DB.
+    Clear the cache and optionally re-sync imported and bundled definitions to the DB.
 
-    This forces the daemon to re-read workflow YAML files from disk
-    on the next access. When *db* is provided, also re-syncs bundled
-    workflows, rules, agents, and variables from disk YAML into the database.
+    This forces the daemon to re-read workflow definitions on the next access.
+    When *db* is provided, project/global workflow imports and bundled rules,
+    pipelines, agents, and variables are re-synced into the database.
 
     Args:
         loader: WorkflowLoader instance whose cache to clear.
@@ -205,6 +154,15 @@ def reload_cache(
     result: dict[str, Any] = {"success": True, "message": "Workflow cache cleared"}
 
     if db is not None:
+        imported = sync_imported_workflows(
+            db,
+            project_path=project_path,
+            project_id=project_id,
+        )
+        result["imported_workflows_synced"] = imported["synced"]
+        if imported["errors"]:
+            result["imported_workflow_sync_errors"] = imported["errors"]
+
         sync_targets: list[tuple[str, str, str]] = [
             ("pipelines", "gobby.workflows.sync_pipelines", "sync_bundled_pipelines"),
             ("rules", "gobby.workflows.sync_rules", "sync_bundled_rules"),

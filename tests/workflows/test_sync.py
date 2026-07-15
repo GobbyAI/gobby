@@ -375,7 +375,13 @@ rules:
 """
         )
 
-        with patch("gobby.workflows.sync_rules.get_bundled_rules_paths", return_value=[rules_dir]):
+        with (
+            patch("gobby.workflows.sync_rules.get_bundled_rules_paths", return_value=[rules_dir]),
+            patch(
+                "gobby.mcp_proxy.tools.workflows._import.sync_imported_workflows",
+                return_value={"synced": 0, "errors": []},
+            ),
+        ):
             sync_bundled_rules(db)
 
             row = manager.get_by_name("bundled-rule")

@@ -297,7 +297,11 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
             }
 
     @router.post("/workflows/reload")
-    async def reload_workflows(response: Response) -> dict[str, Any]:
+    async def reload_workflows(
+        response: Response,
+        project_path: str | None = None,
+        project_id: str | None = None,
+    ) -> dict[str, Any]:
         """
         Reload workflow definitions from disk.
 
@@ -323,7 +327,15 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
 
             # Call reload_cache tool directly via registry.call which handles async/sync
             try:
-                result = await workflows_registry.call("reload_cache", {})
+                args = {
+                    key: value
+                    for key, value in {
+                        "project_path": project_path,
+                        "project_id": project_id,
+                    }.items()
+                    if value is not None
+                }
+                result = await workflows_registry.call("reload_cache", args)
             except ValueError:
                 response.status_code = 503
                 return {

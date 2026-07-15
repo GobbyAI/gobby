@@ -1,4 +1,5 @@
 import json
+from contextlib import nullcontext
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -289,8 +290,13 @@ def test_status_no_variables(cli_runner, mock_session_var_manager) -> None:
 # ==============================================================================
 
 
-def test_import_workflow_file(cli_runner, tmp_path) -> None:
-    """Test importing a workflow from a file."""
+@pytest.mark.asyncio
+async def test_import_workflow_file(
+    cli_runner: CliRunner,
+    tmp_path,
+    temp_db: HubDatabase,
+) -> None:
+    """CLI imports become immediately visible to the DB-backed loader."""
     source_file = tmp_path / "source_wf.yaml"
     source_file.write_text("name: Imported Workflow\ntype: step\ndescription: Test")
 
@@ -298,12 +304,27 @@ def test_import_workflow_file(cli_runner, tmp_path) -> None:
     project_dir.mkdir()
     gobby_dir = project_dir / ".gobby"
     gobby_dir.mkdir()
+    project = LocalProjectManager(temp_db).create("import-project", repo_path=str(project_dir))
+    (gobby_dir / "project.json").write_text(json.dumps({"id": project.id}))
 
-    with patch("gobby.cli.workflows.common.get_project_path", return_value=project_dir):
+    with (
+        patch("gobby.cli.workflows.common.get_project_path", return_value=project_dir),
+        patch(
+            "gobby.cli.workflows.manage.runtime_hub_database",
+            return_value=nullcontext(temp_db),
+        ),
+        patch("gobby.cli.workflows.manage._notify_daemon_reload") as notify_reload,
+    ):
         result = cli_runner.invoke(workflows, ["import", str(source_file)])
 
-        assert result.exit_code == 0
-        assert "Imported workflow" in result.output
+    assert result.exit_code == 0, result.output
+    assert "Imported workflow" in result.output
+    imported = await common.create_workflow_loader(temp_db).load_workflow(
+        "Imported Workflow",
+        project.id,
+    )
+    assert imported is not None
+    notify_reload.assert_called_once_with(project_path=project_dir, project_id=project.id)
 
 
 def test_reinstall_prompt_scopes_to_bundled_definitions(cli_runner) -> None:
