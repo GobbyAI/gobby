@@ -473,19 +473,59 @@ class TestRendererInvokePipelineDict:
         assert rendered.invoke_pipeline["arguments"]["parent_session_id"] == "sess-abc"
         assert rendered.invoke_pipeline["arguments"]["_current_iteration"] == 3
 
-    def test_renders_dict_invoke_pipeline_coerces_types(self, renderer) -> None:
-        """Arguments should be type-coerced (string '600' -> int 600)."""
+    def test_renders_dict_invoke_pipeline_preserves_expression_types(self, renderer) -> None:
         step = PipelineStep(
             id="next_iteration",
             invoke_pipeline={
                 "name": "command-listener",
-                "arguments": {"wait_timeout": "${{ inputs.wait_timeout }}"},
+                "arguments": {
+                    "enabled": "${{ inputs.enabled }}",
+                    "wait_timeout": "${{ inputs.wait_timeout }}",
+                    "ratio": "${{ inputs.ratio }}",
+                    "items": "${{ inputs.items }}",
+                    "settings": "${{ inputs.settings }}",
+                },
             },
         )
-        context = {"inputs": {"wait_timeout": 600}, "steps": {}}
+        context = {
+            "inputs": {
+                "enabled": True,
+                "wait_timeout": 600,
+                "ratio": 1.5,
+                "items": ["one", "two"],
+                "settings": {"mode": "fast"},
+            },
+            "steps": {},
+        }
         rendered = renderer.render_step(step, context)
 
-        assert rendered.invoke_pipeline["arguments"]["wait_timeout"] == 600
+        assert rendered.invoke_pipeline["arguments"] == context["inputs"]
+
+    def test_renders_dict_invoke_pipeline_preserves_string_intent(self, renderer) -> None:
+        step = PipelineStep(
+            id="next_iteration",
+            invoke_pipeline={
+                "name": "command-listener",
+                "arguments": {
+                    "padded_id": "${{ inputs.padded_id }}",
+                    "scientific_id": "${{ inputs.scientific_id }}",
+                    "nested": {
+                        "values": [
+                            "${{ inputs.padded_id }}",
+                            {"identifier": "id-${{ inputs.scientific_id }}"},
+                        ]
+                    },
+                },
+            },
+        )
+        context = {"inputs": {"padded_id": "007", "scientific_id": "1e3"}, "steps": {}}
+        rendered = renderer.render_step(step, context)
+
+        assert rendered.invoke_pipeline["arguments"] == {
+            "padded_id": "007",
+            "scientific_id": "1e3",
+            "nested": {"values": ["007", {"identifier": "id-1e3"}]},
+        }
 
     def test_string_invoke_pipeline_unchanged(self, renderer) -> None:
         """String-form invoke_pipeline should not be affected by dict rendering."""

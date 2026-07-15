@@ -229,44 +229,30 @@ class StepRenderer:
         evaluator = SafeExpressionEvaluator(context, _PIPELINE_EVAL_FUNCS)
         return evaluator.evaluate_value(expr)
 
+    def _render_argument_value(self, value: Any, context: dict[str, Any]) -> Any:
+        """Render an argument while preserving the rendered value's native type."""
+        if isinstance(value, str):
+            # A pure expression carries the source value's type through rendering.
+            m = re.fullmatch(r"\$\{\{\s*(.*?)\s*\}\}", value.strip(), re.DOTALL)
+            if m:
+                return self._resolve_expression(m.group(1), context)
+            return self.render_string(value, context)
+        if isinstance(value, dict):
+            return self.render_mcp_arguments(value, context)
+        if isinstance(value, list):
+            return self._render_list(value, context)
+        return value
+
     def render_mcp_arguments(self, args: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
-        """Render template variables in MCP arguments and coerce types."""
+        """Render template variables in MCP arguments without guessing string types."""
         rendered: dict[str, Any] = {}
         for key, value in args.items():
-            if isinstance(value, str):
-                # Pure expression: "${{ expr }}" — preserve native type (list, dict, etc.)
-                m = re.fullmatch(r"\$\{\{\s*(.*?)\s*\}\}", value.strip(), re.DOTALL)
-                if m:
-                    resolved = self._resolve_expression(m.group(1), context)
-                    # Coerce string results (e.g. "600" → 600) but preserve
-                    # native types like list/dict unchanged.
-                    rendered[key] = (
-                        self._coerce_value(resolved) if isinstance(resolved, str) else resolved
-                    )
-                else:
-                    rendered_val = self.render_string(value, context)
-                    rendered[key] = self._coerce_value(rendered_val)
-            elif isinstance(value, dict):
-                rendered[key] = self.render_mcp_arguments(value, context)
-            elif isinstance(value, list):
-                rendered[key] = self._render_list(value, context)
-            else:
-                rendered[key] = value
+            rendered[key] = self._render_argument_value(value, context)
         return rendered
 
     def _render_list(self, items: list[Any], context: dict[str, Any]) -> list[Any]:
         """Render template variables in a list, handling nested dicts and lists."""
-        result = []
-        for v in items:
-            if isinstance(v, str):
-                result.append(self._coerce_value(self.render_string(v, context)))
-            elif isinstance(v, dict):
-                result.append(self.render_mcp_arguments(v, context))
-            elif isinstance(v, list):
-                result.append(self._render_list(v, context))
-            else:
-                result.append(v)
-        return result
+        return [self._render_argument_value(value, context) for value in items]
 
     def resolve_reference(self, ref: str, context: dict[str, Any]) -> Any:
         """Resolve a $step.output reference from context.
