@@ -88,7 +88,12 @@ export function connectChatTransport(
       fetch(`${baseUrl}/api/chat/${convId}/messages?after_seq=${afterSeq}`)
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
-          if (ctx.viewingSessionIdRef.current) return;
+          if (
+            ctx.viewingSessionIdRef.current ||
+            ctx.conversationIdRef.current !== convId
+          ) {
+            return;
+          }
           if (!data?.messages?.length) return;
           const backfilled: ChatMessage[] = data.messages.map(mapStoredChatMessage);
           ctx.setMessages((prev) => {

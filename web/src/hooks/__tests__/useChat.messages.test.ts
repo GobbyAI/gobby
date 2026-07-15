@@ -134,6 +134,130 @@ describe("useChat message and conversation state", () => {
     }
   });
 
+  it("ignores reconnect backfill after switching conversations", async () => {
+    vi.useFakeTimers();
+    try {
+      await loadModule();
+      mockFetch.mockJsonResponse(
+        "/api/chat/old-chat/messages?limit=100&after_seq=0",
+        {
+          messages: [
+            {
+              id: "old-message",
+              role: "assistant",
+              content: "Old chat",
+              timestamp: "2026-07-14T00:00:00Z",
+            },
+          ],
+          max_seq: 5,
+        },
+      );
+      mockFetch.mockJsonResponse("/api/sessions/old-chat", {
+        session: { id: "old-chat", seq_num: 1, title: "Old chat" },
+      });
+
+      const { result } = renderHook(() => useChat());
+      const firstWs = mockWs.instances[0];
+      act(() => firstWs.simulateOpen());
+
+      await act(async () => {
+        result.current.switchConversation("old-chat");
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(result.current.messages[0]?.id).toBe("old-message");
+
+      let resolveBackfill!: (response: Response) => void;
+      const pendingBackfill = new Promise<Response>((resolve) => {
+        resolveBackfill = resolve;
+      });
+      mockFetch.fn.mockImplementation((input: RequestInfo | URL) => {
+        const url =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+        if (url.includes("/api/chat/old-chat/messages?after_seq=5")) {
+          return pendingBackfill;
+        }
+        if (url.includes("/api/chat/new-chat/messages?limit=100&after_seq=0")) {
+          return Promise.resolve(
+            Response.json({
+              messages: [
+                {
+                  id: "new-message",
+                  role: "assistant",
+                  content: "New chat",
+                  timestamp: "2026-07-14T00:00:01Z",
+                },
+              ],
+              max_seq: 7,
+            }),
+          );
+        }
+        if (url.includes("/api/sessions/new-chat")) {
+          return Promise.resolve(
+            Response.json({
+              session: { id: "new-chat", seq_num: 2, title: "New chat" },
+            }),
+          );
+        }
+        return Promise.resolve(Response.json({ messages: [] }));
+      });
+
+      act(() => {
+        firstWs.simulateClose();
+        vi.advanceTimersByTime(2000);
+      });
+      const reconnectWs = mockWs.instances[1];
+      act(() => reconnectWs.simulateOpen());
+      expect(mockFetch.fn).toHaveBeenCalledWith(
+        expect.stringContaining("/api/chat/old-chat/messages?after_seq=5"),
+      );
+
+      await act(async () => {
+        result.current.switchConversation("new-chat");
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(result.current.messages[0]?.id).toBe("new-message");
+
+      await act(async () => {
+        resolveBackfill(
+          Response.json({
+            messages: [
+              {
+                id: "stale-message",
+                role: "assistant",
+                content: "Stale old chat",
+                timestamp: "2026-07-14T00:00:02Z",
+              },
+            ],
+            max_seq: 99,
+          }),
+        );
+        await pendingBackfill;
+      });
+
+      expect(result.current.messages.map((message) => message.id)).toEqual([
+        "new-message",
+      ]);
+
+      act(() => {
+        reconnectWs.simulateClose();
+        vi.advanceTimersByTime(2000);
+      });
+      act(() => mockWs.instances[2].simulateOpen());
+
+      expect(mockFetch.fn).toHaveBeenCalledWith(
+        expect.stringContaining("/api/chat/new-chat/messages?after_seq=7"),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("defaults activeAgent to default and resets to default on a fresh chat", async () => {
     localStorage.clear();
 
