@@ -50,7 +50,7 @@ class TestExceptionHandlers:
     def test_hook_exception_is_acknowledged(self, session_storage: SessionManager) -> None:
         """Hook ingress keeps its acknowledgement-on-error contract."""
         services = ServiceContainer(
-            config=DaemonConfig(bind_host="127.0.0.1"),
+            config=DaemonConfig(bind_host="127.0.0.1", auth_mode="disabled"),
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),

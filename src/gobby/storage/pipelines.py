@@ -26,7 +26,7 @@ class LocalPipelineExecutionManager(
 
         Args:
             db: Database connection
-            project_id: Project ID for scoping executions
+            project_id: Project ID for scoped access; empty or ``None`` selects all projects
         """
         self.db = db
         self.project_id = project_id or None

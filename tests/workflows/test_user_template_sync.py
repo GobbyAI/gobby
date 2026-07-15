@@ -78,10 +78,12 @@ class TestOrphanTagIsolation:
         assert len(user_rows) == 1, "User-tagged template should survive gobby orphan cleanup"
 
     def test_gobby_orphan_cleanup_only_targets_gobby_tagged(self, manager, temp_db, tmp_path):
-        """Orphan cleanup only soft-deletes templates tagged 'gobby'."""
+        """Orphan cleanup only soft-deletes installed templates tagged 'gobby'."""
         from gobby.workflows.sync_rules import sync_bundled_rules
 
-        _create_rule(manager, "gobby-only-rule", source="installed", tags=["gobby"])
+        installed = _create_rule(manager, "gobby-only-rule", source="installed", tags=["gobby"])
+        duplicate = manager.duplicate(installed.id, "duplicated-rule")
+        _create_rule(manager, "custom-gobby-rule", source="custom", tags=["gobby"])
         _create_rule(manager, "user-only-rule", source="installed", tags=["user"])
 
         rules_dir = tmp_path / "rules"
@@ -96,6 +98,17 @@ class TestOrphanTagIsolation:
         )
         assert gobby_row is not None
         assert gobby_row["deleted_at"] is not None
+
+        custom_row = temp_db.fetchone(
+            "SELECT deleted_at FROM workflow_definitions WHERE name = 'custom-gobby-rule'"
+        )
+        assert custom_row is not None
+        assert custom_row["deleted_at"] is None
+
+        duplicated_row = manager.get(duplicate.id)
+        assert duplicated_row.deleted_at is None
+        assert duplicated_row.source == "custom"
+        assert "gobby" not in (duplicated_row.tags or [])
 
         # user template untouched
         user_row = temp_db.fetchone(

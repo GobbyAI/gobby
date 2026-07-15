@@ -181,7 +181,9 @@ def is_argument_error(error_message: str) -> bool:
 
 def classify_error(service: Any, error_message: str, exception: Exception) -> str:
     """Classify an error into a structured tool proxy error code."""
-    del exception
+    if isinstance(exception, TimeoutError):
+        return ToolProxyErrorCode.CONNECTION_ERROR.value
+
     error_lower = error_message.lower()
 
     if "server" in error_lower:

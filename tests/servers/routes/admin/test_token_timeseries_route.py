@@ -73,7 +73,7 @@ def test_route_pattern_rejects_non_members(value: str, granularity_pattern: str)
 
 @pytest.mark.parametrize(
     "candidate",
-    list(VALID_GRANULARITIES) + ["", "5m", "2h", "1H", "1d1h", "30s", "1y"],
+    sorted(VALID_GRANULARITIES) + ["", "5m", "2h", "1H", "1d1h", "30s", "1y"],
 )
 def test_route_pattern_only_matches_members(candidate: str, granularity_pattern: str) -> None:
     pattern = re.compile(granularity_pattern)

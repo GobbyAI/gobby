@@ -46,6 +46,10 @@ def register_prompt_routes(router: APIRouter, context: ConfigurationRouteContext
                 limit=page_limit,
                 offset=offset,
             )
+            total = manager.count_prompts(
+                project_id=context.server.services.project_id,
+                enabled=True,
+            )
 
             seen: dict[str, Any] = {}
             override_names: set[str] = set()
@@ -81,7 +85,7 @@ def register_prompt_routes(router: APIRouter, context: ConfigurationRouteContext
                 content={
                     "prompts": prompts,
                     "categories": categories,
-                    "total": len(prompts),
+                    "total": total,
                     "limit": page_limit,
                     "offset": offset,
                     "count": len(prompts),

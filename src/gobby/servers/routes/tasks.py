@@ -16,9 +16,12 @@ from gobby.servers.routes.tasks_comment_routes import register_task_comment_rout
 from gobby.servers.routes.tasks_dependency_routes import register_task_dependency_routes
 from gobby.servers.routes.tasks_lifecycle_routes import register_task_lifecycle_routes
 from gobby.servers.routes.tasks_stage_routes import register_task_stage_routes
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks._models import (
     TASK_TYPE_CHOICES,
     VALID_CATEGORIES,
+    TaskHasChildrenError,
+    TaskHasDependentsError,
     TaskNotFoundError,
     validate_task_type,
 )
@@ -123,9 +126,10 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
 
     def _resolve_project(project_id: str | None) -> str:
         """Resolve project ID, falling back to server's project context."""
-        if project_id:
-            return project_id
-        return server.resolve_project_id(project_id=None, cwd=None)
+        resolved_project_id = project_id or server.resolve_project_id(project_id=None, cwd=None)
+        if LocalProjectManager(server.task_manager.db).get(resolved_project_id) is None:
+            raise ValueError(f"Project not found: {resolved_project_id}")
+        return resolved_project_id
 
     def _resolve_task(task_id: str, *, project_id: str | None = None) -> "Task":
         """Resolve flexible task refs using project context for seq-num lookups."""
@@ -144,7 +148,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         """Broadcast a task event via WebSocket if available."""
         ws = server.services.websocket_server
         if ws:
-            _apply_owner_ref([task_dict])
+            await server.run_db(_apply_owner_ref, [task_dict])
             await ws.broadcast_task_event(event, task_id=task_dict.get("id", ""), task=task_dict)
 
     async def _broadcast_task(event: str, task_dict: dict[str, Any]) -> None:
@@ -199,43 +203,16 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 has_build_event=item["id"] in built,
             )
 
-    def _owner_session_ref(owner_id: str | None) -> dict[str, Any] | None:
-        """Resolve an owner session UUID to a friendly, human-readable ref.
-
-        The web detail pane must never render a raw 36-char session UUID. We
-        resolve the owning session to ``#<seq_num>`` plus its source (the CLI
-        that drives it). When the session cannot be resolved we still degrade
-        to a short ``id[:8]`` hash — the same convention task refs use — never
-        the full UUID.
-        """
-        if not owner_id:
-            return None
-        session = None
-        if server.session_manager is not None:
-            try:
-                session = server.session_manager.get(owner_id)
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.debug(f"Failed to resolve owner session {owner_id}: {exc}")
-                session = None
-        if session is not None and session.seq_num:
-            ref = f"#{session.seq_num}"
-        else:
-            ref = owner_id[:8]
-        return {
-            "session_id": owner_id,
-            "ref": ref,
-            "source": session.source if session is not None else None,
-        }
-
     def _apply_owner_ref(task_dicts: list[dict[str, Any]]) -> None:
         """Attach a friendly ``owner_session_ref`` to each serialized task.
 
         ``state.owner_session_id`` is authoritative because it mirrors the
         canonical task state. Serialized task rows also expose top-level
         ``claimed_by_session_id`` for compact consumers, so use it as a fallback.
-        The winning UUID is converted through ``_owner_session_ref``; unowned
-        tasks or non-string owner values receive ``None``.
+        Owner UUIDs are resolved in one query; unowned tasks or non-string
+        owner values receive ``None``.
         """
+        owners_by_task: dict[str, str] = {}
         for item in task_dicts:
             raw_state = item.get("state")
             owner_id: Any = None
@@ -243,9 +220,33 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 owner_id = raw_state.get("owner_session_id")
             if not owner_id:
                 owner_id = item.get("claimed_by_session_id")
-            item["owner_session_ref"] = _owner_session_ref(
-                owner_id if isinstance(owner_id, str) else None
-            )
+            if isinstance(owner_id, str):
+                owners_by_task[item["id"]] = owner_id
+
+        sessions_by_id: dict[str, Any] = {}
+        owner_ids = sorted(set(owners_by_task.values()))
+        if owner_ids and server.session_manager is not None:
+            try:
+                placeholders = ",".join("%s" for _ in owner_ids)
+                rows = server.session_manager.db.fetchall(
+                    f"SELECT id, seq_num, source FROM sessions WHERE id IN ({placeholders})",  # nosec B608
+                    tuple(owner_ids),
+                )
+                sessions_by_id = {row["id"]: row for row in rows}
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug(f"Failed to batch-resolve owner sessions: {exc}")
+
+        for item in task_dicts:
+            owner_id = owners_by_task.get(item["id"])
+            if owner_id is None:
+                item["owner_session_ref"] = None
+                continue
+            session = sessions_by_id.get(owner_id)
+            item["owner_session_ref"] = {
+                "session_id": owner_id,
+                "ref": f"#{session['seq_num']}" if session and session["seq_num"] else owner_id[:8],
+                "source": session["source"] if session else None,
+            }
 
     def _normalize_stage_filters(values: list[str] | None) -> list[str]:
         if not values:
@@ -265,6 +266,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         router,
         server,
         resolve_task=_resolve_task,
+        resolve_session_ref=_resolve_session_ref,
         broadcast_task=_broadcast_task,
         stage_view=_stage_view,
     )
@@ -294,8 +296,8 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         label: str | None = Query(None, description="Filter by label"),
         parent_task_id: str | None = Query(None, description="Filter by parent task ID"),
         search: str | None = Query(None, description="Search by title"),
-        limit: int = Query(50, description="Maximum results"),
-        offset: int = Query(0, description="Pagination offset"),
+        limit: int = Query(50, ge=1, le=1000, description="Maximum results"),
+        offset: int = Query(0, ge=0, description="Pagination offset"),
         sort_by: str = Query(
             "hierarchy",
             description="Sort order: hierarchy, updated_at, created_at, or priority",
@@ -309,21 +311,13 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
     ) -> dict[str, Any]:
         """List tasks with optional filters and state distribution stats."""
         try:
-            resolved_project = _resolve_project(project_id)
-            stage_task_ids: set[str] | None = None
+            resolved_project = await server.run_db(_resolve_project, project_id)
             stage_filters = _normalize_stage_filters(stage)
-            if stage_filters:
-                stage_task_ids = set()
-                for stage_name in stage_filters:
-                    stage_task_ids.update(
-                        server.task_manager.stage_states.list_tasks_at_stage(
-                            stage_name=stage_name,
-                            state=stage_state,
-                            project_id=resolved_project,
-                        )
-                    )
+            if stage_state is not None and not stage_filters:
+                raise HTTPException(status_code=400, detail="stage_state requires stage")
 
-            tasks = server.task_manager.list_tasks(
+            tasks = await server.run_db(
+                server.task_manager.list_tasks,
                 project_id=resolved_project,
                 current_stage_state=current_stage_state,
                 priority=priority,
@@ -333,27 +327,41 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 label=label,
                 parent_task_id=parent_task_id,
                 title_like=search,
-                limit=10000 if stage_task_ids is not None else limit,
-                offset=0 if stage_task_ids is not None else offset,
+                stages=stage_filters,
+                stage_state=stage_state,
+                limit=limit,
+                offset=offset,
                 sort_by=sort_by,
                 sort_order=sort_order,
             )
-            if stage_task_ids is not None:
-                tasks = [task for task in tasks if task.id in stage_task_ids]
-                total = len(tasks)
-                tasks = tasks[offset : offset + limit]
-            else:
-                total = server.task_manager.count_tasks(project_id=resolved_project)
+            total = await server.run_db(
+                server.task_manager.count_tasks,
+                project_id=resolved_project,
+                current_stage_state=current_stage_state,
+                priority=priority,
+                claimed=claimed,
+                closed=closed,
+                task_type=task_type,
+                label=label,
+                parent_task_id=parent_task_id,
+                title_like=search,
+                stages=stage_filters,
+                stage_state=stage_state,
+            )
 
             task_dicts = [t.to_brief() for t in tasks]
             if include_stages or stage_filters or stage_state is not None:
-                stages_by_task = _stage_views_for_tasks([task.id for task in tasks])
+                stages_by_task = await server.run_db(
+                    _stage_views_for_tasks, [task.id for task in tasks]
+                )
                 for item in task_dicts:
                     item["stages"] = stages_by_task.get(item["id"], [])
-            _apply_build_state(task_dicts)
-            _apply_owner_ref(task_dicts)
+            await server.run_db(_apply_build_state, task_dicts)
+            await server.run_db(_apply_owner_ref, task_dicts)
 
-            state_counts = server.task_manager.count_by_state(project_id=resolved_project)
+            state_counts = await server.run_db(
+                server.task_manager.count_by_state, project_id=resolved_project
+            )
             return {
                 "tasks": task_dicts,
                 "total": total,
@@ -372,10 +380,11 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
     async def create_task(request_data: TaskCreateRequest) -> Any:
         """Create a new task."""
         try:
-            project_id = _resolve_project(request_data.project_id)
+            project_id = await server.run_db(_resolve_project, request_data.project_id)
             if request_data.category == "code" and request_data.implementation_domain is None:
                 raise ValueError("Code tasks require implementation_domain.")
-            task = server.task_manager.create_task(
+            task = await server.run_db(
+                server.task_manager.create_task,
                 project_id=project_id,
                 title=request_data.title,
                 description=request_data.description,
@@ -393,20 +402,22 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Failed to create task: {e}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            logger.error(f"Failed to create task: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/{task_id}")
     async def get_task(task_id: str) -> Any:
         """Get a task by ID, seq_num (#N), or path (1.2.3)."""
         try:
-            task = _resolve_task(task_id)
+            task = await server.run_db(_resolve_task, task_id)
             data = task.to_dict()
             data["build_state"] = derive_build_state(
                 allow_automation=bool(task.allow_automation),
-                has_build_event=server.task_manager.lifecycle_events.has_build_event(task.id),
+                has_build_event=await server.run_db(
+                    server.task_manager.lifecycle_events.has_build_event, task.id
+                ),
             )
-            _apply_owner_ref([data])
+            await server.run_db(_apply_owner_ref, [data])
             return data
         except (ValueError, TaskNotFoundError) as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
@@ -417,7 +428,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         try:
             # Resolve the task ID first
             try:
-                task = _resolve_task(task_id)
+                task = await server.run_db(_resolve_task, task_id)
             except (ValueError, TaskNotFoundError) as e:
                 raise HTTPException(status_code=404, detail=str(e)) from e
             resolved_id = task.id
@@ -438,7 +449,8 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 if kwargs["isolation"] is None:
                     kwargs.pop("isolation")
                 else:
-                    kwargs["isolation"] = validate_task_isolation_artifacts(
+                    kwargs["isolation"] = await server.run_db(
+                        validate_task_isolation_artifacts,
                         server.task_manager,
                         resolved_id,
                         cast(str, kwargs["isolation"]),
@@ -446,10 +458,10 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
 
             if not kwargs:
                 unchanged = task.to_dict()
-                _apply_owner_ref([unchanged])
+                await server.run_db(_apply_owner_ref, [unchanged])
                 return unchanged
 
-            updated = server.task_manager.update_task(resolved_id, **kwargs)
+            updated = await server.run_db(server.task_manager.update_task, resolved_id, **kwargs)
             result = updated.to_dict()
             await _broadcast_task("task_updated", result)
             return result
@@ -460,8 +472,8 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Failed to update task {task_id}: {e}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            logger.error(f"Failed to update task {task_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.delete("/{task_id}")
     async def delete_task(
@@ -471,18 +483,24 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         """Delete a task."""
         try:
             # Resolve first
-            task = _resolve_task(task_id)
+            task = await server.run_db(_resolve_task, task_id)
             resolved_id = task.id
-            delete_result = server.task_manager.delete_task(resolved_id, cascade=cascade)
+            delete_result = await server.run_db(
+                server.task_manager.delete_task, resolved_id, cascade=cascade
+            )
             if not delete_result:
                 raise HTTPException(status_code=404, detail="Task not found")
             await _broadcast_task("task_deleted", {"id": resolved_id})
             return {"deleted": True, "id": resolved_id}
+        except HTTPException:
+            raise
+        except (TaskHasChildrenError, TaskHasDependentsError) as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
         except (ValueError, TaskNotFoundError) as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Failed to delete task {task_id}: {e}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            logger.error(f"Failed to delete task {task_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     register_task_comment_routes(
         router,

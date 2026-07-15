@@ -317,10 +317,18 @@ class TestPromptListing:
         manager.create_prompt(name="test/one", content="1", scope="bundled")
         manager.create_prompt(name="test/two", content="2", scope="bundled")
         manager.create_prompt(name="test/three", content="3", scope="global")
+        manager.create_prompt(name="test/one", content="override", scope="global")
+        manager.create_prompt(
+            name="test/disabled",
+            content="disabled",
+            scope="bundled",
+            enabled=False,
+        )
 
-        assert manager.count_prompts() == 3
-        assert manager.count_prompts(scope="bundled") == 2
-        assert manager.count_prompts(scope="global") == 1
+        assert manager.count_prompts() == 4
+        assert manager.count_prompts(enabled=True) == 3
+        assert manager.count_prompts(scope="bundled", enabled=True) == 2
+        assert manager.count_prompts(scope="global") == 2
 
     def test_search_prompts(self, manager) -> None:
         """Test searching prompts by text."""

@@ -151,6 +151,56 @@ class TestListTasks:
         task = next(t for t in data["tasks"] if t["id"] == sample_task["id"])
         assert "state" in task
 
+    @pytest.mark.parametrize("owner_count", [1, 3])
+    def test_list_batches_owner_session_refs(
+        self,
+        client: TestClient,
+        server,
+        task_manager: LocalTaskManager,
+        project_id: str,
+        owner_count: int,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        owners = [
+            server.session_manager.register(
+                external_id=f"owner-{index}",
+                machine_id="test-machine",
+                source="codex",
+                project_id=project_id,
+            )
+            for index in range(owner_count)
+        ]
+        tasks = [
+            task_manager.create_task(
+                project_id=project_id,
+                title=f"Owned task {index}",
+                claimed_by_session_id=owner.id,
+            )
+            for index, owner in enumerate(owners)
+        ]
+        original_fetchall = server.session_manager.db.fetchall
+        owner_queries = 0
+
+        def counting_fetchall(sql: str, params: tuple = ()):
+            nonlocal owner_queries
+            if "SELECT id, seq_num, source FROM sessions WHERE id IN" in sql:
+                owner_queries += 1
+            return original_fetchall(sql, params)
+
+        monkeypatch.setattr(server.session_manager.db, "fetchall", counting_fetchall)
+
+        response = client.get("/api/tasks")
+
+        assert response.status_code == 200
+        payloads = {item["id"]: item for item in response.json()["tasks"]}
+        assert owner_queries == 1
+        for task, owner in zip(tasks, owners, strict=True):
+            assert payloads[task.id]["owner_session_ref"] == {
+                "session_id": owner.id,
+                "ref": owner.ref,
+                "source": "codex",
+            }
+
     @pytest.mark.parametrize(
         ("legacy_type", "canonical_type"),
         [
@@ -204,8 +254,10 @@ class TestListTasks:
         task_manager.submit_for_review(sample_task["id"], review_notes="Ready for QA")
         response = client.get("/api/tasks?current_stage_state=needs_review")
         assert response.status_code == 200
-        ids = [t["id"] for t in response.json()["tasks"]]
+        data = response.json()
+        ids = [t["id"] for t in data["tasks"]]
         assert sample_task["id"] in ids
+        assert data["total"] == len(ids) == 1
 
     def test_list_with_claimed_filter(
         self,
@@ -265,6 +317,66 @@ class TestListTasks:
         assert data["limit"] == 1
         assert data["offset"] == 0
         assert len(data["tasks"]) <= 1
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            {"limit": 0},
+            {"limit": -1},
+            {"limit": 1001},
+            {"offset": -1},
+        ],
+    )
+    def test_list_rejects_out_of_bounds_pagination(
+        self, client: TestClient, params: dict[str, int]
+    ) -> None:
+        response = client.get("/api/tasks", params=params)
+
+        assert response.status_code == 422
+
+    def test_list_total_respects_all_task_filters(
+        self,
+        client: TestClient,
+        task_manager: LocalTaskManager,
+        project_id: str,
+        session_id: str,
+    ) -> None:
+        parent = task_manager.create_task(project_id=project_id, title="Parent")
+        matching = task_manager.create_task(
+            project_id=project_id,
+            title="Filtered needle",
+            parent_task_id=parent.id,
+            priority=1,
+            task_type="task",
+            claimed_by_session_id=session_id,
+            labels=["target"],
+        )
+        task_manager.create_task(
+            project_id=project_id,
+            title="Filtered needle decoy",
+            parent_task_id=parent.id,
+            priority=2,
+            task_type="task",
+            labels=["target"],
+        )
+
+        response = client.get(
+            "/api/tasks",
+            params={
+                "priority": 1,
+                "claimed": "true",
+                "closed": "false",
+                "task_type": "task",
+                "label": "target",
+                "parent_task_id": parent.id,
+                "search": "needle",
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert [task["id"] for task in data["tasks"]] == [matching.id]
+        assert data["total"] == 1
 
     def test_list_value_error(self, server) -> None:
         """When resolve_project_id raises ValueError, returns 400."""
@@ -524,6 +636,36 @@ class TestDeleteTask:
     def test_delete_not_found(self, client: TestClient) -> None:
         response = client.delete("/api/tasks/nonexistent-id-000")
         assert response.status_code == 404
+
+    def test_delete_false_result_returns_not_found(
+        self,
+        client: TestClient,
+        sample_task: dict,
+        task_manager: LocalTaskManager,
+    ) -> None:
+        with patch.object(task_manager, "delete_task", return_value=False):
+            response = client.delete(f"/api/tasks/{sample_task['id']}")
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Task not found"
+
+    def test_delete_with_children_without_cascade_returns_conflict(
+        self,
+        client: TestClient,
+        sample_task: dict,
+        task_manager: LocalTaskManager,
+        project_id: str,
+    ) -> None:
+        task_manager.create_task(
+            project_id=project_id,
+            title="Child",
+            parent_task_id=sample_task["id"],
+        )
+
+        response = client.delete(f"/api/tasks/{sample_task['id']}")
+
+        assert response.status_code == 409
+        assert "has children" in response.json()["detail"]
 
     def test_delete_with_cascade(
         self, client: TestClient, sample_task: dict, task_manager: LocalTaskManager, project_id: str
@@ -806,6 +948,36 @@ class TestCloseTask:
         )
         assert response.status_code == 400
 
+    @pytest.mark.parametrize("commit_sha", ["", " \t\n"])
+    def test_close_rejects_empty_commit_sha(
+        self, client: TestClient, sample_task: dict, commit_sha: str
+    ) -> None:
+        response = client.post(
+            f"/api/tasks/{sample_task['id']}/close",
+            json={"commit_sha": commit_sha},
+        )
+
+        assert response.status_code == 422
+
+    def test_close_with_valid_commit_sha_uses_commit_path(
+        self,
+        client: TestClient,
+        sample_task: dict,
+        task_manager: LocalTaskManager,
+    ) -> None:
+        commit_sha = "a" * 40
+        task = task_manager.get_task(sample_task["id"])
+
+        with patch.object(task_manager, "close_task_with_commit", return_value=task) as close:
+            response = client.post(
+                f"/api/tasks/{sample_task['id']}/close",
+                json={"commit_sha": commit_sha},
+            )
+
+        assert response.status_code == 200
+        close.assert_called_once()
+        assert close.call_args.args[:2] == (sample_task["id"], commit_sha)
+
     def test_close_not_found(self, client: TestClient) -> None:
         # get_task raises ValueError for unknown UUID; close catches it as 400
         response = client.post("/api/tasks/nonexistent-id-000/close")
@@ -1013,12 +1185,7 @@ class TestComments:
         author_type: str = "session",
         parent_comment_id: str | None = None,
     ) -> str:
-        """Insert a comment directly into the DB, bypassing the route.
-
-        The create_comment route has a known bug: it references task.ref which
-        doesn't exist on the Task dataclass. We insert directly to test the
-        list/delete endpoints.
-        """
+        """Insert a comment directly into the DB, bypassing the route."""
         import uuid as _uuid
 
         comment_id = str(_uuid.uuid4())
@@ -1030,22 +1197,40 @@ class TestComments:
         return comment_id
 
     def test_create_comment_endpoint(self, client: TestClient, sample_task: dict) -> None:
-        """Exercise the create_comment endpoint.
-
-        The route has a known bug (task.ref doesn't exist on Task dataclass)
-        in the _broadcast_task call. Use non-raising client so we can verify
-        the comment was inserted despite the broadcast failure.
-        """
-        from starlette.testclient import TestClient as TC
-
-        non_raising = TC(client.app, raise_server_exceptions=False)
-        non_raising.post(
+        response = client.post(
             f"/api/tasks/{sample_task['id']}/comments",
             json={"body": "Test comment", "author": "sess-1", "author_type": "session"},
         )
-        # Verify the comment was inserted (the DB write happens before the crash)
+        assert response.status_code == 200
         list_resp = client.get(f"/api/tasks/{sample_task['id']}/comments")
         assert list_resp.json()["total"] >= 1
+
+    def test_create_comment_rejects_missing_parent(
+        self, client: TestClient, sample_task: dict
+    ) -> None:
+        response = client.post(
+            f"/api/tasks/{sample_task['id']}/comments",
+            json={
+                "body": "Reply",
+                "author": "sess-1",
+                "parent_comment_id": "00000000-0000-0000-0000-000000000000",
+            },
+        )
+
+        assert response.status_code == 400
+
+    def test_create_comment_rejects_parent_from_another_task(
+        self, client: TestClient, two_tasks: tuple, temp_db
+    ) -> None:
+        task, other_task = two_tasks
+        parent_id = self._insert_comment(temp_db, other_task["id"], "Parent", "a1")
+
+        response = client.post(
+            f"/api/tasks/{task['id']}/comments",
+            json={"body": "Reply", "author": "sess-1", "parent_comment_id": parent_id},
+        )
+
+        assert response.status_code == 400
 
     def test_list_comments(self, client: TestClient, sample_task: dict, temp_db) -> None:
         self._insert_comment(temp_db, sample_task["id"], "First", "a1")
@@ -1077,6 +1262,26 @@ class TestComments:
         assert response.json()["deleted"] is True
         list_resp = client.get(f"/api/tasks/{sample_task['id']}/comments")
         assert list_resp.json()["count"] == 0
+
+    def test_delete_missing_comment_returns_not_found(
+        self, client: TestClient, sample_task: dict
+    ) -> None:
+        response = client.delete(
+            f"/api/tasks/{sample_task['id']}/comments/00000000-0000-0000-0000-000000000000"
+        )
+
+        assert response.status_code == 404
+
+    def test_delete_comment_from_another_task_returns_not_found(
+        self, client: TestClient, two_tasks: tuple, temp_db
+    ) -> None:
+        task, other_task = two_tasks
+        comment_id = self._insert_comment(temp_db, other_task["id"], "Keep", "a1")
+
+        response = client.delete(f"/api/tasks/{task['id']}/comments/{comment_id}")
+
+        assert response.status_code == 404
+        assert temp_db.fetchone("SELECT id FROM task_comments WHERE id = %s", (comment_id,))
 
     def test_comments_for_nonexistent_task(self, client: TestClient) -> None:
         response = client.get("/api/tasks/nonexistent-id-000/comments")

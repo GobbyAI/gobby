@@ -26,8 +26,12 @@ def task_manager(temp_db) -> LocalTaskManager:
 
 
 @pytest.fixture
-def stage_client(task_manager: LocalTaskManager) -> Iterator[TestClient]:
-    server = create_http_server(task_manager=task_manager, websocket_server=MagicMock())
+def stage_client(temp_db, task_manager: LocalTaskManager) -> Iterator[TestClient]:
+    server = create_http_server(
+        session_manager=SessionManager(temp_db),
+        task_manager=task_manager,
+        websocket_server=MagicMock(),
+    )
     with patch("gobby.servers.app_factory.HookManager") as hook_manager:
         hook_manager.return_value._stop_registry = MagicMock()
         hook_manager.return_value.shutdown = MagicMock()
@@ -63,6 +67,63 @@ def test_patch_start_stage(
 
     assert response.status_code == 200
     assert response.json()["stage"]["state"] == "in_progress"
+
+
+@pytest.mark.parametrize(
+    ("action", "manager_method", "stage_name", "extra_payload"),
+    [
+        ("start", "start_stage", "development", {}),
+        ("submit_for_review", "submit_for_review", "development", {}),
+        ("approve_review", "approve_review", "development", {}),
+        ("reject_review", "reject_review", "development", {"reason": "changes needed"}),
+        ("complete", "complete_stage", "development", {}),
+        ("fail", "fail_stage", "development", {"reason": "validation failed"}),
+        ("move_to", "move_to_stage", "development", {}),
+        ("add", "add_stage", "extra", {"position": 1}),
+        ("remove", "remove_stage", "development", {}),
+    ],
+)
+@pytest.mark.parametrize("session_ref_kind", ["local", "uuid", "missing"])
+def test_patch_stage_attributes_every_mutation_to_request_session(
+    temp_db,
+    sample_project,
+    task_manager: LocalTaskManager,
+    stage_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
+    manager_method: str,
+    stage_name: str,
+    extra_payload: dict[str, object],
+    session_ref_kind: str,
+) -> None:
+    task, _manager = make_task_with_manifest(temp_db, sample_project, [spec("development", 0)])
+    actor = SessionManager(temp_db).register(
+        external_id=f"stage-actor-{action}-{session_ref_kind}",
+        machine_id="machine",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    stage_row = task_manager.stage_states.get(task.id, "development")
+    operation = MagicMock(return_value=None if action == "remove" else stage_row)
+    monkeypatch.setattr(task_manager.stage_states, manager_method, operation)
+    if session_ref_kind == "local":
+        headers = {"X-Gobby-Session-Id": f"#{actor.seq_num}"}
+        expected_session_id = actor.id
+    elif session_ref_kind == "uuid":
+        headers = {"X-Gobby-Session-Id": actor.id}
+        expected_session_id = actor.id
+    else:
+        headers = {}
+        expected_session_id = None
+
+    response = stage_client.patch(
+        f"/api/tasks/{task.id}/stages/{stage_name}",
+        json={"action": action, **extra_payload},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert operation.call_args.kwargs["by_session_id"] == expected_session_id
 
 
 def test_patch_move_to_stage_resets_manifest_to_target(
@@ -153,6 +214,12 @@ def test_patch_move_to_stage_force_overrides_claim(
         source="codex",
         project_id=sample_project["id"],
     )
+    operator = SessionManager(temp_db).register(
+        external_id="operator-session",
+        machine_id="machine",
+        source="codex",
+        project_id=sample_project["id"],
+    )
     temp_db.execute(
         "UPDATE tasks SET claimed_by_session_id = %s WHERE id = %s",
         (owner.id, task.id),
@@ -161,7 +228,7 @@ def test_patch_move_to_stage_force_overrides_claim(
     response = stage_client.patch(
         f"/api/tasks/{task.id}/stages/pr",
         json={"action": "move_to", "force": True, "notes": "operator secret"},
-        headers={"X-Gobby-Session-Id": "session-header-1"},
+        headers={"X-Gobby-Session-Id": operator.id},
     )
 
     assert response.status_code == 200
@@ -176,7 +243,7 @@ def test_patch_move_to_stage_force_overrides_claim(
     assert forced_log.force is True
     assert forced_log.notes_present is True
     assert not hasattr(forced_log, "notes")
-    assert forced_log.request_session_id == "session-header-1"
+    assert forced_log.request_session_id == operator.id
 
 
 def test_patch_force_is_only_accepted_for_move_to(
@@ -225,7 +292,52 @@ def test_list_filter_by_stage_state(
     )
 
     assert response.status_code == 200
-    assert [task["id"] for task in response.json()["tasks"]] == [matching.id]
+    data = response.json()
+    assert [task["id"] for task in data["tasks"]] == [matching.id]
+    assert data["total"] == 1
+
+
+def test_list_stage_filter_uses_database_pagination(
+    temp_db,
+    sample_project,
+    stage_client: TestClient,
+) -> None:
+    tasks = [
+        make_task_with_manifest(
+            temp_db,
+            sample_project,
+            [spec("development", 0)],
+            title=f"Task {index}",
+        )[0]
+        for index in range(3)
+    ]
+
+    response = stage_client.get(
+        "/api/tasks",
+        params={
+            "project_id": sample_project["id"],
+            "stage": "development",
+            "limit": 1,
+            "offset": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 3
+    assert data["limit"] == 1
+    assert data["offset"] == 1
+    assert [task["id"] for task in data["tasks"]] == [tasks[1].id]
+
+
+def test_list_stage_state_requires_stage(sample_project, stage_client: TestClient) -> None:
+    response = stage_client.get(
+        "/api/tasks",
+        params={"project_id": sample_project["id"], "stage_state": "ready"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "stage_state requires stage"
 
 
 def test_list_filter_by_repeated_stage_query_values(

@@ -1,10 +1,12 @@
 """HTTP server lifespan and middleware behavior tests."""
 
+import asyncio
 import hashlib
 import hmac
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import ParamSpec, TypeVar, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -25,6 +27,13 @@ from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
+_P = ParamSpec("_P")
+_T = TypeVar("_T")
+
+
+async def _run_db(func: Callable[_P, _T], *args: _P.args, **kwargs: _P.kwargs) -> _T:
+    return await asyncio.to_thread(func, *args, **kwargs)
+
 
 def _required_auth_middleware_app(
     *,
@@ -40,6 +49,7 @@ def _required_auth_middleware_app(
         SimpleNamespace(
             auth_service=auth_service,
             services=SimpleNamespace(config=SimpleNamespace(bind_host=bind_host)),
+            run_db=_run_db,
         ),
     )
     app = FastAPI()
@@ -97,7 +107,7 @@ def test_loopback_hooks_remain_open_when_auth_mode_is_disabled() -> None:
 
 
 def test_required_by_default(temp_db: HubDatabase) -> None:
-    def build_services(config: DaemonConfig | None) -> ServiceContainer:
+    def services(config: DaemonConfig | None) -> ServiceContainer:
         return ServiceContainer(
             config=config,
             database=temp_db,
@@ -108,10 +118,10 @@ def test_required_by_default(temp_db: HubDatabase) -> None:
             llm_service=MagicMock(),
         )
 
-    fallback_server = HTTPServer(build_services(None))
-    configured_server = HTTPServer(build_services(DaemonConfig(auth_mode="disabled")))
+    fallback_server = HTTPServer(services(None))
+    configured_server = HTTPServer(services(DaemonConfig(auth_mode="disabled")))
     explicit_server = HTTPServer(
-        build_services(DaemonConfig(auth_mode="required")),
+        services(DaemonConfig(auth_mode="required")),
         auth_mode="disabled",
     )
 
@@ -153,10 +163,12 @@ def test_public_prefix_matrix() -> None:
         "/api/health",
         "/api/admin/health",
         "/api/admin/startup-progress",
+        "/api/sessions/register",
+        "/api/sessions/find_current",
+        "/api/sessions/statusline",
+        "/api/sessions/update_status",
         "/api/comms/webhooks/slack",
         "/api/github/webhooks/triage/project",
-        "/api/hooks/session-start",
-        "/api/sessions/current",
         "/assets/index.js",
         "/favicon.ico",
         "/logo.png",
@@ -165,8 +177,20 @@ def test_public_prefix_matrix() -> None:
         "/api/health/details",
         "/api/admin/health/details",
         "/api/admin/startup-progress/details",
+        "/api/hooks/session-start",
+        "/api/sessions/current",
+        "/api/sessions/session-id/transcript",
+        "/api/sessions/session-id/changes",
+        "/api/sessions/session-id/expire",
+        "/api/sessions/bulk-move",
+        "/api/sessions/session-id/rename",
+        "/api/sessions/session-id/stop",
         "/api/mcp",
+        "/api/mcp/tools/call",
+        "/api/mcp/servers",
         "/api/admin/status",
+        "/api/admin/metrics",
+        "/api/admin/config",
         "/mcp",
         "/memory",
     )
@@ -231,7 +255,12 @@ def test_bearer_and_alias_accepted(temp_db: HubDatabase, tmp_path: Path) -> None
     server = cast(
         HTTPServer,
         SimpleNamespace(
-            auth_service=AuthService(lambda: temp_db, "required", token_file=tmp_path / "missing")
+            auth_service=AuthService(
+                lambda: temp_db,
+                "required",
+                token_file=tmp_path / "missing",
+            ),
+            run_db=_run_db,
         ),
     )
     app = FastAPI()

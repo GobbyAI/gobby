@@ -40,22 +40,22 @@ def _build_filters(
     *,
     created_col: str = "created_at",
     project_col: str = "project_id",
-) -> tuple[str, list[str]]:
+) -> tuple[str, list[str | int]]:
     """Build SQL WHERE fragments and params for time + project filtering."""
     clauses: list[str] = []
-    params: list[str] = []
+    params: list[str | int] = []
 
     # Time filter: hours takes precedence over days
     if hours is not None and hours > 0:
-        clauses.append(f"AND {created_col} >= strftime('%Y-%m-%dT%H:%M:%S', 'now', ?)")
-        params.append(f"-{hours} hours")
+        clauses.append(f"AND {created_col} >= NOW() - (%s * INTERVAL '1 hour')")
+        params.append(hours)
     elif hours is None and days > 0:
-        clauses.append(f"AND {created_col} >= strftime('%Y-%m-%dT%H:%M:%S', 'now', ?)")
-        params.append(f"-{days} days")
+        clauses.append(f"AND {created_col} >= NOW() - (%s * INTERVAL '1 day')")
+        params.append(days)
     # hours=0 or days=0 means all time — no filter
 
     if project_id:
-        clauses.append(f"AND {project_col} = ?")
+        clauses.append(f"AND {project_col} = %s")
         params.append(project_id)
 
     return " ".join(clauses), params
@@ -91,7 +91,8 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             "closed_24h": 0,
         }
         try:
-            rows = db.fetchall(
+            rows = await server.run_db(
+                db.fetchall,
                 "SELECT task.state_bucket as task_state, COUNT(*) as cnt FROM tasks task "
                 f"WHERE 1=1 {time_filter} GROUP BY task_state",
                 tuple(params),
@@ -109,7 +110,8 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
                 created_col="t.created_at",
                 project_col="t.project_id",
             )
-            ready_rows = db.fetchall(
+            ready_rows = await server.run_db(
+                db.fetchall,
                 "SELECT COUNT(*) as cnt FROM tasks t "
                 f"{_current_stage_join_sql('t')} "
                 f"WHERE {_not_closed_or_escalated_sql('t')} "
@@ -128,7 +130,8 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             task_stats["ready_unblocked"] = ready_rows[0]["cnt"] if ready_rows else 0
 
             # Blocked = unresolved tasks with unresolved blocking deps
-            blocked_rows = db.fetchall(
+            blocked_rows = await server.run_db(
+                db.fetchall,
                 "SELECT COUNT(*) as cnt FROM tasks t "
                 "WHERE t.closed_at IS NULL "
                 f"{tf_aliased} "
@@ -142,7 +145,8 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             task_stats["blocked"] = blocked_rows[0]["cnt"] if blocked_rows else 0
 
             # Closed in last 24h (always relative to now, intersected with window)
-            closed_24h_rows = db.fetchall(
+            closed_24h_rows = await server.run_db(
+                db.fetchall,
                 "SELECT COUNT(*) as cnt FROM tasks "
                 f"WHERE closed_at >= NOW() - INTERVAL '1 day' {time_filter}",
                 tuple(params),
@@ -150,6 +154,7 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             task_stats["closed_24h"] = closed_24h_rows[0]["cnt"] if closed_24h_rows else 0
         except Exception as e:
             logger.warning(f"Failed to get time-filtered task stats: {e}")
+            raise
 
         # --- Sessions ---
         session_stats: dict[str, Any] = {
@@ -160,7 +165,8 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             "by_source": {},
         }
         try:
-            rows = db.fetchall(
+            rows = await server.run_db(
+                db.fetchall,
                 f"SELECT status, COUNT(*) as cnt FROM sessions "
                 f"WHERE 1=1 {time_filter} GROUP BY status",
                 tuple(params),
@@ -175,7 +181,8 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
 
             # By-source breakdown
             by_source: dict[str, dict[str, int]] = {}
-            source_rows = db.fetchall(
+            source_rows = await server.run_db(
+                db.fetchall,
                 "SELECT source, status, COUNT(*) as cnt FROM sessions "
                 f"WHERE 1=1 {time_filter} "
                 "GROUP BY source, status",
@@ -190,11 +197,13 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             session_stats["by_source"] = by_source
         except Exception as e:
             logger.warning(f"Failed to get time-filtered session stats: {e}")
+            raise
 
         # --- Memory ---
         memory_stats: dict[str, Any] = {"count": 0, "by_type": {}, "recent_count": 0}
         try:
-            rows = db.fetchall(
+            rows = await server.run_db(
+                db.fetchall,
                 f"SELECT memory_type, COUNT(*) as cnt FROM memories "
                 f"WHERE 1=1 {time_filter} GROUP BY memory_type",
                 tuple(params),
@@ -210,7 +219,8 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             memory_stats["by_type"] = by_type
 
             # Recent = created in last 24h (within the filtered set)
-            recent_rows = db.fetchall(
+            recent_rows = await server.run_db(
+                db.fetchall,
                 "SELECT COUNT(*) as cnt FROM memories "
                 f"WHERE created_at >= NOW() - INTERVAL '1 day' {time_filter}",
                 tuple(params),
@@ -218,6 +228,7 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             memory_stats["recent_count"] = recent_rows[0]["cnt"] if recent_rows else 0
         except Exception as e:
             logger.warning(f"Failed to get time-filtered memory stats: {e}")
+            raise
 
         # --- Metrics Events ---
         metrics_stats: dict[str, Any] = {
@@ -236,14 +247,16 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
                 since = datetime.now(UTC) - timedelta(days=days)
 
             # Tool call stats
-            tool_rows = db.fetchall(
+            tool_rows = await server.run_db(
+                db.fetchall,
                 "SELECT name, COUNT(*) as cnt FROM metrics_events "
                 "WHERE event_type = 'tool_call'"
                 + (" AND created_at >= %s" if since else "")
                 + " GROUP BY name ORDER BY cnt DESC LIMIT 5",
                 (since.isoformat(),) if since else (),
             )
-            tool_total_row = db.fetchone(
+            tool_total_row = await server.run_db(
+                db.fetchone,
                 "SELECT COUNT(*) as cnt FROM metrics_events "
                 "WHERE event_type = 'tool_call'" + (" AND created_at >= %s" if since else ""),
                 (since.isoformat(),) if since else (),
@@ -255,7 +268,8 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             }
 
             # Rule eval stats
-            rule_rows = db.fetchall(
+            rule_rows = await server.run_db(
+                db.fetchall,
                 "SELECT name, COUNT(*) as cnt, "
                 "SUM(CASE WHEN result = 'block' THEN 1 ELSE 0 END) as blocks "
                 "FROM metrics_events WHERE event_type = 'rule_eval'"
@@ -263,7 +277,8 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
                 + " GROUP BY name ORDER BY cnt DESC LIMIT 5",
                 (since.isoformat(),) if since else (),
             )
-            rule_total_row = db.fetchone(
+            rule_total_row = await server.run_db(
+                db.fetchone,
                 "SELECT COUNT(*) as cnt, "
                 "SUM(CASE WHEN result = 'block' THEN 1 ELSE 0 END) as blocks "
                 "FROM metrics_events WHERE event_type = 'rule_eval'"
@@ -279,14 +294,16 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             }
 
             # Skill stats
-            skill_rows = db.fetchall(
+            skill_rows = await server.run_db(
+                db.fetchall,
                 "SELECT name, event_type, COUNT(*) as cnt "
                 "FROM metrics_events WHERE event_type IN ('skill_search', 'skill_invoke')"
                 + (" AND created_at >= %s" if since else "")
                 + " GROUP BY name, event_type ORDER BY cnt DESC LIMIT 5",
                 (since.isoformat(),) if since else (),
             )
-            skill_total = db.fetchone(
+            skill_total = await server.run_db(
+                db.fetchone,
                 "SELECT "
                 "SUM(CASE WHEN event_type = 'skill_search' THEN 1 ELSE 0 END) as searches, "
                 "SUM(CASE WHEN event_type = 'skill_invoke' THEN 1 ELSE 0 END) as invocations "
@@ -304,6 +321,7 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             }
         except Exception as e:
             logger.warning(f"Failed to get metrics event stats: {e}")
+            raise
 
         return {
             "days": days,

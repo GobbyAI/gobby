@@ -26,11 +26,6 @@ _PUBLIC_PREFIXES = (
     "/api/auth",
     "/api/comms/webhooks",
     "/api/github/webhooks",
-    "/api/hooks",
-    "/api/llm",
-    "/api/mcp/tools",
-    "/api/sessions",
-    "/api/workflows/variables",
     "/assets",
 )
 
@@ -40,8 +35,10 @@ _PUBLIC_PATHS = frozenset(
         "/api/health",
         "/api/admin/health",
         "/api/admin/startup-progress",
-        "/api/embeddings",
-        "/api/voice/transcribe",
+        "/api/sessions/register",
+        "/api/sessions/find_current",
+        "/api/sessions/statusline",
+        "/api/sessions/update_status",
         "/favicon.ico",
         "/logo.png",
     }
@@ -89,7 +86,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if not auth_service.enabled and not remote_hook_requires_auth:
             return await call_next(request)
 
-        if auth_service.is_request_authenticated(request):
+        if await self.server.run_db(auth_service.is_request_authenticated, request):
             return await call_next(request)
 
         if path.startswith(_PROTECTED_PREFIXES):

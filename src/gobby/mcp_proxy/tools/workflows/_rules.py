@@ -114,7 +114,12 @@ def list_rules(
         rows = def_manager.list_all(workflow_type="rule", enabled=enabled, project_id=project_id)
 
     formatter = _rule_brief if brief else _rule_summary
-    rules = [formatter(r) for r in rows]
+    rules: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            rules.append(formatter(row))
+        except (json.JSONDecodeError, AttributeError, TypeError) as e:
+            logger.warning("Skipping unparseable rule '%s': %s", row.name, e)
     return {"success": True, "rules": rules, "count": len(rules)}
 
 

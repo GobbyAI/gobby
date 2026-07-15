@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from gobby.servers.responses import JSONResponse
+from gobby.workflows.pipeline_state import StepStatus
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -120,7 +121,8 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
             db=server.services.database, project_id=project_id
         )
 
-        executions = execution_manager.list_executions(
+        executions = await server.run_db(
+            execution_manager.list_executions,
             status=status_filter,
             pipeline_name=pipeline_name,
             session_id=session_id,
@@ -128,7 +130,8 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
             limit=limit,
             offset=offset,
         )
-        total, status_summary = execution_manager.execution_metrics(
+        total, status_summary = await server.run_db(
+            execution_manager.execution_metrics,
             status=status_filter,
             pipeline_name=pipeline_name,
             session_id=session_id,
@@ -136,10 +139,14 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
         )
 
         # Batch-load steps for all executions in one query
-        all_steps = execution_manager.get_steps_for_executions([e.id for e in executions])
+        all_steps = await server.run_db(
+            execution_manager.get_steps_for_executions, [e.id for e in executions]
+        )
 
         # Batch-load cron info for executions
-        cron_info = _batch_load_cron_info(server.services.database, [e.id for e in executions])
+        cron_info = await server.run_db(
+            _batch_load_cron_info, server.services.database, [e.id for e in executions]
+        )
 
         result = []
         for execution in executions:
@@ -219,7 +226,8 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
             db=server.services.database, project_id=project_id
         )
 
-        executions = execution_manager.search_executions(
+        executions = await server.run_db(
+            execution_manager.search_executions,
             query=q.strip(),
             search_errors=search_errors,
             search_outputs=search_outputs,
@@ -227,7 +235,8 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
             limit=limit,
             offset=offset,
         )
-        total = execution_manager.count_search_executions(
+        total = await server.run_db(
+            execution_manager.count_search_executions,
             query=q.strip(),
             search_errors=search_errors,
             search_outputs=search_outputs,
@@ -274,7 +283,7 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
         loader = server.services.workflow_loader
 
         if loader is None:
-            raise HTTPException(status_code=500, detail="Workflow loader not configured")
+            raise HTTPException(status_code=500, detail="Internal server error")
 
         project_id = request.project_id or ""
         if not project_id:
@@ -284,9 +293,7 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
 
         executor = server.services.get_pipeline_executor(project_id)
         if executor is None:
-            raise HTTPException(
-                status_code=500, detail="Pipeline executor not available for project"
-            )
+            raise HTTPException(status_code=500, detail="Internal server error")
 
         # Load the pipeline
         pipeline = await loader.load_pipeline(request.name, project_id)
@@ -306,9 +313,7 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
                 )
             except Exception as e:
                 logger.error(f"Failed to start detached pipeline run: {e}", exc_info=True)
-                raise HTTPException(
-                    status_code=500, detail=f"Failed to start detached run: {e}"
-                ) from None
+                raise HTTPException(status_code=500, detail="Internal server error") from e
             return JSONResponse(
                 status_code=202,
                 content={
@@ -348,7 +353,7 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
 
         except Exception as e:
             logger.error(f"Pipeline execution failed: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Execution error: {e}") from None
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/{execution_id}")
     async def get_execution(execution_id: str) -> dict[str, Any]:
@@ -367,15 +372,17 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
         )
 
         # Fetch execution
-        execution = execution_manager.get_execution(execution_id)
+        execution = await server.run_db(execution_manager.get_execution, execution_id)
         if execution is None:
             raise HTTPException(status_code=404, detail=f"Execution '{execution_id}' not found")
 
         # Fetch steps
-        steps = execution_manager.get_steps_for_execution(execution_id)
+        steps = await server.run_db(execution_manager.get_steps_for_execution, execution_id)
 
         # Load cron trigger info
-        cron_info = _batch_load_cron_info(server.services.database, [execution.id])
+        cron_info = await server.run_db(
+            _batch_load_cron_info, server.services.database, [execution.id]
+        )
 
         result: dict[str, Any] = {
             "id": execution.id,
@@ -398,7 +405,6 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
                     "completed_at": step.completed_at,
                     "output_json": step.output_json,
                     "error": step.error,
-                    "approval_token": step.approval_token,
                 }
                 for step in steps
             ],
@@ -420,24 +426,25 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
             200: Execution resumed and completed (or continued)
             202: Execution resumed but needs another approval
             404: Invalid token
+            409: Approval is no longer waiting
         """
         from gobby.storage.pipelines import LocalPipelineExecutionManager
         from gobby.workflows.pipeline_state import ApprovalRequired
 
         # Look up the execution's project from the approval token
         global_mgr = LocalPipelineExecutionManager(db=server.services.database, project_id=None)
-        step = global_mgr.get_step_by_approval_token(token)
+        step = await server.run_db(global_mgr.get_step_by_approval_token, token)
         if not step:
             raise HTTPException(status_code=404, detail="Invalid approval token")
-        execution_record = global_mgr.get_execution(step.execution_id)
+        if step.status != StepStatus.WAITING_APPROVAL:
+            raise HTTPException(status_code=409, detail="Approval is no longer waiting")
+        execution_record = await server.run_db(global_mgr.get_execution, step.execution_id)
         if not execution_record:
             raise HTTPException(status_code=404, detail="Execution not found")
 
         executor = server.services.get_pipeline_executor(execution_record.project_id)
         if executor is None:
-            raise HTTPException(
-                status_code=500, detail="Pipeline executor not available for project"
-            )
+            raise HTTPException(status_code=500, detail="Internal server error")
 
         try:
             execution = await executor.approve(token, approved_by=None)
@@ -461,8 +468,8 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
                 },
             )
 
-        except ValueError as e:
-            raise HTTPException(status_code=404, detail=f"Invalid token: {e}") from None
+        except ValueError:
+            raise HTTPException(status_code=409, detail="Approval is no longer waiting") from None
 
     @router.post("/reject/{token}")
     async def reject_execution(token: str) -> dict[str, Any]:
@@ -472,23 +479,24 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
         Returns:
             200: Execution rejected/cancelled
             404: Invalid token
+            409: Approval is no longer waiting
         """
         from gobby.storage.pipelines import LocalPipelineExecutionManager
 
         # Look up the execution's project from the rejection token
         global_mgr = LocalPipelineExecutionManager(db=server.services.database, project_id=None)
-        step = global_mgr.get_step_by_approval_token(token)
+        step = await server.run_db(global_mgr.get_step_by_approval_token, token)
         if not step:
             raise HTTPException(status_code=404, detail="Invalid rejection token")
-        execution_record = global_mgr.get_execution(step.execution_id)
+        if step.status != StepStatus.WAITING_APPROVAL:
+            raise HTTPException(status_code=409, detail="Approval is no longer waiting")
+        execution_record = await server.run_db(global_mgr.get_execution, step.execution_id)
         if not execution_record:
             raise HTTPException(status_code=404, detail="Execution not found")
 
         executor = server.services.get_pipeline_executor(execution_record.project_id)
         if executor is None:
-            raise HTTPException(
-                status_code=500, detail="Pipeline executor not available for project"
-            )
+            raise HTTPException(status_code=500, detail="Internal server error")
 
         try:
             execution = await executor.reject(token, rejected_by=None)
@@ -499,7 +507,7 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
                 "pipeline_name": execution.pipeline_name,
             }
 
-        except ValueError as e:
-            raise HTTPException(status_code=404, detail=f"Invalid token: {e}") from None
+        except ValueError:
+            raise HTTPException(status_code=409, detail="Approval is no longer waiting") from None
 
     return router

@@ -286,6 +286,7 @@ class TestListSessionsEdgeCases:
             response = test_client.get("/api/sessions")
 
         assert response.status_code == 500
+        assert response.json() == {"detail": "Internal server error"}
 
 
 # ============================================================================
@@ -481,6 +482,7 @@ class TestGetMessagesEdgeCases:
         response = test_client.get(f"/api/sessions/{session.id}/messages")
 
         assert response.status_code == 500
+        assert response.json() == {"detail": "Internal server error"}
 
 
 # ============================================================================

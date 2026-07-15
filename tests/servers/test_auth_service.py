@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import base64
-import hashlib
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -17,7 +15,13 @@ from gobby.config.app import DaemonConfig
 from gobby.config.ui import AuthConfig
 from gobby.runner_init import storage as storage_module
 from gobby.servers.auth_service import AuthService
-from gobby.storage.auth import LOCAL_API_TOKEN_HASH_KEY, AuthStore, hash_token
+from gobby.storage.auth import (
+    LOCAL_API_TOKEN_HASH_KEY,
+    AuthStore,
+    hash_password,
+    hash_token,
+    verify_password_hash,
+)
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
@@ -49,24 +53,18 @@ def _set_api_token(db: HubDatabase, token: str) -> None:
 
 
 def _password_hash(password: str, salt: bytes = b"auth-service-test") -> str:
-    derived = hashlib.scrypt(
-        password.encode(),
-        salt=salt,
-        n=2**14,
-        r=8,
-        p=1,
-        dklen=32,
-    )
-    return "$".join(
-        (
-            "scrypt",
-            str(2**14),
-            "8",
-            "1",
-            base64.b64encode(salt).decode(),
-            base64.b64encode(derived).decode(),
-        )
-    )
+    return hash_password(password, salt=salt)
+
+
+def test_password_hash_is_salted_argon2id() -> None:
+    first_hash = hash_password("correct-password")
+    second_hash = hash_password("correct-password")
+
+    assert first_hash.startswith("$argon2id$v=19$")
+    assert second_hash.startswith("$argon2id$v=19$")
+    assert first_hash != second_hash
+    assert verify_password_hash("correct-password", first_hash) is True
+    assert verify_password_hash("wrong-password", first_hash) is False
 
 
 def test_legacy_password_migration(temp_db: HubDatabase, tmp_path: Path) -> None:
@@ -82,7 +80,7 @@ def test_legacy_password_migration(temp_db: HubDatabase, tmp_path: Path) -> None
     assert secret_store.get("password") is None
     password_hash = config_store.get("auth.password_hash")
     assert isinstance(password_hash, str)
-    assert password_hash.startswith("scrypt$16384$8$1$")
+    assert password_hash.startswith("$argon2id$v=19$m=65536,t=3,p=4$")
     service = AuthService(lambda: temp_db, "required", token_file=tmp_path / "missing")
     assert service.verify_password("legacy-user", "legacy-password") is True
 
@@ -214,7 +212,7 @@ def test_server_auth_mode_uses_config_then_explicit_override(temp_db: HubDatabas
     assert explicit_server.auth_service.enabled is False
 
 
-def test_verify_password_uses_scrypt_hash(temp_db: HubDatabase, tmp_path: Path) -> None:
+def test_verify_password_uses_argon2id_hash(temp_db: HubDatabase, tmp_path: Path) -> None:
     config_store = ConfigStore(temp_db)
     config_store.set("auth.username", "operator")
     config_store.set("auth.password_hash", _password_hash("correct-password"))

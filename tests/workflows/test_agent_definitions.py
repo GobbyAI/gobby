@@ -51,13 +51,13 @@ def _blocked_tools(agent: dict[str, Any]) -> set[str]:
 
 def test_build_smoke_agent_runtime_mappings() -> None:
     expected = {
-        "backend-developer": ("codex", "gpt-5.5", "high"),
-        "fullstack-developer": ("codex", "gpt-5.5", "xhigh"),
-        "frontend-developer": ("codex", "gpt-5.5", "high"),
-        "tech-writer": ("codex", "gpt-5.5", "high"),
+        "backend-developer": ("codex", "gpt-5.6-sol", "high"),
+        "fullstack-developer": ("codex", "gpt-5.6-sol", "xhigh"),
+        "frontend-developer": ("codex", "gpt-5.6-sol", "high"),
+        "tech-writer": ("codex", "gpt-5.6-sol", "high"),
         "qa-reviewer": ("claude", "opus", "high"),
         "doc-reviewer": ("claude", "opus", "high"),
-        "holistic-reviewer": ("codex", "gpt-5.5", "high"),
+        "holistic-reviewer": ("codex", "gpt-5.6-sol", "high"),
         "merge-orchestrator": ("claude", "opus", "high"),
         "merge-worker": ("claude", "sonnet", "high"),
     }

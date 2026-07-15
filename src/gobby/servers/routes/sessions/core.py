@@ -10,9 +10,10 @@ import logging
 import subprocess  # nosec B404 # subprocess needed for git commit counting
 import time
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import ValidationError
 from starlette.requests import ClientDisconnect
 
 from gobby.agents.sandbox import (
@@ -20,12 +21,15 @@ from gobby.agents.sandbox import (
     web_chat_sandbox_config,
     web_chat_sandbox_policy_hash,
 )
-from gobby.servers.models import SessionRegisterRequest, WebChatSessionRequest
+from gobby.servers.models import (
+    SessionRegisterRequest,
+    StatuslineUpdateRequest,
+    WebChatSessionRequest,
+)
 from gobby.servers.routes.sessions.statusline_activity import (
     STATUSLINE_GAP_OBSERVATION_THRESHOLD_MS,
     STATUSLINE_GAP_WARNING_THRESHOLD_MS,
     last_session_activity,
-    prune_trackers,
     record_statusline_seen,
     should_emit_statusline_gap_warning,
 )
@@ -53,7 +57,7 @@ def _legacy_missing_machine_id() -> str:
     return machine_id
 
 
-def _get_commit_count(db: "HubDatabase", session: Any) -> int:
+async def _get_commit_count(db: "HubDatabase", session: Any) -> int:
     """Count git commits made during a session's timeframe.
 
     Args:
@@ -67,7 +71,8 @@ def _get_commit_count(db: "HubDatabase", session: Any) -> int:
     cwd = None
     if session.project_id:
         try:
-            row = db.fetchone(
+            row = await asyncio.to_thread(
+                db.fetchone,
                 "SELECT repo_path FROM projects WHERE id = %s",
                 (session.project_id,),
             )
@@ -112,7 +117,8 @@ def _get_commit_count(db: "HubDatabase", session: Any) -> int:
             f"--until={until_str}",
             "HEAD",
         ]
-        result = subprocess.run(  # nosec B603 # cmd built from hardcoded git arguments
+        result = await asyncio.to_thread(
+            subprocess.run,  # nosec B603 # cmd built from hardcoded git arguments
             cmd,
             capture_output=True,
             text=True,
@@ -145,18 +151,20 @@ async def _compute_resumability(
     if server.session_manager:
         db = server.session_manager.db
         try:
-            rows = db.fetchall(
+            rows = await server.run_db(
+                db.fetchall,
                 "SELECT DISTINCT parent_session_id FROM agent_runs "
-                "WHERE status IN ('pending', 'running') AND parent_session_id IS NOT NULL"
+                "WHERE status IN ('pending', 'running') AND parent_session_id IS NOT NULL",
             )
             active_agent_session_ids = {r["parent_session_id"] for r in rows}
         except Exception as e:
             logger.debug(f"Failed to fetch active agent session ids: {e}")
 
         try:
-            rows = db.fetchall(
+            rows = await server.run_db(
+                db.fetchall,
                 "SELECT DISTINCT session_id FROM pipeline_executions "
-                "WHERE status IN ('pending', 'running', 'waiting_approval') AND session_id IS NOT NULL"
+                "WHERE status IN ('pending', 'running', 'waiting_approval') AND session_id IS NOT NULL",
             )
             active_pipeline_session_ids = {r["session_id"] for r in rows}
         except Exception as e:
@@ -228,7 +236,7 @@ def register_core_routes(
                     ),
                 )
 
-            project_id = server.resolve_project_id(body.project_id, body.cwd)
+            project_id = await server.run_db(server.resolve_project_id, body.project_id, body.cwd)
 
             machine_id = body.machine_id.strip() if body.machine_id else None
             if not machine_id:
@@ -248,7 +256,8 @@ def register_core_routes(
                 sandbox_enabled = web_chat_sandbox_config(server.services.config).enabled
                 sandbox_policy_hash = web_chat_sandbox_policy_hash(server.services.config)
 
-            session = server.session_manager.create_web_chat_session(
+            session = await server.run_db(
+                server.session_manager.create_web_chat_session,
                 machine_id=machine_id,
                 project_id=project_id,
                 source=provider,
@@ -273,9 +282,7 @@ def register_core_routes(
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
             logger.error(f"Error creating web chat session: {e}", exc_info=True)
-            raise HTTPException(
-                status_code=500, detail="Internal server error while creating web chat session"
-            ) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/register")
     async def register_session(request_data: SessionRegisterRequest) -> dict[str, Any]:
@@ -306,10 +313,13 @@ def register_core_routes(
                     git_branch = git_metadata.get("git_branch")
 
             # Resolve project_id from cwd if not provided
-            project_id = server.resolve_project_id(request_data.project_id, request_data.cwd)
+            project_id = await server.run_db(
+                server.resolve_project_id, request_data.project_id, request_data.cwd
+            )
 
             # Register session in local storage
-            session = server.session_manager.register(
+            session = await server.run_db(
+                server.session_manager.register,
                 external_id=request_data.external_id,
                 machine_id=machine_id,
                 source=request_data.source or "Claude Code",
@@ -340,9 +350,7 @@ def register_core_routes(
 
         except Exception as e:
             logger.error(f"Error registering session: {e}", exc_info=True)
-            raise HTTPException(
-                status_code=500, detail="Internal server error while registering session"
-            ) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/usage")
     async def get_usage_breakdown(
@@ -358,7 +366,10 @@ def register_core_routes(
 
         sm = get_session_manager()
         tracker = SessionTokenTracker(db=sm.db)
-        return tracker.get_usage_summary(days=days, project_id=project_id)
+        return cast(
+            dict[str, Any],
+            await server.run_db(tracker.get_usage_summary, days=days, project_id=project_id),
+        )
 
     @router.post("/statusline")
     async def statusline_update(request: Request) -> dict[str, Any]:
@@ -373,18 +384,22 @@ def register_core_routes(
         except (ValueError, json.JSONDecodeError):
             raise HTTPException(status_code=400, detail="Invalid JSON") from None
 
-        external_id = body.get("session_id")
+        try:
+            update = StatuslineUpdateRequest.model_validate(body)
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.errors()) from None
+
+        external_id = update.session_id
         if not external_id:
             raise HTTPException(status_code=400, detail="Missing session_id") from None
 
         sm = get_session_manager()
-        session = sm.find_active_by_external_id(external_id, source="claude")
+        session = await server.run_db(sm.find_active_by_external_id, external_id, source="claude")
         if not session:
             # Session may not be registered yet (first ~1s of updates)
             return {"status": "ok", "warning": "session_not_found"}
 
         now = datetime.now(UTC)
-        prune_trackers(now)
         previous = record_statusline_seen(session.id, now)
         if previous is not None:
             gap_ms = int((now - previous).total_seconds() * 1000)
@@ -428,14 +443,15 @@ def register_core_routes(
                         STATUSLINE_GAP_OBSERVATION_THRESHOLD_MS,
                     )
 
-        sm.update_usage(
+        await server.run_db(
+            sm.update_usage,
             session_id=session.id,
-            input_tokens=body.get("input_tokens", 0),
-            output_tokens=body.get("output_tokens", 0),
-            cache_creation_tokens=body.get("cache_creation_tokens", 0),
-            cache_read_tokens=body.get("cache_read_tokens", 0),
-            context_window=body.get("context_window_size"),
-            model=body.get("model_id"),
+            input_tokens=update.input_tokens,
+            output_tokens=update.output_tokens,
+            cache_creation_tokens=update.cache_creation_tokens,
+            cache_read_tokens=update.cache_read_tokens,
+            context_window=update.context_window_size,
+            model=update.model_id,
         )
         inc_counter("statusline_posts_succeeded_total", attributes={"source": "claude"})
 
@@ -445,17 +461,13 @@ def register_core_routes(
                 build_session_usage_payload(
                     session_id=session.id,
                     project_id=session.project_id,
-                    model=body.get("model_id") if isinstance(body.get("model_id"), str) else None,
-                    context_window=(
-                        body.get("context_window_size")
-                        if isinstance(body.get("context_window_size"), int)
-                        else None
-                    ),
+                    model=update.model_id,
+                    context_window=update.context_window_size,
                     totals={
-                        "input_tokens": int(body.get("input_tokens", 0) or 0),
-                        "output_tokens": int(body.get("output_tokens", 0) or 0),
-                        "cache_creation_tokens": int(body.get("cache_creation_tokens", 0) or 0),
-                        "cache_read_tokens": int(body.get("cache_read_tokens", 0) or 0),
+                        "input_tokens": update.input_tokens,
+                        "output_tokens": update.output_tokens,
+                        "cache_creation_tokens": update.cache_creation_tokens,
+                        "cache_read_tokens": update.cache_read_tokens,
                     },
                     updated_at=now,
                 )
@@ -473,12 +485,14 @@ def register_core_routes(
     ) -> dict[str, Any]:
         """Return recent token events for a session."""
         sm = get_session_manager()
-        session = sm.get(session_id)
+        session = await server.run_db(sm.get, session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
 
         store = TokenEventStore(sm.db)
-        events = store.list_session_events(session_id, limit=limit, since=since)
+        events = await server.run_db(
+            store.list_session_events, session_id, limit=limit, since=since
+        )
         return {
             "session_id": session_id,
             "events": events,
@@ -586,7 +600,8 @@ def register_core_routes(
             # Over-fetch when resumability filtering is requested, since
             # non-resumable sessions will be removed post-query
             fetch_limit = limit * 3 if include_resumability else limit
-            sessions = server.session_manager.list(
+            sessions = await server.run_db(
+                server.session_manager.list,
                 project_id=project_id,
                 status=status,
                 source=source,
@@ -617,8 +632,8 @@ def register_core_routes(
             # claimed_task_refs / created_task_refs / closed_task_refs on each
             # session before serialization. Empty lists when the session never
             # touched a task.
-            task_refs_by_session = server.session_manager.fetch_task_refs_by_session(
-                [s.id for s in sessions]
+            task_refs_by_session = await server.run_db(
+                server.session_manager.fetch_task_refs_by_session, [s.id for s in sessions]
             )
             for session in sessions:
                 refs = task_refs_by_session.get(session.id)
@@ -670,7 +685,7 @@ def register_core_routes(
             raise
         except Exception as e:
             logger.error(f"Error listing sessions: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     # Remaining routes (bulk-move, get, find_current, find_parent,
     # update_status, expire, rename) are in lifecycle.py

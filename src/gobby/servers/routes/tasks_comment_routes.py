@@ -76,6 +76,17 @@ def register_task_comment_routes(
             task = resolve_task(task_id)
             resolved_id = task.id
 
+            if request_data.parent_comment_id is not None:
+                parent = server.task_manager.db.fetchone(
+                    "SELECT task_id FROM task_comments WHERE id = %s",
+                    (request_data.parent_comment_id,),
+                )
+                if parent is None or parent["task_id"] != resolved_id:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="parent_comment_id must reference a comment on the same task",
+                    )
+
             comment_id = str(uuid.uuid4())
             server.task_manager.db.execute(
                 """INSERT INTO task_comments (id, task_id, parent_comment_id, author, author_type, body)
@@ -107,10 +118,12 @@ def register_task_comment_routes(
         """Delete a comment."""
         try:
             task = resolve_task(task_id)
-            server.task_manager.db.execute(
+            cursor = server.task_manager.db.execute(
                 "DELETE FROM task_comments WHERE id = %s AND task_id = %s",
                 (comment_id, task.id),
             )
+            if cursor.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Comment not found")
             return {"deleted": True}
         except TaskNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e

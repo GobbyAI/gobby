@@ -407,6 +407,10 @@ class TestInstallCommandSharedStores:
         db = MagicMock()
         db.fetchone.return_value = None
         secret_store = MagicMock()
+        config_store = MagicMock()
+        mock_store_cls = MagicMock(return_value=secret_store)
+        mock_config_cls = MagicMock(return_value=config_store)
+        mock_provision_token = MagicMock()
 
         with (
             # all_flag auto-detects installed CLIs via these unpatched probes;
@@ -423,7 +427,12 @@ class TestInstallCommandSharedStores:
             patch(
                 "gobby.storage.hub.runtime.open_runtime_hub_database", return_value=db
             ) as mock_db_cls,
-            patch("gobby.cli.install.SecretStore", return_value=secret_store) as mock_store_cls,
+            patch.multiple(
+                "gobby.cli.install",
+                SecretStore=mock_store_cls,
+                ConfigStore=mock_config_cls,
+                _provision_local_api_token=mock_provision_token,
+            ),
             patch(
                 "gobby.cli.install._ensure_daemon_config",
                 return_value={"created": False, "path": str(tmp_path / "bootstrap.yaml")},
@@ -462,6 +471,8 @@ class TestInstallCommandSharedStores:
 
         mock_db_cls.assert_called_once_with()
         mock_store_cls.assert_called_once_with(db)
+        mock_config_cls.assert_called_once_with(db)
+        mock_provision_token.assert_called_once_with(config_store)
         assert mock_voice_install.call_args.kwargs["db"] is db
         assert mock_voice_install.call_args.kwargs["secret_store"] is secret_store
         assert mock_summary.call_args.kwargs["db"] is db
@@ -476,6 +487,10 @@ class TestInstallCommandSharedStores:
         db = MagicMock()
         db.fetchone.return_value = None
         secret_store = MagicMock()
+        config_store = MagicMock()
+        mock_store_cls = MagicMock(return_value=secret_store)
+        mock_config_cls = MagicMock(return_value=config_store)
+        mock_provision_token = MagicMock()
 
         with (
             # all_flag auto-detects installed CLIs via these unpatched probes;
@@ -492,7 +507,12 @@ class TestInstallCommandSharedStores:
             patch(
                 "gobby.storage.hub.runtime.open_runtime_hub_database", return_value=db
             ) as mock_db_cls,
-            patch("gobby.cli.install.SecretStore", return_value=secret_store) as mock_store_cls,
+            patch.multiple(
+                "gobby.cli.install",
+                SecretStore=mock_store_cls,
+                ConfigStore=mock_config_cls,
+                _provision_local_api_token=mock_provision_token,
+            ),
             patch(
                 "gobby.cli.install._ensure_daemon_config",
                 return_value={"created": False, "path": str(tmp_path / "bootstrap.yaml")},
@@ -539,6 +559,8 @@ class TestInstallCommandSharedStores:
 
         mock_db_cls.assert_called_once_with()
         mock_store_cls.assert_called_once_with(db)
+        mock_config_cls.assert_called_once_with(db)
+        mock_provision_token.assert_called_once_with(config_store)
         assert mock_embedding.call_args.kwargs["api_base_override"] == "http://lan:1234/v1"
         assert "embedding_api_key" not in mock_embedding.call_args.kwargs
         assert mock_embedding.call_args.kwargs["provider_override"] == "lmstudio"

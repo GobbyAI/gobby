@@ -1,12 +1,17 @@
 import os
 from pathlib import Path
-from unittest.mock import MagicMock
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from gobby.servers.routes.files import create_files_router
+from gobby.servers.routes.files import (
+    MAX_READ_SIZE,
+    _get_git_tracked_files,
+    create_files_router,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -14,6 +19,29 @@ PROJECT_ID = "11111111-1111-4111-8111-111111111111"
 GIT_PROJECT_ID = "22222222-2222-4222-8222-222222222222"
 GIT_DIFF_PROJECT_ID = "33333333-3333-4333-8333-333333333333"
 UNKNOWN_PROJECT_ID = "99999999-9999-4999-8999-999999999999"
+
+
+@pytest.mark.asyncio
+async def test_get_git_tracked_files_expected_failure_returns_none() -> None:
+    with patch(
+        "gobby.servers.routes.files._run_git",
+        new=AsyncMock(side_effect=OSError("git unavailable")),
+    ):
+        result = await _get_git_tracked_files("/project")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_git_tracked_files_unexpected_error_propagates() -> None:
+    with (
+        patch(
+            "gobby.servers.routes.files._run_git",
+            new=AsyncMock(side_effect=RuntimeError("programmer error")),
+        ),
+        pytest.raises(RuntimeError, match="programmer error"),
+    ):
+        await _get_git_tracked_files("/project")
 
 
 class TestFilesRoutes:
@@ -84,6 +112,11 @@ class TestFilesRoutes:
             return None
 
         db.fetchone.side_effect = mock_fetchone
+
+        async def run_db(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        server.run_db = AsyncMock(side_effect=run_db)
         return server
 
     @pytest.fixture
@@ -176,10 +209,29 @@ class TestFilesRoutes:
         )
         assert resp.status_code == 404
 
-    def test_read_truncation(self, client: TestClient, project_dir: Path) -> None:
+    def test_read_truncation(
+        self,
+        client: TestClient,
+        project_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         # Create a file larger than max_size
         large_content = "x" * 1000
-        (project_dir / "large.txt").write_text(large_content)
+        large_path = project_dir / "large.txt"
+        large_path.write_text(large_content)
+
+        bounded_reader = MagicMock()
+        bounded_reader.__enter__.return_value = bounded_reader
+        bounded_reader.read.side_effect = lambda byte_limit: large_content.encode()[:byte_limit]
+        original_open = Path.open
+
+        def instrumented_open(path: Path, *args: Any, **kwargs: Any) -> Any:
+            if path == large_path:
+                return bounded_reader
+            return original_open(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", instrumented_open)
+
         resp = client.get(
             "/api/files/read",
             params={"project_id": PROJECT_ID, "path": "large.txt", "max_size": 100},
@@ -188,6 +240,19 @@ class TestFilesRoutes:
         data = resp.json()
         assert data["truncated"] is True
         assert len(data["content"]) == 100
+        bounded_reader.read.assert_called_once_with(101)
+
+    @pytest.mark.parametrize("max_size", [-1, MAX_READ_SIZE + 1])
+    def test_read_rejects_out_of_range_max_size(
+        self,
+        client: TestClient,
+        max_size: int,
+    ) -> None:
+        resp = client.get(
+            "/api/files/read",
+            params={"project_id": PROJECT_ID, "path": "README.md", "max_size": max_size},
+        )
+        assert resp.status_code == 422
 
     # -- /image --
 
@@ -197,6 +262,22 @@ class TestFilesRoutes:
         )
         assert resp.status_code == 200
         assert "image" in resp.headers["content-type"]
+
+    def test_serve_svg_uses_restrictive_content_security_policy(
+        self, client: TestClient, project_dir: Path
+    ) -> None:
+        (project_dir / "images" / "active.svg").write_text(
+            '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
+        )
+
+        resp = client.get(
+            "/api/files/image", params={"project_id": PROJECT_ID, "path": "images/active.svg"}
+        )
+
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("image/svg+xml")
+        assert resp.headers["content-security-policy"] == "sandbox; default-src 'none'"
+        assert resp.headers["x-content-type-options"] == "nosniff"
 
     def test_serve_non_image_rejected(self, client: TestClient) -> None:
         resp = client.get(
@@ -333,6 +414,28 @@ class TestFilesRoutes:
     def test_git_status_nonexistent_project(self, client: TestClient) -> None:
         resp = client.get("/api/files/git-status", params={"project_id": UNKNOWN_PROJECT_ID})
         assert resp.status_code == 404
+
+    def test_git_status_expected_process_failure_returns_empty_status(
+        self, client: TestClient
+    ) -> None:
+        with patch(
+            "gobby.servers.routes.files._run_git",
+            new=AsyncMock(side_effect=OSError("git unavailable")),
+        ):
+            resp = client.get("/api/files/git-status", params={"project_id": PROJECT_ID})
+
+        assert resp.status_code == 200
+        assert resp.json() == {"branch": None, "files": {}}
+
+    def test_git_status_unexpected_error_propagates(self, client: TestClient) -> None:
+        with (
+            patch(
+                "gobby.servers.routes.files._run_git",
+                new=AsyncMock(side_effect=RuntimeError("programmer error")),
+            ),
+            pytest.raises(RuntimeError, match="programmer error"),
+        ):
+            client.get("/api/files/git-status", params={"project_id": PROJECT_ID})
 
     # -- /git-diff --
 

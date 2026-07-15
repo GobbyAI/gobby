@@ -3,12 +3,17 @@
 Split from the test_pipeline_executor monolith (#12210).
 """
 
+import asyncio
+from collections.abc import Callable
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.workflows.definitions import PipelineDefinition, PipelineStep
-from gobby.workflows.pipeline_state import ExecutionStatus
+from gobby.workflows.pipeline.gatekeeper import ApprovalManager
+from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
 
 pytestmark = pytest.mark.unit
 
@@ -38,7 +43,11 @@ class TestApprovalGateHandling:
 
     @pytest.mark.asyncio
     async def test_approval_gate_raises_approval_required(
-        self, mock_db, mock_execution_manager, mock_llm_service, pipeline_with_approval
+        self,
+        mock_db: MagicMock,
+        mock_execution_manager: MagicMock,
+        mock_llm_service: MagicMock,
+        pipeline_with_approval: PipelineDefinition,
     ) -> None:
         """Test that step with approval=required=True raises ApprovalRequired."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -64,7 +73,11 @@ class TestApprovalGateHandling:
 
     @pytest.mark.asyncio
     async def test_approval_gate_generates_unique_token(
-        self, mock_db, mock_execution_manager, mock_llm_service, pipeline_with_approval
+        self,
+        mock_db: MagicMock,
+        mock_execution_manager: MagicMock,
+        mock_llm_service: MagicMock,
+        pipeline_with_approval: PipelineDefinition,
     ) -> None:
         """Test that approval gate generates a unique approval token."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -89,7 +102,11 @@ class TestApprovalGateHandling:
 
     @pytest.mark.asyncio
     async def test_approval_gate_includes_message(
-        self, mock_db, mock_execution_manager, mock_llm_service, pipeline_with_approval
+        self,
+        mock_db: MagicMock,
+        mock_execution_manager: MagicMock,
+        mock_llm_service: MagicMock,
+        pipeline_with_approval: PipelineDefinition,
     ) -> None:
         """Test that approval gate includes the approval message."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -112,7 +129,11 @@ class TestApprovalGateHandling:
 
     @pytest.mark.asyncio
     async def test_approval_gate_stores_token_in_step_execution(
-        self, mock_db, mock_execution_manager, mock_llm_service, pipeline_with_approval
+        self,
+        mock_db: MagicMock,
+        mock_execution_manager: MagicMock,
+        mock_llm_service: MagicMock,
+        pipeline_with_approval: PipelineDefinition,
     ) -> None:
         """Test that approval token is stored in step execution record."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -138,7 +159,11 @@ class TestApprovalGateHandling:
 
     @pytest.mark.asyncio
     async def test_approval_gate_updates_execution_status_to_waiting(
-        self, mock_db, mock_execution_manager, mock_llm_service, pipeline_with_approval
+        self,
+        mock_db: MagicMock,
+        mock_execution_manager: MagicMock,
+        mock_llm_service: MagicMock,
+        pipeline_with_approval: PipelineDefinition,
     ) -> None:
         """Test that execution status is set to WAITING_APPROVAL when hitting approval gate."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -165,7 +190,11 @@ class TestApprovalGateHandling:
 
     @pytest.mark.asyncio
     async def test_approval_gate_updates_step_status_to_waiting(
-        self, mock_db, mock_execution_manager, mock_llm_service, pipeline_with_approval
+        self,
+        mock_db: MagicMock,
+        mock_execution_manager: MagicMock,
+        mock_llm_service: MagicMock,
+        pipeline_with_approval: PipelineDefinition,
     ) -> None:
         """Test that step status is set to WAITING_APPROVAL when approval required."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -192,7 +221,11 @@ class TestApprovalGateHandling:
 
     @pytest.mark.asyncio
     async def test_step_without_approval_does_not_pause(
-        self, mock_db, mock_execution_manager, mock_llm_service, simple_pipeline
+        self,
+        mock_db: MagicMock,
+        mock_execution_manager: MagicMock,
+        mock_llm_service: MagicMock,
+        simple_pipeline: PipelineDefinition,
     ) -> None:
         """Test that steps without approval gate do not pause."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -213,7 +246,7 @@ class TestApprovalGateHandling:
 
     @pytest.mark.asyncio
     async def test_approval_required_false_does_not_pause(
-        self, mock_db, mock_execution_manager, mock_llm_service
+        self, mock_db: MagicMock, mock_execution_manager: MagicMock, mock_llm_service: MagicMock
     ) -> None:
         """Test that approval.required=False does not pause execution."""
         from gobby.workflows.definitions import PipelineApproval
@@ -246,7 +279,11 @@ class TestApprovalGateHandling:
 
     @pytest.mark.asyncio
     async def test_approval_gate_executes_previous_steps_first(
-        self, mock_db, mock_execution_manager, mock_llm_service, pipeline_with_approval
+        self,
+        mock_db: MagicMock,
+        mock_execution_manager: MagicMock,
+        mock_llm_service: MagicMock,
+        pipeline_with_approval: PipelineDefinition,
     ) -> None:
         """Test that steps before approval gate are executed first."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -273,11 +310,11 @@ class TestApprovalGateHandling:
     @pytest.mark.asyncio
     async def test_approval_gate_calls_webhook_notifier(
         self,
-        mock_db,
-        mock_execution_manager,
-        mock_llm_service,
-        mock_webhook_notifier,
-        pipeline_with_approval,
+        mock_db: MagicMock,
+        mock_execution_manager: MagicMock,
+        mock_llm_service: MagicMock,
+        mock_webhook_notifier: AsyncMock,
+        pipeline_with_approval: PipelineDefinition,
     ) -> None:
         """Test that approval gate calls webhook notifier if configured."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -326,7 +363,7 @@ class TestApproveMethod:
 
     @pytest.mark.asyncio
     async def test_approve_finds_execution_by_token(
-        self, mock_db, mock_execution_manager, mock_llm_service
+        self, mock_db: MagicMock, mock_execution_manager: MagicMock, mock_llm_service: MagicMock
     ) -> None:
         """Test that approve() finds the execution by approval token."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -365,7 +402,7 @@ class TestApproveMethod:
 
     @pytest.mark.asyncio
     async def test_approve_invalid_token_raises_error(
-        self, mock_db, mock_execution_manager, mock_llm_service
+        self, mock_db: MagicMock, mock_execution_manager: MagicMock, mock_llm_service: MagicMock
     ) -> None:
         """Test that approve() raises ValueError for invalid token."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -383,7 +420,7 @@ class TestApproveMethod:
 
     @pytest.mark.asyncio
     async def test_approve_marks_step_as_approved(
-        self, mock_db, mock_execution_manager, mock_llm_service
+        self, mock_db: MagicMock, mock_execution_manager: MagicMock, mock_llm_service: MagicMock
     ) -> None:
         """Test that approve() marks the step as approved."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -422,7 +459,7 @@ class TestApproveMethod:
 
     @pytest.mark.asyncio
     async def test_approve_returns_execution(
-        self, mock_db, mock_execution_manager, mock_llm_service
+        self, mock_db: MagicMock, mock_execution_manager: MagicMock, mock_llm_service: MagicMock
     ) -> None:
         """Test that approve() returns the updated execution."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -460,7 +497,7 @@ class TestRejectMethod:
 
     @pytest.mark.asyncio
     async def test_reject_finds_execution_by_token(
-        self, mock_db, mock_execution_manager, mock_llm_service
+        self, mock_db: MagicMock, mock_execution_manager: MagicMock, mock_llm_service: MagicMock
     ) -> None:
         """Test that reject() finds the execution by approval token."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -499,7 +536,7 @@ class TestRejectMethod:
 
     @pytest.mark.asyncio
     async def test_reject_invalid_token_raises_error(
-        self, mock_db, mock_execution_manager, mock_llm_service
+        self, mock_db: MagicMock, mock_execution_manager: MagicMock, mock_llm_service: MagicMock
     ) -> None:
         """Test that reject() raises ValueError for invalid token."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -517,7 +554,7 @@ class TestRejectMethod:
 
     @pytest.mark.asyncio
     async def test_reject_sets_status_to_cancelled(
-        self, mock_db, mock_execution_manager, mock_llm_service
+        self, mock_db: MagicMock, mock_execution_manager: MagicMock, mock_llm_service: MagicMock
     ) -> None:
         """Test that reject() sets execution status to CANCELLED."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -554,7 +591,7 @@ class TestRejectMethod:
 
     @pytest.mark.asyncio
     async def test_reject_returns_execution(
-        self, mock_db, mock_execution_manager, mock_llm_service
+        self, mock_db: MagicMock, mock_execution_manager: MagicMock, mock_llm_service: MagicMock
     ) -> None:
         """Test that reject() returns the updated execution."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -588,7 +625,7 @@ class TestRejectMethod:
 
     @pytest.mark.asyncio
     async def test_reject_marks_step_as_failed(
-        self, mock_db, mock_execution_manager, mock_llm_service
+        self, mock_db: MagicMock, mock_execution_manager: MagicMock, mock_llm_service: MagicMock
     ) -> None:
         """Test that reject() marks the step as failed/rejected."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -631,7 +668,7 @@ class TestApproveReject:
 
     @pytest.mark.asyncio
     async def test_approve_without_loader(
-        self, mock_db, mock_execution_manager, mock_llm_service
+        self, mock_db: MagicMock, mock_execution_manager: MagicMock, mock_llm_service: MagicMock
     ) -> None:
         from gobby.workflows.pipeline_executor import PipelineExecutor
 
@@ -654,7 +691,7 @@ class TestApproveReject:
 
     @pytest.mark.asyncio
     async def test_reject_delegates_to_approval_manager(
-        self, mock_db, mock_execution_manager, mock_llm_service
+        self, mock_db: MagicMock, mock_execution_manager: MagicMock, mock_llm_service: MagicMock
     ) -> None:
         from gobby.workflows.pipeline_executor import PipelineExecutor
 
@@ -674,3 +711,118 @@ class TestApproveReject:
 
         result = await executor.reject("tok-1")
         assert result.status == ExecutionStatus.CANCELLED
+
+
+_REPLAY_PROJECT_ID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+
+
+def _create_waiting_approval(
+    db: HubDatabase,
+    token: str,
+) -> tuple[LocalPipelineExecutionManager, str]:
+    db.execute(
+        "INSERT INTO projects (id, name, created_at, updated_at) "
+        "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        (_REPLAY_PROJECT_ID, "Approval Replay Project"),
+    )
+    manager = LocalPipelineExecutionManager(db, project_id=_REPLAY_PROJECT_ID)
+    execution = manager.create_execution(pipeline_name="approval-replay")
+    waiting = manager.update_execution_status(
+        execution.id,
+        ExecutionStatus.WAITING_APPROVAL,
+    )
+    assert waiting is not None
+    step = manager.create_step_execution(execution_id=execution.id, step_id="gate")
+    manager.update_step_execution(
+        step.id,
+        status=StepStatus.WAITING_APPROVAL,
+        approval_token=token,
+    )
+    return manager, execution.id
+
+
+class TestApprovalReplayIntegration:
+    async def test_reject_after_approve_cannot_cancel_completed_execution(
+        self,
+        temp_db: HubDatabase,
+    ) -> None:
+        token = "approve-then-reject"
+        manager, execution_id = _create_waiting_approval(temp_db, token)
+        approvals = ApprovalManager(manager)
+
+        await approvals.approve_step(token, approved_by="reviewer")
+        completed = manager.update_execution_status(execution_id, ExecutionStatus.COMPLETED)
+        assert completed is not None
+
+        with pytest.raises(ValueError, match="already used"):
+            await approvals.reject_step(token, rejected_by="reviewer")
+
+        execution = manager.get_execution(execution_id)
+        step = manager.get_steps_for_execution(execution_id)[0]
+        assert execution is not None
+        assert execution.status == ExecutionStatus.COMPLETED
+        assert step.status == StepStatus.COMPLETED
+        assert step.approval_token is None
+
+    async def test_approve_after_reject_cannot_rewrite_rejected_step(
+        self,
+        temp_db: HubDatabase,
+    ) -> None:
+        token = "reject-then-approve"
+        manager, execution_id = _create_waiting_approval(temp_db, token)
+        approvals = ApprovalManager(manager)
+
+        rejected = await approvals.reject_step(token, rejected_by="reviewer")
+        assert rejected.status == ExecutionStatus.CANCELLED
+
+        with pytest.raises(ValueError, match="already used"):
+            await approvals.approve_step(token, approved_by="reviewer")
+
+        execution = manager.get_execution(execution_id)
+        step = manager.get_steps_for_execution(execution_id)[0]
+        assert execution is not None
+        assert execution.status == ExecutionStatus.CANCELLED
+        assert step.status == StepStatus.FAILED
+        assert step.approval_token is None
+
+    async def test_concurrent_double_approve_runs_post_gate_once(
+        self,
+        temp_db: HubDatabase,
+    ) -> None:
+        token = "concurrent-double-approve"
+        manager, execution_id = _create_waiting_approval(temp_db, token)
+        arrivals = 0
+        both_arrived = asyncio.Event()
+
+        async def synchronized_run_db(
+            func: Callable[..., object],
+            *args: object,
+            **kwargs: object,
+        ) -> object:
+            nonlocal arrivals
+            arrivals += 1
+            if arrivals == 2:
+                both_arrived.set()
+            await asyncio.wait_for(both_arrived.wait(), timeout=1)
+            return await asyncio.to_thread(func, *args, **kwargs)
+
+        approvals = ApprovalManager(manager, run_db=synchronized_run_db)
+        post_gate_runs = 0
+
+        async def approve_and_run_post_gate() -> None:
+            nonlocal post_gate_runs
+            await approvals.approve_step(token, approved_by="reviewer")
+            post_gate_runs += 1
+
+        results = await asyncio.gather(
+            approve_and_run_post_gate(),
+            approve_and_run_post_gate(),
+            return_exceptions=True,
+        )
+
+        assert post_gate_runs == 1
+        assert sum(result is None for result in results) == 1
+        assert sum(isinstance(result, ValueError) for result in results) == 1
+        step = manager.get_steps_for_execution(execution_id)[0]
+        assert step.status == StepStatus.COMPLETED
+        assert step.approval_token is None

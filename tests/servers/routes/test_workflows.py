@@ -12,9 +12,13 @@ import pytest
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.workflow_definitions import (
+    LocalWorkflowDefinitionManager,
+    compute_definition_hash,
+)
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.loader import WorkflowLoader
+from gobby.workflows.template_hashes import TemplateHashCache
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -146,6 +150,40 @@ class TestCreateWorkflow:
         data = resp.json()
         assert data["status"] == "success"
         assert data["definition"]["name"] == "new-workflow"
+
+    @pytest.mark.parametrize(
+        "definition_json",
+        ["not-json", '{"unexpected": true}'],
+    )
+    def test_rejects_invalid_rule_definition(
+        self, client: TestClient, definition_json: str
+    ) -> None:
+        resp = client.post(
+            "/api/workflows",
+            json={
+                "name": "invalid-rule",
+                "definition_json": definition_json,
+                "workflow_type": "rule",
+            },
+        )
+
+        assert resp.status_code == 400
+
+    def test_rejects_duplicate_name(
+        self, client: TestClient, wf_manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        existing = _create_workflow(wf_manager)
+
+        resp = client.post(
+            "/api/workflows",
+            json={
+                "name": existing["name"],
+                "definition_json": existing["definition_json"],
+                "workflow_type": "rule",
+            },
+        )
+
+        assert resp.status_code == 409
 
 
 # ---------------------------------------------------------------------------
@@ -302,6 +340,33 @@ type: pipeline
 # ---------------------------------------------------------------------------
 # POST /api/workflows/{id}/restore
 # ---------------------------------------------------------------------------
+
+
+class TestRestoreFromTemplate:
+    def test_same_named_pipeline_template_does_not_restore_rule(
+        self,
+        client: TestClient,
+        wf_manager: LocalWorkflowDefinitionManager,
+    ) -> None:
+        created = _create_workflow(wf_manager, name="shared-name")
+        original_json = created["definition_json"]
+        pipeline_json = '{"name":"shared-name","type":"pipeline"}'
+        cache = TemplateHashCache()
+        cache._hashes[("pipeline", "shared-name")] = compute_definition_hash(pipeline_json)
+        cache._json_cache[("pipeline", "shared-name")] = pipeline_json
+
+        with patch(
+            "gobby.workflows.template_hashes.get_template_hash_cache",
+            return_value=cache,
+        ):
+            list_resp = client.get("/api/workflows")
+            resp = client.post(f"/api/workflows/{created['id']}/restore-from-template")
+
+        listed_definition = list_resp.json()["definitions"][0]
+        assert listed_definition["has_template_update"] is False
+        assert resp.status_code == 200
+        assert resp.json()["message"] == "Definition already matches template"
+        assert wf_manager.get(created["id"]).definition_json == original_json
 
 
 class TestRestoreWorkflow:

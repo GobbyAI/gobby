@@ -133,6 +133,8 @@ def list_tasks(
     label: str | None = None,
     parent_task_id: str | None = None,
     title_like: str | None = None,
+    stages: list[str] | None = None,
+    stage_state: str | None = None,
     limit: int = 50,
     offset: int = 0,
     sort_by: str = "hierarchy",
@@ -209,6 +211,20 @@ def list_tasks(
     if title_like:
         query += " AND title LIKE %s ESCAPE '\\'"
         params.append(f"%{_escape_like_pattern(title_like)}%")
+    if stages:
+        placeholders = ", ".join("%s" for _ in stages)
+        query += f"""
+        AND EXISTS (
+            SELECT 1
+              FROM task_stage_states stage_filter
+             WHERE stage_filter.task_id = tasks.id
+               AND stage_filter.stage_name IN ({placeholders})
+        """
+        params.extend(stages)
+        if stage_state is not None:
+            query += " AND stage_filter.state = %s"
+            params.append(stage_state)
+        query += ")"
 
     valid_sorts = {
         "hierarchy": "priority ASC, created_at ASC, id ASC",

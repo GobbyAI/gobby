@@ -60,6 +60,7 @@ def mock_server():
     server.message_manager = AsyncMock()
     server.llm_service = MagicMock()
     server.resolve_project_id = MagicMock(return_value="proj-123")
+    server.run_db = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
     return server
 
 
@@ -119,6 +120,39 @@ class TestStatuslineEndpoint:
         mock_counter.assert_called_once_with(
             "statusline_posts_succeeded_total", attributes={"source": "claude"}
         )
+
+    def test_prunes_statusline_trackers_once_without_changing_activity(
+        self, client, mock_server
+    ) -> None:
+        session = _make_session()
+        mock_server.session_manager.find_active_by_external_id.return_value = session
+        mock_server.session_manager.update_usage.return_value = True
+        now = datetime(2026, 3, 17, 12, 0, 0, tzinfo=UTC)
+        stale_at = now - timedelta(seconds=statusline_activity.STATUSLINE_LAST_SEEN_TTL_SECONDS + 1)
+        activity_at = now - timedelta(seconds=30)
+        statusline_activity.record_session_activity(session.id, activity_at)
+        statusline_activity._STATUSLINE_LAST_SEEN["stale-session"] = stale_at
+        statusline_activity._LAST_PRUNE_AT = now - timedelta(
+            seconds=statusline_activity.STATUSLINE_PRUNE_INTERVAL_SECONDS
+        )
+        mock_prune = MagicMock(wraps=statusline_activity.prune_trackers)
+
+        with (
+            patch("gobby.servers.routes.sessions.core.datetime", autospec=True) as mock_datetime,
+            patch(
+                "gobby.servers.routes.sessions.core.prune_trackers",
+                mock_prune,
+                create=True,
+            ),
+            patch.object(statusline_activity, "prune_trackers", mock_prune),
+        ):
+            mock_datetime.now.return_value = now
+            response = client.post("/api/sessions/statusline", json={"session_id": "ext-123"})
+
+        assert response.status_code == 200
+        mock_prune.assert_called_once_with(now)
+        assert "stale-session" not in statusline_activity._STATUSLINE_LAST_SEEN
+        assert statusline_activity.last_session_activity(session.id) == activity_at
 
     def test_returns_warning_for_unknown_session(self, client, mock_server) -> None:
         mock_server.session_manager.find_active_by_external_id.return_value = None
@@ -188,6 +222,26 @@ class TestStatuslineEndpoint:
             context_window=None,
             model=None,
         )
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "input_tokens",
+            "output_tokens",
+            "cache_creation_tokens",
+            "cache_read_tokens",
+            "context_window_size",
+        ],
+    )
+    def test_rejects_invalid_usage_values(self, client, mock_server, field: str) -> None:
+        response = client.post(
+            "/api/sessions/statusline",
+            json={"session_id": "ext-123", field: "invalid"},
+        )
+
+        assert response.status_code == 422
+        mock_server.session_manager.find_active_by_external_id.assert_not_called()
+        mock_server.session_manager.update_usage.assert_not_called()
 
     def test_does_not_log_usage_gap_for_routine_updates(
         self, client, mock_server, caplog, enable_log_propagation

@@ -7,6 +7,7 @@ Provides file tree browsing, reading, and image serving endpoints.
 import asyncio
 import logging
 import mimetypes
+import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 # Max file size to read (1MB default)
 DEFAULT_MAX_SIZE = 1_048_576
+MAX_READ_SIZE = 16 * DEFAULT_MAX_SIZE
 GIT_PORCELAIN_STATUS_MIN_LINE_LENGTH = 4
 GIT_PORCELAIN_PATH_OFFSET = 3
 
@@ -90,6 +92,12 @@ def _resolve_safe_path(project_path: str, relative_path: str) -> Path:
     return target
 
 
+def _read_prefix(path: Path, byte_limit: int) -> bytes:
+    """Read at most ``byte_limit`` bytes from a file."""
+    with path.open("rb") as handle:
+        return handle.read(byte_limit)
+
+
 def _get_project_manager(server: "HTTPServer") -> LocalProjectManager:
     """Get a LocalProjectManager from the server's database."""
     if server.session_manager is None:
@@ -141,7 +149,7 @@ async def _get_git_tracked_files(project_path: str) -> set[str] | None:
                 if line:
                     files.add(line)
         return files
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return None
 
 
@@ -181,7 +189,7 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
         from gobby.storage.projects import PERSONAL_PROJECT_ID
 
         pm = _get_project_manager(server)
-        projects = pm.list()
+        projects = await server.run_db(pm.list)
         result: list[dict[str, Any]] = [
             {
                 "id": p.id,
@@ -207,7 +215,7 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
         Respects .gitignore via git ls-files.
         """
         pm = _get_project_manager(server)
-        project = pm.get(project_id)
+        project = await server.run_db(pm.get, project_id)
         if not project or not project.repo_path:
             raise HTTPException(404, f"Project not found: {project_id}")
 
@@ -253,7 +261,12 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
     async def read_file(
         project_id: str = Query(..., description="Project ID"),
         path: str = Query(..., description="Relative path within project"),
-        max_size: int = Query(DEFAULT_MAX_SIZE, description="Max bytes to read"),
+        max_size: int = Query(
+            DEFAULT_MAX_SIZE,
+            ge=0,
+            le=MAX_READ_SIZE,
+            description="Max bytes to read",
+        ),
     ) -> dict[str, Any]:
         """Read file content.
 
@@ -261,7 +274,7 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
         Binary files return metadata only.
         """
         pm = _get_project_manager(server)
-        project = pm.get(project_id)
+        project = await server.run_db(pm.get, project_id)
         if not project or not project.repo_path:
             raise HTTPException(404, "Project not found")
 
@@ -293,11 +306,10 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
             result["content"] = None
             return result
 
-        # Read text content
         # Read text content (async)
         try:
             loop = asyncio.get_running_loop()
-            raw = await loop.run_in_executor(None, target.read_bytes)
+            raw = await loop.run_in_executor(None, _read_prefix, target, max_size + 1)
             truncated = len(raw) > max_size
             if truncated:
                 raw = raw[:max_size]
@@ -317,7 +329,7 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
     ) -> FileResponse:
         """Serve an image file directly for <img> tags."""
         pm = _get_project_manager(server)
-        project = pm.get(project_id)
+        project = await server.run_db(pm.get, project_id)
         if not project or not project.repo_path:
             raise HTTPException(404, "Project not found")
 
@@ -330,7 +342,13 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(400, "Not an image file")
 
         mime_type = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
-        return FileResponse(target, media_type=mime_type)
+        headers = None
+        if extension == ".svg":
+            headers = {
+                "Content-Security-Policy": "sandbox; default-src 'none'",
+                "X-Content-Type-Options": "nosniff",
+            }
+        return FileResponse(target, media_type=mime_type, headers=headers)
 
     class WriteFileRequest(BaseModel):
         project_id: str
@@ -344,7 +362,7 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
         Refuses writes to .git/ directory.
         """
         pm = _get_project_manager(server)
-        project = pm.get(request.project_id)
+        project = await server.run_db(pm.get, request.project_id)
         if not project or not project.repo_path:
             raise HTTPException(404, "Project not found")
 
@@ -381,7 +399,7 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
         Status codes: M=modified, A=added, D=deleted, ?=untracked, R=renamed.
         """
         pm = _get_project_manager(server)
-        project = pm.get(project_id)
+        project = await server.run_db(pm.get, project_id)
         if not project or not project.repo_path:
             raise HTTPException(404, "Project not found")
 
@@ -415,7 +433,7 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
                     if file_path:
                         files[file_path] = status_code
                 result["files"] = files
-        except Exception:
+        except (OSError, subprocess.SubprocessError):
             logger.debug("Failed to get git status", exc_info=True)
 
         return result
@@ -427,7 +445,7 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
     ) -> dict[str, str]:
         """Get git diff for a specific file."""
         pm = _get_project_manager(server)
-        project = pm.get(project_id)
+        project = await server.run_db(pm.get, project_id)
         if not project or not project.repo_path:
             raise HTTPException(404, "Project not found")
 

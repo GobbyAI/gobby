@@ -36,6 +36,7 @@ __all__ = [
     "TaskSubtreeCascade",
     "Transaction",
     "WebChatSessionBootstrap",
+    "WorkflowDefinitionMutation",
 ]
 
 
@@ -211,6 +212,14 @@ class SystemSessionBootstrap:
     """Serializes one-time system-session bootstrap."""
 
     PRIORITY: ClassVar[int] = 800
+
+
+@dataclass(frozen=True)
+class WorkflowDefinitionMutation:
+    """Serializes read-modify-write updates to one workflow definition."""
+
+    PRIORITY: ClassVar[int] = 850
+    definition_id: str
 
 
 @dataclass(frozen=True)

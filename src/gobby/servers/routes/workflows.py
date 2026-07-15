@@ -4,13 +4,17 @@ Workflow definition routes for Gobby HTTP server.
 Provides CRUD endpoints for managing workflow definitions in the database.
 """
 
+import json
 import logging
 from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
-from pydantic import BaseModel
+from psycopg.errors import UniqueViolation
+from pydantic import BaseModel, ValidationError
+
+from gobby.workflows.definitions import RuleDefinitionBody
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -32,7 +36,7 @@ class CreateWorkflowRequest(BaseModel):
     priority: int = 100
     sources: list[str] | None = None
     canvas_json: str | None = None
-    source: Literal["installed", "agent", "project", "custom"] = "installed"
+    source: Literal["installed", "agent", "project", "custom"] = "custom"
     tags: list[str] | None = None
 
 
@@ -113,7 +117,8 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         """List workflow definitions with optional filters."""
         try:
             manager = _get_manager()
-            rows = manager.list_all(
+            rows = await server.run_db(
+                manager.list_all,
                 project_id=project_id,
                 workflow_type=workflow_type,
                 enabled=enabled,
@@ -157,7 +162,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         """Get a workflow definition by ID."""
         try:
             manager = _get_manager()
-            row = manager.get(definition_id)
+            row = await server.run_db(manager.get, definition_id)
             return {"status": "success", "definition": row.to_dict()}
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
@@ -170,7 +175,9 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         """Import a workflow definition from YAML content."""
         try:
             manager = _get_manager()
-            row = manager.import_from_yaml(request.yaml_content, project_id=request.project_id)
+            row = await server.run_db(
+                manager.import_from_yaml, request.yaml_content, project_id=request.project_id
+            )
             await _broadcast_workflow("workflow_created", row.id)
             return {"status": "success", "definition": row.to_dict()}
         except (ValueError, yaml.YAMLError) as e:
@@ -184,7 +191,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         """Duplicate a workflow definition with a new name."""
         try:
             manager = _get_manager()
-            row = manager.duplicate(definition_id, request.new_name)
+            row = await server.run_db(manager.duplicate, definition_id, request.new_name)
             await _broadcast_workflow("workflow_created", row.id)
             return {"status": "success", "definition": row.to_dict()}
         except ValueError as e:
@@ -197,8 +204,26 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
     async def create_workflow(request: CreateWorkflowRequest) -> dict[str, Any]:
         """Create a new workflow definition."""
         try:
+            definition = json.loads(request.definition_json)
+            if request.workflow_type == "rule":
+                RuleDefinitionBody.model_validate(definition)
+        except (json.JSONDecodeError, ValidationError) as e:
+            raise HTTPException(status_code=400, detail=f"Invalid definition_json: {e}") from e
+
+        try:
             manager = _get_manager()
-            row = manager.create(
+            existing = await server.run_db(
+                manager.get_by_name,
+                request.name,
+                project_id=request.project_id,
+            )
+            if existing is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Workflow definition '{request.name}' already exists",
+                )
+            row = await server.run_db(
+                manager.create,
                 name=request.name,
                 definition_json=request.definition_json,
                 workflow_type=request.workflow_type,
@@ -210,10 +235,21 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
                 sources=request.sources,
                 canvas_json=request.canvas_json,
                 source=request.source,
-                tags=request.tags,
+                tags=(
+                    None
+                    if request.tags is None
+                    else [tag for tag in request.tags if tag != "gobby"]
+                ),
             )
             await _broadcast_workflow("workflow_created", row.id)
             return {"status": "success", "definition": row.to_dict()}
+        except HTTPException:
+            raise
+        except UniqueViolation as e:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Workflow definition '{request.name}' already exists",
+            ) from e
         except Exception as e:
             logger.error(f"Error creating workflow definition: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
@@ -223,8 +259,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         """Toggle a workflow definition's enabled status."""
         try:
             manager = _get_manager()
-            row = manager.get(definition_id)
-            updated = manager.update(definition_id, enabled=not row.enabled)
+            updated = await server.run_db(manager.toggle_enabled, definition_id)
             await _broadcast_workflow("workflow_updated", definition_id)
             return {"status": "success", "definition": updated.to_dict()}
         except ValueError as e:
@@ -241,7 +276,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             fields = request.model_dump(exclude_unset=True)
             if not fields:
                 raise HTTPException(status_code=400, detail="No fields to update")
-            row = manager.update(definition_id, **fields)
+            row = await server.run_db(manager.update, definition_id, **fields)
             await _broadcast_workflow("workflow_updated", definition_id)
             return {"status": "success", "definition": row.to_dict()}
         except ValueError as e:
@@ -257,7 +292,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         """Delete a workflow definition (soft-delete)."""
         try:
             manager = _get_manager()
-            deleted = manager.delete(definition_id)
+            deleted = await server.run_db(manager.delete, definition_id)
             if not deleted:
                 raise HTTPException(status_code=404, detail="Definition not found")
             await _broadcast_workflow("workflow_deleted", definition_id)
@@ -275,21 +310,21 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             from gobby.workflows.template_hashes import get_template_hash_cache
 
             manager = _get_manager()
-            row = manager.get(definition_id)
+            row = await server.run_db(manager.get, definition_id)
             cache = get_template_hash_cache()
 
             if not cache.has_drift(row):
                 return {"status": "success", "message": "Definition already matches template"}
 
             # Re-read the template file and update the definition
-            template_json = cache.get_template_json(row.name)
+            template_json = cache.get_template_json(row.workflow_type, row.name)
             if template_json is None:
                 raise HTTPException(
                     status_code=404,
                     detail=f"No bundled template found for '{row.name}'",
                 )
 
-            updated = manager.update(row.id, definition_json=template_json)
+            updated = await server.run_db(manager.update, row.id, definition_json=template_json)
             await _broadcast_workflow("workflow_updated", definition_id)
             return {"status": "success", "definition": updated.to_dict()}
         except HTTPException:
@@ -305,7 +340,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         """Move a definition to project scope."""
         try:
             manager = _get_manager()
-            row = manager.move_to_project(definition_id, request.project_id)
+            row = await server.run_db(manager.move_to_project, definition_id, request.project_id)
             await _broadcast_workflow("workflow_updated", definition_id)
             return {"status": "success", "definition": row.to_dict()}
         except ValueError as e:
@@ -321,7 +356,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         """Move a definition to global (installed) scope."""
         try:
             manager = _get_manager()
-            row = manager.move_to_global(definition_id)
+            row = await server.run_db(manager.move_to_global, definition_id)
             await _broadcast_workflow("workflow_updated", definition_id)
             return {"status": "success", "definition": row.to_dict()}
         except ValueError as e:
@@ -337,7 +372,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         """Restore a soft-deleted workflow definition."""
         try:
             manager = _get_manager()
-            row = manager.restore(definition_id)
+            row = await server.run_db(manager.restore, definition_id)
             await _broadcast_workflow("workflow_updated", definition_id)
             return {"status": "success", "definition": row.to_dict()}
         except ValueError as e:

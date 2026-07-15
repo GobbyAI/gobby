@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from gobby.sessions.context_usage import effective_context_window_for_session
 from gobby.sessions.terminal_kill import kill_terminal_session
+from gobby.storage.projects import LocalProjectManager
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -33,7 +34,9 @@ def _legacy_missing_machine_id() -> str:
     return machine_id
 
 
-def _get_session_stats(db: "HubDatabase", session: Any) -> dict[str, int]:
+async def _get_session_stats(
+    server: "HTTPServer", db: "HubDatabase", session: Any
+) -> dict[str, int]:
     """Get activity stats for a session (tasks closed, memories, commits).
 
     Args:
@@ -47,7 +50,8 @@ def _get_session_stats(db: "HubDatabase", session: Any) -> dict[str, int]:
 
     # Tasks closed in this session
     try:
-        row = db.fetchone(
+        row = await server.run_db(
+            db.fetchone,
             """
             SELECT COUNT(*) AS count
               FROM session_tasks
@@ -61,7 +65,8 @@ def _get_session_stats(db: "HubDatabase", session: Any) -> dict[str, int]:
 
     # Memories created by this session
     try:
-        row = db.fetchone(
+        row = await server.run_db(
+            db.fetchone,
             "SELECT COUNT(*) AS count FROM memories WHERE source_session_id = %s",
             (session.id,),
         )
@@ -72,11 +77,12 @@ def _get_session_stats(db: "HubDatabase", session: Any) -> dict[str, int]:
     # Commits made during session timeframe
     from gobby.servers.routes.sessions.core import _get_commit_count
 
-    stats["commit_count"] = _get_commit_count(db, session)
+    stats["commit_count"] = await _get_commit_count(db, session)
 
     # Skills injected in this session
     try:
-        row = db.fetchone(
+        row = await server.run_db(
+            db.fetchone,
             """
             SELECT COUNT(DISTINCT skill_name) AS count
               FROM session_skills
@@ -116,17 +122,26 @@ def register_lifecycle_routes(
                     detail="Required: session_ids (list) and target_project_id",
                 )
 
-            moved_ids: list[str] = []
-            errors = []
-            for sid in session_ids:
-                try:
-                    session = server.session_manager.move_to_project(sid, target_project_id)
-                    if session is None:
-                        errors.append(f"Session {sid} not found")
-                        continue
-                    moved_ids.append(session.id)
-                except Exception as e:
-                    errors.append(f"Failed to move {sid}: {e}")
+            db = server.session_manager.db
+            project_manager = LocalProjectManager(db)
+            if await server.run_db(project_manager.get, target_project_id) is None:
+                raise HTTPException(status_code=400, detail="Target project not found")
+
+            def _move_sessions() -> tuple[list[str], list[str]]:
+                moved: list[str] = []
+                move_errors: list[str] = []
+                for sid in session_ids:
+                    try:
+                        session = server.session_manager.move_to_project(sid, target_project_id)
+                        if session is None:
+                            move_errors.append(f"Session {sid} not found")
+                            continue
+                        moved.append(session.id)
+                    except Exception as e:
+                        move_errors.append(f"Failed to move {sid}: {e}")
+                return moved, move_errors
+
+            moved_ids, errors = await server.run_db(_move_sessions)
 
             for sid in moved_ids:
                 await broadcast_session("session_updated", sid)
@@ -142,7 +157,7 @@ def register_lifecycle_routes(
             raise
         except Exception as e:
             logger.error(f"Bulk move sessions error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/{session_id}")
     async def sessions_get(session_id: str) -> dict[str, Any]:
@@ -161,7 +176,7 @@ def register_lifecycle_routes(
             if server.session_manager is None:
                 raise HTTPException(status_code=503, detail="Session manager not available")
 
-            session = server.session_manager.get(session_id)
+            session = await server.run_db(server.session_manager.get, session_id)
 
             if session is None:
                 raise HTTPException(status_code=404, detail="Session not found")
@@ -171,9 +186,8 @@ def register_lifecycle_routes(
             try:
                 from gobby.workflows.state_manager import SessionVariableManager
 
-                loaded_variables = SessionVariableManager(server.session_manager.db).get_variables(
-                    session_id
-                )
+                variable_manager = SessionVariableManager(server.session_manager.db)
+                loaded_variables = await server.run_db(variable_manager.get_variables, session_id)
                 if isinstance(loaded_variables, dict):
                     variables = loaded_variables
             except (psycopg.Error, ValueError, KeyError) as e:
@@ -185,7 +199,8 @@ def register_lifecycle_routes(
                     exc_info=True,
                 )
                 raise
-            session_data["context_window"] = effective_context_window_for_session(
+            session_data["context_window"] = await server.run_db(
+                effective_context_window_for_session,
                 session,
                 variables=variables,
                 db=server.session_manager.db,
@@ -193,7 +208,7 @@ def register_lifecycle_routes(
 
             # Enrich with activity stats
             try:
-                stats = _get_session_stats(server.session_manager.db, session)
+                stats = await _get_session_stats(server, server.session_manager.db, session)
                 session_data.update(stats)
             except Exception as e:
                 logger.warning(f"Failed to fetch session stats: {e}")
@@ -210,7 +225,7 @@ def register_lifecycle_routes(
             raise
         except Exception as e:
             logger.error(f"Sessions get error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/find_current")
     async def find_current_session(request: Request) -> dict[str, Any]:
@@ -239,7 +254,7 @@ def register_lifecycle_routes(
 
             # Resolve project_id from cwd if not provided
             if not project_id and cwd:
-                project_id = server.resolve_project_id(None, cwd)
+                project_id = await server.run_db(server.resolve_project_id, None, cwd)
 
             if not project_id:
                 raise HTTPException(
@@ -247,8 +262,12 @@ def register_lifecycle_routes(
                     detail="Required: project_id or cwd (to resolve project)",
                 )
 
-            session = server.session_manager.find_by_external_id(
-                external_id, machine_id, project_id, source
+            session = await server.run_db(
+                server.session_manager.find_by_external_id,
+                external_id,
+                machine_id,
+                project_id,
+                source,
             )
 
             if session is None:
@@ -260,7 +279,7 @@ def register_lifecycle_routes(
             raise
         except Exception as e:
             logger.error(f"Find current session error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/find_parent")
     async def find_parent_session(request: Request) -> dict[str, Any]:
@@ -294,9 +313,10 @@ def register_lifecycle_routes(
                         status_code=400,
                         detail="Required field: project_id or cwd",
                     )
-                project_id = server.resolve_project_id(None, cwd)
+                project_id = await server.run_db(server.resolve_project_id, None, cwd)
 
-            session = server.session_manager.find_parent(
+            session = await server.run_db(
+                server.session_manager.find_parent,
                 machine_id=machine_id,
                 source=source,
                 project_id=project_id,
@@ -311,7 +331,7 @@ def register_lifecycle_routes(
             raise
         except Exception as e:
             logger.error(f"Find parent session error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/find_by_terminal_context")
     async def find_session_by_terminal_context(request: Request) -> dict[str, Any]:
@@ -335,7 +355,8 @@ def register_lifecycle_routes(
                     detail="parent_pid must be a positive integer",
                 )
 
-            session = server.session_manager.find_active_by_terminal_context(
+            session = await server.run_db(
+                server.session_manager.find_active_by_terminal_context,
                 project_id=project_id,
                 parent_pid=parent_pid,
                 terminal_context=terminal_context if isinstance(terminal_context, dict) else None,
@@ -350,7 +371,7 @@ def register_lifecycle_routes(
             raise
         except Exception as e:
             logger.error(f"Find session by terminal context error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/update_status")
     async def update_session_status(request: Request) -> dict[str, Any]:
@@ -368,7 +389,7 @@ def register_lifecycle_routes(
             if not session_id or not status:
                 raise HTTPException(status_code=400, detail="Required fields: session_id, status")
 
-            session = server.session_manager.update_status(session_id, status)
+            session = await server.run_db(server.session_manager.update_status, session_id, status)
 
             if session is None:
                 raise HTTPException(status_code=404, detail="Session not found")
@@ -379,7 +400,7 @@ def register_lifecycle_routes(
             raise
         except Exception as e:
             logger.error(f"Update session status error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/{session_id}/expire")
     async def expire_session(session_id: str) -> dict[str, Any]:
@@ -388,7 +409,7 @@ def register_lifecycle_routes(
             if server.session_manager is None:
                 raise HTTPException(status_code=503, detail="Session manager not available")
 
-            session = server.session_manager.get(session_id)
+            session = await server.run_db(server.session_manager.get, session_id)
             if session is None:
                 raise HTTPException(status_code=404, detail="Session not found")
 
@@ -400,7 +421,7 @@ def register_lifecycle_routes(
             if session.terminal_context:
                 terminal_killed = await kill_terminal_session(session.terminal_context, session_id)
 
-            server.session_manager.update_status(session_id, "expired")
+            await server.run_db(server.session_manager.update_status, session_id, "expired")
             from gobby.servers.routes.sessions.statusline_activity import clear_trackers
 
             clear_trackers(session_id)
@@ -415,7 +436,7 @@ def register_lifecycle_routes(
             raise
         except Exception as e:
             logger.error(f"Expire session error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/{session_id}/rename")
     async def rename_session(session_id: str, request: Request) -> dict[str, Any]:
@@ -441,11 +462,12 @@ def register_lifecycle_routes(
             if len(title) > 200:
                 raise HTTPException(status_code=400, detail="Title must be 200 characters or fewer")
 
-            session = server.session_manager.get(session_id)
+            session = await server.run_db(server.session_manager.get, session_id)
             if session is None:
                 raise HTTPException(status_code=404, detail="Session not found")
 
-            result = server.session_manager.update_title(
+            result = await server.run_db(
+                server.session_manager.update_title,
                 session_id,
                 title,
                 title_source="manual",
@@ -459,4 +481,4 @@ def register_lifecycle_routes(
             raise
         except Exception as e:
             logger.error(f"Rename session error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e

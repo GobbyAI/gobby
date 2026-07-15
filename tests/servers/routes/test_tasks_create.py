@@ -52,3 +52,21 @@ def test_post_review_anchor(temp_db, sample_project) -> None:
     payload = response.json()
     assert payload["task_type"] == "review_anchor"
     assert task_manager.stage_states.list_for_task(payload["id"]) == []
+
+
+def test_post_rejects_unknown_project_id(temp_db) -> None:
+    server = create_http_server(
+        config=DaemonConfig(),
+        database=temp_db,
+        session_manager=SessionManager(temp_db),
+        task_manager=LocalTaskManager(temp_db),
+    )
+    unknown_project_id = "11111111-1111-4111-8111-111111111111"
+
+    response = TestClient(server.app).post(
+        "/api/tasks",
+        json={"title": "Bad project", "project_id": unknown_project_id},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": f"Project not found: {unknown_project_id}"}

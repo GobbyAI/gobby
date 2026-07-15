@@ -16,6 +16,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, ValidationError, field_validator
 
 from gobby.agents.reasoning import normalize_reasoning_effort
+from gobby.storage.hub.protocol import WorkflowDefinitionMutation
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -34,6 +35,24 @@ def _bundled_definition_path(agents_path: Path, name: str) -> Path:
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid agent definition name") from None
     return yaml_path
+
+
+def _reconcile_cancelled_agent_run(manager: Any, run_id: str) -> None:
+    """Persist cancellation after a process kill, retrying a transient manager failure."""
+    try:
+        cancelled = manager.cancel(run_id)
+    except Exception:
+        logger.warning(
+            "Failed to cancel agent run '%s'; retrying reconciliation",
+            run_id,
+            exc_info=True,
+        )
+        cancelled = manager.cancel(run_id)
+
+    if cancelled is None:
+        current = manager.get(run_id)
+        if current is not None and current.status in ("running", "pending"):
+            raise RuntimeError(f"Agent run '{run_id}' remained active after cancellation")
 
 
 class CreateAgentDefinitionRequest(BaseModel):
@@ -366,78 +385,79 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             if not fields:
                 raise HTTPException(status_code=400, detail="No fields to update")
 
-            # Load existing definition_json and apply updates
-            row = manager.get(definition_id)
-            body_dict: dict[str, Any] = _json.loads(row.definition_json)
-            preserved_extra_fields = {
-                "default_workflow",
-                "default_variables",
-                "lifecycle_variables",
-                "mode",
-                "sandbox",
-            }
-            body_dict = {
-                key: value
-                for key, value in body_dict.items()
-                if key in AgentDefinitionBody.model_fields or key in preserved_extra_fields
-            }
+            with manager.db.transaction_immediate(WorkflowDefinitionMutation(definition_id)):
+                # Load existing definition_json and apply updates
+                row = manager.get(definition_id)
+                body_dict: dict[str, Any] = _json.loads(row.definition_json)
+                preserved_extra_fields = {
+                    "default_workflow",
+                    "default_variables",
+                    "lifecycle_variables",
+                    "mode",
+                    "sandbox",
+                }
+                body_dict = {
+                    key: value
+                    for key, value in body_dict.items()
+                    if key in AgentDefinitionBody.model_fields or key in preserved_extra_fields
+                }
 
-            # Map body-level fields
-            for key in (
-                "name",
-                "description",
-                "sources",
-                "surfaces",
-                "role",
-                "goal",
-                "personality",
-                "instructions",
-                "provider",
-                "model",
-                "reasoning_effort",
-                "reasoning_required",
-                "fallback_agent",
-                "mode",
-                "isolation",
-                "base_branch",
-                "timeout",
-                "default_workflow",
-            ):
-                if key in fields:
-                    body_dict[key] = fields[key]
+                # Map body-level fields
+                for key in (
+                    "name",
+                    "description",
+                    "sources",
+                    "surfaces",
+                    "role",
+                    "goal",
+                    "personality",
+                    "instructions",
+                    "provider",
+                    "model",
+                    "reasoning_effort",
+                    "reasoning_required",
+                    "fallback_agent",
+                    "mode",
+                    "isolation",
+                    "base_branch",
+                    "timeout",
+                    "default_workflow",
+                ):
+                    if key in fields:
+                        body_dict[key] = fields[key]
 
-            # Nested dict fields that replace wholesale
-            if "workflows" in fields:
-                body_dict["workflows"] = fields["workflows"]
-            if "sandbox_config" in fields:
-                body_dict["sandbox"] = fields["sandbox_config"]
-            if "lifecycle_variables" in fields:
-                body_dict["lifecycle_variables"] = fields["lifecycle_variables"]
-            if "default_variables" in fields:
-                body_dict["default_variables"] = fields["default_variables"]
-            for key in (
-                "steps",
-                "step_variables",
-                "exit_condition",
-                "blocked_tools",
-                "blocked_mcp_tools",
-            ):
-                if key in fields:
-                    body_dict[key] = fields[key]
+                # Nested dict fields that replace wholesale
+                if "workflows" in fields:
+                    body_dict["workflows"] = fields["workflows"]
+                if "sandbox_config" in fields:
+                    body_dict["sandbox"] = fields["sandbox_config"]
+                if "lifecycle_variables" in fields:
+                    body_dict["lifecycle_variables"] = fields["lifecycle_variables"]
+                if "default_variables" in fields:
+                    body_dict["default_variables"] = fields["default_variables"]
+                for key in (
+                    "steps",
+                    "step_variables",
+                    "exit_condition",
+                    "blocked_tools",
+                    "blocked_mcp_tools",
+                ):
+                    if key in fields:
+                        body_dict[key] = fields[key]
 
-            update_fields: dict[str, Any] = {
-                "definition_json": _json.dumps(body_dict),
-            }
-            if "description" in fields:
-                update_fields["description"] = fields["description"]
-            if "enabled" in fields:
-                update_fields["enabled"] = fields["enabled"]
-            if "name" in fields:
-                update_fields["name"] = fields["name"]
-            if "tags" in fields:
-                update_fields["tags"] = fields["tags"]
+                update_fields: dict[str, Any] = {
+                    "definition_json": _json.dumps(body_dict),
+                }
+                if "description" in fields:
+                    update_fields["description"] = fields["description"]
+                if "enabled" in fields:
+                    update_fields["enabled"] = fields["enabled"]
+                if "name" in fields:
+                    update_fields["name"] = fields["name"]
+                if "tags" in fields:
+                    update_fields["tags"] = fields["tags"]
 
-            row = manager.update(definition_id, **update_fields)
+                row = manager.update(definition_id, **update_fields)
             return {"status": "success", "definition": row.to_dict()}
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
@@ -506,22 +526,23 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             import json as _json
 
             manager = _get_manager()
-            row = manager.get(definition_id)
-            body_dict: dict[str, Any] = _json.loads(row.definition_json)
+            with manager.db.transaction_immediate(WorkflowDefinitionMutation(definition_id)):
+                row = manager.get(definition_id)
+                body_dict: dict[str, Any] = _json.loads(row.definition_json)
 
-            workflows = body_dict.get("workflows", {})
-            rules: list[str] = list(workflows.get("rules", []))
+                workflows = body_dict.get("workflows", {})
+                rules: list[str] = list(workflows.get("rules", []))
 
-            if request.remove:
-                rules = [r for r in rules if r not in request.remove]
-            if request.add:
-                for rule in request.add:
-                    if rule not in rules:
-                        rules.append(rule)
+                if request.remove:
+                    rules = [r for r in rules if r not in request.remove]
+                if request.add:
+                    for rule in request.add:
+                        if rule not in rules:
+                            rules.append(rule)
 
-            workflows["rules"] = rules
-            body_dict["workflows"] = workflows
-            manager.update(definition_id, definition_json=_json.dumps(body_dict))
+                workflows["rules"] = rules
+                body_dict["workflows"] = workflows
+                manager.update(definition_id, definition_json=_json.dumps(body_dict))
 
             return {"status": "success", "rules": rules}
         except ValueError as e:
@@ -539,31 +560,32 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             import json as _json
 
             manager = _get_manager()
-            row = manager.get(definition_id)
-            body_dict: dict[str, Any] = _json.loads(row.definition_json)
+            with manager.db.transaction_immediate(WorkflowDefinitionMutation(definition_id)):
+                row = manager.get(definition_id)
+                body_dict: dict[str, Any] = _json.loads(row.definition_json)
 
-            workflows = body_dict.get("workflows", {})
-            selectors = workflows.get("rule_selectors") or {"include": [], "exclude": []}
-            include: list[str] = list(selectors.get("include", []))
-            exclude: list[str] = list(selectors.get("exclude", []))
+                workflows = body_dict.get("workflows", {})
+                selectors = workflows.get("rule_selectors") or {"include": [], "exclude": []}
+                include: list[str] = list(selectors.get("include", []))
+                exclude: list[str] = list(selectors.get("exclude", []))
 
-            if request.remove_include:
-                include = [s for s in include if s not in request.remove_include]
-            if request.add_include:
-                for s in request.add_include:
-                    if s not in include:
-                        include.append(s)
-            if request.remove_exclude:
-                exclude = [s for s in exclude if s not in request.remove_exclude]
-            if request.add_exclude:
-                for s in request.add_exclude:
-                    if s not in exclude:
-                        exclude.append(s)
+                if request.remove_include:
+                    include = [s for s in include if s not in request.remove_include]
+                if request.add_include:
+                    for s in request.add_include:
+                        if s not in include:
+                            include.append(s)
+                if request.remove_exclude:
+                    exclude = [s for s in exclude if s not in request.remove_exclude]
+                if request.add_exclude:
+                    for s in request.add_exclude:
+                        if s not in exclude:
+                            exclude.append(s)
 
-            rule_selectors = {"include": include, "exclude": exclude}
-            workflows["rule_selectors"] = rule_selectors
-            body_dict["workflows"] = workflows
-            manager.update(definition_id, definition_json=_json.dumps(body_dict))
+                rule_selectors = {"include": include, "exclude": exclude}
+                workflows["rule_selectors"] = rule_selectors
+                body_dict["workflows"] = workflows
+                manager.update(definition_id, definition_json=_json.dumps(body_dict))
 
             return {"status": "success", "rule_selectors": rule_selectors}
         except ValueError as e:
@@ -579,21 +601,22 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             import json as _json
 
             manager = _get_manager()
-            row = manager.get(definition_id)
-            body_dict: dict[str, Any] = _json.loads(row.definition_json)
+            with manager.db.transaction_immediate(WorkflowDefinitionMutation(definition_id)):
+                row = manager.get(definition_id)
+                body_dict: dict[str, Any] = _json.loads(row.definition_json)
 
-            workflows = body_dict.get("workflows", {})
-            variables: dict[str, Any] = dict(workflows.get("variables", {}))
+                workflows = body_dict.get("workflows", {})
+                variables: dict[str, Any] = dict(workflows.get("variables", {}))
 
-            if request.remove:
-                for key in request.remove:
-                    variables.pop(key, None)
-            if request.set:
-                variables.update(request.set)
+                if request.remove:
+                    for key in request.remove:
+                        variables.pop(key, None)
+                if request.set:
+                    variables.update(request.set)
 
-            workflows["variables"] = variables
-            body_dict["workflows"] = workflows
-            manager.update(definition_id, definition_json=_json.dumps(body_dict))
+                workflows["variables"] = variables
+                body_dict["workflows"] = workflows
+                manager.update(definition_id, definition_json=_json.dumps(body_dict))
 
             return {"status": "success", "variables": variables}
         except ValueError as e:
@@ -706,10 +729,10 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                     detail=f"Agent run '{run_id}' is not active (status={run.status})",
                 )
 
-            result = await kill_agent(run, db, signal_name="TERM")
-
-            # Update DB status
-            manager.cancel(run_id)
+            try:
+                result = await kill_agent(run, db, signal_name="TERM")
+            finally:
+                _reconcile_cancelled_agent_run(manager, run_id)
 
             return {"status": "success", "result": result}
         except HTTPException:

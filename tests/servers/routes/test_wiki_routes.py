@@ -5,9 +5,10 @@ import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import MagicMock
 
 import pytest
-from fastapi import FastAPI, UploadFile
+from fastapi import FastAPI, HTTPException, UploadFile
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
@@ -277,10 +278,11 @@ def reset_fakes(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def client() -> TestClient:
+def client(temp_db: Any, tmp_path: Path) -> TestClient:
+    project = LocalProjectManager(temp_db).create(name="wiki-route-client", repo_path=str(tmp_path))
     app = FastAPI()
     server = SimpleNamespace(
-        services=SimpleNamespace(config=SimpleNamespace(), database=None, project_id=None)
+        services=SimpleNamespace(config=SimpleNamespace(), database=temp_db, project_id=project.id)
     )
     app.include_router(create_wiki_router(server))
     return TestClient(app)
@@ -540,8 +542,10 @@ def test_ingest_mixed_urls_and_paths_routes_to_gateway(client: TestClient) -> No
     )
 
     assert response.status_code == 200
+    project_root = Path(cast(str, FakeGateway.instances[-1].project))
+    resolved_path = str(project_root / "docs/path with spaces.md")
     body = response.json()
-    assert body["payload"]["changed_paths"] == ["docs/path with spaces.md"]
+    assert body["payload"]["changed_paths"] == [resolved_path]
     assert body["payload"]["results"][0]["payload"]["accepted"][0]["requested_url"] == (
         "https://example.test/a"
     )
@@ -549,7 +553,7 @@ def test_ingest_mixed_urls_and_paths_routes_to_gateway(client: TestClient) -> No
         ("ingest_url", ["https://example.test/a"]),
         (
             "ingest_file",
-            {"path": "docs/path with spaces.md", "exists": False},
+            {"path": resolved_path, "exists": False},
         ),
         ("index", None),
     ]
@@ -565,8 +569,10 @@ def test_ingest_mixed_urls_and_multiple_paths_flattens_results(client: TestClien
     )
 
     assert response.status_code == 200
+    project_root = Path(cast(str, FakeGateway.instances[-1].project))
+    resolved_paths = [str(project_root / "docs/a.md"), str(project_root / "docs/b.md")]
     body = response.json()
-    assert body["payload"]["changed_paths"] == ["docs/a.md", "docs/b.md"]
+    assert body["payload"]["changed_paths"] == resolved_paths
     assert [result["command"] for result in body["payload"]["results"]] == [
         "ingest_url",
         "ingest_file",
@@ -575,8 +581,8 @@ def test_ingest_mixed_urls_and_multiple_paths_flattens_results(client: TestClien
     assert all("results" not in result["payload"] for result in body["payload"]["results"])
     assert FakeGateway.instances[-1].calls == [
         ("ingest_url", ["https://example.test/a"]),
-        ("ingest_file", {"path": "docs/a.md", "exists": False}),
-        ("ingest_file", {"path": "docs/b.md", "exists": False}),
+        ("ingest_file", {"path": resolved_paths[0], "exists": False}),
+        ("ingest_file", {"path": resolved_paths[1], "exists": False}),
         ("index", None),
     ]
 
@@ -593,11 +599,21 @@ def test_ingest_mixed_ignores_invalid_gateway_changed_paths(client: TestClient) 
     )
 
     assert response.status_code == 200
+    project_root = Path(cast(str, FakeGateway.instances[-1].project))
     body = response.json()
     assert body["payload"]["changed_paths"] == [
         "raw/url.md",
-        "docs/path with spaces.md",
+        str(project_root / "docs/path with spaces.md"),
     ]
+
+
+@pytest.mark.parametrize("path", ["/etc/passwd", "../outside.md"])
+def test_ingest_rejects_paths_outside_project(client: TestClient, path: str) -> None:
+    response = client.post("/api/wiki/ingest", json={"path": path})
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Ingest path must stay inside project"
+    assert FakeGateway.instances == []
 
 
 def test_ingest_url_batch_passthrough_and_indexing(client: TestClient) -> None:
@@ -898,5 +914,65 @@ async def test_stage_upload_unlinks_temp_file_on_read_error(
     with pytest.raises(RuntimeError, match="upload read failed"):
         await _stage_upload(cast(UploadFile, FailingUpload()))
 
+    assert created_paths
+    assert created_paths[0].exists() is False
+
+
+@pytest.mark.asyncio
+async def test_stage_upload_checks_disk_and_accepts_exact_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checked: list[tuple[Path, int, str]] = []
+    original_named_temporary_file = tempfile.NamedTemporaryFile
+
+    def named_temporary_file(*args: Any, **kwargs: Any) -> Any:
+        kwargs["dir"] = tmp_path
+        return original_named_temporary_file(*args, **kwargs)
+
+    def check_disk(directory: Path, incoming_bytes: int, *, label: str) -> None:
+        checked.append((directory, incoming_bytes, label))
+
+    upload = UploadFile(filename="note.md", file=tempfile.SpooledTemporaryFile())
+    upload.file.write(b"1234")
+    upload.file.seek(0)
+    upload.size = 4
+    monkeypatch.setattr(tempfile, "NamedTemporaryFile", named_temporary_file)
+    monkeypatch.setattr(wiki_routes, "ensure_disk_space", check_disk)
+
+    staged_path = await _stage_upload(upload, max_bytes=4)
+    try:
+        assert staged_path.read_bytes() == b"1234"
+        assert checked == [(tmp_path, 4, "Wiki upload")]
+    finally:
+        staged_path.unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
+async def test_stage_upload_rejects_oversize_and_unlinks_temp_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created_paths: list[Path] = []
+    original_named_temporary_file = tempfile.NamedTemporaryFile
+
+    def named_temporary_file(*args: Any, **kwargs: Any) -> Any:
+        kwargs["dir"] = tmp_path
+        staged = original_named_temporary_file(*args, **kwargs)
+        created_paths.append(Path(staged.name))
+        return staged
+
+    upload = UploadFile(filename="note.md", file=tempfile.SpooledTemporaryFile())
+    upload.file.write(b"12345")
+    upload.file.seek(0)
+    upload.size = 5
+    monkeypatch.setattr(tempfile, "NamedTemporaryFile", named_temporary_file)
+    monkeypatch.setattr(wiki_routes, "ensure_disk_space", MagicMock())
+
+    with pytest.raises(HTTPException) as exc_info:
+        await _stage_upload(upload, max_bytes=4)
+
+    assert exc_info.value.status_code == 413
+    assert exc_info.value.detail == "Wiki upload exceeds 4 byte limit"
     assert created_paths
     assert created_paths[0].exists() is False

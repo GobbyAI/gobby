@@ -10,7 +10,7 @@ workflow/session context when body arguments target another session.
 from __future__ import annotations
 
 import uuid
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -26,6 +26,7 @@ PROJECT_ID = str(uuid.uuid4())
 def _make_server(db: MagicMock | None = None) -> MagicMock:
     server = MagicMock()
     server.session_manager = MagicMock()
+    server.run_db = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
     if db is not None:
         server.session_manager.db = db
     return server

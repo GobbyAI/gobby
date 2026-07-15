@@ -29,7 +29,11 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def runner() -> CliRunner:
+def runner(monkeypatch: pytest.MonkeyPatch) -> CliRunner:
+    monkeypatch.setattr(
+        "gobby.cli.installers.ide_config.find_vscode_family_ides_needing_terminal_integration",
+        lambda: [],
+    )
     return CliRunner()
 
 

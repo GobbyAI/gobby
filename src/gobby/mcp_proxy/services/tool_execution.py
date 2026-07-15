@@ -174,6 +174,7 @@ async def call_tool(
     session_id: str | None = None,
     strip_unknown: bool = False,
     enforce_workflow: bool = True,
+    timeout: float | None = None,
 ) -> Any:
     """Execute a tool with optional pre-validation."""
     server_name = service._resolve_server_name(server_name)
@@ -226,6 +227,7 @@ async def call_tool(
                 session_id,
                 strip_unknown=strip_unknown,
                 enforce_workflow=enforce_workflow,
+                timeout=timeout,
             )
         return {
             "success": False,
@@ -328,6 +330,7 @@ async def call_tool(
         arguments=arguments,
         effective_session_id=effective_session_id,
         emit_after_workflow=enforce_workflow,
+        timeout=timeout,
     )
 
 
@@ -339,6 +342,7 @@ async def _execute_tool_dispatch(
     arguments: dict[str, Any],
     effective_session_id: str | None,
     emit_after_workflow: bool,
+    timeout: float | None,
 ) -> Any:
     result = await _execute_tool(
         service=service,
@@ -346,6 +350,7 @@ async def _execute_tool_dispatch(
         tool_name=tool_name,
         arguments=arguments,
         effective_session_id=effective_session_id,
+        timeout=timeout,
     )
     if emit_after_workflow:
         try:
@@ -372,6 +377,7 @@ async def _execute_tool(
     tool_name: str,
     arguments: dict[str, Any],
     effective_session_id: str | None,
+    timeout: float | None,
 ) -> Any:
     try:
         if service._internal_manager and service._internal_manager.is_internal(server_name):
@@ -392,13 +398,23 @@ async def _execute_tool(
                 error_msg += f". Did you mean '{suggestion}'?"
             raise MCPError(error_msg)
 
+        call_kwargs: dict[str, Any] = {"session_id": effective_session_id}
+        if timeout is not None:
+            call_kwargs["timeout"] = timeout
         result = await service._mcp_manager.call_tool(
-            server_name, tool_name, arguments, session_id=effective_session_id
+            server_name, tool_name, arguments, **call_kwargs
         )
         return result
 
     except Exception as e:
-        error_message = str(e)
+        if isinstance(e, TimeoutError):
+            error_message = (
+                f"Tool call timed out after {timeout:g} seconds"
+                if timeout is not None
+                else "Tool call timed out"
+            )
+        else:
+            error_message = str(e)
         logger.warning(f"Tool call failed: {server_name}/{tool_name}: {error_message}")
 
         response: dict[str, Any] = {

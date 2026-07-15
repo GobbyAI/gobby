@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 import pytest
 from fastapi.testclient import TestClient
 
+from gobby.servers.routes import projects as projects_routes
+from gobby.storage.tasks import LocalTaskManager
 from tests.servers.conftest import create_http_server
 
 if TYPE_CHECKING:
@@ -142,6 +144,50 @@ class TestProjectRoutes:
         proj = next(p for p in data if p["id"] == real_project["id"])
         assert proj["session_count"] == 1
 
+    @pytest.mark.parametrize("project_count", [1, 3])
+    def test_list_projects_batches_stats_queries(
+        self,
+        client: TestClient,
+        project_manager: LocalProjectManager,
+        session_manager: SessionManager,
+        project_count: int,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        projects = [
+            project_manager.create(name=f"batch-project-{index}", repo_path=None)
+            for index in range(project_count)
+        ]
+        task_manager = LocalTaskManager(session_manager.db)
+        for index, project in enumerate(projects):
+            session_manager.register(
+                external_id=f"batch-session-{index}",
+                source="codex",
+                machine_id="test-machine",
+                project_id=project.id,
+            )
+            task_manager.create_task(project_id=project.id, title=f"Open task {index}")
+
+        original_fetchall = session_manager.db.fetchall
+        stats_queries = 0
+
+        def counting_fetchall(sql: str, params: tuple = ()):
+            nonlocal stats_queries
+            if "GROUP BY project_id" in sql and ("FROM sessions" in sql or "FROM tasks" in sql):
+                stats_queries += 1
+            return original_fetchall(sql, params)
+
+        monkeypatch.setattr(session_manager.db, "fetchall", counting_fetchall)
+
+        response = client.get("/api/projects")
+
+        assert response.status_code == 200
+        payloads = {item["id"]: item for item in response.json()}
+        assert stats_queries == 2
+        for project in projects:
+            assert payloads[project.id]["session_count"] == 1
+            assert payloads[project.id]["open_task_count"] == 1
+            assert payloads[project.id]["last_activity_at"] is not None
+
     # -----------------------------------------------------------------
     # GET /api/projects/{project_id}
     # -----------------------------------------------------------------
@@ -153,6 +199,8 @@ class TestProjectRoutes:
         data = response.json()
         assert data["id"] == real_project["id"]
         assert data["name"] == "my-project"
+        assert data["created_at"] == real_project["created_at"]
+        assert data["updated_at"] == real_project["updated_at"]
         assert data["display_name"] == "my-project"
         assert "session_count" in data
         assert data["approval_rules"] == []
@@ -330,6 +378,81 @@ class TestProjectRoutes:
         saved = json.loads(project_file.read_text())
         assert saved["validation_detection"]["custom_matchers"][0]["id"] == "project-ci"
 
+    def test_update_project_invalid_validation_detection_does_not_mutate(
+        self,
+        client: TestClient,
+        project_manager: LocalProjectManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        old_repo = tmp_path / "old-repo"
+        new_repo = tmp_path / "new-repo"
+        old_repo.mkdir()
+        new_repo.mkdir()
+        project = project_manager.create(name="unchanged", repo_path=str(old_repo))
+        project_file = old_repo / ".gobby" / "project.json"
+        project_file.parent.mkdir(parents=True)
+        original_payload = {"verification": {"lint": "uv run ruff check src/"}}
+        project_file.write_text(json.dumps(original_payload))
+
+        def fail_mutation(*args: object, **kwargs: object) -> None:
+            raise AssertionError("invalid request attempted a project-file mutation")
+
+        for function_name in (
+            "save_project_approval_rules",
+            "migrate_project_approval_rules",
+            "clear_project_approval_rules",
+            "save_project_validation_detection",
+            "clear_project_validation_detection",
+        ):
+            monkeypatch.setattr(projects_routes, function_name, fail_mutation)
+
+        response = client.put(
+            f"/api/projects/{project.id}",
+            json={
+                "name": "changed",
+                "repo_path": str(new_repo),
+                "approval_rules": ["tool:Write"],
+                "validation_detection": {
+                    "custom_matchers": [{"id": " ", "label": "Invalid", "prefixes": ["test"]}]
+                },
+            },
+        )
+
+        assert response.status_code == 400
+        persisted = project_manager.get(project.id)
+        assert persisted is not None
+        assert persisted.name == "unchanged"
+        assert persisted.repo_path == str(old_repo)
+        assert json.loads(project_file.read_text()) == original_payload
+        assert not (new_repo / ".gobby" / "project.json").exists()
+
+    def test_update_project_file_failure_rolls_back_database_update(
+        self,
+        client: TestClient,
+        project_manager: LocalProjectManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        project = project_manager.create(name="unchanged", repo_path=str(repo_path))
+
+        def fail_save(*args: object, **kwargs: object) -> None:
+            raise OSError("project file write failed")
+
+        monkeypatch.setattr(projects_routes, "save_project_validation_detection", fail_save)
+
+        with pytest.raises(OSError, match="project file write failed"):
+            client.put(
+                f"/api/projects/{project.id}",
+                json={"name": "changed", "validation_detection": {}},
+            )
+
+        persisted = project_manager.get(project.id)
+        assert persisted is not None
+        assert persisted.name == "unchanged"
+
     def test_update_project_repo_path_migrates_approval_rules_and_preserves_metadata(
         self,
         client: TestClient,
@@ -348,7 +471,7 @@ class TestProjectRoutes:
                 {
                     "id": project.id,
                     "name": project.name,
-                    "created_at": project.created_at,
+                    "created_at": project.created_at.isoformat(),
                     "verification": {"lint": "uv run ruff check src/"},
                     "tool_approvals": {"allow": ["tool:Write"]},
                 }
@@ -392,7 +515,7 @@ class TestProjectRoutes:
                 {
                     "id": project.id,
                     "name": project.name,
-                    "created_at": project.created_at,
+                    "created_at": project.created_at.isoformat(),
                     "verification": {"unit_tests": "uv run pytest tests/ -v"},
                     "tool_approvals": {"allow": ["tool:Write"]},
                 }

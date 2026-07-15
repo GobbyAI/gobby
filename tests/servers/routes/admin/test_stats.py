@@ -1,10 +1,12 @@
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
-from gobby.servers.routes.admin._stats import register_stats_routes
+from gobby.servers.routes.admin._stats import _build_filters, register_stats_routes
+from gobby.storage.projects import LocalProjectManager
+from gobby.storage.tasks import LocalTaskManager
 
 
 @pytest.fixture
@@ -13,6 +15,7 @@ def test_app():
     router = APIRouter()
     server_mock = MagicMock()
     server_mock.services.database = MagicMock()
+    server_mock.run_db = AsyncMock(side_effect=lambda func, *args: func(*args))
 
     register_stats_routes(router, server_mock)
     app.include_router(router)
@@ -105,18 +108,56 @@ def test_stats_with_filters(test_app):
     assert response.status_code == 200
 
 
-def test_stats_exceptions(test_app):
+@pytest.mark.parametrize(
+    ("hours", "days", "expected_sql", "expected_params"),
+    [
+        (24, 7, "AND created_at >= NOW() - (%s * INTERVAL '1 hour')", [24, "p1"]),
+        (None, 7, "AND created_at >= NOW() - (%s * INTERVAL '1 day')", [7, "p1"]),
+    ],
+)
+def test_build_filters_uses_postgres_sql(hours, days, expected_sql, expected_params):
+    sql, params = _build_filters(hours, days, "p1")
+
+    assert sql == f"{expected_sql} AND project_id = %s"
+    assert params == expected_params
+    assert "strftime" not in sql
+    assert "?" not in sql
+
+
+def test_stats_with_filters_returns_postgres_counts(temp_db):
+    project_manager = LocalProjectManager(temp_db)
+    included_project = project_manager.create(name="included", repo_path="/tmp/included")
+    excluded_project = project_manager.create(name="excluded", repo_path="/tmp/excluded")
+    task_manager = LocalTaskManager(temp_db)
+    for project in (included_project, excluded_project):
+        task_manager.create_task(
+            project_id=project.id,
+            title=f"Task for {project.name}",
+            task_type="task",
+        )
+
+    app = FastAPI()
+    router = APIRouter()
+    server_mock = MagicMock()
+    server_mock.services.database = temp_db
+    server_mock.run_db = AsyncMock(side_effect=lambda func, *args: func(*args))
+    register_stats_routes(router, server_mock)
+    app.include_router(router)
+
+    response = TestClient(app).get(f"/stats?hours=24&project_id={included_project.id}")
+
+    assert response.status_code == 200
+    assert response.json()["tasks"]["ready"] == 1
+
+
+def test_stats_exceptions_return_server_error(test_app):
     app, server_mock = test_app
     db = server_mock.services.database
 
     db.fetchall.side_effect = Exception("DB error")
     db.fetchone.side_effect = Exception("DB error")
 
-    client = TestClient(app)
+    client = TestClient(app, raise_server_exceptions=False)
     response = client.get("/stats")
 
-    assert response.status_code == 200
-    data = response.json()
-    assert data["tasks"]["ready"] == 0
-    assert data["sessions"]["active"] == 0
-    assert data["memory"]["count"] == 0
+    assert response.status_code == 500

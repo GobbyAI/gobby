@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, ValidationError
+from fastapi.encoders import jsonable_encoder
+from pydantic import BaseModel, Field, ValidationError
 
 from gobby.config.validation_detection import (
+    ValidationDetectionConfig,
     clear_project_validation_detection,
     load_project_validation_detection,
     save_project_validation_detection,
@@ -46,10 +48,10 @@ class ProjectUpdate(BaseModel):
 class GitHubTriageConfigUpdate(BaseModel):
     """Request body for project GitHub triage config."""
 
-    enabled: bool | None = None
-    webhook_enabled: bool | None = None
-    repositories: list[str] | None = None
-    reconcile_interval_seconds: int | None = None
+    enabled: bool = False
+    webhook_enabled: bool = False
+    repositories: list[str] = Field(default_factory=list)
+    reconcile_interval_seconds: int = 3600
     webhook_secret_ref: str | None = None
 
 
@@ -60,39 +62,62 @@ def _get_project_manager(server: HTTPServer) -> LocalProjectManager:
     return LocalProjectManager(server.session_manager.db)
 
 
-def _get_project_stats(server: HTTPServer, project_id: str) -> dict[str, Any]:
-    """Get computed stats for a project."""
+def _get_project_stats_batch(
+    server: HTTPServer, project_ids: list[str]
+) -> dict[str, dict[str, Any]]:
+    """Get computed stats for projects in two bounded queries."""
+    stats = {
+        project_id: {"session_count": 0, "open_task_count": 0, "last_activity_at": None}
+        for project_id in project_ids
+    }
     if server.session_manager is None:
-        return {"session_count": 0, "open_task_count": 0, "last_activity_at": None}
+        return stats
+    if not project_ids:
+        return stats
 
     db = server.session_manager.db
-
-    session_count = db.fetchone(
-        "SELECT COUNT(*) as cnt FROM sessions WHERE project_id = %s AND status IN ('active', 'paused')",
-        (project_id,),
+    placeholders = ",".join("%s" for _ in project_ids)
+    session_rows = db.fetchall(
+        f"""
+        SELECT project_id,
+               COUNT(*) FILTER (WHERE status IN ('active', 'paused')) AS session_count,
+               MAX(updated_at) AS last_activity_at
+        FROM sessions
+        WHERE project_id IN ({placeholders})
+        GROUP BY project_id
+        """,  # nosec B608
+        tuple(project_ids),
+    )
+    task_rows = db.fetchall(
+        f"""
+        SELECT project_id, COUNT(*) AS open_task_count
+        FROM tasks
+        WHERE project_id IN ({placeholders}) AND closed_at IS NULL
+        GROUP BY project_id
+        """,  # nosec B608
+        tuple(project_ids),
     )
 
-    open_task_count = db.fetchone(
-        "SELECT COUNT(*) as cnt FROM tasks WHERE project_id = %s AND closed_at IS NULL",
-        (project_id,),
-    )
-
-    last_activity = db.fetchone(
-        "SELECT MAX(updated_at) as last_activity FROM sessions WHERE project_id = %s",
-        (project_id,),
-    )
-
-    return {
-        "session_count": session_count["cnt"] if session_count else 0,
-        "open_task_count": open_task_count["cnt"] if open_task_count else 0,
-        "last_activity_at": last_activity["last_activity"] if last_activity else None,
-    }
+    for row in session_rows:
+        stats[row["project_id"]].update(
+            session_count=row["session_count"], last_activity_at=row["last_activity_at"]
+        )
+    for row in task_rows:
+        stats[row["project_id"]]["open_task_count"] = row["open_task_count"]
+    return stats
 
 
-def _project_to_response(server: HTTPServer, project: Project) -> dict[str, Any]:
-    data = project.to_dict()
+def _get_project_stats(server: HTTPServer, project_id: str) -> dict[str, Any]:
+    """Get computed stats for one project."""
+    return _get_project_stats_batch(server, [project_id])[project_id]
+
+
+def _project_to_response(
+    server: HTTPServer, project: Project, stats: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    data = cast(dict[str, Any], jsonable_encoder(project.to_dict()))
     data["display_name"] = "Personal" if project.name == "_personal" else project.name
-    data.update(_get_project_stats(server, project.id))
+    data.update(stats if stats is not None else _get_project_stats(server, project.id))
     data["approval_rules"] = (
         load_project_approval_rules(project.repo_path) if project.repo_path else []
     )
@@ -110,14 +135,18 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
     async def list_projects() -> list[dict[str, Any]]:
         """List all projects with computed stats."""
         pm = _get_project_manager(server)
-        projects = pm.list()
+        projects = await server.run_db(pm.list)
 
-        results = []
-        for project in projects:
-            if project.name in HIDDEN_PROJECT_NAMES:
-                continue
-
-            results.append(_project_to_response(server, project))
+        visible_projects = [
+            project for project in projects if project.name not in HIDDEN_PROJECT_NAMES
+        ]
+        stats_by_project = await server.run_db(
+            _get_project_stats_batch, server, [project.id for project in visible_projects]
+        )
+        results = [
+            await server.run_db(_project_to_response, server, project, stats_by_project[project.id])
+            for project in visible_projects
+        ]
 
         return results
 
@@ -125,17 +154,17 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
     async def get_project(project_id: str) -> dict[str, Any]:
         """Get a single project with stats."""
         pm = _get_project_manager(server)
-        project = pm.get(project_id)
+        project = await server.run_db(pm.get, project_id)
         if not project or project.deleted_at:
             raise HTTPException(404, "Project not found")
 
-        return _project_to_response(server, project)
+        return cast(dict[str, Any], await server.run_db(_project_to_response, server, project))
 
     @router.put("/{project_id}")
     async def update_project(project_id: str, body: ProjectUpdate) -> dict[str, Any]:
         """Update project fields."""
         pm = _get_project_manager(server)
-        project = pm.get(project_id)
+        project = await server.run_db(pm.get, project_id)
         if not project or project.deleted_at:
             raise HTTPException(404, "Project not found")
 
@@ -145,6 +174,22 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
         original_repo_path = project.repo_path
         requested_repo_path = fields.get("repo_path", original_repo_path)
         repo_path_changed = requested_repo_path != original_repo_path
+
+        if approval_rules is not None and not requested_repo_path:
+            raise HTTPException(400, "Project has no repo_path for project-scoped approval rules")
+
+        if validation_detection is not None:
+            if not requested_repo_path:
+                raise HTTPException(
+                    400, "Project has no repo_path for project-scoped validation detection"
+                )
+            try:
+                validation_detection = ValidationDetectionConfig.model_validate(
+                    validation_detection
+                ).model_dump()
+            except ValidationError as exc:
+                raise HTTPException(400, str(exc)) from exc
+
         migrated_rules = (
             load_project_approval_rules(original_repo_path)
             if repo_path_changed and original_repo_path
@@ -157,68 +202,79 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
         )
         if not fields:
             if approval_rules is None and validation_detection is None:
-                return _project_to_response(server, project)
-
-        if fields:
-            updated = pm.update(project_id, **fields)
-            if not updated:
-                raise HTTPException(500, "Failed to update project")
-        else:
-            updated = project
-
-        if approval_rules is not None:
-            if not updated.repo_path:
-                raise HTTPException(
-                    400, "Project has no repo_path for project-scoped approval rules"
+                return cast(
+                    dict[str, Any],
+                    await server.run_db(_project_to_response, server, project),
                 )
-            if repo_path_changed and original_repo_path:
-                migrate_project_approval_rules(
-                    original_repo_path, updated.repo_path, approval_rules
-                )
-            else:
-                save_project_approval_rules(updated.repo_path, approval_rules)
-        elif repo_path_changed and updated.repo_path and migrated_rules:
-            migrate_project_approval_rules(original_repo_path, updated.repo_path)
 
-        if validation_detection is not None:
-            if not updated.repo_path:
-                raise HTTPException(
-                    400, "Project has no repo_path for project-scoped validation detection"
-                )
-            try:
-                save_project_validation_detection(updated.repo_path, validation_detection)
-            except ValidationError as exc:
-                raise HTTPException(400, str(exc)) from exc
-        elif repo_path_changed and updated.repo_path and migrated_validation_detection is not None:
-            save_project_validation_detection(updated.repo_path, migrated_validation_detection)
+        def apply_update() -> Project:
+            with pm.db.transaction():
+                if fields:
+                    updated = pm.update(project_id, **fields)
+                    if not updated:
+                        raise HTTPException(500, "Failed to update project")
+                else:
+                    updated = project
 
-        if (
-            repo_path_changed
-            and original_repo_path
-            and (approval_rules is not None or migrated_rules)
-        ):
-            clear_project_approval_rules(original_repo_path)
-        if (
-            repo_path_changed
-            and original_repo_path
-            and (validation_detection is not None or migrated_validation_detection is not None)
-        ):
-            clear_project_validation_detection(original_repo_path)
+                if approval_rules is not None:
+                    assert updated.repo_path is not None
+                    if repo_path_changed and original_repo_path:
+                        migrate_project_approval_rules(
+                            original_repo_path, updated.repo_path, approval_rules
+                        )
+                    else:
+                        save_project_approval_rules(updated.repo_path, approval_rules)
+                elif repo_path_changed and updated.repo_path and migrated_rules:
+                    migrate_project_approval_rules(original_repo_path, updated.repo_path)
 
-        return _project_to_response(server, updated)
+                if validation_detection is not None:
+                    assert updated.repo_path is not None
+                    save_project_validation_detection(updated.repo_path, validation_detection)
+                elif (
+                    repo_path_changed
+                    and updated.repo_path
+                    and migrated_validation_detection is not None
+                ):
+                    save_project_validation_detection(
+                        updated.repo_path, migrated_validation_detection
+                    )
+
+                if (
+                    repo_path_changed
+                    and original_repo_path
+                    and (approval_rules is not None or migrated_rules)
+                ):
+                    clear_project_approval_rules(original_repo_path)
+                if (
+                    repo_path_changed
+                    and original_repo_path
+                    and (
+                        validation_detection is not None
+                        or migrated_validation_detection is not None
+                    )
+                ):
+                    clear_project_validation_detection(original_repo_path)
+
+                return updated
+
+        updated = await server.run_db(apply_update)
+
+        return cast(dict[str, Any], await server.run_db(_project_to_response, server, updated))
 
     @router.get("/{project_id}/github-triage")
     async def get_github_triage_config(project_id: str) -> dict[str, Any]:
         """Get GitHub issue triage configuration for a project."""
         pm = _get_project_manager(server)
-        project = pm.get(project_id)
+        project = await server.run_db(pm.get, project_id)
         if not project or project.deleted_at:
             raise HTTPException(404, "Project not found")
-        config = GitHubTriageStore(server.services.database).get_config(
+        store = GitHubTriageStore(server.services.database)
+        config = await server.run_db(
+            store.get_config,
             project_id,
             fallback_repo=project.github_repo,
         )
-        return config.to_dict()
+        return cast(dict[str, Any], config.to_dict())
 
     @router.put("/{project_id}/github-triage")
     async def update_github_triage_config(
@@ -227,12 +283,14 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
     ) -> dict[str, Any]:
         """Update GitHub issue triage configuration for a project."""
         pm = _get_project_manager(server)
-        project = pm.get(project_id)
+        project = await server.run_db(pm.get, project_id)
         if not project or project.deleted_at:
             raise HTTPException(404, "Project not found")
 
         store = GitHubTriageStore(server.services.database)
-        current = store.get_config(project_id, fallback_repo=project.github_repo)
+        current = await server.run_db(
+            store.get_config, project_id, fallback_repo=project.github_repo
+        )
         values = body.model_dump(exclude_unset=True)
         interval = values.get(
             "reconcile_interval_seconds",
@@ -241,7 +299,8 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
         if interval is not None and interval <= 0:
             raise HTTPException(400, "reconcile_interval_seconds must be greater than 0")
 
-        updated = store.upsert_config(
+        updated = await server.run_db(
+            store.upsert_config,
             GitHubTriageConfig(
                 project_id=project_id,
                 enabled=values.get("enabled", current.enabled),
@@ -249,22 +308,22 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
                 repositories=tuple(values.get("repositories", current.repositories)),
                 reconcile_interval_seconds=interval,
                 webhook_secret_ref=values.get("webhook_secret_ref", current.webhook_secret_ref),
-            )
+            ),
         )
-        return updated.to_dict()
+        return cast(dict[str, Any], updated.to_dict())
 
     @router.delete("/{project_id}")
     async def delete_project(project_id: str) -> dict[str, str]:
         """Soft-delete a project. Protected projects cannot be deleted."""
         pm = _get_project_manager(server)
-        project = pm.get(project_id)
+        project = await server.run_db(pm.get, project_id)
         if not project or project.deleted_at:
             raise HTTPException(404, "Project not found")
 
         if project.name in SYSTEM_PROJECT_NAMES:
             raise HTTPException(403, f"Cannot delete protected project '{project.name}'")
 
-        if not pm.soft_delete(project_id):
+        if not await server.run_db(pm.soft_delete, project_id):
             raise HTTPException(500, "Failed to delete project")
 
         return {"status": "deleted", "id": project_id}

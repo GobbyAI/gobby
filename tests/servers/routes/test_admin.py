@@ -1,3 +1,4 @@
+import logging
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -145,7 +146,17 @@ class TestAdminRoutes:
         mock_server.mcp_manager.server_configs = [mock_config]
         mock_server.mcp_manager.connections = ["test-server"]
 
-        response = client.get("/api/admin/status")
+        with patch(
+            "gobby.storage.pipelines.LocalPipelineExecutionManager"
+        ) as execution_manager_cls:
+            execution_manager_cls.return_value.count_by_status.return_value = {
+                "running": 2,
+                "waiting_approval": 3,
+                "completed": 5,
+                "failed": 7,
+            }
+            response = client.get("/api/admin/status")
+
         assert response.status_code == 200
         data = response.json()
 
@@ -154,6 +165,16 @@ class TestAdminRoutes:
         assert data["process"]["memory_rss_mb"] == 100.0
         assert "test-server" in data["mcp_servers"]
         assert data["mcp_servers"]["test-server"]["connected"] is True
+        assert data["pipelines"] == {
+            "running": 2,
+            "waiting_approval": 3,
+            "completed": 5,
+            "failed": 7,
+            "total": 17,
+        }
+        execution_manager_cls.assert_called_once_with(
+            db=mock_server.services.database, project_id=None
+        )
 
     @patch("gobby.servers.routes.admin._health.psutil")
     @patch("gobby.servers.routes.admin._health.asyncio.to_thread")
@@ -207,6 +228,93 @@ class TestAdminRoutes:
         assert response.json()["last_shutdown"] == (
             "source=cli_restart, intent=restart, sender_pid=123"
         )
+
+    def test_status_endpoint_logs_file_descriptor_collection_failure(
+        self,
+        client: TestClient,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with (
+            caplog.at_level(logging.DEBUG, logger="gobby.servers.routes.admin._health"),
+            patch("resource.getrlimit", side_effect=RuntimeError("fd failure")),
+        ):
+            response = client.get("/api/admin/status")
+
+        assert response.status_code == 200
+        record = next(
+            record
+            for record in caplog.records
+            if record.message == "Could not collect file descriptor usage"
+        )
+        assert record.exc_info is not None
+
+    def test_status_endpoint_logs_last_shutdown_failure(
+        self,
+        client: TestClient,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with (
+            caplog.at_level(logging.DEBUG, logger="gobby.servers.routes.admin._health"),
+            patch("gobby.cli.utils.get_gobby_home", side_effect=RuntimeError("home failure")),
+        ):
+            response = client.get("/api/admin/status")
+
+        assert response.status_code == 200
+        record = next(
+            record
+            for record in caplog.records
+            if record.message == "Could not read the last shutdown source"
+        )
+        assert record.exc_info is not None
+
+    def test_status_endpoint_logs_agent_stats_failure(
+        self,
+        client: TestClient,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with (
+            caplog.at_level(logging.DEBUG, logger="gobby.servers.routes.admin._health"),
+            patch(
+                "gobby.storage.agents.LocalAgentRunManager.list_running",
+                side_effect=RuntimeError("agent failure"),
+            ),
+        ):
+            response = client.get("/api/admin/status")
+
+        assert response.status_code == 200
+        assert response.json()["agents"]["running"] == 0
+        record = next(
+            record
+            for record in caplog.records
+            if record.message == "Could not collect running agent count"
+        )
+        assert record.exc_info is not None
+
+    def test_status_endpoint_logs_database_size_failure(
+        self,
+        client: TestClient,
+        mock_server: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mock_server.services.database.db_path = "/tmp/gobby.db"
+        resolved_path = MagicMock()
+        resolved_path.expanduser.return_value = resolved_path
+        resolved_path.exists.return_value = True
+        resolved_path.stat.side_effect = RuntimeError("stat failure")
+
+        with (
+            caplog.at_level(logging.DEBUG, logger="gobby.servers.routes.admin._health"),
+            patch("gobby.servers.routes.admin._health.Path", return_value=resolved_path),
+        ):
+            response = client.get("/api/admin/status")
+
+        assert response.status_code == 200
+        record = next(
+            record
+            for record in caplog.records
+            if record.message == "Could not read database file size"
+        )
+        assert record.exc_info is not None
 
     @patch("gobby.servers.routes.admin._health.is_qdrant_healthy", new_callable=AsyncMock)
     @patch("gobby.servers.routes.admin._health.psutil")
@@ -510,6 +618,19 @@ class TestAdminRoutes:
         mock_write_shutdown.assert_called_once_with("http_shutdown", intent="stop")
         mock_server._process_shutdown.assert_called_once()
 
+    def test_shutdown_endpoint_returns_500_when_shutdown_fails(self, client) -> None:
+        with patch(
+            "gobby.runner_maintenance.write_shutdown_source",
+            side_effect=RuntimeError("write failed"),
+        ):
+            response = client.post("/api/admin/shutdown")
+
+        assert response.status_code == 500
+        assert response.json() == {
+            "status": "error",
+            "message": "Shutdown failed to initiate",
+        }
+
     def test_request_runner_shutdown_rejects_runner_without_shutdown_api(self) -> None:
         from gobby.servers.routes.admin._lifecycle import _request_runner_shutdown
 
@@ -624,6 +745,86 @@ class TestAdminRoutes:
         mock_popen.assert_called_once()
         mock_write_shutdown.assert_called_once_with("http_restart", intent="restart")
         mock_server._process_shutdown.assert_called_once()
+
+    @patch("gobby.servers.routes.admin._lifecycle._spawn_restart_helper")
+    @patch(
+        "gobby.servers.routes.admin._lifecycle.asyncio.to_thread",
+        new_callable=AsyncMock,
+        return_value=False,
+    )
+    @patch("gobby.servers.routes.admin._lifecycle._should_restart_via_service_manager")
+    def test_restart_endpoint_offloads_service_manager_probe(
+        self,
+        mock_service_mode,
+        mock_to_thread,
+        _mock_spawn,
+        client,
+    ) -> None:
+        response = client.post("/api/admin/restart")
+
+        assert response.json()["status"] == "restarting"
+        mock_to_thread.assert_awaited_once_with(mock_service_mode)
+
+    @patch(
+        "gobby.servers.routes.admin._lifecycle.asyncio.to_thread",
+        new_callable=AsyncMock,
+        return_value=False,
+    )
+    def test_restart_endpoint_starts_shutdown_before_spawning_helper(
+        self,
+        _mock_to_thread,
+        client,
+    ) -> None:
+        events: list[str] = []
+
+        with (
+            patch(
+                "gobby.runner_maintenance.write_shutdown_source",
+                side_effect=lambda *_args, **_kwargs: events.append("write_shutdown_source"),
+            ),
+            patch(
+                "gobby.servers.routes.admin._lifecycle._request_runner_shutdown",
+                side_effect=lambda *_args: events.append("request_runner_shutdown") or True,
+            ),
+            patch(
+                "gobby.servers.routes.admin._lifecycle._spawn_restart_helper",
+                side_effect=lambda **_kwargs: events.append("spawn_restart_helper"),
+            ),
+        ):
+            response = client.post("/api/admin/restart")
+
+        assert response.json()["status"] == "restarting"
+        assert events == [
+            "write_shutdown_source",
+            "request_runner_shutdown",
+            "spawn_restart_helper",
+        ]
+
+    @patch("gobby.servers.routes.admin._lifecycle._spawn_restart_helper")
+    @patch(
+        "gobby.servers.routes.admin._lifecycle.asyncio.to_thread",
+        new_callable=AsyncMock,
+        return_value=False,
+    )
+    def test_restart_endpoint_releases_lock_when_shutdown_not_initiated(
+        self,
+        _mock_to_thread,
+        mock_spawn,
+        client,
+    ) -> None:
+        with (
+            patch("gobby.runner_maintenance.write_shutdown_source"),
+            patch(
+                "gobby.servers.routes.admin._lifecycle._request_runner_shutdown",
+                side_effect=[RuntimeError("shutdown failed"), True],
+            ),
+        ):
+            failed_response = client.post("/api/admin/restart")
+            retry_response = client.post("/api/admin/restart")
+
+        assert failed_response.json()["status"] == "error"
+        assert retry_response.json()["status"] == "restarting"
+        mock_spawn.assert_called_once()
 
     @patch(
         "gobby.servers.routes.admin._lifecycle._should_restart_via_service_manager",
@@ -792,7 +993,7 @@ class TestWorkflowsReloadEndpoint:
         mock_server._internal_manager.get_all_registries.return_value = [other_registry]
 
         response = client.post("/api/admin/workflows/reload")
-        assert response.status_code == 200
+        assert response.status_code == 503
         data = response.json()
 
         assert data["status"] == "error"
@@ -802,7 +1003,7 @@ class TestWorkflowsReloadEndpoint:
         mock_server._internal_manager = None
 
         response = client.post("/api/admin/workflows/reload")
-        assert response.status_code == 200
+        assert response.status_code == 503
         data = response.json()
 
         assert data["status"] == "error"
@@ -813,7 +1014,7 @@ class TestWorkflowsReloadEndpoint:
         registry.call = AsyncMock(side_effect=ValueError("Tool not found"))
 
         response = client.post("/api/admin/workflows/reload")
-        assert response.status_code == 200
+        assert response.status_code == 503
         data = response.json()
 
         assert data["status"] == "error"
@@ -824,7 +1025,7 @@ class TestWorkflowsReloadEndpoint:
         registry.call = AsyncMock(side_effect=RuntimeError("Cache corrupted"))
 
         response = client.post("/api/admin/workflows/reload")
-        assert response.status_code == 200
+        assert response.status_code == 500
         data = response.json()
 
         assert data["status"] == "error"
@@ -836,7 +1037,7 @@ class TestWorkflowsReloadEndpoint:
         )
 
         response = client.post("/api/admin/workflows/reload")
-        assert response.status_code == 200
+        assert response.status_code == 500
         data = response.json()
 
         assert data["status"] == "error"
@@ -872,9 +1073,7 @@ class TestTestEndpoints:
 
     @patch("gobby.storage.projects.LocalProjectManager")
     def test_register_project_success(self, mock_pm_cls, client, mock_server) -> None:
-        mock_pm = MagicMock()
-        mock_pm.get.return_value = None  # project does not exist yet
-        mock_pm_cls.return_value = mock_pm
+        mock_server.session_manager.db.execute.return_value.fetchone.return_value = {"id": "proj-1"}
 
         response = client.post(
             "/api/admin/test/register-project",
@@ -887,13 +1086,18 @@ class TestTestEndpoints:
         assert data["project_id"] == "proj-1"
         assert data["name"] == "Test Project"
         assert "response_time_ms" in data
+        sql = mock_server.session_manager.db.execute.call_args.args[0]
+        assert "ON CONFLICT (id) DO NOTHING" in sql
+        assert "RETURNING id" in sql
+        mock_pm_cls.return_value.get.assert_not_called()
 
     @patch("gobby.storage.projects.LocalProjectManager")
-    def test_register_project_already_exists(self, mock_pm_cls, client) -> None:
+    def test_register_project_already_exists(self, mock_pm_cls, client, mock_server) -> None:
         existing = MagicMock()
         existing.id = "proj-1"
         existing.name = "Existing"
 
+        mock_server.session_manager.db.execute.return_value.fetchone.return_value = None
         mock_pm = MagicMock()
         mock_pm.get.return_value = existing
         mock_pm_cls.return_value = mock_pm
@@ -907,6 +1111,8 @@ class TestTestEndpoints:
 
         assert data["status"] == "already_exists"
         assert data["project_id"] == "proj-1"
+        assert data["name"] == "Existing"
+        mock_pm.get.assert_called_once_with("proj-1")
 
     def test_register_project_forbidden_when_not_test_mode(self, mock_server) -> None:
         mock_server.test_mode = False

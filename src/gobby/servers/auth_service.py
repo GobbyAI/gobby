@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import hmac
 import logging
+import secrets
 import threading
 import time
 from collections.abc import Callable
@@ -80,11 +80,11 @@ class AuthService:
         candidate_hash = hash_token(token)
         self.refresh()
 
-        if hmac.compare_digest(candidate_hash, self._token_hash_snapshot()):
+        if secrets.compare_digest(candidate_hash, self._token_hash_snapshot()):
             return True
 
         self.refresh()
-        return hmac.compare_digest(candidate_hash, self._token_hash_snapshot())
+        return secrets.compare_digest(candidate_hash, self._token_hash_snapshot())
 
     async def verify_ws_token(self, token: str) -> str | None:
         return "local-cli" if self.verify_bearer(token) else None
@@ -117,7 +117,7 @@ class AuthService:
             expected_username = self._web_username or ""
             stored_hash = self._web_password_hash
 
-        username_matches = hmac.compare_digest(
+        username_matches = secrets.compare_digest(
             username.encode("utf-8"),
             expected_username.encode("utf-8"),
         )

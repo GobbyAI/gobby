@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import tempfile
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
@@ -18,6 +19,11 @@ from gobby.gwiki_gateway import (
     normalize_page_write_mode,
     resolve_ask_timeout,
 )
+from gobby.servers.chat_attachment_limits import (
+    DEFAULT_ATTACHMENT_MAX_FILE_BYTES,
+    resolve_server_attachment_limits,
+)
+from gobby.servers.upload_limits import ensure_disk_space
 from gobby.wiki import WikiUpdateCoordinator
 from gobby.wiki.scope_resolution import (
     ResolvedWikiScope,
@@ -175,7 +181,8 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
         topic: str | None = Query(None),
     ) -> dict[str, Any]:
         gateway = await _gateway(server, project, topic)
-        staged_path = await _stage_upload(file)
+        max_upload_bytes = resolve_server_attachment_limits(server).max_file_bytes
+        staged_path = await _stage_upload(file, max_bytes=max_upload_bytes)
         try:
             result = await _map_gateway_errors(lambda: gateway.ingest_file(staged_path))
         finally:
@@ -194,7 +201,10 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
         if not urls and not paths:
             raise HTTPException(status_code=400, detail="Provide path, paths, or urls")
 
-        gateway = await _gateway(server, project, topic)
+        resolved = await _resolve_scope(server, project, topic)
+        if paths:
+            paths = _resolve_ingest_paths(paths, resolved.project_root)
+        gateway = _gateway_from_scope(resolved)
         if urls and paths:
             result = await _ingest_mixed(gateway, urls, paths)
         elif urls:
@@ -508,6 +518,23 @@ def _ingest_paths(request: dict[str, Any]) -> list[str]:
     return paths
 
 
+def _resolve_ingest_paths(paths: list[str], project_root: Path | None) -> list[str]:
+    if project_root is None:
+        raise HTTPException(status_code=400, detail="Project scope is required for path ingestion")
+
+    root = project_root.resolve()
+    resolved_paths: list[str] = []
+    for path in paths:
+        source = Path(path).expanduser()
+        if source.is_absolute():
+            raise HTTPException(status_code=403, detail="Ingest path must stay inside project")
+        resolved = (root / source).resolve()
+        if not resolved.is_relative_to(root):
+            raise HTTPException(status_code=403, detail="Ingest path must stay inside project")
+        resolved_paths.append(str(resolved))
+    return resolved_paths
+
+
 async def _ingest_many(gateway: GwikiGateway, paths: list[str]) -> dict[str, Any]:
     results = []
     for path in paths:
@@ -561,15 +588,43 @@ async def _map_gateway_awaitable(awaitable: Awaitable[dict[str, Any]]) -> dict[s
     return await _map_gateway_errors(lambda: awaitable)
 
 
-async def _stage_upload(file: UploadFile) -> Path:
+async def _stage_upload(
+    file: UploadFile,
+    *,
+    max_bytes: int = DEFAULT_ATTACHMENT_MAX_FILE_BYTES,
+) -> Path:
     suffix = Path(file.filename or "").suffix
     staged_path: Path | None = None
+    size = 0
     try:
         with tempfile.NamedTemporaryFile(
             prefix="gobby-wiki-", suffix=suffix, delete=False
         ) as staged:
             staged_path = Path(staged.name)
-            while chunk := await file.read(UPLOAD_CHUNK_SIZE):
+            known_file_size = getattr(file, "size", None)
+            reserved_bytes = (
+                min(max_bytes, known_file_size)
+                if isinstance(known_file_size, int) and known_file_size >= 0
+                else max_bytes
+            )
+            await asyncio.to_thread(
+                ensure_disk_space,
+                staged_path.parent,
+                reserved_bytes,
+                label="Wiki upload",
+            )
+            while True:
+                remaining = max_bytes - size
+                read_size = min(UPLOAD_CHUNK_SIZE, max(remaining + 1, 1))
+                chunk = await file.read(read_size)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Wiki upload exceeds {max_bytes} byte limit",
+                    )
                 staged.write(chunk)
             return staged_path
     except Exception:

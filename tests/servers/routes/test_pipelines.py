@@ -25,6 +25,11 @@ def mock_server() -> MagicMock:
     server.services.database = MagicMock()
     server.services.workflow_loader = MagicMock()
     server.services.get_pipeline_executor.return_value = MagicMock()
+
+    async def run_db(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    server.run_db = AsyncMock(side_effect=run_db)
     return server
 
 
@@ -98,6 +103,7 @@ class TestListExecutions:
             assert data["offset"] == 0
             assert data["status_summary"] == {}
             assert data["executions"] == []
+            MockEM.assert_called_once_with(db=mock_server.services.database, project_id=None)
 
     def test_list_executions_invalid_status(
         self, client: TestClient, mock_server: MagicMock
@@ -207,6 +213,7 @@ class TestSearchExecutions:
             assert data["limit"] == 5
             assert data["offset"] == 0
             assert data["query"] == "test"
+            MockEM.assert_called_once_with(db=mock_server.services.database, project_id=None)
 
     @pytest.mark.parametrize(
         "query_string",
@@ -425,7 +432,7 @@ class TestGetExecution:
             mock_step.completed_at = "2024-01-01"
             mock_step.output_json = "{}"
             mock_step.error = None
-            mock_step.approval_token = None
+            mock_step.approval_token = "secret-approval-token"
 
             em = MockEM.return_value
             em.get_execution.return_value = mock_exec
@@ -438,6 +445,7 @@ class TestGetExecution:
             data = response.json()
             assert data["id"] == "pe-1"
             assert len(data["steps"]) == 1
+            assert "approval_token" not in data["steps"][0]
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -460,6 +468,7 @@ class TestApproveExecution:
         with patch("gobby.storage.pipelines.LocalPipelineExecutionManager") as MockEM:
             mock_step = MagicMock()
             mock_step.execution_id = "pe-gone"
+            mock_step.status = StepStatus.WAITING_APPROVAL
 
             em = MockEM.return_value
             em.get_step_by_approval_token.return_value = mock_step
@@ -472,6 +481,7 @@ class TestApproveExecution:
         with patch("gobby.storage.pipelines.LocalPipelineExecutionManager") as MockEM:
             mock_step = MagicMock()
             mock_step.execution_id = "pe-1"
+            mock_step.status = StepStatus.WAITING_APPROVAL
             mock_exec = MagicMock()
             mock_exec.project_id = "proj-1"
 
@@ -488,6 +498,7 @@ class TestApproveExecution:
         with patch("gobby.storage.pipelines.LocalPipelineExecutionManager") as MockEM:
             mock_step = MagicMock()
             mock_step.execution_id = "pe-1"
+            mock_step.status = StepStatus.WAITING_APPROVAL
             mock_exec = MagicMock()
             mock_exec.project_id = "proj-1"
             mock_exec.id = "pe-1"
@@ -505,10 +516,24 @@ class TestApproveExecution:
             assert response.status_code == 200
             assert response.json()["execution_id"] == "pe-1"
 
+    def test_approve_non_waiting_step_returns_conflict(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        with patch("gobby.storage.pipelines.LocalPipelineExecutionManager") as MockEM:
+            mock_step = MagicMock(status=StepStatus.COMPLETED)
+            MockEM.return_value.get_step_by_approval_token.return_value = mock_step
+
+            response = client.post("/api/pipelines/approve/used-token")
+
+            assert response.status_code == 409
+            assert response.json()["detail"] == "Approval is no longer waiting"
+            mock_server.services.get_pipeline_executor.assert_not_called()
+
     def test_approve_raises_value_error(self, client: TestClient, mock_server: MagicMock) -> None:
         with patch("gobby.storage.pipelines.LocalPipelineExecutionManager") as MockEM:
             mock_step = MagicMock()
             mock_step.execution_id = "pe-1"
+            mock_step.status = StepStatus.WAITING_APPROVAL
             mock_exec = MagicMock()
             mock_exec.project_id = "proj-1"
 
@@ -520,8 +545,8 @@ class TestApproveExecution:
             executor.approve = AsyncMock(side_effect=ValueError("Bad token"))
 
             response = client.post("/api/pipelines/approve/tok-bad")
-            assert response.status_code == 404
-            assert response.json()["detail"] == "Invalid token: Bad token"
+            assert response.status_code == 409
+            assert response.json()["detail"] == "Approval is no longer waiting"
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -544,6 +569,7 @@ class TestRejectExecution:
         with patch("gobby.storage.pipelines.LocalPipelineExecutionManager") as MockEM:
             mock_step = MagicMock()
             mock_step.execution_id = "pe-1"
+            mock_step.status = StepStatus.WAITING_APPROVAL
             mock_exec = MagicMock()
             mock_exec.project_id = "proj-1"
             mock_exec.id = "pe-1"
@@ -562,10 +588,24 @@ class TestRejectExecution:
             data = response.json()
             assert data["status"] == "cancelled"
 
+    def test_reject_non_waiting_step_returns_conflict(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        with patch("gobby.storage.pipelines.LocalPipelineExecutionManager") as MockEM:
+            mock_step = MagicMock(status=StepStatus.FAILED)
+            MockEM.return_value.get_step_by_approval_token.return_value = mock_step
+
+            response = client.post("/api/pipelines/reject/used-token")
+
+            assert response.status_code == 409
+            assert response.json()["detail"] == "Approval is no longer waiting"
+            mock_server.services.get_pipeline_executor.assert_not_called()
+
     def test_reject_raises_value_error(self, client: TestClient, mock_server: MagicMock) -> None:
         with patch("gobby.storage.pipelines.LocalPipelineExecutionManager") as MockEM:
             mock_step = MagicMock()
             mock_step.execution_id = "pe-1"
+            mock_step.status = StepStatus.WAITING_APPROVAL
             mock_exec = MagicMock()
             mock_exec.project_id = "proj-1"
 
@@ -577,5 +617,5 @@ class TestRejectExecution:
             executor.reject = AsyncMock(side_effect=ValueError("Bad token"))
 
             response = client.post("/api/pipelines/reject/tok-bad")
-            assert response.status_code == 404
-            assert response.json()["detail"] == "Invalid token: Bad token"
+            assert response.status_code == 409
+            assert response.json()["detail"] == "Approval is no longer waiting"

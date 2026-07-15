@@ -31,7 +31,9 @@ from gobby.config.feature_base import (
 )
 from gobby.llm.base import validate_vision_description
 from gobby.llm.image_payloads import MAX_IMAGE_BYTES
+from gobby.servers.chat_attachment_limits import resolve_server_attachment_limits
 from gobby.servers.responses import JSONResponse
+from gobby.servers.upload_limits import read_bounded_upload
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -331,7 +333,11 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
         if config is None:
             raise HTTPException(status_code=503, detail="Daemon config not found")
 
-        image_bytes = await _read_bounded_image_upload(file)
+        max_upload_bytes = min(
+            MAX_IMAGE_BYTES,
+            resolve_server_attachment_limits(server).max_file_bytes,
+        )
+        image_bytes = await _read_bounded_image_upload(file, max_bytes=max_upload_bytes)
         try:
             image_path = _write_temp_image(image_bytes, file.filename)
         except RuntimeError as e:
@@ -379,15 +385,13 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
     return router
 
 
-async def _read_bounded_image_upload(file: UploadFile) -> bytes:
+async def _read_bounded_image_upload(
+    file: UploadFile,
+    *,
+    max_bytes: int = MAX_IMAGE_BYTES,
+) -> bytes:
     """Read at most one byte past the provider image limit."""
-    image_bytes = await file.read(MAX_IMAGE_BYTES + 1)
-    if len(image_bytes) > MAX_IMAGE_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Image exceeds {MAX_IMAGE_BYTES} byte limit",
-        )
-    return image_bytes
+    return await read_bounded_upload(file, max_bytes=max_bytes, label="Image")
 
 
 def _capability_error_detail(error: CapabilityUnavailableError) -> dict[str, Any]:

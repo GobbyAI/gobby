@@ -7,14 +7,18 @@ create_http_server() with a real LocalWorkflowDefinitionManager backed by temp_d
 from __future__ import annotations
 
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
+from gobby.storage.agents import AgentRun, LocalAgentRunManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import AgentDefinitionBody
@@ -90,6 +94,22 @@ def server(temp_db, task_manager):
 @pytest.fixture
 def client(server) -> TestClient:
     return TestClient(server.app)
+
+
+@pytest.fixture
+def running_agent_run(
+    temp_db, session_manager: SessionManager, sample_project: dict[str, Any]
+) -> tuple[LocalAgentRunManager, AgentRun]:
+    parent = session_manager.register(
+        external_id="cancel-route-parent",
+        machine_id="machine-1",
+        source="claude",
+        project_id=sample_project["id"],
+    )
+    manager = LocalAgentRunManager(temp_db)
+    run = manager.create(parent_session_id=parent.id, provider="claude", prompt="Cancel me")
+    manager.start(run.id)
+    return manager, run
 
 
 # ---------------------------------------------------------------------------
@@ -770,6 +790,60 @@ class TestPatchVariables:
         )
         assert response.status_code == 404
 
+    def test_concurrent_patches_preserve_both_updates(
+        self,
+        client: TestClient,
+        agent_manager: LocalWorkflowDefinitionManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Concurrent read-modify-write patches serialize without losing an update."""
+        created = client.post(
+            "/api/agents/definitions", json={"name": "variables-concurrent"}
+        ).json()["definition"]
+        definition_id = created["id"]
+
+        original_get = LocalWorkflowDefinitionManager.get
+        read_count = 0
+        read_count_lock = threading.Lock()
+        second_read = threading.Event()
+
+        def coordinate_initial_reads(
+            manager: LocalWorkflowDefinitionManager,
+            requested_id: str,
+            include_deleted: bool = False,
+        ) -> Any:
+            nonlocal read_count
+            row = original_get(manager, requested_id, include_deleted)
+            if requested_id != definition_id:
+                return row
+            with read_count_lock:
+                read_count += 1
+                current_read = read_count
+            if current_read == 1:
+                second_read.wait(timeout=0.5)
+            elif current_read == 2:
+                second_read.set()
+            return row
+
+        monkeypatch.setattr(LocalWorkflowDefinitionManager, "get", coordinate_initial_reads)
+        start = threading.Barrier(2)
+
+        def patch_value(item: tuple[str, int]) -> int:
+            key, value = item
+            start.wait(timeout=5)
+            response = client.patch(
+                f"/api/agents/definitions/{definition_id}/variables",
+                json={"set": {key: value}},
+            )
+            return response.status_code
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            statuses = list(executor.map(patch_value, [("first", 1), ("second", 2)]))
+
+        assert statuses == [200, 200]
+        body = json.loads(agent_manager.get(definition_id).definition_json)
+        assert body["workflows"]["variables"] == {"first": 1, "second": 2}
+
 
 # ---------------------------------------------------------------------------
 # GET /api/agents/definitions (source_filter)
@@ -983,3 +1057,70 @@ class TestDeleteDefinitionErrors:
         ):
             response = client.delete("/api/agents/definitions/any-id")
         assert response.status_code == 500
+
+
+class TestCancelAgentRun:
+    def test_cancel_running_agent(
+        self,
+        client: TestClient,
+        running_agent_run: tuple[LocalAgentRunManager, AgentRun],
+    ) -> None:
+        manager, run = running_agent_run
+
+        with patch(
+            "gobby.agents.kill.kill_agent",
+            new=AsyncMock(return_value={"success": True}),
+        ):
+            response = client.post(f"/api/agents/runs/{run.id}/cancel")
+
+        assert response.status_code == 200
+        assert manager.get(run.id).status == "cancelled"
+
+    def test_retries_failed_manager_update_after_kill(
+        self,
+        client: TestClient,
+        running_agent_run: tuple[LocalAgentRunManager, AgentRun],
+    ) -> None:
+        manager, run = running_agent_run
+        original_cancel = LocalAgentRunManager.cancel
+        attempts = 0
+
+        def fail_once(instance, run_id):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("transient manager failure")
+            return original_cancel(instance, run_id)
+
+        with (
+            patch("gobby.agents.kill.kill_agent", new=AsyncMock(return_value={"success": True})),
+            patch.object(LocalAgentRunManager, "cancel", autospec=True, side_effect=fail_once),
+        ):
+            response = client.post(f"/api/agents/runs/{run.id}/cancel")
+
+        assert response.status_code == 200
+        assert attempts == 2
+        assert manager.get(run.id).status == "cancelled"
+
+    def test_reconciles_status_when_kill_raises(
+        self,
+        client: TestClient,
+        running_agent_run: tuple[LocalAgentRunManager, AgentRun],
+    ) -> None:
+        manager, run = running_agent_run
+
+        with patch(
+            "gobby.agents.kill.kill_agent",
+            new=AsyncMock(side_effect=RuntimeError("kill failed after signalling")),
+        ):
+            response = client.post(f"/api/agents/runs/{run.id}/cancel")
+
+        assert response.status_code == 500
+        assert manager.get(run.id).status == "cancelled"
+
+    def test_cancel_missing_run(self, client: TestClient) -> None:
+        with patch("gobby.agents.kill.kill_agent", new=AsyncMock()) as kill:
+            response = client.post(f"/api/agents/runs/{UNKNOWN_ID}/cancel")
+
+        assert response.status_code == 404
+        kill.assert_not_awaited()

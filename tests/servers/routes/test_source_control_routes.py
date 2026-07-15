@@ -50,6 +50,7 @@ def mock_server():
     server.services.worktree_storage = None
     server.services.clone_storage = None
     server.services.git_manager = None
+    server.run_db = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
     return server
 
 
@@ -595,6 +596,49 @@ class TestListBranches:
             # _run_git should only be called for the first request (3 calls)
             assert mock_git.call_count == 3
 
+    def test_branches_does_not_cache_partial_result_after_git_failure(
+        self, client, mock_server
+    ) -> None:
+        """A partial branch list is retried after an expected git failure."""
+        mock_server.services.worktree_storage = None
+
+        current_result = MagicMock(returncode=0, stdout="main\n")
+        local_result = MagicMock(returncode=0, stdout="main\t\t\t2025-01-01\n")
+        remote_result = MagicMock(
+            returncode=0,
+            stdout="origin/develop\t2025-01-02\n",
+        )
+
+        with (
+            patch(
+                "gobby.servers.routes.source_control._resolve_project",
+                return_value=("/tmp/repo", None),
+            ),
+            patch(
+                "gobby.servers.routes.source_control._run_git",
+                new_callable=AsyncMock,
+                side_effect=[
+                    current_result,
+                    local_result,
+                    subprocess.TimeoutExpired("git", 15),
+                    current_result,
+                    local_result,
+                    remote_result,
+                ],
+            ) as mock_git,
+        ):
+            partial_response = client.get("/api/source-control/branches")
+            retried_response = client.get("/api/source-control/branches")
+
+        assert partial_response.status_code == 200
+        assert [branch["name"] for branch in partial_response.json()["branches"]] == ["main"]
+        assert retried_response.status_code == 200
+        assert [branch["name"] for branch in retried_response.json()["branches"]] == [
+            "main",
+            "develop",
+        ]
+        assert mock_git.call_count == 6
+
     def test_branches_skips_remote_head(self, client, mock_server) -> None:
         """origin/HEAD should be excluded from remote branches."""
         mock_server.services.worktree_storage = None
@@ -879,6 +923,32 @@ class TestListBranchCommits:
         # Verify the limit is passed through (capped at 100)
         call_args = mock_git.call_args[0][0]
         assert "--max-count=5" in call_args
+
+    @pytest.mark.parametrize("limit", [-1, 101])
+    def test_commits_rejects_out_of_range_limit(self, client, limit: int) -> None:
+        response = client.get(f"/api/source-control/branches/main/commits?limit={limit}")
+
+        assert response.status_code == 422
+
+    @pytest.mark.parametrize("limit", [1, 100])
+    def test_commits_accepts_boundary_limit(self, client, mock_server, limit: int) -> None:
+        git_result = MagicMock(returncode=0, stdout="")
+
+        with (
+            patch(
+                "gobby.servers.routes.source_control._resolve_project",
+                return_value=("/tmp/repo", None),
+            ),
+            patch(
+                "gobby.servers.routes.source_control._run_git",
+                new_callable=AsyncMock,
+                return_value=git_result,
+            ) as mock_git,
+        ):
+            response = client.get(f"/api/source-control/branches/main/commits?limit={limit}")
+
+        assert response.status_code == 200
+        assert f"--max-count={limit}" in mock_git.call_args.args[0]
 
 
 # ---------------------------------------------------------------------------
@@ -1262,7 +1332,8 @@ class TestListCICDRuns:
         assert data["runs"] == []
         assert data["github_available"] is False
 
-    def test_cicd_with_runs(self, client, mock_server) -> None:
+    @pytest.mark.parametrize("limit", [1, 100])
+    def test_cicd_with_runs(self, client, mock_server, limit: int) -> None:
         mock_gh = MagicMock()
         mock_gh.is_available.return_value = True
 
@@ -1294,9 +1365,9 @@ class TestListCICDRuns:
                 "gobby.servers.routes.source_control._call_github_mcp",
                 new_callable=AsyncMock,
                 return_value=workflow_data,
-            ),
+            ) as mock_call_github,
         ):
-            response = client.get("/api/source-control/cicd/runs")
+            response = client.get(f"/api/source-control/cicd/runs?limit={limit}")
 
         assert response.status_code == 200
         data = response.json()
@@ -1304,6 +1375,13 @@ class TestListCICDRuns:
         assert len(data["runs"]) == 1
         assert data["runs"][0]["name"] == "CI"
         assert data["runs"][0]["conclusion"] == "success"
+        assert mock_call_github.call_args.args[2]["per_page"] == limit
+
+    @pytest.mark.parametrize("limit", [-1, 101])
+    def test_cicd_rejects_out_of_range_limit(self, client, limit: int) -> None:
+        response = client.get(f"/api/source-control/cicd/runs?limit={limit}")
+
+        assert response.status_code == 422
 
     def test_cicd_no_repo_configured(self, client, mock_server) -> None:
         mock_gh = MagicMock()
@@ -1505,9 +1583,42 @@ class TestDeleteWorktree:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["success"] is True  # DB record still deleted
+        assert data["success"] is False
         assert data["git_deleted"] is False
-        assert "message" in data
+        assert data["git_error"] == "worktree locked"
+        assert data["message"] == "Git worktree deletion failed; DB record was preserved"
+        mock_storage.delete.assert_not_called()
+
+    def test_delete_git_deletion_raises(self, client, mock_server) -> None:
+        wt = MagicMock()
+        wt.worktree_path = "/tmp/wt"
+        wt.project_id = "proj-1"
+
+        mock_storage = MagicMock()
+        mock_storage.get.return_value = wt
+        mock_server.services.worktree_storage = mock_storage
+        mock_server.services.git_manager = MagicMock()
+
+        with (
+            patch(
+                "gobby.servers.routes.source_control._resolve_project",
+                return_value=("/tmp/repo", None),
+            ),
+            patch(
+                "gobby.worktrees.git.WorktreeGitManager",
+            ) as mock_wgm_cls,
+        ):
+            mock_wgm_cls.return_value.delete_worktree.side_effect = RuntimeError("git failed")
+
+            response = client.delete("/api/source-control/worktrees/wt-1")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert data["git_deleted"] is False
+        assert data["git_error"] == "git failed"
+        assert data["message"] == "Git worktree deletion failed; DB record was preserved"
+        mock_storage.delete.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

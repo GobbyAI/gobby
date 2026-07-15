@@ -5,7 +5,6 @@ Extracted from tools.py as part of Phase 2 Strangler Fig decomposition.
 These endpoints handle tool listing, schema retrieval, and tool execution.
 """
 
-import asyncio
 import json
 import logging
 import time
@@ -19,6 +18,7 @@ from gobby.mcp_proxy.wait_tools import (
     mcp_wrapper_fingerprint_stale_result,
 )
 from gobby.servers.routes.dependencies import get_internal_manager, get_mcp_manager, get_server
+from gobby.servers.routes.mcp.endpoints.discovery import _mcp_call_timeout
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.telemetry.instruments import inc_counter, observe_histogram
 from gobby.utils.datetime import to_json_safe
@@ -57,6 +57,14 @@ def _success_response_payload(result: Any, response_time_ms: float) -> dict[str,
             "response_time_ms": response_time_ms,
         }
     )
+
+
+def _timeout_response_payload(timeout: float, response_time_ms: float) -> dict[str, Any]:
+    return {
+        "success": False,
+        "error": f"Tool call timed out after {timeout:g} seconds",
+        "response_time_ms": response_time_ms,
+    }
 
 
 def _stale_stdio_wrapper_wait_result(
@@ -161,15 +169,6 @@ def _derive_project_from_unique_session_seq(
     return None
 
 
-def _derive_project_from_header_session(server: "HTTPServer", session_ref: str) -> str | None:
-    """Resolve a header session and return its project for HTTP bootstrap."""
-    if not server.session_manager:
-        return None
-    bootstrap_id = resolve_session_reference(server.session_manager.db, session_ref)
-    bootstrap_session = server.session_manager.get(bootstrap_id)
-    return bootstrap_session.project_id if bootstrap_session else None
-
-
 async def _set_context_for_request(
     server: "HTTPServer", arguments: Any, request: Request | None = None
 ) -> SeededContextTokens:
@@ -211,7 +210,7 @@ async def _set_context_for_request(
         and caller_project_id_header != project_id_header
     )
     if not canonical_project_ref and header_session_id:
-        canonical_project_ref = await asyncio.to_thread(
+        canonical_project_ref = await server.run_db(
             _derive_project_from_unique_session_seq, server, header_session_id
         )
     if (
@@ -222,9 +221,12 @@ async def _set_context_for_request(
         and argument_session_id.lstrip("#").isdigit()
     ):
         try:
-            canonical_project_ref = await asyncio.to_thread(
-                _derive_project_from_header_session, server, header_session_id
+            bootstrap_id = await server.run_db(
+                resolve_session_reference, server.session_manager.db, header_session_id
             )
+            bootstrap_session = await server.run_db(server.session_manager.get, bootstrap_id)
+            if bootstrap_session:
+                canonical_project_ref = bootstrap_session.project_id
         except Exception as e:
             logger.debug(
                 f"HTTP project bootstrap from header session {header_session_id!r} failed: {e}"
@@ -346,11 +348,12 @@ async def _call_internal_tool(
         return _success_response_payload(result, response_time_ms)
     except Exception as e:
         inc_counter("mcp_tool_calls_failed_total")
-        error_msg = str(e) or f"{type(e).__name__}: (no message)"
-        raise HTTPException(
-            status_code=500,
-            detail={"success": False, "error": error_msg},
-        ) from e
+        logger.error(
+            f"Internal MCP tool call error: {server_name}.{tool_name}",
+            exc_info=True,
+            extra={"server": server_name, "tool": tool_name},
+        )
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 async def list_mcp_tools(
@@ -678,6 +681,7 @@ async def call_mcp_tool(
         # _set_context_for_request reads it non-destructively via .get().
         # InternalToolRegistry.call strips unknown kwargs via signature inspection.
         try:
+            timeout = _mcp_call_timeout(server)
             # Route through ToolProxyService for consistent error enrichment
             if server.tool_proxy:
                 result = await server.tool_proxy.call_tool(
@@ -685,6 +689,7 @@ async def call_mcp_tool(
                     tool_name,
                     arguments,
                     session_id=get_current_session_id(),
+                    timeout=timeout,
                 )
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 return _process_tool_proxy_result(result, server_name, tool_name, response_time_ms)
@@ -706,18 +711,26 @@ async def call_mcp_tool(
 
             # Call external MCP tool
             try:
-                result = await server.mcp_manager.call_tool(server_name, tool_name, arguments)
+                result = await server.mcp_manager.call_tool(
+                    server_name, tool_name, arguments, timeout=timeout
+                )
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 inc_counter("mcp_tool_calls_succeeded_total")
 
                 return _success_response_payload(result, response_time_ms)
 
+            except TimeoutError:
+                inc_counter("mcp_tool_calls_failed_total")
+                response_time_ms = (time.perf_counter() - start_time) * 1000
+                return _timeout_response_payload(timeout, response_time_ms)
             except Exception as e:
                 inc_counter("mcp_tool_calls_failed_total")
-                error_msg = str(e) or f"{type(e).__name__}: (no message)"
-                raise HTTPException(
-                    status_code=500, detail={"success": False, "error": error_msg}
-                ) from e
+                logger.error(
+                    f"MCP tool call error: {server_name}.{tool_name}",
+                    exc_info=True,
+                    extra={"server": server_name, "tool": tool_name},
+                )
+                raise HTTPException(status_code=500, detail="Internal server error") from e
         finally:
             _reset_context(ctx_token)
 
@@ -725,9 +738,8 @@ async def call_mcp_tool(
         raise
     except Exception as e:
         inc_counter("mcp_tool_calls_failed_total")
-        error_msg = str(e) or f"{type(e).__name__}: (no message)"
-        logger.error(f"Call MCP tool error: {error_msg}", exc_info=True)
-        raise HTTPException(status_code=500, detail={"success": False, "error": error_msg}) from e
+        logger.error("Call MCP tool error", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 async def mcp_proxy(
@@ -771,6 +783,7 @@ async def mcp_proxy(
         # Set project context from session_id or stdio proxy headers
         ctx_token = await _set_context_for_request(server, arguments, request)
         try:
+            timeout = _mcp_call_timeout(server)
             # Route through ToolProxyService for consistent error enrichment
             if server.tool_proxy:
                 result = await server.tool_proxy.call_tool(
@@ -778,6 +791,7 @@ async def mcp_proxy(
                     tool_name,
                     arguments,
                     session_id=get_current_session_id(),
+                    timeout=timeout,
                 )
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 return _process_tool_proxy_result(result, server_name, tool_name, response_time_ms)
@@ -806,7 +820,9 @@ async def mcp_proxy(
 
             # Call MCP tool
             try:
-                result = await server.mcp_manager.call_tool(server_name, tool_name, arguments)
+                result = await server.mcp_manager.call_tool(
+                    server_name, tool_name, arguments, timeout=timeout
+                )
 
                 response_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -823,6 +839,10 @@ async def mcp_proxy(
 
                 return _success_response_payload(result, response_time_ms)
 
+            except TimeoutError:
+                inc_counter("mcp_tool_calls_failed_total")
+                response_time_ms = (time.perf_counter() - start_time) * 1000
+                return _timeout_response_payload(timeout, response_time_ms)
             except ValueError as e:
                 inc_counter("mcp_tool_calls_failed_total")
                 logger.warning(
@@ -834,15 +854,12 @@ async def mcp_proxy(
                 ) from e
             except Exception as e:
                 inc_counter("mcp_tool_calls_failed_total")
-                error_msg = str(e) or f"{type(e).__name__}: (no message)"
                 logger.error(
                     f"MCP tool call error: {server_name}.{tool_name}",
                     exc_info=True,
                     extra={"server": server_name, "tool": tool_name},
                 )
-                raise HTTPException(
-                    status_code=500, detail={"success": False, "error": error_msg}
-                ) from e
+                raise HTTPException(status_code=500, detail="Internal server error") from e
 
         finally:
             _reset_context(ctx_token)
@@ -851,9 +868,8 @@ async def mcp_proxy(
         raise
     except Exception as e:
         inc_counter("mcp_tool_calls_failed_total")
-        error_msg = str(e) or f"{type(e).__name__}: (no message)"
         logger.error(f"MCP proxy error: {server_name}.{tool_name}", exc_info=True)
-        raise HTTPException(status_code=500, detail={"success": False, "error": error_msg}) from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 __all__ = [

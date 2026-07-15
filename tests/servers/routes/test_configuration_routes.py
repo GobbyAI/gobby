@@ -340,6 +340,44 @@ class TestSaveConfigValues:
         assert response.status_code == 400
         assert "detail" in response.json()
 
+    def test_resolved_config_validation_failure_does_not_persist(
+        self,
+        client: TestClient,
+        temp_db: Any,
+        server: Any,
+    ) -> None:
+        """Resolved runtime validation must finish before storage is mutated."""
+        original_config = server.services.config.model_dump(mode="json")
+        real_daemon_config = DaemonConfig
+
+        def validate_config(**values: Any) -> DaemonConfig:
+            api_key = values.get("embeddings", {}).get("api_key")
+            if api_key == "invalid-resolved-secret":
+                raise ValueError("resolved secret is invalid")
+            return real_daemon_config(**values)
+
+        with patch(
+            "gobby.servers.routes.configuration_values.DaemonConfig",
+            side_effect=validate_config,
+        ):
+            response = client.put(
+                "/api/config/values",
+                json={
+                    "values": {
+                        "daemon_port": 9999,
+                        "embeddings": {"api_key": "invalid-resolved-secret"},
+                    }
+                },
+            )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Invalid configuration values"
+        store = ConfigStore(temp_db)
+        assert store.get("daemon_port") is None
+        assert store.get(AI_EMBEDDING_API_KEY_KEY) is None
+        assert SecretStore(temp_db).get(EMBEDDING_API_KEY_SECRET_NAME) is None
+        assert server.services.config.model_dump(mode="json") == original_config
+
     def test_save_falkordb_password_encrypts_and_masks(
         self, postgres_client: TestClient, postgres_db: Any, mock_machine_id: Any
     ) -> None:
@@ -620,6 +658,33 @@ class TestSaveTemplate:
         )
         assert response.status_code == 200
         assert response.json()["ok"] is True
+
+    def test_save_preserves_non_daemon_config_namespaces(
+        self, client: TestClient, temp_db: Any
+    ) -> None:
+        ui_response = client.put(
+            "/api/config/ui-settings",
+            json={"fontSize": 18},
+        )
+        approvals_response = client.put(
+            "/api/config/tool-approvals/global",
+            json={"rules": ["tool:Write", "mcp:third-party:*"]},
+        )
+        assert ui_response.status_code == 200
+        assert approvals_response.status_code == 200
+
+        response = client.put(
+            "/api/config/template",
+            json={"content": "daemon_port: 9999\n"},
+        )
+
+        assert response.status_code == 200
+        store = ConfigStore(temp_db)
+        assert store.get("ui_settings.fontSize") == 18
+        assert store.get("tool_approvals.global_rules") == [
+            "tool:Write",
+            "mcp:third-party:*",
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -1180,6 +1245,31 @@ class TestPromptsEndpoints:
         assert data["offset"] == 1
         assert data["count"] == len(data["prompts"])
 
+    def test_list_prompts_total_is_filter_scoped_and_unpaginated(
+        self,
+        client: TestClient,
+        temp_db: HubDatabase,
+    ) -> None:
+        initial = client.get("/api/config/prompts").json()
+        prompt_path = initial["prompts"][0]["path"]
+
+        override = client.put(
+            f"/api/config/prompts/{prompt_path}",
+            json={"content": "# Override"},
+        )
+        assert override.status_code == 200
+        LocalPromptManager(temp_db).create_prompt(
+            name="test/disabled",
+            content="disabled",
+            scope="global",
+            enabled=False,
+        )
+
+        data = client.get("/api/config/prompts?limit=1").json()
+        assert data["total"] == initial["total"]
+        assert data["count"] == 1
+        assert len(data["prompts"]) == 1
+
     def test_list_prompts_source_is_bundled(self, client: TestClient) -> None:
         """Without overrides, all sources should be 'bundled'."""
         response = client.get("/api/config/prompts")
@@ -1707,6 +1797,28 @@ class TestExportImport:
         assert "config restored" in data["summary"]
         assert "1 prompt override(s) restored" in data["summary"]
         assert data["requires_restart"] is True
+
+    def test_import_prompt_write_failure_rolls_back_config(
+        self, client: TestClient, temp_db: Any
+    ) -> None:
+        store = ConfigStore(temp_db)
+        store.set("daemon_port", 5555)
+
+        with patch.object(
+            LocalPromptManager,
+            "create_prompt",
+            side_effect=RuntimeError("prompt write failed"),
+        ):
+            response = client.post(
+                "/api/config/import",
+                json={
+                    "config_store": {"daemon_port": 9999},
+                    "prompts": {"test/foo.md": "# Foo"},
+                },
+            )
+
+        assert response.status_code == 400
+        assert store.get("daemon_port") == 5555
 
     def test_import_config_store_falkordb_password_encrypts(
         self, postgres_client: TestClient, postgres_db: Any, mock_machine_id: Any

@@ -25,6 +25,9 @@ from gobby.ai.registry import (
     build_daemon_ai_capability_registry,
     normalize_capability,
 )
+from gobby.servers.chat_attachment_limits import resolve_server_attachment_limits
+from gobby.servers.responses import JSONResponse
+from gobby.servers.upload_limits import read_bounded_upload
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -233,16 +236,24 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
         model: str | None = Form(default=None),
         language: str | None = Form(default=None),
         prompt: str | None = Form(default=None),
-    ) -> dict[str, Any]:
+    ) -> Any:
         """One-shot audio transcription (for testing).
 
         Upload an audio file to get transcription text.
         """
         config = server.config
         if not config or not hasattr(config, "voice"):
-            return {"error": "Voice not enabled", "text": ""}
+            return JSONResponse(
+                status_code=503,
+                content={"error": "Voice not enabled", "text": ""},
+            )
 
-        audio_bytes = await file.read()
+        max_upload_bytes = resolve_server_attachment_limits(server).max_file_bytes
+        audio_bytes = await read_bounded_upload(
+            file,
+            max_bytes=max_upload_bytes,
+            label="Audio",
+        )
         content_type = file.content_type or "audio/webm"
         selected_capability = capability or AICapability.AUDIO_TRANSCRIBE.value
         failure_label = _audio_failure_label(selected_capability)
@@ -277,25 +288,34 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
                 "model": result.model,
             }
         except AudioProviderUnavailableError as e:
-            return _audio_error_payload(
-                str(e),
-                code="provider_unavailable",
-                capability=selected_capability,
-                provider=provider,
-                model=model,
+            return JSONResponse(
+                status_code=503,
+                content=_audio_error_payload(
+                    str(e),
+                    code="provider_unavailable",
+                    capability=selected_capability,
+                    provider=provider,
+                    model=model,
+                ),
             )
         except CapabilityUnavailableError as e:
             logger.info("Audio capability unavailable: %s", e)
-            return _capability_error_payload(e)
+            return JSONResponse(status_code=400, content=_capability_error_payload(e))
         except ValueError as e:
             logger.info("%s rejected: %s", failure_label, e)
-            return {"error": str(e), "text": ""}
+            return JSONResponse(status_code=400, content={"error": str(e), "text": ""})
         except TimeoutError:
             logger.warning("%s timed out", failure_label)
-            return {"error": f"{failure_label} timed out", "text": ""}
+            return JSONResponse(
+                status_code=504,
+                content={"error": f"{failure_label} timed out", "text": ""},
+            )
         except Exception:
             logger.error("%s error", failure_label, exc_info=True)
-            return {"error": f"{failure_label} failed", "text": ""}
+            return JSONResponse(
+                status_code=500,
+                content={"error": f"{failure_label} failed", "text": ""},
+            )
 
     return router
 
