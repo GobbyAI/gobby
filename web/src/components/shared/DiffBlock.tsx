@@ -138,16 +138,17 @@ export function DiffBlock({
     return (
       <div className="flex flex-col h-full">
         <div
-          className="flex items-center gap-2 px-3 border-b border-border shrink-0"
-          style={{ height: 36, background: 'var(--bg-secondary)' }}
+          className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3 pointer-coarse:h-11"
+          style={{ background: 'var(--bg-secondary)' }}
         >
           <span className="text-xs font-mono text-muted-foreground truncate flex-1">
             {path}
           </span>
           {onCopy && (
             <button
+              type="button"
               onClick={onCopy}
-              className="text-xs text-muted-foreground hover:text-foreground shrink-0"
+              className="shrink-0 text-xs text-muted-foreground hover:text-foreground pointer-coarse:min-h-11 pointer-coarse:min-w-11"
               title="Copy diff"
             >
               Copy

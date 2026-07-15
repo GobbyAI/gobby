@@ -133,7 +133,13 @@ describe('DiffBlock — inline variant from parsed unified diff', () => {
     )
 
     expect(screen.getByText('src/foo.ts')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Copy' }))
+    const copyButton = screen.getByRole('button', { name: 'Copy' })
+    expect(copyButton).toHaveAttribute('type', 'button')
+    expect(copyButton).toHaveClass('pointer-coarse:min-h-11')
+    expect(copyButton).toHaveClass('pointer-coarse:min-w-11')
+    expect(copyButton.parentElement).toHaveClass('pointer-coarse:h-11')
+
+    fireEvent.click(copyButton)
     expect(onCopy).toHaveBeenCalledTimes(1)
   })
 

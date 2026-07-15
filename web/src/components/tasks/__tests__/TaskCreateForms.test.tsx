@@ -64,6 +64,15 @@ describe('task creation forms', () => {
     expect(onClose).not.toHaveBeenCalled()
   })
 
+  it('promotes QuickCaptureTask controls for coarse pointers', () => {
+    render(<QuickCaptureTask isOpen onClose={vi.fn()} />)
+
+    for (const button of screen.getAllByRole('button')) {
+      expect(button).toHaveClass('pointer-coarse:min-h-11')
+      expect(button).toHaveClass('pointer-coarse:min-w-11')
+    }
+  })
+
   it('closes QuickCaptureTask after a successful request', async () => {
     const onClose = vi.fn()
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 201 })))
