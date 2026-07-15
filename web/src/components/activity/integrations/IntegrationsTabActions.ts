@@ -26,6 +26,7 @@ export async function saveExistingIntegration(
   return await updateIntegrationChannel(channelId, {
     config: payload.config,
     enabled: payload.enabled,
+    secrets: payload.secrets,
   });
 }
 

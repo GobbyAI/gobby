@@ -1,5 +1,6 @@
-import { useEffect, useRef } from 'react'
+import { useId, useLayoutEffect, useRef } from 'react'
 import type { CSSProperties } from 'react'
+import { useDialogFocus } from '../../hooks/useDialogFocus'
 import { cn } from '../../lib/utils'
 import './SidebarPanel.css'
 
@@ -25,19 +26,10 @@ export function SidebarPanel({
   className,
 }: SidebarPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null)
-  const onCloseRef = useRef(onClose)
-  useEffect(() => {
-    onCloseRef.current = onClose
-  }, [onClose])
-
-  useEffect(() => {
-    if (!isOpen) return
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCloseRef.current()
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    panelRef.current?.focus()
-    return () => document.removeEventListener('keydown', handleKeyDown)
+  const titleId = useId()
+  useDialogFocus({ ref: panelRef, isOpen, onClose })
+  useLayoutEffect(() => {
+    panelRef.current?.toggleAttribute('inert', !isOpen)
   }, [isOpen])
 
   return (
@@ -51,6 +43,10 @@ export function SidebarPanel({
       <div
         ref={panelRef}
         tabIndex={-1}
+        role={isOpen ? 'dialog' : undefined}
+        aria-modal={isOpen ? true : undefined}
+        aria-labelledby={isOpen ? titleId : undefined}
+        aria-hidden={isOpen ? undefined : true}
         className={cn(
           'fixed right-0 top-0 z-[100] flex h-full max-w-[90vw] flex-col border-l border-[var(--border)] bg-[var(--bg-secondary)] outline-none transition-transform duration-[250ms] ease-out',
           'w-[var(--sidebar-panel-width)] max-md:w-screen max-md:max-w-full',
@@ -62,9 +58,12 @@ export function SidebarPanel({
       >
         <div className="flex-shrink-0 border-b border-[var(--border)] px-5 py-4">
           <div className="flex items-center justify-between">
-            <span className="text-[length:var(--text-sm)] font-semibold uppercase tracking-[0.05em] text-[var(--text-muted)]">
+            <h2
+              id={titleId}
+              className="text-[length:var(--text-sm)] font-semibold uppercase tracking-[0.05em] text-[var(--text-muted)]"
+            >
               {title}
-            </span>
+            </h2>
             <button
               type="button"
               onClick={onClose}

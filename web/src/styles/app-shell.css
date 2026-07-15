@@ -20,7 +20,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--text-primary);
-  font-size: 1.625rem;
+  font-size: var(--text-3xl);
   font-weight: var(--font-weight-semibold);
   line-height: 1;
   text-overflow: ellipsis;
@@ -123,7 +123,7 @@
   }
 
   .app-brand-title {
-    font-size: 1.25rem;
+    font-size: var(--text-2xl);
   }
 
   .app-header-actions [role="radiogroup"] {

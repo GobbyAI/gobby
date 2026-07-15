@@ -6,6 +6,7 @@
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
+import { inputFocusCls } from "../../shared/focusStyles";
 import { fetchSearch, type WikiFetchScope } from "./WikiTabData";
 import type { WikiNodeIndex, WikiPageMeta } from "./WikiTabModel";
 
@@ -142,13 +143,16 @@ export function WikiQuickOpen({ scope, pages, nodeIndex, onOpen, onClose }: Wiki
   return (
     <div
       className="absolute inset-0 z-20 flex items-start justify-center bg-background/60 pt-10"
-      onClick={onClose}
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.button === 0) onClose()
+      }}
     >
       <div
         role="dialog"
         aria-label="Quick open"
         className="w-full max-w-md rounded-lg border border-border bg-background shadow-lg"
-        onClick={(event) => event.stopPropagation()}
+        onMouseDown={(event) => event.stopPropagation()}
       >
         <input
           ref={inputRef}
@@ -161,7 +165,7 @@ export function WikiQuickOpen({ scope, pages, nodeIndex, onOpen, onClose }: Wiki
           aria-label="Quick open"
           value={query}
           placeholder="Jump to a page…"
-          className="w-full rounded-t-lg border-b border-border bg-transparent px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+          className={`w-full rounded-t-lg border-b border-border bg-transparent px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground ${inputFocusCls}`}
           onChange={(event) => {
             setQuery(event.target.value);
             setActiveIndex(0);
@@ -187,7 +191,9 @@ export function WikiQuickOpen({ scope, pages, nodeIndex, onOpen, onClose }: Wiki
                 index === clampedIndex ? "bg-muted text-foreground" : "text-foreground"
               } hover:bg-muted`}
               onMouseEnter={() => setActiveIndex(index)}
-              onClick={() => open(match.path)}
+              onMouseDown={(event) => {
+                if (event.button === 0) open(match.path)
+              }}
             >
               <span className="truncate">{match.title}</span>
               <span className="ml-auto truncate pl-2 font-mono text-2xs text-muted-foreground">

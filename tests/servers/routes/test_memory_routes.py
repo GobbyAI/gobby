@@ -392,11 +392,17 @@ class TestUpdateMemory:
         )
         response = client.put(
             "/api/memories/mm-abc123",
-            json={"content": "Updated content"},
+            json={"content": "Updated content", "memory_type": "preference"},
         )
         assert response.status_code == 200
         data = response.json()
         assert data["content"] == "Updated content"
+        mock_server.memory_manager.update_memory.assert_awaited_once_with(
+            memory_id="mm-abc123",
+            content="Updated content",
+            tags=None,
+            memory_type="preference",
+        )
 
     def test_update_not_found(self, client, mock_server) -> None:
         """PUT /memories/{id} returns 404 when not found."""

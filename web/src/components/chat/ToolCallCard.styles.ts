@@ -15,7 +15,7 @@ export const TOOL_RESULT_CUSTOM_STYLE = {
   margin: 0,
   background: 'transparent',
   padding: '0.75rem',
-  fontSize: '0.75rem',
+  fontSize: 'var(--text-sm)',
   borderRadius: '0.25rem',
   maxHeight: '24rem',
   overflowY: 'auto' as const,

@@ -93,7 +93,7 @@ describe('TracesTab', () => {
     expect(screen.getByText('loaded-trace')).toBeInTheDocument()
   })
 
-  it('sorts traces newest-first and calls setSelectedTraceId on click', async () => {
+  it('sorts traces newest-first and selects a trace from the keyboard', async () => {
     tracesMock.traces = [
       makeTrace({ trace_id: 't-old', root_span_name: 'old-span', timestamp: '2026-04-01T00:00:00Z' }),
       makeTrace({ trace_id: 't-new', root_span_name: 'new-span', timestamp: '2026-05-01T00:00:00Z' }),
@@ -102,7 +102,8 @@ describe('TracesTab', () => {
     const buttons = screen.getAllByTestId('trace-row-button')
     expect(buttons[0]).toHaveTextContent('new-span')
 
-    await userEvent.click(buttons[1])
+    buttons[1].focus()
+    await userEvent.keyboard('{Enter}')
     expect(tracesMock.setSelectedTraceId).toHaveBeenCalledWith('t-old')
   })
 

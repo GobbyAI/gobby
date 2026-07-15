@@ -595,7 +595,7 @@ async def test_handle_inbound_verifies_adapter_when_webhook_secret_unset():
 @pytest.mark.asyncio
 async def test_handle_inbound_resolves_webhook_secret_ref():
     """handle_inbound() resolves webhook_secret refs before signature verification."""
-    channel = make_channel(webhook_secret="$secret:COMMS_SLACK_WEBHOOK_SECRET_MY-SLACK")
+    channel = make_channel(webhook_secret="$secret:COMMS_SLACK_WEBHOOK_SECRET_MY_SLACK")
     store = make_store([channel])
     secret_store = make_secret_store()
     secret_store.get.return_value = "mysecret"
@@ -613,7 +613,7 @@ async def test_handle_inbound_resolves_webhook_secret_ref():
     messages = await manager.handle_inbound("test-channel", b"payload", {"X-Signature": "ok"})
 
     assert messages == []
-    secret_store.get.assert_called_once_with("COMMS_SLACK_WEBHOOK_SECRET_MY-SLACK")
+    secret_store.get.assert_called_once_with("COMMS_SLACK_WEBHOOK_SECRET_MY_SLACK")
     mock_adapter.verify_webhook.assert_called_once_with(
         b"payload",
         {"X-Signature": "ok"},
@@ -839,24 +839,24 @@ async def test_add_channel_stores_secrets_in_secret_store():
     with patch("gobby.communications.manager.get_adapter_class", return_value=mock_adapter_cls):
         channel = await manager.add_channel("slack", "my-slack", {}, secrets=secrets)
 
-    assert channel.webhook_secret == "$secret:COMMS_SLACK_WEBHOOK_SECRET_MY-SLACK"
+    assert channel.webhook_secret == "$secret:COMMS_SLACK_WEBHOOK_SECRET_MY_SLACK"
 
     # bot_token, signing_secret, and webhook_secret stored in SecretStore
     assert secret_store.set.call_count == 3
     set_calls = {call.kwargs["name"]: call for call in secret_store.set.call_args_list}
-    assert "COMMS_SLACK_BOT_TOKEN_MY-SLACK" in set_calls
-    assert "COMMS_SLACK_SIGNING_SECRET_MY-SLACK" in set_calls
-    assert "COMMS_SLACK_WEBHOOK_SECRET_MY-SLACK" in set_calls
+    assert "COMMS_SLACK_BOT_TOKEN_MY_SLACK" in set_calls
+    assert "COMMS_SLACK_SIGNING_SECRET_MY_SLACK" in set_calls
+    assert "COMMS_SLACK_WEBHOOK_SECRET_MY_SLACK" in set_calls
 
     # Config should have $secret: references
     created_channel = store.create_channel.call_args[0][0]
-    assert created_channel.config_json["bot_token"] == "$secret:COMMS_SLACK_BOT_TOKEN_MY-SLACK"
+    assert created_channel.config_json["bot_token"] == "$secret:COMMS_SLACK_BOT_TOKEN_MY_SLACK"
     assert (
         created_channel.config_json["signing_secret"]
-        == "$secret:COMMS_SLACK_SIGNING_SECRET_MY-SLACK"
+        == "$secret:COMMS_SLACK_SIGNING_SECRET_MY_SLACK"
     )
     assert "webhook_secret" not in created_channel.config_json
-    assert created_channel.webhook_secret == "$secret:COMMS_SLACK_WEBHOOK_SECRET_MY-SLACK"
+    assert created_channel.webhook_secret == "$secret:COMMS_SLACK_WEBHOOK_SECRET_MY_SLACK"
     assert secret_store.set.call_args_list[-1].kwargs["plaintext_value"] == "whsec_keep_separate"
 
 
@@ -876,11 +876,11 @@ async def test_add_channel_does_not_mutate_caller_config():
 
     assert config == {"token": "$secret:SLACK_TOKEN"}
     created_channel = store.create_channel.call_args[0][0]
-    assert created_channel.config_json["bot_token"] == "$secret:COMMS_SLACK_BOT_TOKEN_MY-SLACK"
+    assert created_channel.config_json["bot_token"] == "$secret:COMMS_SLACK_BOT_TOKEN_MY_SLACK"
 
 
 def test_channel_to_dict_redacts_webhook_secret():
-    channel = make_channel(webhook_secret="$secret:COMMS_SLACK_WEBHOOK_SECRET_MY-SLACK")
+    channel = make_channel(webhook_secret="$secret:COMMS_SLACK_WEBHOOK_SECRET_MY_SLACK")
     manager = CommunicationsManager(
         make_config(), make_store([channel]), make_secret_store(), MagicMock()
     )
@@ -929,12 +929,12 @@ async def test_init_adapter_resolves_secret_refs_with_real_secret_store(
     assert mock_machine_id
     secret_store = SecretStore(temp_db)
     secret_store.set(
-        name="COMMS_SLACK_BOT_TOKEN_MY-SLACK",
+        name="COMMS_SLACK_BOT_TOKEN_MY_SLACK",
         plaintext_value="xoxb-scoped-token",
         category="integration",
     )
     secret_store.set(
-        name="COMMS_SLACK_SIGNING_SECRET_MY-SLACK",
+        name="COMMS_SLACK_SIGNING_SECRET_MY_SLACK",
         plaintext_value="scoped-signing-secret",
         category="integration",
     )
@@ -945,8 +945,8 @@ async def test_init_adapter_resolves_secret_refs_with_real_secret_store(
         name="my-slack",
         enabled=True,
         config_json={
-            "bot_token": "$secret:COMMS_SLACK_BOT_TOKEN_MY-SLACK",
-            "signing_secret": "$secret:COMMS_SLACK_SIGNING_SECRET_MY-SLACK",
+            "bot_token": "$secret:COMMS_SLACK_BOT_TOKEN_MY_SLACK",
+            "signing_secret": "$secret:COMMS_SLACK_SIGNING_SECRET_MY_SLACK",
         },
         created_at="2024-01-01T00:00:00Z",
         updated_at="2024-01-01T00:00:00Z",
@@ -983,7 +983,7 @@ async def test_add_channel_skips_empty_secrets():
 
     # Only bot_token stored (signing_secret and webhook_secret are empty)
     assert secret_store.set.call_count == 1
-    assert secret_store.set.call_args.kwargs["name"] == "COMMS_SLACK_BOT_TOKEN_MY-SLACK"
+    assert secret_store.set.call_args.kwargs["name"] == "COMMS_SLACK_BOT_TOKEN_MY_SLACK"
 
 
 @pytest.mark.asyncio
@@ -1118,6 +1118,26 @@ async def test_update_channel_delegates_to_store():
     store.update_channel.assert_called_once_with(channel)
     # updated_at should be refreshed
     assert channel.updated_at != "2024-01-01T00:00:00"
+
+
+async def test_update_channel_stores_changed_secrets():
+    channel = make_channel(channel_type="slack", name="my-slack")
+    store = make_store()
+    store.update_channel.return_value = channel
+    secret_store = make_secret_store()
+    manager = CommunicationsManager(make_config(), store, secret_store, MagicMock())
+
+    with patch("gobby.communications.manager.get_adapter_class", return_value=None):
+        result = await manager.update_channel(channel, secrets={"bot_token": "new-token"})
+
+    assert result == channel
+    secret_store.set.assert_called_once_with(
+        name="COMMS_SLACK_BOT_TOKEN_MY_SLACK",
+        plaintext_value="new-token",
+        category="integration",
+        description="slack channel 'my-slack': bot_token",
+    )
+    assert channel.config_json["bot_token"] == "$secret:COMMS_SLACK_BOT_TOKEN_MY_SLACK"
 
 
 async def test_update_channel_disable_stops_runtime_traffic():
@@ -1294,8 +1314,8 @@ async def test_handle_inbound_populates_thread_map_and_handles_reactions():
         channel_id="chan-1",
         external_user_id="user-1",
         session_id="session-123",
-        created_at="",
-        updated_at="",
+        created_at="2024-01-01T00:00:00Z",
+        updated_at="2024-01-01T00:00:00Z",
     )
 
     manager._identity_manager = MagicMock()
@@ -1309,7 +1329,7 @@ async def test_handle_inbound_populates_thread_map_and_handles_reactions():
         direction="inbound",
         content="Hello",
         platform_thread_id="thread-456",
-        created_at="",
+        created_at="2024-01-01T00:00:00Z",
         identity_id="user-1",
     )
 
@@ -1320,7 +1340,7 @@ async def test_handle_inbound_populates_thread_map_and_handles_reactions():
         content="+1",
         platform_message_id="msg-123",
         content_type="reaction",
-        created_at="",
+        created_at="2024-01-01T00:00:00Z",
         identity_id="user-1",
     )
 

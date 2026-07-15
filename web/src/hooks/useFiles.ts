@@ -19,6 +19,7 @@ export interface OpenFile {
   loading: boolean
   saving: boolean
   error: string | null
+  saveError: string | null
   dirty: boolean
   editing: boolean
   image: boolean
@@ -258,6 +259,7 @@ export function useFiles() {
       loading: true,
       saving: false,
       error: null,
+      saveError: null,
       dirty: false,
       editing: false,
       image: false,
@@ -336,7 +338,13 @@ export function useFiles() {
         if (i !== index) return f
         if (f.truncated) return f
         if (f.editing && f.dirty) return f
-        return { ...f, editing: !f.editing, editContent: f.originalContent, dirty: false }
+        return {
+          ...f,
+          editing: !f.editing,
+          editContent: f.originalContent,
+          dirty: false,
+          saveError: null,
+        }
       })
     )
   }, [])
@@ -345,7 +353,13 @@ export function useFiles() {
     setOpenFiles(prev =>
       prev.map((f, i) =>
         i === index
-          ? { ...f, editing: false, editContent: f.originalContent, dirty: false }
+          ? {
+              ...f,
+              editing: false,
+              editContent: f.originalContent,
+              dirty: false,
+              saveError: null,
+            }
           : f
       )
     )
@@ -361,12 +375,22 @@ export function useFiles() {
     )
   }, [])
 
+  const clearSaveError = useCallback((index: number) => {
+    setOpenFiles(prev =>
+      prev.map((f, i) => (i === index ? { ...f, saveError: null } : f))
+    )
+  }, [])
+
   const saveFile = useCallback(async (index: number) => {
     const file = openFilesRef.current[index]
     if (!file || file.truncated || !file.dirty || file.editContent === null) return
+    const matchesFile = (candidate: OpenFile) =>
+      candidate.projectId === file.projectId && candidate.path === file.path
 
     setOpenFiles(prev =>
-      prev.map((f, i) => (i === index ? { ...f, saving: true } : f))
+      prev.map(f =>
+        matchesFile(f) ? { ...f, saving: true, saveError: null } : f
+      )
     )
 
     try {
@@ -386,8 +410,8 @@ export function useFiles() {
       }
 
       setOpenFiles(prev =>
-        prev.map((f, i) =>
-          i === index
+        prev.map(f =>
+          matchesFile(f)
             ? {
                 ...f,
                 content: f.editContent,
@@ -395,6 +419,7 @@ export function useFiles() {
                 dirty: false,
                 saving: false,
                 error: null,
+                saveError: null,
               }
             : f
         )
@@ -402,8 +427,8 @@ export function useFiles() {
       await fetchGitStatus(file.projectId)
     } catch (e) {
       setOpenFiles(prev =>
-        prev.map((f, i) =>
-          i === index ? { ...f, saving: false, error: String(e) } : f
+        prev.map(f =>
+          matchesFile(f) ? { ...f, saving: false, saveError: String(e) } : f
         )
       )
     }
@@ -453,6 +478,7 @@ export function useFiles() {
     toggleEditing,
     cancelEditing,
     updateEditContent,
+    clearSaveError,
     saveFile,
     fetchGitStatus,
     fetchDiff,

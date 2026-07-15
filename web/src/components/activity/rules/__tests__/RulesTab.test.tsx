@@ -85,7 +85,7 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
-function installRulesFetch() {
+function installRulesFetch({ toggleSucceeds = true }: { toggleSucceeds?: boolean } = {}) {
   const rules = [
     makeRule({ id: "rule-1", name: "alpha-rule" }),
     makeRule({
@@ -187,6 +187,7 @@ function installRulesFetch() {
     }
 
     if (requestUrl.pathname.endsWith("/toggle") && method === "PUT") {
+      if (!toggleSucceeds) return jsonResponse({ detail: "toggle failed" }, 500);
       const pathParts = requestUrl.pathname.split("/");
       const ruleName = decodeURIComponent(pathParts[pathParts.length - 2] ?? "");
       const rule = rules.find((candidate) => candidate.name === ruleName);
@@ -297,6 +298,22 @@ describe("Rules activity tab", () => {
       expect.objectContaining({ name: "alpha-rule-copy" }),
       expect.objectContaining({ name: "alpha-rule-copy-2" }),
     ]);
+  });
+
+  it("shows an error and preserves the enabled state when a toggle fails", async () => {
+    installRulesFetch({ toggleSucceeds: false });
+    const user = userEvent.setup();
+
+    render(<RulesTab />);
+    expect(await screen.findByText("alpha-rule")).toBeInTheDocument();
+    const alphaRule = screen.getByRole("button", { name: "Select alpha-rule" });
+    expect(within(alphaRule).getByLabelText("Rule enabled")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Open actions for alpha-rule" }));
+    await user.click(screen.getByRole("menuitem", { name: "Deactivate" }));
+
+    expect(await screen.findByText("Failed to deactivate rule")).toBeInTheDocument();
+    expect(within(alphaRule).getByLabelText("Rule enabled")).toBeInTheDocument();
   });
 
   it("saves scalar draft edits as a full-definition PUT and reselects renamed rules", async () => {

@@ -417,6 +417,7 @@ class MemoryCrudMixin(MemoryStoreBase):
         memory_id: str,
         content: str | None = None,
         tags: list[str] | None = None,
+        memory_type: str | None = None,
     ) -> Memory:
         updates = []
         params: list[Any] = []
@@ -451,6 +452,9 @@ class MemoryCrudMixin(MemoryStoreBase):
         if tags is not None:
             updates.append("tags = %s")
             params.append(json.dumps(tags))
+        if memory_type is not None:
+            updates.append("memory_type = %s")
+            params.append(memory_type)
 
         if not updates:
             return self.get_memory(memory_id)

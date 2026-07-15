@@ -54,6 +54,7 @@ export function CodePage({ projectId }: CodePageProps) {
               onToggleEditing={files.toggleEditing}
               onCancelEditing={files.cancelEditing}
               onUpdateEditContent={files.updateEditContent}
+              onClearSaveError={files.clearSaveError}
               onSaveFile={files.saveFile}
               onFetchDiff={files.fetchDiff}
             />

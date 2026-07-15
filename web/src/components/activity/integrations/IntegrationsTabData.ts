@@ -81,7 +81,11 @@ export async function createIntegrationChannel(payload: IntegrationSavePayload):
 
 export async function updateIntegrationChannel(
   channelId: string,
-  updates: { config?: Record<string, string | number>; enabled?: boolean },
+  updates: {
+    config?: Record<string, string | number>;
+    enabled?: boolean;
+    secrets?: Record<string, string>;
+  },
 ): Promise<Channel> {
   return await fetchJson<Channel>(`/api/comms/channels/${encodeURIComponent(channelId)}`, {
     method: "PUT",

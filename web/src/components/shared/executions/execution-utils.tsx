@@ -12,7 +12,7 @@ import { getExecStatusKind } from "../../../lib/pipelineColors";
 // theme-aware via tokens (badges, soft tints) needs no per-theme variant.
 
 export const PIPELINE_BTN_CLS =
-  "px-3 py-1.5 rounded-md text-[length:calc(var(--font-size-base)*0.8)] font-medium cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed pointer-coarse:min-h-11";
+  "px-3 py-1.5 rounded-md text-md font-medium cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed pointer-coarse:min-h-11";
 export const PIPELINE_BTN_APPROVE_CLS =
   "bg-[var(--color-success-soft)] border border-[var(--color-success-foreground)] text-[var(--color-success-foreground)] hover:not-disabled:bg-[color-mix(in_srgb,var(--color-success-foreground)_20%,transparent)]";
 export const PIPELINE_BTN_REJECT_CLS =
@@ -25,7 +25,7 @@ export const PIPELINE_APPROVAL_MESSAGE_CLS =
 export const PIPELINE_APPROVAL_ACTIONS_CLS = "flex gap-2";
 
 export const PIPELINE_ERROR_CLS =
-  "bg-[var(--color-error-soft)] border border-[var(--color-error)] [[data-theme=light]_&]:bg-[color-mix(in_srgb,var(--color-error)_6%,transparent)] rounded-md p-3 mt-3 text-[var(--color-error)] text-[length:calc(var(--font-size-base)*0.85)]";
+  "bg-[var(--color-error-soft)] border border-[var(--color-error)] [[data-theme=light]_&]:bg-[color-mix(in_srgb,var(--color-error)_6%,transparent)] rounded-md p-3 mt-3 text-[var(--color-error)] text-base";
 
 export const PIPELINE_STEPS_CLS = "flex flex-col gap-1";
 
@@ -46,7 +46,7 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 const BADGE_BASE_CLS =
-  "text-[length:calc(var(--font-size-base)*0.7)] px-2 py-0.5 rounded-full font-medium uppercase tracking-wider";
+  "text-xs px-2 py-0.5 rounded-full font-medium uppercase tracking-wider";
 
 const BADGE_STATUS_CLS: Record<string, string> = {
   pending: "bg-[var(--bg-tertiary)] text-[var(--text-muted)]",
@@ -107,29 +107,30 @@ const STEP_HEADER_CLS =
   "flex items-center justify-between px-3 py-2 cursor-pointer hover:bg-[var(--bg-secondary)] pointer-coarse:min-h-11";
 const STEP_INFO_CLS = "flex items-center gap-2";
 const STEP_INDEX_CLS =
-  "text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-muted)] font-[inherit]";
-const STEP_NAME_CLS = "text-[length:calc(var(--font-size-base)*0.85)]";
+  "text-sm text-[var(--text-muted)] font-[inherit]";
+const STEP_NAME_CLS = "text-base";
 const STEP_META_CLS = "flex items-center gap-2";
 const STEP_TIMING_CLS =
-  "text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-muted)] tabular-nums font-[inherit]";
+  "text-xs text-[var(--text-muted)] tabular-nums font-[inherit]";
 const STEP_OUTPUT_CLS =
   "px-3 py-2 border-t border-border bg-[var(--bg-secondary)]";
 const STEP_OUTPUT_PRE_CLS =
-  "font-mono text-[length:calc(var(--font-size-base)*0.75)] whitespace-pre-wrap break-words text-[var(--text-secondary)] m-0 max-h-[200px] overflow-y-auto leading-[1.5]";
+  "font-mono text-sm whitespace-pre-wrap break-words text-[var(--text-secondary)] m-0 max-h-[200px] overflow-y-auto leading-[1.5]";
 const STEP_ERROR_CLS =
-  "px-3 py-2 border-t border-border bg-[var(--color-error-soft)] [[data-theme=light]_&]:bg-[color-mix(in_srgb,var(--color-error)_6%,transparent)] text-[var(--color-error)] text-[length:calc(var(--font-size-base)*0.8)]";
+  "px-3 py-2 border-t border-border bg-[var(--color-error-soft)] [[data-theme=light]_&]:bg-[color-mix(in_srgb,var(--color-error)_6%,transparent)] text-[var(--color-error)] text-md";
 
-const STEP_DOT_BASE_CLS =
-  "absolute left-[-5px] top-3 w-2 h-2 rounded-full";
+const STEP_TIMELINE_STATUS_CLS =
+  "absolute left-[-8px] top-2.5 inline-flex h-4 w-4 items-center justify-center bg-[var(--bg-primary)]";
 
-const STEP_DOT_STATUS_CLS: Record<string, string> = {
-  completed: "bg-[var(--color-success-foreground)]",
-  success: "bg-[var(--color-success-foreground)]",
-  failed: "bg-[var(--color-error)]",
-  error: "bg-[var(--color-error)]",
-  running: "bg-[var(--color-info)] animate-pulse",
-  waiting_approval: "bg-[var(--color-warning-foreground)]",
-  skipped: "bg-[var(--color-warning-foreground)]",
+const STEP_STATUS_CLS: Record<string, string> = {
+  completed: "text-[var(--color-success-foreground)]",
+  success: "text-[var(--color-success-foreground)]",
+  failed: "text-[var(--color-error)]",
+  error: "text-[var(--color-error)]",
+  running: "text-[var(--color-info)]",
+  waiting_approval: "text-[var(--color-warning-foreground)]",
+  skipped: "text-[var(--color-warning-foreground)]",
+  timeout: "text-[var(--color-error)]",
 };
 
 export type StepLayout = "card" | "timeline";
@@ -169,7 +170,7 @@ export function StepDisplay({
               {formatDuration(step.started_at, step.completed_at)}
             </span>
           )}
-          {step.status === "running" && <Spinner />}
+          {layout === "card" && <StepStatusIcon status={step.status} />}
           {step.output_json && <ChevronIcon expanded={showOutput} />}
         </div>
       </div>
@@ -191,11 +192,11 @@ export function StepDisplay({
   );
 
   if (layout === "timeline") {
-    const dotVariant =
-      STEP_DOT_STATUS_CLS[step.status] ?? "bg-[var(--border)]";
     return (
       <div className="relative ml-3 pl-3 border-l border-border last:border-l-transparent">
-        <span className={`${STEP_DOT_BASE_CLS} ${dotVariant}`} aria-hidden />
+        <span className={STEP_TIMELINE_STATUS_CLS}>
+          <StepStatusIcon status={step.status} />
+        </span>
         {inner}
       </div>
     );
@@ -205,24 +206,46 @@ export function StepDisplay({
 }
 
 export function StepStatusIcon({ status }: { status: string }) {
+  let icon;
+
   switch (status) {
     case "completed":
     case "success":
-      return <CheckIcon />;
+      icon = <CheckIcon />;
+      break;
     case "failed":
     case "error":
-      return <XIcon />;
+      icon = <XIcon />;
+      break;
     case "running":
-      return <CircleIcon className="running" />;
+      icon = <Spinner />;
+      break;
     case "waiting_approval":
-      return <ClockIcon />;
+      icon = <ClockIcon />;
+      break;
     case "skipped":
-      return <SkipIcon />;
+      icon = <SkipIcon />;
+      break;
     case "timeout":
-      return <ClockIcon />;
+      icon = <AlertIcon />;
+      break;
     default:
-      return <CircleIcon />;
+      icon = <CircleIcon />;
   }
+
+  const label = `Step status: ${status.replace(/_/g, " ")}`;
+  const statusClass = STEP_STATUS_CLS[status] ?? "text-[var(--text-muted)]";
+
+  return (
+    <span
+      className={`inline-flex items-center justify-center ${statusClass}`}
+      role="img"
+      aria-label={label}
+      title={label}
+    >
+      {icon}
+    </span>
+  );
 }
 
 // ── Icons ──

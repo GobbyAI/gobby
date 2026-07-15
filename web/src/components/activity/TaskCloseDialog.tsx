@@ -94,8 +94,10 @@ export function TaskCloseDialog({
     <div
       className="activity-task-close-backdrop"
       role="presentation"
-      onClick={(event) => {
-        if (event.target === event.currentTarget && !isSubmitting) onCancel();
+      onMouseDown={(event) => {
+        if (event.button === 0 && event.target === event.currentTarget && !isSubmitting) {
+          onCancel();
+        }
       }}
     >
       <form
@@ -105,7 +107,6 @@ export function TaskCloseDialog({
         aria-modal="true"
         aria-labelledby="activity-task-close-title"
         aria-describedby={showReasonError ? "activity-task-close-error" : undefined}
-        onClick={(event) => event.stopPropagation()}
         onSubmit={(event) => {
           event.preventDefault();
           event.stopPropagation();

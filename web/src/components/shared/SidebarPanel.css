@@ -35,3 +35,10 @@
   color: var(--text-primary);
   border-bottom-color: var(--accent);
 }
+
+@media (pointer: coarse) {
+  .sidebar-tab {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}

@@ -170,7 +170,7 @@ export function ChannelDetailPanel({
   const fields = CHANNEL_TYPE_FIELDS[draft.channel_type];
   const webhookUrl =
     mode === "edit" && channel && supportsWebhook(channel.channel_type)
-      ? `${window.location.origin}/api/comms/webhooks/${channel.name}`
+      ? `${window.location.origin}/api/comms/webhooks/${encodeURIComponent(channel.name)}`
       : null;
   const extraConfig =
     mode === "edit" && channel

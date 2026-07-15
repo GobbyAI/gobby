@@ -175,6 +175,8 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
             return {"status": "success", "job": job.to_dict()}
         except HTTPException:
             raise
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
             logger.error(f"Error creating cron job: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e

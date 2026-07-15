@@ -214,9 +214,11 @@ class CommunicationsManager:
         """Get a channel by ID."""
         return self._store.get_channel(channel_id)
 
-    async def update_channel(self, channel: ChannelConfig) -> ChannelConfig:
+    async def update_channel(
+        self, channel: ChannelConfig, secrets: dict[str, Any] | None = None
+    ) -> ChannelConfig:
         """Update channel configuration in DB."""
-        return await self._lifecycle.update_channel(channel)
+        return await self._lifecycle.update_channel(channel, secrets=secrets)
 
     def channel_to_dict(self, channel: ChannelConfig) -> dict[str, Any]:
         """Serialize a channel with runtime activity and initialization state."""

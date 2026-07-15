@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import type { GobbyTask } from '../../types/tasks'
 import { cn } from '../../lib/utils'
 import { useDialogFocus } from '../../hooks/useDialogFocus'
+import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { inputFocusCls } from '../shared/focusStyles'
 import {
   DEFAULT_TASK_PRIORITY,
@@ -50,26 +51,28 @@ const TYPE_OPTIONS = ['task', 'bug', 'feature', 'epic', 'chore']
 const BACKDROP_CLS = cn(TASK_MODAL_BACKDROP_BASE_CLS, 'z-[200]')
 const MODAL_CLS =
   'fixed left-1/2 top-1/2 z-[210] max-h-[85vh] w-[520px] max-w-[90vw] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] shadow-[var(--shadow-xl)]'
-const TITLE_CLS = 'text-[length:calc(var(--font-size-base)*1.05)] font-semibold'
+const TITLE_CLS = 'text-lg font-semibold'
 
 const FORM_CLS = 'flex flex-col gap-3 px-5 py-4'
 const FIELD_CLS = 'flex flex-col gap-1'
 const ROW_CLS = 'flex gap-3 [&>*]:flex-1'
-const LABEL_CLS = 'text-[length:calc(var(--font-size-base)*0.75)] font-medium text-[var(--text-muted)]'
+const LABEL_CLS = 'text-sm font-medium text-[var(--text-muted)]'
 const REQUIRED_CLS = 'text-[var(--color-error)]'
 const INPUT_CLS =
-  `rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2.5 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.85)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] ${inputFocusCls} pointer-coarse:min-h-11`
+  `rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2.5 py-1.5 font-[inherit] text-base text-[var(--text-primary)] placeholder:text-[var(--text-muted)] ${inputFocusCls} pointer-coarse:min-h-11`
 const TEXTAREA_CLS =
-  `min-h-12 resize-y rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2.5 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.85)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] ${inputFocusCls}`
+  `min-h-12 resize-y rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2.5 py-1.5 font-[inherit] text-base text-[var(--text-primary)] placeholder:text-[var(--text-muted)] ${inputFocusCls}`
+const ERROR_CLS = 'text-md text-[var(--color-error)]'
 
 const ACTIONS_CLS = 'flex justify-end gap-2 border-t border-[var(--border)] pt-2'
 const CANCEL_BTN_CLS =
-  'min-w-[100px] cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-3 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] font-medium text-[var(--text-primary)] transition-colors duration-150 hover:bg-[var(--border)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
+  'min-w-[100px] cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-3 py-1.5 font-[inherit] text-md font-medium text-[var(--text-primary)] transition-colors duration-150 hover:bg-[var(--border)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
 const SUBMIT_BTN_CLS =
-  'min-w-[100px] cursor-pointer rounded-md border border-[var(--accent)] bg-[var(--accent)] px-3 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] font-medium text-[var(--accent-foreground)] transition-colors duration-150 hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
+  'min-w-[100px] cursor-pointer rounded-md border border-[var(--accent)] bg-[var(--accent)] px-3 py-1.5 font-[inherit] text-md font-medium text-[var(--accent-foreground)] transition-colors duration-150 hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
 
 export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: TaskCreateFormProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
+  const { confirm, ConfirmDialogElement } = useConfirmDialog()
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [taskType, setTaskType] = useState('task')
@@ -79,8 +82,9 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
   const [labelsInput, setLabelsInput] = useState('')
   const [validationCriteria, setValidationCriteria] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  const handleClose = useCallback(() => {
+  const resetAndClose = useCallback(() => {
     setTitle('')
     setDescription('')
     setTaskType('task')
@@ -89,10 +93,36 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
     setParentTaskId('')
     setLabelsInput('')
     setValidationCriteria('')
+    setError(null)
     onClose()
   }, [onClose])
 
-  useDialogFocus({ ref: dialogRef, isOpen, onClose: handleClose })
+  const isDirty =
+    title !== (defaults?.title || '') ||
+    description !== (defaults?.description || '') ||
+    taskType !== (defaults?.taskType || 'task') ||
+    priority !== (defaults?.priority ?? DEFAULT_TASK_PRIORITY) ||
+    category !== (defaults?.category || '') ||
+    parentTaskId !== (defaults?.parentTaskId || '') ||
+    labelsInput !== (defaults?.labels?.join(', ') || '') ||
+    validationCriteria !== (defaults?.validationCriteria || '')
+
+  const requestClose = useCallback(async () => {
+    if (
+      isDirty &&
+      !(await confirm({
+        title: 'Discard task draft?',
+        description: 'Your task draft has unsaved changes.',
+        confirmLabel: 'Discard',
+        destructive: true,
+      }))
+    ) {
+      return
+    }
+    resetAndClose()
+  }, [confirm, isDirty, resetAndClose])
+
+  useDialogFocus({ ref: dialogRef, isOpen, onClose: requestClose })
 
   useEffect(() => {
     if (isOpen) {
@@ -104,6 +134,7 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
       setParentTaskId(defaults?.parentTaskId || '')
       setLabelsInput(defaults?.labels?.join(', ') || '')
       setValidationCriteria(defaults?.validationCriteria || '')
+      setError(null)
     }
   }, [isOpen, defaults])
 
@@ -112,6 +143,7 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
     if (!title.trim()) return
 
     setSubmitting(true)
+    setError(null)
     const params: CreateTaskParams = {
       title: title.trim(),
       task_type: taskType,
@@ -128,20 +160,21 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
 
     try {
       await onSubmit(params)
-      handleClose()
+      resetAndClose()
     } catch (err) {
       console.error('Failed to create task:', err)
+      setError(err instanceof Error ? err.message : 'Failed to create task')
     } finally {
       setSubmitting(false)
     }
-  }, [title, description, taskType, priority, category, parentTaskId, labelsInput, validationCriteria, onSubmit, handleClose])
+  }, [title, description, taskType, priority, category, parentTaskId, labelsInput, validationCriteria, onSubmit, resetAndClose])
 
   if (!isOpen) return null
 
   const parentOptions = tasks.filter(t => t.task_type === 'epic' || t.task_type === 'task')
 
   return (
-    <div className={BACKDROP_CLS} onClick={handleClose}>
+    <div className={BACKDROP_CLS} onClick={() => void requestClose()}>
       <div
         ref={dialogRef}
         className={MODAL_CLS}
@@ -156,7 +189,7 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
           <button
             type="button"
             className={TASK_MODAL_CLOSE_BTN_CLS}
-            onClick={handleClose}
+            onClick={() => void requestClose()}
             title="Close"
             aria-label="Close"
           >
@@ -267,11 +300,13 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
             />
           </label>
 
+          {error && <p className={ERROR_CLS} role="alert">{error}</p>}
+
           <div className={ACTIONS_CLS}>
             <button
               type="button"
               className={CANCEL_BTN_CLS}
-              onClick={handleClose}
+              onClick={() => void requestClose()}
             >
               Cancel
             </button>
@@ -285,6 +320,7 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
           </div>
         </form>
       </div>
+      {ConfirmDialogElement}
     </div>
   )
 }

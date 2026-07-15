@@ -431,8 +431,14 @@ class MemoryManagerFacadeMethods:
         memory_id: str,
         content: str | None = None,
         tags: list[str] | None = None,
+        memory_type: str | None = None,
     ) -> Memory:
-        return await self._lifecycle_service.update_memory(memory_id, content, tags)
+        return await self._lifecycle_service.update_memory(
+            memory_id=memory_id,
+            content=content,
+            tags=tags,
+            memory_type=memory_type,
+        )
 
     async def rescope_memory(self, memory_id: str, new_project_id: str | None) -> Memory:
         return await self._lifecycle_service.rescope_memory(memory_id, new_project_id)

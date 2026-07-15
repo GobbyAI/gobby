@@ -13,7 +13,7 @@ body,
 
 body {
   font-family: var(--font-sans);
-  font-size: var(--font-size-base);
+  font-size: var(--text-lg);
   background: var(--bg-primary);
   color: var(--text-primary);
   line-height: 1.6;
@@ -62,7 +62,7 @@ body {
   border: none;
   border-radius: 6px;
   font: inherit;
-  font-size: calc(var(--font-size-base) * 0.85);
+  font-size: var(--text-base);
   text-align: left;
   cursor: pointer;
   animation: fade-in 0.2s ease;
@@ -126,14 +126,14 @@ body {
 }
 
 .coming-soon-content h2 {
-  font-size: calc(var(--font-size-base) * 1.25);
+  font-size: var(--text-2xl);
   font-weight: 600;
   color: var(--text-primary);
   margin-bottom: 0.5rem;
 }
 
 .coming-soon-content p {
-  font-size: calc(var(--font-size-base) * 0.875);
+  font-size: var(--text-base);
   color: var(--text-muted);
 }
 

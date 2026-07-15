@@ -110,7 +110,7 @@
 }
 
 .speaking-label {
-  font-size: calc(var(--font-size-base) * 0.75);
+  font-size: var(--text-sm);
   color: var(--accent);
   margin-left: 0.375rem;
 }
@@ -178,7 +178,7 @@
 }
 
 .voice-error {
-  font-size: calc(var(--font-size-base) * 0.75);
+  font-size: var(--text-sm);
   color: var(--color-error);
   padding: 0.25rem 0.5rem;
   background: color-mix(in srgb, var(--color-error) 10%, transparent);

@@ -109,13 +109,27 @@ def test_create_job_rejects_invalid_enabled_schedule(cron_storage: CronJobStorag
         cron_storage.create_job(
             project_id=PROJECT_ID,
             name="Invalid Cron",
-            schedule_type="cron",
+            schedule_type="once",
             action_type="shell",
             action_config={"command": "echo"},
-            cron_expr="invalid",
+            run_at="2020-01-01T00:00:00+00:00",
         )
 
     assert cron_storage.list_jobs(project_id=PROJECT_ID) == []
+
+
+def test_create_job_rejects_invalid_cron_expression(cron_storage: CronJobStorage) -> None:
+    with pytest.raises(ValueError, match="Invalid cron expression"):
+        cron_storage.create_job(
+            project_id=PROJECT_ID,
+            name="Invalid cron",
+            schedule_type="cron",
+            action_type="shell",
+            action_config={"command": "echo"},
+            cron_expr="not a cron expression",
+        )
+
+    assert cron_storage.list_jobs() == []
 
 
 def test_create_interval_job_clamps_to_minimum_interval(

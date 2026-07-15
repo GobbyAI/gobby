@@ -5,6 +5,7 @@ import { SphereGeometry, MeshLambertMaterial, Mesh } from 'three'
 import { IS_MOBILE, IS_IOS } from '../../../utils/platform'
 import { resolveCssVar, cn, escapeHtml } from '../../../lib/utils'
 import type { KnowledgeGraphData, KnowledgeEntity, KnowledgeRelationship } from '../../../hooks/useMemory'
+import { inputFocusCls } from '../../shared/focusStyles'
 
 const CONTAINER_CLS = 'relative flex min-h-0 flex-1 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-primary)]'
 const EMPTY_CLS = 'flex h-full min-h-[300px] flex-col items-center justify-center gap-2 text-[var(--text-muted)]'
@@ -20,7 +21,7 @@ const PHYSICS_LABEL_CLS = 'min-w-[56px] text-[length:var(--text-xs)] text-[var(-
 const PHYSICS_VALUE_CLS = 'min-w-[36px] text-right font-[inherit] text-[length:var(--text-2xs)] tabular-nums text-[var(--text-muted)]'
 const PHYSICS_SLIDER_CLS = 'h-1 flex-1 cursor-pointer accent-[var(--accent)]'
 const PHYSICS_RESET_CLS = 'mt-0.5 cursor-pointer self-end rounded border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 py-0.5 text-[length:var(--text-xs)] text-[var(--text-secondary)] hover:bg-[var(--bg-primary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11 pointer-coarse:px-3'
-const SEARCH_INPUT_CLS = 'rounded border border-[var(--border)] bg-[var(--bg-primary)] px-2 py-1 text-[length:var(--text-sm)] text-[var(--text-primary)] outline-none w-[150px] font-mono pointer-coarse:min-h-11 pointer-coarse:px-2.5 pointer-coarse:py-2 pointer-coarse:text-[length:var(--text-md)]'
+const SEARCH_INPUT_CLS = `w-[150px] rounded border border-[var(--border)] bg-[var(--bg-primary)] px-2 py-1 font-mono text-[length:var(--text-sm)] text-[var(--text-primary)] pointer-coarse:min-h-11 pointer-coarse:px-2.5 pointer-coarse:py-2 pointer-coarse:text-[length:var(--text-md)] ${inputFocusCls}`
 
 interface KnowledgeGraphProps {
   fetchKnowledgeGraph: (limit?: number) => Promise<KnowledgeGraphData | null>
@@ -80,19 +81,26 @@ function getEntityColorCss(type: string): string {
   return `var(${entityColorVar(type)})`
 }
 
-function hashToHue(str: string): number {
+const EDGE_COLOR_VARS = [
+  '--color-info',
+  '--color-success-foreground',
+  '--color-warning-foreground',
+  '--color-error',
+  '--color-review',
+  '--accent',
+] as const
+
+function hashString(str: string): number {
   let hash = 0
   for (let i = 0; i < str.length; i++) {
     hash = str.charCodeAt(i) + ((hash << 5) - hash)
   }
-  return Math.abs(hash) % 360
+  return Math.abs(hash)
 }
 
 function edgeColor(relType: string): string {
-  // Open-ended relationship types — hashed hue keeps adjacent edges distinguishable
-  // while staying mid-saturation/mid-lightness to harmonize with the design palette.
-  const hue = hashToHue(relType)
-  return `hsl(${hue}, 45%, 50%)`
+  const colorVar = EDGE_COLOR_VARS[hashString(relType) % EDGE_COLOR_VARS.length]
+  return `var(${colorVar})`
 }
 
 function mergeGraphData(
@@ -150,6 +158,8 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
   const fgRef = useRef<any>(null)
   const [graphData, setGraphData] = useState<KnowledgeGraphData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
+  const [loadAttempt, setLoadAttempt] = useState(0)
   const [searchQuery, setSearchQuery] = useState('')
   const [expandingNode, setExpandingNode] = useState<string | null>(null)
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
@@ -262,16 +272,20 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
     void (async () => {
       try {
         const data = await fetchKnowledgeGraph(limit)
-        if (!cancelled && data) setGraphData(data)
-        if (!cancelled) setLoading(false)
+        if (!cancelled) {
+          if (data) setGraphData(data)
+          setLoadError(false)
+          setLoading(false)
+        }
       } catch (error) {
         if (cancelled) return
         console.error('Failed to load knowledge graph', error)
+        setLoadError(true)
         setLoading(false)
       }
     })()
     return () => { cancelled = true }
-  }, [fetchKnowledgeGraph, limit])
+  }, [fetchKnowledgeGraph, limit, loadAttempt])
 
   // Build force graph data
   const forceData = useMemo(() => {
@@ -435,6 +449,26 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
     return (
       <div className={CONTAINER_CLS} ref={containerRef}>
         <div className={EMPTY_CLS}>Loading knowledge graph...</div>
+      </div>
+    )
+  }
+
+  if (loadError) {
+    return (
+      <div className={CONTAINER_CLS} ref={containerRef}>
+        <div className={EMPTY_CLS}>
+          <div>Failed to load knowledge graph</div>
+          <button
+            type="button"
+            className="mt-2 rounded border border-[var(--border)] px-3 py-1 text-[length:var(--text-sm)] hover:bg-[var(--bg-tertiary)]"
+            onClick={() => {
+              setLoading(true)
+              setLoadAttempt(attempt => attempt + 1)
+            }}
+          >
+            Retry
+          </button>
+        </div>
       </div>
     )
   }

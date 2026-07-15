@@ -7,6 +7,7 @@ import { undo, redo } from '@codemirror/commands'
 import type { EditorView } from '@codemirror/view'
 import type { FileEntry, OpenFile, Project, GitStatus } from '../hooks/useFiles'
 import { cn } from '../lib/utils'
+import { activateOnKeyboard } from '../lib/keyboard'
 
 const PAGE_CLS = 'flex flex-1 overflow-hidden'
 
@@ -55,6 +56,7 @@ const DIFF_BTN_ACTIVE_CLS = ''
 
 const VIEWER_CLS = 'flex flex-1 flex-col overflow-hidden'
 const CODE_VIEWER_CLS = 'min-h-0 flex-1 overflow-auto [&>div]:min-h-full'
+const EDITOR_CLS = 'flex min-h-0 flex-1 flex-col'
 
 const MARKDOWN_VIEWER_CLS =
   'overflow-wrap-break-word px-6 py-4 text-[length:var(--text-base)] leading-[1.7] text-[var(--text-primary)]'
@@ -65,6 +67,8 @@ const EMPTY_VIEWER_CLS =
 const VIEWER_STATUS_CLS =
   'flex flex-1 flex-col items-center justify-center gap-2 text-[length:var(--text-base)] text-[var(--text-muted)]'
 const VIEWER_ERROR_CLS = 'text-[var(--color-error)]'
+const SAVE_ERROR_CLS =
+  'flex items-center justify-between gap-3 border-b border-[var(--color-error)] bg-[var(--bg-secondary)] px-3 py-2 text-[length:var(--text-sm)] text-[var(--color-error)]'
 const VIEWER_MUTED_CLS = 'text-[length:var(--text-sm)] text-[var(--text-muted)]'
 
 const IMAGE_VIEWER_CLS = 'flex flex-1 flex-col items-center justify-center gap-4 overflow-auto p-8'
@@ -109,6 +113,7 @@ interface FilesPageProps {
   onToggleEditing: (index: number) => void
   onCancelEditing: (index: number) => void
   onUpdateEditContent: (index: number, content: string) => void
+  onClearSaveError: (index: number) => void
   onSaveFile: (index: number) => void
   gitStatuses: Map<string, GitStatus>
   onFetchDiff: (projectId: string, path: string) => Promise<string>
@@ -130,33 +135,65 @@ export function FilesPage({
   onToggleEditing,
   onCancelEditing,
   onUpdateEditContent,
+  onClearSaveError,
   onSaveFile,
   gitStatuses,
   onFetchDiff,
 }: FilesPageProps) {
   const activeFile = activeFileIndex >= 0 ? openFiles[activeFileIndex] : null
-  const [diffContent, setDiffContent] = useState<string | null>(null)
-  const [showDiff, setShowDiff] = useState(false)
-  const [showCancelConfirm, setShowCancelConfirm] = useState(false)
+  const activeFileKey = activeFile ? `${activeFile.projectId}\0${activeFile.path}` : null
+  const [diffState, setDiffState] = useState<{
+    activeFileKey: string | null
+    requestId: number
+    content: string | null
+    visible: boolean
+  }>({ activeFileKey, requestId: 0, content: null, visible: false })
+  const [pendingDiscard, setPendingDiscard] = useState<
+    { action: 'cancel' | 'close'; index: number } | null
+  >(null)
   const editorViewRef = useRef<EditorView | null>(null)
+  const showDiff = diffState.activeFileKey === activeFileKey && diffState.visible
+  const diffContent = showDiff ? diffState.content : null
 
-  const cancelIndexRef = useRef(activeFileIndex)
+  if (diffState.activeFileKey !== activeFileKey) {
+    setDiffState({
+      activeFileKey,
+      requestId: diffState.requestId + 1,
+      content: null,
+      visible: false,
+    })
+  }
+
+  const hideDiff = useCallback(() => {
+    setDiffState(current => ({
+      ...current,
+      requestId: current.requestId + 1,
+      content: null,
+      visible: false,
+    }))
+  }, [])
+
+  const showCancelConfirm = pendingDiscard !== null
 
   const handleCancel = useCallback(() => {
     if (activeFile?.dirty) {
-      cancelIndexRef.current = activeFileIndex
-      setShowCancelConfirm(true)
+      setPendingDiscard({ action: 'cancel', index: activeFileIndex })
     } else {
       onCancelEditing(activeFileIndex)
-      setShowDiff(false)
+      hideDiff()
     }
-  }, [activeFile, activeFileIndex, onCancelEditing])
+  }, [activeFile, activeFileIndex, hideDiff, onCancelEditing])
 
   const confirmCancel = useCallback(() => {
-    setShowCancelConfirm(false)
-    onCancelEditing(cancelIndexRef.current)
-    setShowDiff(false)
-  }, [onCancelEditing])
+    if (!pendingDiscard) return
+    setPendingDiscard(null)
+    if (pendingDiscard.action === 'close') {
+      onCloseFile(pendingDiscard.index)
+    } else {
+      onCancelEditing(pendingDiscard.index)
+      hideDiff()
+    }
+  }, [hideDiff, onCancelEditing, onCloseFile, pendingDiscard])
 
   const previousFocusRef = useRef<Element | null>(null)
   useEffect(() => {
@@ -166,7 +203,7 @@ export function FilesPage({
     dialog?.focus()
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        setShowCancelConfirm(false)
+        setPendingDiscard(null)
       } else if (e.key === 'Tab' && dialog) {
         const focusable = dialog.querySelectorAll<HTMLElement>('button, [tabindex]')
         if (focusable.length === 0) return
@@ -201,14 +238,17 @@ export function FilesPage({
   const handleShowDiff = useCallback(async () => {
     if (!activeFile) return
     if (showDiff) {
-      setShowDiff(false)
-      setDiffContent(null)
+      hideDiff()
       return
     }
+    const requestId = diffState.requestId + 1
+    setDiffState({ activeFileKey, requestId, content: null, visible: false })
     const diff = await onFetchDiff(activeFile.projectId, activeFile.path)
-    setDiffContent(diff)
-    setShowDiff(true)
-  }, [activeFile, showDiff, onFetchDiff])
+    setDiffState(current => {
+      if (current.activeFileKey !== activeFileKey || current.requestId !== requestId) return current
+      return { ...current, content: diff, visible: true }
+    })
+  }, [activeFile, activeFileKey, diffState.requestId, hideDiff, showDiff, onFetchDiff])
 
   const activeGitStatus = activeFile ? gitStatuses.get(activeFile.projectId) : undefined
   const activeFileGitStatus = activeFile && activeGitStatus ? activeGitStatus.files[activeFile.path] : undefined
@@ -242,14 +282,20 @@ export function FilesPage({
 
       <div className={MAIN_CLS}>
         {openFiles.length > 0 && (
-          <div className={TABS_CLS}>
+          <div className={TABS_CLS} role="tablist" aria-label="Open files">
             {openFiles.map((file, i) => {
               const isActive = i === activeFileIndex
               return (
                 <div
                   key={`${file.projectId}:${file.path}`}
                   className={cn(TAB_CLS, isActive && TAB_ACTIVE_CLS)}
+                  role="tab"
+                  aria-selected={isActive}
+                  tabIndex={0}
                   onClick={() => onSetActiveFile(i)}
+                  onKeyDown={(event) =>
+                    activateOnKeyboard(event, () => onSetActiveFile(i))
+                  }
                 >
                   <FileIcon extension={file.name.split('.').pop() || ''} size={14} />
                   <span className={TAB_NAME_CLS}>{file.dirty ? `${file.name} ●` : file.name}</span>
@@ -257,8 +303,13 @@ export function FilesPage({
                     className={cn(TAB_CLOSE_CLS, isActive && 'opacity-100')}
                     onClick={(e) => {
                       e.stopPropagation()
-                      onCloseFile(i)
+                      if (file.dirty) {
+                        setPendingDiscard({ action: 'close', index: i })
+                      } else {
+                        onCloseFile(i)
+                      }
                     }}
+                    aria-label={`Close ${file.name}`}
                   >
                     &times;
                   </button>
@@ -322,7 +373,7 @@ export function FilesPage({
                   className={TOOLBAR_BTN_BASE_CLS}
                   onClick={() => {
                     onToggleEditing(activeFileIndex)
-                    setShowDiff(false)
+                    hideDiff()
                   }}
                   disabled={activeFile.truncated}
                   aria-label="Edit"
@@ -356,6 +407,7 @@ export function FilesPage({
               file={activeFile}
               getImageUrl={getImageUrl}
               onContentChange={(content) => onUpdateEditContent(activeFileIndex, content)}
+              onDismissSaveError={() => onClearSaveError(activeFileIndex)}
               onSave={() => onSaveFile(activeFileIndex)}
               editorViewRef={editorViewRef}
             />
@@ -368,7 +420,13 @@ export function FilesPage({
         </div>
 
         {showCancelConfirm && (
-          <div className={CONFIRM_OVERLAY_CLS} onClick={() => setShowCancelConfirm(false)}>
+          <div
+            className={CONFIRM_OVERLAY_CLS}
+            role="presentation"
+            onMouseDown={(event) => {
+              if (event.button === 0) setPendingDiscard(null)
+            }}
+          >
             <div
               className={cn(CONFIRM_DIALOG_CLS, CONFIRM_DIALOG_QUERY_CLS)}
               role="dialog"
@@ -376,12 +434,12 @@ export function FilesPage({
               aria-labelledby="cancel-dialog-title"
               aria-describedby="cancel-dialog-desc"
               tabIndex={-1}
-              onClick={e => e.stopPropagation()}
+              onMouseDown={e => e.stopPropagation()}
             >
               <p className={CONFIRM_TITLE_CLS} id="cancel-dialog-title">Discard unsaved changes?</p>
               <p className={CONFIRM_MESSAGE_CLS} id="cancel-dialog-desc">Your changes to this file will be lost.</p>
               <div className={CONFIRM_ACTIONS_CLS}>
-                <button className={CONFIRM_KEEP_CLS} onClick={() => setShowCancelConfirm(false)}>
+                <button className={CONFIRM_KEEP_CLS} onClick={() => setPendingDiscard(null)}>
                   Keep Editing
                 </button>
                 <button className={CONFIRM_DISCARD_CLS} onClick={confirmCancel}>
@@ -487,7 +545,13 @@ function TreeEntry({ entry, projectId, depth, expandedDirs, loadingDirs, gitFile
         <div
           className={TREE_ITEM_CLS}
           style={{ paddingLeft: `${depth * 16 + 4}px` }}
+          role="button"
+          tabIndex={0}
+          aria-expanded={isExpanded}
           onClick={() => onExpandDir(projectId, entry.path)}
+          onKeyDown={(event) =>
+            activateOnKeyboard(event, () => onExpandDir(projectId, entry.path))
+          }
         >
           <span className={TREE_ARROW_CLS}>{isExpanded ? '▾' : '▸'}</span>
           <FolderIcon open={isExpanded} />
@@ -524,7 +588,12 @@ function TreeEntry({ entry, projectId, depth, expandedDirs, loadingDirs, gitFile
     <div
       className={TREE_ITEM_CLS}
       style={{ paddingLeft: `${depth * 16 + 20}px` }}
+      role="button"
+      tabIndex={0}
       onClick={() => onOpenFile(projectId, entry.path, entry.name)}
+      onKeyDown={(event) =>
+        activateOnKeyboard(event, () => onOpenFile(projectId, entry.path, entry.name))
+      }
     >
       <FileIcon extension={entry.extension?.replace('.', '') || ''} size={14} />
       <span className={cn(TREE_NAME_CLS, gitClass)}>{entry.name}</span>
@@ -537,10 +606,18 @@ function TreeEntry({ entry, projectId, depth, expandedDirs, loadingDirs, gitFile
   )
 }
 
-function FileContent({ file, getImageUrl, onContentChange, onSave, editorViewRef }: {
+function FileContent({
+  file,
+  getImageUrl,
+  onContentChange,
+  onDismissSaveError,
+  onSave,
+  editorViewRef,
+}: {
   file: OpenFile
   getImageUrl: (projectId: string, path: string) => string
   onContentChange: (content: string) => void
+  onDismissSaveError: () => void
   onSave: () => void
   editorViewRef?: React.MutableRefObject<EditorView | null>
 }) {
@@ -585,15 +662,30 @@ function FileContent({ file, getImageUrl, onContentChange, onSave, editorViewRef
 
   if (file.editing) {
     return (
-      <div className={CODE_VIEWER_CLS}>
-        <CodeMirrorEditor
-          content={file.editContent ?? file.content}
-          language={file.language}
-          readOnly={false}
-          onChange={onContentChange}
-          onSave={onSave}
-          editorViewRef={editorViewRef}
-        />
+      <div className={EDITOR_CLS}>
+        {file.saveError && (
+          <div className={SAVE_ERROR_CLS} role="alert">
+            <span>Save failed: {file.saveError}</span>
+            <button
+              className={ICON_BTN_CLS}
+              onClick={onDismissSaveError}
+              aria-label="Dismiss save error"
+              title="Dismiss"
+            >
+              <XIcon />
+            </button>
+          </div>
+        )}
+        <div className={CODE_VIEWER_CLS}>
+          <CodeMirrorEditor
+            content={file.editContent ?? file.content}
+            language={file.language}
+            readOnly={false}
+            onChange={onContentChange}
+            onSave={onSave}
+            editorViewRef={editorViewRef}
+          />
+        </div>
       </div>
     )
   }

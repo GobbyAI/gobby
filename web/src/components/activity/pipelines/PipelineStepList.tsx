@@ -48,9 +48,9 @@ import {
 
 type PipelineStepListProps = {
   steps: PipelineStep[]
-  expandedId: string | null
+  expandedIndex: number | null
   inSidebar?: boolean
-  onExpandedIdChange: (id: string | null) => void
+  onExpandedIndexChange: (index: number | null) => void
   onUpdateStep: (index: number, updates: Partial<PipelineStep>) => void
   onDeleteStep: (index: number) => void | Promise<void>
   onMoveStep: (index: number, direction: -1 | 1) => void
@@ -60,9 +60,9 @@ type PipelineStepListProps = {
 
 export function PipelineStepList({
   steps,
-  expandedId,
+  expandedIndex,
   inSidebar,
-  onExpandedIdChange,
+  onExpandedIndexChange,
   onUpdateStep,
   onDeleteStep,
   onMoveStep,
@@ -82,12 +82,12 @@ export function PipelineStepList({
 
       {steps.map((step, index) => (
         <PipelineStepCard
-          key={step.id}
+          key={index}
           step={step}
           index={index}
           totalSteps={steps.length}
-          expanded={expandedId === step.id}
-          onToggle={() => onExpandedIdChange(expandedId === step.id ? null : step.id)}
+          expanded={expandedIndex === index}
+          onToggle={() => onExpandedIndexChange(expandedIndex === index ? null : index)}
           onUpdate={(updates) => onUpdateStep(index, updates)}
           onDelete={() => void onDeleteStep(index)}
           onMove={(direction) => onMoveStep(index, direction)}
@@ -134,7 +134,10 @@ function PipelineStepCard({
       >
         <span
           className={TYPE_BADGE_CLS}
-          style={{ background: `${typeColor}22`, color: typeColor }}
+          style={{
+            background: `color-mix(in srgb, ${typeColor} 12%, transparent)`,
+            color: typeColor,
+          }}
         >
           {type}
         </span>

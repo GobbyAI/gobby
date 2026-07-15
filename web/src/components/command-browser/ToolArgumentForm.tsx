@@ -1,4 +1,4 @@
-import { useCallback, useId } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Input } from '../chat/ui/Input'
 import { cn } from '../../lib/utils'
 
@@ -6,6 +6,7 @@ interface ToolArgumentFormProps {
   schema: Record<string, unknown> | null
   values: Record<string, unknown>
   onChange: (values: Record<string, unknown>) => void
+  onValidityChange?: (isValid: boolean) => void
   disabled?: boolean
 }
 
@@ -17,7 +18,26 @@ interface PropertySchema {
   items?: Record<string, unknown>
 }
 
-export function ToolArgumentForm({ schema, values, onChange, disabled }: ToolArgumentFormProps) {
+export function ToolArgumentForm({
+  schema,
+  values,
+  onChange,
+  onValidityChange,
+  disabled,
+}: ToolArgumentFormProps) {
+  const invalidFieldsRef = useRef(new Set<string>())
+
+  useEffect(() => {
+    invalidFieldsRef.current.clear()
+    onValidityChange?.(true)
+  }, [schema, onValidityChange])
+
+  const handleFieldValidityChange = useCallback((name: string, isValid: boolean) => {
+    if (isValid) invalidFieldsRef.current.delete(name)
+    else invalidFieldsRef.current.add(name)
+    onValidityChange?.(invalidFieldsRef.current.size === 0)
+  }, [onValidityChange])
+
   if (!schema) return null
 
   const properties = (schema.properties ?? {}) as Record<string, PropertySchema>
@@ -39,6 +59,7 @@ export function ToolArgumentForm({ schema, values, onChange, disabled }: ToolArg
           isRequired={required.includes(key)}
           disabled={disabled}
           onChange={(val) => onChange({ ...values, [key]: val })}
+          onValidityChange={handleFieldValidityChange}
         />
       ))}
     </div>
@@ -52,6 +73,7 @@ function FieldRow({
   isRequired,
   disabled,
   onChange,
+  onValidityChange,
 }: {
   name: string
   prop: PropertySchema
@@ -59,12 +81,20 @@ function FieldRow({
   isRequired: boolean
   disabled?: boolean
   onChange: (val: unknown) => void
+  onValidityChange: (name: string, isValid: boolean) => void
 }) {
   const inputId = useId()
+  const errorId = `${inputId}-error`
   const handleChange = useCallback(
     (val: unknown) => onChange(val),
     [onChange],
   )
+  const formatJsonValue = useCallback((nextValue: unknown) => {
+    if (nextValue === undefined || nextValue === null || nextValue === '') return ''
+    return typeof nextValue === 'string' ? nextValue : JSON.stringify(nextValue, null, 2)
+  }, [])
+  const [jsonValue, setJsonValue] = useState(() => formatJsonValue(value))
+  const [jsonError, setJsonError] = useState<string | null>(null)
 
   const label = (
     <label htmlFor={inputId} className="block text-sm font-medium text-foreground mb-1">
@@ -148,9 +178,6 @@ function FieldRow({
 
   // Object / array -> JSON textarea
   if (prop.type === 'object' || prop.type === 'array') {
-    const strValue = value !== undefined && value !== null
-      ? (typeof value === 'string' ? value : JSON.stringify(value, null, 2))
-      : ''
     return (
       <div>
         {label}
@@ -162,18 +189,41 @@ function FieldRow({
             'disabled:cursor-not-allowed disabled:opacity-50',
             'min-h-[80px] resize-y',
           )}
-          value={strValue}
+          value={jsonValue}
           onChange={(e) => {
             const raw = e.target.value
+            setJsonValue(raw)
+            if (!raw.trim()) {
+              setJsonError(null)
+              onValidityChange(name, true)
+              handleChange(undefined)
+              return
+            }
             try {
-              handleChange(JSON.parse(raw))
+              const parsed = JSON.parse(raw)
+              setJsonError(null)
+              onValidityChange(name, true)
+              handleChange(parsed)
             } catch {
-              handleChange(raw)
+              setJsonError('Enter valid JSON.')
+              onValidityChange(name, false)
             }
           }}
+          onBlur={() => {
+            if (!jsonError && jsonValue.trim()) {
+              setJsonValue(JSON.stringify(JSON.parse(jsonValue), null, 2))
+            }
+          }}
+          aria-invalid={jsonError ? true : undefined}
+          aria-describedby={jsonError ? errorId : undefined}
           disabled={disabled}
           placeholder={`JSON ${prop.type}`}
         />
+        {jsonError && (
+          <p id={errorId} role="alert" className="text-xs text-destructive-foreground mt-1">
+            {jsonError}
+          </p>
+        )}
         {help}
       </div>
     )

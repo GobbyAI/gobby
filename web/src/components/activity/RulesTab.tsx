@@ -203,7 +203,11 @@ export function RulesTab({ projectId: _projectId }: RulesTabProps) {
       setActionError(null);
       setBusyRuleName(rule.name);
       try {
-        await data.toggleRule(rule.name, !rule.enabled);
+        const didToggle = await data.toggleRule(rule.name, !rule.enabled);
+        if (!didToggle) {
+          setActionError(`Failed to ${rule.enabled ? "deactivate" : "activate"} rule`);
+          return;
+        }
         if (selectedName === rule.name) setDetailRefreshToken((value) => value + 1);
       } catch (error) {
         setActionError(formatRuleError(error));

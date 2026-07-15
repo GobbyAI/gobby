@@ -324,7 +324,7 @@ describe('mobile chrome CSS', () => {
     expectDeclarations(
       shellCss,
       '.app-brand-title',
-      { 'font-size': '1.25rem' },
+      { 'font-size': 'var(--text-2xl)' },
       '(max-width: 768px)',
     )
   })
@@ -456,5 +456,19 @@ describe('mobile chrome CSS', () => {
     expectContainerDeclarations(inputCss, '.chat-input-footer', narrowChatColumn, {
       'padding-inline': '0.75rem 0.5rem',
     })
+  })
+
+  it('promotes sidebar tabs to 44px touch targets for coarse pointers', () => {
+    const sidebarCss = parseCss('src/components/shared/SidebarPanel.css')
+
+    expect(
+      findRule(sidebarCss, '.sidebar-tab', '(pointer: coarse)').selector,
+    ).toBe('.sidebar-tab')
+    expectDeclarations(
+      sidebarCss,
+      '.sidebar-tab',
+      { 'min-width': '44px', 'min-height': '44px' },
+      '(pointer: coarse)',
+    )
   })
 })

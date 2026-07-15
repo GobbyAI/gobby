@@ -182,6 +182,11 @@ describe("Skills activity Installed segment", () => {
     expect(screen.getAllByText("INSTALLED").length).toBeGreaterThan(0);
     expect(screen.getByText("hub")).toBeInTheDocument();
 
+    const hubSkill = screen.getByRole("button", { name: "Select Hub curator" });
+    hubSkill.focus();
+    await user.keyboard("{Enter}");
+    expect(hubSkill.parentElement).toHaveClass("activity-list-row--selected");
+
     await user.selectOptions(screen.getByLabelText("Skill source"), "project");
     expect(screen.getAllByText("Bridge pack").length).toBeGreaterThan(0);
     expect(screen.queryByText("Code navigator")).not.toBeInTheDocument();
@@ -301,5 +306,57 @@ describe("Skills activity Installed segment", () => {
 
     await user.click(screen.getByRole("button", { name: "Close" }));
     expect(screen.getByLabelText("Skill description")).toBeInTheDocument();
+  });
+
+  it("keeps the skill editor draft open and shows update failures", async () => {
+    setupFetch([
+      makeSkill({
+        id: "sk-installed",
+        name: "Code navigator",
+        content: "# Code navigator\nUse gcode first.\n",
+      }),
+    ]);
+
+    const user = userEvent.setup();
+    render(<SkillsTab projectId="project-1" />);
+
+    await user.click(await screen.findByRole("button", { name: /Select Code navigator/i }));
+    await user.click(screen.getByRole("button", { name: "Content" }));
+    fireEvent.change(screen.getByLabelText("Skill content markdown"), {
+      target: { value: "# Code navigator\nKeep this draft.\n" },
+    });
+
+    mockFetch.resetRoutes();
+    mockFetch.mockJsonResponse(
+      /\/api\/skills\/sk-installed$/,
+      { detail: "Skill update was rejected" },
+      { status: 409 },
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByText("Skill update was rejected")).toBeInTheDocument();
+    expect(screen.getByLabelText("Skill content markdown")).toHaveValue(
+      "# Code navigator\nKeep this draft.\n",
+    );
+    expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
+  });
+
+  it("shows export failures", async () => {
+    setupFetch([makeSkill({ id: "sk-installed", name: "Code navigator" })]);
+
+    const user = userEvent.setup();
+    render(<SkillsTab projectId="project-1" />);
+
+    await screen.findByRole("button", { name: /Select Code navigator/i });
+    await user.click(screen.getByRole("button", { name: "Open actions for Code navigator" }));
+    mockFetch.resetRoutes();
+    mockFetch.mockJsonResponse(
+      /\/api\/skills\/sk-installed\/export$/,
+      { detail: "Skill export is unavailable" },
+      { status: 503 },
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Export" }));
+
+    expect(await screen.findByText("Skill export is unavailable")).toBeInTheDocument();
   });
 });

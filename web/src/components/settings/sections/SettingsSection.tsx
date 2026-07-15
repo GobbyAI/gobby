@@ -23,6 +23,7 @@ export interface SettingsSectionProps {
   sectionId: SettingsSectionId
   /** Config dotted-paths this section owns. The draft is scoped to these. */
   ownedPaths: readonly string[]
+  saveDisabled?: boolean
   children: (fields: SettingsSectionFields) => ReactNode
 }
 
@@ -67,6 +68,7 @@ function pickPaths(
 export function SettingsSection({
   sectionId,
   ownedPaths,
+  saveDisabled = false,
   children,
 }: SettingsSectionProps) {
   const { configValues, schema, secretKeys, isLoading, saveConfig, registerDirtyGuard } =
@@ -138,7 +140,7 @@ export function SettingsSection({
             onClick={() => {
               void save()
             }}
-            disabled={!dirty || saving}
+            disabled={!dirty || saving || saveDisabled}
           />
         </footer>
       ) : null}

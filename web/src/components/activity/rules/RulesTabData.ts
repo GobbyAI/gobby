@@ -122,7 +122,7 @@ export function detailToDraft(detail: RuleDetail): RuleDraft {
     when: detail.when,
     match: detail.match,
     effects: ruleEffects(detail),
-    extra: {},
+    extra: extraDefinitionFields({ ...detail }),
   };
 }
 
@@ -153,6 +153,7 @@ const RULE_YAML_DUMP_OPTIONS: yaml.DumpOptions = {
 };
 
 const RULE_DRAFT_KEYS = new Set([
+  "id",
   "name",
   "description",
   "event",
@@ -166,6 +167,9 @@ const RULE_DRAFT_KEYS = new Set([
   "match",
   "effect",
   "effects",
+  "source",
+  "project_id",
+  "has_template_update",
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {

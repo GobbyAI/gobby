@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { SettingsSection, type SettingsSectionFields } from './SettingsSection'
 import {
   useSettingsSectionContext,
@@ -411,7 +412,13 @@ function VerificationDefaultsGroup({ fields }: { fields: SettingsSectionFields }
   )
 }
 
-function ValidationDetectionGroup({ fields }: { fields: SettingsSectionFields }) {
+function ValidationDetectionGroup({
+  fields,
+  onValidityChange,
+}: {
+  fields: SettingsSectionFields
+  onValidityChange: (isValid: boolean) => void
+}) {
   return (
     <Subsection
       title="Validation detection"
@@ -420,6 +427,7 @@ function ValidationDetectionGroup({ fields }: { fields: SettingsSectionFields })
       <ValidationDetectionEditor
         value={fields.getValue(VALIDATION_DETECTION_PATH)}
         onChange={(next) => fields.setValue(VALIDATION_DETECTION_PATH, next)}
+        onValidityChange={onValidityChange}
       />
     </Subsection>
   )
@@ -427,8 +435,13 @@ function ValidationDetectionGroup({ fields }: { fields: SettingsSectionFields })
 
 export function ProjectsSessionsSection() {
   const { projectSelection } = useSettingsSectionContext()
+  const [validationDetectionValid, setValidationDetectionValid] = useState(true)
   return (
-    <SettingsSection sectionId="projects-sessions" ownedPaths={OWNED_PATHS}>
+    <SettingsSection
+      sectionId="projects-sessions"
+      ownedPaths={OWNED_PATHS}
+      saveDisabled={!validationDetectionValid}
+    >
       {(fields) => (
         <>
           <ProjectSelectionGroup projectSelection={projectSelection} />
@@ -439,7 +452,10 @@ export function ProjectsSessionsSection() {
           <ChatHistoryGroup fields={fields} />
           <MessageTrackingGroup fields={fields} />
           <VerificationDefaultsGroup fields={fields} />
-          <ValidationDetectionGroup fields={fields} />
+          <ValidationDetectionGroup
+            fields={fields}
+            onValidityChange={setValidationDetectionValid}
+          />
         </>
       )}
     </SettingsSection>

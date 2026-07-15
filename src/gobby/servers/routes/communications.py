@@ -28,6 +28,7 @@ def create_communications_router(server: HTTPServer) -> APIRouter:
     class ChannelUpdateRequest(BaseModel):
         config: dict[str, Any] | None = Field(None, description="Updated channel config")
         enabled: bool | None = Field(None, description="Enable or disable channel")
+        secrets: dict[str, Any] | None = Field(None, description="Updated channel secrets")
 
     @router.post("/webhooks/{channel_name}")
     async def receive_webhook(
@@ -129,11 +130,18 @@ def create_communications_router(server: HTTPServer) -> APIRouter:
             raise HTTPException(status_code=404, detail="Channel not found")
 
         if request.config is not None:
-            channel.config_json = request.config
+            preserved_secret_refs = {
+                key: value
+                for key, value in channel.config_json.items()
+                if key not in request.config
+                and isinstance(value, str)
+                and value.startswith("$secret:")
+            }
+            channel.config_json = {**preserved_secret_refs, **request.config}
         if request.enabled is not None:
             channel.enabled = request.enabled
 
-        updated = await comms_manager.update_channel(channel)
+        updated = await comms_manager.update_channel(channel, secrets=request.secrets)
 
         return cast("dict[str, Any]", comms_manager.channel_to_dict(updated))
 

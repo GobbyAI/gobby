@@ -27,9 +27,16 @@ export function WorkflowVariablesEditor() {
   const [name, setName] = useState('')
   const [value, setValue] = useState('')
   const [description, setDescription] = useState('')
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    void fetchWorkflows({ workflow_type: 'variable' })
+    let active = true
+    void fetchWorkflows({ workflow_type: 'variable' }).then((ok) => {
+      if (active && !ok) setError('Could not load variable defaults.')
+    })
+    return () => {
+      active = false
+    }
   }, [fetchWorkflows])
 
   const variables = useMemo(
@@ -53,6 +60,7 @@ export function WorkflowVariablesEditor() {
       value: parseVariableInput(value),
       description: trimmedDescription || undefined,
     })
+    setError(null)
     const created = await createWorkflow({
       name: trimmedName,
       definition_json: definitionJson,
@@ -60,12 +68,24 @@ export function WorkflowVariablesEditor() {
       description: trimmedDescription || undefined,
       enabled: true,
     })
-    if (created) resetForm()
+    if (created) {
+      resetForm()
+    } else {
+      setError('Could not save the variable.')
+    }
   }
 
-  function handleDelete(variable: WorkflowDetail) {
+  async function handleToggle(variable: WorkflowDetail) {
+    setError(null)
+    const updated = await toggleEnabled(variable.id)
+    if (!updated) setError(`Could not update "${variable.name}".`)
+  }
+
+  async function handleDelete(variable: WorkflowDetail) {
     if (!window.confirm(`Delete variable "${variable.name}"?`)) return
-    void deleteWorkflow(variable.id)
+    setError(null)
+    const deleted = await deleteWorkflow(variable.id)
+    if (!deleted) setError(`Could not delete "${variable.name}".`)
   }
 
   return (
@@ -128,9 +148,15 @@ export function WorkflowVariablesEditor() {
         </div>
       ) : null}
 
+      {error ? (
+        <p className="settings-field__hint" role="alert">
+          {error}
+        </p>
+      ) : null}
+
       {isLoading ? (
         <p className="settings-field__empty">Loading variables…</p>
-      ) : variables.length === 0 ? (
+      ) : error && variables.length === 0 ? null : variables.length === 0 ? (
         <p className="settings-field__empty">No variable defaults yet.</p>
       ) : (
         <ul className="settings-typed-list__items">
@@ -148,14 +174,14 @@ export function WorkflowVariablesEditor() {
                   <Switch
                     checked={variable.enabled}
                     aria-label={`Toggle ${variable.name}`}
-                    onChange={() => void toggleEnabled(variable.id)}
+                    onChange={() => void handleToggle(variable)}
                   />
                   {variable.source !== 'template' ? (
                     <button
                       type="button"
                       className="btn btn-ghost btn-sm"
                       aria-label={`Delete ${variable.name}`}
-                      onClick={() => handleDelete(variable)}
+                      onClick={() => void handleDelete(variable)}
                     >
                       Delete
                     </button>

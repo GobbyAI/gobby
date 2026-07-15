@@ -215,6 +215,11 @@ describe("Integrations activity tab", () => {
       "integration-status-filter",
     );
 
+    const incident = screen.getByRole("button", { name: "Select Incident bridge" });
+    incident.focus();
+    await user.keyboard("{Enter}");
+    expect(incident.parentElement).toHaveClass("activity-list-row--selected");
+
     await user.selectOptions(screen.getByRole("combobox", { name: "Platform filter" }), "telegram");
     expect(screen.queryByText("Release alerts")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Select Incident bridge" })).toBeInTheDocument();
@@ -280,6 +285,58 @@ describe("Integrations activity tab", () => {
         enabled: true,
       }),
     );
+  });
+
+  it("sends changed secrets when saving an existing channel", async () => {
+    setupFetch([
+      makeChannel({
+        id: "ch-slack",
+        name: "Release alerts",
+        channel_type: "slack",
+        config_json: {
+          channel_id: "C123",
+          bot_token: "$secret:COMMS_SLACK_BOT_TOKEN_RELEASE_ALERTS",
+        },
+      }),
+    ]);
+
+    const user = userEvent.setup();
+    render(<IntegrationsTab />);
+
+    await user.click(await screen.findByRole("button", { name: "Select Release alerts" }));
+    await user.type(screen.getByLabelText("Bot Token"), "new-token");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(lastJsonBodyFor("/api/comms/channels/ch-slack")).toEqual({
+        config: { channel_id: "C123" },
+        enabled: true,
+        secrets: { bot_token: "new-token" },
+      }),
+    );
+  });
+
+  it("encodes channel names in webhook URLs", async () => {
+    setupFetch([
+      makeChannel({
+        id: "ch-slack",
+        name: "Release alerts/primary",
+        channel_type: "slack",
+        config_json: { channel_id: "C123" },
+      }),
+    ]);
+
+    const user = userEvent.setup();
+    render(<IntegrationsTab />);
+    await user.click(
+      await screen.findByRole("button", { name: "Select Release alerts/primary" }),
+    );
+
+    expect(
+      await screen.findByText(
+        `${window.location.origin}/api/comms/webhooks/Release%20alerts%2Fprimary`,
+      ),
+    ).toBeInTheDocument();
   });
 
   it("swaps the selected channel detail pane to recent messages", async () => {

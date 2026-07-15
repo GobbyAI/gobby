@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 
 import { FileChangesTab } from '../FileChangesTab'
 
@@ -80,6 +81,24 @@ describe('FileChangesTab', () => {
     expect(consoleError).toHaveBeenCalled()
 
     consoleError.mockRestore()
+  })
+
+  it('selects changed files from the keyboard', async () => {
+    const user = userEvent.setup()
+    const fetchDiff = vi.fn().mockResolvedValue('keyboard diff')
+
+    render(
+      <FileChangesTab
+        changedFiles={[{ path: 'src/keyboard.ts', status: 'W' }]}
+        fetchDiff={fetchDiff}
+      />,
+    )
+
+    const file = screen.getByRole('button', { name: /keyboard\.ts/i })
+    file.focus()
+    await user.keyboard(' ')
+
+    await waitFor(() => expect(fetchDiff).toHaveBeenCalledWith('src/keyboard.ts'))
   })
 
   it('deselects a file when it is clicked twice', async () => {

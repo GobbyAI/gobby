@@ -97,6 +97,7 @@ function PromptOverridesGroup({
   const [savedContent, setSavedContent] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const requestIdRef = useRef(0)
 
   const dirty = detail !== null && editContent !== savedContent
   useSectionDirtyGuard(dirty)
@@ -124,10 +125,12 @@ function PromptOverridesGroup({
   }
 
   const openPrompt = async (path: string) => {
+    const requestId = ++requestIdRef.current
     setBusy(true)
     setError(null)
     try {
       const loaded = await onGetDetail(path)
+      if (requestId !== requestIdRef.current) return
       if (loaded) {
         setDetail(loaded)
         setEditContent(loaded.content)
@@ -135,13 +138,19 @@ function PromptOverridesGroup({
       } else {
         setError('Could not load this prompt.')
       }
+    } catch {
+      if (requestId === requestIdRef.current) {
+        setError('Could not load this prompt.')
+      }
     } finally {
-      setBusy(false)
+      if (requestId === requestIdRef.current) setBusy(false)
     }
   }
 
   const closeEditor = () => {
     if (dirty && !window.confirm('Discard unsaved override edits?')) return
+    requestIdRef.current += 1
+    setBusy(false)
     setDetail(null)
     setEditContent('')
     setSavedContent('')
@@ -150,18 +159,24 @@ function PromptOverridesGroup({
 
   const handleSave = async () => {
     if (!detail) return
+    const requestId = ++requestIdRef.current
     setBusy(true)
     setError(null)
     try {
       const ok = await onSaveOverride(detail.path, editContent)
+      if (requestId !== requestIdRef.current) return
       if (ok) {
         setSavedContent(editContent)
         setDetail({ ...detail, source: 'overridden', has_override: true })
       } else {
         setError('Could not save the override.')
       }
+    } catch {
+      if (requestId === requestIdRef.current) {
+        setError('Could not save the override.')
+      }
     } finally {
-      setBusy(false)
+      if (requestId === requestIdRef.current) setBusy(false)
     }
   }
 
@@ -170,10 +185,12 @@ function PromptOverridesGroup({
     if (!window.confirm(`Revert "${detail.path}" to its bundled default?`)) {
       return
     }
+    const requestId = ++requestIdRef.current
     setBusy(true)
     setError(null)
     try {
       const ok = await onDeleteOverride(detail.path)
+      if (requestId !== requestIdRef.current) return
       if (ok) {
         const bundled = detail.bundled_content ?? ''
         setDetail({
@@ -187,8 +204,12 @@ function PromptOverridesGroup({
       } else {
         setError('Could not revert the override.')
       }
+    } catch {
+      if (requestId === requestIdRef.current) {
+        setError('Could not revert the override.')
+      }
     } finally {
-      setBusy(false)
+      if (requestId === requestIdRef.current) setBusy(false)
     }
   }
 
@@ -268,7 +289,6 @@ function PromptOverridesGroup({
                   <button
                     type="button"
                     className="settings-prompt-row"
-                    disabled={busy}
                     aria-label={`Edit prompt ${prompt.path}`}
                     onClick={() => {
                       void openPrompt(prompt.path)

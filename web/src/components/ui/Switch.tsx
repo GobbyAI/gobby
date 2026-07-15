@@ -22,10 +22,7 @@ export function Switch({
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cn(
-        'inline-flex h-6 w-11 shrink-0 items-center rounded-full border-2 transition-colors duration-150',
-        checked
-          ? 'border-transparent bg-accent'
-          : 'border-border bg-muted',
+        'inline-flex h-6 w-11 shrink-0 items-center justify-center rounded-full border-0 bg-transparent p-0 pointer-coarse:h-11',
         disabled
           ? 'cursor-not-allowed opacity-50'
           : 'cursor-pointer',
@@ -33,10 +30,19 @@ export function Switch({
     >
       <span
         className={cn(
-          'block h-5 w-5 rounded-full bg-background shadow-sm transition-transform duration-150',
-          checked ? 'translate-x-5' : 'translate-x-0',
+          'inline-flex h-6 w-11 shrink-0 items-center rounded-full border-2 transition-colors duration-150',
+          checked
+            ? 'border-transparent bg-accent'
+            : 'border-border bg-muted',
         )}
-      />
+      >
+        <span
+          className={cn(
+            'block h-5 w-5 rounded-full bg-background shadow-sm transition-transform duration-150',
+            checked ? 'translate-x-5' : 'translate-x-0',
+          )}
+        />
+      </span>
     </button>
   )
 }

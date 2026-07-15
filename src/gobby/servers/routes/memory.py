@@ -74,6 +74,7 @@ class MemoryUpdateRequest(BaseModel):
 
     content: str | None = Field(default=None, description="New content text")
     tags: list[str] | None = Field(default=None, description="New tags")
+    memory_type: str | None = Field(default=None, description="New memory type")
 
 
 class MemoryPromoteRequest(BaseModel):
@@ -579,6 +580,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
                 memory_id=memory_id,
                 content=request_data.content,
                 tags=request_data.tags,
+                memory_type=request_data.memory_type,
             )
             return memory.to_dict()
         except ValueError as e:

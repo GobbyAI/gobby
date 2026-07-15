@@ -32,7 +32,7 @@
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  font-size: calc(var(--font-size-base) * 0.7);
+  font-size: var(--text-xs);
   padding: 0.25rem;
 }
 
@@ -46,7 +46,7 @@
 
 .session-group-label {
   padding: 0.375rem 0.75rem;
-  font-size: calc(var(--font-size-base) * 0.7);
+  font-size: var(--text-xs);
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -102,7 +102,7 @@
 }
 
 .session-name {
-  font-size: calc(var(--font-size-base) * 0.85);
+  font-size: var(--text-base);
   font-family: inherit;
   color: var(--text-primary);
   overflow: hidden;
@@ -112,7 +112,7 @@
 }
 
 .session-name-input {
-  font-size: calc(var(--font-size-base) * 0.85);
+  font-size: var(--text-base);
   font-family: inherit;
   color: var(--text-primary);
   background: var(--bg-primary);
@@ -125,7 +125,7 @@
 }
 
 .session-badge {
-  font-size: calc(var(--font-size-base) * 0.6);
+  font-size: var(--text-2xs);
   padding: 0.1rem 0.325rem;
   border-radius: 9999px;
   text-transform: uppercase;

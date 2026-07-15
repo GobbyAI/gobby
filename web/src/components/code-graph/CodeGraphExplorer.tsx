@@ -5,6 +5,7 @@ import { useCodeGraph, mergeCodeGraphData } from '../../hooks/useCodeGraph'
 import type { CodeGraphData, CodeGraphNode, CodeGraphSearchResult } from '../../hooks/useCodeGraph'
 import { IS_MOBILE, IS_IOS } from '../../utils/platform'
 import { resolveCssVar, cn, escapeHtml } from '../../lib/utils'
+import { inputFocusCls } from '../shared/focusStyles'
 
 const DEFAULT_CODE_GRAPH_LIMIT = IS_IOS ? 30 : IS_MOBILE ? 50 : 100
 const CODE_GRAPH_LIMIT_MIN = 10
@@ -27,7 +28,7 @@ const BTN_ACTIVE_CLS =
 
 const SEARCH_WRAP_CLS = 'absolute left-3 top-3 z-10 w-[260px]'
 const SEARCH_INPUT_CLS =
-  'w-full rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1.5 font-mono text-[length:var(--text-sm)] text-[var(--text-primary)] outline-none transition-colors duration-150 placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] pointer-coarse:min-h-11'
+  `w-full rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1.5 font-mono text-[length:var(--text-sm)] text-[var(--text-primary)] transition-colors duration-150 placeholder:text-[var(--text-muted)] pointer-coarse:min-h-11 ${inputFocusCls}`
 const SEARCH_RESULTS_CLS =
   'mt-1 max-h-[240px] overflow-y-auto rounded border border-[var(--border)] bg-[var(--bg-secondary)]'
 const SEARCH_RESULT_CLS =
@@ -220,6 +221,9 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
   const [linkDist, setLinkDist] = useState(() => getStoredNumber('gobby-cg-link-dist', DEFAULT_LINK_DIST))
   const [centerStrength, setCenterStrength] = useState(() => getStoredNumber('gobby-cg-center', DEFAULT_CENTER))
   const searchDebounceRef = useRef<number | null>(null)
+  const graphRequestIdRef = useRef(0)
+  const searchRequestIdRef = useRef(0)
+  const selectionRequestIdRef = useRef(0)
 
   const { fetchFileGraph, expandFile, expandSymbol, fetchBlastRadius, searchSymbols } = useCodeGraph()
 
@@ -273,14 +277,17 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
   // Initial load (re-fetch when limit changes)
   useEffect(() => {
     if (!projectId) return
+    const requestId = ++graphRequestIdRef.current
+    searchRequestIdRef.current += 1
+    selectionRequestIdRef.current += 1
     setIsLoading(true)
     setExpandedNodes(new Set())
     fetchFileGraph(projectId, limit).then(data => {
-      if (data) setGraphData(data)
+      if (requestId === graphRequestIdRef.current && data) setGraphData(data)
     }).catch(e => {
       console.error('CodeGraphExplorer: fetchFileGraph failed', e)
     }).finally(() => {
-      setIsLoading(false)
+      if (requestId === graphRequestIdRef.current) setIsLoading(false)
     })
   }, [projectId, limit, fetchFileGraph])
 
@@ -309,6 +316,7 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
   // Node click handler
   const handleNodeClick = useCallback(async (node: any) => {
     if (!projectId) return
+    const requestId = ++selectionRequestIdRef.current
     setSelectedNode(node as GraphNode)
 
     if (blastMode) {
@@ -316,6 +324,7 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
         ? { filePath: node.id }
         : { symbolId: node.id }
       const data = await fetchBlastRadius(projectId, opts)
+      if (requestId !== selectionRequestIdRef.current) return
       if (data) {
         const affected = new Set(data.nodes.map((n: any) => n.id))
         setBlastData(affected)
@@ -333,6 +342,7 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
     } else {
       newData = await expandSymbol(projectId, node.id)
     }
+    if (requestId !== selectionRequestIdRef.current) return
     if (newData) {
       setGraphData(prev => mergeCodeGraphData(prev, newData!))
     }
@@ -340,11 +350,13 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
 
   // Search handler
   const handleSearch = useCallback((query: string) => {
+    const requestId = ++searchRequestIdRef.current
     setSearchQuery(query)
     if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
     if (!query.trim() || !projectId) { setSearchResults([]); return }
     searchDebounceRef.current = window.setTimeout(async () => {
       const results = await searchSymbols(projectId, query)
+      if (requestId !== searchRequestIdRef.current) return
       setSearchResults(results)
     }, 300)
   }, [projectId, searchSymbols])
@@ -352,12 +364,14 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
   // Search result click
   const handleSearchResultClick = useCallback(async (result: any) => {
     if (!projectId) return
+    const requestId = ++selectionRequestIdRef.current
     setSearchQuery('')
     setSearchResults([])
 
     const exists = graphData.nodes.some(n => n.id === result.id)
     if (!exists) {
       const data = await expandSymbol(projectId, result.id)
+      if (requestId !== selectionRequestIdRef.current) return
       if (data) {
         const resultNode: CodeGraphNode = {
           id: result.id, name: result.name,
