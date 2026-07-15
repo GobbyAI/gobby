@@ -390,3 +390,17 @@ arm O at the same HEAD so O-vs-G is the clean primary comparison.
 - Fix adopted (Josh-approved): frozen git worktree at 2b2bc1848 (`wiki-bakeoff/gobby-frozen-2b2bc1848`); run-arm-o.zsh and run-arm-g.zsh now point --project at it. Reuse keys on content hashes only, so file/module pages fully reuse; arm G becomes aggregates-only.
 - Relaunch against the worktree exposed bakeoff bug #6: `PublicationFingerprint::from_run` hard-crashed (`No such file or directory (os error 2)`) on 17 index-listed files that don't exist at 2b2bc1848 (post-snapshot additions). Residual of #18109, which fixed the identical failure in the snapshot builder but missed this sibling hashing loop. Filed + fixed as #18248: `hash_snapshot_file` (Ok(None)=warn+skip) now shared with fingerprinting; regression test `fingerprint_skips_sources_missing_from_disk` proven to fail pre-fix with the exact production error.
 - Binary transition #8: rebuilt release gcode with #18248 and atomically installed to ~/.gobby/bin/gcode (cp + mv -f). Render version unchanged — no reuse invalidation.
+
+## 2026-07-15 ~03:35 CDT — #18285: tool_chat 60s timeout root-caused and fixed
+Arm-O attempts 9 and 10 both died at the opus aggregate phase: every tool_chat
+candidate (a full multi-turn agentic run) was bounded by the single-generation
+spawn-cold budget `ai.generation.cli_candidate_timeout_seconds` (60s), borrowed
+from TextGenerationService by #17458. Narrative batches degraded to AST-only
+skeletons (HTTP 500) and Lane B repo.md hard-failed with model-unavailable;
+nightly cron tool_chat calls at 03:08 failed identically. Fixed in dadc4a0bf
+(#18285, closed): ToolChatService now bounds each candidate by
+`ai.generation.timeout_seconds` (1200s); request-level overrides still tighten.
+Daemon restarted 03:34:38 CDT (deliberate, self) to load the fix. Attempt-11
+launched 03:35 CDT (gcode pid 53361, ARM_O_START 2026-07-15T08:35:38Z); its
+seed re-discards the stage (live index drift, #18252 evidence — also stamped in
+arm-opus.log at 23:56 CDT for attempt-10's reseed) and re-pays the sweep.
