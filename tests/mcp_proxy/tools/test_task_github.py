@@ -1,10 +1,47 @@
 """Focused tests for task GitHub MCP tools."""
 
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.mcp_proxy.tools.task_github import create_github_registry
+
+
+@pytest.mark.asyncio
+async def test_github_cli_helper_runs_off_event_loop_thread() -> None:
+    """The actual GitHub registry must dispatch its synchronous CLI helper off-loop."""
+    task_manager = MagicMock()
+    ctx = MagicMock(task_manager=task_manager)
+    event_loop_thread = threading.get_ident()
+    helper_threads: list[int] = []
+
+    def fetch_issues(**_kwargs: object) -> list[dict[str, object]]:
+        helper_threads.append(threading.get_ident())
+        return []
+
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.task_github.get_project_context",
+            return_value={"id": "project-id"},
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.task_github._fetch_issues_via_gh",
+            side_effect=fetch_issues,
+        ),
+    ):
+        registry = create_github_registry(ctx)
+        result = await registry.call("import_github_issues", {"repo": "owner/repo"})
+
+    assert result == {
+        "success": True,
+        "imported_count": 0,
+        "updated_count": 0,
+        "tasks": [],
+    }
+    assert helper_threads
+    assert helper_threads[0] != event_loop_thread
+
 
 pytestmark = pytest.mark.unit
 

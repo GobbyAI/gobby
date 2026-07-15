@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
 from typing import Any
 
@@ -305,21 +306,29 @@ async def test_context_param_is_ignored() -> None:
 
 @pytest.mark.asyncio
 async def test_sync_internal_tool_runs_off_event_loop() -> None:
-    """Synchronous registry tools must run in a worker thread."""
+    """A blocking synchronous tool must not stall concurrent event-loop work."""
     registry = InternalToolRegistry(name="test-registry")
-    event_loop_thread = threading.get_ident()
-    tool_threads: list[int] = []
+    loop = asyncio.get_running_loop()
+    tool_started = asyncio.Event()
+    loop_progressed = threading.Event()
 
     @registry.tool(name="sync_tool", description="Synchronous tool")
     def sync_tool() -> dict[str, bool]:
-        tool_threads.append(threading.get_ident())
+        loop.call_soon_threadsafe(tool_started.set)
+        if not loop_progressed.wait(timeout=1):
+            raise TimeoutError("event loop did not progress while sync tool was running")
         return {"ok": True}
 
-    result = await registry.call("sync_tool", {})
+    async def make_loop_progress() -> None:
+        loop_progressed.set()
+
+    call_task = asyncio.create_task(registry.call("sync_tool", {}))
+    await asyncio.wait_for(tool_started.wait(), timeout=1)
+
+    await make_loop_progress()
+    result = await asyncio.wait_for(call_task, timeout=1)
 
     assert result == {"ok": True}
-    assert tool_threads
-    assert tool_threads[0] != event_loop_thread
 
 
 def test_normalize_internal_success_result_strips_legacy_success() -> None:
