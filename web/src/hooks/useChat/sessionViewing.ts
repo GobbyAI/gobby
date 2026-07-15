@@ -49,6 +49,7 @@ export function useChatSessionViewing(params: UseChatSessionViewingParams) {
     observedSessionIdRef,
     observedSessionMetaRef,
     onModeChangedRef,
+    pendingAttachSessionIdRef,
     pendingProxyMessagesRef,
     pendingProxySessionQueuesRef,
     pendingSessionInteractionModeRef,
@@ -94,6 +95,7 @@ const viewSession = useCallback(
       return;
     }
     const requestSeq = ++viewRequestSeqRef.current;
+    pendingAttachSessionIdRef.current = null;
     const isCurrentRequest = () =>
       viewRequestSeqRef.current === requestSeq &&
       viewingSessionIdRef.current === sessionId;
@@ -206,6 +208,7 @@ const viewSession = useCallback(
 // Clear viewing state and restore previous web chat
 const clearViewingSession = useCallback(() => {
   viewRequestSeqRef.current += 1;
+  pendingAttachSessionIdRef.current = null;
   // Detach from any active WS subscription
   const observedSessionId = observedSessionIdRef.current;
   if (observedSessionId) {
@@ -301,6 +304,7 @@ const attachToSession = useCallback(
   (sessionId: string, mode: "observe" | "proxy" = "proxy") => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     clearFreshChatDraft();
+    pendingAttachSessionIdRef.current = sessionId;
     pendingSessionInteractionModeRef.current = mode;
     setProxyDeliveryNotice(null);
 

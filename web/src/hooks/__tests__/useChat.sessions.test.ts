@@ -727,6 +727,83 @@ describe("useChat viewed session state", () => {
     expect(result.current.messages[0]?.content).toBe("New conversation transcript");
   });
 
+  it("ignores and detaches a late attach result after viewing another session", async () => {
+    await loadModule();
+    mockFetch.mockJsonResponse(
+      "/api/sessions/sess-new/messages?limit=100&offset=0",
+      {
+        messages: [
+          {
+            id: "new-message",
+            role: "assistant",
+            content: "New session transcript",
+            timestamp: "2026-04-09T00:00:00Z",
+            content_blocks: [{ type: "text", content: "New session transcript" }],
+          },
+        ],
+      },
+    );
+    mockFetch.mockJsonResponse("/api/sessions/sess-new", {
+      session: {
+        id: "sess-new",
+        seq_num: 2311,
+        source: "codex",
+        title: "New Terminal",
+        status: "active",
+        model: "gpt-5.4",
+        external_id: "codex-ext-new",
+        session_type: "terminal",
+      },
+    });
+
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      result.current.observeSession?.("sess-old", "observe");
+    });
+
+    await act(async () => {
+      result.current.viewSession("sess-new");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const sendCountBeforeLateResult = ws.send.mock.calls.length;
+    act(() => {
+      ws.simulateMessage({
+        type: "attach_to_session_result",
+        session_id: "sess-old",
+        external_id: "codex-ext-old",
+        source: "codex",
+        title: "Old Terminal",
+        status: "active",
+        model: "gpt-5.4",
+        ref: "#2310",
+        session_type: "terminal",
+        messages: [
+          {
+            id: "old-message",
+            role: "assistant",
+            content: "Stale attached transcript",
+          },
+        ],
+        total_count: 1,
+      });
+    });
+
+    expect(result.current.viewingSessionId).toBe("sess-new");
+    expect(result.current.viewingSessionMeta?.title).toBe("New Terminal");
+    expect(result.current.messages.map((message) => message.content)).toEqual([
+      "New session transcript",
+    ]);
+    expect(JSON.parse(ws.send.mock.calls[sendCountBeforeLateResult][0])).toEqual({
+      type: "detach_from_session",
+      session_id: "sess-old",
+    });
+  });
+
   it("ignores stale detach acknowledgements after swapping watched terminal sessions", async () => {
     await loadModule();
     mockFetch.mockJsonResponse(

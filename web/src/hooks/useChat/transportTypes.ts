@@ -136,6 +136,7 @@ export interface PendingRefs {
   pendingPlanFeedbackRef: MutableRefObject<string | null>;
   pendingProxyMessagesRef: MutableRefObject<Map<string, PendingProxyMessage>>;
   pendingProxySessionQueuesRef: MutableRefObject<Map<string, string[]>>;
+  pendingAttachSessionIdRef: MutableRefObject<string | null>;
   pendingSessionInteractionModeRef: MutableRefObject<"observe" | "proxy">;
 }
 

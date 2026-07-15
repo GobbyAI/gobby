@@ -159,6 +159,7 @@ export function useChat() {
     observedSessionId,
     observedSessionIdRef,
     observedSessionMetaRef,
+    pendingAttachSessionIdRef,
     pendingProxyMessagesRef,
     pendingProxySessionQueuesRef,
     pendingSessionInteractionModeRef,
@@ -206,6 +207,7 @@ export function useChat() {
           }),
         );
       }
+      pendingAttachSessionIdRef.current = null;
       if (!preserveViewing) {
         viewingSessionIdRef.current = null;
         viewingSessionMetaRef.current = null;
@@ -232,6 +234,7 @@ export function useChat() {
       attachedSessionMetaRef,
       observedSessionIdRef,
       observedSessionMetaRef,
+      pendingAttachSessionIdRef,
       pendingProxyMessagesRef,
       pendingProxySessionQueuesRef,
       sessionInteractionModeRef,
@@ -424,6 +427,7 @@ export function useChat() {
     onChatDeletedRef,
     onModeChangedRef,
     onPlanReadyRef,
+    pendingAttachSessionIdRef,
     pendingMessagesRef,
     pendingPlanFeedbackRef,
     pendingProxyMessagesRef,
@@ -612,6 +616,7 @@ export function useChat() {
     observedSessionIdRef,
     observedSessionMetaRef,
     onModeChangedRef,
+    pendingAttachSessionIdRef,
     pendingProxyMessagesRef,
     pendingProxySessionQueuesRef,
     pendingSessionInteractionModeRef,

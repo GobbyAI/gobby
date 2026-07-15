@@ -42,6 +42,21 @@ export function handleAttachToSessionResult(
   ctx: UseChatTransportParams,
 ) {
   const sid = data.session_id as string;
+  if (ctx.pendingAttachSessionIdRef.current !== sid) {
+    if (
+      ctx.observedSessionIdRef.current !== sid &&
+      ctx.wsRef.current?.readyState === WebSocket.OPEN
+    ) {
+      ctx.wsRef.current.send(
+        JSON.stringify({
+          type: "detach_from_session",
+          session_id: sid,
+        }),
+      );
+    }
+    return;
+  }
+  ctx.pendingAttachSessionIdRef.current = null;
   const meta = toSessionObservationMeta(data) ?? UNKNOWN_SESSION_META;
   ctx.setObservedSessionId(sid);
   ctx.observedSessionIdRef.current = sid;

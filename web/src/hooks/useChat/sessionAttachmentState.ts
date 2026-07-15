@@ -66,6 +66,7 @@ export function useSessionAttachmentState() {
   const pendingSessionInteractionModeRef = useRef<"observe" | "proxy">(
     "proxy",
   );
+  const pendingAttachSessionIdRef = useRef<string | null>(null);
   const [proxyDeliveryNotice, setProxyDeliveryNotice] = useState<string | null>(
     null,
   );
@@ -216,6 +217,7 @@ export function useSessionAttachmentState() {
     observedSessionMetaRef,
     pendingProxyMessagesRef,
     pendingProxySessionQueuesRef,
+    pendingAttachSessionIdRef,
     pendingSessionInteractionModeRef,
     proxyDeliveryNotice,
     resolveAgentName,
