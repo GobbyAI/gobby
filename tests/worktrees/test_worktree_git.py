@@ -1252,6 +1252,12 @@ class TestWorktreeGitManagerSyncEdgeCases:
                 stdout="",
                 stderr="error: cannot rebase: dirty index",
             ),
+            subprocess.CompletedProcess(
+                args=["git", "rebase", "--abort"],
+                returncode=0,
+                stdout="",
+                stderr="",
+            ),
         ]
 
         result = manager.sync_from_main(worktree_path)
@@ -1259,6 +1265,7 @@ class TestWorktreeGitManagerSyncEdgeCases:
         assert result.success is False
         assert "Failed to rebase" in result.message
         assert "dirty index" in result.error
+        assert mock_run.call_args_list[-1].args[0] == ["git", "rebase", "--abort"]
 
     @patch("subprocess.run")
     def test_sync_merge_failure_no_conflict(self, mock_run, manager, tmp_path) -> None:
@@ -1274,12 +1281,19 @@ class TestWorktreeGitManagerSyncEdgeCases:
                 stdout="",
                 stderr="error: You have unstaged changes",
             ),
+            subprocess.CompletedProcess(
+                args=["git", "merge", "--abort"],
+                returncode=0,
+                stdout="",
+                stderr="",
+            ),
         ]
 
         result = manager.sync_from_main(worktree_path, strategy="merge")
 
         assert result.success is False
         assert "Failed to merge" in result.message
+        assert mock_run.call_args_list[-1].args[0] == ["git", "merge", "--abort"]
 
     @patch("subprocess.run")
     def test_sync_conflict_in_stderr(self, mock_run, manager, tmp_path) -> None:
@@ -1309,12 +1323,21 @@ class TestWorktreeGitManagerSyncEdgeCases:
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
 
-        mock_run.side_effect = subprocess.TimeoutExpired(cmd="git", timeout=120)
+        mock_run.side_effect = [
+            subprocess.TimeoutExpired(cmd="git", timeout=120),
+            subprocess.CompletedProcess(
+                args=["git", "rebase", "--abort"],
+                returncode=0,
+                stdout="",
+                stderr="",
+            ),
+        ]
 
         result = manager.sync_from_main(worktree_path)
 
         assert result.success is False
         assert "timed out" in result.message
+        assert mock_run.call_args_list[-1].args[0] == ["git", "rebase", "--abort"]
 
     @patch("subprocess.run")
     def test_sync_generic_exception(self, mock_run, manager, tmp_path) -> None:
