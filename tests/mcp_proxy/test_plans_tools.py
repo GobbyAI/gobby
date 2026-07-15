@@ -13,6 +13,7 @@ from gobby.mcp_proxy.tools.plans import create_plan_registry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
 
@@ -121,6 +122,7 @@ async def test_plan_storage_tools_dispatch_off_event_loop(
 @pytest.mark.asyncio
 async def test_plan_tool_schemas_and_happy_path(temp_db: HubDatabase, tmp_path: Path) -> None:
     project_id = LocalProjectManager(temp_db).create(name="plans", repo_path=str(tmp_path)).id
+    root_task = LocalTaskManager(temp_db).create_task(project_id, "Plan root")
     plan_path = _write_plan(tmp_path)
     registry = create_plan_registry(temp_db, default_project_id=project_id)
 
@@ -141,7 +143,7 @@ async def test_plan_tool_schemas_and_happy_path(temp_db: HubDatabase, tmp_path: 
         {
             "plan_id": "task-100-demo",
             "plan_path": str(plan_path),
-            "root_task_ref": "#100",
+            "root_task_ref": f"#{root_task.seq_num}",
         },
     )
     assert created["ok"] is True
@@ -165,6 +167,61 @@ async def test_plan_tools_return_invalid_ref_for_blank_plan_ref(
 
     assert result["ok"] is False
     assert result["error"] == "invalid_ref"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        ("get_plan", {"plan_id_or_ref": "task-100-demo"}),
+        ("list_plans", {}),
+        ("archive_plan", {"plan_id": "task-100-demo"}),
+        ("update_plan_hash", {"plan_id": "task-100-demo"}),
+        ("regenerate_coverage_manifest", {"plan_id": "task-100-demo"}),
+        ("delete_plan", {"plan_id": "task-100-demo"}),
+    ],
+)
+async def test_plan_tools_reject_unresolvable_project_ref(
+    temp_db: HubDatabase,
+    tool_name: str,
+    arguments: dict[str, str],
+) -> None:
+    registry = create_plan_registry(temp_db)
+
+    result = await registry.call(tool_name, {**arguments, "project": "missing-project"})
+
+    assert result["ok"] is False
+    assert result["error"] == "invalid_project"
+
+
+@pytest.mark.asyncio
+async def test_delete_plan_with_unresolvable_project_does_not_delete_unscoped_plan(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    project_id = LocalProjectManager(temp_db).create(name="plans", repo_path=str(tmp_path)).id
+    root_task = LocalTaskManager(temp_db).create_task(project_id, "Plan root")
+    plan_path = _write_plan(tmp_path)
+    registry = create_plan_registry(temp_db, default_project_id=project_id)
+    created = await registry.call(
+        "create_plan",
+        {
+            "plan_id": "task-100-demo",
+            "plan_path": str(plan_path),
+            "root_task_ref": f"#{root_task.seq_num}",
+        },
+    )
+    assert created["ok"] is True
+
+    result = await registry.call(
+        "delete_plan",
+        {"plan_id": "task-100-demo", "project": "missing-project"},
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == "invalid_project"
+    preserved = LocalPlanManager(temp_db).get_plan("task-100-demo", project_id=project_id)
+    assert preserved.plan_id == "task-100-demo"
 
 
 @pytest.mark.asyncio
