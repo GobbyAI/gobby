@@ -103,6 +103,64 @@ def test_edit_history_flow(temp_db, tmp_path) -> None:
     assert not session.had_edits
 
 
+def test_shell_edit_history_invalidates_verification_evidence(temp_db, tmp_path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    session_manager = SessionManager(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    project_manager = LocalProjectManager(temp_db)
+    session_var_manager = SessionVariableManager(temp_db)
+
+    project = project_manager.create("test-shell-edit", str(repo_root))
+    session = session_manager.register(
+        external_id="test-shell-session",
+        machine_id="test-machine",
+        source="codex",
+        project_id=project.id,
+        title="Shell Edit Session",
+    )
+    task = task_manager.create_task(
+        project_id=project.id,
+        title="Shell Edit Task",
+        created_in_session_id=session.id,
+    )
+    task_manager.claim_task(task.id, session.id)
+    session_var_manager.merge_variables(
+        session.id,
+        {
+            **add_claimed_task({}, task.id, f"#{task.seq_num}"),
+            "verification_evidence_recorded": True,
+            "verification_evidence": [
+                {"evidence_type": "validation_command", "command": "uv run pytest"}
+            ],
+        },
+    )
+    handlers = EventHandlers(session_storage=session_manager, task_manager=task_manager)
+    event = HookEvent(
+        event_type=HookEventType.AFTER_TOOL,
+        session_id="test-shell-session",
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        cwd=str(repo_root),
+        data={
+            "tool_name": "Bash",
+            "tool_input": {"command": "touch src/edited.py docs/edited.md"},
+            "canonical_tool_kind": "write",
+            "canonical_repo_mutation": True,
+            "canonical_file_paths": ["src/edited.py", "docs/edited.md"],
+        },
+        metadata={"_platform_session_id": session.id},
+    )
+
+    handlers.handle_after_tool(event)
+
+    variables = session_var_manager.get_variables(session.id)
+    assert variables["session_edited_files"] == ["docs/edited.md", "src/edited.py"]
+    assert variables["task_edited_files"] == {task.id: ["docs/edited.md", "src/edited.py"]}
+    assert variables["verification_evidence_recorded"] is False
+    assert variables["verification_evidence"] == []
+
+
 def test_edit_history_ignores_out_of_repo_paths(temp_db, tmp_path) -> None:
     """Test claimed out-of-repo edits do not set had_edits or session_edited_files."""
     repo_root = tmp_path / "repo"

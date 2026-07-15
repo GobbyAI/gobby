@@ -172,44 +172,58 @@ class ToolEventHandlerMixin(EventHandlersBase):
             # Skip .gobby/ internal files (tasks.jsonl, memories.jsonl, etc.)
             tool_input = input_data.get("tool_input", {})
 
-            # Simple check for edit tools (case-insensitive)
-            is_edit = tool_name.lower() in EDIT_TOOLS
-
-            # For complex tools (multi_replace, etc), check if they modify files
-            # This logic could be expanded, but for now stick to the basic set
+            # Structured edit tools and normalized shell writes both count as edits.
+            is_canonical_edit = (
+                input_data.get("canonical_tool_kind") == "write"
+                and input_data.get("canonical_repo_mutation") is True
+            )
+            is_edit = tool_name.lower() in EDIT_TOOLS or is_canonical_edit
 
             if not is_failure and is_edit and self._session_manager:
                 try:
                     # Check if file is internal .gobby file
-                    file_path = (
+                    legacy_file_path = (
                         tool_input.get("file_path")
                         or tool_input.get("target_file")
                         or tool_input.get("path")
                     )
-                    repo_edit = (
-                        self._resolve_repo_edit_paths(str(file_path), event.cwd)
-                        if file_path
-                        else None
-                    )
-                    repo_relative_path = repo_edit[1] if repo_edit else None
-                    raw_internal = bool(file_path and ".gobby/" in str(file_path))
-                    normalized_internal = bool(
-                        repo_relative_path and Path(repo_relative_path).parts[:1] == (".gobby",)
-                    )
-                    is_internal = raw_internal or normalized_internal
-                    in_repo_edit = not file_path or repo_edit is not None
-                    # Gitignored paths (e.g. a gitignored wiki/ vault) can never
-                    # produce a commit, so they must stay out of the session/task
-                    # edit ledgers that arm commit-before-status gates.
-                    committable_edit = True
-                    if not is_internal and in_repo_edit and repo_edit is not None:
-                        from gobby.utils.git import is_path_gitignored
+                    canonical_paths = input_data.get("canonical_file_paths")
+                    if is_canonical_edit and isinstance(canonical_paths, list):
+                        file_paths = [path for path in canonical_paths if isinstance(path, str)]
+                        if not file_paths:
+                            file_paths = [legacy_file_path]
+                    else:
+                        file_paths = [legacy_file_path]
 
-                        committable_edit = not is_path_gitignored(
-                            repo_edit[1], os.fspath(repo_edit[0])
+                    has_committable_edit = False
+                    for file_path in file_paths:
+                        repo_edit = (
+                            self._resolve_repo_edit_paths(str(file_path), event.cwd)
+                            if file_path
+                            else None
                         )
+                        repo_relative_path = repo_edit[1] if repo_edit else None
+                        raw_internal = bool(file_path and ".gobby/" in str(file_path))
+                        normalized_internal = bool(
+                            repo_relative_path and Path(repo_relative_path).parts[:1] == (".gobby",)
+                        )
+                        is_internal = raw_internal or normalized_internal
+                        in_repo_edit = not file_path or repo_edit is not None
+                        # Gitignored paths (e.g. a gitignored wiki/ vault) can never
+                        # produce a commit, so they must stay out of the session/task
+                        # edit ledgers that arm commit-before-status gates.
+                        committable_edit = True
+                        if not is_internal and in_repo_edit and repo_edit is not None:
+                            from gobby.utils.git import is_path_gitignored
 
-                    if not is_internal and in_repo_edit:
+                            committable_edit = not is_path_gitignored(
+                                repo_edit[1], os.fspath(repo_edit[0])
+                            )
+
+                        if is_internal or not in_repo_edit:
+                            continue
+
+                        has_committable_edit = has_committable_edit or committable_edit
                         # Track repo-relative file path in session variables
                         # (independent of task-claim gate — rules need this
                         # for per-session has_dirty_files scoping)
@@ -233,9 +247,10 @@ class ToolEventHandlerMixin(EventHandlersBase):
                                 except Exception as e:
                                     self.logger.debug(f"Failed to trigger code index update: {e}")
 
-                        # Check if session has any claimed tasks before marking had_edits
+                    # Check if session has any claimed tasks before marking had_edits
+                    if has_committable_edit:
                         has_claimed_task = False
-                        if committable_edit and self._task_manager:
+                        if self._task_manager:
                             try:
                                 claimed_tasks = self._task_manager.list_tasks(
                                     claimed_by_session_id=session_id
