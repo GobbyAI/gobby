@@ -7,6 +7,7 @@ import { useConfirmDialog } from "../../hooks/useConfirmDialog";
 import { useFileChanges } from "../../hooks/useFileChanges";
 import { ActivityPanel } from "../activity/ActivityPanel";
 import { useActivityPanel } from "../activity/useActivityPanel";
+import { AppErrorBoundary } from "../app/AppErrorBoundary";
 import { Heading } from "../shared/Heading";
 import { CommandPalette } from "./CommandPalette";
 import { ChatMainColumn } from "./ChatMainColumn";
@@ -188,51 +189,56 @@ export function ChatPage({
         />
       )}
 
-      <ActivityPanel
-        mode={effectiveMode}
-        onToggleChat={toggleFromPanel}
-        panelWidth={panelWidth}
-        onWidthChange={setPanelWidth}
-        activeTab={activityTab}
-        onTabChange={setActivityTab}
-        artifacts={artifacts.artifacts}
-        activeArtifact={artifacts.activeArtifact}
-        onOpenArtifact={artifacts.openArtifact}
-        onCloseArtifact={artifacts.handleCloseArtifact}
-        onUpdateArtifactContent={artifacts.updateArtifact}
-        onSetArtifactVersion={artifacts.setVersion}
-        planPendingApproval={artifacts.planPendingApproval}
-        planApproved={artifacts.planApproved}
-        planApprovalOptions={artifacts.planApprovalOptions}
-        onApprovePlan={artifacts.handleApprovePlan}
-        onRequestPlanChanges={artifacts.handleRequestPlanChanges}
-        planPendingVariant={planPendingVariant}
-        changedFiles={fileChanges.changedFiles}
-        fetchDiff={fileChanges.fetchDiff}
-        changesLoading={fileChanges.loading}
-        changesError={fileChanges.error}
-        onRetryChanges={fileChanges.refresh}
-        projectId={projectId}
-        sessions={activitySessions ?? allProjectSessions}
-        sessionsLoading={activitySessionsLoading ?? allProjectSessionsLoading}
-        sessionsFilters={sessionsFilters}
-        onSessionsFiltersChange={onSessionsFiltersChange}
-        mcp={mcp}
-        onKillAgent={conversations.onKillAgent}
-        onExpireSession={conversations.onExpireSession}
-        onAcpCloseSession={conversations.onAcpCloseSession}
-        onAcpDeleteSession={conversations.onAcpDeleteSession}
-        chatSessionId={routing.activityPanelChatSessionId}
-        focusSessionId={routing.focusSessionId}
-        dirtyGuard={dirtyGuard}
-        onFocusSessionHandled={routing.handleFocusSessionHandled}
-        onSwapSession={routing.handleSwapSession}
-        onResumeSession={routing.handleResumeSessionFromActivity}
-        onAddFileToChat={routing.handleAddFileToChat}
-        isMobile={isMobile}
-        requestPanelOverride={requestPanelOverride}
-        releasePanelOverride={releasePanelOverride}
-      />
+      <AppErrorBoundary
+        activeTab="activity sidebar"
+        onReturnToChat={toggleFromPanel}
+      >
+        <ActivityPanel
+          mode={effectiveMode}
+          onToggleChat={toggleFromPanel}
+          panelWidth={panelWidth}
+          onWidthChange={setPanelWidth}
+          activeTab={activityTab}
+          onTabChange={setActivityTab}
+          artifacts={artifacts.artifacts}
+          activeArtifact={artifacts.activeArtifact}
+          onOpenArtifact={artifacts.openArtifact}
+          onCloseArtifact={artifacts.handleCloseArtifact}
+          onUpdateArtifactContent={artifacts.updateArtifact}
+          onSetArtifactVersion={artifacts.setVersion}
+          planPendingApproval={artifacts.planPendingApproval}
+          planApproved={artifacts.planApproved}
+          planApprovalOptions={artifacts.planApprovalOptions}
+          onApprovePlan={artifacts.handleApprovePlan}
+          onRequestPlanChanges={artifacts.handleRequestPlanChanges}
+          planPendingVariant={planPendingVariant}
+          changedFiles={fileChanges.changedFiles}
+          fetchDiff={fileChanges.fetchDiff}
+          changesLoading={fileChanges.loading}
+          changesError={fileChanges.error}
+          onRetryChanges={fileChanges.refresh}
+          projectId={projectId}
+          sessions={activitySessions ?? allProjectSessions}
+          sessionsLoading={activitySessionsLoading ?? allProjectSessionsLoading}
+          sessionsFilters={sessionsFilters}
+          onSessionsFiltersChange={onSessionsFiltersChange}
+          mcp={mcp}
+          onKillAgent={conversations.onKillAgent}
+          onExpireSession={conversations.onExpireSession}
+          onAcpCloseSession={conversations.onAcpCloseSession}
+          onAcpDeleteSession={conversations.onAcpDeleteSession}
+          chatSessionId={routing.activityPanelChatSessionId}
+          focusSessionId={routing.focusSessionId}
+          dirtyGuard={dirtyGuard}
+          onFocusSessionHandled={routing.handleFocusSessionHandled}
+          onSwapSession={routing.handleSwapSession}
+          onResumeSession={routing.handleResumeSessionFromActivity}
+          onAddFileToChat={routing.handleAddFileToChat}
+          isMobile={isMobile}
+          requestPanelOverride={requestPanelOverride}
+          releasePanelOverride={releasePanelOverride}
+        />
+      </AppErrorBoundary>
 
       <CommandPalette
         isOpen={commandPalette.showCommandPalette}
