@@ -596,6 +596,7 @@ def test_apply_postgres_baseline_rejects_pre_baseline_lineage_with_observed_stat
     assert f"pre-{BASELINE_VERSION}" in message
     assert f"max schema version {BASELINE_VERSION - 1}" in message
     assert "tables ['sessions', 'tasks']" in message
+    assert "Post-baseline repair migrations do not run for this lineage" in message
 
 
 def test_apply_postgres_baseline_adopts_gcore_code_index_state(monkeypatch) -> None:

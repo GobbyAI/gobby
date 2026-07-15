@@ -460,7 +460,8 @@ class PostgresHubDatabase:
                     raise MigrationUnsupportedError(
                         f"Unsupported pre-{BASELINE_VERSION} PostgreSQL baseline lineage: "
                         f"observed max schema version {version!r} with tables {observed_tables!r}. "
-                        "Back up/export the database and recreate it."
+                        "Post-baseline repair migrations do not run for this lineage; "
+                        "back up/export the database and recreate it."
                     )
                 raise MigrationUnsupportedError("Unrecognized PostgreSQL schema.")
             _require_baseline_extensions(conn)
