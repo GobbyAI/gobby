@@ -627,6 +627,8 @@ def _normalize_value(value: Any) -> Any:
     if isinstance(value, date):
         return value
     if isinstance(value, dict | list):
+        # Storage model decoders consume serialized JSON for both JSONB and text columns.
+        # Keep that row boundary uniform rather than exposing driver-specific value types.
         return json.dumps(to_json_safe(value), sort_keys=True, separators=(",", ":"))
     return value
 

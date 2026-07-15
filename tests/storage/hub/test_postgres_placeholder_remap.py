@@ -501,7 +501,7 @@ class _FakeResult:
         return list(self._rows)
 
 
-def test_postgres_cursor_normalizes_jsonb_values_to_json_text() -> None:
+def test_postgres_cursor_normalizes_jsonb_values_to_storage_json_text() -> None:
     module = _postgres_module()
     cursor = module._PostgresCursor(
         _FakeResult(

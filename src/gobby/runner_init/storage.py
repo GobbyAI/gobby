@@ -51,8 +51,7 @@ def _migrate_legacy_auth_password(
 
     with config_store.db.transaction():
         config_store.set(PASSWORD_HASH_KEY, hash_password(password), source="migration")
-        config_store.delete(_LEGACY_PASSWORD_KEY)
-        secret_store.delete(secret_name)
+        config_store.clear_secret(_LEGACY_PASSWORD_KEY, secret_store)
     return True
 
 

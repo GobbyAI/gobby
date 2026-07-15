@@ -70,6 +70,9 @@ class TestFlatten:
     def test_empty_dict(self):
         assert flatten_config({}) == {}
 
+    def test_nested_empty_dict_is_preserved(self):
+        assert flatten_config({"section": {"empty": {}}}) == {"section.empty": {}}
+
     def test_prefix(self):
         result = flatten_config({"key": "val"}, prefix="root")
         assert result == {"root.key": "val"}
@@ -84,7 +87,11 @@ class TestUnflatten:
         assert result == {"llm": {"claude": {"enabled": True}}}
 
     def test_roundtrip(self):
-        original = {"llm": {"claude": {"enabled": True, "model": "opus"}}, "port": 8080}
+        original = {
+            "llm": {"claude": {"enabled": True, "model": "opus"}},
+            "empty": {},
+            "port": 8080,
+        }
         assert unflatten_config(flatten_config(original)) == original
 
     def test_empty(self):
@@ -93,6 +100,17 @@ class TestUnflatten:
     def test_sibling_keys(self):
         result = unflatten_config({"a.b": 1, "a.c": 2})
         assert result == {"a": {"b": 1, "c": 2}}
+
+    @pytest.mark.parametrize(
+        "flat",
+        [
+            {"a": 1, "a.b": 2},
+            {"a.b": 2, "a": 1},
+        ],
+    )
+    def test_scalar_nested_conflicts_are_rejected_independent_of_order(self, flat):
+        with pytest.raises(ValueError, match="Conflicting scalar and nested config keys"):
+            unflatten_config(flat)
 
 
 # =============================================================================
@@ -116,6 +134,26 @@ class TestConfigStore:
         store.set("b", "hello")
         result = store.get_all()
         assert result == {"a": 1, "b": "hello"}
+
+    def test_get_corrupt_json_names_key(self, store: ConfigStore):
+        store.set("broken.key", "valid")
+        store.db.execute(
+            "UPDATE config_store SET value = %s WHERE key = %s",
+            ("{invalid", "broken.key"),
+        )
+
+        with pytest.raises(ValueError, match=r"Invalid JSON for config key 'broken\.key'"):
+            store.get("broken.key")
+
+    def test_get_all_corrupt_json_names_key(self, store: ConfigStore):
+        store.set("broken.key", "valid")
+        store.db.execute(
+            "UPDATE config_store SET value = %s WHERE key = %s",
+            ("{invalid", "broken.key"),
+        )
+
+        with pytest.raises(ValueError, match=r"Invalid JSON for config key 'broken\.key'"):
+            store.get_all()
 
     def test_set_upsert(self, store: ConfigStore):
         store.set("key", "old")
@@ -230,6 +268,20 @@ class TestConfigStore:
 
     def test_delete_nonexistent(self, store: ConfigStore):
         assert store.delete("nonexistent") is False
+
+    def test_delete_rejects_secret_keys(
+        self,
+        store: ConfigStore,
+        secret_store: SecretStore,
+    ) -> None:
+        key = "service.provider_api_key"
+        store.set_secret(key, "keep-me", secret_store)
+
+        with pytest.raises(ValueError, match="use clear_secret"):
+            store.delete(key)
+
+        assert store.get(key) == "$secret:provider_api_key"
+        assert secret_store.get("provider_api_key") == "keep-me"
 
     def test_delete_all(self, store: ConfigStore, secret_store: SecretStore):
         store.set_many({"a": 1, "b": 2, "c": 3})
