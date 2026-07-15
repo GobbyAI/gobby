@@ -6,12 +6,16 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from gobby.workflows.observer_utils import _json_safe
-
 if TYPE_CHECKING:
     from gobby.hooks.events import HookEvent
 
 logger = logging.getLogger("gobby.workflows.observers")
+
+_MAX_MCP_RESULT_ENTRIES = 64
+_MAX_MCP_RESULT_FIELDS = 16
+_MAX_MCP_RESULT_NAME_LENGTH = 128
+_MAX_MCP_RESULT_STRING_LENGTH = 256
+_MCP_FAILURE_FIELDS = ("success", "error", "status")
 
 
 def detect_mcp_call(event: HookEvent, variables: dict[str, Any], session_id: str) -> None:
@@ -183,6 +187,12 @@ def _track_mcp_call(
     if inner_tool not in server_calls:
         server_calls.append(inner_tool)
 
+    if (
+        len(server_name) > _MAX_MCP_RESULT_NAME_LENGTH
+        or len(inner_tool) > _MAX_MCP_RESULT_NAME_LENGTH
+    ):
+        return True
+
     mcp_results_value = variables.get("mcp_results")
     if not isinstance(mcp_results_value, dict):
         mcp_results: dict[str, Any] = {}
@@ -196,7 +206,8 @@ def _track_mcp_call(
         mcp_results[server_name] = server_results
     else:
         server_results = server_results_value
-    server_results[inner_tool] = _json_safe(result)
+    server_results[inner_tool] = _summarize_mcp_result(result)
+    _trim_mcp_results(mcp_results)
 
     logger.debug(
         "Session %s: MCP call tracked %s/%s (result=%s)",
@@ -206,3 +217,50 @@ def _track_mcp_call(
         "present" if result is not None else "null",
     )
     return True
+
+
+def _summarize_mcp_result(result: Any) -> dict[str, Any] | None:
+    """Keep only bounded top-level scalar fields needed by condition helpers."""
+    if result is None:
+        return None
+    if not isinstance(result, dict):
+        return {}
+
+    summary: dict[str, Any] = {}
+    ordered_fields = (
+        *(field for field in _MCP_FAILURE_FIELDS if field in result),
+        *(key for key in result if key not in _MCP_FAILURE_FIELDS),
+    )
+    for field in ordered_fields:
+        if len(summary) >= _MAX_MCP_RESULT_FIELDS:
+            break
+        if not isinstance(field, str) or len(field) > _MAX_MCP_RESULT_NAME_LENGTH:
+            continue
+        value = result[field]
+        if value is None or isinstance(value, bool | int | float):
+            summary[field] = value
+        elif isinstance(value, str) and len(value) <= _MAX_MCP_RESULT_STRING_LENGTH:
+            summary[field] = value
+        elif field == "error" and value:
+            summary[field] = True
+    return summary
+
+
+def _trim_mcp_results(mcp_results: dict[str, Any]) -> None:
+    """Evict oldest tool summaries until the total result count is bounded."""
+    excess = sum(len(results) for results in mcp_results.values() if isinstance(results, dict))
+    excess -= _MAX_MCP_RESULT_ENTRIES
+    if excess <= 0:
+        return
+
+    for server_name in list(mcp_results):
+        server_results = mcp_results[server_name]
+        if not isinstance(server_results, dict):
+            continue
+        while server_results and excess > 0:
+            del server_results[next(iter(server_results))]
+            excess -= 1
+        if not server_results:
+            del mcp_results[server_name]
+        if excess <= 0:
+            return

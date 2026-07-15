@@ -917,9 +917,11 @@ class TestDetectMcpCall:
 
         mcp_results = variables.get("mcp_results", {})
         assert "demo-server" in mcp_results
-        assert mcp_results["demo-server"]["demo-tool"] == "success"
+        assert mcp_results["demo-server"]["demo-tool"] == {}
 
-    def test_tracks_json_safe_result(self, variables, make_after_tool_event) -> None:
+    def test_tracks_only_bounded_scalar_result_fields(
+        self, variables, make_after_tool_event
+    ) -> None:
         @dataclass
         class DemoResult:
             id: str
@@ -928,15 +930,40 @@ class TestDetectMcpCall:
         event = make_after_tool_event(
             "mcp__gobby__call_tool",
             tool_input={"server_name": "demo-server", "tool_name": "demo-tool"},
-            tool_output={"result": {"items": [DemoResult(id="a", count=1)]}},
+            tool_output={
+                "result": {
+                    "timed_out": True,
+                    "status": "ready",
+                    "items": [DemoResult(id="a", count=1)],
+                    "detail": "x" * 257,
+                    **{f"field-{index}": index for index in range(20)},
+                }
+            },
         )
 
         detect_mcp_call(event, variables, SESSION_ID)
 
-        assert variables["mcp_results"]["demo-server"]["demo-tool"] == {
-            "items": [{"id": "a", "count": 1}]
-        }
+        stored = variables["mcp_results"]["demo-server"]["demo-tool"]
+        assert stored["timed_out"] is True
+        assert stored["status"] == "ready"
+        assert "items" not in stored
+        assert "detail" not in stored
+        assert len(stored) == 16
         json.dumps(variables)
+
+    def test_keeps_only_latest_64_mcp_results(self, variables, make_after_tool_event) -> None:
+        for index in range(65):
+            event = make_after_tool_event(
+                "mcp__gobby__call_tool",
+                tool_input={"server_name": "demo-server", "tool_name": f"tool-{index}"},
+                tool_output={"result": {"status": "ready"}},
+            )
+            detect_mcp_call(event, variables, SESSION_ID)
+
+        stored = variables["mcp_results"]["demo-server"]
+        assert len(stored) == 64
+        assert "tool-0" not in stored
+        assert stored["tool-64"] == {"status": "ready"}
 
     def test_tracks_multiple_tools(self, variables, make_after_tool_event) -> None:
         event1 = make_after_tool_event(
@@ -979,7 +1006,7 @@ class TestDetectMcpCall:
 
         detect_mcp_call(event, variables, SESSION_ID)
 
-        assert variables["mcp_results"] == {"demo-server": {"demo-tool": "success"}}
+        assert variables["mcp_results"] == {"demo-server": {"demo-tool": {}}}
 
     def test_heals_null_mcp_server_buckets(self, variables, make_after_tool_event) -> None:
         variables["mcp_calls"] = {"demo-server": None}
@@ -993,7 +1020,7 @@ class TestDetectMcpCall:
         detect_mcp_call(event, variables, SESSION_ID)
 
         assert variables["mcp_calls"] == {"demo-server": ["demo-tool"]}
-        assert variables["mcp_results"] == {"demo-server": {"demo-tool": "success"}}
+        assert variables["mcp_results"] == {"demo-server": {"demo-tool": {}}}
 
     def test_ignores_error_responses(self, variables, make_after_tool_event) -> None:
         event = make_after_tool_event(
@@ -1043,7 +1070,6 @@ class TestDetectMcpCall:
 
         assert variables["mcp_results"]["gobby-skills"]["get_skill"] == {
             "success": True,
-            "skill": {"name": "brevity"},
         }
         assert variables["loaded_skills"] == ["brevity"]
 
