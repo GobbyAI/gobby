@@ -169,18 +169,18 @@ describe('getToolSummary', () => {
     const call = makeCall({
       id: '1',
       tool_name: 'Grep',
-      arguments: { pattern: 'TODO' },
+      arguments: { pattern: 'needle' },
     })
-    expect(getToolSummary(call)).toBe('"TODO"')
+    expect(getToolSummary(call)).toBe('"needle"')
   })
 
   it('returns pattern and path for Grep with path', () => {
     const call = makeCall({
       id: '1',
       tool_name: 'Grep',
-      arguments: { pattern: 'TODO', path: 'src/' },
+      arguments: { pattern: 'needle', path: 'src/' },
     })
-    expect(getToolSummary(call)).toBe('"TODO" in src/')
+    expect(getToolSummary(call)).toBe('"needle" in src/')
   })
 
   it('returns null for Grep without pattern', () => {
@@ -627,6 +627,21 @@ describe('unwrapMcpResultEnvelope', () => {
     expect(result).not.toBeNull()
     expect(result!.primary).toBe('hello\nworld')
     expect(result!.meta).toEqual({ is_error: false })
+  })
+
+  it('joins all text blocks and surfaces additional non-text blocks', () => {
+    const envelope = {
+      content: [
+        { type: 'text', text: 'first result' },
+        { type: 'image', data: 'base64-image-data', mimeType: 'image/png' },
+        { type: 'text', text: 'second result' },
+      ],
+      is_error: false,
+    }
+    const result = unwrapMcpResultEnvelope(envelope)
+    expect(result).not.toBeNull()
+    expect(result!.primary).toBe('first result\nsecond result')
+    expect(result!.meta).toEqual({ is_error: false, content: '+1 more blocks' })
   })
 
   it('parses JSON strings and unwraps when they look like envelopes', () => {

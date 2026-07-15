@@ -466,10 +466,17 @@ export function unwrapMcpResultEnvelope(value: unknown): McpEnvelopeUnwrap | nul
   if (!isRecord(parsed)) return null
 
   if (Array.isArray(parsed.content) && parsed.content.length > 0) {
-    const first = parsed.content[0]
-    if (isRecord(first) && first.type === 'text' && typeof first.text === 'string') {
+    const textBlocks = parsed.content.filter(
+      (block): block is Record<string, unknown> & { text: string } =>
+        isRecord(block) && block.type === 'text' && typeof block.text === 'string',
+    )
+    if (textBlocks.length > 0) {
       const { content: _content, ...rest } = parsed
-      return { primary: first.text, meta: rest }
+      const remainingBlockCount = parsed.content.length - textBlocks.length
+      const meta = remainingBlockCount > 0
+        ? { ...rest, content: `+${remainingBlockCount} more blocks` }
+        : rest
+      return { primary: textBlocks.map((block) => block.text).join('\n'), meta }
     }
   }
 

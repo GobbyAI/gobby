@@ -242,6 +242,35 @@ describe('ToolCallCard rendering', () => {
     expect(code).not.toContain('"result":')
   })
 
+  it('renders all MCP text blocks and indicates additional content blocks', () => {
+    const { container } = renderWithProviders(
+      <ToolCallCards
+        toolCalls={[
+          makeCall({
+            id: 'tool-mcp-content',
+            tool_name: 'mcp__gobby__call_tool',
+            result: {
+              content: {
+                content: [
+                  { type: 'text', text: 'first result' },
+                  { type: 'image', data: 'base64-image-data', mimeType: 'image/png' },
+                  { type: 'text', text: 'second result' },
+                ],
+                is_error: false,
+              },
+              kind: 'json',
+              truncated: false,
+            },
+          }),
+        ]}
+      />,
+    )
+
+    expect(container.textContent).toContain('first result')
+    expect(container.textContent).toContain('second result')
+    expect(screen.getByText('+1 more blocks')).toBeInTheDocument()
+  })
+
   it('renders Codex image output tool results inline', () => {
     renderWithProviders(
       <ToolCallCards
