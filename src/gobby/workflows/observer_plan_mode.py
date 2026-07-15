@@ -207,6 +207,8 @@ def detect_plan_mode_from_context(
         new_level = compute_mode_level(chat_mode)
         if new_level != 0:
             variables["mode_level"] = new_level
+            variables["plan_mode"] = False
+            variables["plan_skill_loaded"] = False
             logger.info(
                 "Session %s: mode_level=%s "
                 "(healed stale plan mode - no markers found, chat_mode=%r)",

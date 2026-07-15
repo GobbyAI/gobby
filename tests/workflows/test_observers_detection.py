@@ -192,9 +192,13 @@ class TestDetectPlanModeFromContext:
         """After clear/compact, mode_level=0 persists but no CLI injects markers."""
         variables["mode_level"] = 0
         variables["chat_mode"] = "bypass"
+        variables["plan_mode"] = True
+        variables["plan_skill_loaded"] = True
         prompt = "Please fix the bug in the code."
         detect_plan_mode_from_context(prompt, variables, SESSION_ID)
         assert variables.get("mode_level") == 2  # reset to YOLO
+        assert variables.get("plan_mode") is False
+        assert variables.get("plan_skill_loaded") is False
 
     def test_no_heal_when_chat_mode_is_plan(self, variables) -> None:
         """Don't reset mode_level if chat_mode is genuinely plan (edge case)."""
