@@ -140,7 +140,7 @@ export function Integrations({ state, setState, onNext }: StepProps): React.Reac
             onSubmit={(val) => {
               const trimmed = val.trim();
               if (!trimmed) {
-                setError("Empty value — skipping.");
+                setError(null);
                 setCurrentIdx((i) => i + 1);
                 setPhase("menu");
                 return;
@@ -150,11 +150,12 @@ export function Integrations({ state, setState, onNext }: StepProps): React.Reac
               if (ok) {
                 setConfigured((prev) => [...prev, integration.id]);
                 setError(null);
+                setCurrentIdx((i) => i + 1);
+                setPhase("menu");
               } else {
                 setError(`Failed to store ${integration.label} secret.`);
+                setPhase("input");
               }
-              setCurrentIdx((i) => i + 1);
-              setPhase("menu");
             }}
           />
         </Box>

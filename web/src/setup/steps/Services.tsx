@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Text, Box } from "ink";
 import Spinner from "ink-spinner";
 import TextInput from "ink-text-input";
+import SelectInput from "ink-select-input";
 import { runGobby } from "../utils/gobby.js";
 import { StatusMessage } from "../components/StatusMessage.js";
 import { saveState } from "../utils/state.js";
@@ -109,7 +110,6 @@ export function Services({ state: _state, setState, onNext }: StepProps): React.
       message: formatInstallFailure(r.output),
     });
     setPhase("done");
-    finish(false, false);
   };
 
   if (phase === "prompt") {
@@ -181,13 +181,29 @@ export function Services({ state: _state, setState, onNext }: StepProps): React.
   }
 
   // done
-  return (
-    <Box flexDirection="column">
-      {result?.success ? (
-        <StatusMessage level="success">{result.message}</StatusMessage>
-      ) : (
+  if (!result?.success) {
+    return (
+      <Box flexDirection="column">
         <StatusMessage level="error">{result?.message ?? "Unknown error"}</StatusMessage>
-      )}
-    </Box>
-  );
+        <SelectInput
+          items={[
+            { label: "Retry", value: "retry" },
+            { label: "Continue without FalkorDB", value: "skip" },
+            { label: "Exit setup", value: "exit" },
+          ]}
+          onSelect={(item) => {
+            if (item.value === "retry") {
+              install();
+            } else if (item.value === "skip") {
+              finish(false, false);
+            } else {
+              process.exit(1);
+            }
+          }}
+        />
+      </Box>
+    );
+  }
+
+  return <StatusMessage level="success">{result.message}</StatusMessage>;
 }

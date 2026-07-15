@@ -1,5 +1,5 @@
 import React from "react";
-import { render, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SetupState } from "../../utils/state.js";
 import { Launch } from "../Launch.js";
@@ -29,6 +29,24 @@ vi.mock("ink", () => ({
 
 vi.mock("ink-spinner", () => ({
   default: () => <span data-testid="spinner" />,
+}));
+
+vi.mock("ink-select-input", () => ({
+  default: ({
+    items,
+    onSelect,
+  }: {
+    items: Array<{ label: string; value: string }>;
+    onSelect: (item: { label: string; value: string }) => void;
+  }) => (
+    <div>
+      {items.map((item) => (
+        <button key={item.value} onClick={() => onSelect(item)}>
+          {item.label}
+        </button>
+      ))}
+    </div>
+  ),
 }));
 
 vi.mock("../../utils/gobby.js", () => ({
@@ -88,5 +106,40 @@ describe("Launch summary", () => {
     expect(summary).toContain("- FalkorDB: installed (Docker)");
     expect(summary).toContain("- FalkorDB password: custom");
     expect(summary).not.toContain("Neo4j");
+  });
+
+  it("keeps launch incomplete when gobby start fails and supports retry", async () => {
+    mocks.runGobby
+      .mockReturnValueOnce({ success: false, output: "daemon refused to start" })
+      .mockReturnValueOnce({ success: true, output: "" });
+    const setState = vi.fn();
+
+    render(<Launch state={createState()} setState={setState} onNext={vi.fn()} />);
+
+    expect(await screen.findByText(/Launch failed: daemon refused to start/i)).toBeTruthy();
+    expect(mocks.checkHealth).not.toHaveBeenCalled();
+    expect(mocks.writeFileSync).not.toHaveBeenCalled();
+    expect(mocks.execSync).not.toHaveBeenCalled();
+    expect(setState).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByText(/Setup complete!/i)).toBeTruthy();
+    expect(mocks.runGobby).toHaveBeenCalledTimes(2);
+    expect(mocks.checkHealth).toHaveBeenCalledOnce();
+    expect(setState).toHaveBeenCalledOnce();
+  });
+
+  it("does not complete or open the browser when health never passes", async () => {
+    mocks.checkHealth.mockResolvedValue(false);
+    const setState = vi.fn();
+
+    render(<Launch state={createState()} setState={setState} onNext={vi.fn()} />);
+
+    expect(await screen.findByText(/Launch failed: Daemon health check did not pass/i)).toBeTruthy();
+    expect(mocks.writeFileSync).not.toHaveBeenCalled();
+    expect(mocks.execSync).not.toHaveBeenCalled();
+    expect(setState).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Setup complete!/i)).toBeNull();
   });
 });

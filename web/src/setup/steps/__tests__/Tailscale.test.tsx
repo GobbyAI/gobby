@@ -72,4 +72,23 @@ describe("Tailscale", () => {
       }),
     );
   });
+
+  it("keeps tailscale failures visible without completing the step", () => {
+    mocks.spawnSync.mockReturnValue({ status: 1, stderr: "permission denied" });
+    const state = {
+      ports: { http: 60887, ws: 60888, ui: 60889 },
+      completed_step_id: null,
+    } as unknown as SetupState;
+    const setState = vi.fn();
+    const onNext = vi.fn();
+
+    render(<Tailscale state={state} setState={setState} onNext={onNext} />);
+    fireEvent.click(screen.getByRole("button", { name: "Yes, configure tailscale serve" }));
+
+    expect(screen.getByText(/Tailscale setup failed: permission denied/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Continue without Tailscale" })).toBeTruthy();
+    expect(setState).not.toHaveBeenCalled();
+    expect(onNext).not.toHaveBeenCalled();
+  });
 });

@@ -23,6 +23,26 @@ export function Tailscale({ state, setState, onNext }: StepProps): React.ReactEl
     setTimeout(onNext, 300);
   };
 
+  const configureTailscale = (): void => {
+    try {
+      const r = spawnSync(
+        "tailscale",
+        ["serve", "--bg", String(state.ports.ui)],
+        { encoding: "utf-8", timeout: 30000 },
+      );
+      if (r.status === 0) {
+        setResult("success");
+        setPhase("done");
+        finish(true);
+        return;
+      }
+      setResult(`failed: ${(r.stderr || "").trim() || "command exited unsuccessfully"}`);
+    } catch (error) {
+      setResult(`failed: ${error instanceof Error ? error.message : "command could not run"}`);
+    }
+    setPhase("done");
+  };
+
   if (phase === "prompt") {
     return (
       <Box flexDirection="column">
@@ -43,21 +63,7 @@ export function Tailscale({ state, setState, onNext }: StepProps): React.ReactEl
               return;
             }
 
-            const uiPort = state.ports.ui;
-            const r = spawnSync(
-              "tailscale",
-              ["serve", "--bg", String(uiPort)],
-              { encoding: "utf-8", timeout: 30000 },
-            );
-
-            if (r.status === 0) {
-              setResult("success");
-              finish(true);
-            } else {
-              setResult(`failed: ${(r.stderr || "").trim()}`);
-              finish(false);
-            }
-            setPhase("done");
+            configureTailscale();
           }}
         />
       </Box>
@@ -73,9 +79,25 @@ export function Tailscale({ state, setState, onNext }: StepProps): React.ReactEl
       )}
       {result === "skipped" && <Text dimColor>{"  "}Skipped.</Text>}
       {result && result.startsWith("failed") && (
-        <StatusMessage level="warning">
-          Tailscale setup {result}
-        </StatusMessage>
+        <Box flexDirection="column">
+          <StatusMessage level="error">Tailscale setup {result}</StatusMessage>
+          <SelectInput
+            items={[
+              { label: "Retry", value: "retry" },
+              { label: "Continue without Tailscale", value: "skip" },
+              { label: "Exit setup", value: "exit" },
+            ]}
+            onSelect={(item) => {
+              if (item.value === "retry") {
+                configureTailscale();
+              } else if (item.value === "skip") {
+                finish(false);
+              } else {
+                process.exit(1);
+              }
+            }}
+          />
+        </Box>
       )}
     </Box>
   );

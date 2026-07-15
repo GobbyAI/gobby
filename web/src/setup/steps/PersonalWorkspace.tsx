@@ -12,7 +12,7 @@ import { saveState } from "../utils/state.js";
 import type { StepProps } from "../types.js";
 
 export function PersonalWorkspace({ state: _state, setState, onNext }: StepProps): React.ReactElement {
-  const [phase, setPhase] = useState<"init" | "shortcut" | "done">("init");
+  const [phase, setPhase] = useState<"init" | "error" | "shortcut" | "done">("init");
   const [initMsg, setInitMsg] = useState("");
 
   const personalDir = join(getGobbyHome(), "personal");
@@ -33,18 +33,23 @@ export function PersonalWorkspace({ state: _state, setState, onNext }: StepProps
 
   useEffect(() => {
     if (phase !== "init") return;
-    // Create personal dir and init project
-    mkdirSync(personalDir, { recursive: true });
-    const r = runGobby(["init", "--name", "_personal"], {
-      cwd: personalDir,
-      timeout: 15000,
-    });
-
-    const msg = r.success
-      ? `  Created: ${personalDir}`
-      : `  Personal workspace: ${personalDir}`;
-    setInitMsg(msg);
-    setPhase("shortcut");
+    try {
+      mkdirSync(personalDir, { recursive: true });
+      const r = runGobby(["init", "--name", "_personal"], {
+        cwd: personalDir,
+        timeout: 15000,
+      });
+      if (!r.success) {
+        setInitMsg(r.output.trim() || "gobby init failed or timed out.");
+        setPhase("error");
+        return;
+      }
+      setInitMsg(`  Created: ${personalDir}`);
+      setPhase("shortcut");
+    } catch (error) {
+      setInitMsg(error instanceof Error ? error.message : "Failed to create personal workspace.");
+      setPhase("error");
+    }
   }, [personalDir, phase]);
 
   if (phase === "init") {
@@ -52,6 +57,27 @@ export function PersonalWorkspace({ state: _state, setState, onNext }: StepProps
       <Text>
         <Spinner type="dots" /> Creating personal workspace...
       </Text>
+    );
+  }
+
+  if (phase === "error") {
+    return (
+      <Box flexDirection="column">
+        <StatusMessage level="error">Personal workspace failed: {initMsg}</StatusMessage>
+        <SelectInput
+          items={[
+            { label: "Retry", value: "retry" },
+            { label: "Exit setup", value: "exit" },
+          ]}
+          onSelect={(item) => {
+            if (item.value === "retry") {
+              setPhase("init");
+            } else {
+              process.exit(1);
+            }
+          }}
+        />
+      </Box>
     );
   }
 

@@ -18,6 +18,24 @@ vi.mock("ink-spinner", () => ({
   default: () => <span data-testid="spinner" />,
 }));
 
+vi.mock("ink-select-input", () => ({
+  default: ({
+    items,
+    onSelect,
+  }: {
+    items: Array<{ label: string; value: string }>;
+    onSelect: (item: { label: string; value: string }) => void;
+  }) => (
+    <div>
+      {items.map((item) => (
+        <button key={item.value} onClick={() => onSelect(item)}>
+          {item.label}
+        </button>
+      ))}
+    </div>
+  ),
+}));
+
 vi.mock("ink-text-input", () => ({
   default: ({
     value,
@@ -215,5 +233,18 @@ describe("Services FalkorDB setup", () => {
     expect(view.onNext).not.toHaveBeenCalled();
     expect(screen.getByText(/Enter FalkorDB password/i)).toBeTruthy();
     expect(hasRenderedText("FalkorDB password must not contain whitespace")).toBe(true);
+  });
+
+  it("keeps a default install failure visible until the operator retries or skips", () => {
+    mocks.runGobby.mockReturnValue({ success: false, output: "docker unavailable" });
+    const view = renderServices();
+
+    submit("y");
+
+    expect(hasRenderedText("docker unavailable")).toBe(true);
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Continue without FalkorDB" })).toBeTruthy();
+    expect(view.setState).not.toHaveBeenCalled();
+    expect(view.onNext).not.toHaveBeenCalled();
   });
 });

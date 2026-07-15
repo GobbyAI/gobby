@@ -16,6 +16,8 @@ export function ProjectDiscovery({ state: _state, setState, onNext }: StepProps)
   const [phase, setPhase] = useState<"scan" | "select" | "init" | "done">("scan");
   const [initResults, setInitResults] = useState<string[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
+  const [initialized, setInitialized] = useState<string[]>([]);
+  const [failed, setFailed] = useState<string[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -45,18 +47,25 @@ export function ProjectDiscovery({ state: _state, setState, onNext }: StepProps)
   useEffect(() => {
     if (phase !== "init") return;
     const results: string[] = [];
+    const succeeded: string[] = [];
+    const failedRepos: string[] = [];
     for (const repoPath of selected) {
       const r = runGobby(["init"], { cwd: repoPath, timeout: 15000 });
       if (r.success) {
         results.push(`  Initialized: ${basename(repoPath)}`);
+        succeeded.push(repoPath);
       } else {
         results.push(`  Failed: ${basename(repoPath)}: ${r.output.trim().slice(0, 80)}`);
+        failedRepos.push(repoPath);
       }
     }
+    const completed = [...new Set([...initialized, ...succeeded])];
     setInitResults(results);
+    setInitialized(completed);
+    setFailed(failedRepos);
     setPhase("done");
-    finish(selected);
-  }, [finish, phase, selected]);
+    if (failedRepos.length === 0) finish(completed);
+  }, [finish, initialized, phase, selected]);
 
   if (scanning) {
     return (
@@ -116,11 +125,35 @@ export function ProjectDiscovery({ state: _state, setState, onNext }: StepProps)
       {initResults.map((line, i) => (
         <Text key={i}>{line}</Text>
       ))}
-      {initResults.length > 0 && (
+      {failed.length === 0 && initResults.length > 0 && (
         <Box marginTop={1}>
           <StatusMessage level="success">
             Projects initialized.
           </StatusMessage>
+        </Box>
+      )}
+      {failed.length > 0 && (
+        <Box flexDirection="column" marginTop={1}>
+          <StatusMessage level="error">
+            {failed.length} project initialization{failed.length === 1 ? "" : "s"} failed.
+          </StatusMessage>
+          <SelectInput
+            items={[
+              { label: "Retry failed projects", value: "retry" },
+              { label: "Continue without failed projects", value: "skip" },
+              { label: "Exit setup", value: "exit" },
+            ]}
+            onSelect={(item) => {
+              if (item.value === "retry") {
+                setSelected(failed);
+                setPhase("init");
+              } else if (item.value === "skip") {
+                finish(initialized);
+              } else {
+                process.exit(1);
+              }
+            }}
+          />
         </Box>
       )}
     </Box>

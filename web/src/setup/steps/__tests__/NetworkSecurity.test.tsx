@@ -74,4 +74,23 @@ describe("NetworkSecurity", () => {
       { stdio: "inherit", timeout: 60000 },
     );
   });
+
+  it("keeps firewall failures visible without completing the step", () => {
+    mocks.spawnSync.mockReturnValue({ status: 1 });
+    const state = {
+      ports: { http: 60887, ws: 60888, ui: 60889 },
+      completed_step_id: null,
+    } as unknown as SetupState;
+    const setState = vi.fn();
+    const onNext = vi.fn();
+
+    render(<NetworkSecurity state={state} setState={setState} onNext={onNext} />);
+    fireEvent.click(screen.getByRole("button", { name: "Yes, configure firewall" }));
+
+    expect(screen.getByText(/Firewall setup command failed/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Continue without firewall" })).toBeTruthy();
+    expect(setState).not.toHaveBeenCalled();
+    expect(onNext).not.toHaveBeenCalled();
+  });
 });
