@@ -287,30 +287,6 @@ def test_adjust_counter_and_derive_boolean_clamps_at_zero(db: Any) -> None:
     assert variables["is_subagent"] is False
 
 
-def test_delete_variables(db: Any) -> None:
-    """Test delete_variables removes all variables for a session."""
-    from gobby.workflows.state_manager import SessionVariableManager
-
-    mgr = SessionVariableManager(db)
-
-    mgr.set_variable(S1, "a", 1)
-    mgr.set_variable(S1, "b", 2)
-
-    mgr.delete_variables(S1)
-
-    result = mgr.get_variables(S1)
-    assert result == {}
-
-
-def test_delete_variables_nonexistent(db: Any) -> None:
-    """Test delete_variables on non-existent session doesn't raise."""
-    from gobby.workflows.state_manager import SessionVariableManager
-
-    mgr = SessionVariableManager(db)
-    mgr.delete_variables(NONEXISTENT_SESSION_ID)
-    assert mgr.get_variables(NONEXISTENT_SESSION_ID) == {}
-
-
 def test_variables_persist_across_workflow_changes(db: Any) -> None:
     """Test that session variables persist when workflow instances change.
 
@@ -410,6 +386,33 @@ def test_append_to_set_variable_deduplicates(db: Any) -> None:
 
     result = mgr.get_variables(S1)
     assert result["files"] == ["a.py", "b.py", "c.py"]
+
+
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [
+        (None, ["new.py"]),
+        (False, ["new.py"]),
+        (0, ["new.py"]),
+        ("", ["new.py"]),
+        ({"bad": "value"}, ["new.py"]),
+        (["kept.py", 0, ["unhashable"]], ["kept.py", "new.py"]),
+    ],
+)
+def test_append_to_set_variable_normalizes_stored_values(
+    db: Any,
+    stored: Any,
+    expected: list[str],
+) -> None:
+    """Only strings from stored lists participate in set mutation."""
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    mgr.set_variable(S1, "files", stored)
+
+    mgr.append_to_set_variable(S1, "files", ["new.py"])
+
+    assert mgr.get_variables(S1)["files"] == expected
 
 
 def test_append_to_set_variable_preserves_other_vars(db: Any) -> None:

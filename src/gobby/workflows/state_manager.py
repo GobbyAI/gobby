@@ -33,6 +33,13 @@ def _decode_variables_payload(variables: Any) -> dict[str, Any]:
     return {}
 
 
+def _normalize_string_list(value: Any) -> list[str]:
+    """Return the string entries from a stored list variable."""
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
 class WorkflowInstanceManager:
     """Manages CRUD operations for workflow instances (multi-workflow per session)."""
 
@@ -239,7 +246,7 @@ class SessionVariableManager:
     def merge_variables(self, session_id: str, updates: dict[str, Any]) -> bool:
         """Atomically merge variable updates into session variables.
 
-        Uses BEGIN IMMEDIATE to serialize the read-modify-write,
+        A PostgreSQL transaction-scoped advisory lock serializes the read-modify-write,
         preventing concurrent evaluations from clobbering each other.
         Creates the row if it doesn't exist.
 
@@ -351,10 +358,11 @@ class SessionVariableManager:
         return len(bounded_items)
 
     def append_to_set_variable(self, session_id: str, name: str, values: list[str]) -> bool:
-        """Atomically append values to a list variable (deduped, sorted).
+        """Atomically append strings to a string-list variable (deduped, sorted).
 
-        Uses BEGIN IMMEDIATE to serialize the read-modify-write, preventing
-        concurrent AFTER_TOOL events from clobbering each other.
+        A PostgreSQL transaction-scoped advisory lock serializes the read-modify-write,
+        preventing concurrent events from clobbering each other. Stored scalars and
+        non-string list entries are discarded to preserve the string-list contract.
 
         Args:
             session_id: Session ID to scope the variable to.
@@ -374,10 +382,7 @@ class SessionVariableManager:
             ).fetchone()
             stored_vars = _decode_variables_payload(row["variables"]) if row else {}
             current_vars = self._apply_variable_defaults(stored_vars)
-            stored = current_vars.get(name, [])
-            if not isinstance(stored, list):
-                stored = [stored] if stored else []
-            existing = set(stored)
+            existing = set(_normalize_string_list(current_vars.get(name)))
             existing.update(values)
             current_vars[name] = sorted(existing)
             if row:
@@ -416,11 +421,7 @@ class SessionVariableManager:
                 (session_id,),
             ).fetchone()
             current_vars = _decode_variables_payload(row["variables"]) if row else {}
-            stored = current_vars.get(name, [])
-            if not isinstance(stored, list):
-                stored = [stored] if stored else []
-
-            existing = set(stored)
+            existing = set(_normalize_string_list(current_vars.get(name)))
             claimed: list[str] = []
             for value in values:
                 if value not in existing:
@@ -472,10 +473,7 @@ class SessionVariableManager:
             current_vars = self._apply_variable_defaults(stored_vars)
 
             if values:
-                stored = current_vars.get(name, [])
-                if not isinstance(stored, list):
-                    stored = [stored] if stored else []
-                existing = set(stored)
+                existing = set(_normalize_string_list(current_vars.get(name)))
                 existing.update(values)
                 current_vars[name] = sorted(existing)
 
@@ -590,10 +588,3 @@ class SessionVariableManager:
                     (session_id, json.dumps(current_vars), now),
                 )
         return "full"
-
-    def delete_variables(self, session_id: str) -> None:
-        """Delete all session variables for a session."""
-        self.db.execute(
-            "DELETE FROM session_variables WHERE session_id = %s",
-            (session_id,),
-        )
