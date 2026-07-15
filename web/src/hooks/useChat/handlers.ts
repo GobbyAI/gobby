@@ -205,7 +205,7 @@ const handleChatError = useCallback((error: ChatError) => {
   setMessages((prev) => [
     ...prev,
     {
-      id: error.message_id || `error-${uuid()}`,
+      id: `error-${uuid()}`,
       role: "system" as const,
       content: `Error: ${error.error}`,
       timestamp: new Date(),

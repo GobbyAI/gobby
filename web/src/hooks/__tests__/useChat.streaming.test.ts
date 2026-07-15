@@ -132,7 +132,7 @@ describe("useChat streaming and event handling", () => {
     expect(result.current.isStreaming).toBe(false);
   });
 
-  it("handles chat_error messages", async () => {
+  it("gives chat errors a distinct id from streamed assistant content", async () => {
     await loadModule();
     const { result } = renderHook(() => useChat());
 
@@ -147,6 +147,13 @@ describe("useChat streaming and event handling", () => {
 
     act(() => {
       ws.simulateMessage({
+        type: "chat_stream",
+        message_id: "msg-1",
+        request_id: requestId,
+        content: "Partial response",
+        done: false,
+      });
+      ws.simulateMessage({
         type: "chat_error",
         message_id: "msg-1",
         request_id: requestId,
@@ -155,11 +162,20 @@ describe("useChat streaming and event handling", () => {
     });
 
     expect(result.current.isStreaming).toBe(false);
-    // Error should appear in messages
-    const errorMsgs = result.current.messages.filter(
-      (m) => m.role === "system",
+    const assistant = result.current.messages.find(
+      (m) => m.role === "assistant",
     );
-    expect(errorMsgs.length).toBeGreaterThanOrEqual(1);
+    const error = result.current.messages.find((m) => m.role === "system");
+    expect(assistant).toMatchObject({
+      id: "msg-1",
+      content: "Partial response",
+    });
+    expect(error).toMatchObject({ content: "Error: Something went wrong" });
+    expect(error?.id).toMatch(/^error-/);
+    expect(error?.id).not.toBe(assistant?.id);
+    expect(new Set(result.current.messages.map((m) => m.id))).toHaveLength(
+      result.current.messages.length,
+    );
   });
 
   it("handles tool_status messages", async () => {
