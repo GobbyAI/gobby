@@ -3,9 +3,6 @@ import { Text, Box } from "ink";
 import SelectInput from "ink-select-input";
 import Spinner from "ink-spinner";
 import { spawnSync } from "child_process";
-import { readFileSync, writeFileSync, unlinkSync } from "fs";
-import { join } from "path";
-import { tmpdir } from "os";
 import { StatusMessage } from "../components/StatusMessage.js";
 import { resolveFirewallScriptPath } from "../utils/firewall.js";
 import { saveState } from "../utils/state.js";
@@ -70,14 +67,11 @@ export function NetworkSecurity({ state, setState, onNext }: StepProps): React.R
                 return;
               }
 
-              // Copy to temp and execute with sudo
-              const tmpScript = join(tmpdir(), `gobby-fw-${Date.now()}.sh`);
-              writeFileSync(tmpScript, readFileSync(scriptPath));
               try {
                 const { http, ws, ui } = state.ports;
                 const r = spawnSync(
                   "sudo",
-                  ["bash", tmpScript, String(http), String(ws), String(ui)],
+                  ["bash", scriptPath, String(http), String(ws), String(ui)],
                   { stdio: "inherit", timeout: 60000 },
                 );
 
@@ -91,8 +85,6 @@ export function NetworkSecurity({ state, setState, onNext }: StepProps): React.R
               } catch {
                 setResult("failed");
                 finish(false);
-              } finally {
-                try { unlinkSync(tmpScript); } catch { /* best-effort cleanup */ }
               }
               setPhase("done");
             }}
