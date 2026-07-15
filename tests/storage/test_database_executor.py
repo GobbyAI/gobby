@@ -8,6 +8,8 @@ import threading
 import pytest
 
 from gobby.storage.executor import DatabaseExecutor
+from gobby.storage.hub._ambient import ambient_transaction
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.integration
 
@@ -54,6 +56,48 @@ async def test_database_executor_limits_worker_count() -> None:
         assert len(thread_ids) <= 2
     finally:
         executor.shutdown(wait=True)
+
+
+@pytest.mark.asyncio
+async def test_database_executor_does_not_inherit_ambient_transaction(
+    temp_db: HubDatabase,
+) -> None:
+    """Executor work uses its own connection while the caller holds a row lock."""
+    executor = DatabaseExecutor(max_workers=1)
+    temp_db.execute("DROP TABLE IF EXISTS executor_transaction_isolation")
+    temp_db.execute(
+        "CREATE TABLE executor_transaction_isolation (id INTEGER PRIMARY KEY, value INTEGER)"
+    )
+    temp_db.execute("INSERT INTO executor_transaction_isolation VALUES (1, 0)")
+
+    def read_committed_value() -> tuple[bool, int]:
+        has_no_ambient_transaction = ambient_transaction(temp_db) is None
+        row = temp_db.fetchone(
+            "SELECT value FROM executor_transaction_isolation WHERE id = %s",
+            (1,),
+        )
+        assert row is not None
+        return has_no_ambient_transaction, int(row["value"])
+
+    try:
+        with temp_db.transaction() as txn:
+            txn.execute(
+                "UPDATE executor_transaction_isolation SET value = %s WHERE id = %s",
+                (1, 1),
+            )
+            assert await asyncio.wait_for(executor.run(read_committed_value), timeout=2) == (
+                True,
+                0,
+            )
+
+        row = temp_db.fetchone(
+            "SELECT value FROM executor_transaction_isolation WHERE id = %s", (1,)
+        )
+        assert row is not None
+        assert row["value"] == 1
+    finally:
+        executor.shutdown(wait=True)
+        temp_db.execute("DROP TABLE IF EXISTS executor_transaction_isolation")
 
 
 @pytest.mark.asyncio

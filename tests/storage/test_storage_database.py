@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
+from dataclasses import dataclass
+from typing import ClassVar
+
 import pytest
 from psycopg.errors import UniqueViolation
 
@@ -140,6 +145,63 @@ class TestHubDatabase:
                     raise RuntimeError("boom")
 
         assert events == []
+
+    @pytest.mark.asyncio
+    async def test_interleaved_tasks_isolate_lock_order_and_after_commit_callbacks(
+        self,
+        temp_db: HubDatabase,
+    ) -> None:
+        @dataclass(frozen=True)
+        class OuterLock:
+            PRIORITY: ClassVar[int] = 20
+            name: str = "outer"
+
+        @dataclass(frozen=True)
+        class IndependentLock:
+            PRIORITY: ClassVar[int] = 10
+            name: str = "independent"
+
+        first_entered = asyncio.Event()
+        second_committed = asyncio.Event()
+        callbacks_run: list[str] = []
+
+        async def dry_run_like_transaction() -> None:
+            with pytest.raises(RuntimeError, match="roll back dry run"):
+                with temp_db.transaction_immediate(OuterLock()) as txn:
+                    txn.after_commit(lambda: callbacks_run.append("dry-run"))
+                    first_entered.set()
+                    await second_committed.wait()
+                    assert callbacks_run == ["committed"]
+                    raise RuntimeError("roll back dry run")
+
+        async def committed_transaction() -> None:
+            await first_entered.wait()
+            with temp_db.transaction_immediate(IndependentLock()) as txn:
+                txn.after_commit(lambda: callbacks_run.append("committed"))
+            second_committed.set()
+
+        await asyncio.gather(dry_run_like_transaction(), committed_transaction())
+
+        assert callbacks_run == ["committed"]
+
+    def test_transaction_after_commit_from_another_thread_waits_for_commit(
+        self,
+        temp_db: HubDatabase,
+    ) -> None:
+        callbacks_run: list[str] = []
+
+        with temp_db.transaction() as txn:
+            worker = threading.Thread(
+                target=txn.after_commit,
+                args=(lambda: callbacks_run.append("committed"),),
+            )
+            worker.start()
+            worker.join(timeout=2)
+
+            assert not worker.is_alive()
+            assert callbacks_run == []
+
+        assert callbacks_run == ["committed"]
 
     def test_row_factory_returns_dict_like_rows(self, temp_db: HubDatabase) -> None:
         row = temp_db.fetchone("SELECT 1 AS a, 2 AS b, 3 AS c")
