@@ -64,6 +64,9 @@ export function useTraces(projectId?: string) {
   useEffect(() => {
     setIsLoading(true)
     fetchTraces()
+    return () => {
+      if (refetchTimerRef.current) clearTimeout(refetchTimerRef.current)
+    }
   }, [fetchTraces])
 
   useWebSocketEvent('trace_event', useCallback(() => {
@@ -72,12 +75,6 @@ export function useTraces(projectId?: string) {
       fetchTraces()
     }, 500)
   }, [fetchTraces]))
-
-  useEffect(() => {
-    return () => {
-      if (refetchTimerRef.current) clearTimeout(refetchTimerRef.current)
-    }
-  }, [])
 
   return {
     traces,
@@ -94,31 +91,40 @@ export function useTraceDetail(traceId: string | null) {
   const [spans, setSpans] = useState<SpanRecord[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const refetchTimerRef = useRef<number | null>(null)
+  const requestGenerationRef = useRef(0)
 
   const fetchDetail = useCallback(async () => {
+    const requestGeneration = ++requestGenerationRef.current
     if (!traceId) {
       setSpans([])
+      setIsLoading(false)
       return
     }
     setIsLoading(true)
     try {
       const res = await fetch(`/api/traces/${encodeURIComponent(traceId)}`)
+      if (requestGeneration !== requestGenerationRef.current) return
       if (res.ok) {
         const data = await res.json()
+        if (requestGeneration !== requestGenerationRef.current) return
         setSpans(data.spans || [])
       } else {
         console.error('Failed to fetch trace detail:', res.status, res.statusText)
         setSpans([])
       }
     } catch (e) {
+      if (requestGeneration !== requestGenerationRef.current) return
       console.error('Failed to fetch trace detail:', e)
     } finally {
-      setIsLoading(false)
+      if (requestGeneration === requestGenerationRef.current) setIsLoading(false)
     }
   }, [traceId])
 
   useEffect(() => {
     fetchDetail()
+    return () => {
+      if (refetchTimerRef.current) clearTimeout(refetchTimerRef.current)
+    }
   }, [fetchDetail])
 
   useWebSocketEvent('trace_event', useCallback((data: any) => {
@@ -129,12 +135,6 @@ export function useTraceDetail(traceId: string | null) {
       }, 500)
     }
   }, [traceId, fetchDetail]))
-
-  useEffect(() => {
-    return () => {
-      if (refetchTimerRef.current) clearTimeout(refetchTimerRef.current)
-    }
-  }, [])
 
   return {
     spans,
