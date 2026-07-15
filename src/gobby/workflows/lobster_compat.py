@@ -104,8 +104,14 @@ class LobsterImporter:
         # Map args → inputs
         inputs = lobster_pipeline.get("args", {})
 
+        lobster_steps = lobster_pipeline.get("steps", [])
+        if not isinstance(lobster_steps, list):
+            raise ValueError("Lobster pipeline 'steps' must be a list")
+
         steps = []
-        for lobster_step in lobster_pipeline.get("steps", []):
+        for index, lobster_step in enumerate(lobster_steps):
+            if not isinstance(lobster_step, dict):
+                raise ValueError(f"Lobster pipeline step at index {index} must be an object")
             steps.append(self.convert_step(lobster_step))
 
         resume_on_restart = lobster_pipeline.get("resume_on_restart", False)

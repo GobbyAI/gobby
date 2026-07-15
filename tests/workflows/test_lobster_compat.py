@@ -158,6 +158,23 @@ class TestLobsterImporterConvertStep:
 class TestLobsterImporterConvertPipeline:
     """Tests for LobsterImporter.convert_pipeline() method."""
 
+    def test_rejects_non_list_steps(self) -> None:
+        from gobby.workflows.lobster_compat import LobsterImporter
+
+        importer = LobsterImporter()
+
+        with pytest.raises(ValueError, match="'steps' must be a list"):
+            importer.convert_pipeline({"name": "invalid", "steps": "build"})
+
+    @pytest.mark.parametrize("step", ["build", None, ["nested"]])
+    def test_rejects_non_mapping_step(self, step: object) -> None:
+        from gobby.workflows.lobster_compat import LobsterImporter
+
+        importer = LobsterImporter()
+
+        with pytest.raises(ValueError, match="step at index 0 must be an object"):
+            importer.convert_pipeline({"name": "invalid", "steps": [step]})
+
     def test_convert_full_pipeline(self) -> None:
         """Verify full Lobster pipeline conversion."""
         from gobby.workflows.lobster_compat import LobsterImporter

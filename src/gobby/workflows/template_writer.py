@@ -143,7 +143,9 @@ def read_template(path: Path) -> dict[str, Any]:
     Returns:
         Parsed YAML data
     """
-    result: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8"))
+    result = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(result, dict):
+        raise ValueError(f"Invalid template {path}: expected YAML object")
     return result
 
 

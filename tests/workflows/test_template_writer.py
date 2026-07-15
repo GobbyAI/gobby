@@ -1,6 +1,20 @@
 """Tests for template_writer.py — YAML write/read/delete for user templates."""
 
+from pathlib import Path
+
+import pytest
 import yaml
+
+from gobby.workflows.template_writer import read_template
+
+
+@pytest.mark.parametrize("content", ["- item\n", "plain scalar\n", ""])
+def test_read_template_rejects_non_mapping_yaml(tmp_path: Path, content: str) -> None:
+    path = tmp_path / "invalid.yaml"
+    path.write_text(content, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="expected YAML object"):
+        read_template(path)
 
 
 class TestWriteRuleTemplate:
