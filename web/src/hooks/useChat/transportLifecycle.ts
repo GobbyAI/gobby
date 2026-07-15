@@ -71,9 +71,10 @@ export function connectChatTransport(
             msg.model ?? null,
             msg.files,
             msg.projectId,
-            undefined,
+            msg.injectContext,
             msg.reasoningEffort,
             msg.ttsEnabled,
+            msg.messageId,
           );
         }
       }, 500);

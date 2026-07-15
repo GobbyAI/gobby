@@ -481,6 +481,44 @@ describe("useChat message and conversation state", () => {
     expect(result.current.messages[0].role).toBe("user");
   });
 
+  it("flushes an offline message once with its inject context", async () => {
+    vi.useFakeTimers();
+    try {
+      await loadModule();
+      const { result } = renderHook(() => useChat());
+      const ws = mockWs.instances[0];
+
+      act(() => {
+        result.current.sendMessage(
+          "Queued prompt",
+          null,
+          undefined,
+          null,
+          "Attached context",
+        );
+      });
+      const queuedMessageId = result.current.messages[0].id;
+
+      act(() => {
+        ws.simulateOpen();
+        vi.advanceTimersByTime(500);
+      });
+
+      expect(result.current.messages).toHaveLength(1);
+      const chatPayloads = ws.send.mock.calls
+        .map(([raw]) => JSON.parse(raw as string))
+        .filter((payload) => payload.type === "chat_message");
+      expect(chatPayloads).toHaveLength(1);
+      expect(chatPayloads[0]).toMatchObject({
+        content: "Queued prompt",
+        inject_context: "Attached context",
+        message_id: queuedMessageId,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("startNewChat clears messages without creating a session", async () => {
     await loadModule();
     const { result } = renderHook(() => useChat());

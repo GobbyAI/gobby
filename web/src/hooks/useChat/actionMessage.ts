@@ -41,6 +41,7 @@ export function useMessageAction(
       injectContext,
       reasoningEffort,
       ttsEnabled,
+      optimisticMessageId,
     ) => {
       const normalizedReasoningEffort =
         normalizeReasoningEffort(reasoningEffort);
@@ -101,26 +102,30 @@ export function useMessageAction(
           projectId: projectId ?? projectIdRef.current,
           provider: selectedProviderRef.current,
         });
+        const queuedId = optimisticMessageId ?? `user-${uuid()}`;
         pendingMessagesRef.current.push({
+          messageId: queuedId,
           content,
           model,
           files,
           projectId,
+          injectContext,
           reasoningEffort: normalizedReasoningEffort,
           ttsEnabled,
         });
-        const queuedId = `user-${uuid()}`;
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: queuedId,
-            role: "user" as const,
-            content,
-            toolCalls: [],
-            contentBlocks: userContentBlocks(content, files),
-            timestamp: new Date(),
-          },
-        ]);
+        if (!optimisticMessageId) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: queuedId,
+              role: "user" as const,
+              content,
+              toolCalls: [],
+              contentBlocks: userContentBlocks(content, files),
+              timestamp: new Date(),
+            },
+          ]);
+        }
         return true;
       }
 
@@ -168,20 +173,22 @@ export function useMessageAction(
         return true;
       }
 
-      const messageId = `user-${uuid()}`;
+      const messageId = optimisticMessageId ?? `user-${uuid()}`;
       const requestId = uuid();
       activeRequestIdRef.current = requestId;
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: messageId,
-          role: "user",
-          content,
-          contentBlocks: userContentBlocks(content, files),
-          timestamp: new Date(),
-        },
-      ]);
+      if (!optimisticMessageId) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: messageId,
+            role: "user",
+            content,
+            contentBlocks: userContentBlocks(content, files),
+            timestamp: new Date(),
+          },
+        ]);
+      }
 
       saveConversationId(conversationIdRef.current);
 

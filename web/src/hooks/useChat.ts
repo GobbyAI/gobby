@@ -293,10 +293,12 @@ export function useChat() {
   // Queue for messages sent while disconnected — flushed on reconnect
   const pendingMessagesRef = useRef<
     {
+      messageId: string;
       content: string;
       model?: string | null;
       files?: QueuedFile[];
       projectId?: string | null;
+      injectContext?: string;
       reasoningEffort?: string | null;
       ttsEnabled?: boolean;
     }[]

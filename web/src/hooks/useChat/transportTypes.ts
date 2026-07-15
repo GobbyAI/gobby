@@ -27,10 +27,12 @@ import type {
 export type Setter<T> = Dispatch<SetStateAction<T>>;
 
 export interface QueuedTransportMessage {
+  messageId: string;
   content: string;
   model?: string | null;
   files?: QueuedFile[];
   projectId?: string | null;
+  injectContext?: string;
   reasoningEffort?: string | null;
   ttsEnabled?: boolean;
 }
@@ -43,6 +45,7 @@ export type SendMessage = (
   injectContext?: string,
   reasoningEffort?: string | null,
   ttsEnabled?: boolean,
+  optimisticMessageId?: string,
 ) => boolean;
 
 export type ArtifactEventCallback = (
