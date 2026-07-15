@@ -1,7 +1,7 @@
 """Tests for git worktree operations manager."""
 
 import subprocess
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -1141,9 +1141,9 @@ class TestWorktreeGitManagerDeleteWorktreeEdgeCases:
 
         result = manager.delete_worktree(worktree_path, delete_branch=True)
 
-        # Worktree was removed, so success is True, but message indicates branch issue
-        assert result.success is True
+        assert result.success is False
         assert "failed to delete branch" in result.message
+        assert result.error == "error: branch not fully merged"
 
     @patch("subprocess.run")
     def test_delete_branch_with_no_status(self, mock_run, manager, tmp_path) -> None:
@@ -1252,6 +1252,12 @@ class TestWorktreeGitManagerSyncEdgeCases:
                 stdout="",
                 stderr="error: cannot rebase: dirty index",
             ),
+            subprocess.CompletedProcess(
+                args=["git", "rebase", "--abort"],
+                returncode=0,
+                stdout="",
+                stderr="",
+            ),
         ]
 
         result = manager.sync_from_main(worktree_path)
@@ -1259,6 +1265,7 @@ class TestWorktreeGitManagerSyncEdgeCases:
         assert result.success is False
         assert "Failed to rebase" in result.message
         assert "dirty index" in result.error
+        assert mock_run.call_args_list[-1].args[0] == ["git", "rebase", "--abort"]
 
     @patch("subprocess.run")
     def test_sync_merge_failure_no_conflict(self, mock_run, manager, tmp_path) -> None:
@@ -1274,12 +1281,19 @@ class TestWorktreeGitManagerSyncEdgeCases:
                 stdout="",
                 stderr="error: You have unstaged changes",
             ),
+            subprocess.CompletedProcess(
+                args=["git", "merge", "--abort"],
+                returncode=0,
+                stdout="",
+                stderr="",
+            ),
         ]
 
         result = manager.sync_from_main(worktree_path, strategy="merge")
 
         assert result.success is False
         assert "Failed to merge" in result.message
+        assert mock_run.call_args_list[-1].args[0] == ["git", "merge", "--abort"]
 
     @patch("subprocess.run")
     def test_sync_conflict_in_stderr(self, mock_run, manager, tmp_path) -> None:
@@ -1309,12 +1323,21 @@ class TestWorktreeGitManagerSyncEdgeCases:
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
 
-        mock_run.side_effect = subprocess.TimeoutExpired(cmd="git", timeout=120)
+        mock_run.side_effect = [
+            subprocess.TimeoutExpired(cmd="git", timeout=120),
+            subprocess.CompletedProcess(
+                args=["git", "rebase", "--abort"],
+                returncode=0,
+                stdout="",
+                stderr="",
+            ),
+        ]
 
         result = manager.sync_from_main(worktree_path)
 
         assert result.success is False
         assert "timed out" in result.message
+        assert mock_run.call_args_list[-1].args[0] == ["git", "rebase", "--abort"]
 
     @patch("subprocess.run")
     def test_sync_generic_exception(self, mock_run, manager, tmp_path) -> None:
@@ -1712,6 +1735,35 @@ class TestWorktreeGitManagerBranchCoverage:
     def manager(self, tmp_path):
         """Create manager with temp directory."""
         return WorktreeGitManager(tmp_path)
+
+    @pytest.mark.parametrize(
+        ("count", "expected"),
+        [("1\n", (True, 1)), ("0\n", (False, 0))],
+    )
+    def test_has_unpushed_commits_without_upstream_compares_default_branch(
+        self, manager, count, expected
+    ) -> None:
+        """Local-only branches count commits ahead of the default branch."""
+        manager._run_git = Mock(
+            side_effect=[
+                subprocess.CompletedProcess(args=[], returncode=128, stdout="", stderr=""),
+                subprocess.CompletedProcess(
+                    args=[],
+                    returncode=0,
+                    stdout="refs/remotes/origin/main\n",
+                    stderr="",
+                ),
+                subprocess.CompletedProcess(args=[], returncode=0, stdout=count, stderr=""),
+            ]
+        )
+
+        result = manager.has_unpushed_commits("feature/local")
+
+        assert result == expected
+        manager._run_git.assert_called_with(
+            ["rev-list", "--count", "main..feature/local"],
+            timeout=5,
+        )
 
     @patch("subprocess.run")
     def test_has_unpushed_commits_missing_branch_is_not_local_only(self, mock_run, manager) -> None:

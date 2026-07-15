@@ -266,7 +266,15 @@ def delete_artifacts(
                     if stored_path.exists():
                         path = stored_path
                 if path.exists():
-                    worktree_result = worktree_git.delete_worktree(path, force=force)
+                    worktree_result = worktree_git.delete_worktree(
+                        path,
+                        force=force,
+                        delete_branch=True,
+                        force_delete_branch=force,
+                        branch_name=(
+                            stored_worktree.branch_name if stored_worktree is not None else None
+                        ),
+                    )
                     if not worktree_result.success and path.exists():
                         artifact.error = worktree_result.error or worktree_result.message
                         continue

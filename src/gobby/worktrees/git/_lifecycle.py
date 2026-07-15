@@ -248,7 +248,7 @@ def delete_worktree(
 
             if branch_result.returncode != 0:
                 return GitOperationResult(
-                    success=True,  # Worktree removed, but branch deletion failed
+                    success=False,
                     message=f"Worktree removed, but failed to delete branch: {branch_result.stderr}",
                     error=branch_result.stderr,
                 )
@@ -301,6 +301,18 @@ def sync_from_main(
             message=f"Worktree path does not exist: {worktree_path}",
         )
 
+    def abort_sync() -> tuple[bool, str]:
+        try:
+            abort_result = runner._run_git(
+                [strategy, "--abort"],
+                cwd=worktree_path,
+                timeout=30,
+            )
+            abort_error = abort_result.stderr.strip() or abort_result.stdout.strip()
+            return abort_result.returncode == 0, abort_error
+        except Exception as e:
+            return False, str(e)
+
     try:
         sync_source = source_branch or base_branch
         if sync_source.startswith("origin/"):
@@ -332,20 +344,11 @@ def sync_from_main(
             )
 
         if sync_result.returncode != 0:
+            aborted, abort_error = abort_sync()
+            abort_detail = "; aborted" if aborted else f"; abort failed: {abort_error}"
+
             # Check if there are conflicts
             if "CONFLICT" in sync_result.stdout or "CONFLICT" in sync_result.stderr:
-                try:
-                    abort_result = runner._run_git(
-                        [strategy, "--abort"],
-                        cwd=worktree_path,
-                        timeout=30,
-                    )
-                    aborted = abort_result.returncode == 0
-                    abort_error = abort_result.stderr.strip() or abort_result.stdout.strip()
-                except Exception as e:
-                    aborted = False
-                    abort_error = str(e)
-                abort_detail = "; aborted" if aborted else f"; abort failed: {abort_error}"
                 return GitOperationResult(
                     success=False,
                     message=f"Sync failed due to conflicts{abort_detail}",
@@ -353,7 +356,7 @@ def sync_from_main(
                 )
             return GitOperationResult(
                 success=False,
-                message=f"Failed to {strategy}: {sync_result.stderr}",
+                message=f"Failed to {strategy}: {sync_result.stderr}{abort_detail}",
                 error=sync_result.stderr,
             )
 
@@ -364,9 +367,11 @@ def sync_from_main(
         )
 
     except subprocess.TimeoutExpired:
+        aborted, abort_error = abort_sync()
+        abort_detail = "; aborted" if aborted else f"; abort failed: {abort_error}"
         return GitOperationResult(
             success=False,
-            message="Git command timed out",
+            message=f"Git command timed out{abort_detail}",
         )
     except Exception as e:
         return GitOperationResult(
