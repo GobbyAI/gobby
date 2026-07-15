@@ -121,6 +121,40 @@ def test_postgres_migration_discovery_reports_invalid_filenames(
     assert ".gitkeep" not in caplog.text
 
 
+@pytest.mark.parametrize("version", [295, 305])
+def test_postgres_migration_discovery_rejects_reserved_versions(
+    version: int,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _migration_module()
+    migrations_dir = tmp_path / "migrations"
+    migrations_dir.mkdir()
+    (migrations_dir / f"{version}_reused_with_different_sql.sql").touch()
+    monkeypatch.setattr(module.importlib.resources, "files", lambda _package: tmp_path)
+
+    with pytest.raises(
+        RuntimeError,
+        match=rf"Migration v{version} reuses a version reserved by baseline v305",
+    ):
+        module.MigrationRunner(_PostgresMigrationHub())._discover_migrations()
+
+
+def test_postgres_migration_discovery_rejects_duplicate_post_baseline_versions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _migration_module()
+    migrations_dir = tmp_path / "migrations"
+    migrations_dir.mkdir()
+    (migrations_dir / "321_first.sql").touch()
+    (migrations_dir / "321_second.postgres.sql").touch()
+    monkeypatch.setattr(module.importlib.resources, "files", lambda _package: tmp_path)
+
+    with pytest.raises(RuntimeError, match="Duplicate migration file for v321"):
+        module.MigrationRunner(_PostgresMigrationHub())._discover_migrations()
+
+
 def test_postgres_migration_discovery_finds_all_post_baseline_migrations() -> None:
     module = _migration_module()
     hub = _PostgresMigrationHub()

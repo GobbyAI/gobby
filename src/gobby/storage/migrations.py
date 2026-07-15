@@ -22,6 +22,9 @@ tests/storage/test_migration_contract.py):
    baseline — see git history) carries the reference preflight pattern.
 3. Optional text-uuid columns that used ``''`` sentinels convert with
    ``USING NULLIF(col::TEXT, '')::UUID`` after dropping NOT NULL.
+4. Migration versions are append-only. Versions at or below
+   ``BASELINE_VERSION`` remain permanently reserved after flattening; new
+   files must use a unique version above that high-water mark.
 """
 
 from __future__ import annotations
@@ -123,6 +126,11 @@ class MigrationRunner:
 
             version = int(match.group("version"))
             name = match.group("name")
+            if version <= BASELINE_VERSION:
+                raise RuntimeError(
+                    f"Migration v{version} reuses a version reserved by "
+                    f"baseline v{BASELINE_VERSION}"
+                )
             existing = grouped.get(version)
             if existing is not None:
                 raise RuntimeError(f"Duplicate migration file for v{version}")

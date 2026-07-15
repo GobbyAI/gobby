@@ -4,6 +4,20 @@
 
 This plan is partially implemented and the original `v212` wording is now stale.
 
+### Permanent migration-version contract
+
+`BASELINE_VERSION` in `src/gobby/storage/migrations.py` is the migration history
+high-water mark. Every version at or below it is reserved forever, including
+versions whose SQL files were deleted after their contents were folded into the
+baseline. A retired number must never be reintroduced, even with its original SQL.
+
+New migration files must use a unique version greater than `BASELINE_VERSION`.
+When flattening again, fold the selected migrations into
+`postgres_baseline_schema.sql`, advance `BASELINE_VERSION` to the highest folded
+version, and delete the folded files. Never decrease `BASELINE_VERSION`; the next
+migration continues above the new high-water mark. `MigrationRunner` enforces the
+reserved range and duplicate versions during discovery.
+
 Already landed in the repo:
 
 - `src/gobby/storage/migrations.py` sets `BASELINE_VERSION = 214`.
