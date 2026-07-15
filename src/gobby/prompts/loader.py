@@ -139,38 +139,18 @@ class PromptLoader:
 
     def _render_jinja(self, template_str: str, context: dict[str, Any]) -> str:
         """Render a template string with Jinja2."""
-        try:
-            from jinja2 import Environment, StrictUndefined, UndefinedError
+        from jinja2 import Environment, StrictUndefined
 
-            env = Environment(  # nosec B701 # generating raw text prompts, not HTML
-                autoescape=False,
-                undefined=StrictUndefined,
-                extensions=[],
-            )
+        env = Environment(  # nosec B701 # generating raw text prompts, not HTML
+            autoescape=False,
+            undefined=StrictUndefined,
+            extensions=[],
+        )
+        env.filters["untrusted"] = delimit_untrusted_content
 
-            env.filters["default"] = lambda v, d="": d if v is None else v
-            env.filters["untrusted"] = delimit_untrusted_content
-
-            template = env.from_string(template_str)
-            rendered: str = template.render(**context)
-            return rendered
-
-        except UndefinedError as e:
-            logger.warning(f"Template rendering error (undefined variable): {e}")
-            return self._render_simple(template_str, context)
-        except ImportError:
-            logger.debug("Jinja2 not available, using simple format")
-            return self._render_simple(template_str, context)
-        except Exception as e:
-            logger.warning(f"Template rendering error: {e}")
-            return self._render_simple(template_str, context)
-
-    def _render_simple(self, template_str: str, context: dict[str, Any]) -> str:
-        """Simple string formatting fallback."""
-        try:
-            return template_str.format(**context)
-        except KeyError:
-            return template_str
+        template = env.from_string(template_str)
+        rendered: str = template.render(**context)
+        return rendered
 
     def exists(self, path: str) -> bool:
         """Check if a template exists in the database.

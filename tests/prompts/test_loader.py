@@ -1,6 +1,7 @@
 """Unit tests for PromptLoader (database-backed)."""
 
 import pytest
+from jinja2 import UndefinedError
 
 from gobby.prompts import PromptLoader, PromptTemplate, parse_frontmatter
 from gobby.prompts.sync import sync_bundled_prompts
@@ -63,6 +64,31 @@ class TestPromptLoader:
         result = loader.render("test/template", {"name": "Claude"})
 
         assert result == "Hello, Claude!"
+
+    def test_render_raises_for_undefined_variable(self, db, manager) -> None:
+        manager.create_prompt(
+            name="test/undefined",
+            content="Hello, {{ missing }}!",
+            variables={},
+            scope="bundled",
+        )
+
+        loader = PromptLoader(db=db)
+
+        with pytest.raises(UndefinedError):
+            loader.render("test/undefined")
+
+    def test_render_uses_builtin_default_filter(self, db, manager) -> None:
+        manager.create_prompt(
+            name="test/jinja-default",
+            content="{{ missing | default('fallback') }}|{{ empty | default('fallback', true) }}",
+            variables={},
+            scope="bundled",
+        )
+
+        loader = PromptLoader(db=db)
+
+        assert loader.render("test/jinja-default", {"empty": ""}) == "fallback|fallback"
 
     def test_render_with_defaults(self, db, manager) -> None:
         """Test rendering uses default values from variables."""
