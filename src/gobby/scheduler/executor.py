@@ -687,7 +687,7 @@ class CronExecutor:
             raise ValueError(f"No handler registered: '{name}'. Available: {available}")
         return await handler(job)
 
-    async def _execute_dispatcher(self, job: CronJob) -> str:
+    async def _execute_dispatcher(self, job: CronJob) -> ActionOutcome:
         """Execute the dispatcher heartbeat action."""
         from gobby.dispatch.dispatcher import run_heartbeat
 
@@ -719,7 +719,7 @@ class CronExecutor:
             if result.executed == 0 or result.cap_reached or result.reason:
                 break
 
-        return (
+        output = (
             "Dispatcher heartbeat completed: "
             f"ticks={ticks}, "
             f"scanned={scanned}, "
@@ -728,6 +728,13 @@ class CronExecutor:
             f"cap_reached={cap_reached}, "
             f"reason={reason}"
         )
+        if cap_reached or reason:
+            return ActionOutcome(
+                status="failed",
+                output=output,
+                error=f"Dispatcher heartbeat stopped: {reason or 'cap_reached'}",
+            )
+        return ActionOutcome(status="completed", output=output)
 
     def _dispatcher_heartbeat_ticks(self, job: CronJob) -> int:
         config = job.action_config

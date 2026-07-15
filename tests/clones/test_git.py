@@ -318,8 +318,8 @@ class TestCloneGitManagerSyncClone:
         clone_path.mkdir()
         mock_run.return_value = MagicMock(
             returncode=1,
-            stdout="",
-            stderr="! [rejected] main -> main (non-fast-forward)",
+            stdout="! [rejected] main -> main (non-fast-forward)",
+            stderr="",
         )
 
         result = manager.sync_clone(clone_path, direction="push")
@@ -604,6 +604,13 @@ class TestCloneGitManagerGetCloneStatus:
 
         assert status is None
 
+    def test_get_clone_status_handles_os_error(self, manager, mock_run, tmp_path: Path) -> None:
+        clone_path = tmp_path / "clone"
+        clone_path.mkdir()
+        mock_run.side_effect = OSError("git unavailable")
+
+        assert manager.get_clone_status(clone_path) is None
+
 
 class TestMergeBranch:
     """Tests for CloneGitManager.merge_branch."""
@@ -630,6 +637,37 @@ class TestMergeBranch:
         # Find the merge call (4th: rev-parse, fetch, checkout, pull, merge)
         merge_call = mock_run.call_args_list[4]
         assert merge_call[0][0] == ["merge", "origin/feature", "--no-edit"]
+
+    def test_merge_branch_restores_detached_commit(self, manager, mock_run, tmp_path: Path) -> None:
+        success = MagicMock(returncode=0, stdout="", stderr="")
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout="HEAD\n", stderr=""),
+            MagicMock(returncode=0, stdout="abc123def456\n", stderr=""),
+            success,
+            success,
+            success,
+            success,
+            success,
+        ]
+
+        result = manager.merge_branch(source_branch="feature", target_branch="main")
+
+        assert result.success is True
+        assert mock_run.call_args_list[-1][0][0] == ["checkout", "abc123def456"]
+
+    def test_merge_branch_rejects_unresolvable_detached_head(
+        self, manager, mock_run, tmp_path: Path
+    ) -> None:
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout="HEAD\n", stderr=""),
+            MagicMock(returncode=128, stdout="", stderr="bad revision"),
+        ]
+
+        result = manager.merge_branch(source_branch="feature", target_branch="main")
+
+        assert result.success is False
+        assert result.error == "bad revision"
+        assert mock_run.call_count == 2
 
     def test_merge_branch_source_is_local_skips_origin_prefix(
         self, manager, mock_run, tmp_path: Path

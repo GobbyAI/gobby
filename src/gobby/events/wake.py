@@ -113,7 +113,7 @@ class WakeDispatcher:
         session_id: str,
         message: str,
         result: dict[str, Any],
-    ) -> None:
+    ) -> dict[str, Any]:
         """Wake a session with a completion notification.
 
         Args:
@@ -124,12 +124,22 @@ class WakeDispatcher:
         session = self._session_manager.get(session_id)
         if session is None:
             logger.warning(f"Cannot wake session {session_id}: not found")
-            return
+            return self._live_wake_failure(
+                session_id,
+                method=None,
+                error_code="session_not_found",
+                error_message="Session not found",
+            )
 
         if not self._send_ism(session_id, message, result):
-            return
+            return self._live_wake_failure(
+                session_id,
+                method="ism",
+                error_code="ism_persist_failed",
+                error_message="Could not persist completion notification",
+            )
 
-        await self.dispatch_live_wake(session_id, session=session)
+        return await self.dispatch_live_wake(session_id, session=session)
 
     async def dispatch_live_wake(
         self,

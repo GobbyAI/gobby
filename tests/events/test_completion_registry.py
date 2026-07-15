@@ -62,6 +62,7 @@ class TestRegisterAndNotify:
         registry.register(COMPLETION_ID, subscribers=[])
         with pytest.raises(asyncio.TimeoutError):
             await registry.wait(COMPLETION_ID, timeout=0.05)
+        assert registry.is_registered(COMPLETION_ID) is False
 
     @pytest.mark.asyncio
     async def test_wait_on_already_notified(self, registry: CompletionEventRegistry) -> None:

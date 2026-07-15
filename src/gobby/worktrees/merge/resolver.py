@@ -58,7 +58,7 @@ async def auto_resolve_trivial_conflicts(
     remaining = []
 
     for f in conflicted_files:
-        if any(f == pattern or f.endswith(pattern) for pattern in TRIVIAL_CONFLICT_PATTERNS):
+        if f in TRIVIAL_CONFLICT_PATTERNS:
             trivial.append(f)
         else:
             remaining.append(f)
@@ -109,14 +109,14 @@ async def auto_resolve_trivial_conflicts(
 
 
 _CONFLICT_BLOCK_RE = re.compile(
-    r"<<<<<<< [^\n]*\n.*?\n=======[ \t]*\n.*?\n>>>>>>> [^\n]*\n",
+    r"<<<<<<< [^\n]*\n.*?\n=======[ \t]*\n.*?\n>>>>>>> [^\n]*(?:\n|\Z)",
     re.DOTALL,
 )
 _FENCED_SOURCE_RESPONSE_RE = re.compile(
     r"\A[ \t\r\n]*```[A-Za-z0-9_+.-]*[ \t]*\r?\n(?P<body>.*?)(?:\r?\n)?```[ \t\r\n]*\Z",
     re.DOTALL,
 )
-_CONFLICT_MARKER_LINE_RE = re.compile(r"(?m)^\s*(<<<<<<<|=======[ \t]*$|>>>>>>>).*")
+_CONFLICT_MARKER_LINE_RE = re.compile(r"(?m)^\s*(<<<<<<<|\|\|\|\|\|\|\||>>>>>>>).*")
 
 
 def assert_marker_free(content: str) -> None:
@@ -165,7 +165,7 @@ def clean_ai_source_response(response: str) -> str | None:
     """Return source content from an AI response, or None when prose leaked in."""
     candidate = response.strip()
     if not candidate:
-        return None
+        return ""
 
     fenced = _FENCED_SOURCE_RESPONSE_RE.fullmatch(candidate)
     if fenced is not None:
@@ -353,9 +353,7 @@ class MergeResolver:
             result = await self._resolve_conflicts_only([conflict])
             if result["success"]:
                 content_by_file = {
-                    r["file"]: r["content"]
-                    for r in result.get("resolutions", [])
-                    if r.get("content")
+                    r["file"]: r["content"] for r in result.get("resolutions", []) if "content" in r
                 }
                 return ResolutionResult(
                     success=True,
@@ -377,7 +375,7 @@ class MergeResolver:
         result = await self._resolve_full_file([conflict])
         if result["success"]:
             content_by_file = {
-                r["file"]: r["content"] for r in result.get("resolutions", []) if r.get("content")
+                r["file"]: r["content"] for r in result.get("resolutions", []) if "content" in r
             }
             return ResolutionResult(
                 success=True,
@@ -781,7 +779,7 @@ class MergeResolver:
                     caller="worktrees.merge.resolve_full_file",
                 )
 
-                if not response:
+                if response is None:
                     return {
                         "success": False,
                         "resolutions": [],

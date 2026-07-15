@@ -18,6 +18,7 @@ from gobby.worktrees.merge.resolver import (
     MergeResolver,
     MergeResult,
     ResolutionTier,
+    clean_ai_source_response,
     splice_resolutions_into_file,
 )
 
@@ -62,6 +63,26 @@ def test_splice_empty_resolution_collapses_block() -> None:
     file_with_markers = "before\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> b\nafter\n"
     spliced = splice_resolutions_into_file(file_with_markers, [""])
     assert spliced == "before\nafter\n"
+
+
+def test_splice_accepts_conflict_at_eof_without_trailing_newline() -> None:
+    file_with_markers = "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feature"
+
+    assert splice_resolutions_into_file(file_with_markers, ["resolved"]) == "resolved\n"
+
+
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        pytest.param("Heading\n=======\n", "Heading\n=======", id="bare-separator"),
+        pytest.param("resolved\n||||||| base\nold\n", None, id="diff3-marker"),
+        pytest.param("", "", id="empty-file"),
+    ],
+)
+def test_clean_ai_source_response_handles_bare_separator_diff3_and_empty_content(
+    response: str, expected: str | None
+) -> None:
+    assert clean_ai_source_response(response) == expected
 
 
 # --- MergeResult contract ---
@@ -187,6 +208,28 @@ async def test_resolve_file_tier3_populates_content_when_tier2_fails(
     assert result.success is True
     assert result.tier == ResolutionTier.FULL_FILE_AI
     assert result.resolved_content_by_file[str(file_path)] == full_file_response
+
+
+@pytest.mark.asyncio
+async def test_resolve_file_tier3_preserves_empty_file(
+    resolver_with_llm: MergeResolver, tmp_path: Path
+) -> None:
+    file_path = tmp_path / "deleted.py"
+    file_path.write_text("<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feature\n")
+
+    assert resolver_with_llm.llm_service is not None
+    resolver_with_llm.llm_service.call_feature = AsyncMock(
+        side_effect=["first\n---HUNK SEPARATOR---\nsecond", ""]
+    )
+
+    result = await resolver_with_llm.resolve_file(
+        file_path,
+        [{"ours": "ours", "theirs": "theirs"}],
+    )
+
+    assert result.success is True
+    assert result.tier == ResolutionTier.FULL_FILE_AI
+    assert result.resolved_content_by_file == {str(file_path): ""}
 
 
 @pytest.mark.asyncio

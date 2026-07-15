@@ -69,8 +69,12 @@ class TestWakeDispatch:
             session_manager=session_manager,
             ism_manager=ism_manager,
         )
-        await dispatcher.wake(WAKE_SESSION_ID, "Pipeline completed", {"status": "completed"})
+        result = await dispatcher.wake(
+            WAKE_SESSION_ID, "Pipeline completed", {"status": "completed"}
+        )
 
+        assert result["session_id"] == WAKE_SESSION_ID
+        assert "delivered" in result
         ism_manager.create_message.assert_called_once()
         call_kwargs = ism_manager.create_message.call_args.kwargs
         assert call_kwargs["to_session"] == WAKE_SESSION_ID
@@ -516,8 +520,8 @@ class TestWakeDispatch:
             session_manager=session_manager,
             ism_manager=ism_manager,
         )
-        # Should not raise
-        await dispatcher.wake("nonexistent", "Done", {"status": "completed"})
+        result = await dispatcher.wake("nonexistent", "Done", {"status": "completed"})
+        assert result["error_code"] == "session_not_found"
         ism_manager.create_message.assert_not_called()
         assert ism_manager.create_message.call_count == 0
         assert not ism_manager.create_message.called

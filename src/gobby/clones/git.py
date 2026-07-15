@@ -444,10 +444,11 @@ class CloneGitManager:
                     timeout=120,
                 )
                 if push_result.returncode != 0:
+                    detail = push_result.stderr or push_result.stdout
                     return GitOperationResult(
                         success=False,
-                        message=f"Push failed: {push_result.stderr}",
-                        error=push_result.stderr,
+                        message=f"Push failed: {detail}",
+                        error=detail,
                     )
 
             return GitOperationResult(
@@ -599,7 +600,7 @@ class CloneGitManager:
                 commit=commit,
             )
 
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             logger.error(f"Error getting clone status: {e}")
             return None
 
@@ -751,6 +752,20 @@ class CloneGitManager:
         )
         if branch_result.returncode == 0:
             original_branch = branch_result.stdout.strip()
+            if original_branch == "HEAD":
+                commit_result = self._run_git(
+                    ["rev-parse", "HEAD"],
+                    cwd=cwd,
+                    timeout=5,
+                )
+                if commit_result.returncode == 0:
+                    original_branch = commit_result.stdout.strip()
+                else:
+                    return GitOperationResult(
+                        success=False,
+                        message=f"Failed to resolve detached HEAD: {commit_result.stderr}",
+                        error=commit_result.stderr,
+                    )
 
         checked_out_target = False
 
