@@ -181,8 +181,8 @@ class TestInstallQdrant:
         data = yaml.safe_load(compose_file.read_text())
         assert "qdrant" in data["services"]
 
-    def test_install_returns_url(self, tmp_path: Path) -> None:
-        """install_qdrant returns the configured URL on success."""
+    def test_install_exports_and_checks_custom_port(self, tmp_path: Path) -> None:
+        """install_qdrant uses the persisted custom port for compose and health checks."""
         from gobby.cli.installers.qdrant import install_qdrant
 
         mock_result = MagicMock()
@@ -190,20 +190,29 @@ class TestInstallQdrant:
 
         with (
             patch.object(shutil, "which", return_value="/usr/bin/docker"),
-            patch("gobby.cli.installers.qdrant.subprocess.run", return_value=mock_result),
-            patch("gobby.cli.installers.qdrant._wait_for_health", return_value=True),
-            patch("gobby.cli.installers.qdrant._update_config"),
+            patch("gobby.cli.installers.qdrant.subprocess.run", return_value=mock_result) as run,
+            patch(
+                "gobby.cli.installers.qdrant._wait_for_health", return_value=True
+            ) as wait_for_health,
+            patch("gobby.cli.installers.qdrant._update_config") as update_config,
             patch("gobby.cli.installers.qdrant.resolve_compose_runtime") as resolve,
         ):
             resolve.return_value.environment = {
-                "GOBBY_QDRANT_HTTP_PORT": "6333",
+                "GOBBY_QDRANT_HTTP_PORT": "7333",
                 "GOBBY_POSTGRES_PASSWORD": "postgres-secret",
             }
-            result = install_qdrant(gobby_home=tmp_path, port=6333)
+            result = install_qdrant(gobby_home=tmp_path, port=7333)
 
-        assert result["qdrant_url"] == "http://localhost:6333"
+        assert result["qdrant_url"] == "http://localhost:7333"
         assert result["success"] is True
-        assert resolve.call_count == 1
+        update_config.assert_called_once_with(
+            qdrant_url="http://localhost:7333",
+            qdrant_port=7333,
+            gobby_home=tmp_path,
+        )
+        resolve.assert_called_once_with(tmp_path)
+        assert run.call_args.kwargs["env"]["GOBBY_QDRANT_HTTP_PORT"] == "7333"
+        wait_for_health.assert_called_once_with("http://localhost:7333")
 
     def test_install_health_check_failure(self, tmp_path: Path) -> None:
         """install_qdrant returns error when health check fails."""
