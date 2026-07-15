@@ -372,6 +372,58 @@ describe("providerModels", () => {
     );
   });
 
+  it("returns the stale cached catalog when a refresh fails", async () => {
+    const cachedCatalog = [
+      { provider: "claude", available: true, source: "live", models: [] },
+    ];
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ providers: cachedCatalog }),
+      })
+      .mockRejectedValueOnce(new Error("offline"));
+    vi.stubGlobal("fetch", fetchSpy);
+    vi.spyOn(Date, "now")
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(5 * 60 * 1000 + 1);
+    vi.spyOn(console, "debug").mockImplementation(() => {});
+
+    await expect(fetchProviderModelCatalog()).resolves.toEqual(cachedCatalog);
+    await expect(fetchProviderModelCatalog()).resolves.toEqual(cachedCatalog);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("filters malformed provider catalog entries before caching", async () => {
+    const validEntry = {
+      provider: "claude",
+      available: true,
+      source: "live",
+      models: [{ value: "opus", label: "Opus" }],
+    };
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        providers: [
+          null,
+          { provider: "codex", available: true, source: "live" },
+          {
+            provider: "qwen",
+            available: true,
+            source: "live",
+            models: [null],
+          },
+          validEntry,
+        ],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await expect(fetchProviderModelCatalog()).resolves.toEqual([validEntry]);
+    await expect(fetchProviderModelCatalog()).resolves.toEqual([validEntry]);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("clearProviderModelCache resets the cached catalog", async () => {
     const fetchSpy = vi
       .fn()

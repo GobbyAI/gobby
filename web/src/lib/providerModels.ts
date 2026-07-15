@@ -66,6 +66,63 @@ export const AUTO_REASONING_EFFORT = "auto";
 let cachedModels: ProviderModelEntry[] | null = null;
 let cachedModelsTimestamp = 0;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isProviderModelReasoning(value: unknown): value is ProviderModelReasoning {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.supported_efforts) &&
+    value.supported_efforts.every((effort) => typeof effort === "string") &&
+    (value.default_effort === undefined || typeof value.default_effort === "string")
+  );
+}
+
+function isProviderModelOption(value: unknown): value is ProviderModelOption {
+  return (
+    isRecord(value) &&
+    typeof value.value === "string" &&
+    typeof value.label === "string" &&
+    (value.hidden === undefined || typeof value.hidden === "boolean") &&
+    (value.is_default === undefined || typeof value.is_default === "boolean") &&
+    (value.canonical_id === undefined || typeof value.canonical_id === "string") &&
+    (value.context_length === undefined ||
+      value.context_length === null ||
+      typeof value.context_length === "number") &&
+    (value.context_length_source === undefined ||
+      ["provider_reported", "provider_catalog", "registry", "static_default"].includes(
+        value.context_length_source as string,
+      )) &&
+    (value.reasoning === undefined || isProviderModelReasoning(value.reasoning))
+  );
+}
+
+function isProviderModelEntry(value: unknown): value is ProviderModelEntry {
+  return (
+    isRecord(value) &&
+    typeof value.provider === "string" &&
+    typeof value.available === "boolean" &&
+    Array.isArray(value.models) &&
+    value.models.every(isProviderModelOption) &&
+    ["static", "live", "cache", "config", "failed", "unsupported"].includes(
+      value.source as string,
+    ) &&
+    (value.display_name === undefined || typeof value.display_name === "string") &&
+    (value.installed === undefined || typeof value.installed === "boolean") &&
+    (value.deprecated === undefined || typeof value.deprecated === "boolean") &&
+    (value.deprecation_message === undefined ||
+      value.deprecation_message === null ||
+      typeof value.deprecation_message === "string") &&
+    (value.supports_web_chat === undefined || typeof value.supports_web_chat === "boolean") &&
+    (value.supports_agent_spawn === undefined ||
+      typeof value.supports_agent_spawn === "boolean") &&
+    (value.unavailable_reason === undefined ||
+      value.unavailable_reason === null ||
+      typeof value.unavailable_reason === "string")
+  );
+}
+
 export async function fetchProviderModelCatalog(): Promise<
   ProviderModelEntry[]
 > {
@@ -82,16 +139,17 @@ export async function fetchProviderModelCatalog(): Promise<
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data?.providers)) {
-        cachedModels = data.providers as ProviderModelEntry[];
+        const validModels = data.providers.filter(isProviderModelEntry);
+        cachedModels = validModels;
         cachedModelsTimestamp = now;
-        return cachedModels;
+        return validModels;
       }
     }
   } catch (err) {
     console.debug("Failed to load provider catalog", err);
   }
 
-  return [];
+  return cachedModels ?? [];
 }
 
 export function clearProviderModelCache(): void {
