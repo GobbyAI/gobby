@@ -94,7 +94,7 @@ describe('pruneTimeBoundLru', () => {
     expect(entries.size).toBe(129)
   })
 
-  it('aborts pruning when the clock moves behind any last-seen timestamp', () => {
+  it('enforces capacity when the clock moves behind a last-seen timestamp', () => {
     const entries = new Map<string, number>([
       ['expired', 0],
       ['future', 20],
@@ -102,9 +102,6 @@ describe('pruneTimeBoundLru', () => {
 
     pruneTimeBoundLru(entries, 10, { maxEntries: 1, ttlMs: 5 })
 
-    expect(Array.from(entries.entries())).toEqual([
-      ['expired', 0],
-      ['future', 20],
-    ])
+    expect(Array.from(entries.entries())).toEqual([['future', 20]])
   })
 })

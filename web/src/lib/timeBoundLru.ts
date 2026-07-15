@@ -52,15 +52,19 @@ export function pruneTimeBoundLru<K>(
   now: number,
   { maxEntries, ttlMs }: TimeBoundLruOptions,
 ): void {
+  let canPruneByTime = true
   for (const [, lastSeenAt] of entries) {
     if (now < lastSeenAt) {
-      return
+      canPruneByTime = false
+      break
     }
   }
 
-  for (const [key, lastSeenAt] of entries) {
-    if (now - lastSeenAt >= ttlMs) {
-      entries.delete(key)
+  if (canPruneByTime) {
+    for (const [key, lastSeenAt] of entries) {
+      if (now - lastSeenAt >= ttlMs) {
+        entries.delete(key)
+      }
     }
   }
 
