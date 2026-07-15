@@ -1101,6 +1101,37 @@ class TestKillAgent:
         assert "No agent found for session" not in result.get("error", "")
 
     @pytest.mark.asyncio
+    async def test_parent_kill_by_session_id_defaults_to_cancelled(self) -> None:
+        runner = _make_runner_with_run_storage()
+        mock_run = _make_mock_agent_run(
+            run_id="run-123",
+            session_id="sess-456",
+            parent_session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001",
+        )
+        runner.run_storage.get_by_session.return_value = mock_run
+        runner.get_run.return_value = mock_run
+        runner.cancel_run.return_value = True
+
+        registry = create_agents_registry(runner)
+        kill_agent = registry._tools["kill_agent"].func
+
+        from gobby.utils.session_context import session_context_for_test
+
+        with (
+            session_context_for_test("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001"),
+            patch(
+                "gobby.mcp_proxy.tools.agents._kill_agent_process",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ),
+        ):
+            result = await kill_agent(session_id="sess-456")
+
+        assert result["status"] == "cancelled"
+        runner.cancel_run.assert_called_once_with("run-123")
+        runner.complete_run.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_session_id_not_found_returns_error(self) -> None:
         """Test error when session_id doesn't match any agent."""
         runner = _make_runner_with_run_storage()
