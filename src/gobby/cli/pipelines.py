@@ -5,6 +5,7 @@ CLI commands for managing Gobby pipelines.
 from __future__ import annotations
 
 import asyncio  # noqa: F401 - facade for split pipeline modules
+import getpass
 import json
 import logging
 from pathlib import Path
@@ -33,6 +34,11 @@ from gobby.workflows.lobster_compat import (  # noqa: F401 - facade for pipeline
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _cli_actor() -> str:
+    """Return the stable local actor recorded for CLI decisions."""
+    return getpass.getuser()
 
 
 def get_project_path() -> Path | None:

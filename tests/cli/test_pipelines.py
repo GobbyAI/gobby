@@ -717,11 +717,19 @@ class TestPipelinesApprove:
         )
         mock_executor.approve = AsyncMock(return_value=mock_execution)
 
-        with patch("gobby.cli.pipelines.get_pipeline_executor", return_value=mock_executor):
+        with (
+            patch("gobby.cli.pipelines.get_pipeline_executor", return_value=mock_executor),
+            patch("gobby.cli.pipelines.getpass.getuser", return_value="local-user") as mock_getuser,
+        ):
             result = runner.invoke(cli, ["pipelines", "approve", "approval-token-xyz"])
 
             assert result.exit_code == 0
-            mock_executor.approve.assert_called_once_with("approval-token-xyz", approved_by=None)
+            assert "✓ Pipeline approved" in result.output
+            assert "Execution ID: pe-abc123" in result.output
+            mock_getuser.assert_called_once_with()
+            mock_executor.approve.assert_called_once_with(
+                "approval-token-xyz", approved_by="local-user"
+            )
 
     @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_approve_shows_result(self, runner) -> None:
@@ -821,11 +829,19 @@ class TestPipelinesReject:
         )
         mock_executor.reject = AsyncMock(return_value=mock_execution)
 
-        with patch("gobby.cli.pipelines.get_pipeline_executor", return_value=mock_executor):
+        with (
+            patch("gobby.cli.pipelines.get_pipeline_executor", return_value=mock_executor),
+            patch("gobby.cli.pipelines.getpass.getuser", return_value="local-user") as mock_getuser,
+        ):
             result = runner.invoke(cli, ["pipelines", "reject", "approval-token-xyz"])
 
             assert result.exit_code == 0
-            mock_executor.reject.assert_called_once_with("approval-token-xyz", rejected_by=None)
+            assert "✗ Pipeline rejected" in result.output
+            assert "Execution ID: pe-abc123" in result.output
+            mock_getuser.assert_called_once_with()
+            mock_executor.reject.assert_called_once_with(
+                "approval-token-xyz", rejected_by="local-user"
+            )
 
     @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_reject_shows_result(self, runner) -> None:
