@@ -68,10 +68,12 @@ class TestPipelineExecutorExecute:
         """Test that execute() creates a PipelineExecution record."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
 
+        run_db = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
         executor = PipelineExecutor(
             db=mock_db,
             execution_manager=mock_execution_manager,
             llm_service=mock_llm_service,
+            run_db=run_db,
         )
 
         await executor.execute(
@@ -84,6 +86,13 @@ class TestPipelineExecutorExecute:
         call_kwargs = mock_execution_manager.create_execution.call_args
         assert call_kwargs.kwargs["pipeline_name"] == "test-pipeline"
         assert call_kwargs.kwargs["inputs_json"] is not None
+        offloaded = [call.args[0] for call in run_db.await_args_list]
+        assert executor._create_execution_record in offloaded
+        assert mock_execution_manager.update_execution_status in offloaded
+        assert mock_execution_manager.get_steps_for_execution in offloaded
+        assert mock_execution_manager.create_step_execution in offloaded
+        assert mock_execution_manager.update_step_execution in offloaded
+        assert mock_execution_manager.get_failed_steps in offloaded
 
     @pytest.mark.asyncio
     async def test_execute_with_existing_execution_id(

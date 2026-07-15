@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.workflows.definitions import MCPStepConfig, PipelineDefinition, PipelineStep
+from gobby.workflows.pipeline_state import ExecutionStatus
 
 pytestmark = pytest.mark.unit
 
@@ -28,12 +29,14 @@ class TestPipelineChildSession:
         child_session = MagicMock()
         child_session.id = "child-session-123"
         mock_session_manager.register.return_value = child_session
+        run_db = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
 
         executor = PipelineExecutor(
             db=mock_db,
             execution_manager=mock_execution_manager,
             llm_service=mock_llm_service,
             session_manager=mock_session_manager,
+            run_db=run_db,
         )
 
         await executor.execute(
@@ -50,6 +53,7 @@ class TestPipelineChildSession:
         assert "pipeline-" in call_kwargs["external_id"]
         assert call_kwargs["title"] == "pipeline:test-pipeline"
         assert call_kwargs["agent_depth"] == 0
+        assert mock_session_manager.register in [call.args[0] for call in run_db.await_args_list]
 
     @pytest.mark.asyncio
     async def test_context_session_id_is_child(
@@ -462,6 +466,9 @@ class TestPipelineChildSession:
         child_session = MagicMock()
         child_session.id = "child-session-top"
         mock_session_manager.register.return_value = child_session
+        mock_execution_manager.update_execution_status.return_value.status = (
+            ExecutionStatus.COMPLETED
+        )
 
         captured_contexts: list[dict] = []
 

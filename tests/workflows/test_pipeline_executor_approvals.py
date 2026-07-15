@@ -383,11 +383,13 @@ class TestApproveMethod:
         mock_execution.status = ExecutionStatus.WAITING_APPROVAL
         mock_execution_manager.get_execution.return_value = mock_execution
         mock_execution_manager.update_execution_status.return_value = mock_execution
+        run_db = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
 
         executor = PipelineExecutor(
             db=mock_db,
             execution_manager=mock_execution_manager,
             llm_service=mock_llm_service,
+            run_db=run_db,
         )
 
         result = await executor.approve("test-token-xyz", approved_by="user@example.com")
@@ -399,6 +401,9 @@ class TestApproveMethod:
             status=StepStatus.PENDING,
             approved_by="user@example.com",
         )
+        assert mock_execution_manager.get_execution in [
+            call.args[0] for call in run_db.await_args_list
+        ]
 
     @pytest.mark.asyncio
     async def test_approve_invalid_token_raises_error(
@@ -517,11 +522,13 @@ class TestRejectMethod:
         mock_execution.status = ExecutionStatus.CANCELLED
         mock_execution_manager.get_execution.return_value = mock_execution
         mock_execution_manager.update_execution_status.return_value = mock_execution
+        run_db = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
 
         executor = PipelineExecutor(
             db=mock_db,
             execution_manager=mock_execution_manager,
             llm_service=mock_llm_service,
+            run_db=run_db,
         )
 
         result = await executor.reject("test-token-xyz", rejected_by="user@example.com")
@@ -533,6 +540,9 @@ class TestRejectMethod:
             status=StepStatus.FAILED,
             error="Rejected by user@example.com",
         )
+        assert mock_execution_manager.update_execution_status in [
+            call.args[0] for call in run_db.await_args_list
+        ]
 
     @pytest.mark.asyncio
     async def test_reject_invalid_token_raises_error(

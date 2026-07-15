@@ -6,7 +6,7 @@ import asyncio
 import logging
 import secrets
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, cast
 
 from gobby.workflows.pipeline_state import (
     ApprovalRequired,
@@ -21,6 +21,9 @@ if TYPE_CHECKING:
     from gobby.workflows.definitions import PipelineDefinition, PipelineStep
 
 logger = logging.getLogger(__name__)
+
+_P = ParamSpec("_P")
+_T = TypeVar("_T")
 
 
 class ApprovalManager:
@@ -38,10 +41,10 @@ class ApprovalManager:
         self.event_callback = event_callback
         self._db_runner = run_db
 
-    async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    async def _run_db(self, func: Callable[_P, _T], *args: _P.args, **kwargs: _P.kwargs) -> _T:
         if self._db_runner is None:
             return await asyncio.to_thread(func, *args, **kwargs)
-        return await self._db_runner(func, *args, **kwargs)
+        return cast(_T, await self._db_runner(func, *args, **kwargs))
 
     async def _emit_event(self, event: str, execution_id: str, **kwargs: Any) -> None:
         """Emit a pipeline event via the callback if configured."""
@@ -175,7 +178,7 @@ class ApprovalManager:
             raise ValueError(f"Invalid or already used approval token: {token}")
 
         # Get the execution
-        execution = self.execution_manager.get_execution(step.execution_id)
+        execution = await self._run_db(self.execution_manager.get_execution, step.execution_id)
         if not execution:
             raise ValueError(f"Execution {step.execution_id} not found")
 
@@ -213,7 +216,8 @@ class ApprovalManager:
             raise ValueError(f"Invalid or already used approval token: {token}")
 
         # Set execution status to CANCELLED
-        execution = self.execution_manager.update_execution_status(
+        execution = await self._run_db(
+            self.execution_manager.update_execution_status,
             execution_id=step.execution_id,
             status=ExecutionStatus.CANCELLED,
         )
