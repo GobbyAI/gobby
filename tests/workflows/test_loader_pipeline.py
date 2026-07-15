@@ -476,6 +476,19 @@ class TestValidatePipelineReferences:
         }
         assert _validate_pipeline_references(data) is None
 
+    def test_valid_back_reference_after_step_without_id(self) -> None:
+        """An ID-less step does not shift physical reference positions."""
+        data = {
+            "name": "valid-refs-after-idless-step",
+            "type": "pipeline",
+            "steps": [
+                {"id": "step1", "exec": "echo hello"},
+                {"approval": {"prompt": "Continue?"}},
+                {"id": "step2", "prompt": "Process $step1.output"},
+            ],
+        }
+        assert _validate_pipeline_references(data) is None
+
     def test_rejects_forward_reference(self) -> None:
         """Test that $later_step.output (forward ref) is rejected."""
         data = {
