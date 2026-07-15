@@ -607,6 +607,7 @@ export function useChat() {
     attachedSessionIdRef,
     attachedSessionMetaRef,
     contextUsage,
+    currentModeRef,
     initialViewingModeRef,
     initialViewingReconnectRetryRef,
     initialViewingRestoreRef,

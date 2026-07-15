@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import {
   cleanupUseChatTestContext,
@@ -649,6 +649,97 @@ describe("useChat viewed session state", () => {
       ]);
     });
     expect(messageFetchCount).toBe(2);
+  });
+
+  it("restores main-chat mode and reconnect watermark after clearing a viewed session", async () => {
+    try {
+      await loadModule();
+      mockFetch.mockJsonResponse(
+        "/api/chat/test-conversation-id/messages?limit=100&after_seq=0",
+        {
+          messages: [
+            {
+              id: "main-message",
+              role: "assistant",
+              content: "Main transcript",
+              timestamp: "2026-04-09T00:00:00Z",
+            },
+          ],
+          max_seq: 9,
+        },
+      );
+      mockFetch.mockJsonResponse("/api/sessions/test-conversation-id", {
+        session: {
+          id: "test-conversation-id",
+          seq_num: 2500,
+          source: "claude",
+          title: "Main chat",
+          status: "active",
+          model: "sonnet",
+          external_id: "main-external-id",
+          session_type: "web_chat",
+          chat_mode: "plan",
+        },
+      });
+
+      const { result } = renderHook(() => useChat());
+      const ws = mockWs.instances[0];
+      const modeChanged = vi.fn();
+      act(() => {
+        ws.simulateOpen();
+        result.current.setOnModeChanged(modeChanged);
+        result.current.observeSession?.("terminal-session", "proxy");
+      });
+      act(() => {
+        ws.simulateMessage({
+          type: "attach_to_session_result",
+          session_id: "terminal-session",
+          source: "codex",
+          status: "active",
+          external_id: "terminal-external-id",
+          session_type: "terminal",
+          can_proxy_attach: true,
+          chat_mode: "bypass",
+          messages: [],
+        });
+      });
+      expect(modeChanged).toHaveBeenLastCalledWith("bypass");
+
+      await act(async () => {
+        result.current.clearViewingSession?.();
+        await Promise.resolve();
+      });
+      await waitFor(() => {
+        expect(modeChanged).toHaveBeenLastCalledWith("plan");
+      });
+
+      ws.send.mockClear();
+      act(() => {
+        result.current.sendMode("bypass");
+      });
+      expect(
+        ws.send.mock.calls
+          .map(([message]) => JSON.parse(message))
+          .filter((message) => message.type === "set_mode"),
+      ).toHaveLength(1);
+
+      vi.useFakeTimers();
+      act(() => {
+        ws.simulateClose();
+        vi.advanceTimersByTime(2000);
+      });
+      await act(async () => {
+        mockWs.instances[1].simulateOpen();
+        await Promise.resolve();
+      });
+      expect(mockFetch.fn).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "/api/chat/test-conversation-id/messages?after_seq=9",
+        ),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not let clearViewingSession restore overwrite a later conversation switch", async () => {

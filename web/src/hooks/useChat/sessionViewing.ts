@@ -38,6 +38,7 @@ export function useChatSessionViewing(params: UseChatSessionViewingParams) {
     attachedSessionIdRef,
     attachedSessionMetaRef,
     contextUsage,
+    currentModeRef,
     initialViewingModeRef,
     initialViewingReconnectRetryRef,
     initialViewingRestoreRef,
@@ -145,10 +146,15 @@ const clearViewingSession = useCallback(() => {
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (
-          !data?.messages?.length ||
           viewingSessionIdRef.current ||
           loadDbSessionId() !== prevDbSid
         ) {
+          return;
+        }
+        if (typeof data?.max_seq === "number") {
+          lastSeqRef.current = data.max_seq;
+        }
+        if (!data?.messages?.length) {
           return;
         }
         const mapped = data.messages.map((m: Record<string, unknown>) =>
@@ -167,7 +173,9 @@ const clearViewingSession = useCallback(() => {
           return;
         }
         if (s?.chat_mode) {
-          onModeChangedRef.current?.(normalizeChatMode(s.chat_mode));
+          const restored = normalizeChatMode(s.chat_mode);
+          currentModeRef.current = restored;
+          onModeChangedRef.current?.(restored);
         }
       })
       .catch(() => {});
