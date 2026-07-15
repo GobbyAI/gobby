@@ -418,3 +418,17 @@ Interactive). Binary transition #9; daemon restarted 05:01 CDT. Attempt-12
 zero frontmatter-degraded aggregates. Residue: _ownership.md reused its
 attempt-11 degraded copy — reuse keys on module-link set and ignores the
 degraded flag; filed as a follow-up bug under #17713.
+
+## 2026-07-15 ~09:40 CDT — #17531 bakeoff COMPLETE: three arms published, judged, evidence committed
+Arm G (default feature_high = gpt-5.5@xhigh, no candidate flag) ran 06:55-09:02
+CDT, single attempt, END exit=0: all aggregates generated (its _architecture.md
+agentic request stalled server-side ~50min with no daemon log before a client
+retry completed it — follow-up under #17713). Gate: O-vs-G file substrate
+byte-identical except 31 live-index-drift regenerations (disclosed, list
+saved); S-vs-O 456 (disclosed). Blind pairwise judging (3 chapters x 3 pairs x
+2 judges, labels randomized): 18/18 calls succeeded, judges unanimous on all 9
+comparisons — S 8 wins, O 8, G 2; opus swept gpt-5.5 6-0; sonnet edged opus
+4-2. Verdict: Claude tiers decisively beat the gpt-5.5 default for narrative
+aggregates; sonnet remains the sensible default candidate; opus wins
+troubleshooting-style chapters and uniquely added 10-build-packaging. Evidence
+doc: docs/evidence/wiki-bakeoff-2026-07/model-tier-narrative.md.
