@@ -768,6 +768,7 @@ class TestInitSubsystems:
         services = RecordingServices()
         tracker = RecordingTracker()
         runner = SimpleNamespace(
+            config=SimpleNamespace(code_index=SimpleNamespace(enabled=False)),
             http_server=SimpleNamespace(services=services),
             message_processor=SimpleNamespace(start=AsyncMock(side_effect=message_start)),
             communications_manager=SimpleNamespace(
@@ -916,7 +917,10 @@ class TestShutdownDaemonServices:
     @pytest.mark.asyncio
     async def test_late_subsystem_init_cannot_activate_after_shutdown_starts(self) -> None:
         services = SimpleNamespace(startup_ready=False, shutdown_in_progress=False)
-        runner = SimpleNamespace(http_server=SimpleNamespace(services=services))
+        runner = SimpleNamespace(
+            config=SimpleNamespace(code_index=SimpleNamespace(enabled=False)),
+            http_server=SimpleNamespace(services=services),
+        )
 
         async def begin_shutdown_during_pipeline_recovery(
             _runner: object,
