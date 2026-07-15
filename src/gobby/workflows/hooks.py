@@ -70,6 +70,7 @@ _TOOL_CONTEXT_REHYDRATION_SOURCES = frozenset(
         SessionSource.DROID,
     }
 )
+_MAX_PENDING_TOOL_CONTEXTS_PER_SESSION = 100
 
 
 def _is_turn_start_event(event_type: HookEventType | str) -> bool:
@@ -295,7 +296,14 @@ class WorkflowHookHandler:
 
         cache_key = self._tool_context_session_key(source, session_id)
         with self._tool_context_lock:
-            self._tool_contexts.setdefault(cache_key, []).append(snapshot)
+            pending = self._tool_contexts.setdefault(cache_key, [])
+            pending.append(snapshot)
+            if len(pending) > _MAX_PENDING_TOOL_CONTEXTS_PER_SESSION:
+                evicted = pending.pop(0)
+                for identifier in evicted.get("_ids", []):
+                    id_key = (cache_key, identifier)
+                    if self._tool_context_by_id.get(id_key) is evicted:
+                        self._tool_context_by_id.pop(id_key, None)
             for identifier in snapshot.get("_ids", []):
                 self._tool_context_by_id[(cache_key, identifier)] = snapshot
 
@@ -379,7 +387,7 @@ class WorkflowHookHandler:
         ):
             return
 
-        if event.event_type == HookEventType.SESSION_END:
+        if event.event_type == HookEventType.SESSION_END or _is_turn_end_event(event.event_type):
             self._clear_tool_context(event.source, session_id)
             return
 

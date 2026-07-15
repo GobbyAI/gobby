@@ -11,7 +11,10 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.git_utils import DirtyFiles
-from gobby.workflows.hooks import WorkflowHookHandler
+from gobby.workflows.hooks import (
+    _MAX_PENDING_TOOL_CONTEXTS_PER_SESSION,
+    WorkflowHookHandler,
+)
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
@@ -138,6 +141,61 @@ def test_pending_tool_context_matches_direct_proxy_event(
         PLATFORM_SESSION_ID,
         proxy_data,
     )
+
+
+@pytest.mark.parametrize("event_type", [HookEventType.AFTER_AGENT, HookEventType.STOP])
+def test_turn_end_clears_stale_tool_context(
+    handler: WorkflowHookHandler,
+    event_type: HookEventType,
+) -> None:
+    before_event = _event(
+        HookEventType.BEFORE_TOOL,
+        {
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {"server_name": "gobby-tasks", "tool_name": "claim_task"},
+            "tool_use_id": "stale-tool",
+        },
+        source=SessionSource.CODEX,
+    )
+    handler._sync_tool_context(before_event, PLATFORM_SESSION_ID)
+
+    handler._sync_tool_context(
+        _event(event_type, {}, source=SessionSource.CODEX),
+        PLATFORM_SESSION_ID,
+    )
+    after_event = _event(HookEventType.AFTER_TOOL, {}, source=SessionSource.CODEX)
+    handler._sync_tool_context(after_event, PLATFORM_SESSION_ID)
+
+    assert after_event.data == {}
+    assert "_tool_context_rehydrated" not in after_event.metadata
+
+
+def test_pending_tool_context_is_bounded_per_session(handler: WorkflowHookHandler) -> None:
+    contexts = [
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": f"command-{index}"},
+            "tool_use_id": f"tool-{index}",
+        }
+        for index in range(_MAX_PENDING_TOOL_CONTEXTS_PER_SESSION + 1)
+    ]
+
+    for context in contexts:
+        handler._remember_tool_context(SessionSource.CODEX, PLATFORM_SESSION_ID, context)
+
+    cache_key = handler._tool_context_session_key(SessionSource.CODEX, PLATFORM_SESSION_ID)
+    assert len(handler._tool_contexts[cache_key]) == _MAX_PENDING_TOOL_CONTEXTS_PER_SESSION
+    assert not handler.has_pending_tool_context(
+        SessionSource.CODEX,
+        PLATFORM_SESSION_ID,
+        contexts[0],
+    )
+    assert handler.has_pending_tool_context(
+        SessionSource.CODEX,
+        PLATFORM_SESSION_ID,
+        contexts[-1],
+    )
+    assert (cache_key, "tool-0") not in handler._tool_context_by_id
 
 
 @pytest.mark.parametrize(
