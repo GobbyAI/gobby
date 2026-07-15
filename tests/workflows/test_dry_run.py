@@ -96,10 +96,20 @@ class TestWorkflowNotFound:
 
 class TestLifecycleType:
     @pytest.mark.asyncio
+    async def test_step_type_uses_definition_contract(self, mock_loader: MagicMock) -> None:
+        definition = _make_definition(steps=[_make_step("init")], wf_type="step")
+        mock_loader.load_workflow.return_value = definition
+
+        result = await evaluate_workflow("step-wf", mock_loader)
+
+        assert result.workflow_type == "step"
+
+    @pytest.mark.asyncio
     async def test_lifecycle_type_info(self, mock_loader: MagicMock) -> None:
         """Always-on workflows get info-level type notice."""
         definition = WorkflowDefinition(
             name="lifecycle-wf",
+            type="lifecycle",
             enabled=True,
             steps=[_make_step("init")],
         )
@@ -108,6 +118,7 @@ class TestLifecycleType:
         result = await evaluate_workflow("lifecycle-wf", mock_loader)
 
         info_items = [i for i in result.items if i.code == "ALWAYS_ON"]
+        assert result.workflow_type == "lifecycle"
         assert len(info_items) == 1
         assert info_items[0].level == "info"
 
@@ -196,14 +207,23 @@ class TestStructuralValidation:
         assert unreachable_items[0].detail["step"] == "orphan"
 
     @pytest.mark.asyncio
-    async def test_dead_end_non_terminal(self, mock_loader: MagicMock) -> None:
-        """DEAD_END_STEP warning for non-final step with no transitions."""
+    async def test_dead_end_uses_runtime_exit_condition(self, mock_loader: MagicMock) -> None:
+        """Only a step selected by the runtime exit condition is terminal."""
         steps = [
-            _make_step("start", transitions=[{"to": "dead", "when": "true"}]),
-            _make_step("dead"),  # No transitions, not last
-            _make_step("end"),  # Last step, dead-end is OK
+            _make_step(
+                "start",
+                transitions=[
+                    {"to": "dead", "when": "vars.failed"},
+                    {"to": "complete", "when": "vars.done"},
+                ],
+            ),
+            _make_step("dead"),
+            _make_step("complete"),
         ]
-        definition = _make_definition(steps=steps)
+        definition = _make_definition(
+            steps=steps,
+            exit_condition="current_step == 'complete'",
+        )
         mock_loader.load_workflow.return_value = definition
 
         result = await evaluate_workflow("dead-end", mock_loader)
@@ -211,6 +231,22 @@ class TestStructuralValidation:
         dead_items = [i for i in result.warnings if i.code == "DEAD_END_STEP"]
         assert len(dead_items) == 1
         assert dead_items[0].detail["step"] == "dead"
+
+    @pytest.mark.asyncio
+    async def test_last_step_is_not_implicitly_terminal(self, mock_loader: MagicMock) -> None:
+        """Step order does not grant runtime exit semantics."""
+        definition = _make_definition(
+            steps=[
+                _make_step("start", transitions=[{"to": "last", "when": "true"}]),
+                _make_step("last"),
+            ]
+        )
+        mock_loader.load_workflow.return_value = definition
+
+        result = await evaluate_workflow("positional-terminal", mock_loader)
+
+        dead_items = [i for i in result.warnings if i.code == "DEAD_END_STEP"]
+        assert [item.detail["step"] for item in dead_items] == ["last"]
 
     @pytest.mark.asyncio
     async def test_duplicate_step_names(self, mock_loader: MagicMock) -> None:
@@ -641,6 +677,27 @@ class TestLifecyclePath:
         result = await evaluate_workflow("linear", mock_loader)
 
         assert result.lifecycle_path == ["claim_task", "work", "report", "shutdown", "complete"]
+
+    @pytest.mark.asyncio
+    async def test_lifecycle_path_includes_all_branches(self, mock_loader: MagicMock) -> None:
+        """The trace includes every reachable branch in transition order."""
+        steps = [
+            _make_step(
+                "start",
+                transitions=[
+                    {"to": "success", "when": "vars.ok"},
+                    {"to": "failure", "when": "not vars.ok"},
+                ],
+            ),
+            _make_step("success", transitions=[{"to": "done", "when": "true"}]),
+            _make_step("failure", transitions=[{"to": "done", "when": "true"}]),
+            _make_step("done"),
+        ]
+        mock_loader.load_workflow.return_value = _make_definition(steps=steps)
+
+        result = await evaluate_workflow("branching", mock_loader)
+
+        assert result.lifecycle_path == ["start", "success", "failure", "done"]
 
 
 class TestHappyPath:

@@ -196,7 +196,7 @@ async def evaluate_workflow(
         )
         return result
 
-    result.workflow_type = "enabled" if definition.enabled else "on-demand"
+    result.workflow_type = definition.type
 
     for mismatch in runtime_resolution_mismatches(name, workflow_loader, project_id):
         result.items.append(
@@ -417,7 +417,7 @@ def _check_structure(definition: WorkflowDefinition, result: WorkflowEvaluation)
                     )
                 )
 
-    # Dead-end steps (non-terminal steps with no transitions)
+    # Dead-end steps (steps that cannot transition or satisfy a step-based exit)
     exit_condition_names: set[str] = set()
     if definition.exit_condition:
         # Parse exit_condition for step name references (simple heuristic)
@@ -425,19 +425,17 @@ def _check_structure(definition: WorkflowDefinition, result: WorkflowEvaluation)
             if sn in definition.exit_condition:
                 exit_condition_names.add(sn)
 
-    last_step_name = step_names[-1] if step_names else None
     for step in steps:
-        if (
-            not step.transitions
-            and step.name != last_step_name
-            and step.name not in exit_condition_names
-        ):
+        if not step.transitions and step.name not in exit_condition_names:
             result.items.append(
                 EvaluationItem(
                     layer="structure",
                     level="warning",
                     code="DEAD_END_STEP",
-                    message=f"Step '{step.name}' has no transitions and is not the final step",
+                    message=(
+                        f"Step '{step.name}' has no transitions and is not selected by the "
+                        "workflow exit condition"
+                    ),
                     detail={"step": step.name},
                 )
             )
@@ -956,22 +954,27 @@ def _build_step_trace(definition: WorkflowDefinition, result: WorkflowEvaluation
 
 
 def _build_lifecycle_path(definition: WorkflowDefinition, result: WorkflowEvaluation) -> None:
-    """Build primary lifecycle path via first transitions."""
+    """List all reachable lifecycle steps in breadth-first transition order."""
     if not definition.steps:
         return
 
     step_map = {s.name: s for s in definition.steps}
     path: list[str] = []
     visited: set[str] = set()
-    current = definition.steps[0].name
+    queue: deque[str] = deque([definition.steps[0].name])
 
-    while current and current not in visited:
+    while queue:
+        current = queue.popleft()
+        if current in visited:
+            continue
         visited.add(current)
         path.append(current)
         step = step_map.get(current)
-        if step and step.transitions:
-            current = step.transitions[0].to
-        else:
-            break
+        if step:
+            queue.extend(
+                transition.to
+                for transition in step.transitions
+                if transition.to in step_map and transition.to not in visited
+            )
 
     result.lifecycle_path = path

@@ -117,15 +117,15 @@ class TestWorkflowLoader:
         loader: WorkflowLoader,
         def_manager: LocalWorkflowDefinitionManager,
     ) -> None:
-        """Test loading a workflow with an invalid JSON shape returns None."""
+        """An existing workflow with an invalid JSON shape raises a load error."""
         def_manager.create(
             name="invalid",
             definition_json=json.dumps("bad workflow payload"),
             workflow_type="workflow",
         )
 
-        wf = await loader.load_workflow("invalid")
-        assert wf is None
+        with pytest.raises(ValueError, match="Failed to parse DB workflow 'invalid'"):
+            await loader.load_workflow("invalid")
 
     @pytest.mark.asyncio
     async def test_load_workflow_exception_handling(
@@ -133,7 +133,7 @@ class TestWorkflowLoader:
         loader: WorkflowLoader,
         def_manager: LocalWorkflowDefinitionManager,
     ) -> None:
-        """Test that parse errors during loading return None."""
+        """Definition validation errors remain distinct from a missing workflow."""
         # Insert data that will fail WorkflowDefinition parsing (missing name)
         def_manager.create(
             name="bad_parse",
@@ -141,8 +141,8 @@ class TestWorkflowLoader:
             workflow_type="workflow",
         )
 
-        result = await loader.load_workflow("bad_parse")
-        assert result is None
+        with pytest.raises(ValueError, match="Failed to parse DB workflow 'bad_parse'"):
+            await loader.load_workflow("bad_parse")
 
     @pytest.mark.asyncio
     async def test_load_workflow_with_project_id(
