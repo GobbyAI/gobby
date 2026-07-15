@@ -30,28 +30,28 @@
 
 /* Headings */
 .message-content h1 {
-  font-size: 1.75em;
+  font-size: var(--text-3xl);
   font-weight: 600;
   margin: 1.5rem 0 0.5rem;
 }
 .message-content h2 {
-  font-size: 1.5em;
+  font-size: var(--text-2xl);
   font-weight: 600;
   margin: 1.5rem 0 0.5rem;
 }
 .message-content h3 {
-  font-size: 1.25em;
+  font-size: var(--text-xl);
   font-weight: 600;
   margin: 1.25rem 0 0.5rem;
 }
 .message-content h4 {
-  font-size: 1.1em;
+  font-size: var(--text-lg);
   font-weight: 600;
   margin: 1rem 0 0.5rem;
 }
 .message-content h5,
 .message-content h6 {
-  font-size: 1em;
+  font-size: var(--text-base);
   font-weight: 600;
   margin: 1rem 0 0.5rem;
 }
