@@ -408,7 +408,7 @@ function parseClaudeModelInfo(model: ProviderModelOption): ParsedModelInfo {
     displayLabel: family
       ? `${titleCase(family)}${versionParts.length > 0 ? ` ${versionParts.join(".")}` : ""}`
       : humanizeFallbackModelLabel(model.label || model.value),
-    strengthRank: familyScore + versionScore(versionParts),
+    strengthRank: familyScore * 10_000 + versionScore(versionParts),
     versionParts,
     releaseDate,
   };
@@ -524,6 +524,12 @@ function compareResolvedModels(
 ): number {
   const leftParsed = left._parsed ?? parseGenericModelInfo(left);
   const rightParsed = right._parsed ?? parseGenericModelInfo(right);
+  const leftIsDefault = left.is_default === true;
+  const rightIsDefault = right.is_default === true;
+
+  if (leftIsDefault !== rightIsDefault) {
+    return leftIsDefault ? -1 : 1;
+  }
 
   if (leftParsed.strengthRank !== rightParsed.strengthRank) {
     return rightParsed.strengthRank - leftParsed.strengthRank;
@@ -539,10 +545,6 @@ function compareResolvedModels(
 
   if (leftParsed.releaseDate !== rightParsed.releaseDate) {
     return (rightParsed.releaseDate ?? "").localeCompare(leftParsed.releaseDate ?? "");
-  }
-
-  if (left.is_default !== right.is_default) {
-    return left.is_default ? -1 : 1;
   }
 
   return left.label.localeCompare(right.label);

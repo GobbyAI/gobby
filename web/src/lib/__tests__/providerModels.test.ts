@@ -112,6 +112,59 @@ describe("providerModels", () => {
     expect(getPreferredModelForProvider(catalog, "claude")).toBe("opus");
   });
 
+  it("ranks Claude model family ahead of version", () => {
+    const claudeCatalog: ProviderModelEntry[] = [
+      {
+        provider: "claude",
+        available: true,
+        source: "live",
+        models: [
+          { value: "opus", label: "Opus", canonical_id: "claude-opus-4-1" },
+          { value: "haiku", label: "Haiku", canonical_id: "claude-haiku-4-5" },
+        ],
+      },
+    ];
+
+    expect(getPreferredModelForProvider(claudeCatalog, "claude")).toBe("opus");
+  });
+
+  it("recognizes Fable as the strongest Claude family", () => {
+    const claudeCatalog: ProviderModelEntry[] = [
+      {
+        provider: "claude",
+        available: true,
+        source: "live",
+        models: [
+          { value: "fable", label: "Fable", canonical_id: "claude-fable-5" },
+          { value: "opus", label: "Opus", canonical_id: "claude-opus-5" },
+        ],
+      },
+    ];
+
+    expect(getPreferredModelForProvider(claudeCatalog, "claude")).toBe("fable");
+  });
+
+  it("prefers the provider-declared default over heuristic ranking", () => {
+    const claudeCatalog: ProviderModelEntry[] = [
+      {
+        provider: "claude",
+        available: true,
+        source: "live",
+        models: [
+          { value: "fable", label: "Fable", canonical_id: "claude-fable-5" },
+          {
+            value: "haiku",
+            label: "Haiku",
+            canonical_id: "claude-haiku-4-5",
+            is_default: true,
+          },
+        ],
+      },
+    ];
+
+    expect(getPreferredModelForProvider(claudeCatalog, "claude")).toBe("haiku");
+  });
+
   it("resolves provider/model pairs using canonical model identifiers", () => {
     expect(
       resolveProviderModelPair(catalog, {
