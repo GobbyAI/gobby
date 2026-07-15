@@ -83,6 +83,11 @@ class ApprovalManager:
         if not step.approval or not step.approval.required:
             return
 
+        # Approval consumption resets the step for execution. The persisted
+        # timestamp makes the gate single-use when the pipeline resumes.
+        if step_execution.approved_at is not None:
+            return
+
         # Generate unique approval token
         token = secrets.token_urlsafe(24)
 
@@ -163,7 +168,7 @@ class ApprovalManager:
         step = await self._run_db(
             self.execution_manager.consume_step_approval,
             token,
-            status=StepStatus.COMPLETED,
+            status=StepStatus.PENDING,
             approved_by=approved_by,
         )
         if not step:

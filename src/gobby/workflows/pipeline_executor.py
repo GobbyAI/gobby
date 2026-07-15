@@ -509,13 +509,9 @@ class PipelineExecutor(
                             context["steps"][step.id] = {"output": None}
                             continue
 
-                        # If waiting approval, check if we should check gate again
-                        # If we are resuming, it might have been approved
+                        # A still-waiting step will raise ApprovalRequired again.
+                        # Approved steps are reset to PENDING and execute below.
                         if step_execution.status == StepStatus.WAITING_APPROVAL:
-                            # If the step is still marked as waiting approval in DB,
-                            # checking the gate will just re-raise ApprovalRequired.
-                            # If it was approved, status should be COMPLETED.
-                            # So we can just proceed to check/execute.
                             pass
 
                     # Create new step execution if not exists

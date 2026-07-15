@@ -396,7 +396,7 @@ class TestApproveMethod:
         assert result.status == ExecutionStatus.WAITING_APPROVAL
         mock_execution_manager.consume_step_approval.assert_called_once_with(
             "test-token-xyz",
-            status=StepStatus.COMPLETED,
+            status=StepStatus.PENDING,
             approved_by="user@example.com",
         )
 
@@ -453,7 +453,7 @@ class TestApproveMethod:
         assert result.status == ExecutionStatus.WAITING_APPROVAL
         mock_execution_manager.consume_step_approval.assert_called_once_with(
             "test-token-xyz",
-            status=StepStatus.COMPLETED,
+            status=StepStatus.PENDING,
             approved_by="user@example.com",
         )
 
@@ -761,7 +761,7 @@ class TestApprovalReplayIntegration:
         step = manager.get_steps_for_execution(execution_id)[0]
         assert execution is not None
         assert execution.status == ExecutionStatus.COMPLETED
-        assert step.status == StepStatus.COMPLETED
+        assert step.status == StepStatus.PENDING
         assert step.approval_token is None
 
     async def test_approve_after_reject_cannot_rewrite_rejected_step(
@@ -824,5 +824,5 @@ class TestApprovalReplayIntegration:
         assert sum(result is None for result in results) == 1
         assert sum(isinstance(result, ValueError) for result in results) == 1
         step = manager.get_steps_for_execution(execution_id)[0]
-        assert step.status == StepStatus.COMPLETED
+        assert step.status == StepStatus.PENDING
         assert step.approval_token is None

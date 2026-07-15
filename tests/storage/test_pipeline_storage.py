@@ -611,7 +611,7 @@ class TestGetByToken:
     @pytest.mark.parametrize(
         ("decision", "approved_by", "error"),
         [
-            (StepStatus.COMPLETED, "reviewer", None),
+            (StepStatus.PENDING, "reviewer", None),
             (StepStatus.FAILED, None, "Rejected by reviewer"),
         ],
     )
@@ -641,6 +641,7 @@ class TestGetByToken:
         assert consumed.status == decision
         assert consumed.approval_token is None
         assert consumed.approved_by == approved_by
+        assert (consumed.approved_at is not None) is (decision == StepStatus.PENDING)
         assert consumed.error == error
         assert manager.consume_step_approval("single-use-token", status=decision) is None
 
@@ -651,7 +652,7 @@ class TestGetByToken:
         step = manager.create_step_execution(execution_id=execution.id, step_id="approve")
         manager.update_step_execution(step.id, approval_token="stale-token")
 
-        assert manager.consume_step_approval("stale-token", status=StepStatus.COMPLETED) is None
+        assert manager.consume_step_approval("stale-token", status=StepStatus.PENDING) is None
         unchanged = manager.get_step_by_approval_token("stale-token")
         assert unchanged is not None
         assert unchanged.status == StepStatus.PENDING
