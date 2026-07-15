@@ -391,15 +391,15 @@ rules:
         assert deleted is not None
         assert deleted.deleted_at is not None
 
-        # Re-sync — should respect the soft-delete and skip
+        # Re-sync restores the bundled definition.
         result2 = sync_bundled_rules(db, rules_dir)
-        assert result2["skipped"] == 1
+        assert result2["updated"] == 1
+        assert manager.get_by_name("delete-me") is not None
         assert result2["synced"] == 0
 
-        # Verify it's still soft-deleted (not restored)
-        still_deleted = manager.get_by_name("delete-me", include_deleted=True)
-        assert still_deleted is not None
-        assert still_deleted.deleted_at is not None
+        restored = manager.get_by_name("delete-me", include_deleted=True)
+        assert restored is not None
+        assert restored.deleted_at is None
 
 
 class TestInvalidRuleYaml:

@@ -27,7 +27,7 @@ def _create_rule(manager, name, *, source="installed", tags=None, enabled=False,
     tags = tags or ["gobby"]
     definition = {
         "event": "before_tool",
-        "effects": [{"type": "inject_context", "content": "test"}],
+        "effects": [{"type": "inject_context", "template": "test"}],
     }
     return manager.create(
         name=name,
@@ -66,7 +66,7 @@ class TestOrphanTagIsolation:
         rules_dir.mkdir()
         (rules_dir / "retained.yaml").write_text(
             "rules:\n  retained-rule:\n    event: before_tool\n    effect:\n"
-            "      type: inject_context\n      content: retained\n"
+            "      type: inject_context\n      template: retained\n"
         )
 
         result = sync_bundled_rules(temp_db, rules_path=rules_dir)
@@ -94,7 +94,7 @@ class TestOrphanTagIsolation:
         rules_dir.mkdir()
         (rules_dir / "retained.yaml").write_text(
             "rules:\n  retained-rule:\n    event: before_tool\n    effect:\n"
-            "      type: inject_context\n      content: retained\n"
+            "      type: inject_context\n      template: retained\n"
         )
 
         sync_bundled_rules(temp_db, rules_path=rules_dir)
@@ -146,7 +146,7 @@ class TestNameCollisionPrevention:
             "    event: before_tool\n"
             "    effect:\n"
             "      type: inject_context\n"
-            "      content: test\n"
+            "      template: test\n"
         )
 
         # Sync user rules — should skip collision
@@ -169,7 +169,7 @@ class TestSyncUserRules:
             "    event: before_tool\n"
             "    effect:\n"
             "      type: inject_context\n"
-            "      content: test\n"
+            "      template: test\n"
         )
 
         result = sync_bundled_rules(temp_db, rules_path=rules_dir, tag="user")
@@ -216,11 +216,11 @@ class TestMultiRootUserSync:
 
         (project_rules / "project.yaml").write_text(
             "rules:\n  project-rule:\n    event: before_tool\n    effect:\n"
-            "      type: inject_context\n      content: project\n"
+            "      type: inject_context\n      template: project\n"
         )
         (global_rules / "global.yaml").write_text(
             "rules:\n  global-rule:\n    event: before_tool\n    effect:\n"
-            "      type: inject_context\n      content: global\n"
+            "      type: inject_context\n      template: global\n"
         )
         (project_variables / "project.yaml").write_text(
             "variables:\n  project_variable:\n    value: project\n"

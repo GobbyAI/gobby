@@ -132,7 +132,7 @@ rules:
         imported_file = tmp_path / "imported.yaml"
         imported_file.write_text(
             "rules:\n  imported-rule:\n    event: turn_start\n    effect:\n"
-            "      type: inject_context\n      content: imported\n"
+            "      type: inject_context\n      template: imported\n"
         )
         sync_rule_file(db, imported_file)
 
@@ -141,13 +141,13 @@ rules:
         bundled_file = bundled_dir / "bundled.yaml"
         bundled_file.write_text(
             "rules:\n  old-bundled-rule:\n    event: turn_start\n    effect:\n"
-            "      type: inject_context\n      content: old\n"
+            "      type: inject_context\n      template: old\n"
         )
         sync_bundled_rules(db, rules_path=bundled_dir)
 
         bundled_file.write_text(
             "rules:\n  new-bundled-rule:\n    event: turn_start\n    effect:\n"
-            "      type: inject_context\n      content: new\n"
+            "      type: inject_context\n      template: new\n"
         )
         result = sync_bundled_rules(db, rules_path=bundled_dir)
 
@@ -302,7 +302,7 @@ rules:
         rule_file = rules_dir / "rule.yaml"
         rule_file.write_text(
             "rules:\n  retained-rule:\n    event: before_tool\n    effect:\n"
-            "      type: inject_context\n      content: retained\n"
+            "      type: inject_context\n      template: retained\n"
         )
         sync_bundled_rules(db, rules_path=rules_dir)
 
@@ -324,7 +324,7 @@ rules:
         rule_file = rules_dir / "rule.yaml"
         rule_file.write_text(
             "rules:\n  retained-rule:\n    event: before_tool\n    effect:\n"
-            "      type: inject_context\n      content: retained\n"
+            "      type: inject_context\n      template: retained\n"
         )
         sync_bundled_rules(db, rules_path=rules_dir)
         rule_file.unlink()
@@ -343,7 +343,7 @@ rules:
         rules_dir.mkdir()
         (rules_dir / "restore.yaml").write_text(
             "rules:\n  restore-rule:\n    event: before_tool\n    effect:\n"
-            "      type: inject_context\n      content: restored\n"
+            "      type: inject_context\n      template: restored\n"
         )
         sync_bundled_rules(db, rules_path=rules_dir)
         row = manager.get_by_name("restore-rule")
