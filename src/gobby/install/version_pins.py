@@ -4,7 +4,7 @@ from __future__ import annotations
 
 MANAGED_BIN_VERSION_PINS: dict[str, str] = {
     # Floors track published helper release tags.
-    "ghook": "0.7.1",
+    "ghook": "0.7.2",
     "gcode": "1.5.0",
     "gwiki": "0.8.0",
 }
