@@ -40,6 +40,7 @@ export function useSessionDetail(sessionId: string | null) {
   const [messages, setMessages] = useState<SessionMessage[]>([])
   const [transcriptStatus, setTranscriptStatus] = useState<TranscriptStatus | null>(null)
   const [sessionError, setSessionError] = useState<string | null>(null)
+  const [transcriptDownloadUrl, setTranscriptDownloadUrl] = useState<string | null>(null)
   const [messageSource, setMessageSourceState] = useState<MessageSource>(null)
   const [totalMessages, setTotalMessages] = useState(0)
   const [isLoading, setIsLoading] = useState(false)
@@ -136,6 +137,7 @@ export function useSessionDetail(sessionId: string | null) {
     setMessages([])
     setTranscriptStatus(null)
     setSessionError(error)
+    setTranscriptDownloadUrl(null)
     setTotalMessages(0)
     setIsLoading(false)
     setMessageSource(null)
@@ -151,6 +153,7 @@ export function useSessionDetail(sessionId: string | null) {
 
   const clearSessionError = useCallback(() => {
     setSessionError(null)
+    setTranscriptDownloadUrl(null)
   }, [])
 
   const loadSessionDetail = useCallback(async (
@@ -172,6 +175,7 @@ export function useSessionDetail(sessionId: string | null) {
       setIsLoading(true)
     }
     setSessionError(null)
+    setTranscriptDownloadUrl(null)
 
     try {
       const sessionData = await fetchSessionMetadata(activeSessionId)
@@ -193,6 +197,19 @@ export function useSessionDetail(sessionId: string | null) {
       const tailWindowVersion = tailWindowVersionRef.current
       const renderedResult = await fetchRenderedSessionMessages(activeSessionId, 0, 'tail')
       if (!isCurrent() || tailWindowVersionRef.current !== tailWindowVersion) return
+      if (!renderedResult.ok) {
+        setSessionError(
+          renderedResult.status === 413
+            ? 'Transcript is too large to display.'
+            : 'Failed to load session messages',
+        )
+        setTranscriptDownloadUrl(
+          renderedResult.status === 413
+            ? `${import.meta.env.VITE_API_BASE_URL || ''}/api/sessions/${activeSessionId}/transcript`
+            : null,
+        )
+        return
+      }
 
       const shouldUseChatMessages =
         sessionData.session_type === 'web_chat' &&
@@ -507,6 +524,7 @@ export function useSessionDetail(sessionId: string | null) {
   return {
     session,
     sessionError,
+    transcriptDownloadUrl,
     clearSessionError,
     messages,
     transcriptStatus,

@@ -19,6 +19,7 @@ import type { SessionMessage } from "../../../hooks/useSessionDetail";
 type SessionDetailMock = {
   session: GobbySession | null;
   sessionError: string | null;
+  transcriptDownloadUrl?: string | null;
   clearSessionError: () => void;
   messages: SessionMessage[];
   isLoading: boolean;
@@ -1420,7 +1421,8 @@ describe("SessionsTab", () => {
     const clearSessionError = vi.fn();
     mockUseSessionDetail.mockReturnValue({
       session: PAUSED_SESSION,
-      sessionError: "Failed to load session detail",
+      sessionError: "Transcript is too large to display.",
+      transcriptDownloadUrl: "/api/sessions/paused-1/transcript",
       clearSessionError,
       messages: [],
       isLoading: false,
@@ -1431,9 +1433,15 @@ describe("SessionsTab", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("alert")).toHaveTextContent(
-        "Failed to load session detail",
+        "Transcript is too large to display.",
       );
     });
+    expect(
+      screen.getByRole("link", { name: "Download transcript instead" }),
+    ).toHaveAttribute(
+      "href",
+      "/api/sessions/paused-1/transcript",
+    );
 
     fireEvent.click(
       screen.getByRole("button", { name: "Dismiss session error" }),

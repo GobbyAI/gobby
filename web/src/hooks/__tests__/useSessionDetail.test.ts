@@ -155,6 +155,59 @@ describe('useSessionDetail', () => {
     expect(result.current.totalMessages).toBe(941)
   })
 
+  it('surfaces a failed messages fetch instead of treating it as an empty transcript', async () => {
+    await loadModule()
+    mockFetch.mockJsonResponse(/^\/api\/sessions\/sess-failed$/, {
+      session: {
+        id: 'sess-failed',
+        external_id: 'failed-ext-1',
+        session_type: 'terminal',
+        transcript_path: '/tmp/failed.jsonl',
+        status: 'paused',
+      },
+    })
+    mockFetch.mockErrorResponse(
+      '/api/sessions/sess-failed/messages?limit=50&offset=0&order=tail',
+      500,
+    )
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const { result } = renderHook(() => useSessionDetail('sess-failed'))
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    expect(result.current.sessionError).toBe('Failed to load session messages')
+    expect(result.current.messages).toHaveLength(0)
+    expect(result.current.transcriptStatus).toBeNull()
+    expect(result.current.transcriptDownloadUrl).toBeNull()
+    expect(warnSpy).toHaveBeenCalledWith('Messages fetch returned 500')
+  })
+
+  it('offers the raw transcript download when rendered messages return 413', async () => {
+    await loadModule()
+    mockFetch.mockJsonResponse(/^\/api\/sessions\/sess-large$/, {
+      session: {
+        id: 'sess-large',
+        external_id: 'large-ext-1',
+        session_type: 'terminal',
+        transcript_path: '/tmp/large.jsonl',
+        status: 'paused',
+      },
+    })
+    mockFetch.mockErrorResponse(
+      '/api/sessions/sess-large/messages?limit=50&offset=0&order=tail',
+      413,
+    )
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const { result } = renderHook(() => useSessionDetail('sess-large'))
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    expect(result.current.sessionError).toBe('Transcript is too large to display.')
+    expect(result.current.transcriptDownloadUrl).toBe('/api/sessions/sess-large/transcript')
+  })
+
   it('upserts rendered session_message websocket events by message id', async () => {
     await loadModule()
     mockFetch.mockJsonResponse(/^\/api\/sessions\/sess-cli$/, {
