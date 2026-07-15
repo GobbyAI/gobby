@@ -10,7 +10,7 @@ import pytest
 
 from gobby.workflows.definitions import PipelineDefinition, PipelineStep
 from gobby.workflows.pipeline.renderer import StepRenderer
-from gobby.workflows.pipeline_state import ExecutionStatus
+from gobby.workflows.pipeline_state import ApprovalRequired, ExecutionStatus, StepStatus
 
 pytestmark = pytest.mark.unit
 
@@ -146,6 +146,60 @@ class TestExecuteNestedPipeline:
         context: dict = {"inputs": {}, "steps": {}}
         with pytest.raises(RuntimeError, match="No loader configured"):
             await executor._execute_nested_pipeline("child-pipeline", context, "proj-123")
+
+    @pytest.mark.asyncio
+    async def test_nested_pipeline_propagates_approval_required(
+        self, mock_db, mock_execution_manager, mock_llm_service, mock_loader
+    ) -> None:
+        """A child approval gate pauses the caller instead of becoming an error result."""
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+        )
+        executor.loader = AsyncMock()
+        executor.loader.load_pipeline.return_value = mock_loader.load_pipeline.return_value
+        approval = ApprovalRequired("child-execution", "approve", "token", "Review child")
+        executor.execute = AsyncMock(side_effect=approval)
+
+        with pytest.raises(ApprovalRequired) as exc_info:
+            await executor._execute_nested_pipeline(
+                "child-pipeline", {"inputs": {}, "steps": {}}, "proj-123"
+            )
+
+        assert exc_info.value is approval
+
+    @pytest.mark.asyncio
+    async def test_nested_pipeline_error_result_fails_parent_step(
+        self, mock_db, mock_execution_manager, mock_llm_service
+    ) -> None:
+        """An error result from a nested pipeline marks its parent step failed."""
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        pipeline = PipelineDefinition(
+            name="parent-pipeline",
+            steps=[PipelineStep(id="child", invoke_pipeline="child-pipeline")],
+        )
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+        )
+        executor._execute_step = AsyncMock(
+            return_value={"pipeline": "child-pipeline", "error": "child failed"}
+        )
+
+        with pytest.raises(RuntimeError, match="child failed"):
+            await executor.execute(pipeline=pipeline, inputs={}, project_id="proj-123")
+
+        statuses = [
+            call.kwargs.get("status")
+            for call in mock_execution_manager.update_step_execution.call_args_list
+        ]
+        assert StepStatus.FAILED in statuses
+        assert StepStatus.COMPLETED not in statuses
 
 
 class TestExecuteNestedPipelineDictForm:

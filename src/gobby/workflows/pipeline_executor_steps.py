@@ -305,6 +305,8 @@ class PipelineExecutorStepMixin:
                     pass
             return step_output
 
+        except ApprovalRequired:
+            raise
         except Exception as e:
             logger.error(f"Nested pipeline execution failed: {e}", exc_info=True)
             return {

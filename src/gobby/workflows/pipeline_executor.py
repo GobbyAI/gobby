@@ -601,6 +601,17 @@ class PipelineExecutor(
                             f"Step '{step.id}' failed with exit code {step_output['exit_code']}"
                         )
 
+                    if isinstance(step_output, dict) and "error" in step_output:
+                        error_msg = str(step_output["error"])
+                        context["steps"][step.id] = {"output": step_output}
+                        self.execution_manager.update_step_execution(
+                            step_execution_id=step_execution.id,
+                            status=StepStatus.FAILED,
+                            output_json=json_dumps(step_output),
+                            error=error_msg,
+                        )
+                        raise RuntimeError(f"Step '{step.id}' failed: {error_msg}")
+
                     # For exec steps with JSON stdout, merge parsed data into output
                     if isinstance(step_output, dict) and "stdout" in step_output:
                         try:
