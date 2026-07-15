@@ -126,6 +126,44 @@ describe("useChat viewed session state", () => {
     expect(attachMsg?.session_id).toBe("sess-view");
   });
 
+  it("clears a missing persisted viewed session and does not retry it on reconnect", async () => {
+    localStorage.setItem("gobby-viewing-session-id", "sess-missing");
+    localStorage.setItem("gobby-viewing-session-mode", "observe");
+
+    mockFetch.mockJsonResponse(
+      "/api/sessions/sess-missing/messages?limit=100&offset=0",
+      { messages: [] },
+    );
+    mockFetch.mockErrorResponse("/api/sessions/sess-missing", 404);
+    mockFetch.mockJsonResponse(
+      "/api/chat/test-conversation-id/messages?limit=100&after_seq=0",
+      { messages: [] },
+    );
+
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+
+    await waitFor(() => {
+      expect(result.current.viewingSessionId).toBeNull();
+      expect(result.current.conversationId).toBe("test-conversation-id");
+      expect(localStorage.getItem("gobby-viewing-session-id")).toBeNull();
+      expect(localStorage.getItem("gobby-viewing-session-mode")).toBeNull();
+    });
+
+    const metadataRequestCount = () =>
+      mockFetch.fn.mock.calls.filter(
+        ([input]) => requestUrl(input) === "/api/sessions/sess-missing",
+      ).length;
+    expect(metadataRequestCount()).toBe(1);
+
+    await act(async () => {
+      mockWs.instances[0].simulateOpen();
+      await Promise.resolve();
+    });
+
+    expect(metadataRequestCount()).toBe(1);
+  });
+
   it("restores a proxy-attached terminal session on mount", async () => {
     localStorage.setItem("gobby-viewing-session-id", "sess-proxy-restore");
     localStorage.setItem("gobby-viewing-session-mode", "proxy");

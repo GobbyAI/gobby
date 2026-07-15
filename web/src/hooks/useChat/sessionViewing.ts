@@ -80,131 +80,6 @@ export function useChatSessionViewing(params: UseChatSessionViewingParams) {
 
 const viewRequestSeqRef = useRef(0);
 
-// View a CLI session (read-only, no WS subscription — loads via REST)
-const viewSession = useCallback(
-  (sessionId: string, options?: ViewSessionOptions) => {
-    const forceRefresh = options?.forceRefresh ?? false;
-    clearFreshChatDraft();
-    // Skip if already viewing/attached to this session
-    if (
-      !forceRefresh &&
-      ((viewingSessionIdRef.current === sessionId &&
-        (viewingSessionMetaRef.current || messagesRef.current.length > 0)) ||
-        observedSessionIdRef.current === sessionId)
-    ) {
-      return;
-    }
-    const requestSeq = ++viewRequestSeqRef.current;
-    pendingAttachSessionIdRef.current = null;
-    const isCurrentRequest = () =>
-      viewRequestSeqRef.current === requestSeq &&
-      viewingSessionIdRef.current === sessionId;
-
-    // Detach from any active WS subscription first
-    const observedSessionId = observedSessionIdRef.current;
-    if (observedSessionId && observedSessionId !== sessionId) {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(
-          JSON.stringify({
-            type: "detach_from_session",
-            session_id: observedSessionId,
-          }),
-        );
-      }
-      observedSessionIdRef.current = null;
-      setObservedSessionId(null);
-      observedSessionMetaRef.current = null;
-      attachedSessionIdRef.current = null;
-      setAttachedSessionId(null);
-      attachedSessionMetaRef.current = null;
-      setAttachedSessionMeta(null);
-      clearPendingProxyMessages(
-        pendingProxyMessagesRef.current,
-        pendingProxySessionQueuesRef.current,
-      );
-      sessionInteractionModeRef.current = "none";
-      setProxyDeliveryNotice(null);
-      setSessionInteractionMode("none");
-    }
-
-    // Reset chat state
-    lastSeqRef.current = 0;
-    activeRequestIdRef.current = null;
-    setIsStreaming(false);
-    setIsThinking(false);
-    setMessages([]);
-    setIsLoadingMessages(true);
-    setProxyDeliveryNotice(null);
-    setContextUsage(buildContextUsageFromTotals({}));
-
-    // Set viewing state
-    viewingSessionIdRef.current = sessionId;
-    setViewingSessionId(sessionId);
-
-    // Fetch messages via REST
-    const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-    fetch(`${baseUrl}/api/sessions/${sessionId}/messages?limit=100&offset=0`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (!isCurrentRequest()) return;
-        const mapped = data?.messages?.length ? mapApiMessages(data.messages) : [];
-        setMessages(mapped);
-      })
-      .catch((err) => console.error("Failed to fetch session messages:", err))
-      .finally(() => {
-        if (isCurrentRequest()) setIsLoadingMessages(false);
-      });
-
-    // Fetch session metadata
-    const metadataFetchStartedAt = Date.now();
-    fetch(`${baseUrl}/api/sessions/${sessionId}`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        const s = data?.session;
-        if (!s || !isCurrentRequest()) return;
-          const ref = typeof s.seq_num === "number" ? `#${s.seq_num}` : null;
-        setSessionRef(ref);
-        const nextMeta: SessionObservationMeta = {
-          ref,
-          source: s.source || "unknown",
-          title: s.title || null,
-          status: s.status || "unknown",
-          canProxyAttach: canProxyAttachSessionRecord(s),
-          model: s.model || null,
-          reasoningEffort: s.reasoning_effort || null,
-          externalId: s.external_id || "",
-          chatMode: s.chat_mode || null,
-          gitBranch: s.git_branch || null,
-          contextWindow: s.context_window || null,
-          agentRunId: s.agent_run_id || null,
-          workflowName: s.workflow_name || null,
-          agentName: null,
-          sessionType: normalizeSessionType(s.session_type),
-        };
-        viewingSessionMetaRef.current = nextMeta;
-        setViewingSessionMeta(nextMeta);
-        if (nextMeta.agentRunId) {
-          void resolveAgentName(nextMeta.agentRunId).then((agentName) => {
-            if (!agentName || !isCurrentRequest()) return;
-            setViewingSessionMeta((prev) =>
-              prev && isCurrentRequest() ? { ...prev, agentName } : prev,
-            );
-          });
-        }
-        if (!shouldApplyHydratedUsage(sessionId, metadataFetchStartedAt)) {
-          return;
-        }
-        setContextUsage(computeContextUsageFromSessionData(s));
-      })
-      .catch((err) =>
-        console.error("Failed to fetch session metadata:", err),
-      );
-    // resolveAgentName is a stable useCallback (its own deps are []) — safe
-    // to reference here without re-creating the callback every render.
-  },
-  [resolveAgentName, setContextUsage, shouldApplyHydratedUsage],
-);
-
 // Clear viewing state and restore previous web chat
 const clearViewingSession = useCallback(() => {
   viewRequestSeqRef.current += 1;
@@ -298,6 +173,139 @@ const clearViewingSession = useCallback(() => {
       .catch(() => {});
   }
 }, [mainSessionMeta, setContextUsage]);
+
+// View a CLI session (read-only, no WS subscription — loads via REST)
+const viewSession = useCallback(
+  (sessionId: string, options?: ViewSessionOptions) => {
+    const forceRefresh = options?.forceRefresh ?? false;
+    clearFreshChatDraft();
+    // Skip if already viewing/attached to this session
+    if (
+      !forceRefresh &&
+      ((viewingSessionIdRef.current === sessionId &&
+        (viewingSessionMetaRef.current || messagesRef.current.length > 0)) ||
+        observedSessionIdRef.current === sessionId)
+    ) {
+      return;
+    }
+    const requestSeq = ++viewRequestSeqRef.current;
+    pendingAttachSessionIdRef.current = null;
+    const isCurrentRequest = () =>
+      viewRequestSeqRef.current === requestSeq &&
+      viewingSessionIdRef.current === sessionId;
+
+    // Detach from any active WS subscription first
+    const observedSessionId = observedSessionIdRef.current;
+    if (observedSessionId && observedSessionId !== sessionId) {
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(
+          JSON.stringify({
+            type: "detach_from_session",
+            session_id: observedSessionId,
+          }),
+        );
+      }
+      observedSessionIdRef.current = null;
+      setObservedSessionId(null);
+      observedSessionMetaRef.current = null;
+      attachedSessionIdRef.current = null;
+      setAttachedSessionId(null);
+      attachedSessionMetaRef.current = null;
+      setAttachedSessionMeta(null);
+      clearPendingProxyMessages(
+        pendingProxyMessagesRef.current,
+        pendingProxySessionQueuesRef.current,
+      );
+      sessionInteractionModeRef.current = "none";
+      setProxyDeliveryNotice(null);
+      setSessionInteractionMode("none");
+    }
+
+    // Reset chat state
+    lastSeqRef.current = 0;
+    activeRequestIdRef.current = null;
+    setIsStreaming(false);
+    setIsThinking(false);
+    setMessages([]);
+    setIsLoadingMessages(true);
+    setProxyDeliveryNotice(null);
+    setContextUsage(buildContextUsageFromTotals({}));
+
+    // Set viewing state
+    viewingSessionIdRef.current = sessionId;
+    setViewingSessionId(sessionId);
+
+    // Fetch messages via REST
+    const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
+    fetch(`${baseUrl}/api/sessions/${sessionId}/messages?limit=100&offset=0`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!isCurrentRequest()) return;
+        const mapped = data?.messages?.length ? mapApiMessages(data.messages) : [];
+        setMessages(mapped);
+      })
+      .catch((err) => console.error("Failed to fetch session messages:", err))
+      .finally(() => {
+        if (isCurrentRequest()) setIsLoadingMessages(false);
+      });
+
+    // Fetch session metadata
+    const metadataFetchStartedAt = Date.now();
+    fetch(`${baseUrl}/api/sessions/${sessionId}`)
+      .then((res) => {
+        if (res.status === 404 && isCurrentRequest()) {
+          initialViewingSessionIdRef.current = null;
+          initialViewingModeRef.current = "none";
+          clearViewingSession();
+          return null;
+        }
+        return res.ok ? res.json() : null;
+      })
+      .then((data) => {
+        const s = data?.session;
+        if (!s || !isCurrentRequest()) return;
+          const ref = typeof s.seq_num === "number" ? `#${s.seq_num}` : null;
+        setSessionRef(ref);
+        const nextMeta: SessionObservationMeta = {
+          ref,
+          source: s.source || "unknown",
+          title: s.title || null,
+          status: s.status || "unknown",
+          canProxyAttach: canProxyAttachSessionRecord(s),
+          model: s.model || null,
+          reasoningEffort: s.reasoning_effort || null,
+          externalId: s.external_id || "",
+          chatMode: s.chat_mode || null,
+          gitBranch: s.git_branch || null,
+          contextWindow: s.context_window || null,
+          agentRunId: s.agent_run_id || null,
+          workflowName: s.workflow_name || null,
+          agentName: null,
+          sessionType: normalizeSessionType(s.session_type),
+        };
+        viewingSessionMetaRef.current = nextMeta;
+        setViewingSessionMeta(nextMeta);
+        if (nextMeta.agentRunId) {
+          void resolveAgentName(nextMeta.agentRunId).then((agentName) => {
+            if (!agentName || !isCurrentRequest()) return;
+            setViewingSessionMeta((prev) =>
+              prev && isCurrentRequest() ? { ...prev, agentName } : prev,
+            );
+          });
+        }
+        if (!shouldApplyHydratedUsage(sessionId, metadataFetchStartedAt)) {
+          return;
+        }
+        setContextUsage(computeContextUsageFromSessionData(s));
+      })
+      .catch((err) =>
+        console.error("Failed to fetch session metadata:", err),
+      );
+    // resolveAgentName is a stable useCallback (its own deps are []) — safe
+    // to reference here without re-creating the callback every render.
+  },
+  [resolveAgentName, setContextUsage, shouldApplyHydratedUsage],
+);
 
 // Attach to a CLI session (interactive mode with WS subscription)
 const attachToSession = useCallback(
