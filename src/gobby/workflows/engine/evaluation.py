@@ -97,7 +97,7 @@ class EvaluationMixin:
             allowed_funcs: dict[str, Callable[..., Any]],
             context_parts: list[str],
             mcp_calls: list[dict[str, Any]],
-        ) -> bool: ...
+        ) -> str | None: ...
 
         def _check_catastrophic_failure(
             self,
@@ -314,7 +314,7 @@ class EvaluationMixin:
                     continue
 
                 # Apply non-block effects immediately
-                should_continue = await self._apply_effect(
+                inline_block_reason = await self._apply_effect(
                     effect,
                     row,
                     evaluation.variables,
@@ -323,8 +323,9 @@ class EvaluationMixin:
                     evaluation.context_parts,
                     evaluation.mcp_calls,
                 )
-                if not should_continue:
-                    break  # Inline dispatch failed - skip remaining effects
+                if inline_block_reason:
+                    rule_blocked = True
+                    block_gates.append(BlockGate(rule_name=row.name, reason=inline_block_reason))
 
             # Now apply deferred block (if any)
             if deferred_block is not None:

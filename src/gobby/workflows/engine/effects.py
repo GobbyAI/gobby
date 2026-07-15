@@ -95,12 +95,12 @@ class EffectsMixin:
         allowed_funcs: dict[str, Callable[..., Any]],
         context_parts: list[str],
         mcp_calls: list[dict[str, Any]],
-    ) -> bool:
+    ) -> str | None:
         """Apply a single non-block effect.
 
         Returns:
-            True to continue processing sibling effects, False to abort
-            remaining effects for this rule (e.g. inline mcp_call failed).
+            A block reason when an inline mcp_call matches its configured
+            blocking outcome, otherwise None.
         """
         if effect.type == "set_variable":
             self._apply_set_variable(effect, variables, ctx)
@@ -202,21 +202,34 @@ class EffectsMixin:
                             )
                         if formatted:
                             context_parts.append(formatted)
-                    elif not success:
-                        error = dr.get("result", {}).get("error", "unknown") if dr else "no result"
+                    if effect.block_on_success and success:
+                        return f"Intercepted by {effect.server}/{effect.tool} — see context below."
+                    if not success:
+                        call_result = dr.get("result") if isinstance(dr, dict) else None
+                        error = (
+                            call_result.get("error", "unknown")
+                            if isinstance(call_result, dict)
+                            else str(call_result or "no result")
+                        )
                         logger.warning(
                             f"Inline mcp_call {effect.server}/{effect.tool} failed "
-                            f"(rule {row.name}): {error} — aborting remaining effects",
+                            f"(rule {row.name}): {error}",
                         )
-                        return False
-                except Exception:
+                        if effect.block_on_failure:
+                            return (
+                                f"Auto-heal prerequisite failed: "
+                                f"{effect.server}/{effect.tool}: {error}"
+                            )
+                except Exception as exc:
                     logger.warning(
-                        f"Inline mcp_call {effect.server}/{effect.tool} raised "
-                        f"(rule {row.name}) — aborting remaining effects",
+                        f"Inline mcp_call {effect.server}/{effect.tool} raised (rule {row.name})",
                         exc_info=True,
                     )
-                    return False
-                return True
+                    if effect.block_on_failure:
+                        return (
+                            f"Auto-heal prerequisite failed: {effect.server}/{effect.tool}: {exc}"
+                        )
+                return None
 
             # Deferred dispatch (background, non-inject, or no dispatcher)
             mcp_calls.append(
@@ -332,7 +345,7 @@ class EffectsMixin:
 
                 context_parts.append(skill_fetch_directive(effect.skill))
 
-        return True
+        return None
 
     def _format_delivery_result(
         self,
