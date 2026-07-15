@@ -20,6 +20,11 @@ import psycopg
 
 from gobby.cli import postgres_bootstrap as _bootstrap
 from gobby.cli.postgres_bootstrap import InstallMode
+from gobby.code_index.bm25_health import (
+    render_bm25_status,
+    unavailable_bm25_status,
+    verify_bm25_indexes,
+)
 from gobby.config.bootstrap import BootstrapConfigError
 from gobby.utils.postgres_extensions import BASELINE_POSTGRES_EXTENSIONS
 
@@ -153,17 +158,20 @@ async def get_postgres_status(
             "error": bootstrap_error,
             "extensions": dict.fromkeys(BASELINE_POSTGRES_EXTENSIONS, False),
             "preload_libraries": [],
+            "code_index": unavailable_bm25_status(bootstrap_error),
         }
     if database_url is None:
+        error = f"{home / 'bootstrap.yaml'} does not define database_url"
         return {
             "available": False,
             "mode": active_mode,
             "dsn_host": None,
             "dsn_db": None,
             "healthy": False,
-            "error": f"{home / 'bootstrap.yaml'} does not define database_url",
+            "error": error,
             "extensions": dict.fromkeys(BASELINE_POSTGRES_EXTENSIONS, False),
             "preload_libraries": [],
+            "code_index": unavailable_bm25_status(error),
         }
 
     payload: dict[str, Any] = {
@@ -177,6 +185,7 @@ async def get_postgres_status(
         ),
         "extensions": dict.fromkeys(BASELINE_POSTGRES_EXTENSIONS, False),
         "preload_libraries": [],
+        "code_index": unavailable_bm25_status("PostgreSQL status connection unavailable"),
     }
     if bootstrap_error:
         payload["error"] = bootstrap_error
@@ -188,8 +197,10 @@ async def get_postgres_status(
                 for extension in BASELINE_POSTGRES_EXTENSIONS
             }
             payload["preload_libraries"] = _preload_libraries(conn)
+            payload["code_index"] = verify_bm25_indexes(conn)
     except psycopg.Error as exc:
         logger.debug("PostgreSQL status connection failed: %s", exc)
+        payload["code_index"] = unavailable_bm25_status(str(exc))
 
     return payload
 
@@ -210,6 +221,9 @@ def render_postgres_status(payload: dict[str, Any]) -> str:
         lines.append(
             f"Ownership:   {'present' if ownership.get('sentinel_present') else 'missing'}"
         )
+    code_index = payload.get("code_index")
+    if isinstance(code_index, dict):
+        lines.extend(render_bm25_status(code_index))
     error = payload.get("error")
     if error:
         lines.append(f"Error:       {error}")

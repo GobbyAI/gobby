@@ -247,22 +247,55 @@ mod serial_db {
             vec!["overlay_kind", "overlay_shadow_kind", "parent_kind"]
         );
         assert_eq!(
-            count_text_visible(&mut conn, "parentonly", &ctx, None, &[]),
-            1
-        );
-        assert_eq!(count_text_visible(&mut conn, "marker", &ctx, None, &[]), 3);
-        assert_eq!(
-            count_content_visible(&mut conn, "parentonly", &ctx, None, &[]),
+            count_text_visible(&mut conn, "parentonly", &ctx, None, &[]).unwrap(),
             1
         );
         assert_eq!(
-            count_content_visible(&mut conn, "marker", &ctx, None, &[]),
+            count_text_visible(&mut conn, "marker", &ctx, None, &[]).unwrap(),
+            3
+        );
+        assert_eq!(
+            count_content_visible(&mut conn, "parentonly", &ctx, None, &[]).unwrap(),
+            1
+        );
+        assert_eq!(
+            count_content_visible(&mut conn, "marker", &ctx, None, &[]).unwrap(),
             3
         );
 
         cleanup
             .cleanup()
             .expect("cleanup overlay visibility fixture");
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn bm25_query_error_is_returned_instead_of_empty_results() {
+        let (mut conn, _) = connect_overlay_visibility_test_db();
+        conn.batch_execute("BEGIN").expect("begin transaction");
+        assert!(conn.batch_execute("SELECT 1 / 0").is_err());
+
+        let error = search_symbols_fts(
+            &mut conn,
+            "marker",
+            &fixture_uuid("failed-bm25-query").to_string(),
+            None,
+            None,
+            &[],
+            10,
+        )
+        .expect_err("aborted transaction must fail the BM25 query");
+        conn.batch_execute("ROLLBACK")
+            .expect("rollback transaction");
+
+        let message = error.to_string();
+        assert!(message.contains("public.code_symbols_search_bm25"));
+        assert!(message.contains("gcode status"));
+        assert!(message.contains("gobby postgres repair-code-index"));
     }
 
     #[test]

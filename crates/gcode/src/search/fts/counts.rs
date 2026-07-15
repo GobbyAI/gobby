@@ -6,6 +6,7 @@ use super::common::{
     PgParam, SymbolFilters, param_refs, push_id_param, push_param, push_path_filter,
     push_symbol_filters, push_visible_project_file_filter, query_count, sanitize_pg_search_query,
 };
+use super::errors::{CONTENT_INDEX, SYMBOL_INDEX, bm25_query_error};
 
 pub fn count_text(
     conn: &mut Client,
@@ -13,15 +14,15 @@ pub fn count_text(
     project_id: &str,
     language: Option<&str>,
     paths: &[String],
-) -> usize {
+) -> anyhow::Result<usize> {
     if query.trim().is_empty() {
-        return 0;
+        return Ok(0);
     }
 
     let bm25_query = sanitize_pg_search_query(query);
     if bm25_query.is_empty() {
         log::warn!("BM25 symbol count skipped because query contains no pg_search terms");
-        return 0;
+        return Ok(0);
     }
 
     let mut params = Vec::new();
@@ -45,7 +46,8 @@ pub fn count_text(
         },
     );
     if path_filter_requires_post_filter {
-        return count_symbol_file_path_rows(conn, conditions, params, paths).unwrap_or(0);
+        return count_symbol_file_path_rows(conn, conditions, params, paths)
+            .map_err(|error| bm25_query_error(SYMBOL_INDEX, &error));
     }
     let refs = param_refs(&params);
     let sql = format!(
@@ -56,13 +58,13 @@ pub fn count_text(
          WHERE {}",
         conditions.join(" AND ")
     );
-    match conn.query_one(&sql, &refs) {
-        Ok(row) => row.try_get::<_, i64>("count").unwrap_or(0) as usize,
-        Err(error) => {
-            log::error!("BM25 symbol count failed; pg_search is required: {error}");
-            0
-        }
-    }
+    let row = conn
+        .query_one(&sql, &refs)
+        .map_err(|error| bm25_query_error(SYMBOL_INDEX, &error))?;
+    let count = row
+        .try_get::<_, i64>("count")
+        .map_err(|error| bm25_query_error(SYMBOL_INDEX, &error))?;
+    Ok(count as usize)
 }
 
 /// Count matching content chunks using pg_search BM25.
@@ -72,15 +74,15 @@ pub fn count_content(
     project_id: &str,
     language: Option<&str>,
     paths: &[String],
-) -> usize {
+) -> anyhow::Result<usize> {
     if query.trim().is_empty() {
-        return 0;
+        return Ok(0);
     }
 
     let bm25_query = sanitize_pg_search_query(query);
     if bm25_query.is_empty() {
         log::warn!("BM25 content count skipped because query contains no pg_search terms");
-        return 0;
+        return Ok(0);
     }
     let mut params = Vec::new();
     let query_placeholder = push_param(&mut params, bm25_query);
@@ -103,13 +105,13 @@ pub fn count_content(
          WHERE {}",
         conditions.join(" AND ")
     );
-    match conn.query_one(&sql, &refs) {
-        Ok(row) => row.try_get::<_, i64>("count").unwrap_or(0) as usize,
-        Err(error) => {
-            log::error!("BM25 content count failed; pg_search is required: {error}");
-            0
-        }
-    }
+    let row = conn
+        .query_one(&sql, &refs)
+        .map_err(|error| bm25_query_error(CONTENT_INDEX, &error))?;
+    let count = row
+        .try_get::<_, i64>("count")
+        .map_err(|error| bm25_query_error(CONTENT_INDEX, &error))?;
+    Ok(count as usize)
 }
 
 fn count_visible_symbols_by_conditions(
@@ -312,24 +314,19 @@ pub fn count_text_visible(
     ctx: &Context,
     language: Option<&str>,
     paths: &[String],
-) -> usize {
+) -> anyhow::Result<usize> {
     if query.trim().is_empty() {
-        return 0;
+        return Ok(0);
     }
 
     let bm25_query = sanitize_pg_search_query(query);
     if bm25_query.is_empty() {
         log::warn!("visible BM25 symbol count skipped because query contains no pg_search terms");
-        return 0;
+        return Ok(0);
     }
 
-    match count_symbols_fts_visible(conn, &bm25_query, ctx, language, paths) {
-        Ok(count) => count,
-        Err(error) => {
-            log::error!("visible BM25 symbol count failed; pg_search is required: {error}");
-            0
-        }
-    }
+    count_symbols_fts_visible(conn, &bm25_query, ctx, language, paths)
+        .map_err(|error| bm25_query_error(SYMBOL_INDEX, &error))
 }
 
 pub fn count_content_visible(
@@ -338,24 +335,19 @@ pub fn count_content_visible(
     ctx: &Context,
     language: Option<&str>,
     paths: &[String],
-) -> usize {
+) -> anyhow::Result<usize> {
     if query.trim().is_empty() {
-        return 0;
+        return Ok(0);
     }
 
     let bm25_query = sanitize_pg_search_query(query);
     if bm25_query.is_empty() {
         log::warn!("visible BM25 content count skipped because query contains no pg_search terms");
-        return 0;
+        return Ok(0);
     }
 
-    match count_content_bm25_visible(conn, &bm25_query, ctx, language, paths) {
-        Ok(count) => count,
-        Err(error) => {
-            log::error!("visible BM25 content count failed; pg_search is required: {error}");
-            0
-        }
-    }
+    count_content_bm25_visible(conn, &bm25_query, ctx, language, paths)
+        .map_err(|error| bm25_query_error(CONTENT_INDEX, &error))
 }
 
 #[cfg(test)]

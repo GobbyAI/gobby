@@ -156,6 +156,61 @@ async def _check_external_services(runner: GobbyRunner, tracker: StartupTracker 
         logger.debug("FalkorDB is not configured; graph health check skipped")
 
 
+async def _repair_code_index_bm25(
+    runner: GobbyRunner,
+    tracker: StartupTracker | None,
+) -> bool:
+    """Verify and repair required BM25 indexes before code-index workers start."""
+    if not runner.config.code_index.enabled:
+        return True
+
+    from gobby.code_index.bm25_health import (
+        repair_bm25_indexes,
+        unavailable_bm25_status,
+    )
+    from gobby.runner_init.services import mark_service_degraded
+
+    database_url = runner.config.database_url
+    if database_url:
+        try:
+            status = await asyncio.to_thread(
+                repair_bm25_indexes,
+                database_url,
+                timeout_seconds=runner.config.code_index.maintenance_index_timeout_seconds,
+            )
+        except Exception as exc:
+            logger.exception("Unexpected code-index BM25 recovery failure")
+            status = unavailable_bm25_status(str(exc))
+    else:
+        status = unavailable_bm25_status("PostgreSQL database_url is not configured")
+
+    if status["healthy"]:
+        repaired = [item["name"] for item in status["indexes"] if item["repaired"]]
+        if repaired:
+            logger.warning("Repaired damaged code-index BM25 indexes: %s", ", ".join(repaired))
+        else:
+            logger.info("Code-index BM25 indexes verified healthy")
+        if tracker:
+            tracker.complete("Code-index BM25 healthy")
+        return True
+
+    mark_service_degraded(runner, "code_index_bm25")
+    failures = [
+        f"{item['name']}: {item['error'] or item['state']}"
+        for item in status["indexes"]
+        if item["state"] != "healthy"
+    ]
+    detail = "; ".join(failures)
+    logger.error(
+        "Code-index BM25 recovery failed; maintenance and sync workers will not start: %s. "
+        "Run `gobby postgres repair-code-index`, then restart Gobby.",
+        detail,
+    )
+    if tracker:
+        tracker.error("Code-index BM25", detail)
+    return False
+
+
 async def _check_embedding_service(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
     emb_cfg = runner.config.embeddings
     if not emb_cfg.api_base:
@@ -750,6 +805,7 @@ async def init_subsystems(
     )
     await _connect_mcp_servers(runner, tracker)
     await _check_external_services(runner, tracker)
+    code_index_bm25_ready = await _repair_code_index_bm25(runner, tracker)
     await _check_embedding_service(runner, tracker)
     await _cleanup_metrics_on_startup(runner)
     await _cleanup_stale_expansion_runs_on_startup(runner)
@@ -762,11 +818,12 @@ async def init_subsystems(
         reconcile_agent_runs_after_restart,
     )
     await _start_cron_scheduler(runner, tracker)
-    _run_tracked_start(
-        lambda: _start_code_index_tasks(runner, tracker),
-        "Code index tasks",
-        tracker,
-    )
+    if code_index_bm25_ready:
+        _run_tracked_start(
+            lambda: _start_code_index_tasks(runner, tracker),
+            "Code index tasks",
+            tracker,
+        )
     await _recover_pipelines(runner, tracker)
     services = getattr(getattr(runner, "http_server", None), "services", None)
     if services is not None and bool(getattr(services, "shutdown_in_progress", False)):

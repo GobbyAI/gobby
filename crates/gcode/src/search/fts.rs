@@ -6,6 +6,7 @@
 mod common;
 mod content;
 mod counts;
+mod errors;
 mod graph;
 mod symbols;
 

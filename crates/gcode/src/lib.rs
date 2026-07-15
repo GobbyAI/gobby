@@ -1,3 +1,4 @@
+pub(crate) mod bm25_health;
 pub mod commands;
 pub mod config;
 pub mod contract;
@@ -9,6 +10,7 @@ pub mod index;
 pub(crate) mod index_lock;
 pub mod models;
 pub mod output;
+pub(crate) mod postgres_errors;
 pub mod project;
 pub mod projection;
 pub mod savings;

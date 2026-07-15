@@ -9,6 +9,7 @@ use super::common::{
     PgParam, bm25_score_expr, param_refs, push_id_param, push_param, push_path_filter,
     sanitize_pg_search_query, trusted_row_id,
 };
+use super::errors::{CONTENT_INDEX, bm25_query_error};
 
 fn content_bm25_order_by_sql(tiebreakers: &[&str]) -> String {
     let row_id = trusted_row_id("c.id");
@@ -28,9 +29,9 @@ pub fn search_content(
     language: Option<&str>,
     paths: &[String],
     limit: usize,
-) -> Vec<ContentSearchHit> {
+) -> anyhow::Result<Vec<ContentSearchHit>> {
     if query.trim().is_empty() || limit == 0 {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     let bm25_query = sanitize_pg_search_query(query);
@@ -38,7 +39,7 @@ pub fn search_content(
         eprintln!(
             "gcode: content BM25 search skipped because query contains no pg_search terms; use `gcode grep` for exact text"
         );
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     let mut params = Vec::new();
@@ -71,13 +72,10 @@ pub fn search_content(
         conditions.join(" AND ")
     );
 
-    match conn.query(&sql, &refs) {
-        Ok(rows) => content_hits_from_rows(&rows, query),
-        Err(error) => {
-            eprintln!("gcode: content BM25 search failed; pg_search is required: {error}");
-            Vec::new()
-        }
-    }
+    let rows = conn
+        .query(&sql, &refs)
+        .map_err(|error| bm25_query_error(CONTENT_INDEX, &error))?;
+    Ok(content_hits_from_rows(&rows, query))
 }
 
 pub fn search_content_visible(
@@ -87,9 +85,9 @@ pub fn search_content_visible(
     language: Option<&str>,
     paths: &[String],
     limit: usize,
-) -> Vec<ContentSearchHit> {
+) -> anyhow::Result<Vec<ContentSearchHit>> {
     if query.trim().is_empty() || limit == 0 {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     let bm25_query = sanitize_pg_search_query(query);
@@ -97,7 +95,7 @@ pub fn search_content_visible(
         eprintln!(
             "gcode: visible content BM25 search skipped because query contains no pg_search terms; use `gcode grep` for exact text"
         );
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     let mut params = Vec::new();
@@ -128,13 +126,10 @@ pub fn search_content_visible(
         conditions.join(" AND ")
     );
 
-    match conn.query(&sql, &refs) {
-        Ok(rows) => content_hits_from_rows(&rows, query),
-        Err(error) => {
-            eprintln!("gcode: visible content BM25 search failed; pg_search is required: {error}");
-            Vec::new()
-        }
-    }
+    let rows = conn
+        .query(&sql, &refs)
+        .map_err(|error| bm25_query_error(CONTENT_INDEX, &error))?;
+    Ok(content_hits_from_rows(&rows, query))
 }
 
 fn visible_files_sql(ctx: &Context, params: &mut Vec<PgParam>) -> String {
