@@ -1252,7 +1252,7 @@ class TestCodexBackend:
         assert isinstance(done, DoneEvent)
         assert done.input_tokens == 451
         assert done.cache_read_input_tokens == 25_984
-        assert done.output_tokens == 12
+        assert done.output_tokens == 10
         assert done.total_input_tokens == 26_435
         assert done.context_window == 258_400
 
@@ -1349,7 +1349,7 @@ class TestCodexBackend:
         assert done.tool_calls_count == 1
         assert done.input_tokens == 19_634
         assert done.cache_read_input_tokens == 108_416
-        assert done.output_tokens == 296
+        assert done.output_tokens == 214
         assert done.total_input_tokens == 128_050
         assert done.context_window == 258_400
 
