@@ -51,8 +51,9 @@ _FALKOR_RESTART_HINT = (
 _UNEXPECTED_CONFIG_ERROR = "Internal config error"
 
 
-def _mask_secret_value(key: str, value: Any) -> Any:
-    if is_secret_key_name(key) and value not in (None, ""):
+def _mask_secret_value(key: str, value: Any, secret_keys: set[str] | None = None) -> Any:
+    is_secret = is_secret_key_name(key) or (secret_keys is not None and key in secret_keys)
+    if is_secret and value not in (None, ""):
         return _MASKED_SECRET
     return value
 
@@ -149,6 +150,13 @@ def create_config_registry(
         """Flatten current in-memory config to dotted keys."""
         return flatten_config(_current_config().model_dump(mode="json", by_alias=True))
 
+    def _secret_keys() -> set[str]:
+        """Return persisted secret keys using their runtime config names."""
+        return {
+            storage_embedding_config_key_to_runtime_key(key)
+            for key in config_store.get_secret_keys()
+        }
+
     @registry.tool(
         name="get_config",
         description="Get a config value by dotted key (e.g. 'skills.hubs.clawdhub.type'). Reads from in-memory config.",
@@ -160,11 +168,12 @@ def create_config_registry(
         except (TypeError, ValueError, ValidationError) as e:
             return {"success": False, "error": str(e)}
         flat = _flat_config()
+        secret_keys = _secret_keys()
         if lookup_key in flat:
             return {
                 "success": True,
                 "key": key,
-                "value": _mask_secret_value(lookup_key, flat[lookup_key]),
+                "value": _mask_secret_value(lookup_key, flat[lookup_key], secret_keys),
             }
         return {"success": False, "error": f"Key '{key}' not found in config"}
 
@@ -179,10 +188,11 @@ def create_config_registry(
         except (TypeError, ValueError, ValidationError) as e:
             return {"success": False, "error": str(e)}
         flat = _flat_config()
+        secret_keys = _secret_keys()
         # Filter keys matching the prefix (exact prefix + '.' boundary)
         section_prefix = lookup_prefix + "."
         filtered = {
-            k[len(section_prefix) :]: _mask_secret_value(k, v)
+            k[len(section_prefix) :]: _mask_secret_value(k, v, secret_keys)
             for k, v in flat.items()
             if k.startswith(section_prefix)
         }
@@ -191,7 +201,7 @@ def create_config_registry(
             return {
                 "success": True,
                 "prefix": prefix,
-                "value": _mask_secret_value(lookup_prefix, flat[lookup_prefix]),
+                "value": _mask_secret_value(lookup_prefix, flat[lookup_prefix], secret_keys),
             }
         if not filtered:
             return {"success": False, "error": f"No keys found under prefix '{prefix}'"}
