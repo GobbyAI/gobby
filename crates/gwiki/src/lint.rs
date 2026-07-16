@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use gobby_core::vault::lint::{LintPage, page_targets, run_checks};
+use gobby_core::vault::lint::{LintPage, PageAuthorship, page_targets, run_checks};
 use serde::Serialize;
 
 use crate::frontmatter::{WikiFrontmatter, parse_frontmatter};
@@ -53,6 +53,7 @@ pub(crate) fn report_from_pages(
             aliases: &page.parsed.frontmatter.aliases,
             links: &page.parsed.links,
             has_frontmatter: page.has_frontmatter,
+            authorship: page_authorship(page),
         })
         .collect();
     let outcome = run_checks(&lint_pages, None);
@@ -183,6 +184,39 @@ pub(crate) fn title_for_page(page: &WikiPage) -> String {
                 .map(ToOwned::to_owned)
         })
         .unwrap_or_else(|| page.relative_path.display().to_string())
+}
+
+/// Ingested source digests live under this vault directory
+/// (`paths::derived_markdown_path`).
+const SOURCES_ROOT: &str = "knowledge/sources";
+
+/// Classify a page for backlink-reciprocity semantics (#17806): machine-
+/// regenerated pages neither create nor bear backlink obligations, because
+/// the next regeneration erases any hand-added reciprocal link. A page is
+/// generated when it is stamped `generated_by` (codewiki file/module/repo
+/// pages, gwiki catalog indexes), carries a codewiki `type: code_*` marker
+/// (aggregate/narrative/concept pages predate universal `generated_by`
+/// stamping), or lives in a machine-written vault namespace (recap digests,
+/// ingested source digests). Everything else — concepts, topics, operator
+/// pages — is curated and keeps full reciprocity checking.
+fn page_authorship(page: &WikiPage) -> PageAuthorship {
+    let frontmatter = &page.parsed.frontmatter;
+    let codewiki_typed = frontmatter
+        .unknown
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|page_type| page_type.starts_with("code_"));
+    if frontmatter.generated_by.is_some()
+        || codewiki_typed
+        || page
+            .relative_path
+            .starts_with(crate::recap::RECAPS_DIRECTORY)
+        || page.relative_path.starts_with(SOURCES_ROOT)
+    {
+        PageAuthorship::Generated
+    } else {
+        PageAuthorship::Curated
+    }
 }
 
 fn collect_markdown_files(
@@ -510,6 +544,93 @@ mod tests {
         assert_eq!(issue.path, PathBuf::from("code/narrative/architecture.md"));
         assert_eq!(issue.kind, "missing_backlink");
         assert_eq!(issue.target, "Introduction");
+    }
+
+    #[test]
+    fn generated_pages_are_exempt_from_backlink_reciprocity() {
+        // The systemic #17806 noise: fan-out links from generated surfaces
+        // (catalog indexes, codewiki-typed pages, recap digests, ingested
+        // sources) and links pointing at machine-regenerated pages demand no
+        // reciprocity. A pre-regen catalog index without frontmatter is
+        // exempted by path, and its missing frontmatter stays reported
+        // honestly until `catalog::regenerate` stamps it.
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        write_page(root, "code/INDEX.md", "# Code\n- [[Widget Module]]\n");
+        write_page(
+            root,
+            "code/modules/widget.md",
+            "---\ntitle: \"Widget Module\"\ntype: code_module\n---\n# Widget\nUses [[Helper Module]].\n",
+        );
+        write_page(
+            root,
+            "code/modules/helper.md",
+            "---\ntitle: \"Helper Module\"\ngenerated_by: gcode-codewiki\n---\n# Helper\nNo links back.\n",
+        );
+        write_page(
+            root,
+            "recaps/2026-07-15.md",
+            "---\ntitle: \"Recap: 2026-07-15\"\n---\n# Recap\nCovered [[Gwiki]].\n",
+        );
+        write_page(
+            root,
+            "knowledge/sources/src-0011223344556677-session.md",
+            "---\ntitle: \"Session digest\"\n---\n# Digest\nDiscusses [[Gwiki]].\n",
+        );
+        write_page(
+            root,
+            "knowledge/concepts/gwiki.md",
+            "---\ntitle: \"Gwiki\"\n---\n# Gwiki\nLinks back to nothing generated.\n",
+        );
+
+        let report = run(root, ScopeIdentity::topic("ops")).expect("lint runs");
+
+        assert!(
+            report.missing_backlinks.is_empty(),
+            "{:?}",
+            report.missing_backlinks
+        );
+        assert_eq!(
+            report.missing_frontmatter,
+            vec![PathBuf::from("code/INDEX.md")]
+        );
+    }
+
+    #[test]
+    fn curated_one_way_links_still_reported_amid_generated_noise() {
+        // The genuine finding the semantic rule must preserve: a curated
+        // concept linking a curated concept that never links back.
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        write_page(
+            root,
+            "recaps/2026-07-15.md",
+            "---\ntitle: \"Recap\"\n---\n# Recap\nCovered [[Gwiki]] and [[Qdrant]].\n",
+        );
+        write_page(
+            root,
+            "knowledge/concepts/gwiki.md",
+            "---\ntitle: \"Gwiki\"\n---\n# Gwiki\nRelated to [[Qdrant]].\n",
+        );
+        write_page(
+            root,
+            "knowledge/concepts/qdrant.md",
+            "---\ntitle: \"Qdrant\"\n---\n# Qdrant\nNo link back.\n",
+        );
+
+        let report = run(root, ScopeIdentity::topic("ops")).expect("lint runs");
+
+        assert_eq!(
+            report.missing_backlinks.len(),
+            1,
+            "{:?}",
+            report.missing_backlinks
+        );
+        assert_eq!(
+            report.missing_backlinks[0].path,
+            PathBuf::from("knowledge/concepts/qdrant.md")
+        );
+        assert_eq!(report.missing_backlinks[0].target, "Gwiki");
     }
 
     #[test]

@@ -28,6 +28,22 @@ use super::mermaid::{
 /// Vault index page name at the vault root.
 pub const INDEX_FILE: &str = "_index.md";
 
+/// Who authors a page's content, for backlink-reciprocity semantics (#17806).
+///
+/// The consumer classifies each page from its own metadata (frontmatter
+/// markers, vault-layout contracts); the core only honors the result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PageAuthorship {
+    /// Operator/librarian-curated content: full reciprocity applies.
+    #[default]
+    Curated,
+    /// Machine-regenerated content (catalog indexes, recaps, ingested
+    /// sources, codewiki output). Links from it fan out by design, and links
+    /// to it demand no backlink — the next regeneration would erase any
+    /// hand-added reciprocal link anyway.
+    Generated,
+}
+
 /// A borrowed view of one vault page, prepared by the consumer from its own
 /// page representation. `display_title` is the human-facing title used in
 /// missing-backlink findings; `title` and `aliases` are the frontmatter
@@ -41,6 +57,7 @@ pub struct LintPage<'a> {
     pub aliases: &'a [String],
     pub links: &'a [WikiLink],
     pub has_frontmatter: bool,
+    pub authorship: PageAuthorship,
 }
 
 /// A link-shaped defect: a broken link, a missing backlink, or an index entry
@@ -437,12 +454,15 @@ fn is_orphan_exempt(path: &Path) -> bool {
 }
 
 /// Pure navigation/index/aggregate roots (the repo front page, the concept
-/// index, and the ownership/hotspots/onboarding dashboards) link out to many
-/// pages by design, so links *originating* from them never count as missing
-/// backlinks. Matched by relative path only (any `.md` extension stripped),
-/// never by display title — a content page that merely happens to be named
-/// `index` is not exempt (#853D). Per-folder `_context.md` navigation files
-/// are the same fan-out-by-design shape and are exempt by file stem.
+/// index, the ownership/hotspots/onboarding dashboards, and the generated
+/// `code`/`knowledge` catalog indexes) link out to many pages by design, so
+/// links *originating* from them never count as missing backlinks. Matched by
+/// relative path only (any `.md` extension stripped), never by display title —
+/// a content page that merely happens to be named `index` is not exempt
+/// (#853D). Per-folder `_context.md` navigation files are the same
+/// fan-out-by-design shape and are exempt by file stem. This path list is the
+/// classification-free backstop; consumers that classify pages mark these
+/// [`PageAuthorship::Generated`] too (#17806).
 fn is_backlink_source_exempt(path: &Path) -> bool {
     if path
         .file_stem()
@@ -460,6 +480,8 @@ fn is_backlink_source_exempt(path: &Path) -> bool {
             | "code/_ownership"
             | "code/_hotspots"
             | "code/_onboarding"
+            | "code/INDEX"
+            | "knowledge/INDEX"
     )
 }
 
@@ -502,11 +524,17 @@ fn missing_backlinks(
             )
         })
         .collect();
+    let generated: BTreeSet<&Path> = pages
+        .iter()
+        .filter(|page| page.authorship == PageAuthorship::Generated)
+        .map(|page| page.relative_path)
+        .collect();
     let mut issues = Vec::new();
     for (source, targets) in outgoing {
         // Navigation/index/aggregate roots fan out by design; do not require
-        // every page they link to link back (#853D).
-        if is_backlink_source_exempt(source) {
+        // every page they link to link back (#853D). Generated pages are the
+        // same shape wholesale: their links create no obligations (#17806).
+        if is_backlink_source_exempt(source) || generated.contains(source.as_path()) {
             continue;
         }
         for target in targets {
@@ -514,6 +542,11 @@ fn missing_backlinks(
                 .get(target)
                 .is_some_and(|target_outgoing| target_outgoing.contains(source))
             {
+                continue;
+            }
+            // A generated page bears no backlink obligation either: the next
+            // regeneration would erase any hand-added reciprocal link (#17806).
+            if generated.contains(target.as_path()) {
                 continue;
             }
             issues.push(LinkIssue {
@@ -554,6 +587,7 @@ mod tests {
         title: Option<String>,
         aliases: Vec<String>,
         links: Vec<WikiLink>,
+        authorship: PageAuthorship,
     }
 
     fn owned_page(relative: &str, markdown: &str, known_targets: &[&str]) -> OwnedPage {
@@ -566,6 +600,14 @@ mod tests {
             title,
             aliases: Vec::new(),
             links: extract_links(markdown, known_targets.iter().copied()),
+            authorship: PageAuthorship::Curated,
+        }
+    }
+
+    fn generated_page(relative: &str, markdown: &str, known_targets: &[&str]) -> OwnedPage {
+        OwnedPage {
+            authorship: PageAuthorship::Generated,
+            ..owned_page(relative, markdown, known_targets)
         }
     }
 
@@ -583,6 +625,7 @@ mod tests {
                 aliases: &page.aliases,
                 links: &page.links,
                 has_frontmatter: page.markdown.starts_with("---\n"),
+                authorship: page.authorship,
             })
             .collect()
     }
@@ -905,6 +948,115 @@ mod tests {
         assert_eq!(issue.path, PathBuf::from("code/narrative/architecture.md"));
         assert_eq!(issue.kind, "missing_backlink");
         assert_eq!(issue.target, "Introduction");
+    }
+
+    #[test]
+    fn generated_pages_create_no_backlink_obligations() {
+        let pages = vec![
+            generated_page(
+                "recaps/2026-07-15.md",
+                "---\ntitle: Recap\n---\n# Recap\nCovered [[Gwiki]].\n",
+                &[],
+            ),
+            owned_page(
+                "knowledge/concepts/gwiki.md",
+                "---\ntitle: Gwiki\n---\n# Gwiki\nNo link back to the recap.\n",
+                &[],
+            ),
+        ];
+
+        let outcome = run_checks(&lint_pages(&pages), None);
+
+        assert!(
+            outcome.missing_backlinks.is_empty(),
+            "{:?}",
+            outcome.missing_backlinks
+        );
+    }
+
+    #[test]
+    fn generated_pages_bear_no_backlink_obligations() {
+        let pages = vec![
+            owned_page(
+                "knowledge/concepts/gwiki.md",
+                "---\ntitle: Gwiki\n---\n# Gwiki\nImplemented by [[Gwiki Module]].\n",
+                &[],
+            ),
+            generated_page(
+                "code/modules/crates/gwiki.md",
+                "---\ntitle: Gwiki Module\n---\n# Gwiki Module\nRegenerated wholesale; no link back.\n",
+                &[],
+            ),
+        ];
+
+        let outcome = run_checks(&lint_pages(&pages), None);
+
+        assert!(
+            outcome.missing_backlinks.is_empty(),
+            "{:?}",
+            outcome.missing_backlinks
+        );
+    }
+
+    #[test]
+    fn curated_one_way_links_are_still_reported_between_generated_noise() {
+        let pages = vec![
+            generated_page(
+                "recaps/2026-07-15.md",
+                "---\ntitle: Recap\n---\n# Recap\nCovered [[Gwiki]].\n",
+                &[],
+            ),
+            owned_page(
+                "knowledge/concepts/gwiki.md",
+                "---\ntitle: Gwiki\n---\n# Gwiki\nRelated to [[Qdrant]].\n",
+                &[],
+            ),
+            owned_page(
+                "knowledge/concepts/qdrant.md",
+                "---\ntitle: Qdrant\n---\n# Qdrant\nNo link back.\n",
+                &[],
+            ),
+        ];
+
+        let outcome = run_checks(&lint_pages(&pages), None);
+
+        assert_eq!(
+            outcome.missing_backlinks.len(),
+            1,
+            "{:?}",
+            outcome.missing_backlinks
+        );
+        let issue = &outcome.missing_backlinks[0];
+        assert_eq!(issue.path, PathBuf::from("knowledge/concepts/qdrant.md"));
+        assert_eq!(issue.target, "Gwiki");
+    }
+
+    #[test]
+    fn catalog_index_paths_are_exempt_backlink_sources_without_classification() {
+        // Pre-#17806 vaults have catalog indexes with no frontmatter to
+        // classify from; the path backstop must exempt them by itself.
+        let pages = vec![
+            owned_page("code/INDEX.md", "# Code\n- [[Introduction]]\n", &[]),
+            owned_page("knowledge/INDEX.md", "# Knowledge\n- [[Gwiki]]\n", &[]),
+            owned_page(
+                "code/narrative/introduction.md",
+                "---\ntitle: Introduction\n---\n# Introduction\nNo link back.\n",
+                &[],
+            ),
+            owned_page(
+                "knowledge/concepts/gwiki.md",
+                "---\ntitle: Gwiki\n---\n# Gwiki\nNo link back.\n",
+                &[],
+            ),
+        ];
+
+        let outcome = run_checks(&lint_pages(&pages), None);
+
+        assert!(
+            outcome.missing_backlinks.is_empty(),
+            "{:?}",
+            outcome.missing_backlinks
+        );
     }
 
     #[test]
