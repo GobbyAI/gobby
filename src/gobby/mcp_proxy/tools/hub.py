@@ -157,16 +157,25 @@ def create_hub_registry(
         try:
 
             def _query_projects(hub_db: HubDatabase) -> list[Any]:
+                # Counts come from per-table pre-aggregations: joining tasks
+                # AND sessions onto projects before grouping fans out to
+                # tasks-per-project x sessions-per-project intermediate rows,
+                # which hangs on real hubs (#18332).
                 return hub_db.fetchall(
                     """
                 SELECT p.id, p.name, p.repo_path,
-                       COUNT(DISTINCT t.id) as task_count,
-                       COUNT(DISTINCT s.id) as session_count
+                       COALESCE(t.task_count, 0) as task_count,
+                       COALESCE(s.session_count, 0) as session_count
                 FROM projects p
-                LEFT JOIN tasks t ON t.project_id = p.id
-                LEFT JOIN sessions s ON s.project_id = p.id
+                LEFT JOIN (
+                    SELECT project_id, COUNT(*) as task_count
+                    FROM tasks GROUP BY project_id
+                ) t ON t.project_id = p.id
+                LEFT JOIN (
+                    SELECT project_id, COUNT(*) as session_count
+                    FROM sessions GROUP BY project_id
+                ) s ON s.project_id = p.id
                 WHERE p.deleted_at IS NULL
-                GROUP BY p.id, p.name, p.repo_path
                 ORDER BY p.name
                 """,
                 )

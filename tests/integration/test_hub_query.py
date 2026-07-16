@@ -5,6 +5,7 @@ with data from multiple projects.
 """
 
 import tempfile
+import uuid
 
 import pytest
 
@@ -13,6 +14,15 @@ from gobby.storage.tasks import LocalTaskManager
 
 # Mark all tests in this module as integration tests
 pytestmark = pytest.mark.integration
+
+
+def _test_uuid(label: str) -> str:
+    """Deterministic UUID for fixture rows — projects/sessions/tasks PKs are UUID-typed."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"gobby-hub-query-tests/{label}"))
+
+
+PROJECT_FRONTEND = _test_uuid("project-frontend")
+PROJECT_BACKEND = _test_uuid("project-backend")
 
 
 def _start_current_stage(task_manager: LocalTaskManager, task_id: str) -> None:
@@ -28,7 +38,9 @@ def _start_current_stage(task_manager: LocalTaskManager, task_id: str) -> None:
 def multi_project_hub(hub_db):
     """Create a hub database with data from multiple projects."""
     # Insert data for two projects
-    for i, project_name in enumerate(["project-frontend", "project-backend"]):
+    for i, (project_name, project_id) in enumerate(
+        [("project-frontend", PROJECT_FRONTEND), ("project-backend", PROJECT_BACKEND)]
+    ):
         project_dir = tempfile.mkdtemp()
 
         # Insert project
@@ -37,7 +49,7 @@ def multi_project_hub(hub_db):
             INSERT INTO projects (id, name, repo_path, created_at, updated_at)
             VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
-            (project_name, project_name.replace("-", " ").title(), project_dir),
+            (project_id, project_name.replace("-", " ").title(), project_dir),
         )
 
         task_manager = LocalTaskManager(hub_db)
@@ -50,7 +62,7 @@ def multi_project_hub(hub_db):
             ]
         ):
             task = task_manager.create_task(
-                project_id=project_name,
+                project_id=project_id,
                 title=f"Task {j} for {project_name}",
                 task_type=task_type,
                 priority=j + 1,
@@ -73,8 +85,8 @@ def multi_project_hub(hub_db):
                 VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """,
                 (
-                    f"sess-{project_name}-{k}",
-                    project_name,
+                    _test_uuid(f"sess-{project_name}-{k}"),
+                    project_id,
                     f"ext-{project_name}-{k}",
                     source,
                     f"machine-{i}",
@@ -102,8 +114,8 @@ class TestHubQueryIntegration:
         assert result["project_count"] == 2
 
         project_ids = [p["project_id"] for p in result["projects"]]
-        assert "project-frontend" in project_ids
-        assert "project-backend" in project_ids
+        assert PROJECT_FRONTEND in project_ids
+        assert PROJECT_BACKEND in project_ids
 
     def test_list_all_projects_includes_accurate_counts(self, multi_project_hub) -> None:
         """Test that list_all_projects includes correct task and session counts."""
@@ -139,8 +151,8 @@ class TestHubQueryIntegration:
 
         # Verify tasks from both projects are present
         project_ids = {t["project_id"] for t in result["tasks"]}
-        assert "project-frontend" in project_ids
-        assert "project-backend" in project_ids
+        assert PROJECT_FRONTEND in project_ids
+        assert PROJECT_BACKEND in project_ids
 
     def test_list_cross_project_tasks_filters_by_state(self, multi_project_hub) -> None:
         """Test that list_cross_project_tasks correctly filters by projected state."""
@@ -190,8 +202,8 @@ class TestHubQueryIntegration:
 
         # Verify sessions from both projects are present
         project_ids = {s["project_id"] for s in result["sessions"]}
-        assert "project-frontend" in project_ids
-        assert "project-backend" in project_ids
+        assert PROJECT_FRONTEND in project_ids
+        assert PROJECT_BACKEND in project_ids
 
     def test_list_cross_project_sessions_respects_limit(self, multi_project_hub) -> None:
         """Test that list_cross_project_sessions respects the limit parameter."""
@@ -299,19 +311,20 @@ class TestHubQueryEdgeCases:
         import asyncio
 
         # Insert project with only tasks, no sessions
+        tasks_only_project = _test_uuid("tasks-only-project")
         hub_db.execute(
             """
             INSERT INTO projects (id, name, repo_path, created_at, updated_at)
             VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
-            ("tasks-only-project", "Tasks Only", "/path/tasks"),
+            (tasks_only_project, "Tasks Only", "/path/tasks"),
         )
         hub_db.execute(
             """
             INSERT INTO tasks (id, project_id, title, created_at, updated_at)
             VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
-            ("task-only-1", "tasks-only-project", "A Task"),
+            (_test_uuid("task-only-1"), tasks_only_project, "A Task"),
         )
 
         registry = create_hub_registry(db=hub_db)
@@ -322,7 +335,7 @@ class TestHubQueryEdgeCases:
         assert result["success"] is True
         assert result["project_count"] == 1
         project = result["projects"][0]
-        assert project["project_id"] == "tasks-only-project"
+        assert project["project_id"] == tasks_only_project
         assert project["task_count"] == 1
         assert project["session_count"] == 0
 
@@ -331,19 +344,27 @@ class TestHubQueryEdgeCases:
         import asyncio
 
         # Insert project with only sessions, no tasks
+        sessions_only_project = _test_uuid("sessions-only-project")
         hub_db.execute(
             """
             INSERT INTO projects (id, name, repo_path, created_at, updated_at)
             VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
-            ("sessions-only-project", "Sessions Only", "/path/sessions"),
+            (sessions_only_project, "Sessions Only", "/path/sessions"),
         )
         hub_db.execute(
             """
             INSERT INTO sessions (id, project_id, external_id, source, machine_id, status, created_at, updated_at)
             VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
-            ("sess-only-1", "sessions-only-project", "ext-1", "claude", "machine-1", "active"),
+            (
+                _test_uuid("sess-only-1"),
+                sessions_only_project,
+                "ext-1",
+                "claude",
+                "machine-1",
+                "active",
+            ),
         )
 
         registry = create_hub_registry(db=hub_db)
@@ -354,6 +375,6 @@ class TestHubQueryEdgeCases:
         assert result["success"] is True
         assert result["project_count"] == 1
         project = result["projects"][0]
-        assert project["project_id"] == "sessions-only-project"
+        assert project["project_id"] == sessions_only_project
         assert project["task_count"] == 0
         assert project["session_count"] == 1
