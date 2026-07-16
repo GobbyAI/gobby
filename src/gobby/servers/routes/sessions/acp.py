@@ -32,17 +32,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _legacy_missing_machine_id() -> str:
-    from gobby.utils.machine_id import new_legacy_missing_machine_id
-
-    machine_id = new_legacy_missing_machine_id()
-    logger.warning(
-        "ACP discovery missing client machine_id; using session-only %s",
-        machine_id,
-    )
-    return machine_id
-
-
 def _raise_for_lifecycle_error(exc: ACPLifecycleError) -> NoReturn:
     """Map an ACP lifecycle error onto its locked HTTP status code."""
     if isinstance(exc, ACPSessionNotFoundError):
@@ -79,28 +68,31 @@ def register_acp_routes(
                 session_manager=get_session_manager(),
                 runtime_manager=getattr(server.services, "web_chat_runtime_manager", None),
                 resolve_project_id=_resolve_project_id,
-                machine_id_factory=_legacy_missing_machine_id,
             )
             service_box["service"] = service
         return service
 
-    async def _read_cwd(request: Request) -> str | None:
+    async def _read_discovery_request(request: Request) -> tuple[str | None, str]:
         try:
             body = await request.json()
         except (json.JSONDecodeError, UnicodeDecodeError):
-            return None
-        if isinstance(body, dict):
-            cwd = body.get("cwd")
-            if isinstance(cwd, str) and cwd:
-                return cwd
-        return None
+            raise HTTPException(status_code=400, detail="Required field: machine_id") from None
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="Required field: machine_id")
+        machine_id = body.get("machine_id")
+        machine_id = machine_id.strip() if isinstance(machine_id, str) else None
+        if not machine_id:
+            raise HTTPException(status_code=400, detail="Required field: machine_id")
+        cwd = body.get("cwd")
+        cwd = cwd if isinstance(cwd, str) and cwd else None
+        return cwd, machine_id
 
     @router.post("/acp/discover")
     async def discover_acp_sessions(request: Request) -> dict[str, Any]:
         """Reconcile agent-side ACP sessions into canonical rows."""
-        cwd = await _read_cwd(request)
+        cwd, machine_id = await _read_discovery_request(request)
         try:
-            return await _service().discover(cwd=cwd)
+            return await _service().discover(machine_id=machine_id, cwd=cwd)
         except ACPLifecycleError as exc:
             _raise_for_lifecycle_error(exc)
         except HTTPException:

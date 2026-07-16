@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
 
+import { getBrowserMachineId } from "../../lib/browserMachineId";
+
 const DISCOVER_DEBOUNCE_MS = 250;
 
 /**
@@ -33,7 +35,7 @@ export function useAcpSessionDiscovery(trigger: string): void {
         const res = await fetch("/api/sessions/acp/discover", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: "{}",
+          body: JSON.stringify({ machine_id: getBrowserMachineId() }),
         });
         if (!res.ok) {
           console.warn("ACP session discovery failed", {

@@ -262,7 +262,6 @@ def _service(
         session_manager=session_manager,
         runtime_manager=runtime_manager,
         resolve_project_id=_resolve,
-        machine_id=MACHINE,
         page_cap=page_cap,
     )
 
@@ -292,7 +291,7 @@ async def test_discover_creates_new_external_rows() -> None:
     )
     rm = _FakeRuntimeManager({"qwen": backend})
 
-    result = await _service(sm, rm).discover()
+    result = await _service(sm, rm).discover(machine_id=MACHINE)
 
     assert len(result["sessions"]) == 2
     assert len(sm.registered) == 2
@@ -317,27 +316,18 @@ async def test_discover_creates_new_external_rows() -> None:
 
 
 @pytest.mark.asyncio
-async def test_discover_uses_machine_id_factory_per_new_row() -> None:
+async def test_discover_uses_supplied_machine_id_for_every_row() -> None:
     sm = _FakeSessionManager()
     backend = _FakeBackend(
         capabilities={"list": True},
         pages=[_page(_info("s1"), _info("s2"))],
     )
     rm = _FakeRuntimeManager({"qwen": backend})
-    machine_ids = iter(["legacy-missing:one", "legacy-missing:two"])
-    service = ACPSessionLifecycleService(
-        session_manager=sm,
-        runtime_manager=rm,
-        resolve_project_id=_resolve,
-        machine_id_factory=lambda: next(machine_ids),
-    )
+    service = _service(sm, rm)
 
-    await service.discover()
+    await service.discover(machine_id="browser-machine")
 
-    assert [row.machine_id for row in sm.registered] == [
-        "legacy-missing:one",
-        "legacy-missing:two",
-    ]
+    assert [row.machine_id for row in sm.registered] == ["browser-machine", "browser-machine"]
 
 
 @pytest.mark.asyncio
@@ -361,7 +351,7 @@ async def test_discover_matched_row_is_conservative_no_register_no_move() -> Non
     )
     rm = _FakeRuntimeManager({"qwen": backend})
 
-    result = await _service(sm, rm).discover()
+    result = await _service(sm, rm).discover(machine_id=MACHINE)
 
     assert sm.registered == []  # never register() over an existing row
     assert sm.title_updates == []  # non-provisional title is not clobbered
@@ -394,7 +384,7 @@ async def test_discover_refreshes_only_provisional_title() -> None:
     )
     rm = _FakeRuntimeManager({"qwen": backend})
 
-    await _service(sm, rm).discover()
+    await _service(sm, rm).discover(machine_id=MACHINE)
 
     assert sm.title_updates == [("sess-qwen-s1", "Fix the parser", "native")]
     row = sm.rows["sess-qwen-s1"]
@@ -413,7 +403,7 @@ async def test_discover_per_row_resilience_skips_unresolved_cwd() -> None:
     )
     rm = _FakeRuntimeManager({"qwen": backend})
 
-    result = await _service(sm, rm).discover()
+    result = await _service(sm, rm).discover(machine_id=MACHINE)
 
     assert len(result["sessions"]) == 1
     assert len(sm.registered) == 1
@@ -428,7 +418,7 @@ async def test_discover_provider_unavailable_is_skipped_not_fatal() -> None:
     backend = _FakeBackend(available=False, capabilities={"list": True})
     rm = _FakeRuntimeManager({"qwen": backend})
 
-    result = await _service(sm, rm).discover()
+    result = await _service(sm, rm).discover(machine_id=MACHINE)
 
     assert result["sessions"] == []
     assert result["skipped"] == [{"provider": "qwen", "reason": "provider_unavailable"}]
@@ -448,7 +438,7 @@ async def test_discover_provider_without_list_contributes_nothing() -> None:
     backend = _FakeBackend(capabilities={})  # qwen today: nothing advertised
     rm = _FakeRuntimeManager({"qwen": backend})
 
-    result = await _service(sm, rm).discover()
+    result = await _service(sm, rm).discover(machine_id=MACHINE)
 
     assert result["sessions"] == []
     assert sm.registered == []
@@ -476,7 +466,7 @@ async def test_discover_paginates_over_next_cursor() -> None:
     )
     rm = _FakeRuntimeManager({"qwen": backend})
 
-    result = await _service(sm, rm).discover()
+    result = await _service(sm, rm).discover(machine_id=MACHINE)
 
     assert len(result["sessions"]) == 3
     assert [call[1] for call in backend.list_calls] == [None, "1", "2"]
@@ -492,7 +482,7 @@ async def test_discover_respects_page_cap() -> None:
     )
     rm = _FakeRuntimeManager({"qwen": backend})
 
-    result = await _service(sm, rm, page_cap=3).discover()
+    result = await _service(sm, rm, page_cap=3).discover(machine_id=MACHINE)
 
     assert len(backend.list_calls) == 3
     assert result["providers"][0]["truncated"] is True
@@ -506,8 +496,8 @@ async def test_discover_coalesces_concurrent_runs_per_provider() -> None:
     rm = _FakeRuntimeManager({"qwen": backend})
     service = _service(sm, rm)
 
-    t1 = asyncio.create_task(service.discover())
-    t2 = asyncio.create_task(service.discover())
+    t1 = asyncio.create_task(service.discover(machine_id=MACHINE))
+    t2 = asyncio.create_task(service.discover(machine_id=MACHINE))
     assert backend.entered is not None and backend.release is not None
     await asyncio.wait_for(backend.entered.wait(), timeout=1.0)
     backend.release.set()
@@ -525,11 +515,18 @@ async def test_discover_joiner_cancellation_does_not_cancel_shared_scan() -> Non
     rm = _FakeRuntimeManager({"qwen": backend})
     service = _service(sm, rm)
 
-    owner = asyncio.create_task(service.discover())
+    owner = asyncio.create_task(service.discover(machine_id=MACHINE))
     assert backend.entered is not None and backend.release is not None
     await asyncio.wait_for(backend.entered.wait(), timeout=1.0)
-    joiner = asyncio.create_task(service.discover())
-    await asyncio.sleep(0)
+
+    joiner_started = asyncio.Event()
+
+    async def join_discovery() -> dict[str, Any]:
+        joiner_started.set()
+        return await service.discover(machine_id=MACHINE)
+
+    joiner = asyncio.create_task(join_discovery())
+    await asyncio.wait_for(joiner_started.wait(), timeout=1.0)
 
     joiner.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -552,14 +549,32 @@ async def test_discover_does_not_coalesce_different_cwd_scans() -> None:
     rm = _FakeRuntimeManager({"qwen": backend})
     service = _service(sm, rm)
 
-    t1 = asyncio.create_task(service.discover(cwd="/repo"))
-    t2 = asyncio.create_task(service.discover(cwd="/other"))
+    t1 = asyncio.create_task(service.discover(machine_id=MACHINE, cwd="/repo"))
+    t2 = asyncio.create_task(service.discover(machine_id=MACHINE, cwd="/other"))
     assert backend.entered is not None and backend.release is not None
     await asyncio.wait_for(backend.entered.wait(), timeout=1.0)
     backend.release.set()
     await asyncio.gather(t1, t2)
 
     assert sorted(call[0] for call in backend.list_calls) == ["/other", "/repo"]
+
+
+@pytest.mark.asyncio
+async def test_discover_does_not_coalesce_different_machine_ids() -> None:
+    sm = _FakeSessionManager()
+    backend = _FakeBackend(capabilities={"list": True}, pages=[_page(_info("s1"))], gate=True)
+    rm = _FakeRuntimeManager({"qwen": backend})
+    service = _service(sm, rm)
+
+    t1 = asyncio.create_task(service.discover(machine_id="browser-one"))
+    t2 = asyncio.create_task(service.discover(machine_id="browser-two"))
+    assert backend.entered is not None and backend.release is not None
+    await asyncio.wait_for(backend.entered.wait(), timeout=1.0)
+    backend.release.set()
+    await asyncio.gather(t1, t2)
+
+    assert len(backend.list_calls) == 2
+    assert {row.machine_id for row in sm.registered} == {"browser-one", "browser-two"}
 
 
 # ---------------------------------------------------------------------------

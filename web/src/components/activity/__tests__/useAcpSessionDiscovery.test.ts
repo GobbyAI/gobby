@@ -12,6 +12,7 @@ describe("useAcpSessionDiscovery (#17400)", () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
+    localStorage.clear();
     mockFetch = createMockFetch();
     mockFetch.mockJsonResponse("/api/sessions/acp/discover", {
       sessions: [],
@@ -40,6 +41,34 @@ describe("useAcpSessionDiscovery (#17400)", () => {
     expect(mockFetch.fn).toHaveBeenCalledWith(
       "/api/sessions/acp/discover",
       expect.objectContaining({ method: "POST" }),
+    );
+    const init = mockFetch.fn.mock.calls[0]?.[1];
+    const body = JSON.parse(String(init?.body)) as { machine_id?: unknown };
+    expect(body.machine_id).toEqual(expect.any(String));
+  });
+
+  it("reuses one persisted client machine id across discoveries", async () => {
+    const { rerender } = renderHook(
+      ({ mode }) => useAcpSessionDiscovery(mode),
+      { initialProps: { mode: "live" } },
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+    });
+    rerender({ mode: "expired" });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+    });
+
+    const bodies = mockFetch.fn.mock.calls.map(([, init]) =>
+      JSON.parse(String(init?.body)) as { machine_id: string },
+    );
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]?.machine_id).toBeTruthy();
+    expect(bodies[1]?.machine_id).toBe(bodies[0]?.machine_id);
+    expect(localStorage.getItem("gobby-browser-machine-id")).toBe(
+      bodies[0]?.machine_id,
     );
   });
 

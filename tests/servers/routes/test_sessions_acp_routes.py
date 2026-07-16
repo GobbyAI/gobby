@@ -16,7 +16,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from gobby.servers.routes.sessions import create_sessions_router
-from gobby.utils.machine_id import LEGACY_MISSING_MACHINE_ID_PREFIX
 
 pytestmark = pytest.mark.unit
 
@@ -238,13 +237,16 @@ def test_discover_returns_summary_shape() -> None:
     )
     client = _client(sm, _RM({"qwen": backend}))
 
-    resp = client.post("/api/sessions/acp/discover")
+    resp = client.post(
+        "/api/sessions/acp/discover",
+        json={"machine_id": "browser-machine"},
+    )
 
     assert resp.status_code == 200
     body = resp.json()
     assert set(body) == {"sessions", "skipped", "providers"}
     assert len(body["sessions"]) == 1
-    assert body["sessions"][0]["machine_id"].startswith(LEGACY_MISSING_MACHINE_ID_PREFIX)
+    assert body["sessions"][0]["machine_id"] == "browser-machine"
     assert body["providers"] == [
         {
             "provider": "qwen",
@@ -258,10 +260,34 @@ def test_discover_returns_summary_shape() -> None:
 def test_discover_without_runtime_manager_is_empty() -> None:
     client = _client(_SM(), None)
 
-    resp = client.post("/api/sessions/acp/discover")
+    resp = client.post(
+        "/api/sessions/acp/discover",
+        json={"machine_id": "browser-machine"},
+    )
 
     assert resp.status_code == 200
     assert resp.json() == {"sessions": [], "skipped": [], "providers": []}
+
+
+def test_discover_requires_client_machine_id() -> None:
+    client = _client(_SM(), None)
+
+    resp = client.post("/api/sessions/acp/discover", json={})
+
+    assert resp.status_code == 400
+    assert resp.json() == {"detail": "Required field: machine_id"}
+
+
+def test_discover_rejects_blank_client_machine_id() -> None:
+    client = _client(_SM(), None)
+
+    resp = client.post(
+        "/api/sessions/acp/discover",
+        json={"machine_id": "   "},
+    )
+
+    assert resp.status_code == 400
+    assert resp.json() == {"detail": "Required field: machine_id"}
 
 
 # ---------------------------------------------------------------------------
