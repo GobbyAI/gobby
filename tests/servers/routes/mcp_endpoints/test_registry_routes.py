@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import MCPServerConfig
-from gobby.servers.routes.dependencies import get_server
+from gobby.servers.routes.dependencies import get_metrics_manager, get_server
 from gobby.servers.routes.mcp.tools import create_mcp_router
 
 pytestmark = pytest.mark.unit
@@ -36,7 +36,11 @@ class TestMCPRegistryRoutes:
         async def override_server():
             return mock_server
 
+        async def override_metrics():
+            return None
+
         app.dependency_overrides[get_server] = override_server
+        app.dependency_overrides[get_metrics_manager] = override_metrics
         return TestClient(app)
 
     # -----------------------------------------------------------------
@@ -439,8 +443,19 @@ class TestMCPRegistryRoutes:
         ext_config = MagicMock()
         ext_config.name = "github-mcp"
         ext_config.enabled = True
+        ext_config.tools = []
         mock_server.mcp_manager = MagicMock()
         mock_server.mcp_manager.server_configs = [ext_config]
+
+        def cache_discovered_tools(server_name: str, tools: list[dict[str, object]]) -> None:
+            assert server_name == "github-mcp"
+            ext_config.tools = [
+                {"name": tool["name"], "brief": tool["description"]} for tool in tools
+            ]
+
+        mock_server.mcp_manager.cache_discovered_tools = MagicMock(
+            side_effect=cache_discovered_tools
+        )
 
         # Mock MCP tool
         mock_tool = MagicMock()
@@ -476,6 +491,27 @@ class TestMCPRegistryRoutes:
         assert data["success"] is True
         assert data["stats"]["servers_processed"] == 1
         assert "github-mcp" in data["stats"]["by_server"]
+        mock_server.mcp_manager.cache_discovered_tools.assert_called_once_with(
+            "github-mcp",
+            [
+                {
+                    "name": "list_repos",
+                    "description": "List GitHub repos",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {"org": {"type": "string"}},
+                    },
+                }
+            ],
+        )
+
+        inventory_response = client.get("/api/mcp/tools")
+
+        assert inventory_response.status_code == 200
+        assert inventory_response.json()["tools"]["github-mcp"] == [
+            {"name": "list_repos", "brief": "List GitHub repos"}
+        ]
+        mock_server.mcp_manager.ensure_connected.assert_awaited_once_with("github-mcp")
 
     def test_refresh_external_server_connection_error(
         self, client: TestClient, mock_server: MagicMock

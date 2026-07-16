@@ -9,7 +9,10 @@ from typing import TYPE_CHECKING, Any, TextIO
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
-from gobby.mcp_proxy.bundled import resolve_runtime_stdio_args
+from gobby.mcp_proxy.bundled import (
+    is_bundled_external_mcp_server,
+    resolve_runtime_stdio_args,
+)
 from gobby.mcp_proxy.models import ConnectionState, MCPError
 from gobby.mcp_proxy.transports.base import BaseTransportConnection
 from gobby.utils.env import expand_env_mapping, expand_env_variables
@@ -160,6 +163,9 @@ class StdioTransportConnection(BaseTransportConnection):
             runtime_args = resolve_runtime_stdio_args(self.config.name, self.config.args)
             expanded_args = _expand_args(runtime_args) or []
             expanded_env = expand_env_mapping(self.config.env)
+            if self.config.command == "npx" and is_bundled_external_mcp_server(self.config.name):
+                expanded_env = dict(expanded_env or {})
+                expanded_env.setdefault("npm_config_prefer_offline", "true")
 
             params = StdioServerParameters(
                 command=self.config.command,

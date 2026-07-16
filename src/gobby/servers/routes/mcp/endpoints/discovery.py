@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
 from fastapi import Depends, HTTPException, Request
 from mcp.types import ListToolsResult
 
-from gobby.mcp_proxy.models import HealthState, MCPConnectionHealth
 from gobby.servers.routes.dependencies import get_metrics_manager, get_server
 
 if TYPE_CHECKING:
@@ -28,11 +27,6 @@ MCP_CALL_TIMEOUT = 30.0
 
 # Set to keep background tasks alive (prevent garbage collection)
 _background_tasks: set[asyncio.Task[Any]] = set()
-
-
-class HealthAwareMCPManager(Protocol):
-    @property
-    def health(self) -> Mapping[str, MCPConnectionHealth]: ...
 
 
 class CachedToolDict(TypedDict, total=False):
@@ -60,13 +54,6 @@ class ToolBrief(TypedDict):
     brief: str
 
 
-def _log_empty_unhealthy_cache(server_name: str) -> None:
-    logger.warning(
-        "MCP server %s is unhealthy and has no cached tool list; returning no tools",
-        server_name,
-    )
-
-
 def _object_attr(value: object, attr: str) -> object | None:
     return getattr(value, attr, None)
 
@@ -81,11 +68,6 @@ def _truncate_tool_brief(text: str | None, *, max_chars: int = 100) -> str:
     if max_chars == 1:
         return "…"
     return f"{text[: max_chars - 1]}…"
-
-
-def _external_server_is_unhealthy(mcp_manager: HealthAwareMCPManager, server_name: str) -> bool:
-    health = mcp_manager.health.get(server_name)
-    return health is not None and health.health == HealthState.UNHEALTHY
 
 
 def _response_tool_briefs(tool_briefs: list[ToolBrief]) -> list[dict[str, Any]]:
@@ -110,15 +92,21 @@ def _cached_tool_briefs(config: CachedToolsConfig) -> list[ToolBrief]:
     return tools
 
 
-def _tool_briefs_from_list_tools_result(tools_result: ListToolsResult) -> list[ToolBrief]:
-    tools_list: list[ToolBrief] = []
+def _discovered_tools_from_list_tools_result(
+    tools_result: ListToolsResult,
+) -> list[dict[str, Any]]:
+    tools_list: list[dict[str, Any]] = []
     for tool in tools_result.tools:
         raw_description = _object_attr(tool, "description")
-        desc = str(raw_description) if raw_description else ""
+        raw_schema = _object_attr(tool, "inputSchema")
+        if hasattr(raw_schema, "model_dump"):
+            raw_schema = raw_schema.model_dump()
+        input_schema = dict(raw_schema) if isinstance(raw_schema, Mapping) else {}
         tools_list.append(
             {
                 "name": tool.name,
-                "brief": _truncate_tool_brief(desc),
+                "description": str(raw_description) if raw_description else "",
+                "inputSchema": input_schema,
             }
         )
     return tools_list
@@ -206,7 +194,20 @@ async def _list_external_server_tools(
         if remaining <= 0:
             raise TimeoutError
         tools_result = await asyncio.wait_for(session.list_tools(), timeout=remaining)
-        return _response_tool_briefs(_tool_briefs_from_list_tools_result(tools_result))
+        discovered_tools = _discovered_tools_from_list_tools_result(tools_result)
+        await asyncio.to_thread(
+            mcp_manager.cache_discovered_tools,
+            server_name,
+            discovered_tools,
+        )
+        tool_briefs: list[ToolBrief] = [
+            {
+                "name": tool["name"],
+                "brief": _truncate_tool_brief(tool.get("description")),
+            }
+            for tool in discovered_tools
+        ]
+        return _response_tool_briefs(tool_briefs)
     except TimeoutError:
         logger.warning(
             "Timed out listing tools from MCP server %s after %.1fs",
@@ -272,19 +273,11 @@ async def list_all_mcp_tools(
                 if server_config and not server_config.enabled:
                     tools_by_server[server_filter] = []
                 else:
-                    if server_config and _external_server_is_unhealthy(
-                        server.mcp_manager, server_filter
-                    ):
-                        cached_tools = _cached_tool_briefs(server_config)
-                        if not cached_tools:
-                            _log_empty_unhealthy_cache(server_filter)
-                        tools_by_server[server_filter] = _response_tool_briefs(cached_tools)
-                    else:
-                        tools_by_server[server_filter] = await _list_external_server_tools(
-                            server.mcp_manager,
-                            server_filter,
-                            timeout=_mcp_call_timeout(server),
-                        )
+                    tools_by_server[server_filter] = await _list_external_server_tools(
+                        server.mcp_manager,
+                        server_filter,
+                        timeout=_mcp_call_timeout(server),
+                    )
         else:
             # Get tools from all servers
             # Internal servers
@@ -292,22 +285,13 @@ async def list_all_mcp_tools(
                 for registry in server._internal_manager.get_all_registries():
                     tools_by_server[registry.name] = registry.list_tools()
 
-            # External MCP servers use cached tools when unhealthy; otherwise
-            # ensure_connected provides lazy loading.
+            # Passive external inventory is cache-only. Live discovery is reserved
+            # for filtered requests and explicit refresh operations.
             if server.mcp_manager:
                 for config in server.mcp_manager.server_configs:
                     if config.enabled:
-                        if _external_server_is_unhealthy(server.mcp_manager, config.name):
-                            cached_tools = _cached_tool_briefs(config)
-                            if not cached_tools:
-                                _log_empty_unhealthy_cache(config.name)
-                            tools_by_server[config.name] = _response_tool_briefs(cached_tools)
-                            continue
-
-                        tools_by_server[config.name] = await _list_external_server_tools(
-                            server.mcp_manager,
-                            config.name,
-                            timeout=_mcp_call_timeout(server),
+                        tools_by_server[config.name] = _response_tool_briefs(
+                            _cached_tool_briefs(config)
                         )
 
         # Enrich with metrics if requested

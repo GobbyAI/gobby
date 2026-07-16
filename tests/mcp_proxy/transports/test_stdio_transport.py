@@ -409,6 +409,59 @@ class TestStdioConnectSuccess:
         assert params.args == []
         assert params.env is None
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("name", "command", "env", "expected_env"),
+        [
+            (
+                "brave-search",
+                "npx",
+                None,
+                {"npm_config_prefer_offline": "true"},
+            ),
+            (
+                "brave-search",
+                "npx",
+                {"npm_config_prefer_offline": "false", "KEY": "value"},
+                {"npm_config_prefer_offline": "false", "KEY": "value"},
+            ),
+            ("custom-server", "npx", {"KEY": "value"}, {"KEY": "value"}),
+            ("brave-search", "node", None, None),
+        ],
+        ids=["bundled-npx", "explicit-override", "custom-npx", "bundled-non-npx"],
+    )
+    @patch("gobby.mcp_proxy.transports.stdio.ClientSession")
+    @patch("gobby.mcp_proxy.transports.stdio.stdio_client")
+    async def test_connect_configures_prefer_offline_only_for_bundled_npx(
+        self,
+        mock_stdio_client: MagicMock,
+        mock_client_session_cls: MagicMock,
+        name: str,
+        command: str,
+        env: dict[str, str] | None,
+        expected_env: dict[str, str] | None,
+    ) -> None:
+        cfg = _make_config(name=name, command=command, args=[], env=env)
+        connection = StdioTransportConnection(cfg)
+
+        mock_transport_ctx = AsyncMock()
+        mock_transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
+        mock_stdio_client.return_value = mock_transport_ctx
+
+        mock_session = _mock_session()
+        mock_session_ctx = AsyncMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_client_session_cls.return_value = mock_session_ctx
+
+        await connection.connect()
+
+        params = mock_stdio_client.call_args[0][0]
+        assert params.command == command
+        assert params.args == []
+        assert params.env == expected_env
+        assert connection.is_connected is True
+        mock_session.initialize.assert_awaited_once()
+
 
 # ===========================================================================
 # connect() — missing command

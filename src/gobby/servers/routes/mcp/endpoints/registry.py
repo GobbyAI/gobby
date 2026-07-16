@@ -5,6 +5,7 @@ Extracted from tools.py as part of Phase 2 Strangler Fig decomposition.
 These endpoints handle tool registry operations like embedding, status, and refresh.
 """
 
+import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING, Any
@@ -269,6 +270,11 @@ async def refresh_mcp_tools(
                                     "inputSchema": schema,
                                 }
                             )
+                        await asyncio.to_thread(
+                            server.mcp_manager.cache_discovered_tools,
+                            server_name,
+                            tools,
+                        )
                     except Exception as e:
                         logger.warning(f"Failed to connect to {server_name}: {e}")
                         stats["by_server"][server_name] = {"error": str(e)}
