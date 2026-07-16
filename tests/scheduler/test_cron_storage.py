@@ -670,11 +670,12 @@ def test_fail_run_if_active_transitions_only_active_rows(
     assert running is not None
     cron_storage.update_run(running.id, status="running")
 
-    assert cron_storage.fail_run_if_active(running.id, "orphaned") is True
+    error = "orphaned:" + "z" * 7_000
+    assert cron_storage.fail_run_if_active(running.id, error) is True
     refreshed = cron_storage.get_run(running.id)
     assert refreshed is not None
     assert refreshed.status == "failed"
-    assert refreshed.error == "orphaned"
+    assert refreshed.error == error
     assert refreshed.completed_at is not None
 
     completed = cron_storage.create_run(job.id)

@@ -32,14 +32,6 @@ class CronConfig(BaseModel):
         default=30,
         description="Delete cron run history older than this many days",
     )
-    run_output_max_chars: int = Field(
-        default=10000,
-        description="Maximum stored cron run output characters",
-    )
-    run_error_max_chars: int = Field(
-        default=5000,
-        description="Maximum stored cron run error characters",
-    )
     backoff_delays: list[int] = Field(
         default=[30, 60, 300, 900, 3600],
         description="Exponential backoff delays in seconds for consecutive failures",
@@ -76,10 +68,3 @@ class CronConfig(BaseModel):
     @property
     def stale_run_timeout_seconds(self) -> int:
         return self.running_timeout_seconds + self.stale_run_grace_seconds
-
-    @field_validator("run_output_max_chars", "run_error_max_chars")
-    @classmethod
-    def validate_run_text_limit(cls, v: int) -> int:
-        if v < 1:
-            raise ValueError("cron run text limits must be at least 1")
-        return v

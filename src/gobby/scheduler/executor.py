@@ -19,7 +19,6 @@ if TYPE_CHECKING:
     from gobby.workflows.pipeline_executor import PipelineExecutor
 
 logger = logging.getLogger(__name__)
-TRUNCATED_MARKER = "\n[truncated]"
 
 # Type for registered cron handlers: async callables that receive a CronJob and return output.
 CronHandler = Callable[[CronJob], Awaitable[object]]
@@ -179,16 +178,8 @@ class CronExecutor:
             run.id,
             status=outcome.status,
             completed_at=completed_at,
-            output=self._truncate(
-                outcome.output,
-                self.config.run_output_max_chars,
-                field_name="output",
-            ),
-            error=self._truncate(
-                outcome.error,
-                self.config.run_error_max_chars,
-                field_name="error",
-            ),
+            output=outcome.output,
+            error=outcome.error,
             agent_run_id=outcome.agent_run_id,
             pipeline_execution_id=outcome.pipeline_execution_id,
         )
@@ -241,23 +232,6 @@ class CronExecutor:
             return json.dumps(dict(value), sort_keys=True)
         except TypeError:
             return str(value)
-
-    def _truncate(self, value: str | None, limit: int, *, field_name: str) -> str | None:
-        if value is None:
-            return None
-        if limit <= 0:
-            return ""
-        if len(value) <= limit:
-            return value
-        logger.warning(
-            "Truncating cron run %s from %s to %s characters",
-            field_name,
-            len(value),
-            limit,
-        )
-        if limit <= len(TRUNCATED_MARKER):
-            return "." * min(limit, 3)
-        return value[: limit - len(TRUNCATED_MARKER)] + TRUNCATED_MARKER
 
     def _overlap_policy(self, job: CronJob) -> Literal["skip_if_active", "allow"]:
         policy = job.action_config.get("overlap_policy", "skip_if_active")
@@ -605,11 +579,7 @@ class CronExecutor:
             cron_run_id,
             status="failed",
             completed_at=datetime.now(UTC).isoformat(),
-            error=self._truncate(
-                error,
-                self.config.run_error_max_chars,
-                field_name="error",
-            ),
+            error=error,
             pipeline_execution_id=execution_id,
         )
 

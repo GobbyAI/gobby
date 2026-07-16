@@ -20,6 +20,8 @@ def test_cron_config_defaults() -> None:
     assert config.stale_run_timeout_seconds == 1560
     assert config.cleanup_after_days == 30
     assert config.backoff_delays == [30, 60, 300, 900, 3600]
+    assert "run_output_max_chars" not in type(config).model_fields
+    assert "run_error_max_chars" not in type(config).model_fields
 
 
 def test_cron_config_custom_values() -> None:

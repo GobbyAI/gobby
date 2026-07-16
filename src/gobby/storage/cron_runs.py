@@ -22,20 +22,6 @@ from gobby.storage.hub.protocol import CronRunAdmission, HubDatabase
 from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
-CRON_RUN_ERROR_MAX_CHARS = 5000
-TRUNCATED_MARKER = "\n[truncated]"
-
-
-def _truncate_cron_run_error(error: str, *, context: str) -> str:
-    if len(error) <= CRON_RUN_ERROR_MAX_CHARS:
-        return error
-    logger.warning(
-        "Truncating cron run %s error from %s to %s characters",
-        context,
-        len(error),
-        CRON_RUN_ERROR_MAX_CHARS,
-    )
-    return error[: CRON_RUN_ERROR_MAX_CHARS - len(TRUNCATED_MARKER)] + TRUNCATED_MARKER
 
 
 class CronRunStorageMixin:
@@ -328,7 +314,7 @@ class CronRunStorageMixin:
                AND status IN ('pending', 'running')
             RETURNING id
             """,
-            (now, _truncate_cron_run_error(error, context="active"), run_id),
+            (now, error, run_id),
         )
         return row is not None
 

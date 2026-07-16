@@ -43,10 +43,6 @@ def _make_job(storage: CronJobStorage, action_type: str, action_config: dict) ->
     )
 
 
-def test_truncate_returns_empty_string_for_non_positive_limit(executor: CronExecutor) -> None:
-    assert executor._truncate("abcdef", 0, field_name="output") == ""
-
-
 @pytest.mark.asyncio
 async def test_shutdown_cancels_background_tasks(executor: CronExecutor) -> None:
     started = asyncio.Event()
@@ -480,6 +476,7 @@ async def test_execute_pipeline_background_success_completes_cron_run(
 async def test_execute_pipeline_background_failure_fails_cron_run(
     cron_storage: CronJobStorage,
 ) -> None:
+    error = "pipeline exploded:" + "p" * 7_000
     pipeline = MagicMock()
     pipeline.name = "cron-failure"
     pipeline.model_dump_json.return_value = '{"name":"cron-failure"}'
@@ -493,7 +490,7 @@ async def test_execute_pipeline_background_failure_fails_cron_run(
     pipeline_executor.execution_manager = MagicMock()
     pipeline_executor.execution_manager.create_execution.return_value = execution
     pipeline_executor.execution_manager.get_steps_for_execution.return_value = []
-    pipeline_executor.execute = AsyncMock(side_effect=RuntimeError("pipeline exploded"))
+    pipeline_executor.execute = AsyncMock(side_effect=RuntimeError(error))
 
     executor = CronExecutor(storage=cron_storage, pipeline_executor=pipeline_executor)
     job = _make_job(cron_storage, "pipeline", {"pipeline_name": "cron-failure"})
@@ -506,7 +503,7 @@ async def test_execute_pipeline_background_failure_fails_cron_run(
     assert dispatched.status == "dispatched"
     assert persisted is not None
     assert persisted.status == "failed"
-    assert persisted.error == "pipeline exploded"
+    assert persisted.error == error
     assert persisted.completed_at is not None
     assert persisted.pipeline_execution_id == execution.id
 
@@ -730,6 +727,25 @@ async def test_execute_handler_success(
 
 
 @pytest.mark.asyncio
+async def test_execute_preserves_oversized_handler_output(
+    cron_storage: CronJobStorage, executor: CronExecutor
+) -> None:
+    output = "output:" + "x" * 12_000
+
+    async def oversized_handler(_job: CronJob) -> str:
+        return output
+
+    executor.register_handler("oversized_output", oversized_handler)
+    job = _make_job(cron_storage, "handler", {"handler": "oversized_output"})
+    run = cron_storage.create_run(job.id)
+
+    result = await executor.execute(job, run)
+
+    assert result.status == "completed"
+    assert result.output == output
+
+
+@pytest.mark.asyncio
 async def test_execute_handler_missing_name(
     cron_storage: CronJobStorage, executor: CronExecutor
 ) -> None:
@@ -772,6 +788,25 @@ async def test_execute_handler_error_propagates(
     result = await executor.execute(job, run)
     assert result.status == "failed"
     assert "handler exploded" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_execute_preserves_oversized_handler_error(
+    cron_storage: CronJobStorage, executor: CronExecutor
+) -> None:
+    error = "error:" + "y" * 7_000
+
+    async def failing_handler(_job: CronJob) -> str:
+        raise RuntimeError(error)
+
+    executor.register_handler("oversized_error", failing_handler)
+    job = _make_job(cron_storage, "handler", {"handler": "oversized_error"})
+    run = cron_storage.create_run(job.id)
+
+    result = await executor.execute(job, run)
+
+    assert result.status == "failed"
+    assert result.error == error
 
 
 @pytest.mark.asyncio
