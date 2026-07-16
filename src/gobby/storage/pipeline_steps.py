@@ -188,7 +188,7 @@ class PipelineStepStorageMixin:
                   SELECT id FROM pipeline_executions WHERE {project_clause}
               )
             RETURNING *
-            """,  # nosec - project_clause is an internal fixed predicate.
+            """,  # nosec B608
             (
                 status.value,
                 approved_by,

@@ -691,7 +691,7 @@ class SkillMetadataMixin:
                     ORDER BY name, (project_id IS NOT NULL) DESC
                 ) AS deduped_skills
                 ORDER BY name ASC
-            """  # nosec B608 - inner query contains only fixed clauses.
+            """  # nosec B608
         else:
             query += " ORDER BY name ASC"
         if limit >= 0:
