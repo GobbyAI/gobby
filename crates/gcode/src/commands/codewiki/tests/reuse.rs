@@ -1,3 +1,5 @@
+use gobby_core::config::AiRouting;
+
 use super::support::*;
 use super::*;
 
@@ -1831,4 +1833,249 @@ fn cluster_rename_rewrites_stale_ownership_module_links() {
         !ownership_after.contains("ids_plan"),
         "stale ownership page retained with a dangling module link"
     );
+}
+
+/// Stamps a top-level `degraded: true` into a page's frontmatter without
+/// touching `_meta/codewiki.json`, simulating manifest/page skew (#18291).
+fn stamp_page_degraded(path: &std::path::Path) {
+    let page = std::fs::read_to_string(path).expect("page to stamp");
+    let stamped = page.replacen("---\n", "---\ndegraded: true\n", 1);
+    assert_ne!(page, stamped, "no frontmatter fence in {}", path.display());
+    std::fs::write(path, stamped).expect("stamp degraded frontmatter");
+}
+
+#[test]
+fn on_disk_degraded_file_page_regenerates_while_healthy_pages_reuse() {
+    let (project, input) = reuse_project();
+    let out_dir = project.path().join("codewiki");
+
+    let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
+        if system == prompts::CURATED_NAVIGATION_SYSTEM {
+            Some(test_curated_navigation_json())
+        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
+            Some(test_concept_handbook_body())
+        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
+            Some(test_narrative_handbook_body())
+        } else {
+            Some("Generated prose.".to_string())
+        }
+    };
+    let mut progress = CodewikiProgress::silent();
+    let first = collect_docs(
+        &input,
+        GenerateDocsOptions {
+            generate: Some(&mut first_generator),
+            ai_depth: AiDepth::Symbols,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
+    );
+    write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &first,
+        None,
+        "symbols",
+        DocPruneScope::unscoped(),
+    )
+    .expect("first write");
+
+    // The manifest still records the page as healthy; only the page itself
+    // carries the degraded stamp (manifest/page skew, #18291).
+    stamp_page_degraded(&out_dir.join("code/files/src/lib.rs.md"));
+
+    let mut calls = 0_usize;
+    let mut counting_generator = |_prompt: &str, _system: &str, _tier: PromptTier| {
+        calls += 1;
+        Some("Second-run prose.".to_string())
+    };
+    let mut plan = ReusePlan::load(project.path(), &out_dir, "symbols").expect("reuse plan loads");
+    let reuse = Some(&mut plan);
+    let mut progress = CodewikiProgress::silent();
+    let second = collect_docs(
+        &input,
+        GenerateDocsOptions {
+            generate: Some(&mut counting_generator),
+            ai_depth: AiDepth::Symbols,
+            reuse,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
+    );
+    assert!(calls > 0, "the degraded page must regenerate");
+
+    let lib_doc = second
+        .iter()
+        .find(|doc| doc.path == "code/files/src/lib.rs.md")
+        .expect("lib file doc is emitted");
+    assert!(
+        lib_doc.content.contains("Second-run prose."),
+        "on-disk degraded page must not satisfy reuse:\n{}",
+        lib_doc.content
+    );
+    let api_doc = second
+        .iter()
+        .find(|doc| doc.path == "code/files/src/nested/api.rs.md")
+        .expect("api file doc is emitted");
+    assert!(
+        api_doc.content.contains("Generated prose."),
+        "healthy unchanged pages still reuse:\n{}",
+        api_doc.content
+    );
+
+    write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &second,
+        None,
+        "symbols",
+        DocPruneScope::unscoped(),
+    )
+    .expect("second write");
+    let healed = std::fs::read_to_string(out_dir.join("code/files/src/lib.rs.md"))
+        .expect("lib page after regeneration");
+    assert!(
+        !healed.contains("\ndegraded: true"),
+        "regenerated page sheds the degraded stamp:\n{healed}"
+    );
+}
+
+#[test]
+fn on_disk_degraded_ownership_page_regenerates_despite_healthy_meta() {
+    let (project, input) = reuse_project();
+    // Declared owners make the ownership page emit module links. The tempdir
+    // is not a git repository, so the built page records `degraded: true`
+    // (git_blame_unavailable) while its BuiltDoc — and therefore its manifest
+    // entry — claims the page is healthy: exactly the manifest/page skew the
+    // #17531 bakeoff hit (#18291).
+    std::fs::write(project.path().join("CODEOWNERS"), "* @gobby-owners\n").expect("codeowners");
+    let out_dir = project.path().join("codewiki");
+
+    let mut generator =
+        |_prompt: &str, _system: &str, _tier: PromptTier| Some("Ownership-run prose.".to_string());
+    let mut progress = CodewikiProgress::silent();
+    let mut first_meta = OwnershipMeta::default();
+    let first = collect_docs(
+        &input,
+        GenerateDocsOptions {
+            ownership: Some((project.path(), &mut first_meta)),
+            generate: Some(&mut generator),
+            ai_depth: AiDepth::Symbols,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
+    );
+    write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &first,
+        None,
+        "symbols",
+        DocPruneScope::unscoped(),
+    )
+    .expect("first write");
+
+    let on_disk = std::fs::read_to_string(out_dir.join("code/_ownership.md"))
+        .expect("ownership page on disk");
+    assert!(
+        on_disk.contains("\ndegraded: true"),
+        "harness precondition: the built ownership page is degraded:\n{on_disk}"
+    );
+    let meta = std::fs::read_to_string(out_dir.join("_meta/codewiki.json")).expect("read meta");
+    let meta: serde_json::Value = serde_json::from_str(&meta).expect("parse meta");
+    assert!(
+        meta["docs"]["code/_ownership.md"].get("degraded").is_none(),
+        "harness precondition: the manifest entry claims the page is healthy"
+    );
+
+    // The degraded page must never satisfy reuse, no matter what the manifest
+    // entry claims — the next run rewrites it.
+    let mut plan = ReusePlan::load(project.path(), &out_dir, "symbols").expect("reuse plan loads");
+    let mut progress = CodewikiProgress::silent();
+    let mut second_meta = OwnershipMeta::default();
+    let second = collect_docs(
+        &input,
+        GenerateDocsOptions {
+            ownership: Some((project.path(), &mut second_meta)),
+            generate: Some(&mut generator),
+            ai_depth: AiDepth::Symbols,
+            reuse: Some(&mut plan),
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
+    );
+    let changed = write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &second,
+        None,
+        "symbols",
+        DocPruneScope::unscoped(),
+    )
+    .expect("second write");
+    assert!(
+        changed.iter().any(|path| path == "code/_ownership.md"),
+        "degraded ownership page must be rewritten, not reused: {changed:?}"
+    );
+}
+
+#[test]
+fn outcome_degraded_page_records_degraded_meta_and_never_reuses() {
+    let project = tempfile::tempdir().expect("project tempdir");
+    let out_dir = project.path().join("codewiki");
+    let doc = BuiltDoc::derived(
+        "code/test.md",
+        "---\ntitle: Test\ntype: note\n---\n\nBody.\n".to_string(),
+        "key-1".to_string(),
+    );
+    // The builder reports the doc healthy; only the run-level write outcome
+    // degrades it (e.g. model-unavailable) — the bakeoff `_ownership.md` case.
+    let degraded_outcome = CodewikiAiOutcome::generated(AiRouting::Daemon, false).for_doc(true);
+
+    let mut sink = DocSink::open(project.path(), &out_dir, "off").expect("sink opens");
+    assert!(
+        sink.persist_with_ai_outcome(&doc, degraded_outcome)
+            .expect("first persist")
+    );
+    assert_eq!(sink.degraded_docs(), ["code/test.md"]);
+    sink.finish(None).expect("first finish");
+
+    let meta = std::fs::read_to_string(out_dir.join("_meta/codewiki.json")).expect("read meta");
+    let meta: serde_json::Value = serde_json::from_str(&meta).expect("parse meta");
+    assert_eq!(
+        meta["docs"]["code/test.md"]["degraded"],
+        serde_json::Value::Bool(true),
+        "outcome degradation lands in _meta/codewiki.json"
+    );
+
+    // A later run under the same degraded outcome must rewrite, never reuse:
+    // repairing degraded pages is the whole point of a heal re-run (#687).
+    let mut sink = DocSink::open(project.path(), &out_dir, "off").expect("sink reopens");
+    assert!(
+        sink.persist_with_ai_outcome(&doc, degraded_outcome)
+            .expect("second persist"),
+        "a degraded page is regenerated, never reused"
+    );
+}
+
+#[test]
+fn page_frontmatter_blocks_reuse_reads_top_level_health_keys() {
+    assert!(page_frontmatter_blocks_reuse(
+        "---\ntitle: T\ndegraded: true\n---\n\nBody.\n"
+    ));
+    assert!(page_frontmatter_blocks_reuse(
+        "---\ntitle: T\nai_generation_status: degraded\n---\n\nBody.\n"
+    ));
+    assert!(!page_frontmatter_blocks_reuse(
+        "---\ntitle: T\ndegraded: false\nai_generation_status: generated\n---\n\nBody.\n"
+    ));
+    assert!(!page_frontmatter_blocks_reuse(
+        "---\ntitle: T\nai_generation_status: skipped\n---\n\nBody.\n"
+    ));
+    // Nested keys belong to other structures, not the page's own health.
+    assert!(!page_frontmatter_blocks_reuse(
+        "---\ntitle: T\nprovenance:\n  - degraded: true\n---\n\nBody.\n"
+    ));
+    // No frontmatter: nothing to block on.
+    assert!(!page_frontmatter_blocks_reuse("Body only.\n"));
 }

@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use super::io::{read_codewiki_meta, safe_doc_path};
+use super::io::{page_frontmatter_blocks_reuse, read_codewiki_meta, safe_doc_path};
 use super::{
     AiGenerationSettings, BuiltDoc, CodewikiAiOutcome, CodewikiDocMeta, SourceSpan,
     render_version_for_path,
@@ -120,8 +120,7 @@ impl ReusePlan {
         if !self.reusable(doc_path, sources, &BTreeSet::new(), ai_outcome) {
             return None;
         }
-        let target = safe_doc_path(&self.out_dir, doc_path).ok()?;
-        std::fs::read_to_string(target).ok()
+        self.read_healthy_page(doc_path)
     }
 
     /// The on-disk page of a derived aggregate page (architecture,
@@ -145,11 +144,7 @@ impl ReusePlan {
         {
             return None;
         }
-        let target = safe_doc_path(&self.out_dir, doc_path).ok()?;
-        if !target.exists() {
-            return None;
-        }
-        std::fs::read_to_string(target).ok()
+        self.read_healthy_page(doc_path)
     }
 
     pub(crate) fn reusable_page_keyed_with_sources_and_ai_outcome(
@@ -166,8 +161,7 @@ impl ReusePlan {
         if !self.reusable(doc_path, sources, &BTreeSet::new(), ai_outcome) {
             return None;
         }
-        let target = safe_doc_path(&self.out_dir, doc_path).ok()?;
-        std::fs::read_to_string(target).ok()
+        self.read_healthy_page(doc_path)
     }
 
     /// Both the on-disk page and the recorded summary of a reusable doc.
@@ -193,9 +187,21 @@ impl ReusePlan {
         if !self.reusable(doc_path, sources, neighbors, self.ai_outcome) {
             return None;
         }
+        let page = self.read_healthy_page(doc_path)?;
+        Some((page, summary))
+    }
+
+    /// Reads a reuse candidate's on-disk page, rejecting pages whose own
+    /// frontmatter records a degraded generation. The manifest can claim a
+    /// page is healthy while the page itself is degraded (#18291), and a
+    /// degraded page must never satisfy reuse (#687).
+    fn read_healthy_page(&self, doc_path: &str) -> Option<String> {
         let target = safe_doc_path(&self.out_dir, doc_path).ok()?;
         let page = std::fs::read_to_string(target).ok()?;
-        Some((page, summary))
+        if page_frontmatter_blocks_reuse(&page) {
+            return None;
+        }
+        Some(page)
     }
 
     pub(crate) fn reusable_pages_with_prefixes_by_ai_outcome(

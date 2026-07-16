@@ -206,6 +206,12 @@ impl<'a> DocSink<'a> {
     ) -> anyhow::Result<bool> {
         let target = safe_doc_path(self.out_dir, &doc.path)?;
         let write_outcome = ai_outcome.for_doc(doc.degraded);
+        // A degraded write outcome degrades the page even when its builder
+        // reported it healthy (e.g. `_ownership.md` emits `degraded: false`
+        // but the run-level model probe failed): the recorded meta must say
+        // so, or the #687 never-reuse-degraded rule silently skips the page
+        // on the next run (#18291).
+        let degraded = doc.degraded || write_outcome.status == AiGenerationStatus::Degraded;
         let content = apply_ai_outcome_to_markdown(&doc.content, write_outcome);
         let content = if doc.path.ends_with(".md") {
             strict_markdown::normalize_codewiki_markdown(&content)
@@ -214,12 +220,18 @@ impl<'a> DocSink<'a> {
         };
         let previous_meta = self.previous_docs.get(&doc.path);
         let doc_ai_settings = self.ai_settings.for_path(&doc.path);
+        // The on-disk page can also be degraded while the manifest claims it
+        // is healthy (manifest/page skew, #18291); such a page never
+        // satisfies any reuse gate below.
+        let target_blocks_reuse = std::fs::read_to_string(&target)
+            .is_ok_and(|existing| page_frontmatter_blocks_reuse(&existing));
         // Keyed docs take the fast path only while their key is unchanged: a
         // key move (aggregate digest, module link, child-link set) must fall
         // through to the full gate and rewrite even under `--since` (#17731).
         if let (Some(since), Some(meta)) = (self.since.as_ref(), previous_meta)
             && doc.invalidation_key == meta.invalidation_key
             && target.exists()
+            && !target_blocks_reuse
             && !meta.degraded
             && meta.ai_mode == self.ai_mode
             && meta.ai_route == ai_outcome.route_label()
@@ -265,6 +277,7 @@ impl<'a> DocSink<'a> {
         //   an AI-mode, render-version, or generation-settings (#17530) change
         //   invalidates content hashes cannot see.
         let unchanged = target.exists()
+            && !target_blocks_reuse
             && previous_meta.is_some_and(|meta| {
                 !meta.degraded
                     && meta.ai_mode == self.ai_mode
@@ -301,6 +314,7 @@ impl<'a> DocSink<'a> {
         // normal logic above, so a manifest/contract change still rebuilds them.
         let since_unchanged = !source_hashes.is_empty()
             && target.exists()
+            && !target_blocks_reuse
             && previous_meta.is_some_and(|meta| {
                 meta.invalidation_key == doc.invalidation_key
                     && !meta.degraded
@@ -339,7 +353,7 @@ impl<'a> DocSink<'a> {
         } else {
             write_doc(self.out_dir, &doc.path, &content)?;
             self.generated_docs.push(doc.path.clone());
-            if doc.degraded {
+            if degraded {
                 self.degraded_docs.push(doc.path.clone());
             }
             // Mirror the Lane B observability (lane/tool-call/turn counts) from
@@ -348,14 +362,10 @@ impl<'a> DocSink<'a> {
             let lane = lane_observability_from_content(&content);
             CodewikiDocMeta {
                 source_hashes,
-                degraded: doc.degraded,
+                degraded,
                 // Degraded fallbacks are never reused, so their summaries are
                 // never recorded.
-                summary: if doc.degraded {
-                    None
-                } else {
-                    doc.summary.clone()
-                },
+                summary: if degraded { None } else { doc.summary.clone() },
                 ai_mode: self.ai_mode.clone(),
                 ai_route: write_outcome.route_label().to_string(),
                 ai_fallback: write_outcome.fallback,
@@ -580,6 +590,30 @@ fn lane_observability_from_content(content: &str) -> LaneObservability {
         return LaneObservability::default();
     };
     serde_yaml::from_str(frontmatter_body).unwrap_or_default()
+}
+
+/// Generation-health fields parsed back out of a page's rendered frontmatter;
+/// every other key is ignored.
+#[derive(Default, serde::Deserialize)]
+struct PageHealthFrontmatter {
+    degraded: Option<bool>,
+    ai_generation_status: Option<String>,
+}
+
+/// True when a page's own on-disk frontmatter records a degraded generation.
+/// The manifest entry can claim a page is healthy while the page itself
+/// carries a degraded stamp — an emit site that under-reports degradation, or
+/// a run killed between the page write and the manifest flush (#18291). The
+/// page is the last word: a degraded page never satisfies reuse (#687).
+pub(crate) fn page_frontmatter_blocks_reuse(content: &str) -> bool {
+    let Some((frontmatter_body, _)) = split_frontmatter(content) else {
+        return false;
+    };
+    let Ok(health) = serde_yaml::from_str::<PageHealthFrontmatter>(frontmatter_body) else {
+        return false;
+    };
+    health.degraded == Some(true)
+        || health.ai_generation_status.as_deref() == Some(AiGenerationStatus::Degraded.as_str())
 }
 
 fn is_ai_frontmatter_line(line: &str, top_level_indent: &str) -> bool {
