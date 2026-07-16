@@ -6,12 +6,16 @@ from typing import Any
 _FAILED_RUN_STATUSES = frozenset({"failed", "failure", "error", "timeout", "degraded"})
 WIKI_HEALTH_HISTORY_SAMPLE_SIZE = 10
 WIKI_REFRESH_HISTORY_SAMPLE_SIZE = 5
+WIKI_VERBOSE_HISTORY_SAMPLE_SIZE = 3
+WIKI_HISTORY_SAMPLE_TEXT_MAX_CHARS = 300
 
 # Refresh payloads enumerate every catalog source per run; stored history keeps
 # counts (and per-code samples) instead so cron output stays inside executor
 # limits. `refreshed` stays verbatim — it holds only what actually changed.
 _REFRESH_GROUPED_LIST_FIELDS = ("failed", "skipped")
 _REFRESH_COUNTED_LIST_FIELDS = ("planned", "unchanged")
+_AUDIT_COUNTED_LIST_FIELDS = ("claims", "unsupported_claims", "source_context")
+_SYNC_SESSIONS_COUNTED_LIST_FIELDS = ("accepted", "skipped", "failed", "reconciled")
 
 _HEALTH_HISTORY_LIST_FIELDS = (
     "broken_links",
@@ -37,7 +41,20 @@ def _history_output(
     error = _run_error(gwiki_result, payload, command=command, status=status)
     if extra_error:
         error = f"{error}; {extra_error}" if error else extra_error
-    visible_payload = _compact_refresh_payload(payload) if command == "refresh" else payload
+    if command == "refresh":
+        visible_payload = _compact_refresh_payload(payload)
+    elif command == "audit":
+        visible_payload = _compact_counted_list_payload(
+            payload,
+            fields=_AUDIT_COUNTED_LIST_FIELDS,
+        )
+    elif command == "sync-sessions":
+        visible_payload = _compact_counted_list_payload(
+            payload,
+            fields=_SYNC_SESSIONS_COUNTED_LIST_FIELDS,
+        )
+    else:
+        visible_payload = payload
     return _history_output_json(
         purpose=purpose,
         scope=scope,
@@ -194,6 +211,42 @@ def _compact_refresh_payload(
         else:
             compact[key] = value
     return compact
+
+
+def _compact_counted_list_payload(
+    payload: dict[str, Any],
+    *,
+    fields: tuple[str, ...],
+    sample_size: int = WIKI_VERBOSE_HISTORY_SAMPLE_SIZE,
+) -> dict[str, Any]:
+    compact: dict[str, Any] = {}
+    for key, value in payload.items():
+        if key in fields and isinstance(value, list):
+            compact[f"{key}_count"] = len(value)
+            compact[f"{key}_sample"] = [
+                _compact_history_sample(item) for item in value[:sample_size]
+            ]
+        else:
+            compact[key] = value
+    return compact
+
+
+def _compact_history_sample(value: Any) -> Any:
+    if isinstance(value, str):
+        if len(value) <= WIKI_HISTORY_SAMPLE_TEXT_MAX_CHARS:
+            return value
+        return value[: WIKI_HISTORY_SAMPLE_TEXT_MAX_CHARS - 3] + "..."
+    if isinstance(value, dict):
+        compact: dict[str, Any] = {}
+        for key, nested in value.items():
+            if isinstance(nested, list):
+                compact[f"{key}_count"] = len(nested)
+            else:
+                compact[key] = _compact_history_sample(nested)
+        return compact
+    if isinstance(value, list):
+        return {"count": len(value)}
+    return value
 
 
 def _compact_health_payload(

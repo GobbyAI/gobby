@@ -365,6 +365,31 @@ class LargeRefreshGateway(RecordingGateway):
         )
 
 
+class LargeAuditGateway(RecordingGateway):
+    def __init__(self, payload: dict[str, Any]) -> None:
+        super().__init__()
+        self.payload = payload
+
+    async def audit(self) -> dict[str, Any]:
+        self.calls.append(("audit", {}))
+        return _result("audit", self.payload)
+
+
+class LargeSyncSessionsGateway(RecordingGateway):
+    def __init__(self, payload: dict[str, Any]) -> None:
+        super().__init__()
+        self.payload = payload
+
+    async def sync_sessions(
+        self,
+        *,
+        archive_dir: str | Path | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        self.calls.append(("sync-sessions", {"archive_dir": archive_dir, "limit": limit}))
+        return _result("sync_sessions", self.payload)
+
+
 @pytest.mark.asyncio
 async def test_refresh_cron_history_compacts_per_source_arrays() -> None:
     skipped = [
@@ -410,6 +435,144 @@ async def test_refresh_cron_history_compacts_per_source_arrays() -> None:
     assert result["failed_count"] == 7
     assert result["failed"] == [{"code": "replay_failed", "count": 7, "sample": failed[:5]}]
     assert "payload" not in result["gwiki"]
+    assert len(raw_output) < 10_000
+
+
+@pytest.mark.asyncio
+async def test_audit_cron_history_compacts_verbose_collections() -> None:
+    source_context = [
+        {
+            "source_id": f"src-{index}",
+            "path": f"knowledge/sources/source-{index}.md",
+            "citation": f"session:{index}",
+            "location": f"session:{index}",
+        }
+        for index in range(250)
+    ]
+    claims = [
+        {
+            "path": "knowledge/concepts/gobby.md",
+            "line": index,
+            "heading": "Overview",
+            "claim": f"Claim {index}: " + ("detailed evidence " * 300),
+            "classification": "EXTRACTED",
+        }
+        for index in range(120)
+    ]
+    unsupported_claims = [
+        {
+            "path": "knowledge/concepts/gobby.md",
+            "line": index,
+            "heading": "Overview",
+            "claim": f"Unsupported claim {index}: " + ("missing evidence " * 300),
+            "reason": "No supporting source found",
+            "source_context": source_context,
+        }
+        for index in range(40)
+    ]
+    gateway = LargeAuditGateway(
+        {
+            "status": "completed",
+            "root": "/wiki/root",
+            "claims": claims,
+            "unsupported_claims": unsupported_claims,
+            "source_context": source_context,
+        }
+    )
+    handler = create_wiki_audit_handler(
+        gateway=gateway,
+        coordinator=WikiUpdateCoordinator(gateway),
+        scope="project:alpha",
+    )
+
+    raw_output = await handler(_job("audit"))
+    output = json.loads(raw_output)
+    result = output["result"]
+
+    assert result["root"] == "/wiki/root"
+    assert result["claims_count"] == 120
+    assert len(result["claims_sample"]) == 3
+    assert result["claims_sample"][0]["claim"].endswith("...")
+    assert result["unsupported_claims_count"] == 40
+    assert result["unsupported_claims_sample"][0]["source_context_count"] == 250
+    assert result["source_context_count"] == 250
+    assert len(result["source_context_sample"]) == 3
+    assert result["gwiki"] == {"ok": True, "command": "audit", "stderr": ""}
+    assert "claims" not in result
+    assert "unsupported_claims" not in result
+    assert "source_context" not in result
+    assert len(raw_output) < 10_000
+
+
+@pytest.mark.asyncio
+async def test_sync_sessions_cron_history_compacts_per_session_results() -> None:
+    accepted = [
+        {
+            "archive_path": f"/archive/session-{index}.md",
+            "raw_path": f"raw/session-{index}.md",
+            "source": {
+                "id": f"src-{index}",
+                "kind": "session",
+                "location": f"session:{index}",
+                "content_hash": f"hash-{index}",
+            },
+        }
+        for index in range(25)
+    ]
+    skipped = [
+        {
+            "archive_path": f"/archive/skipped-{index}.md",
+            "content_hash": f"skipped-hash-{index}",
+            "reason": "content_hash_already_ingested",
+        }
+        for index in range(4_200)
+    ]
+    reconciled = [
+        {
+            "source_id": f"src-reconciled-{index}",
+            "canonical_location": f"session:reconciled-{index}",
+            "content_hash": f"reconciled-hash-{index}",
+        }
+        for index in range(60)
+    ]
+    gateway = LargeSyncSessionsGateway(
+        {
+            "status": "completed",
+            "archive_dir": "/archive",
+            "scanned": 4_285,
+            "accepted": accepted,
+            "skipped": skipped,
+            "failed": [],
+            "reconciled": reconciled,
+            "indexed": {"documents": 323, "chunks": 2_416, "links": 847},
+        }
+    )
+    handler = create_wiki_sync_sessions_handler(
+        gateway=gateway,
+        coordinator=WikiUpdateCoordinator(gateway),
+        scope="project:alpha",
+    )
+
+    raw_output = await handler(_job("sync-sessions"))
+    output = json.loads(raw_output)
+    result = output["result"]
+
+    assert result["archive_dir"] == "/archive"
+    assert result["scanned"] == 4_285
+    assert result["indexed"] == {"documents": 323, "chunks": 2_416, "links": 847}
+    assert result["accepted_count"] == 25
+    assert result["accepted_sample"] == accepted[:3]
+    assert result["skipped_count"] == 4_200
+    assert result["skipped_sample"] == skipped[:3]
+    assert result["failed_count"] == 0
+    assert result["failed_sample"] == []
+    assert result["reconciled_count"] == 60
+    assert result["reconciled_sample"] == reconciled[:3]
+    assert result["gwiki"] == {"ok": True, "command": "sync_sessions", "stderr": ""}
+    assert "accepted" not in result
+    assert "skipped" not in result
+    assert "failed" not in result
+    assert "reconciled" not in result
     assert len(raw_output) < 10_000
 
 
