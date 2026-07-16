@@ -171,10 +171,10 @@ pub(crate) use build::{
     build_infrastructure_doc, build_module_docs_with_filter, build_onboarding_doc,
     hash_snapshot_file, resolve_file_reuse, resolve_lane_b_dump_dir,
 };
-pub(crate) use publication::{CodewikiPublication, PublicationFingerprint};
+pub(crate) use publication::{CodewikiPublication, PublicationFingerprint, code_wikilinks};
 pub(crate) use reuse_guard::{
-    file_module_link_key, module_child_links_key, restamp_file_module_link,
-    reused_module_child_links_current,
+    file_module_link_key, module_child_links_key, nav_set_invalidation_key,
+    restamp_file_module_link, reused_module_child_links_current,
 };
 pub(crate) use truth_digest::build_truth_digest;
 // Module clustering and graph-to-file helpers.

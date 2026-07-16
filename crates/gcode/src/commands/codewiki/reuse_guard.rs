@@ -35,6 +35,26 @@ pub(crate) fn module_child_links_key(children: &[ModuleLink]) -> String {
     format!("child-links:{}", names.join("\n"))
 }
 
+/// Invalidation key recording the atomically-planned curated-navigation doc
+/// set (concept index + concept pages + narrative pages). The nondeterministic
+/// clustering pass can regroup the set between runs while every member's own
+/// sources hash unchanged; without this key the persist gates skip individual
+/// nav docs and a stale index survives referencing slugs the current plan
+/// dropped, which publication then rejects (#18328). The key hashes the sorted
+/// emitted path set, so an identical plan still skips and any regrouping
+/// rewrites the whole set atomically.
+pub(crate) fn nav_set_invalidation_key(paths: &BTreeSet<String>) -> String {
+    let joined = paths
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "nav-links:{}",
+        crate::index::hasher::content_hash(joined.as_bytes())
+    )
+}
+
 /// Re-stamp the deterministic `Module:` link of a reused file page with the
 /// module computed this run.
 ///
@@ -129,6 +149,37 @@ mod tests {
             summary: String::new(),
             source_spans: Vec::new(),
         }
+    }
+
+    #[test]
+    fn nav_set_key_is_stable_for_a_set_and_moves_when_the_set_regroups() {
+        let set = |paths: &[&str]| {
+            paths
+                .iter()
+                .map(|path| path.to_string())
+                .collect::<BTreeSet<_>>()
+        };
+        let planned = set(&[
+            "code/concepts/index.md",
+            "code/concepts/contract.md",
+            "code/concepts/contract-2.md",
+        ]);
+        let key = nav_set_invalidation_key(&planned);
+        assert!(key.starts_with("nav-links:"), "{key}");
+        // Same emitted set — regardless of discovery order — keeps the key, so
+        // an unchanged plan still skips.
+        assert_eq!(
+            key,
+            nav_set_invalidation_key(&set(&[
+                "code/concepts/contract-2.md",
+                "code/concepts/contract.md",
+                "code/concepts/index.md",
+            ]))
+        );
+        // A regrouped plan (contract-2 merged away) moves the key, so every
+        // nav doc falls through the persist skip gates (#18328).
+        let regrouped = set(&["code/concepts/index.md", "code/concepts/contract.md"]);
+        assert_ne!(key, nav_set_invalidation_key(&regrouped));
     }
 
     #[test]

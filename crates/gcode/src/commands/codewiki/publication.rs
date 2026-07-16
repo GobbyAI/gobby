@@ -386,7 +386,7 @@ fn validate_and_plan(live_out: &Path, stage_out: &Path) -> anyhow::Result<Public
     })
 }
 
-fn code_wikilinks(content: &str) -> anyhow::Result<BTreeSet<String>> {
+pub(crate) fn code_wikilinks(content: &str) -> anyhow::Result<BTreeSet<String>> {
     let masked = mask_code_regions(content);
     let mut targets = BTreeSet::new();
     let mut rest = masked.as_str();

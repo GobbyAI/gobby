@@ -116,6 +116,92 @@ fn unchanged_sources_are_reused_without_any_generation_call() {
     );
 }
 
+/// #18328: whole-set nav reuse enumerates the manifest, which is
+/// file-consistent even when a prior run's per-doc skips left the on-disk
+/// index referencing a slug no page in the set carries. Such a skewed set
+/// must fall through to fresh generation (which heals it), never reuse —
+/// otherwise publication fails on every relaunch. The consistent-set case
+/// stays reusable (`unchanged_sources_are_reused_without_any_generation_call`).
+#[test]
+fn skewed_nav_set_falls_through_reuse_to_regeneration() {
+    let (project, input) = reuse_project();
+    let out_dir = project.path().join("codewiki");
+
+    let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
+        if system == prompts::CURATED_NAVIGATION_SYSTEM {
+            Some(test_curated_navigation_json())
+        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
+            Some(test_concept_handbook_body())
+        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
+            Some(test_narrative_handbook_body())
+        } else {
+            Some("Generated prose.".to_string())
+        }
+    };
+    let mut progress = CodewikiProgress::silent();
+    let first = collect_docs(
+        &input,
+        GenerateDocsOptions {
+            generate: Some(&mut first_generator),
+            ai_depth: AiDepth::Symbols,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
+    );
+    write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &first,
+        None,
+        "symbols",
+        DocPruneScope::unscoped(),
+    )
+    .expect("first write");
+
+    // Simulate the #18328 skew: the on-disk index references a concept slug
+    // no page in the set carries (a prior run's plan emitted it; per-doc
+    // skips carried the stale index into this stage).
+    let index_path = out_dir.join("code/concepts/index.md");
+    let mut index = std::fs::read_to_string(&index_path).expect("index on disk");
+    index.push_str("\n- [[code/concepts/ghost|Ghost]]\n");
+    std::fs::write(&index_path, index).expect("skew index");
+
+    let mut nav_generations = 0_usize;
+    let mut counting_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
+        if system == prompts::CURATED_NAVIGATION_SYSTEM {
+            nav_generations += 1;
+            Some(test_curated_navigation_json())
+        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
+            Some(test_concept_handbook_body())
+        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
+            Some(test_narrative_handbook_body())
+        } else {
+            Some("Generated prose.".to_string())
+        }
+    };
+    let mut plan = ReusePlan::load(project.path(), &out_dir, "symbols").expect("reuse plan loads");
+    let mut progress = CodewikiProgress::silent();
+    let second = collect_docs(
+        &input,
+        GenerateDocsOptions {
+            generate: Some(&mut counting_generator),
+            ai_depth: AiDepth::Symbols,
+            reuse: Some(&mut plan),
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
+    );
+    assert!(
+        nav_generations > 0,
+        "a skewed nav set must regenerate, not reuse"
+    );
+    let index = second
+        .iter()
+        .find(|doc| doc.path == "code/concepts/index.md")
+        .expect("index is emitted");
+    assert!(!index.content.contains("ghost"), "{}", index.content);
+}
+
 #[test]
 fn reconciled_stage_reuses_unchanged_page_and_bypasses_since_hash_shortcut() {
     let (project, input) = reuse_project();

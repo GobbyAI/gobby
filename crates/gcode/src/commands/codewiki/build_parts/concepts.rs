@@ -61,6 +61,29 @@ fn maybe_dump_nav_failure(dump_dir: Option<&std::path::Path>, prompt: &str, raw:
     }
 }
 
+/// True when every nav-internal wikilink (`code/concepts/…`,
+/// `code/narrative/…`) in the docs resolves to a doc within the set itself.
+/// The nav set is planned atomically, so a link escaping the set means the
+/// on-disk pages were written by different plans (#18328); an unparseable
+/// link is treated the same way. Links to other namespaces (module and file
+/// reference pages) are validated by publication, not here.
+fn nav_set_internally_consistent(docs: &[BuiltDoc]) -> bool {
+    let paths = docs
+        .iter()
+        .map(|doc| doc.path.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    docs.iter().all(|doc| {
+        code_wikilinks(&doc.content).is_ok_and(|targets| {
+            targets
+                .iter()
+                .filter(|target| {
+                    target.starts_with("code/concepts/") || target.starts_with("code/narrative/")
+                })
+                .all(|target| paths.contains(target.as_str()))
+        })
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_curated_navigation_docs(
     files: &[FileDoc],
@@ -90,8 +113,18 @@ pub(crate) fn build_curated_navigation_docs(
             |_path| lane_a_ai_outcome,
         )
     }) {
-        progress.emit("reusing curated navigation docs (sources unchanged)");
-        return Ok(reused_docs);
+        // The manifest tracks files, not links: a stage skewed by a prior
+        // run's per-doc skips is manifest-consistent while its index still
+        // references slugs that plan dropped (#18328). Reuse only a set whose
+        // nav-internal links resolve within the set itself; otherwise fall
+        // through to fresh generation, which heals the skew.
+        if nav_set_internally_consistent(&reused_docs) {
+            progress.emit("reusing curated navigation docs (sources unchanged)");
+            return Ok(reused_docs);
+        }
+        progress.emit(
+            "regenerating curated navigation docs (reused set links do not resolve within the set)",
+        );
     }
 
     progress.emit("generating curated navigation docs");

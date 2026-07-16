@@ -447,3 +447,153 @@ fn git_changed_files_lists_diff_against_ref() {
     // A bad ref fails loudly rather than silently degrading to a full scan.
     assert!(git_changed_files(root, "no-such-ref").is_err());
 }
+
+/// #18328: every curated-navigation doc (index, concept pages, narrative
+/// pages) carries the same plan-derived `nav-links:` invalidation key, so the
+/// atomically-planned set also invalidates atomically at the persist gates.
+#[test]
+fn curated_navigation_docs_share_one_plan_derived_invalidation_key() {
+    let input = two_crate_input();
+    let docs = collect_docs(&input, GenerateDocsOptions::default());
+    let nav = docs
+        .iter()
+        .filter(|doc| {
+            doc.path.starts_with("code/concepts/") || doc.path.starts_with("code/narrative/")
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        nav.iter().any(|doc| doc.path == "code/concepts/index.md"),
+        "nav index is emitted"
+    );
+    assert!(
+        nav.iter()
+            .any(|doc| doc.path.starts_with("code/narrative/")),
+        "narrative chapters are emitted"
+    );
+    let key = nav[0]
+        .invalidation_key
+        .as_deref()
+        .expect("nav docs carry a key");
+    assert!(key.starts_with("nav-links:"), "{key}");
+    for doc in &nav {
+        assert_eq!(doc.invalidation_key.as_deref(), Some(key), "{}", doc.path);
+        assert!(doc.invalidation_key_requires_sources, "{}", doc.path);
+    }
+}
+
+/// #18328: the curated nav set is planned atomically but persisted per doc,
+/// and the persist skip gates are content-blind. A regrouped plan must move
+/// the shared nav-set key so the index rewrites even though its provenance
+/// hashes are unchanged — otherwise a stale index survives referencing slugs
+/// the plan dropped, and publication fails closed.
+#[test]
+fn nav_set_regroup_rewrites_the_index_despite_unchanged_sources() {
+    let project = tempfile::tempdir().expect("project");
+    let out_dir = project.path().join("codewiki");
+    write_source(project.path(), "src/lib.rs", "pub struct Client;\n");
+
+    let page = |body: &str| format!("---\nprovenance:\n  - file: src/lib.rs\n---\n\n{body}");
+    let nav_doc = |path: &str, body: &str, key: &str| BuiltDoc {
+        path: path.to_string(),
+        content: page(body),
+        degraded: false,
+        summary: None,
+        neighbors: BTreeSet::new(),
+        invalidation_key: Some(key.to_string()),
+        invalidation_key_requires_sources: true,
+    };
+    let write = |docs: Vec<BuiltDoc>| {
+        write_incremental_doc_set_with_snapshot(
+            project.path(),
+            &out_dir,
+            &docs,
+            None,
+            "symbols",
+            DocPruneScope::unscoped(),
+        )
+        .expect("write nav docs")
+    };
+    let key_for = |paths: &[&str]| {
+        nav_set_invalidation_key(
+            &paths
+                .iter()
+                .map(|path| path.to_string())
+                .collect::<BTreeSet<_>>(),
+        )
+    };
+
+    let grouped = key_for(&[
+        "code/concepts/index.md",
+        "code/concepts/contract.md",
+        "code/concepts/contract-2.md",
+    ]);
+    write(vec![
+        nav_doc(
+            "code/concepts/index.md",
+            "# Concepts\n\n- [[code/concepts/contract|Contract]]\n- [[code/concepts/contract-2|Contract 2]]\n",
+            &grouped,
+        ),
+        nav_doc(
+            "code/concepts/contract.md",
+            "# Contract\n\nBody.\n",
+            &grouped,
+        ),
+        nav_doc(
+            "code/concepts/contract-2.md",
+            "# Contract 2\n\nBody.\n",
+            &grouped,
+        ),
+    ]);
+
+    // Same plan, same key: the per-doc skip gate holds even for different
+    // bytes — this content-blindness is exactly what let a stale index
+    // survive, so the regroup below must move the key to defeat it.
+    let unchanged = write(vec![
+        nav_doc(
+            "code/concepts/index.md",
+            "# Concepts\n\n- [[code/concepts/contract-2|Contract 2]]\n- [[code/concepts/contract|Contract]]\n",
+            &grouped,
+        ),
+        nav_doc(
+            "code/concepts/contract.md",
+            "# Contract\n\nBody.\n",
+            &grouped,
+        ),
+        nav_doc(
+            "code/concepts/contract-2.md",
+            "# Contract 2\n\nBody.\n",
+            &grouped,
+        ),
+    ]);
+    assert!(
+        unchanged.is_empty(),
+        "an unchanged nav plan must keep the skip gate: {unchanged:?}"
+    );
+
+    // The next run's clustering regroups: contract-2 merges away. The moved
+    // set key rewrites the index in the same run, so no stale reference to
+    // the dropped slug survives, and the dropped page is pruned.
+    let regrouped = key_for(&["code/concepts/index.md", "code/concepts/contract.md"]);
+    let changed = write(vec![
+        nav_doc(
+            "code/concepts/index.md",
+            "# Concepts\n\n- [[code/concepts/contract|Contract]]\n",
+            &regrouped,
+        ),
+        nav_doc(
+            "code/concepts/contract.md",
+            "# Contract\n\nBody.\n",
+            &regrouped,
+        ),
+    ]);
+    assert!(
+        changed.iter().any(|path| path == "code/concepts/index.md"),
+        "a regrouped nav set must rewrite the index: {changed:?}"
+    );
+    let index = std::fs::read_to_string(out_dir.join("code/concepts/index.md")).expect("index");
+    assert!(!index.contains("contract-2"), "{index}");
+    assert!(
+        !out_dir.join("code/concepts/contract-2.md").exists(),
+        "the dropped concept page must be pruned"
+    );
+}

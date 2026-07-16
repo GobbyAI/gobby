@@ -92,6 +92,25 @@ pub(super) fn render_curated_navigation_docs(
         .map(|concept| (concept.slug.as_str(), concept.title.as_str()))
         .collect::<std::collections::BTreeMap<_, _>>();
 
+    // The nav set (index + concept pages + narrative pages) is planned
+    // atomically by a nondeterministic clustering pass, so every member shares
+    // one plan-derived invalidation key: a regrouped plan rewrites the whole
+    // set even where individual source hashes are unchanged, instead of
+    // skip-carrying a stale index that references dropped slugs (#18328).
+    let nav_doc_paths = std::iter::once("code/concepts/index.md".to_string())
+        .chain(
+            concepts
+                .iter()
+                .map(|concept| concept_doc_path(&concept.slug)),
+        )
+        .chain(
+            narrative_pages
+                .iter()
+                .map(|page| narrative_doc_path(&page.slug)),
+        )
+        .collect::<std::collections::BTreeSet<_>>();
+    let nav_set_key = nav_set_invalidation_key(&nav_doc_paths);
+
     let mut docs = Vec::new();
     docs.push(BuiltDoc {
         path: "code/concepts/index.md".to_string(),
@@ -110,8 +129,8 @@ pub(super) fn render_curated_navigation_docs(
             .any(|code| code != GRAPH_UNAVAILABLE),
         summary: Some("Curated concept navigation over the code reference.".to_string()),
         neighbors: std::collections::BTreeSet::new(),
-        invalidation_key: None,
-        invalidation_key_requires_sources: false,
+        invalidation_key: Some(nav_set_key.clone()),
+        invalidation_key_requires_sources: true,
     });
 
     for concept in &concepts {
@@ -151,8 +170,8 @@ pub(super) fn render_curated_navigation_docs(
                 .any(|code| code != GRAPH_UNAVAILABLE),
             summary: Some(concept.summary.clone()),
             neighbors: std::collections::BTreeSet::new(),
-            invalidation_key: None,
-            invalidation_key_requires_sources: false,
+            invalidation_key: Some(nav_set_key.clone()),
+            invalidation_key_requires_sources: true,
         });
     }
 
@@ -196,8 +215,8 @@ pub(super) fn render_curated_navigation_docs(
                 .any(|code| code != GRAPH_UNAVAILABLE),
             summary: Some(page.summary.clone()),
             neighbors: std::collections::BTreeSet::new(),
-            invalidation_key: None,
-            invalidation_key_requires_sources: false,
+            invalidation_key: Some(nav_set_key.clone()),
+            invalidation_key_requires_sources: true,
         });
     }
 

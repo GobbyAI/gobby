@@ -224,6 +224,11 @@ impl ReusePlan {
             let entry = self.docs.get(&path)?;
             let sources = entry.source_hashes.keys().cloned().collect::<BTreeSet<_>>();
             let summary = entry.summary.clone();
+            // Carry the recorded invalidation key forward: a reused doc that
+            // dropped its key would miss the persist skip gate, rewrite, and
+            // erase the key from the meta — costing a spurious whole-set
+            // rewrite on the next generating run (#18328).
+            let invalidation_key = entry.invalidation_key.clone();
             let content =
                 self.reusable_page_with_ai_outcome(&path, &sources, ai_outcome_for_path(&path))?;
             docs.push(BuiltDoc {
@@ -232,8 +237,8 @@ impl ReusePlan {
                 degraded: false,
                 summary,
                 neighbors: BTreeSet::new(),
-                invalidation_key: None,
-                invalidation_key_requires_sources: false,
+                invalidation_key_requires_sources: invalidation_key.is_some(),
+                invalidation_key,
             });
         }
         docs.sort_by(|left, right| left.path.cmp(&right.path));
