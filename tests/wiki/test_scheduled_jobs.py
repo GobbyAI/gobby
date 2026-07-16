@@ -1202,6 +1202,103 @@ async def test_startup_parks_rows_for_unresolvable_scope(
 
 
 @pytest.mark.asyncio
+async def test_startup_disables_rows_for_soft_deleted_project(
+    cron_storage: CronJobStorage,
+    project_id: str,
+    temp_db: Any,
+) -> None:
+    # A previous startup created enabled rows for a project that was later
+    # soft-deleted (repo merged away, #18330): parking would re-warn on every
+    # startup forever, so the rows are disabled once with an audit trail.
+    manager = LocalProjectManager(temp_db)
+    dead_project = manager.create(name="wiki-dead", repo_path="/tmp/wiki-dead").id
+    await register_wiki_cron_jobs(
+        cron_storage=cron_storage,
+        cron_executor=RecordingExecutor(handlers={}),
+        project_id=dead_project,
+        scopes=[f"project:{dead_project}"],
+        gateway_factory=lambda _scope: RecordingGateway(),
+    )
+    assert manager.soft_delete(dead_project) is True
+    executor = RecordingExecutor(handlers={})
+
+    registered = await register_wiki_cron_jobs(
+        cron_storage=cron_storage,
+        cron_executor=executor,
+        project_id=project_id,
+        db=temp_db,
+        scopes=[f"project:{project_id}"],
+        gateway_factory=lambda _scope: RecordingGateway(),
+    )
+
+    assert registered == 7
+    for command in WIKI_JOB_COMMANDS:
+        job = cron_storage.get_job_by_name(f"gobby:wiki-{command}:project:{dead_project}")
+        assert job is not None
+        # Disabled, not parked: the scope can never resolve again.
+        assert job.enabled is False
+        assert job.next_run_at is None
+        assert f"wiki:{command}:project:{dead_project}" not in executor.handlers
+
+    # The next sweep sees no enabled rows for the dead scope: nothing to
+    # disable again, nothing to warn about, and the live scope re-registers.
+    rerun = await register_wiki_cron_jobs(
+        cron_storage=cron_storage,
+        cron_executor=RecordingExecutor(handlers={}),
+        project_id=project_id,
+        db=temp_db,
+        scopes=[f"project:{project_id}"],
+        gateway_factory=lambda _scope: RecordingGateway(),
+    )
+    assert rerun == 7
+    for command in WIKI_JOB_COMMANDS:
+        job = cron_storage.get_job_by_name(f"gobby:wiki-{command}:project:{dead_project}")
+        assert job is not None
+        assert job.enabled is False
+
+
+@pytest.mark.asyncio
+async def test_startup_keeps_parking_live_project_with_missing_root(
+    cron_storage: CronJobStorage,
+    project_id: str,
+    temp_db: Any,
+    tmp_path: Path,
+) -> None:
+    # A registered, live project whose repo path is missing (unmounted
+    # volume) must keep today's parking — never lose its schedules (#18330).
+    vanished_root = tmp_path / "unmounted" / "wiki-away"
+    away_project = (
+        LocalProjectManager(temp_db).create(name="wiki-away", repo_path=str(vanished_root)).id
+    )
+    await register_wiki_cron_jobs(
+        cron_storage=cron_storage,
+        cron_executor=RecordingExecutor(handlers={}),
+        project_id=away_project,
+        scopes=[f"project:{away_project}"],
+        gateway_factory=lambda _scope: RecordingGateway(),
+    )
+    executor = RecordingExecutor(handlers={})
+
+    # gateway_factory=None exercises the root-existence check used at startup.
+    registered = await register_wiki_cron_jobs(
+        cron_storage=cron_storage,
+        cron_executor=executor,
+        project_id=project_id,
+        db=temp_db,
+        scopes=[],
+        gateway_factory=None,
+    )
+
+    assert registered == 0
+    for command in WIKI_JOB_COMMANDS:
+        job = cron_storage.get_job_by_name(f"gobby:wiki-{command}:project:{away_project}")
+        assert job is not None
+        # Parked, not disabled: the scope may resolve again on a later sweep.
+        assert job.enabled is True
+        assert job.next_run_at is None
+
+
+@pytest.mark.asyncio
 async def test_sweep_wakes_parked_rows_when_scope_resolves(
     cron_storage: CronJobStorage,
     project_id: str,

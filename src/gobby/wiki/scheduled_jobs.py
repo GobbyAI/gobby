@@ -13,6 +13,7 @@ from gobby.scheduler.executor import CronHandler
 from gobby.storage.cron import CronJobStorage, compute_next_run
 from gobby.storage.cron_models import CronJob
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
 from gobby.wiki.scheduled_jobs_history import (
     _health_history_output,
     _history_output,
@@ -22,6 +23,7 @@ from gobby.wiki.scheduled_jobs_history import (
     _status,
 )
 from gobby.wiki.scope_resolution import (
+    PROJECT_SCOPE_PREFIX,
     ResolvedWikiScope,
     WikiScopeResolutionError,
     normalize_scope_identity,
@@ -514,6 +516,24 @@ def _wiki_job_scope(job: CronJob) -> str | None:
     return None
 
 
+def _scope_project_tombstone(db: HubDatabase, scope: str) -> str | None:
+    """Why this project scope can never resolve again, or None if it still may.
+
+    Only a soft-deleted project row is permanent: deletion is an explicit
+    operator decision. An unknown id or a registered project whose repo path
+    is merely missing keeps parking — the project may register later (another
+    machine) or the volume may remount, and parked rows wake on the next
+    sweep once the scope resolves (#18330).
+    """
+    if not scope.startswith(PROJECT_SCOPE_PREFIX):
+        return None
+    project_id = scope.removeprefix(PROJECT_SCOPE_PREFIX)
+    project = LocalProjectManager(db).get(project_id)
+    if project is not None and project.deleted_at is not None:
+        return f"project {project.name} ({project_id}) was deleted {project.deleted_at:%Y-%m-%d}"
+    return None
+
+
 async def _register_enabled_wiki_row_handlers(
     *,
     cron_storage: CronJobStorage,
@@ -544,6 +564,33 @@ async def _register_enabled_wiki_row_handlers(
     registered = 0
     for scope in sorted(rows_by_scope):
         scope_rows = rows_by_scope[scope]
+        # A scope whose project row was deleted can never resolve again:
+        # parking would re-warn on every startup forever, and a lingering
+        # repo directory must not keep its jobs running either. Disable the
+        # rows once, with an audit trail; a restored project re-enables via
+        # normal registration (#18330).
+        tombstone = (
+            await _run_sync(run_sync, _scope_project_tombstone, db, scope)
+            if db is not None
+            else None
+        )
+        if tombstone is not None:
+            for job in scope_rows:
+                await _run_sync(
+                    run_sync,
+                    cron_storage.reconcile_system_job_identity,
+                    job.id,
+                    enabled=False,
+                    next_run_at=None,
+                )
+                logger.info("Disabled orphaned wiki cron row %s (%s)", job.name, job.id)
+            logger.warning(
+                "Disabled %d enabled wiki cron row(s) for scope %s: %s",
+                len(scope_rows),
+                scope,
+                tombstone,
+            )
+            continue
         try:
             resolved = await resolve_scope_identity(
                 db,
