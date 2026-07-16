@@ -689,7 +689,6 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
                         task_id,
                     )
                     stats["skipped"] += 1
-                    stats["errors"] += 1
                     continue
 
                 self.task_manager.reconcile_task_state(task_id, **updates)

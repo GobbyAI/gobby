@@ -218,6 +218,37 @@ async def test_linear_sync_handler_raises_on_partial_errors(
 
 
 @pytest.mark.asyncio
+async def test_linear_sync_handler_succeeds_after_skipped_pull_conflict(
+    mock_mcp_manager,
+    mock_task_manager,
+) -> None:
+    """A skipped newer-local conflict proceeds through a successful cron sync."""
+    service = MagicMock()
+    service.is_available.return_value = True
+    service.sync_all = AsyncMock(
+        return_value={
+            "pull": {"updated": 0, "skipped": 1, "errors": 0, "deferred": 0},
+            "push": {"pushed": 1, "skipped": 0, "errors": 0, "deferred": 0},
+        }
+    )
+    handler = linear_module.create_linear_sync_handler(
+        mock_mcp_manager,
+        mock_task_manager,
+        project_id="test-project-id",
+        team_id="team-123",
+    )
+
+    with patch.object(linear_module, "LinearSyncService", return_value=service):
+        result = await handler(_cron_job())
+
+    assert result == (
+        "Linear sync complete: pulled 0 (skipped 1, errors 0, deferred 0), "
+        "pushed 1 (errors 0, deferred 0)"
+    )
+    service.sync_all.assert_awaited_once_with(team_id="team-123")
+
+
+@pytest.mark.asyncio
 async def test_linear_sync_handler_reports_deferred_without_raising(
     mock_mcp_manager,
     mock_task_manager,
@@ -961,7 +992,7 @@ class TestLinearSyncServiceSync:
 
         result = await sync_service.pull_linear_updates()
 
-        assert result == {"updated": 0, "skipped": 1, "errors": 1, "deferred": 0}
+        assert result == {"updated": 0, "skipped": 1, "errors": 0, "deferred": 0}
         mock_task_manager.reconcile_task_state.assert_not_called()
 
     @pytest.mark.asyncio
@@ -1219,7 +1250,7 @@ class TestLinearSyncServiceSync:
     async def test_sync_all_updates_cursor_when_pull_and_push_succeed(
         self, sync_service: LinearSyncService
     ) -> None:
-        """sync_all advances the cursor after an error-free bidirectional sync."""
+        """sync_all pushes after a skipped pull conflict and advances the cursor."""
         sync_service.pull_linear_updates = AsyncMock(
             return_value={"updated": 0, "skipped": 1, "errors": 0, "deferred": 0}
         )
@@ -1231,8 +1262,11 @@ class TestLinearSyncServiceSync:
 
         result = await sync_service.sync_all(team_id="team-123")
 
+        assert result["pull"] == {"updated": 0, "skipped": 1, "errors": 0, "deferred": 0}
+        assert result["push"] == {"pushed": 1, "skipped": 0, "errors": 0, "deferred": 0}
         assert result["cursor_updated"] is True
         assert isinstance(result["synced_at"], str)
+        sync_service.push_dirty_tasks.assert_awaited_once_with()
         sync_service._update_synced_at.assert_called_once_with(result["synced_at"])
 
     async def test_sync_all_next_run_sees_edit_created_during_sync(
