@@ -110,7 +110,7 @@ class GenerationConfig(BaseModel):
         ),
     )
     cli_candidate_timeout_seconds: float = Field(
-        default=60.0,
+        default=600.0,
         gt=0.0,
         description=(
             "Maximum seconds for a single candidate attempt on a spawn-cold lane "

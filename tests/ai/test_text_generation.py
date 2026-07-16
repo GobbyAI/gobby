@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import signal
 from collections.abc import AsyncIterator
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar
@@ -304,7 +306,7 @@ async def test_successful_text_generation_logs_feature_llm_call_at_debug(
     records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
     assert len(records) == 1
     assert records[0].levelno == logging.DEBUG
-    assert records[0].success is True
+    assert records[0].__dict__["success"] is True
 
 
 @pytest.mark.asyncio
@@ -348,8 +350,8 @@ async def test_recoverable_candidate_failure_logs_feature_llm_call_at_debug(
     assert result.provider == "local:good"
     records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
     assert [record.levelno for record in records] == [logging.DEBUG, logging.DEBUG]
-    assert records[0].success is False
-    assert records[1].success is True
+    assert records[0].__dict__["success"] is False
+    assert records[1].__dict__["success"] is True
 
 
 @pytest.mark.asyncio
@@ -379,7 +381,7 @@ async def test_failed_text_generation_logs_feature_llm_call_at_error(
     records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
     assert len(records) == 1
     assert records[0].levelno == logging.ERROR
-    assert records[0].success is False
+    assert records[0].__dict__["success"] is False
 
 
 @pytest.mark.asyncio
@@ -497,7 +499,7 @@ async def test_text_generation_service_falls_back_when_candidate_returns_blank_o
 
     assert result.text == "claude:summarize"
     records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
-    assert [record.success for record in records] == [False, True]
+    assert [record.__dict__["success"] for record in records] == [False, True]
 
 
 @pytest.mark.asyncio
@@ -1909,9 +1911,7 @@ async def test_text_generation_service_resolves_only_selected_adapter() -> None:
 
     service = TextGenerationService(
         registry,
-        adapter_factories={
-            provider: (lambda provider=provider: factory(provider)) for provider in providers
-        },
+        adapter_factories={provider: partial(factory, provider) for provider in providers},
     )
 
     response = await service.generate(
@@ -2779,8 +2779,8 @@ async def test_text_generation_service_times_out_slow_candidate_and_falls_back(
     assert result.provider == "local:good"
     records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
     assert [record.levelno for record in records] == [logging.DEBUG, logging.DEBUG]
-    assert records[0].success is False
-    assert "candidate timed out after 0.01s" in records[0].error
+    assert records[0].__dict__["success"] is False
+    assert "candidate timed out after 0.01s" in records[0].__dict__["error"]
 
 
 @pytest.mark.asyncio
@@ -2803,8 +2803,8 @@ async def test_text_generation_service_times_out_slow_json_candidate_and_falls_b
 
     assert result == {"provider": "local:good", "model": "good-model"}
     records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
-    assert records[0].success is False
-    assert "candidate timed out after 0.01s" in records[0].error
+    assert records[0].__dict__["success"] is False
+    assert "candidate timed out after 0.01s" in records[0].__dict__["error"]
 
 
 @pytest.mark.asyncio
@@ -2842,6 +2842,7 @@ async def test_text_generation_service_total_timeout_cancels_active_generation()
             except asyncio.CancelledError:
                 cancelled.set()
                 raise
+            raise AssertionError("unreachable")
 
     registry = AICapabilityRegistry(
         [
@@ -2953,6 +2954,27 @@ def test_builder_uses_cli_candidate_timeout_not_overall_budget() -> None:
     )
     assert service._candidate_timeout_seconds == 20.0
     assert service._cli_candidate_timeout_seconds == 45.0
+
+
+def test_default_spawn_cold_candidate_timeout_selection() -> None:
+    service = build_daemon_text_generation_service(
+        DaemonConfig(),
+        registry=AICapabilityRegistry([]),
+    )
+    request = TextGenerationRequest(prompt="prompt")
+
+    for provider, style in (
+        ("qwen", AIAdapterStyle.CLI),
+        ("codex", AIAdapterStyle.DAEMON),
+        ("claude", AIAdapterStyle.LLM_PROVIDER),
+    ):
+        binding = CapabilityBinding(
+            capability=AICapability.TEXT_GENERATE,
+            provider=provider,
+            adapter_style=style,
+            available=True,
+        )
+        assert service._candidate_timeout_for_binding(request, binding) == 600.0
 
 
 class FakeProcess:
@@ -3090,7 +3112,7 @@ async def test_run_cli_text_generation_command_signals_process_group_when_cancel
 
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert signals == [(process.pid, text_generation_adapters.signal.SIGTERM)]
+    assert signals == [(process.pid, signal.SIGTERM)]
     assert process.terminated is False
     assert process.killed is False
 

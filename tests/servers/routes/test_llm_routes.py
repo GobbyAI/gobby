@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import stat
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -138,7 +139,7 @@ def test_create_llm_router_does_not_run_vision_temp_cleanup(
     router = create_llm_router(server_with_llm)
 
     assert router.prefix == "/api/llm"
-    assert any(route.path.endswith("/status") for route in router.routes)
+    assert any(getattr(route, "path", "").endswith("/status") for route in router.routes)
     cleanup.assert_not_called()
 
 
@@ -272,6 +273,24 @@ def test_generate_caps_and_propagates_timeout_overrides(
     assert request.candidate_timeout_seconds == 30
     assert request.cli_candidate_timeout_seconds == 45
     assert request.total_timeout_seconds == 45
+
+    # Explicit caller budgets retain precedence over the restored 600-second
+    # spawn-cold default.
+    response = client.post(
+        "/api/llm/generate",
+        json={
+            "prompt": "Summarize this",
+            "provider": "qwen",
+            "model": "qwen3-coder",
+            "cli_candidate_timeout_seconds": 60,
+        },
+    )
+
+    assert response.status_code == 200
+    request = adapter.requests[3]
+    assert request.candidate_timeout_seconds is None
+    assert request.cli_candidate_timeout_seconds == 60
+    assert request.total_timeout_seconds is None
 
 
 @pytest.mark.parametrize(
@@ -1189,7 +1208,7 @@ def test_write_temp_image_uses_dedicated_restrictive_dir(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(llm_module.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
 
     image_path = llm_module._write_temp_image(b"image bytes", "screen.jpg")
     try:
@@ -1209,7 +1228,7 @@ def test_vision_temp_dir_enforces_restrictive_mode_on_existing_dir(
     temp_dir = tmp_path / "gobby-vision"
     temp_dir.mkdir(mode=0o755)
     temp_dir.chmod(0o755)
-    monkeypatch.setattr(llm_module.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
 
     assert llm_module._vision_temp_dir() == temp_dir
     assert stat.S_IMODE(temp_dir.stat().st_mode) == 0o700
@@ -1219,7 +1238,7 @@ def test_vision_temp_cleanup_task_skips_without_running_loop(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(llm_module.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     app = FastAPI()
 
     llm_module.start_vision_temp_cleanup_task(app)
@@ -1233,7 +1252,7 @@ def test_write_temp_image_raises_contextual_error_on_temp_dir_failure(
     def fail_gettempdir() -> str:
         raise OSError("no temp")
 
-    monkeypatch.setattr(llm_module.tempfile, "gettempdir", fail_gettempdir)
+    monkeypatch.setattr(tempfile, "gettempdir", fail_gettempdir)
 
     with pytest.raises(RuntimeError, match="gobby-vision"):
         llm_module._write_temp_image(b"image bytes", "screen.jpg")
@@ -1243,7 +1262,7 @@ def test_write_temp_image_wraps_temp_file_write_failure(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(llm_module.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     monkeypatch.setattr(
         llm_module,
         "NamedTemporaryFile",
@@ -1258,7 +1277,7 @@ def test_cleanup_stale_vision_temp_files(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(llm_module.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     temp_dir = tmp_path / "gobby-vision"
     temp_dir.mkdir()
     old_file = temp_dir / "old.png"
@@ -1281,7 +1300,7 @@ async def test_vision_temp_cleanup_task_cancels_on_shutdown(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(llm_module.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     app = FastAPI()
 
     llm_module.start_vision_temp_cleanup_task(app)
@@ -1312,7 +1331,7 @@ async def test_vision_temp_cleanup_task_replaces_stale_loop_task(
         def cancel(self) -> None:
             self.cancelled = True
 
-    monkeypatch.setattr(llm_module.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     old_task = _StaleTask()
     app = FastAPI()
     app.state.vision_temp_cleanup_task = old_task

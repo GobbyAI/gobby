@@ -593,7 +593,9 @@ class TestLoadYaml:
         data = load_yaml(str(config_file))
         assert data == {}
 
-    def test_env_var_expansion_in_yaml(self, temp_dir: Path, monkeypatch) -> None:
+    def test_env_var_expansion_in_yaml(
+        self, temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Test environment variable expansion in YAML files."""
         monkeypatch.delenv("TEST_PORT", raising=False)
 
@@ -625,7 +627,7 @@ class TestApplyCliOverrides:
 
     def test_creates_nested_path(self) -> None:
         """Test creating nested path that doesn't exist."""
-        config = {}
+        config: dict[str, object] = {}
         overrides = {"logging.level": "debug"}
 
         result = apply_cli_overrides(config, overrides)
@@ -642,7 +644,7 @@ class TestApplyCliOverrides:
 class TestLoadConfig:
     """Tests for load_config function."""
 
-    def test_load_default_config(self, temp_dir: Path, monkeypatch) -> None:
+    def test_load_default_config(self, temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test loading default config when no file exists."""
         monkeypatch.chdir(temp_dir)
         config = load_config(config_file=str(temp_dir / "nonexistent.yaml"))
@@ -832,7 +834,9 @@ class TestLoadConfig:
         config = load_config(config_file=str(config_file))
         assert config.daemon_port == 60887  # Pydantic default
 
-    def test_load_config_with_none_path_uses_bootstrap(self, temp_dir: Path, monkeypatch) -> None:
+    def test_load_config_with_none_path_uses_bootstrap(
+        self, temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Test loading config with config_file=None reads bootstrap.yaml."""
         default_path = temp_dir / ".gobby" / "bootstrap.yaml"
         default_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1146,7 +1150,7 @@ class TestLoadConfig:
             ],
             "gobby_tasks.expansion.profile": "feature_high",
         }
-        rows = [
+        rows: list[dict[str, object]] = [
             {
                 "key": "session_summary.candidates",
                 "value": json.dumps(values["session_summary.candidates"]),
@@ -1708,7 +1712,7 @@ class TestSaveConfigTestGuard:
     """Tests for export_config_to_yaml GOBBY_TEST_PROTECT guard."""
 
     def test_raises_when_test_protect_set_and_no_path(
-        self, default_config: DaemonConfig, monkeypatch
+        self, default_config: DaemonConfig, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """export_config_to_yaml raises RuntimeError when GOBBY_TEST_PROTECT=1 and config_file is None."""
         monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
@@ -1720,7 +1724,10 @@ class TestSaveConfigTestGuard:
             export_config_to_yaml(default_config, config_file=None)
 
     def test_no_error_with_explicit_path(
-        self, temp_dir: Path, default_config: DaemonConfig, monkeypatch
+        self,
+        temp_dir: Path,
+        default_config: DaemonConfig,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """export_config_to_yaml works with explicit path even when GOBBY_TEST_PROTECT=1."""
         monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
@@ -1730,7 +1737,10 @@ class TestSaveConfigTestGuard:
         assert config_file.exists()
 
     def test_no_error_without_test_protect(
-        self, temp_dir: Path, default_config: DaemonConfig, monkeypatch
+        self,
+        temp_dir: Path,
+        default_config: DaemonConfig,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """export_config_to_yaml works normally when GOBBY_TEST_PROTECT is not set."""
         monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
@@ -1738,7 +1748,7 @@ class TestSaveConfigTestGuard:
         # Redirect expanduser so we don't touch real config
         original_expanduser = Path.expanduser
 
-        def mock_expanduser(self):
+        def mock_expanduser(self: Path) -> Path:
             path_str = str(self)
             if path_str.startswith("~/.gobby"):
                 return temp_dir / ".gobby" / path_str[9:]
@@ -2150,7 +2160,7 @@ class TestGenerationConfig:
         config = GenerationConfig()
         assert config.timeout_seconds == 1200.0
         assert config.candidate_timeout_seconds == 30.0
-        assert config.cli_candidate_timeout_seconds == 60.0
+        assert config.cli_candidate_timeout_seconds == 600.0
         assert config.spawn_cold_max_concurrency == 3
 
     def test_candidate_timeout_validation(self) -> None:
