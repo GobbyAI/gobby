@@ -388,6 +388,17 @@ def run_daemon_setup(project_path: Path, *, configure_ide_settings: bool) -> Non
     else:
         _run_managed_native_binary_installs()
 
+    try:
+        from .installers.tmux_config import configure_tmux_clipboard
+
+        tmux_result = configure_tmux_clipboard()
+        if tmux_result.get("updated"):
+            click.echo(f"Configured tmux clipboard integration: {tmux_result['config_path']}")
+        elif tmux_result.get("error"):
+            click.echo(f"Warning: Failed to configure tmux clipboard: {tmux_result['error']}")
+    except (ImportError, OSError, PermissionError, ValueError) as e:
+        click.echo(f"Warning: Failed to configure tmux clipboard: {e}")
+
     if configure_ide_settings:
         try:
             from .installers.ide_config import configure_vscode_family_terminal_integration

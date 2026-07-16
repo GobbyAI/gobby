@@ -164,7 +164,9 @@ class TestRunDaemonSetup:
 
         mock_run.return_value = MagicMock(returncode=0)
 
-        run_daemon_setup(tmp_path, configure_ide_settings=True)
+        with patch("gobby.cli.installers.tmux_config.configure_tmux_clipboard") as mock_tmux:
+            mock_tmux.return_value = {"success": True, "updated": True, "config_path": "/tmp"}
+            run_daemon_setup(tmp_path, configure_ide_settings=True)
 
         mock_init.assert_called_once()
         assert mock_init.call_count == 1
@@ -187,6 +189,7 @@ class TestRunDaemonSetup:
         mock_ide.assert_called_once()
         assert mock_ide.call_count == 1
         assert mock_ide.call_args is not None
+        mock_tmux.assert_called_once_with()
         output = capsys.readouterr().out
         assert "Configured VS Code-family terminal integration: Code" in output
         assert (
@@ -236,7 +239,9 @@ class TestRunDaemonSetup:
         with (
             patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
             patch("gobby.utils.native_bin.Path.home", return_value=tmp_path),
+            patch("gobby.cli.installers.tmux_config.configure_tmux_clipboard") as mock_tmux,
         ):
+            mock_tmux.return_value = {"success": True, "updated": False}
             run_daemon_setup(tmp_path, configure_ide_settings=True)
             command = build_hook_command("codex", "SessionStart", tmp_path / ".gobby" / "hooks")
 
@@ -282,7 +287,9 @@ class TestRunDaemonSetup:
             for name in ("gcode", "ghook", "gwiki")
         ]
 
-        run_daemon_setup(tmp_path, configure_ide_settings=False)
+        with patch("gobby.cli.installers.tmux_config.configure_tmux_clipboard") as mock_tmux:
+            mock_tmux.return_value = {"success": True, "updated": False}
+            run_daemon_setup(tmp_path, configure_ide_settings=False)
 
         assert mock_sync.return_value == {"total_synced": 0, "errors": []}
         assert mock_mcp.return_value["success"] is True
@@ -291,6 +298,7 @@ class TestRunDaemonSetup:
         mock_gcode.assert_not_called()
         mock_ghook.assert_not_called()
         mock_ide.assert_not_called()
+        mock_tmux.assert_called_once_with()
 
 
 class TestRunNpmInstall:
