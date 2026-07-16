@@ -27,7 +27,6 @@ from gobby.memory.title_heuristics import (
 from gobby.memory.usefulness import judge_pending_memory_usefulness
 from gobby.sync.export_context import in_jsonl_export_context
 from gobby.utils.injected_context import strip_injected_context
-from gobby.utils.json_helpers import extract_json_object
 
 logger = logging.getLogger(__name__)
 
@@ -570,13 +569,13 @@ async def _build_turn_record(
                 "`turn_markdown` and `title_candidate`."
             )
 
-        response_text = await llm_service.call_feature(
+        response = await llm_service.call_json_feature(
             digest_config,
             prompt,
             caller="memory.turn_record",
         )
         try:
-            return _parse_turn_record_response(str(response_text), len(undigested_pairs))
+            return _validate_turn_record_payload(response, len(undigested_pairs))
         except ValueError as exc:
             if not str(exc).startswith("memory.turn_record returned invalid JSON contract"):
                 raise
@@ -593,26 +592,20 @@ async def _build_turn_record(
     raise RuntimeError("memory.turn_record retry loop exited unexpectedly")
 
 
-def _parse_turn_record_response(response_text: str, exchange_count: int) -> _TurnRecord:
-    """Parse the strict JSON contract for memory.turn_record responses."""
-    data = extract_json_object(response_text)
-    if data is None:
-        _raise_turn_record_contract_error(
-            "invalid or missing JSON object", response_text, exchange_count
-        )
-
+def _validate_turn_record_payload(data: dict[str, Any], exchange_count: int) -> _TurnRecord:
+    """Validate the strict JSON contract for memory.turn_record responses."""
     turn_markdown = data.get("turn_markdown")
     if not isinstance(turn_markdown, str) or not turn_markdown.strip():
         _raise_turn_record_contract_error(
             "missing or empty turn_markdown",
-            response_text,
+            data,
             exchange_count,
         )
     turn_markdown = turn_markdown.strip()
     if is_template_placeholder(turn_markdown):
         _raise_turn_record_contract_error(
             "placeholder turn_markdown",
-            response_text,
+            data,
             exchange_count,
         )
 
@@ -620,7 +613,7 @@ def _parse_turn_record_response(response_text: str, exchange_count: int) -> _Tur
     if not isinstance(raw_title_candidate, str) or not raw_title_candidate.strip():
         _raise_turn_record_contract_error(
             "missing or invalid title_candidate",
-            response_text,
+            data,
             exchange_count,
         )
 
@@ -628,7 +621,7 @@ def _parse_turn_record_response(response_text: str, exchange_count: int) -> _Tur
     if not title_candidate:
         _raise_turn_record_contract_error(
             f"empty normalized title_candidate (raw_title_candidate={raw_title_candidate!r})",
-            response_text,
+            data,
             exchange_count,
         )
 
@@ -636,8 +629,9 @@ def _parse_turn_record_response(response_text: str, exchange_count: int) -> _Tur
 
 
 def _raise_turn_record_contract_error(
-    reason: str, response_text: str, exchange_count: int
+    reason: str, payload: dict[str, Any], exchange_count: int
 ) -> NoReturn:
+    response_text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     response_preview = response_text[:200]
     response_sha256 = hashlib.sha256(response_text.encode("utf-8")).hexdigest()
     logger.debug(

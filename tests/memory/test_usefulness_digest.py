@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 SESSION_ID = "66666666-6666-4666-8666-666666666666"
+PROJECT_ID = "77777777-7777-4777-8777-777777777777"
 
 
 class FakeJudgeLLM:
@@ -74,6 +75,15 @@ def _config() -> SimpleNamespace:
 
 
 def _queue(db: HubDatabase, entries: list[dict[str, Any]]) -> None:
+    db.execute(
+        "INSERT INTO projects (id, name) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
+        (PROJECT_ID, "memory-usefulness-tests"),
+    )
+    db.execute(
+        "INSERT INTO sessions (id, external_id, machine_id, source, project_id) "
+        "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+        (SESSION_ID, "memory-usefulness-session", "test-machine", "test", PROJECT_ID),
+    )
     SessionVariableManager(db).set_variable(SESSION_ID, PENDING_USEFULNESS_VARIABLE, entries)
 
 
@@ -255,8 +265,13 @@ class _FakeSessionManager:
 
 
 class _FakeDigestLLM:
-    async def call_feature(self, feature_config: Any, prompt: str, **kwargs: Any) -> str:
-        return '{"turn_markdown":"User asked; agent answered.","title_candidate":"Real Work Title"}'
+    async def call_json_feature(
+        self, feature_config: Any, prompt: str, **kwargs: Any
+    ) -> dict[str, Any]:
+        return {
+            "turn_markdown": "User asked; agent answered.",
+            "title_candidate": "Real Work Title",
+        }
 
 
 async def test_build_turn_and_digest_attaches_memory_usefulness(
