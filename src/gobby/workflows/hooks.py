@@ -744,7 +744,7 @@ class WorkflowHookHandler:
                             exc_info=True,
                         )
 
-                from gobby.workflows.git_utils import get_dirty_files_categorized
+                from gobby.workflows.git_utils import DirtyFiles, get_dirty_files_categorized
                 from gobby.workflows.safe_evaluator import LazyBool
 
                 project_path = await asyncio.to_thread(self._resolve_project_path, event)
@@ -766,11 +766,17 @@ class WorkflowHookHandler:
                     else:
                         logger.warning(message)
 
-                dirty_files = await asyncio.to_thread(get_dirty_files_categorized, project_path)
+                dirty_files: DirtyFiles | None = None
+
+                def _load_dirty_files() -> DirtyFiles:
+                    nonlocal dirty_files
+                    if dirty_files is None:
+                        dirty_files = get_dirty_files_categorized(project_path)
+                    return dirty_files
 
                 # Lazy-init baseline on first evaluation (rule template may not have fired)
                 if "baseline_dirty_files" not in variables:
-                    initial_dirty = sorted(dirty_files.all)
+                    initial_dirty = sorted((await asyncio.to_thread(_load_dirty_files)).all)
                     variables["baseline_dirty_files"] = initial_dirty
                     variables.setdefault("session_edited_files", [])
                     variables.setdefault("active_task_id", None)
@@ -803,8 +809,9 @@ class WorkflowHookHandler:
                     _edited: set[str] = session_edited,
                 ) -> bool:
                     # Only count files this session actually touched
-                    dirty_tracked = dirty_files.tracked
-                    dirty_untracked = dirty_files.untracked
+                    current_dirty = _load_dirty_files()
+                    dirty_tracked = current_dirty.tracked
+                    dirty_untracked = current_dirty.untracked
                     session_dirty_tracked = _edited & dirty_tracked
                     session_dirty_untracked = _edited & dirty_untracked
                     return bool(session_dirty_tracked or session_dirty_untracked)
@@ -814,7 +821,7 @@ class WorkflowHookHandler:
                 ) -> bool:
                     if not _edited:
                         return False
-                    return bool(_edited & dirty_files.all)
+                    return bool(_edited & _load_dirty_files().all)
 
                 eval_context = {
                     "has_dirty_files": LazyBool(_check_dirty),

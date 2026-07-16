@@ -1,4 +1,6 @@
 import subprocess
+from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -18,14 +20,29 @@ pytestmark = pytest.mark.unit
 # Mock data
 MOCK_SESSION_ID = "session-123"
 MOCK_EXTERNAL_ID = "cli-session-abc"
+MOCK_TIMESTAMP = datetime.now(UTC)
 
 
 @pytest.fixture
-def workflow_handler():
+def workflow_handler() -> WorkflowHookHandler:
     return WorkflowHookHandler(loop=None)
 
 
-def test_handler_delegates_to_evaluate(workflow_handler) -> None:
+def _handler_with_variables(
+    variables: dict[str, object],
+) -> tuple[WorkflowHookHandler, MagicMock]:
+    mock_engine = MagicMock()
+    mock_engine.evaluate = AsyncMock(return_value=HookResponse(decision="allow"))
+    mock_engine.db = MagicMock()
+
+    handler = WorkflowHookHandler(loop=None)
+    handler.rule_engine = mock_engine
+    handler._session_var_manager = MagicMock()
+    handler._session_var_manager.get_variables.return_value = variables
+    return handler, mock_engine
+
+
+def test_handler_delegates_to_evaluate(workflow_handler: WorkflowHookHandler) -> None:
     """handle() delegates to evaluate() which uses the rule engine.
 
     Without a rule engine configured, evaluate returns allow.
@@ -34,7 +51,7 @@ def test_handler_delegates_to_evaluate(workflow_handler) -> None:
         event_type=HookEventType.SESSION_START,
         session_id=MOCK_EXTERNAL_ID,
         source=SessionSource.CLAUDE,
-        timestamp=None,
+        timestamp=MOCK_TIMESTAMP,
         data={},
     )
 
@@ -43,13 +60,13 @@ def test_handler_delegates_to_evaluate(workflow_handler) -> None:
     assert response.decision == "allow"
 
 
-def test_handler_returns_allow_without_rule_engine(workflow_handler) -> None:
+def test_handler_returns_allow_without_rule_engine(workflow_handler: WorkflowHookHandler) -> None:
     """Without a rule engine, handle() returns allow."""
     event = HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
         session_id=MOCK_EXTERNAL_ID,
         source=SessionSource.CLAUDE,
-        timestamp=None,
+        timestamp=MOCK_TIMESTAMP,
         data={},
     )
 
@@ -80,20 +97,21 @@ def test_hook_manager_integration() -> None:
 
         manager = HookManager(log_file="/tmp/gobby-test.log")
 
-        manager._health_monitor.get_cached_status = MagicMock(
-            return_value=(True, "OK", "healthy", None)
-        )
-
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
             session_id=MOCK_EXTERNAL_ID,
             source=SessionSource.CLAUDE,
-            timestamp=None,
+            timestamp=MOCK_TIMESTAMP,
             data={},
             metadata={"_platform_session_id": MOCK_SESSION_ID},
         )
 
-        response = manager.handle(event)
+        with patch.object(
+            manager._health_monitor,
+            "get_cached_status",
+            return_value=(True, "OK", "healthy", None),
+        ):
+            response = manager.handle(event)
 
         assert MockHandlerClass.call_args.kwargs["timeout"] == 15.0
         mock_handler_instance.handle.assert_called_once()
@@ -102,7 +120,7 @@ def test_hook_manager_integration() -> None:
         assert response.decision == "allow"
 
 
-def test_hook_manager_blocks_on_workflow():
+def test_hook_manager_blocks_on_workflow() -> None:
     with (
         patch("gobby.hooks.factory.HookManagerFactory._create_database", return_value=MagicMock()),
         patch("gobby.hooks.factory.SessionManager") as MockSessionManagerClass,
@@ -125,20 +143,21 @@ def test_hook_manager_blocks_on_workflow():
 
         manager = HookManager(log_file="/tmp/gobby-test.log")
 
-        manager._health_monitor.get_cached_status = MagicMock(
-            return_value=(True, "OK", "healthy", None)
-        )
-
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
             session_id=MOCK_EXTERNAL_ID,
             source=SessionSource.CLAUDE,
-            timestamp=None,
+            timestamp=MOCK_TIMESTAMP,
             data={},
             metadata={"_platform_session_id": MOCK_SESSION_ID},
         )
 
-        response = manager.handle(event)
+        with patch.object(
+            manager._health_monitor,
+            "get_cached_status",
+            return_value=(True, "OK", "healthy", None),
+        ):
+            response = manager.handle(event)
 
         assert response.decision == "block"
         assert response.reason == "Workflow denied"
@@ -155,7 +174,7 @@ class TestWorkflowHookHandlerDisabled:
             event_type=HookEventType.BEFORE_TOOL,
             session_id=MOCK_EXTERNAL_ID,
             source=SessionSource.CLAUDE,
-            timestamp=None,
+            timestamp=MOCK_TIMESTAMP,
             data={},
         )
 
@@ -170,7 +189,7 @@ class TestWorkflowHookHandlerDisabled:
             event_type=HookEventType.SESSION_START,
             session_id=MOCK_EXTERNAL_ID,
             source=SessionSource.CLAUDE,
-            timestamp=None,
+            timestamp=MOCK_TIMESTAMP,
             data={},
         )
 
@@ -190,7 +209,7 @@ class TestWorkflowHookHandlerDisabled:
             event_type=HookEventType.BEFORE_TOOL,
             session_id=MOCK_EXTERNAL_ID,
             source=SessionSource.CLAUDE,
-            timestamp=None,
+            timestamp=MOCK_TIMESTAMP,
             data={},
         )
 
@@ -202,7 +221,64 @@ class TestProjectPathResolution:
     """Verify project_path for dirty file checks uses event.cwd."""
 
     @pytest.mark.asyncio
-    async def test_dirty_files_uses_event_cwd_for_worktree(self, tmp_path) -> None:
+    async def test_existing_baseline_skips_dirty_file_snapshot_for_ordinary_hook(self) -> None:
+        handler, _mock_engine = _handler_with_variables(
+            {"baseline_dirty_files": [], "session_edited_files": []}
+        )
+
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=MOCK_EXTERNAL_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=MOCK_TIMESTAMP,
+            data={"tool_name": "Read"},
+            metadata={"_platform_session_id": MOCK_SESSION_ID},
+        )
+
+        with (
+            patch.object(handler, "_resolve_project_path", return_value="/repo"),
+            patch("gobby.workflows.git_utils.get_dirty_files_categorized") as mock_dirty,
+        ):
+            response = await handler._evaluate_rules(event)
+
+        assert response.decision == "allow"
+        mock_dirty.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_dirty_predicates_share_one_cached_snapshot(self) -> None:
+        handler, mock_engine = _handler_with_variables(
+            {
+                "baseline_dirty_files": [],
+                "session_edited_files": ["tracked.py"],
+                "task_edited_files": {"task-1": ["tracked.py"]},
+            }
+        )
+
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=MOCK_EXTERNAL_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=MOCK_TIMESTAMP,
+            data={"tool_name": "close_task", "tool_input": {"task_id": "task-1"}},
+            metadata={"_platform_session_id": MOCK_SESSION_ID},
+        )
+
+        with (
+            patch.object(handler, "_resolve_project_path", return_value="/repo"),
+            patch("gobby.workflows.git_utils.get_dirty_files_categorized") as mock_dirty,
+        ):
+            mock_dirty.return_value = DirtyFiles({"tracked.py"}, set())
+            response = await handler._evaluate_rules(event)
+
+            eval_context = mock_engine.evaluate.call_args.kwargs["eval_context"]
+            assert bool(eval_context["has_dirty_files"])
+            assert bool(eval_context["has_target_task_dirty_files"])
+
+        assert response.decision == "allow"
+        mock_dirty.assert_called_once_with("/repo")
+
+    @pytest.mark.asyncio
+    async def test_dirty_files_uses_event_cwd_for_worktree(self, tmp_path: Path) -> None:
         """get_dirty_files should receive event.cwd, not None or metadata.project_path.
 
         This ensures worktree agents get dirty file checks scoped to their
@@ -222,7 +298,7 @@ class TestProjectPathResolution:
             event_type=HookEventType.BEFORE_TOOL,
             session_id=MOCK_EXTERNAL_ID,
             source=SessionSource.CLAUDE,
-            timestamp=None,
+            timestamp=MOCK_TIMESTAMP,
             data={"tool_name": "Edit"},
             cwd=str(worktree_path),
         )
@@ -245,7 +321,9 @@ class TestProjectPathResolution:
                 assert call[0][0] == str(worktree_path.resolve())
 
     @pytest.mark.asyncio
-    async def test_dirty_files_prefers_valid_repo_path_over_unusable_cwd(self, tmp_path) -> None:
+    async def test_dirty_files_prefers_valid_repo_path_over_unusable_cwd(
+        self, tmp_path: Path
+    ) -> None:
         non_repo = tmp_path / "plain"
         non_repo.mkdir()
         repo = tmp_path / "repo"
@@ -261,7 +339,7 @@ class TestProjectPathResolution:
             event_type=HookEventType.BEFORE_TOOL,
             session_id=MOCK_EXTERNAL_ID,
             source=SessionSource.CLAUDE,
-            timestamp=None,
+            timestamp=MOCK_TIMESTAMP,
             data={"tool_name": "Edit"},
             cwd=str(non_repo),
             metadata={"project_path": str(repo)},
@@ -302,7 +380,7 @@ class TestProjectPathResolution:
             event_type=HookEventType.BEFORE_TOOL,
             session_id=MOCK_EXTERNAL_ID,
             source=SessionSource.CLAUDE,
-            timestamp=None,
+            timestamp=MOCK_TIMESTAMP,
             data={"tool_name": "Edit"},
             project_id=PERSONAL_PROJECT_ID,
             metadata={"_platform_session_id": MOCK_SESSION_ID},
@@ -353,7 +431,7 @@ class TestProjectPathResolution:
             event_type=HookEventType.BEFORE_TOOL,
             session_id=MOCK_EXTERNAL_ID,
             source=SessionSource.CLAUDE,
-            timestamp=None,
+            timestamp=MOCK_TIMESTAMP,
             data={"tool_name": "Edit"},
             project_id="project-with-missing-path",
             metadata={"_platform_session_id": MOCK_SESSION_ID},

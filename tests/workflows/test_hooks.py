@@ -1822,6 +1822,9 @@ class TestHookBlockingWorkOffload:
         async def evaluate(**kwargs: object) -> HookResponse:
             variables = kwargs["variables"]
             assert isinstance(variables, dict)
+            eval_context = kwargs["eval_context"]
+            assert isinstance(eval_context, dict)
+            assert not await asyncio.to_thread(bool, eval_context["has_dirty_files"])
             variables["rule_changed"] = True
             return HookResponse(decision="allow")
 
