@@ -305,7 +305,7 @@ async def test_prompt_uses_commit_count_first_page_and_cursor_metadata() -> None
     assert "diff --git" not in request.prompt
     assert request.max_turns == 16
     assert request.limits.max_turns == 16
-    assert request.limits.max_tool_calls == 12
+    assert request.limits.max_tool_calls == 32
     assert request.limits.tool_timeout_seconds == 30.0
 
 
