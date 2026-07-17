@@ -128,7 +128,11 @@ class TestMetricsTools:
     ) -> None:
         tool = metrics_tools._tools["reset_metrics"]
 
-        result = tool.func(server_name=server_name, tool_name=tool_name)
+        with patch(
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "p1"},
+        ):
+            result = tool.func(server_name=server_name, tool_name=tool_name)
 
         assert result == {
             "success": False,

@@ -207,9 +207,9 @@ def create_metrics_registry(
             Number of rows deleted
         """
         try:
+            project_id = require_calling_project_id()
             if not server_name and not tool_name:
                 raise ValueError("reset_metrics requires at least one filter")
-            project_id = require_calling_project_id()
             deleted = metrics_manager.reset_metrics(
                 project_id=project_id,
                 server_name=server_name,

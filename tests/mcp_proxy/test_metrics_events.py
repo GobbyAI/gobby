@@ -1,10 +1,11 @@
 """Tests for MetricsEventStore — event log, queries, and archiving."""
 
 import threading
+from collections.abc import Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Never
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -13,7 +14,7 @@ from gobby.mcp_proxy.metrics_events import MetricsEventStore
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-    from gobby.storage.hub.protocol import HubDatabase
+    from gobby.storage.hub.protocol import Cursor, HubDatabase, Transaction
 
 pytestmark = pytest.mark.unit
 
@@ -318,11 +319,14 @@ class TestArchive:
         original_transaction = temp_db.transaction
 
         @contextmanager
-        def interrupted_transaction():
+        def interrupted_transaction() -> Iterator["Transaction"]:
             with original_transaction() as txn:
                 original_execute = txn.execute
 
-                def execute_then_interrupt(sql, params=()):
+                def execute_then_interrupt(
+                    sql: str,
+                    params: Sequence[Any] | Mapping[str, Any] = (),
+                ) -> Never:
                     original_execute(sql, params)
                     raise RuntimeError("simulated process interruption before commit")
 
@@ -354,12 +358,15 @@ class TestArchive:
         original_transaction = temp_db.transaction
 
         @contextmanager
-        def coordinated_transaction():
+        def coordinated_transaction() -> Iterator["Transaction"]:
             with original_transaction() as txn:
                 if threading.current_thread().name.startswith("archive-job"):
                     original_execute = txn.execute
 
-                    def execute_and_signal(sql, params=()):
+                    def execute_and_signal(
+                        sql: str,
+                        params: Sequence[Any] | Mapping[str, Any] = (),
+                    ) -> "Cursor":
                         cursor = original_execute(sql, params)
                         rollup_finished.set()
                         return cursor
@@ -533,8 +540,11 @@ class TestMCPTools:
         from gobby.mcp_proxy.tools.metrics import create_metrics_registry
 
         manager = MagicMock()
-        manager.reset_metrics.side_effect = [3, 2, 1]
+        manager.reset_metrics.side_effect = [3, 2]
         registry = create_metrics_registry(metrics_manager=manager)
+        reset_schema = registry._tools["reset_metrics"].input_schema
+
+        assert set(reset_schema["properties"]) == {"server_name", "tool_name"}
 
         with patch(
             "gobby.utils.project_context.get_project_context",
@@ -545,22 +555,25 @@ class TestMCPTools:
                 "reset_tool_metrics",
                 {"server_name": "server-a", "tool_name": "tool-a"},
             )
-            cross_project_result = await registry.call(
-                "reset_metrics",
-                {"project_id": "other-project"},
-            )
+            with pytest.raises(
+                ValueError,
+                match="Unknown argument\\(s\\) for tool 'reset_metrics': project_id",
+            ):
+                await registry.call("reset_metrics", {"project_id": "other-project"})
 
         assert reset_result["success"] is True
         assert tool_result["success"] is True
-        assert cross_project_result["success"] is True
         assert manager.reset_metrics.call_args_list == [
             call(project_id="calling-project", server_name="server-a", tool_name=None),
             call(project_id="calling-project", server_name="server-a", tool_name="tool-a"),
-            call(project_id="calling-project", server_name=None, tool_name=None),
         ]
 
     @pytest.mark.asyncio
-    async def test_get_session_tools(self, registry, temp_db: "HubDatabase") -> None:
+    async def test_get_session_tools(
+        self,
+        registry: "InternalToolRegistry",
+        temp_db: "HubDatabase",
+    ) -> None:
         event_store = MetricsEventStore(temp_db)
         event_store.record_event(
             event_type="tool_call",
@@ -583,7 +596,11 @@ class TestMCPTools:
         assert len(result["tools"]) == 1
 
     @pytest.mark.asyncio
-    async def test_get_rule_metrics(self, registry, temp_db: "HubDatabase") -> None:
+    async def test_get_rule_metrics(
+        self,
+        registry: "InternalToolRegistry",
+        temp_db: "HubDatabase",
+    ) -> None:
         event_store = MetricsEventStore(temp_db)
         event_store.record_event(event_type="rule_eval", name="task-rule", result="block")
         event_store.record_event(event_type="rule_eval", name="task-rule", result="allow")
@@ -594,7 +611,11 @@ class TestMCPTools:
         assert result["summary"]["total_blocks"] == 1
 
     @pytest.mark.asyncio
-    async def test_get_skill_metrics(self, registry, temp_db: "HubDatabase") -> None:
+    async def test_get_skill_metrics(
+        self,
+        registry: "InternalToolRegistry",
+        temp_db: "HubDatabase",
+    ) -> None:
         event_store = MetricsEventStore(temp_db)
         event_store.record_event(event_type="skill_search", name="memory")
         event_store.record_event(event_type="skill_invoke", name="memory")
@@ -605,7 +626,11 @@ class TestMCPTools:
         assert result["summary"]["total_invocations"] == 1
 
     @pytest.mark.asyncio
-    async def test_get_metrics_timeseries(self, registry, temp_db: "HubDatabase") -> None:
+    async def test_get_metrics_timeseries(
+        self,
+        registry: "InternalToolRegistry",
+        temp_db: "HubDatabase",
+    ) -> None:
         event_store = MetricsEventStore(temp_db)
         event_store.record_event(event_type="tool_call", name="Read", latency_ms=10.0)
 
