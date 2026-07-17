@@ -26,13 +26,13 @@ def find_cli_path() -> str | None:
     if cli_path:
         # Validate CLI exists and is executable
         if not os.path.exists(cli_path):
-            logger.warning(f"Claude CLI not found: {cli_path}")
+            logger.warning("Claude CLI not found: %s", cli_path)
             return None
         elif not os.access(cli_path, os.X_OK):
-            logger.warning(f"Claude CLI not executable: {cli_path}")
+            logger.warning("Claude CLI not executable: %s", cli_path)
             return None
         else:
-            logger.debug(f"Claude CLI found: {cli_path}")
+            logger.debug("Claude CLI found: %s", cli_path)
             return cli_path
     else:
         logger.warning("Claude CLI not found in PATH - LLM features disabled")
@@ -61,7 +61,7 @@ async def verify_cli_path(cached_path: str | None) -> str | None:
     # Retry with backoff if the cached executable disappeared or became unusable.
     if not _is_usable_cli_path(cli_path):
         logger.warning(
-            f"Cached CLI path is no longer usable (may have been reinstalled): {cli_path}"
+            "Cached CLI path is no longer usable (may have been reinstalled): %s", cli_path
         )
         # Try to find CLI again with retry logic for npm install race condition
         max_retries = 3
@@ -71,17 +71,20 @@ async def verify_cli_path(cached_path: str | None) -> str | None:
             cli_path = shutil.which("claude")
             if cli_path and _is_usable_cli_path(cli_path):
                 logger.debug(
-                    f"Found Claude CLI at new location after {attempt} attempt(s): {cli_path}"
+                    "Found Claude CLI at new location after %s attempt(s): %s", attempt, cli_path
                 )
                 break
 
             if attempt < max_retries:
                 logger.debug(
-                    f"Claude CLI not found, waiting {delay}s before retry {attempt + 1}/{max_retries}"
+                    "Claude CLI not found, waiting %ss before retry %s/%s",
+                    delay,
+                    attempt + 1,
+                    max_retries,
                 )
                 await asyncio.sleep(delay)
             else:
-                logger.warning(f"Claude CLI not found in PATH after {max_retries} retries")
+                logger.warning("Claude CLI not found in PATH after %s retries", max_retries)
                 cli_path = None
 
     return cli_path

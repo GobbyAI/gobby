@@ -91,16 +91,16 @@ def install_router_skills_as_commands(target_commands_dir: Path) -> list[str]:
         if stale_path.exists():
             try:
                 stale_path.unlink()
-                logger.info(f"Removed stale command: {stale}")
+                logger.info("Removed stale command: %s", stale)
             except OSError as e:
-                logger.warning(f"Failed to remove stale command {stale}: {e}")
+                logger.warning("Failed to remove stale command %s: %s", stale, e)
 
     target_commands_dir.mkdir(parents=True, exist_ok=True)
 
     for skill_name in router_skills:
         source_skill_md = shared_skills_dir / skill_name / "SKILL.md"
         if not source_skill_md.exists():
-            logger.warning(f"Router skill not found: {source_skill_md}")
+            logger.warning("Router skill not found: %s", source_skill_md)
             continue
 
         # Flatten: copy SKILL.md to commands/name.md
@@ -110,7 +110,7 @@ def install_router_skills_as_commands(target_commands_dir: Path) -> list[str]:
             copy2(source_skill_md, target_cmd)
             installed.append(f"{skill_name}.md")
         except OSError as e:
-            logger.error(f"Failed to copy router skill {skill_name}: {e}")
+            logger.error("Failed to copy router skill %s: %s", skill_name, e)
 
     return installed
 
@@ -142,9 +142,9 @@ def install_router_skills_as_cli_skills(target_skills_dir: Path) -> list[str]:
         if stale_path.exists():
             try:
                 shutil.rmtree(stale_path)
-                logger.info(f"Removed stale skill directory: {stale}/")
+                logger.info("Removed stale skill directory: %s/", stale)
             except OSError as e:
-                logger.warning(f"Failed to remove stale skill {stale}: {e}")
+                logger.warning("Failed to remove stale skill %s: %s", stale, e)
 
     target_skills_dir.mkdir(parents=True, exist_ok=True)
 
@@ -152,7 +152,7 @@ def install_router_skills_as_cli_skills(target_skills_dir: Path) -> list[str]:
         source_skill_dir = shared_skills_dir / skill_name
         source_skill_md = source_skill_dir / "SKILL.md"
         if not source_skill_md.exists():
-            logger.warning(f"Router skill not found: {source_skill_md}")
+            logger.warning("Router skill not found: %s", source_skill_md)
             continue
 
         # Create skill directory and copy SKILL.md
@@ -164,6 +164,6 @@ def install_router_skills_as_cli_skills(target_skills_dir: Path) -> list[str]:
             copy2(source_skill_md, target_skill_md)
             installed.append(f"{skill_name}/")
         except OSError as e:
-            logger.error(f"Failed to copy router skill {skill_name}: {e}")
+            logger.error("Failed to copy router skill %s: %s", skill_name, e)
 
     return installed

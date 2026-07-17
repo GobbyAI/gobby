@@ -460,7 +460,7 @@ class CodexAdapter(BaseAdapter):
     def _translate_approval_event(self, method: str, params: dict[str, Any]) -> HookEvent | None:
         """Translate approval request to HookEvent."""
         if method not in self.EVENT_MAP:
-            logger.debug(f"Unknown approval method: {method}")
+            logger.debug("Unknown approval method: %s", method)
             return None
 
         if method == "mcpServer/elicitation/request":
@@ -711,7 +711,7 @@ class CodexAdapter(BaseAdapter):
                 )
 
         # Unknown/unsupported event
-        logger.debug(f"Unsupported Codex event: {method}")
+        logger.debug("Unsupported Codex event: %s", method)
         return None
 
     def translate_from_hook_response(
@@ -883,13 +883,13 @@ class CodexAdapter(BaseAdapter):
                     await self._dispatch_hook_event(event)
                     synced += 1
                 except Exception as e:
-                    logger.error(f"Failed to sync thread {thread.id}: {e}")
+                    logger.error("Failed to sync thread %s: %s", thread.id, e)
 
-            logger.debug(f"Synced {synced} existing Codex threads")
+            logger.debug("Synced %s existing Codex threads", synced)
             return synced
 
         except Exception as e:
-            logger.error(f"Failed to sync existing sessions: {e}")
+            logger.error("Failed to sync existing sessions: %s", e)
             return 0
 
 

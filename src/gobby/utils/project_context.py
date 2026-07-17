@@ -37,7 +37,7 @@ def set_project_context(ctx: dict[str, Any] | None) -> contextvars.Token[dict[st
     if ctx is not None and not os.environ.get("GOBBY_TEST_PROTECT"):
         pid = ctx.get("id", "")
         if isinstance(pid, str) and pid in _TEST_PROJECT_IDS:
-            logger.warning(f"Blocked test project_id '{pid}' in production context")
+            logger.warning("Blocked test project_id '%s' in production context", pid)
             return _current_project_context.set(None)
     return _current_project_context.set(ctx)
 
@@ -110,7 +110,7 @@ def get_project_context(cwd: Path | None = None) -> dict[str, Any] | None:
                 data["project_path"] = str(root)
                 return cast(dict[str, Any], data)
             except (FileNotFoundError, PermissionError, json.JSONDecodeError, OSError) as e:
-                logger.warning(f"Failed to read project context: {e}")
+                logger.warning("Failed to read project context: %s", e)
 
     # 3. Environment fallback (set by web chat subprocess for correct project routing)
     if cwd is None:
@@ -158,13 +158,15 @@ def _build_and_set_project_context(
                 fs_id = data.get("id")
                 if fs_id and fs_id != project.id:
                     logger.warning(
-                        f"Project ID mismatch: db='{project.id}', "
-                        f"filesystem='{fs_id}' at {project.repo_path}. Using filesystem.",
+                        "Project ID mismatch: db='%s', filesystem='%s' at %s. Using filesystem.",
+                        project.id,
+                        fs_id,
+                        project.repo_path,
                     )
                 data["project_path"] = repo_path
                 return set_project_context(data)
             except (json.JSONDecodeError, OSError) as e:
-                logger.debug(f"Failed to read project.json at {project_file}: {e}")
+                logger.debug("Failed to read project.json at %s: %s", project_file, e)
     return set_project_context(ctx)
 
 
@@ -199,7 +201,7 @@ def set_project_context_from_session(
         if project:
             return _build_and_set_project_context(project)
     except (ImportError, OSError) as e:
-        logger.debug(f"Failed to enrich project context for session {session_id}: {e}")
+        logger.debug("Failed to enrich project context for session %s: %s", session_id, e)
 
     return set_project_context({"id": session.project_id})
 
@@ -330,7 +332,7 @@ def ensure_project_json_for_isolation(
             except OSError:
                 logger.warning("Failed to remove temporary project metadata file %s", temp_path)
 
-        logger.info(f"Wrote project.json with parent reference in {isolated_path}")
+        logger.info("Wrote project.json with parent reference in %s", isolated_path)
     except (OSError, json.JSONDecodeError, KeyError) as exc:
         raise IsolationProjectJsonError(
             f"Failed to write project.json in isolated environment {isolated_path}"
@@ -387,7 +389,7 @@ def get_verification_config(cwd: Path | None = None) -> ProjectVerificationConfi
     try:
         return ProjectVerificationConfig(**verification_data)
     except Exception as e:
-        logger.warning(f"Failed to parse verification config: {e}")
+        logger.warning("Failed to parse verification config: %s", e)
         return None
 
 
@@ -414,5 +416,5 @@ def get_hooks_config(cwd: Path | None = None) -> HooksConfig | None:
     try:
         return HooksConfig(**hooks_data)
     except Exception as e:
-        logger.warning(f"Failed to parse hooks config: {e}")
+        logger.warning("Failed to parse hooks config: %s", e)
         return None

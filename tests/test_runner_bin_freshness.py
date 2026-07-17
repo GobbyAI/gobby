@@ -169,6 +169,7 @@ def test_disabled_config_skips_periodic_task_registration() -> None:
         config=SimpleNamespace(
             telemetry=SimpleNamespace(trace_retention_days=7),
             bin_freshness=BinFreshnessConfig(enabled=False),
+            logging=object(),
         ),
     )
 
@@ -215,6 +216,7 @@ def test_chat_attachment_periodic_defaults_are_explicit() -> None:
             telemetry=SimpleNamespace(trace_retention_days=7),
             bin_freshness=BinFreshnessConfig(enabled=False),
             chat=None,
+            logging=object(),
         ),
     )
     cleanup_kwargs: dict[str, object] = {}

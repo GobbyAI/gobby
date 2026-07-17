@@ -226,7 +226,7 @@ def _resolve_session_refs(session_ids: set[str], db: HubDatabase | None = None) 
         )
         return {row["id"]: f"#{row['seq_num']}" for row in rows if row["seq_num"] is not None}
     except Exception as e:
-        logger.debug(f"Failed to batch-resolve session refs: {e}")
+        logger.debug("Failed to batch-resolve session refs: %s", e)
         return {}
     finally:
         if db is None:
@@ -246,7 +246,7 @@ def _resolve_project_names(project_ids: set[str], db: HubDatabase | None = None)
         )
         return {row["id"]: row["name"] for row in rows}
     except Exception as e:
-        logger.debug(f"Failed to batch-resolve project names: {e}")
+        logger.debug("Failed to batch-resolve project names: %s", e)
         return {}
     finally:
         if db is None:

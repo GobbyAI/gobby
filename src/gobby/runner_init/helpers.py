@@ -56,10 +56,10 @@ def _ensure_headless_settings() -> None:
         import json as _json
 
         _HEADLESS_SETTINGS.write_text(_json.dumps(_HEADLESS_HOOKS, indent=2) + "\n")
-        logger.info(f"Created headless settings: {_HEADLESS_SETTINGS}")
+        logger.info("Created headless settings: %s", _HEADLESS_SETTINGS)
     except OSError as e:
         logger.error(
-            f"Failed to create headless settings at {_HEADLESS_SETTINGS}: {e}", exc_info=True
+            "Failed to create headless settings at %s: %s", _HEADLESS_SETTINGS, e, exc_info=True
         )
 
 

@@ -107,7 +107,7 @@ def get_worktree_status(
         )
 
     except Exception as e:
-        logger.error(f"Error getting worktree status: {e}")
+        logger.error("Error getting worktree status: %s", e)
         return None
 
 
@@ -125,7 +125,7 @@ def list_worktrees(runner: GitRunner) -> list[WorktreeInfo]:
         )
 
         if result.returncode != 0:
-            logger.error(f"Failed to list worktrees: {result.stderr}")
+            logger.error("Failed to list worktrees: %s", result.stderr)
             return []
 
         worktrees = []
@@ -187,7 +187,7 @@ def list_worktrees(runner: GitRunner) -> list[WorktreeInfo]:
         return worktrees
 
     except Exception as e:
-        logger.error(f"Error listing worktrees: {e}")
+        logger.error("Error listing worktrees: %s", e)
         return []
 
 

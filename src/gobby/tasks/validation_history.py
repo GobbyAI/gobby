@@ -106,7 +106,7 @@ class ValidationHistoryManager:
                 ),
             )
 
-        logger.debug(f"Recorded validation iteration {iteration} for task {task_id}: {status}")
+        logger.debug("Recorded validation iteration %s for task %s: %s", iteration, task_id, status)
 
     def get_iteration_history(self, task_id: str) -> list[ValidationIteration]:
         """Get all validation iterations for a task.
@@ -159,7 +159,7 @@ class ValidationHistoryManager:
                 (task_id,),
             )
 
-        logger.debug(f"Cleared validation history for task {task_id}")
+        logger.debug("Cleared validation history for task %s", task_id)
 
     def _row_to_iteration(self, row: Any) -> ValidationIteration:
         """Convert a database row to a ValidationIteration object.

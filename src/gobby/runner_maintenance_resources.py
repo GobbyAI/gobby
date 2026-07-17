@@ -146,7 +146,7 @@ async def resource_monitor_loop(
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.error(f"Error in resource monitor loop: {e}")
+            logger.error("Error in resource monitor loop: %s", e)
         try:
             await asyncio.sleep(interval_seconds)
         except asyncio.CancelledError:

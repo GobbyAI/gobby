@@ -316,7 +316,7 @@ class GitHubMCPHelper:
                 if isinstance(data, str):
                     return data
             except Exception as e:
-                logger.debug(f"GitHub MCP get_file_contents failed, falling back: {e}")
+                logger.debug("GitHub MCP get_file_contents failed, falling back: %s", e)
 
         # Fallback: git show
         ref = branch or "HEAD"
@@ -360,7 +360,7 @@ class GitHubMCPHelper:
                 await self._call_github_mcp("create_branch", args)
                 return True
             except Exception as e:
-                logger.debug(f"GitHub MCP create_branch failed, falling back: {e}")
+                logger.debug("GitHub MCP create_branch failed, falling back: %s", e)
 
         # Fallback: git push
         try:
@@ -370,7 +370,7 @@ class GitHubMCPHelper:
             )
             return r.returncode == 0
         except Exception as e:
-            logger.warning(f"git push fallback for create_branch failed: {e}")
+            logger.warning("git push fallback for create_branch failed: %s", e)
             return False
 
     async def push_files(

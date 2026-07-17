@@ -178,7 +178,8 @@ def delete_worktree(
                 branch_name = status.branch
             if not branch_name:
                 logger.warning(
-                    f"Branch deletion skipped: branch_name could not be resolved from get_worktree_status for worktree '{worktree_path}'",
+                    "Branch deletion skipped: branch_name could not be resolved from get_worktree_status for worktree '%s'",
+                    worktree_path,
                     extra={"worktree_path": str(worktree_path), "delete_branch": True},
                 )
 
@@ -227,9 +228,7 @@ def delete_worktree(
                 prune_result = runner._run_git(["worktree", "prune"], timeout=10)
                 output = prune_result.stdout
                 if not worktree_path.exists():
-                    logger.info(
-                        f"Removed worktree via fallback (rmtree + prune): {worktree_path}",
-                    )
+                    logger.info("Removed worktree via fallback (rmtree + prune): %s", worktree_path)
                 else:
                     return GitOperationResult(
                         success=False,

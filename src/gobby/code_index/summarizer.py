@@ -91,7 +91,7 @@ class SymbolSummarizer:
                 )
             return sanitize_symbol_summary(text)
         except Exception as e:
-            logger.debug(f"LLM call failed for summary of {symbol.name}: {e}")
+            logger.debug("LLM call failed for summary of %s: %s", symbol.name, e)
             return None
 
     async def summarize_batch(

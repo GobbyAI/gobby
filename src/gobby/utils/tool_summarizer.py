@@ -82,7 +82,7 @@ async def _summarize_description_with_llm(description: str) -> str:
         )
 
     except Exception as e:
-        logger.warning(f"Failed to summarize description with configured LLM: {e}")
+        logger.warning("Failed to summarize description with configured LLM: %s", e)
         # Fallback: truncate to 200 chars with ellipsis
         return description[:197] + "..." if len(description) > 200 else description
 
@@ -106,7 +106,7 @@ async def summarize_tools(tools: list[Any]) -> list[dict[str, Any]]:
         # Summarize if needed
         if len(description) > MAX_DESCRIPTION_LENGTH:
             logger.debug(
-                f"Summarizing description for tool '{tool.name}' ({len(description)} chars)"
+                "Summarizing description for tool '%s' (%s chars)", tool.name, len(description)
             )
             description = await _summarize_description_with_llm(description)
 
@@ -173,7 +173,7 @@ async def generate_server_description(
         )
 
     except Exception as e:
-        logger.warning(f"Failed to generate server description for '{server_name}': {e}")
+        logger.warning("Failed to generate server description for '%s': %s", server_name, e)
         # Fallback: Generate simple description from first few tools
         if tool_summaries:
             first_tools = ", ".join([t["name"] for t in tool_summaries[:3]])

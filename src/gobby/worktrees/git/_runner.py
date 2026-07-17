@@ -59,7 +59,7 @@ class GitRunner:
             cwd = self.repo_path
 
         cmd = ["git"] + args
-        logger.debug(f"Running: {' '.join(cmd)} in {cwd}")
+        logger.debug("Running: %s in %s", " ".join(cmd), cwd)
 
         try:
             result = subprocess.run(  # nosec B603 # cmd built from hardcoded git arguments
@@ -73,10 +73,10 @@ class GitRunner:
             )
             return result
         except subprocess.TimeoutExpired:
-            logger.error(f"Git command timed out: {' '.join(cmd)}")
+            logger.error("Git command timed out: %s", " ".join(cmd))
             raise
         except subprocess.CalledProcessError as e:
-            logger.error(f"Git command failed: {' '.join(cmd)}, stderr: {e.stderr}")
+            logger.error("Git command failed: %s, stderr: %s", " ".join(cmd), e.stderr)
             raise
 
     def run_git_command(

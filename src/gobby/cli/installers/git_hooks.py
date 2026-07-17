@@ -412,10 +412,10 @@ def _backup_hook(hook_path: Path, hooks_dir: Path) -> str | None:
 
     try:
         shutil.copy2(hook_path, backup_path)
-        logger.debug(f"Backed up {hook_path.name} to {backup_path.name}")
+        logger.debug("Backed up %s to %s", hook_path.name, backup_path.name)
         return str(backup_path)
     except OSError as e:
-        logger.warning(f"Failed to backup {hook_path.name}: {e}")
+        logger.warning("Failed to backup %s: %s", hook_path.name, e)
         return None
 
 
@@ -578,7 +578,7 @@ def install_git_hooks(
             elif existing_gobby_section is not None:
                 new_content = _replace_gobby_section(content, gobby_section)
                 hook_path.write_text(new_content)
-                logger.info(f"Refreshed Gobby hook section in existing {hook_name}")
+                logger.info("Refreshed Gobby hook section in existing %s", hook_name)
             else:
                 # Append Gobby section to existing hook
                 if content.strip():
@@ -594,13 +594,13 @@ def install_git_hooks(
                     new_content = f"#!/usr/bin/env bash\n\n{gobby_section}"
 
                 hook_path.write_text(new_content)
-                logger.info(f"Appended Gobby hook to existing {hook_name}")
+                logger.info("Appended Gobby hook to existing %s", hook_name)
 
         else:
             # Create new hook (use bash for pre-commit process substitution)
             new_content = f"#!/usr/bin/env bash\n\n{gobby_section}"
             hook_path.write_text(new_content)
-            logger.info(f"Created new {hook_name} hook")
+            logger.info("Created new %s hook", hook_name)
 
         # Ensure executable
         hook_path.chmod(hook_path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
@@ -676,7 +676,7 @@ def uninstall_git_hooks(project_path: Path) -> dict[str, Any]:
             hook_path.unlink()
 
         result["removed"].append(hook_name)
-        logger.info(f"Removed Gobby section from {hook_name}")
+        logger.info("Removed Gobby section from %s", hook_name)
 
     result["success"] = True
     return result

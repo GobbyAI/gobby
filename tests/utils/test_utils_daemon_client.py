@@ -107,7 +107,7 @@ class TestDaemonClientCheckHealth:
 
         assert is_healthy is False
         assert error == "HTTP 503"
-        logger.warning.assert_called_once_with("Daemon health check failed: status 503")
+        logger.warning.assert_called_once_with("Daemon health check failed: status %s", 503)
 
     def test_health_check_connection_refused(self) -> None:
         """Test health check when daemon not running."""
@@ -168,7 +168,8 @@ class TestDaemonClientCheckHealth:
         assert error is DaemonHealthError.NOT_RUNNING
         logger.warning.assert_not_called()
         logger.debug.assert_called_once()
-        assert "during planned restart (cli_restart)" in logger.debug.call_args.args[0]
+        debug_args = logger.debug.call_args.args
+        assert "during planned restart (cli_restart)" in debug_args[0] % debug_args[1:]
 
     @pytest.mark.parametrize(
         "error",

@@ -169,7 +169,7 @@ class CronExecutor:
 
             outcome = self._coerce_action_result(raw_output)
         except Exception as e:
-            logger.exception(f"Cron job {job.id} ({job.name}) failed")
+            logger.exception("Cron job %s (%s) failed", job.id, job.name)
             outcome = ActionOutcome(status="failed", error=str(e))
 
         completed_at = datetime.now(UTC).isoformat()
@@ -410,7 +410,7 @@ class CronExecutor:
                 project_ctx = await self._run_db(self._pipeline_project_context, job.project_id)
             except Exception:
                 logger.debug(
-                    f"Failed to resolve repo_path for project {job.project_id}", exc_info=True
+                    "Failed to resolve repo_path for project %s", job.project_id, exc_info=True
                 )
 
         execution_manager = getattr(pipeline_executor, "execution_manager", None)
@@ -498,7 +498,7 @@ class CronExecutor:
             except ApprovalRequired:
                 return
             except Exception as e:
-                logger.error(f"Background pipeline '{pipeline_name}' failed: {e}", exc_info=True)
+                logger.error("Background pipeline '%s' failed: %s", pipeline_name, e, exc_info=True)
                 try:
                     await self._run_db(
                         self._record_pipeline_execution_failure,
@@ -594,7 +594,7 @@ class CronExecutor:
         def _on_done(done: asyncio.Task[None]) -> None:
             self._background_tasks.discard(done)
             if not done.cancelled() and done.exception():
-                logger.error(f"Cron background task failed: {done.exception()}")
+                logger.error("Cron background task failed: %s", done.exception())
 
         task.add_done_callback(_on_done)
 

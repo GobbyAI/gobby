@@ -1004,8 +1004,8 @@ class TestBackwardCompatibilityLayer:
             # Log deprecation warning if old config values are being used
             if deprecated_keys_used:
                 logger.warning(
-                    f"Using deprecated config.yaml settings: {deprecated_keys_used}. "
-                    "Move these to workflow YAML variables section."
+                    "Using deprecated config.yaml settings: %s. Move these to workflow YAML variables section.",
+                    deprecated_keys_used,
                 )
 
             return {**hardcoded_defaults, **old_config_values, **yaml_variables}
@@ -1020,7 +1020,7 @@ class TestBackwardCompatibilityLayer:
         with unittest.mock.patch.object(test_logger, "warning") as mock_warning:
             get_effective_with_deprecation_check(yaml_variables, old_config_values, test_logger)
             mock_warning.assert_called_once()
-            warning_msg = mock_warning.call_args[0][0]
+            warning_msg = mock_warning.call_args.args[0] % mock_warning.call_args.args[1:]
             assert "deprecated" in warning_msg.lower()
             assert "require_task_before_edit" in warning_msg
 
@@ -1043,7 +1043,7 @@ class TestBackwardCompatibilityLayer:
                     deprecated_keys_used.append(key)
 
             if deprecated_keys_used:
-                logger.warning(f"Using deprecated config.yaml settings: {deprecated_keys_used}.")
+                logger.warning("Using deprecated config.yaml settings: %s.", deprecated_keys_used)
 
             return {**hardcoded_defaults, **old_config_values, **yaml_variables}
 

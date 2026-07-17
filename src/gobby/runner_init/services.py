@@ -68,7 +68,7 @@ def _init_llm_service(runner: GobbyRunner) -> None:
             text_generation=runner.text_generation_service,
         )
         runner.tool_chat_service = build_daemon_tool_chat_service(runner.config)
-        logger.debug(f"LLM service initialized: {runner.llm_service.enabled_providers}")
+        logger.debug("LLM service initialized: %s", runner.llm_service.enabled_providers)
     except Exception:
         mark_service_degraded(runner, "llm_service")
         logger.exception("Failed to initialize LLM service")
@@ -300,7 +300,9 @@ def _init_project_context(runner: GobbyRunner) -> None:
             project_path = project_ctx.get("project_path")
             if project_path:
                 runner.git_manager = _WGM(str(project_path))
-                logger.debug(f"Daemon project context: id={runner.project_id}, path={project_path}")
+                logger.debug(
+                    "Daemon project context: id=%s, path=%s", runner.project_id, project_path
+                )
     except Exception:
         mark_service_degraded(runner, "project_context")
         logger.warning("Could not detect project context from cwd", exc_info=True)

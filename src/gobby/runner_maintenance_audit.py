@@ -7,7 +7,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from gobby.runner_maintenance import _run_db
+from gobby.runner_maintenance_helpers import _run_db
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_audit import WorkflowAuditManager
 

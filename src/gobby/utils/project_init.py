@@ -198,7 +198,7 @@ def initialize_project(
     # Check if already initialized
     project_context = get_project_context(cwd)
     if project_context and project_context.get("id"):
-        logger.debug(f"Project already initialized: {project_context.get('name')}")
+        logger.debug("Project already initialized: %s", project_context.get("name"))
         project_root = Path(project_context.get("project_path") or cwd).resolve()
 
         # Re-detect and merge verification commands on re-init
@@ -242,15 +242,15 @@ def initialize_project(
             if restored is None:
                 raise RuntimeError(f"Failed to restore project '{name}'")
             existing = restored
-            logger.info(f"Restored soft-deleted project '{name}'")
+            logger.info("Restored soft-deleted project '%s'", name)
 
         # Project exists in DB but no local project.json - write it
-        logger.debug(f"Found existing project in database: {name}")
+        logger.debug("Found existing project in database: %s", name)
 
         # Backfill repo_path if missing (e.g. project was created via GitHub)
         if not existing.repo_path:
             project_manager.update(existing.id, repo_path=str(cwd))
-            logger.info(f"Updated repo_path for project '{name}' to {cwd}")
+            logger.info("Updated repo_path for project '%s' to %s", name, cwd)
 
         _write_project_json(
             cwd,
@@ -271,7 +271,7 @@ def initialize_project(
         )
 
     # Create new project
-    logger.debug(f"Creating new project: {name}")
+    logger.debug("Creating new project: %s", name)
     already_existed = False
     try:
         project = project_manager.create(
@@ -286,13 +286,13 @@ def initialize_project(
         _ensure_project_path_matches(concurrent_project.name, concurrent_project.repo_path, cwd)
         project = concurrent_project
         already_existed = True
-        logger.debug(f"Adopting concurrently created project: {name}")
+        logger.debug("Adopting concurrently created project: %s", name)
 
     # Write local .gobby/project.json
     project_created_at = datetime_to_required_iso(project.created_at)
     _write_project_json(cwd, project.id, project.name, project_created_at, verification)
 
-    logger.info(f"Initialized project '{name}' in {cwd}")
+    logger.info("Initialized project '%s' in %s", name, cwd)
 
     return InitResult(
         project_id=project.id,
@@ -317,7 +317,7 @@ def _update_project_json_verification(
         with open(project_file) as f:
             project_data = json.load(f)
     except (json.JSONDecodeError, OSError) as e:
-        logger.warning(f"Failed to read project.json for update: {e}")
+        logger.warning("Failed to read project.json for update: %s", e)
         return
 
     verification_dict = verification.to_dict()
@@ -335,7 +335,7 @@ def _update_project_json_verification(
 
     _atomic_write_project_json(project_file, project_data)
 
-    logger.debug(f"Updated verification in {project_file}")
+    logger.debug("Updated verification in %s", project_file)
 
 
 def update_project_json_fields(cwd: Path, **fields: Any) -> None:
@@ -348,7 +348,7 @@ def update_project_json_fields(cwd: Path, **fields: Any) -> None:
         with open(project_file, encoding="utf-8") as f:
             project_data = json.load(f)
     except (json.JSONDecodeError, OSError) as e:
-        logger.warning(f"Failed to read project.json for field update: {e}")
+        logger.warning("Failed to read project.json for field update: %s", e)
         return
 
     for key, value in fields.items():
@@ -356,7 +356,7 @@ def update_project_json_fields(cwd: Path, **fields: Any) -> None:
 
     _atomic_write_project_json(project_file, project_data)
 
-    logger.debug(f"Updated project.json fields in {project_file}")
+    logger.debug("Updated project.json fields in %s", project_file)
 
 
 def _write_project_json(
@@ -399,4 +399,4 @@ def _write_project_json(
 
     _atomic_write_project_json(project_file, project_data)
 
-    logger.debug(f"Wrote project.json to {project_file}")
+    logger.debug("Wrote project.json to %s", project_file)

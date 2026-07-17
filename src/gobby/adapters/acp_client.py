@@ -337,7 +337,7 @@ class ACPClient:
                     fallback_session_id=session_id,
                 )
                 self._track_additional_directories()
-                logger.debug(f"ACP session ID: {self._session_state.session_id}")
+                logger.debug("ACP session ID: %s", self._session_state.session_id)
             else:
                 self._session_state.clear_session()
         except BaseException:
@@ -605,7 +605,7 @@ class ACPClient:
             }
 
             await self._write_json_rpc_message(request)
-            logger.debug(f"Sent ACP request: {method}")
+            logger.debug("Sent ACP request: %s", method)
             pending_session_id: str | None = None
 
             while True:
@@ -633,7 +633,7 @@ class ACPClient:
                 try:
                     data = json.loads(line_str)
                 except json.JSONDecodeError:
-                    logger.warning(f"Non-JSON line during {method}: {line_str[:200]}")
+                    logger.warning("Non-JSON line during %s: %s", method, line_str[:200])
                     continue
 
                 if "id" in data and data.get("method"):
@@ -667,7 +667,7 @@ class ACPClient:
                     if normalized.event_type == "init":
                         pending_session_id = _extract_session_id(normalized.data)
                 logger.debug(
-                    f"Skipping notification during {method}: {data.get('method', 'unknown')}"
+                    "Skipping notification during %s: %s", method, data.get("method", "unknown")
                 )
         finally:
             self._active_operations = max(0, self._active_operations - 1)

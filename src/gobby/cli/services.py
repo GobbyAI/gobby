@@ -270,7 +270,11 @@ async def is_embedding_healthy(
         return await service.health_check()
     except Exception as e:
         logger.warning(
-            f"Embedding health check failed (model={model}, api_base={api_base}): {type(e).__name__}: {e}"
+            "Embedding health check failed (model=%s, api_base=%s): %s: %s",
+            model,
+            api_base,
+            type(e).__name__,
+            e,
         )
         return False
 
@@ -492,11 +496,11 @@ async def try_autoload_embedding_model(model: str, api_base: str | None) -> bool
                     timeout=300,
                 )
                 if result.returncode == 0:
-                    logger.info(f"Auto-pulled embedding model via ollama pull {model}")
+                    logger.info("Auto-pulled embedding model via ollama pull %s", model)
                     return True
-                logger.warning(f"ollama pull failed: {result.stderr.strip()}")
+                logger.warning("ollama pull failed: %s", result.stderr.strip())
             except (subprocess.TimeoutExpired, OSError) as e:
-                logger.warning(f"ollama pull failed: {e}")
+                logger.warning("ollama pull failed: %s", e)
         return False
 
     # LM Studio: try `lms load`
@@ -525,8 +529,8 @@ async def try_autoload_embedding_model(model: str, api_base: str | None) -> bool
             if result.returncode == 0:
                 logger.info("Auto-loaded embedding model via lms load")
                 return True
-            logger.warning(f"lms load failed: {result.stderr.strip()}")
+            logger.warning("lms load failed: %s", result.stderr.strip())
         except (subprocess.TimeoutExpired, OSError) as e:
-            logger.warning(f"lms load failed: {e}")
+            logger.warning("lms load failed: %s", e)
 
     return False

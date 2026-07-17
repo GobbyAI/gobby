@@ -177,7 +177,7 @@ def install_default_mcp_servers() -> dict[str, Any]:
             return result
 
     if servers_repaired:
-        logger.info(f"Repaired MCP server configs: {', '.join(servers_repaired)}")
+        logger.info("Repaired MCP server configs: %s", ", ".join(servers_repaired))
 
     # Sync .mcp.json to database so the daemon proxy can serve them
     try:
@@ -191,11 +191,11 @@ def install_default_mcp_servers() -> dict[str, Any]:
             imported = mcp_db.import_from_mcp_json(mcp_config_path, project_id=GLOBAL_PROJECT_ID)
             mcp_db.normalize_bundled_servers()
             if imported:
-                logger.info(f"Synced {imported} MCP servers to database")
+                logger.info("Synced %s MCP servers to database", imported)
         finally:
             db.close()
     except Exception as e:
-        logger.warning(f"Failed to sync MCP servers to database: {e}")
+        logger.warning("Failed to sync MCP servers to database: %s", e)
 
     result["success"] = True
     return result

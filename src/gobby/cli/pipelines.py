@@ -146,7 +146,7 @@ def _try_daemon_run(name: str, inputs: dict[str, str], project_id: str) -> dict[
         )
         raise SystemExit(0) from None
     except (httpx.RequestError, ConnectionError, OSError) as e:
-        logger.debug(f"Daemon run failed for {name}: {e}", exc_info=True)
+        logger.debug("Daemon run failed for %s: %s", name, e, exc_info=True)
         return None
 
 

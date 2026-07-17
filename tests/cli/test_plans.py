@@ -13,6 +13,7 @@ from gobby.cli.plans import _root_ref_from_file, plans
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
 plans_module = importlib.import_module("gobby.cli.plans")
@@ -126,12 +127,17 @@ Update docs/demo.md.
     return path
 
 
-def _write_register_plan(root: Path, *, name: str = "cli-register-plan") -> Path:
+def _write_register_plan(
+    root: Path,
+    *,
+    name: str = "cli-register-plan",
+    root_task_ref: str = "#100",
+) -> Path:
     path = root / ".gobby" / "plans" / f"{name}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         f"""---
-root_task_ref: "#100"
+root_task_ref: "{root_task_ref}"
 ---
 > **Plan ID:** {name}
 
@@ -217,7 +223,13 @@ def test_register_command_writes_plan_row(
     temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project_id = _create_project(temp_db, tmp_path)
-    plan = _write_register_plan(tmp_path)
+    root_task = LocalTaskManager(temp_db).create_task(
+        project_id=project_id,
+        title="Plan root",
+        category="planning",
+    )
+    root_task_ref = f"#{root_task.seq_num}"
+    plan = _write_register_plan(tmp_path, root_task_ref=root_task_ref)
     monkeypatch.setattr(plans_module, "resolve_project_ref", lambda *_args, **_kwargs: project_id)
     monkeypatch.setattr(plans_module, "_open_db", lambda: _NonClosingDb(temp_db))
 
@@ -230,7 +242,7 @@ def test_register_command_writes_plan_row(
     assert record.plan_id == "cli-register-plan"
     assert record.plan_path == ".gobby/plans/cli-register-plan.md"
     assert record.plan_kind == "implementation"
-    assert record.root_task_ref == "#100"
+    assert record.root_task_ref == root_task_ref
     assert record.state == "active"
 
 

@@ -108,7 +108,7 @@ async def _connect_mcp_servers(runner: GobbyRunner, tracker: StartupTracker | No
         if tracker:
             tracker.error("MCP servers", "connection timed out")
     except Exception as e:
-        logger.error(f"MCP connection failed: {e}")
+        logger.error("MCP connection failed: %s", e)
         if tracker:
             tracker.error("MCP servers", str(e))
 
@@ -120,8 +120,8 @@ async def _check_external_services(runner: GobbyRunner, tracker: StartupTracker 
 
         if not await is_qdrant_healthy(db_cfg.qdrant.url):
             logger.warning(
-                f"Qdrant configured but unreachable at {db_cfg.qdrant.url} — "
-                "vector features will retry lazily"
+                "Qdrant configured but unreachable at %s — vector features will retry lazily",
+                db_cfg.qdrant.url,
             )
             if tracker:
                 tracker.error("Qdrant", f"unreachable at {db_cfg.qdrant.url}")
@@ -236,8 +236,9 @@ async def _check_embedding_service(runner: GobbyRunner, tracker: StartupTracker 
     else:
         failure_reason = f"unreachable at {emb_cfg.api_base}"
         logger.warning(
-            f"Embedding endpoint unreachable at {emb_cfg.api_base} "
-            f"(model: {emb_cfg.model}) — semantic search will fall back to keyword search"
+            "Embedding endpoint unreachable at %s (model: %s) — semantic search will fall back to keyword search",
+            emb_cfg.api_base,
+            emb_cfg.model,
         )
     if tracker:
         tracker.error("Embeddings", failure_reason)
@@ -252,9 +253,9 @@ async def _cleanup_metrics_on_startup(runner: GobbyRunner) -> None:
         else:
             deleted = await run_db(runner.metrics_manager.cleanup_old_metrics)
         if deleted > 0:
-            logger.info(f"Startup metrics cleanup: removed {deleted} old entries")
+            logger.info("Startup metrics cleanup: removed %s old entries", deleted)
     except Exception as e:
-        logger.warning(f"Metrics cleanup failed: {e}")
+        logger.warning("Metrics cleanup failed: %s", e)
 
 
 async def _cleanup_stale_expansion_runs_on_startup(runner: GobbyRunner) -> int:
@@ -302,8 +303,8 @@ async def _initialize_vector_store(
                 embed_fn = runner.memory_manager.embed_fn
                 if embed_fn:
                     logger.info(
-                        f"Qdrant empty, scheduling background rebuild from "
-                        f"{len(hub_memories)} hub memories..."
+                        "Qdrant empty, scheduling background rebuild from %s hub memories...",
+                        len(hub_memories),
                     )
                     memory_dicts = [{"id": m.id, "content": m.content} for m in hub_memories]
                     runner._vector_rebuild_task = asyncio.create_task(
@@ -317,7 +318,7 @@ async def _initialize_vector_store(
         if tracker:
             tracker.complete("Vector store initialized")
     except Exception as e:
-        logger.warning(f"VectorStore initialization failed; lazy retry will continue: {e}")
+        logger.warning("VectorStore initialization failed; lazy retry will continue: %s", e)
 
 
 async def _start_tracked_service(
@@ -374,7 +375,7 @@ async def _check_tmux_health(tracker: StartupTracker | None) -> None:
         if tracker:
             tracker.complete("tmux healthy")
     except Exception as e:
-        logger.warning(f"tmux health check failed on startup: {e}")
+        logger.warning("tmux health check failed on startup: %s", e)
         if tracker:
             tracker.error("tmux", str(e))
 
@@ -515,7 +516,7 @@ def _start_code_index_tasks(runner: GobbyRunner, tracker: StartupTracker | None)
                         runner.config.code_index,
                     )
             except Exception as e:
-                logger.warning(f"Failed to create SymbolSummarizer: {e}")
+                logger.warning("Failed to create SymbolSummarizer: %s", e)
 
         shutdown_event = asyncio.Event()
         runner._code_index_shutdown = shutdown_event
@@ -650,7 +651,7 @@ async def _recover_pipelines(runner: GobbyRunner, tracker: StartupTracker | None
         elif failed_projects == 0 and tracker:
             tracker.complete("Pipeline recovery")
     except Exception as e:
-        logger.warning(f"Pipeline recovery after restart failed: {e}")
+        logger.warning("Pipeline recovery after restart failed: %s", e)
         if tracker:
             tracker.error("Pipeline recovery", str(e))
 
@@ -709,7 +710,7 @@ async def _wake_interrupted_pipeline_subscribers(
         logger.info("Notified subscribers of %d interrupted pipeline(s)", notified)
         return notified
     except Exception as e:
-        logger.warning(f"Failed to wake subscribers of interrupted pipelines: {e}")
+        logger.warning("Failed to wake subscribers of interrupted pipelines: %s", e)
         raise
 
 

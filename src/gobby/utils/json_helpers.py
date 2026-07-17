@@ -121,10 +121,10 @@ def extract_json_object(text: str | None) -> dict[str, Any] | None:
         result = json.loads(json_str)
         if isinstance(result, dict):
             return result
-        logger.warning(f"Extracted JSON is not an object: {type(result)}")
+        logger.warning("Extracted JSON is not an object: %s", type(result))
         return None
     except json.JSONDecodeError as e:
-        logger.warning(f"Failed to parse extracted JSON: {e}")
+        logger.warning("Failed to parse extracted JSON: %s", e)
         return None
 
 
@@ -190,8 +190,8 @@ def decode_llm_response[T](
         # msgspec.json.decode returns Any at runtime when using TypeVar
         return msgspec.json.decode(json_str.encode(), type=response_type, strict=strict)
     except msgspec.ValidationError as e:
-        logger.warning(f"Invalid LLM response structure: {e}")
+        logger.warning("Invalid LLM response structure: %s", e)
         return None
     except msgspec.DecodeError as e:
-        logger.warning(f"Failed to decode LLM response JSON: {e}")
+        logger.warning("Failed to decode LLM response JSON: %s", e)
         return None

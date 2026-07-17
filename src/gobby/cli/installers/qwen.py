@@ -168,7 +168,7 @@ def install_qwen(project_path: Path, mode: str = "global") -> dict[str, Any]:
         result["mcp_configured"] = mcp_result.get("added", False)
         result["mcp_already_configured"] = mcp_result.get("already_configured", False)
     else:
-        logger.warning(f"Failed to configure MCP server: {mcp_result['error']}")
+        logger.warning("Failed to configure MCP server: %s", mcp_result["error"])
 
     scripts_installed = _install_agent_scripts(install_dir)
     result["scripts_installed"] = scripts_installed
@@ -186,7 +186,7 @@ def _install_agent_scripts(install_dir: Path) -> list[str]:
     target_scripts_dir = Path.home() / ".gobby" / "scripts"
 
     if not source_scripts_dir.exists():
-        logger.debug(f"No scripts directory found at {source_scripts_dir}")
+        logger.debug("No scripts directory found at %s", source_scripts_dir)
         return scripts_installed
 
     target_scripts_dir.mkdir(parents=True, exist_ok=True)
@@ -196,7 +196,7 @@ def _install_agent_scripts(install_dir: Path) -> list[str]:
         copy2(script_file, target_file)
         target_file.chmod(0o755)
         scripts_installed.append(script_file.name)
-        logger.debug(f"Installed script: {script_file.name}")
+        logger.debug("Installed script: %s", script_file.name)
 
     return scripts_installed
 
@@ -245,7 +245,7 @@ def uninstall_qwen(project_path: Path, mode: str = "project") -> dict[str, Any]:
     if mcp_result["success"]:
         result["mcp_removed"] = mcp_result.get("removed", False)
     else:
-        logger.warning(f"Failed to remove MCP server: {mcp_result['error']}")
+        logger.warning("Failed to remove MCP server: %s", mcp_result["error"])
 
     result["success"] = True
     return result

@@ -119,7 +119,7 @@ def expand_env_vars(
                 if secret_value is not None and secret_value != "":
                     return protect_value(secret_value)
             except Exception as e:
-                logger.debug(f"Secret resolver failed for '{var_name}': {e}")
+                logger.debug("Secret resolver failed for '%s': %s", var_name, e)
 
         # 2. Try environment variable
         env_value = os.environ.get(var_name)
@@ -132,8 +132,8 @@ def expand_env_vars(
 
         # 4. Unresolved: warn and leave unchanged
         logger.warning(
-            f"Unresolved variable '${{{var_name}}}' in config "
-            f"- not found in secrets store or environment"
+            "Unresolved variable '${%s}' in config - not found in secrets store or environment",
+            var_name,
         )
         return match.group(0)
 
@@ -149,9 +149,9 @@ def expand_env_vars(
                 if value is not None:
                     return protect_value(value)
             except Exception as e:
-                logger.debug(f"Secret resolver failed for '$secret:{name}': {e}")
+                logger.debug("Secret resolver failed for '$secret:%s': %s", name, e)
             logger.warning(
-                f"Unresolved secret '$secret:{name}' in config - not found in secrets store"
+                "Unresolved secret '$secret:%s' in config - not found in secrets store", name
             )
             return match.group(0)
 

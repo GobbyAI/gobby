@@ -272,7 +272,7 @@ class TelemetryMetrics:
             with self._lock:
                 self._values["counters"][name]["value"] += amount
         else:
-            logger.warning(f"Counter {name} not registered")
+            logger.warning("Counter %s not registered", name)
 
     def set_gauge(self, name: str, value: float, attributes: dict[str, Any] | None = None) -> None:
         """Set a gauge to value."""
@@ -319,7 +319,7 @@ class TelemetryMetrics:
                 hist["count"] += 1
                 hist["sum"] += value
         else:
-            logger.warning(f"Histogram {name} not registered")
+            logger.warning("Histogram %s not registered", name)
 
     def get_uptime(self) -> float:
         """Get collector uptime in seconds."""
@@ -343,7 +343,7 @@ class TelemetryMetrics:
             self.set_gauge("daemon_cpu_percent", cpu_percent)
 
         except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
-            logger.warning(f"Failed to update daemon metrics: {e}")
+            logger.warning("Failed to update daemon metrics: %s", e)
 
     def get_all_metrics(self) -> dict[str, Any]:
         """Get all metrics for backward compatibility with /admin/status."""

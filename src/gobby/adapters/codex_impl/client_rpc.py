@@ -82,14 +82,14 @@ async def send_request(
 
         await loop.run_in_executor(None, write_request)
 
-        logger.debug(f"Sent request: {method} (id={request_id})")
+        logger.debug("Sent request: %s (id=%s)", method, request_id)
 
         # Wait for response
         result = await asyncio.wait_for(future, timeout=timeout)
         return cast(dict[str, Any], result)
 
     except TimeoutError:
-        logger.error(f"Request {method} (id={request_id}) timed out")
+        logger.error("Request %s (id=%s) timed out", method, request_id)
         raise
     finally:
         with client._pending_requests_lock:
@@ -125,7 +125,7 @@ async def send_notification(
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, write_notification)
 
-    logger.debug(f"Sent notification: {method}")
+    logger.debug("Sent notification: %s", method)
 
 
 async def handle_incoming_request(client: CodexAppServerClient, message: dict[str, Any]) -> None:
@@ -142,7 +142,7 @@ async def handle_incoming_request(client: CodexAppServerClient, message: dict[st
     params = message.get("params", {})
 
     if not client._approval_handler:
-        logger.debug(f"No approval handler for incoming request: {method}")
+        logger.debug("No approval handler for incoming request: %s", method)
         response = {
             "jsonrpc": "2.0",
             "id": request_id,
@@ -151,13 +151,13 @@ async def handle_incoming_request(client: CodexAppServerClient, message: dict[st
         await client._send_stdin_response(response)
         return
 
-    logger.debug(f"Handling incoming request: {method} (id={request_id})")
+    logger.debug("Handling incoming request: %s (id=%s)", method, request_id)
 
     try:
         result = await client._approval_handler(method, params)
         response = {"jsonrpc": "2.0", "id": request_id, "result": result}
     except Exception as e:
-        logger.error(f"Approval handler error for {method}: {e}")
+        logger.error("Approval handler error for %s: %s", method, e)
         response = {
             "jsonrpc": "2.0",
             "id": request_id,
@@ -240,7 +240,7 @@ async def read_loop(client: CodexAppServerClient) -> None:
             try:
                 message = json.loads(line.strip())
             except json.JSONDecodeError as e:
-                logger.warning(f"Invalid JSON from app-server: {e}")
+                logger.warning("Invalid JSON from app-server: %s", e)
                 continue
 
             if "method" in message and "id" in message:
@@ -270,24 +270,24 @@ async def read_loop(client: CodexAppServerClient) -> None:
                 if isinstance(params, dict):
                     params = client._enrich_notification(method, params)
 
-                logger.debug(f"Received notification: {method}")
+                logger.debug("Received notification: %s", method)
 
                 if client._on_notification:
                     try:
                         client._on_notification(method, params)
                     except Exception as e:
-                        logger.error(f"Notification handler error: {e}")
+                        logger.error("Notification handler error: %s", e)
 
                 handlers = client._notification_handlers.get(method, [])
                 for handler in handlers:
                     try:
                         handler(method, params)
                     except Exception as e:
-                        logger.error(f"Handler error for {method}: {e}")
+                        logger.error("Handler error for %s: %s", method, e)
 
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.error(f"Error in read loop: {e}", exc_info=True)
+            logger.error("Error in read loop: %s", e, exc_info=True)
             if client._shutdown_event.is_set():
                 break

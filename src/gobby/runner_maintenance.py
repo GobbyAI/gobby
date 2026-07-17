@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.cli.utils import get_gobby_home
 from gobby.config.bin_freshness import BinFreshnessConfig
+from gobby.runner_maintenance_helpers import _positive_int_or_default, _run_db
 from gobby.runner_maintenance_recurring import (
     _wait_for_first_maintenance_cycle,
 )
@@ -68,23 +69,6 @@ _APPROVAL_EXPIRY_BATCH_LIMIT = 100
 _METRIC_SNAPSHOT_CLEANUP_BATCH_LIMIT = 1000
 
 
-def _positive_int_or_default(value: Any, default: int) -> int:
-    if not isinstance(value, int):
-        return default
-    return max(1, value)
-
-
-async def _run_db(
-    runner: Callable[..., Awaitable[Any]] | None,
-    func: Callable[..., Any],
-    *args: Any,
-    **kwargs: Any,
-) -> Any:
-    if runner is None:
-        return await asyncio.to_thread(func, *args, **kwargs)
-    return await runner(func, *args, **kwargs)
-
-
 async def _sleep_until_next_bin_freshness_cycle(
     duration: float,
     *,
@@ -127,7 +111,7 @@ async def bin_freshness_loop(
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Error in bin freshness loop: {e}")
+                logger.error("Error in bin freshness loop: %s", e)
 
             interval = config.interval_seconds
             if config.jitter_seconds > 0:
@@ -175,11 +159,11 @@ async def span_cleanup_loop(
         try:
             deleted = storage.delete_old_spans(retention_days=retention_days)
             if deleted > 0:
-                logger.info(f"Periodic span cleanup: removed {deleted} old spans")
+                logger.info("Periodic span cleanup: removed %s old spans", deleted)
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.error(f"Error in span cleanup loop: {e}")
+            logger.error("Error in span cleanup loop: %s", e)
         try:
             await asyncio.sleep(interval_seconds)
         except asyncio.CancelledError:
@@ -214,7 +198,7 @@ async def unmodeled_observation_cleanup_loop(
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.error(f"Error in unmodeled observation cleanup loop: {e}")
+            logger.error("Error in unmodeled observation cleanup loop: %s", e)
         try:
             await asyncio.sleep(interval_seconds)
         except asyncio.CancelledError:
@@ -233,7 +217,7 @@ async def rebuild_vector_store(
     except asyncio.CancelledError:
         logger.info("VectorStore rebuild cancelled")
     except Exception as e:
-        logger.error(f"VectorStore rebuild failed: {e}")
+        logger.error("VectorStore rebuild failed: %s", e)
 
 
 async def cleanup_zombie_messages_loop(
@@ -264,13 +248,13 @@ async def cleanup_zombie_messages_loop(
             (ttl_hours, ttl_hours),
         )
         if expired.rowcount:
-            logger.info(f"Expired {expired.rowcount} zombie messages")
+            logger.info("Expired %s zombie messages", expired.rowcount)
 
     # Run once immediately on startup, then loop.
     try:
         _expire_zombies()
     except Exception as e:
-        logger.error(f"Error in initial zombie message cleanup: {e}")
+        logger.error("Error in initial zombie message cleanup: %s", e)
 
     while not is_shutdown_requested():
         try:
@@ -279,7 +263,7 @@ async def cleanup_zombie_messages_loop(
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.error(f"Error in zombie message cleanup loop: {e}")
+            logger.error("Error in zombie message cleanup loop: %s", e)
 
 
 async def tmux_window_name_repair_loop(
@@ -312,7 +296,7 @@ async def tmux_window_name_repair_loop(
                 limit=normalized_session_list_limit,
             )
         except Exception as e:
-            logger.warning(f"tmux window repair: failed to list sessions: {e}")
+            logger.warning("tmux window repair: failed to list sessions: %s", e)
             return
         renamed = 0
         for session in _select_tmux_repair_sessions(sessions):
@@ -332,13 +316,13 @@ async def tmux_window_name_repair_loop(
                     exc_info=True,
                 )
         if renamed:
-            logger.info(f"tmux window repair: renamed {renamed} window(s)")
+            logger.info("tmux window repair: renamed %s window(s)", renamed)
 
     # Run once on startup, then loop.
     try:
         await _repair_once()
     except Exception as e:
-        logger.error(f"Error in initial tmux window repair: {e}")
+        logger.error("Error in initial tmux window repair: %s", e)
 
     while not is_shutdown_requested():
         try:
@@ -347,7 +331,7 @@ async def tmux_window_name_repair_loop(
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.error(f"Error in tmux window repair loop: {e}")
+            logger.error("Error in tmux window repair loop: %s", e)
 
 
 async def cleanup_comms_messages_loop(
@@ -404,7 +388,7 @@ async def cleanup_comms_messages_loop(
             )
 
             if deleted_messages > 0:
-                logger.info(f"Comms message cleanup: removed {deleted_messages} old messages")
+                logger.info("Comms message cleanup: removed %s old messages", deleted_messages)
             if deleted_attachment_paths > 0:
                 logger.info(
                     "Comms attachment cleanup: removed %s files for retained messages",
@@ -423,7 +407,7 @@ async def cleanup_comms_messages_loop(
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.error(f"Error in comms message cleanup loop: {e}")
+            logger.error("Error in comms message cleanup loop: %s", e)
         try:
             await sleep_fn(interval_seconds)
         except asyncio.CancelledError:
@@ -541,7 +525,7 @@ async def cleanup_chat_attachments_loop(
     except asyncio.CancelledError:
         return
     except Exception as e:
-        logger.error(f"Error in initial chat attachment cleanup: {e}")
+        logger.error("Error in initial chat attachment cleanup: %s", e)
 
     while not is_shutdown_requested():
         try:
@@ -550,7 +534,7 @@ async def cleanup_chat_attachments_loop(
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.error(f"Error in chat attachment cleanup loop: {e}")
+            logger.error("Error in chat attachment cleanup loop: %s", e)
 
 
 async def expire_approval_timeouts_loop(
@@ -582,18 +566,20 @@ async def expire_approval_timeouts_loop(
                         execution_id=step.execution_id,
                     )
                     logger.info(
-                        f"Approval timed out for step {step.step_id} "
-                        f"in execution {step.execution_id}"
+                        "Approval timed out for step %s in execution %s",
+                        step.step_id,
+                        step.execution_id,
                     )
                 except Exception:
                     logger.error(
-                        f"Failed to expire approval for step {step.id}",
+                        "Failed to expire approval for step %s",
+                        step.id,
                         exc_info=True,
                     )
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.error(f"Error in approval timeout loop: {e}")
+            logger.error("Error in approval timeout loop: %s", e)
 
 
 async def metric_snapshot_loop(
@@ -626,11 +612,11 @@ async def metric_snapshot_loop(
                 limit=_METRIC_SNAPSHOT_CLEANUP_BATCH_LIMIT,
             )
             if deleted > 0:
-                logger.debug(f"Metric snapshot cleanup: removed {deleted} old snapshots")
+                logger.debug("Metric snapshot cleanup: removed %s old snapshots", deleted)
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.error(f"Error in metric snapshot loop: {e}")
+            logger.error("Error in metric snapshot loop: %s", e)
         try:
             await asyncio.sleep(interval_seconds)
         except asyncio.CancelledError:
@@ -665,7 +651,7 @@ async def recall_drift_monitor_loop(
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.error(f"Error in recall drift monitor loop: {e}")
+            logger.error("Error in recall drift monitor loop: %s", e)
         try:
             await asyncio.sleep(interval_seconds)
         except asyncio.CancelledError:
@@ -759,12 +745,15 @@ async def cleanup_expired_isolation_loop(
                     # Remove DB record
                     await _run_db(run_db, worktree_storage.delete, wt.id)
                     logger.info(
-                        f"Expired worktree cleanup: deleted {wt.id} "
-                        f"(branch={wt.branch_name}, path={path})"
+                        "Expired worktree cleanup: deleted %s (branch=%s, path=%s)",
+                        wt.id,
+                        wt.branch_name,
+                        path,
                     )
                 except Exception:
                     logger.error(
-                        f"Failed to clean up expired worktree {wt.id}",
+                        "Failed to clean up expired worktree %s",
+                        wt.id,
                         exc_info=True,
                     )
 
@@ -777,12 +766,15 @@ async def cleanup_expired_isolation_loop(
                         await asyncio.to_thread(shutil.rmtree, path, ignore_errors=True)
                     await _run_db(run_db, clone_storage.delete, clone.id)
                     logger.info(
-                        f"Expired clone cleanup: deleted {clone.id} "
-                        f"(branch={clone.branch_name}, path={path})"
+                        "Expired clone cleanup: deleted %s (branch=%s, path=%s)",
+                        clone.id,
+                        clone.branch_name,
+                        path,
                     )
                 except Exception:
                     logger.error(
-                        f"Failed to clean up expired clone {clone.id}",
+                        "Failed to clean up expired clone %s",
+                        clone.id,
                         exc_info=True,
                     )
 
@@ -795,7 +787,7 @@ async def cleanup_expired_isolation_loop(
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.error(f"Error in expired isolation cleanup loop: {e}")
+            logger.error("Error in expired isolation cleanup loop: %s", e)
 
 
 def _cleanup_missing_isolation_records(
@@ -928,7 +920,10 @@ def write_shutdown_source(
         )
     except Exception as e:
         logger.debug(
-            f"Failed to write shutdown source={source} pid={sender_pid or os.getpid()}: {e}",
+            "Failed to write shutdown source=%s pid=%s: %s",
+            source,
+            sender_pid or os.getpid(),
+            e,
             exc_info=True,
         )
 
@@ -959,13 +954,17 @@ def setup_signal_handlers(
 
             if recorded_shutdown is None:
                 logger.info(
-                    f"Received {sig.name} (signal {sig.value}), initiating graceful shutdown... (pid={os.getpid()}, ppid={os.getppid()})",
+                    "Received %s (signal %s), initiating graceful shutdown... (pid=%s, ppid=%s)",
+                    sig.name,
+                    sig.value,
+                    os.getpid(),
+                    os.getppid(),
                 )
                 # Log stack trace to help identify what triggered the signal
-                logger.debug(f"Stack at signal receipt:\n{''.join(traceback.format_stack())}")
+                logger.debug("Stack at signal receipt:\n%s", "".join(traceback.format_stack()))
                 shutdown_record = _read_signal_shutdown_record()
                 recorded_shutdown = shutdown_record
-                logger.info(f"Shutdown source: {format_shutdown_source(shutdown_record)}")
+                logger.info("Shutdown source: %s", format_shutdown_source(shutdown_record))
                 if shutdown_intent_callback is not None:
                     try:
                         shutdown_intent_callback(shutdown_record.intent)
@@ -995,4 +994,4 @@ def cleanup_pid_file() -> None:
                 pid_file.unlink(missing_ok=True)
                 logger.debug("Cleaned up PID file")
     except Exception as e:
-        logger.debug(f"PID file cleanup failed (non-fatal): {e}")
+        logger.debug("PID file cleanup failed (non-fatal): %s", e)

@@ -58,7 +58,7 @@ class CompletionEventRegistry:
             continuation_prompt: Optional prompt describing what to do with results
         """
         if completion_id in self._events:
-            logger.warning(f"Merging existing completion registration: {completion_id}")
+            logger.warning("Merging existing completion registration: %s", completion_id)
             registered_subscribers = self._subscribers.setdefault(completion_id, [])
             seen = set(registered_subscribers)
             for session_id in subscribers:
@@ -95,7 +95,7 @@ class CompletionEventRegistry:
         """
         event = self._events.get(completion_id)
         if event is None:
-            logger.debug(f"notify() called for unregistered ID {completion_id} - ignoring")
+            logger.debug("notify() called for unregistered ID %s - ignoring", completion_id)
             return
         if completion_id in self._results:
             logger.debug("notify() called for completed ID %s - ignoring duplicate", completion_id)
@@ -117,7 +117,9 @@ class CompletionEventRegistry:
                     await self._wake_callback(session_id, message, result)
                 except Exception:
                     logger.warning(
-                        f"Wake callback failed for session {session_id} (completion {completion_id})",
+                        "Wake callback failed for session %s (completion %s)",
+                        session_id,
+                        completion_id,
                         exc_info=True,
                     )
 

@@ -80,7 +80,7 @@ async def auto_resolve_trivial_conflicts(
         )
         _, co_stderr = await checkout.communicate()
         if checkout.returncode != 0:
-            logger.error(f"git checkout --theirs failed for {f}: {co_stderr.decode().strip()}")
+            logger.error("git checkout --theirs failed for %s: %s", f, co_stderr.decode().strip())
             remaining.append(f)
             continue
 
@@ -95,14 +95,17 @@ async def auto_resolve_trivial_conflicts(
         )
         _, add_stderr = await add.communicate()
         if add.returncode != 0:
-            logger.error(f"git add failed for {f}: {add_stderr.decode().strip()}")
+            logger.error("git add failed for %s: %s", f, add_stderr.decode().strip())
             remaining.append(f)
             continue
 
         resolved.append(f)
 
     logger.info(
-        f"Auto-resolved {len(resolved)} trivial conflict(s) in worktree {worktree_path}: {resolved}"
+        "Auto-resolved %s trivial conflict(s) in worktree %s: %s",
+        len(resolved),
+        worktree_path,
+        resolved,
     )
 
     return remaining
@@ -573,7 +576,7 @@ class MergeResolver:
                 content = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
                 conflict["hunks"] = extract_conflict_hunks(content)
             except Exception as e:
-                logger.error(f"Failed to parse conflicts in {file_rel_path}: {e}")
+                logger.error("Failed to parse conflicts in %s: %s", file_rel_path, e)
             conflicts.append(conflict)
 
         return {"success": False, "conflicts": conflicts}
@@ -687,7 +690,7 @@ class MergeResolver:
                         _conflict_file_path(conflict).read_text, encoding="utf-8"
                     )
                 except OSError as read_err:
-                    logger.error(f"Failed to read {file_path} for hunk splicing: {read_err}")
+                    logger.error("Failed to read %s for hunk splicing: %s", file_path, read_err)
                     return {
                         "success": False,
                         "resolutions": [],
@@ -697,9 +700,10 @@ class MergeResolver:
                 spliced = splice_resolutions_into_file(file_with_markers, cleaned_hunks)
                 if spliced is None:
                     logger.warning(
-                        f"Hunk count mismatch splicing {file_path}: "
-                        f"file has {len(_CONFLICT_BLOCK_RE.findall(file_with_markers))} "
-                        f"conflict blocks, LLM returned {len(cleaned_hunks)} hunks"
+                        "Hunk count mismatch splicing %s: file has %s conflict blocks, LLM returned %s hunks",
+                        file_path,
+                        len(_CONFLICT_BLOCK_RE.findall(file_with_markers)),
+                        len(cleaned_hunks),
                     )
                     return {
                         "success": False,
@@ -719,7 +723,7 @@ class MergeResolver:
                     }
                 )
             except Exception as e:
-                logger.error(f"LLM resolution failed for {file_path}: {e}")
+                logger.error("LLM resolution failed for %s: %s", file_path, e)
                 return {
                     "success": False,
                     "resolutions": [],
@@ -803,7 +807,7 @@ class MergeResolver:
                     }
                 resolutions.append({"file": file_path, "content": cleaned})
             except Exception as e:
-                logger.error(f"Full file resolution failed for {file_path}: {e}")
+                logger.error("Full file resolution failed for %s: %s", file_path, e)
                 return {
                     "success": False,
                     "resolutions": [],
@@ -864,7 +868,7 @@ class MergeResolver:
 
         for r in results:
             if isinstance(r, BaseException):
-                logger.error(f"Error resolving conflict: {r}")
+                logger.error("Error resolving conflict: %s", r)
                 continue
 
             # r is now dict[str, Any] after the isinstance check

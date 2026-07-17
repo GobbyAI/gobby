@@ -67,7 +67,7 @@ async def ensure_tts_deps(config: VoiceConfig) -> bool:
     provider = config.tts_provider
     deps = _TTS_DEPS.get(provider, [])
     if not deps:
-        logger.warning(f"Unknown TTS provider: {provider}")
+        logger.warning("Unknown TTS provider: %s", provider)
         return False
 
     missing = await asyncio.to_thread(_check_imports, deps)

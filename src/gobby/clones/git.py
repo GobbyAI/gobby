@@ -107,7 +107,7 @@ class CloneGitManager:
             cwd = self.repo_path
 
         cmd = ["git"] + args
-        logger.debug(f"Running: {' '.join(cmd)} in {cwd}")
+        logger.debug("Running: %s in %s", " ".join(cmd), cwd)
 
         run_env = None
         if env:
@@ -125,10 +125,10 @@ class CloneGitManager:
             )
             return result
         except subprocess.TimeoutExpired:
-            logger.error(f"Git command timed out: {' '.join(cmd)}")
+            logger.error("Git command timed out: %s", " ".join(cmd))
             raise
         except subprocess.CalledProcessError as e:
-            logger.error(f"Git command failed: {' '.join(cmd)}, stderr: {e.stderr}")
+            logger.error("Git command failed: %s, stderr: %s", " ".join(cmd), e.stderr)
             raise
 
     def run_git_command(
@@ -200,7 +200,7 @@ class CloneGitManager:
                 return result.stdout.strip()
             return None
         except (subprocess.SubprocessError, OSError) as e:
-            logger.error(f"Failed to get remote URL for '{remote}': {e}", exc_info=True)
+            logger.error("Failed to get remote URL for '%s': %s", remote, e, exc_info=True)
             return None
 
     def shallow_clone(
@@ -258,7 +258,7 @@ class CloneGitManager:
             # Sanitize URL in command before logging to avoid exposing credentials
             safe_cmd = cmd.copy()
             safe_cmd[safe_cmd.index(remote_url)] = _sanitize_url(remote_url)
-            logger.debug(f"Running: {' '.join(safe_cmd)}")
+            logger.debug("Running: %s", " ".join(safe_cmd))
 
             result = subprocess.run(  # nosec B603 # cmd built from hardcoded git arguments
                 cmd,
@@ -352,7 +352,7 @@ class CloneGitManager:
             # Sanitize URL in command before logging to avoid exposing credentials
             safe_cmd = cmd.copy()
             safe_cmd[safe_cmd.index(remote_url)] = _sanitize_url(remote_url)
-            logger.debug(f"Running: {' '.join(safe_cmd)}")
+            logger.debug("Running: %s", " ".join(safe_cmd))
 
             result = subprocess.run(  # nosec B603 # cmd built from hardcoded git arguments
                 cmd,
@@ -601,7 +601,7 @@ class CloneGitManager:
             )
 
         except (subprocess.SubprocessError, OSError) as e:
-            logger.error(f"Error getting clone status: {e}")
+            logger.error("Error getting clone status: %s", e)
             return None
 
     def create_clone(
@@ -633,7 +633,7 @@ class CloneGitManager:
         if use_local:
             # Clone from local repo path — always full clone
             source = str(self.repo_path)
-            logger.info(f"Cloning from local repo: {source}")
+            logger.info("Cloning from local repo: %s", source)
             result = self.full_clone(
                 remote_url=source,
                 clone_path=clone_path,
@@ -683,7 +683,8 @@ class CloneGitManager:
                             shutil.rmtree(clone_path)
                     except Exception as cleanup_err:
                         logger.warning(
-                            f"Failed to clean up clone after branch creation failure: {cleanup_err}"
+                            "Failed to clean up clone after branch creation failure: %s",
+                            cleanup_err,
                         )
                     return GitOperationResult(
                         success=False,
@@ -697,7 +698,7 @@ class CloneGitManager:
                         shutil.rmtree(clone_path)
                 except Exception as cleanup_err:
                     logger.warning(
-                        f"Failed to clean up clone after branch creation error: {cleanup_err}"
+                        "Failed to clean up clone after branch creation error: %s", cleanup_err
                     )
                 return GitOperationResult(
                     success=False,

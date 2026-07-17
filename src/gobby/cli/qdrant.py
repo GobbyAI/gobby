@@ -43,7 +43,7 @@ def qdrant_status() -> None:
         config = load_config()
         url = config.databases.qdrant.url
     except (ImportError, FileNotFoundError, ValueError, AttributeError) as e:
-        logger.debug(f"Could not load config for qdrant status: {e}")
+        logger.debug("Could not load config for qdrant status: %s", e)
         url = None
 
     status = asyncio.run(get_qdrant_status(qdrant_url=url))

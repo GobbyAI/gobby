@@ -28,7 +28,7 @@ def check_tasks_enabled() -> None:
         logger.debug("check_tasks_enabled: skipping check due to %s", e)
     except Exception as e:
         # Unexpected errors handling config
-        logger.warning(f"Error checking tasks config: {e}")
+        logger.warning("Error checking tasks config: %s", e)
 
 
 def get_task_manager() -> LocalTaskManager:

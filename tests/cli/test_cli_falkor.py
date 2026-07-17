@@ -54,7 +54,7 @@ class TestInstallFalkorDBFlags:
 
         param_names = [p.name for p in install.params]
         assert "falkordb_flag" in param_names
-        assert "falkordb_password" in param_names
+        assert "falkordb_password_stdin" in param_names
 
     def test_uninstall_command_rejects_falkordb_option(self) -> None:
         from gobby.cli.install import uninstall

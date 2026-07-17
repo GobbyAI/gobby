@@ -154,7 +154,7 @@ class CodeIndexTrigger:
             if proc.returncode == 0:
                 self._clear_retry_backoff(root_key)
                 logger.debug(
-                    f"gcode indexed {len(files)} files for project {project_id} at {root_key}"
+                    "gcode indexed %s files for project %s at %s", len(files), project_id, root_key
                 )
             elif proc.returncode == 3:
                 # Index lock was held (typically by a concurrent reindex, which
@@ -162,13 +162,14 @@ class CodeIndexTrigger:
                 # the files are re-flushed once the lock frees, without emitting a
                 # scary warning for an expected transient condition.
                 logger.debug(
-                    f"gcode index skipped {len(files)} files for project {project_id} "
-                    "(index lock busy); requeuing"
+                    "gcode index skipped %s files for project %s (index lock busy); requeuing",
+                    len(files),
+                    project_id,
                 )
                 self._requeue_for_retry(root_key, project_id, files)
             else:
                 detail = stderr.decode().strip() if stderr else "(no stderr)"
-                logger.warning(f"gcode index exited {proc.returncode}: {detail}")
+                logger.warning("gcode index exited %s: %s", proc.returncode, detail)
                 self._requeue_for_retry(root_key, project_id, files)
         except asyncio.CancelledError:
             try:
@@ -179,7 +180,7 @@ class CodeIndexTrigger:
                 pass
             raise
         except TimeoutError:
-            logger.warning(f"gcode index timed out after {self._index_timeout_seconds:g}s")
+            logger.warning("gcode index timed out after %gs", self._index_timeout_seconds)
             try:
                 if proc is not None:
                     proc.kill()
@@ -188,5 +189,5 @@ class CodeIndexTrigger:
                 pass
             self._requeue_for_retry(root_key, project_id, files)
         except Exception as e:
-            logger.warning(f"gcode index failed: {e}")
+            logger.warning("gcode index failed: %s", e)
             self._requeue_for_retry(root_key, project_id, files)

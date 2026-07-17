@@ -153,7 +153,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         cost_store = ModelCostStore(runner.database)
         cost_store.populate()
     except Exception as e:
-        logger.warning(f"Failed to populate model metadata: {e}", exc_info=True)
+        logger.warning("Failed to populate model metadata: %s", e, exc_info=True)
 
     runner.session_manager = SessionManager(runner.database)
     runner.task_manager = LocalTaskManager(runner.database)
@@ -176,7 +176,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
                     future = asyncio.run_coroutine_threadsafe(broadcast, broadcast_loop)
                 except RuntimeError as e:
                     broadcast.close()
-                    logger.debug(f"Trace broadcast skipped (daemon loop unavailable): {e}")
+                    logger.debug("Trace broadcast skipped (daemon loop unavailable): %s", e)
                     return
 
                 def _log_broadcast_result(done_future: Future[None]) -> None:
@@ -202,19 +202,19 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         sync_result = sync_bundled_content_to_db(runner.database)
         total = sync_result["total_synced"]
         if total > 0:
-            logger.info(f"Dev mode: synced {total} bundled items on startup")
+            logger.info("Dev mode: synced %s bundled items on startup", total)
 
     from gobby.storage.tasks._stage_registry_loader import StageRegistryLoader
 
     stage_sync = StageRegistryLoader().sync(runner.database)
     if stage_sync.upserted > 0:
-        logger.info(f"Synced {stage_sync.upserted} bundled stage registry rows")
+        logger.info("Synced %s bundled stage registry rows", stage_sync.upserted)
 
     from gobby.storage.build_profiles import BuildProfileLoader
 
     profile_sync = BuildProfileLoader().sync(runner.database)
     if profile_sync.upserted > 0:
-        logger.info(f"Synced {profile_sync.upserted} bundled build profile rows")
+        logger.info("Synced %s bundled build profile rows", profile_sync.upserted)
 
     from gobby.storage.prompts import LocalPromptManager
 
@@ -252,6 +252,6 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         runner.hub_manager._skill_description_config = (
             runner.config.skill_description if hasattr(runner.config, "skill_description") else None
         )
-        logger.debug(f"HubManager initialized with {len(skills_config.hubs)} hubs")
+        logger.debug("HubManager initialized with %s hubs", len(skills_config.hubs))
     except Exception as e:
-        logger.warning(f"Failed to initialize HubManager: {e}", exc_info=True)
+        logger.warning("Failed to initialize HubManager: %s", e, exc_info=True)

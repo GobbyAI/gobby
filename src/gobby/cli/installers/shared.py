@@ -74,7 +74,7 @@ def install_global_hooks() -> list[str]:
     for filename, make_executable in hook_files.items():
         source_file = shared_hooks_dir / filename
         if not source_file.exists():
-            logger.warning(f"Shared hook file not found: {source_file}")
+            logger.warning("Shared hook file not found: %s", source_file)
             continue
         target_file = global_hooks_dir / filename
         copy2(source_file, target_file)
@@ -109,7 +109,7 @@ def clean_project_hooks(settings_file: Path, *, flat: bool = False) -> list[str]
         with open(settings_file) as f:
             settings = json.load(f)
     except (json.JSONDecodeError, OSError) as e:
-        logger.warning(f"Could not read project settings for hook cleanup: {e}")
+        logger.warning("Could not read project settings for hook cleanup: %s", e)
         return []
 
     if flat:
@@ -161,10 +161,12 @@ def clean_project_hooks(settings_file: Path, *, flat: bool = False) -> list[str]
                 os.unlink(temp_path)
             raise
     except OSError as e:
-        logger.warning(f"Failed to clean project-level hooks from {settings_file}: {e}")
+        logger.warning("Failed to clean project-level hooks from %s: %s", settings_file, e)
         return []
 
-    logger.info(f"Cleaned {len(removed)} gobby hook(s) from {settings_file}: {', '.join(removed)}")
+    logger.info(
+        "Cleaned %s gobby hook(s) from %s: %s", len(removed), settings_file, ", ".join(removed)
+    )
     return removed
 
 
@@ -272,7 +274,7 @@ def sync_bundled_content_to_db(
 
     for content_type, module_path, func_name in sync_targets:
         if skip_types and content_type in skip_types:
-            logger.debug(f"Skipping sync of bundled {content_type}")
+            logger.debug("Skipping sync of bundled %s", content_type)
             result["details"][content_type] = {"skipped": True}
             continue
         try:
@@ -283,7 +285,7 @@ def sync_bundled_content_to_db(
             result["total_synced"] += synced
             result["details"][content_type] = sync_result
             if synced > 0:
-                logger.info(f"Synced {synced} bundled {content_type} to database")
+                logger.info("Synced %s bundled %s to database", synced, content_type)
         except Exception as e:
             msg = f"Failed to sync bundled {content_type}: {e}"
             logger.warning(msg)
@@ -362,9 +364,9 @@ def _sync_user_templates_to_db(db: "HubDatabase") -> int:
             synced = sync_result.get("synced", 0) + sync_result.get("updated", 0)
             total += synced
             if synced > 0:
-                logger.info(f"Synced {synced} user {content_type} from {paths}")
+                logger.info("Synced %s user %s from %s", synced, content_type, paths)
         except Exception as e:
-            logger.warning(f"Failed to sync user {content_type} from {paths}: {e}")
+            logger.warning("Failed to sync user %s from %s: %s", content_type, paths, e)
 
     # User templates are now created as installed rows directly by the
     # sync functions above — no separate install step needed.

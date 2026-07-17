@@ -123,7 +123,7 @@ class WakeDispatcher:
         """
         session = self._session_manager.get(session_id)
         if session is None:
-            logger.warning(f"Cannot wake session {session_id}: not found")
+            logger.warning("Cannot wake session %s: not found", session_id)
             return self._live_wake_failure(
                 session_id,
                 method=None,
@@ -164,7 +164,7 @@ class WakeDispatcher:
         """Send a live wake signal while holding the per-session wake lock."""
         session = session or self._session_manager.get(session_id)
         if session is None:
-            logger.warning(f"Cannot wake session {session_id}: not found")
+            logger.warning("Cannot wake session %s: not found", session_id)
             return {
                 "session_id": session_id,
                 "delivered": False,
@@ -287,7 +287,9 @@ class WakeDispatcher:
                     }
                 except Exception:
                     logger.warning(
-                        f"tmux wake failed for session {session_id} (tmux={tmux_session_name}), trying SDK resume",
+                        "tmux wake failed for session %s (tmux=%s), trying SDK resume",
+                        session_id,
+                        tmux_session_name,
                         exc_info=True,
                     )
 
@@ -340,7 +342,9 @@ class WakeDispatcher:
                     }
                 except Exception:
                     logger.warning(
-                        f"SDK resume failed for session {session_id} (sdk={sdk_session_id})",
+                        "SDK resume failed for session %s (sdk=%s)",
+                        session_id,
+                        sdk_session_id,
                         exc_info=True,
                     )
                     return {
@@ -485,7 +489,8 @@ class WakeDispatcher:
             return sdk_id
         except Exception:
             logger.debug(
-                f"Could not resolve sdk_session_id for session {session_id}",
+                "Could not resolve sdk_session_id for session %s",
+                session_id,
                 exc_info=True,
             )
             return None
@@ -518,7 +523,8 @@ class WakeDispatcher:
             return True
         except Exception:
             logger.error(
-                f"Failed to send ISM to session {session_id}",
+                "Failed to send ISM to session %s",
+                session_id,
                 exc_info=True,
             )
             return False
@@ -542,7 +548,8 @@ class WakeDispatcher:
                 )
             except Exception:
                 logger.debug(
-                    f"Could not query existing completion notification for {session_id}",
+                    "Could not query existing completion notification for %s",
+                    session_id,
                     exc_info=True,
                 )
 
@@ -558,7 +565,8 @@ class WakeDispatcher:
             )
         except Exception:
             logger.debug(
-                f"Could not query existing completion notifications for {session_id}",
+                "Could not query existing completion notifications for %s",
+                session_id,
                 exc_info=True,
             )
             return False

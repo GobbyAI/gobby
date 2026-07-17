@@ -44,7 +44,7 @@ def _schedule_agent_broadcast(
         except asyncio.CancelledError:
             pass
         except Exception as exc:
-            logger.warning(f"Failed to broadcast agent event {event_type}: {exc}")
+            logger.warning("Failed to broadcast agent event %s: %s", event_type, exc)
 
     task.add_done_callback(_on_done)
 
@@ -145,7 +145,9 @@ def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
             asyncio.get_running_loop()
         except RuntimeError:
             logger.debug(
-                f"Skipping agent event broadcast for {event_type}/{run_id} (no running event loop)",
+                "Skipping agent event broadcast for %s/%s (no running event loop)",
+                event_type,
+                run_id,
             )
             return
 

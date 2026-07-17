@@ -54,7 +54,7 @@ def sync_bundled_prompts(db: HubDatabase) -> dict[str, Any]:
     }
 
     if not prompts_path.exists():
-        logger.warning(f"Bundled prompts path not found: {prompts_path}")
+        logger.warning("Bundled prompts path not found: %s", prompts_path)
         result["errors"].append(f"Prompts path not found: {prompts_path}")
         return result
 
@@ -99,10 +99,10 @@ def sync_bundled_prompts(db: HubDatabase) -> dict[str, Any]:
                         variables=variables,
                         source_path=source_path,
                     )
-                    logger.info(f"Updated bundled prompt: {name}")
+                    logger.info("Updated bundled prompt: %s", name)
                     result["updated"] += 1
                 else:
-                    logger.debug(f"Prompt '{name}' already up to date, skipping")
+                    logger.debug("Prompt '%s' already up to date, skipping", name)
                     result["skipped"] += 1
                 continue
 
@@ -117,7 +117,7 @@ def sync_bundled_prompts(db: HubDatabase) -> dict[str, Any]:
                 source_path=source_path,
                 project_id=None,
             )
-            logger.info(f"Synced bundled prompt: {name}")
+            logger.info("Synced bundled prompt: %s", name)
             result["synced"] += 1
 
         except Exception as e:
@@ -127,8 +127,11 @@ def sync_bundled_prompts(db: HubDatabase) -> dict[str, Any]:
 
     total = result["synced"] + result["updated"] + result["skipped"]
     logger.info(
-        f"Prompt sync complete: {result['synced']} synced, "
-        f"{result['updated']} updated, {result['skipped']} skipped, {total} total"
+        "Prompt sync complete: %s synced, %s updated, %s skipped, %s total",
+        result["synced"],
+        result["updated"],
+        result["skipped"],
+        total,
     )
 
     return result

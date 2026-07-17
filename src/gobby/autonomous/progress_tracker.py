@@ -312,8 +312,10 @@ class ProgressTracker:
             )
 
         logger.debug(
-            f"Recorded progress for session {session_id}: "
-            f"{progress_type.value} (high_value={event.is_high_value})"
+            "Recorded progress for session %s: %s (high_value=%s)",
+            session_id,
+            progress_type.value,
+            event.is_high_value,
         )
 
         return event
@@ -531,7 +533,9 @@ class ProgressTracker:
             return False, duration
 
         if duration > self.stagnation_threshold:
-            logger.info(f"Session {session_id} stagnant: {duration:.0f}s since last progress event")
+            logger.info(
+                "Session %s stagnant: %.0fs since last progress event", session_id, duration
+            )
             return True, duration
 
         return False, duration
@@ -552,7 +556,9 @@ class ProgressTracker:
             )
 
         if result.rowcount > 0:
-            logger.debug(f"Cleared {result.rowcount} progress record(s) for session {session_id}")
+            logger.debug(
+                "Cleared %s progress record(s) for session %s", result.rowcount, session_id
+            )
 
         return result.rowcount
 

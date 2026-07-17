@@ -247,14 +247,14 @@ class ServiceContainer:
             try:
                 pe.startup_sweep()
             except Exception:
-                _logger.warning(f"Pipeline startup sweep failed for project {pid!r}", exc_info=True)
+                _logger.warning("Pipeline startup sweep failed for project %r", pid, exc_info=True)
 
             self._project_infra_cache.setdefault(pid, {})["pipeline_executor"] = pe
-            _logger.debug(f"Lazily created PipelineExecutor for project {pid!r}")
+            _logger.debug("Lazily created PipelineExecutor for project %r", pid)
             return pe
 
         except Exception as e:
-            _logger.warning(f"Failed to lazily create PipelineExecutor: {e}")
+            _logger.warning("Failed to lazily create PipelineExecutor: %s", e)
             return None
 
 

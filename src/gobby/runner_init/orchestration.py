@@ -308,7 +308,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
                             action_config={"handler": handler_name},
                             enabled=True,
                         )
-                        logger.info(f"Created system cron job: {job_name}")
+                        logger.info("Created system cron job: %s", job_name)
             logger.debug("Linear sync handlers registered")
         except Exception:
             mark_service_degraded(runner, "linear_sync")

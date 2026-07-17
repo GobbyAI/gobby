@@ -96,9 +96,10 @@ class WhisperSTT:
                 return self._model
 
             logger.info(
-                f"Loading Whisper model: {self._config.whisper_model_size} "
-                f"(device={self._config.whisper_device}, "
-                f"compute_type={self._config.whisper_compute_type})"
+                "Loading Whisper model: %s (device=%s, compute_type=%s)",
+                self._config.whisper_model_size,
+                self._config.whisper_device,
+                self._config.whisper_compute_type,
             )
 
             def _load() -> _WhisperModelProto:
@@ -207,7 +208,10 @@ class WhisperSTT:
                 text = " ".join(segment.text for segment in segment_data if segment.text)
                 duration = float(getattr(info, "duration", 0.0))
                 logger.debug(
-                    f"Transcribed {len(audio_bytes)} bytes ({duration:.1f}s) -> {len(text)} chars"
+                    "Transcribed %s bytes (%.1fs) -> %s chars",
+                    len(audio_bytes),
+                    duration,
+                    len(text),
                 )
                 return AudioCapabilityOutput(
                     text=text,

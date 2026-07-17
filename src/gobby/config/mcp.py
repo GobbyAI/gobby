@@ -167,7 +167,7 @@ class MCPConfigManager:
             try:
                 # Validate required fields
                 if "name" not in server_dict:
-                    logger.warning(f"Skipping MCP server config without 'name': {server_dict}")
+                    logger.warning("Skipping MCP server config without 'name': %s", server_dict)
                     continue
                 name = str(server_dict["name"])
                 if name in seen_names:
@@ -203,7 +203,9 @@ class MCPConfigManager:
 
             except Exception as e:
                 logger.error(
-                    f"Failed to load MCP server config '{server_dict.get('name', 'unknown')}': {e}"
+                    "Failed to load MCP server config '%s': %s",
+                    server_dict.get("name", "unknown"),
+                    e,
                 )
                 continue
 

@@ -127,7 +127,7 @@ def run_git_command(
             cwd=cwd,
         )
     except Exception as e:
-        logger.debug(f"Git command failed ({' '.join(cmd)}): {e}")
+        logger.debug("Git command failed (%s): %s", " ".join(cmd), e)
         return None
 
 
@@ -309,7 +309,7 @@ def find_matching_files(
                     if match.is_file() and match not in found:
                         found.append(match)
             except Exception as e:
-                logger.debug(f"Failed to glob pattern {pattern}: {e}")
+                logger.debug("Failed to glob pattern %s: %s", pattern, e)
         else:
             # Direct file path
             path = base / pattern
@@ -377,7 +377,7 @@ def find_related_test_files(
         candidates.update(path for path in tests_dir.rglob("test_*.py") if path.is_file())
         candidates.update(path for path in tests_dir.rglob("*_test.py") if path.is_file())
     except Exception as e:
-        logger.debug(f"Failed to search related test files: {e}")
+        logger.debug("Failed to search related test files: %s", e)
         return []
 
     scored: list[tuple[int, str, Path]] = []
@@ -430,7 +430,7 @@ def read_files_content(
             total_chars += len(content)
 
         except Exception as e:
-            logger.debug(f"Failed to read {file_path}: {e}")
+            logger.debug("Failed to read %s: %s", file_path, e)
             content_parts.append(f"=== {file_path} ===\n(Error reading file: {e})\n")
 
     return "\n".join(content_parts)
@@ -696,7 +696,7 @@ class TaskValidator:
                     content = f.read()
                     context.append(f"--- {path} ---\n{content}\n")
             except Exception as e:
-                logger.warning(f"Failed to read file {path} for validation: {e}")
+                logger.warning("Failed to read file %s for validation: %s", path, e)
                 context.append(f"--- {path} ---\n(Error reading file: {e})\n")
         return "\n".join(context)
 
@@ -828,12 +828,12 @@ class TaskValidator:
             return ValidationResult(status="pending", feedback="Validation disabled")
 
         if not description and not validation_criteria:
-            logger.warning(f"Cannot validate task {task_id}: missing description and criteria")
+            logger.warning("Cannot validate task %s: missing description and criteria", task_id)
             return ValidationResult(
                 status="pending", feedback="Missing task description and validation criteria"
             )
 
-        logger.info(f"Validating task {task_id}: {title}")
+        logger.info("Validating task %s: %s", task_id, title)
 
         # Gather context if provided
         file_context_parts: list[str] = []
@@ -940,7 +940,7 @@ class TaskValidator:
             )
 
             if not result_data:
-                logger.warning(f"Empty LLM response for task {task_id} validation")
+                logger.warning("Empty LLM response for task %s validation", task_id)
                 return ValidationResult(
                     status="pending", feedback="Validation failed: Empty response from LLM"
                 )
@@ -987,5 +987,5 @@ class TaskValidator:
                     status="error",
                     feedback=f"Validation generation unavailable (infrastructure): {e}",
                 )
-            logger.error(f"Failed to validate task {task_id}: {e}")
+            logger.error("Failed to validate task %s: %s", task_id, e)
             return ValidationResult(status="pending", feedback=f"Validation failed: {str(e)}")

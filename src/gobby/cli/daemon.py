@@ -94,11 +94,11 @@ def _services_start(gobby_home: Path) -> None:
             cwd=str(services_dir),
         )
         if result.returncode != 0:
-            logger.warning(f"Failed to start services: {result.stderr or result.stdout}")
+            logger.warning("Failed to start services: %s", result.stderr or result.stdout)
     except subprocess.TimeoutExpired:
         logger.warning("Timed out starting Docker services")
     except Exception as e:
-        logger.warning(f"Failed to start Docker services: {e}")
+        logger.warning("Failed to start Docker services: %s", e)
 
 
 def _services_stop(gobby_home: Path) -> None:
@@ -131,13 +131,13 @@ def _services_stop(gobby_home: Path) -> None:
             cwd=str(services_dir),
         )
         if result.returncode != 0:
-            logger.warning(f"Failed to stop services: {result.stderr or result.stdout}")
+            logger.warning("Failed to stop services: %s", result.stderr or result.stdout)
     except ComposeEnvironmentError as exc:
         logger.warning("Could not resolve config for services; skipping Docker shutdown: %s", exc)
     except subprocess.TimeoutExpired:
         logger.warning("Timed out stopping Docker services")
     except Exception as e:
-        logger.warning(f"Failed to stop Docker services: {e}")
+        logger.warning("Failed to stop Docker services: %s", e)
 
 
 def _step(msg: str, *, error: bool = False, scheduled: bool = False) -> None:

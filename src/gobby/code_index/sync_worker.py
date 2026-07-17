@@ -164,7 +164,7 @@ async def sync_worker_loop(
                 breaker=breaker,
             )
         except Exception as e:
-            logger.error(f"Sync worker pass error: {e}", exc_info=True)
+            logger.error("Sync worker pass error: %s", e, exc_info=True)
 
         try:
             await asyncio.wait_for(shutdown_flag.wait(), timeout=interval)
@@ -236,7 +236,10 @@ async def _sync_pass(
 
         if synced_count > 0:
             logger.debug(
-                f"Sync worker: processed {synced_count}/{len(files)} files for project {project.id}"
+                "Sync worker: processed %s/%s files for project %s",
+                synced_count,
+                len(files),
+                project.id,
             )
 
 

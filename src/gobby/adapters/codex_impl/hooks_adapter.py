@@ -110,7 +110,7 @@ class CodexHooksAdapter(BaseAdapter):
 
         event_type = self.EVENT_MAP.get(hook_type)
         if event_type is None:
-            logger.warning(f"Codex hooks: unsupported hook type '{hook_type}'")
+            logger.warning("Codex hooks: unsupported hook type '%s'", hook_type)
             return None
 
         session_id = input_data.get("session_id", "")

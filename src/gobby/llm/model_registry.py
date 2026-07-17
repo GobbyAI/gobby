@@ -74,7 +74,7 @@ def fetch_models_sync(timeout: float = _FETCH_TIMEOUT) -> list[ModelInfo]:
         response.raise_for_status()
         data = response.json()
     except (httpx.HTTPError, ValueError, KeyError) as e:
-        logger.warning(f"Failed to fetch models from OpenRouter: {e}")
+        logger.warning("Failed to fetch models from OpenRouter: %s", e)
         return []
 
     if not isinstance(data, dict):
@@ -114,7 +114,7 @@ def fetch_models_sync(timeout: float = _FETCH_TIMEOUT) -> list[ModelInfo]:
             )
         )
 
-    logger.info(f"Fetched {len(models)} models from OpenRouter")
+    logger.info("Fetched %s models from OpenRouter", len(models))
     return models
 
 

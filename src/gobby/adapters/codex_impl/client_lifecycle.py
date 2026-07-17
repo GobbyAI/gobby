@@ -70,7 +70,7 @@ async def start(client: CodexAppServerClient, subprocess_module: Any) -> None:
         )
 
         user_agent = result.get("userAgent", "unknown")
-        logger.debug(f"Codex app-server initialized: {user_agent}")
+        logger.debug("Codex app-server initialized: %s", user_agent)
 
         # Send initialized notification
         await client._send_notification("initialized", {})
@@ -80,7 +80,7 @@ async def start(client: CodexAppServerClient, subprocess_module: Any) -> None:
 
     except Exception as e:
         client._state = CodexConnectionState.ERROR
-        logger.error(f"Failed to start Codex app-server: {e}", exc_info=True)
+        logger.error("Failed to start Codex app-server: %s", e, exc_info=True)
         await stop(client)
         raise RuntimeError(f"Failed to start Codex app-server: {e}") from e
 
@@ -116,7 +116,7 @@ async def stop(client: CodexAppServerClient) -> None:
             loop = asyncio.get_running_loop()
             await asyncio.wait_for(loop.run_in_executor(None, client._process.wait), timeout=5.0)
         except Exception as e:
-            logger.warning(f"Error terminating Codex app-server: {e}")
+            logger.warning("Error terminating Codex app-server: %s", e)
             client._process.kill()
         finally:
             client._process = None

@@ -508,7 +508,7 @@ def _probe_embedding_dim(
                 raise EmbeddingGenerationError("Embedding API returned empty probe result")
             return len(result)
         except EmbeddingGenerationError as e:
-            logger.warning(f"Embedding dim probe failed: {e}")
+            logger.warning("Embedding dim probe failed: %s", e)
             return None
 
     try:
@@ -548,7 +548,7 @@ def _health_check_embedding(
             )
             return len(result) > 0
         except Exception as e:
-            logger.warning(f"Embedding health check failed: {e}")
+            logger.warning("Embedding health check failed: %s", e)
             return False
 
     try:
@@ -652,7 +652,7 @@ def _semantic_smoke_test(
             )
             return True
         except Exception as e:
-            logger.warning(f"Semantic smoke test failed: {e}")
+            logger.warning("Semantic smoke test failed: %s", e)
             return False
 
     try:

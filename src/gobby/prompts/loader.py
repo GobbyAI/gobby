@@ -97,7 +97,7 @@ class PromptLoader:
         if record is not None:
             template = cast(PromptTemplate, record.to_prompt_template())
             self._cache[path] = template
-            logger.debug(f"Loaded prompt template '{path}' from database (scope={record.scope})")
+            logger.debug("Loaded prompt template '%s' from database (scope=%s)", path, record.scope)
             return template
 
         raise FileNotFoundError(f"Prompt template not found: {path}")

@@ -32,10 +32,10 @@ def get_default_branch(runner: GitRunner) -> str:
             ref = result.stdout.strip()
             if ref.startswith("refs/remotes/origin/"):
                 branch = ref[len("refs/remotes/origin/") :]
-                logger.debug(f"Detected default branch from origin/HEAD: {branch}")
+                logger.debug("Detected default branch from origin/HEAD: %s", branch)
                 return branch
     except Exception as e:
-        logger.debug(f"Method 1 (origin/HEAD) for default branch failed: {e}")
+        logger.debug("Method 1 (origin/HEAD) for default branch failed: %s", e)
 
     # Method 2: Check which common default branches exist
     for branch in ["main", "master", "develop"]:
@@ -46,7 +46,7 @@ def get_default_branch(runner: GitRunner) -> str:
                 timeout=5,
             )
             if result.returncode == 0:
-                logger.debug(f"Detected default branch from local ref: {branch}")
+                logger.debug("Detected default branch from local ref: %s", branch)
                 return branch
 
             # Check remote
@@ -55,10 +55,10 @@ def get_default_branch(runner: GitRunner) -> str:
                 timeout=5,
             )
             if result.returncode == 0:
-                logger.debug(f"Detected default branch from remote ref: {branch}")
+                logger.debug("Detected default branch from remote ref: %s", branch)
                 return branch
         except Exception as e:
-            logger.debug(f"Method 2 branch check failed for {branch}: {e}")
+            logger.debug("Method 2 branch check failed for %s: %s", branch, e)
             continue
 
     # Method 3: Fall back to "main"
@@ -131,7 +131,7 @@ def has_unpushed_commits(runner: GitRunner, branch: str | None = None) -> tuple[
             return count > 0, count
         return False, 0
     except Exception as e:
-        logger.warning(f"Error checking unpushed commits: {e}")
+        logger.warning("Error checking unpushed commits: %s", e)
         return False, 0
 
 

@@ -156,7 +156,7 @@ def install_claude(project_path: Path, mode: str = "global") -> dict[str, Any]:
     skills_dir = claude_path / "skills"
     backup_result = backup_gobby_skills(skills_dir)
     if backup_result["backed_up"] > 0:
-        logger.info(f"Backed up {backup_result['backed_up']} existing gobby skills")
+        logger.info("Backed up %s existing gobby skills", backup_result["backed_up"])
 
     # Get source files
     install_dir = get_install_dir()
@@ -176,7 +176,7 @@ def install_claude(project_path: Path, mode: str = "global") -> dict[str, Any]:
         if cleaned:
             result["project_hooks_cleaned"] = cleaned
     except OSError as e:
-        logger.error(f"Failed to install hook files: {e}")
+        logger.error("Failed to install hook files: %s", e)
         result["error"] = f"Failed to install hook files: {e}"
         return result
 
@@ -185,7 +185,7 @@ def install_claude(project_path: Path, mode: str = "global") -> dict[str, Any]:
         content_path = claude_path if mode == "project" else project_path / ".claude"
         shared = install_shared_content(content_path, project_path)
     except Exception as e:
-        logger.error(f"Failed to install shared content: {e}")
+        logger.error("Failed to install shared content: %s", e)
         result["error"] = f"Failed to install shared content: {e}"
         return result
 
@@ -193,7 +193,7 @@ def install_claude(project_path: Path, mode: str = "global") -> dict[str, Any]:
     try:
         cli = install_cli_content("claude", claude_path)
     except Exception as e:
-        logger.error(f"Failed to install CLI content: {e}")
+        logger.error("Failed to install CLI content: %s", e)
         result["error"] = f"Failed to install CLI content: {e}"
         return result
 
@@ -218,7 +218,7 @@ def install_claude(project_path: Path, mode: str = "global") -> dict[str, Any]:
         try:
             copy2(settings_file, backup_file)
         except OSError as e:
-            logger.error(f"Failed to create backup of settings.json: {e}")
+            logger.error("Failed to create backup of settings.json: %s", e)
             result["error"] = f"Failed to create backup: {e}"
             return result
 
@@ -235,11 +235,11 @@ def install_claude(project_path: Path, mode: str = "global") -> dict[str, Any]:
             with open(settings_file) as f:
                 existing_settings = json.load(f)
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse settings.json: {e}")
+            logger.error("Failed to parse settings.json: %s", e)
             result["error"] = f"Failed to parse settings.json: {e}"
             return result
         except OSError as e:
-            logger.error(f"Failed to read settings.json: {e}")
+            logger.error("Failed to read settings.json: %s", e)
             result["error"] = f"Failed to read settings.json: {e}"
             return result
 
@@ -248,7 +248,7 @@ def install_claude(project_path: Path, mode: str = "global") -> dict[str, Any]:
         with open(source_hooks_template) as f:
             gobby_settings_str = f.read()
     except OSError as e:
-        logger.error(f"Failed to read hooks template: {e}")
+        logger.error("Failed to read hooks template: %s", e)
         result["error"] = f"Failed to read hooks template: {e}"
         return result
 
@@ -258,7 +258,7 @@ def install_claude(project_path: Path, mode: str = "global") -> dict[str, Any]:
     try:
         gobby_settings = json.loads(gobby_settings_str)
     except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse hooks template: {e}")
+        logger.error("Failed to parse hooks template: %s", e)
         result["error"] = f"Failed to parse hooks template: {e}"
         return result
     rewrite_hook_template_commands(gobby_settings, cli_name="claude", hooks_dir=hooks_dir)
@@ -294,14 +294,14 @@ def install_claude(project_path: Path, mode: str = "global") -> dict[str, Any]:
                 os.unlink(temp_path)
             raise
     except OSError as e:
-        logger.error(f"Failed to write settings.json: {e}")
+        logger.error("Failed to write settings.json: %s", e)
         # Attempt to restore from backup if we have one
         if backup_file and backup_file.exists():
             try:
                 copy2(backup_file, settings_file)
                 logger.info("Restored settings.json from backup after write failure")
             except OSError as restore_error:
-                logger.error(f"Failed to restore from backup: {restore_error}")
+                logger.error("Failed to restore from backup: %s", restore_error)
         result["error"] = f"Failed to write settings.json: {e}"
         return result
 
@@ -314,7 +314,7 @@ def install_claude(project_path: Path, mode: str = "global") -> dict[str, Any]:
         result["mcp_already_configured"] = mcp_result.get("already_configured", False)
     else:
         # MCP config failure is non-fatal, just log it
-        logger.warning(f"Failed to configure MCP server: {mcp_result['error']}")
+        logger.warning("Failed to configure MCP server: %s", mcp_result["error"])
 
     result["trust"] = seed_gobby_home_trust("claude")
 
@@ -356,7 +356,7 @@ def uninstall_claude(project_path: Path) -> dict[str, Any]:
     try:
         copy2(settings_file, backup_file)
     except OSError as e:
-        logger.error(f"Failed to create backup of settings.json: {e}")
+        logger.error("Failed to create backup of settings.json: %s", e)
         result["error"] = f"Failed to create backup: {e}"
         return result
 
@@ -371,11 +371,11 @@ def uninstall_claude(project_path: Path) -> dict[str, Any]:
         with open(settings_file) as f:
             settings = json.load(f)
     except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse settings.json: {e}")
+        logger.error("Failed to parse settings.json: %s", e)
         result["error"] = f"Failed to parse settings.json: {e}"
         return result
     except OSError as e:
-        logger.error(f"Failed to read settings.json: {e}")
+        logger.error("Failed to read settings.json: %s", e)
         result["error"] = f"Failed to read settings.json: {e}"
         return result
 
@@ -407,13 +407,13 @@ def uninstall_claude(project_path: Path) -> dict[str, Any]:
                     os.unlink(temp_path)
                 raise
         except OSError as e:
-            logger.error(f"Failed to write settings.json: {e}")
+            logger.error("Failed to write settings.json: %s", e)
             # Attempt to restore from backup
             try:
                 copy2(backup_file, settings_file)
                 logger.info("Restored settings.json from backup after write failure")
             except OSError as restore_error:
-                logger.error(f"Failed to restore from backup: {restore_error}")
+                logger.error("Failed to restore from backup: %s", restore_error)
             result["error"] = f"Failed to write settings.json: {e}"
             return result
 

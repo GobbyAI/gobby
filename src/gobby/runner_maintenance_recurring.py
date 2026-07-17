@@ -87,11 +87,11 @@ async def metrics_cleanup_loop(
                 metrics_manager.cleanup_old_metrics,
             )
             if deleted > 0:
-                logger.info(f"Periodic metrics cleanup: removed {deleted} old entries")
+                logger.info("Periodic metrics cleanup: removed %s old entries", deleted)
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.error(f"Error in metrics cleanup loop: {e}")
+            logger.error("Error in metrics cleanup loop: %s", e)
         try:
             await sleep_fn(interval_seconds)
         except asyncio.CancelledError:
@@ -129,12 +129,14 @@ async def metrics_archive_loop(
             )
             if archived > 0:
                 logger.info(
-                    f"Metrics archive: rolled up {archived} events older than {retention_days} days"
+                    "Metrics archive: rolled up %s events older than %s days",
+                    archived,
+                    retention_days,
                 )
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.error(f"Error in metrics archive loop: {e}")
+            logger.error("Error in metrics archive loop: %s", e)
         try:
             await sleep_fn(interval_seconds)
         except asyncio.CancelledError:
@@ -169,14 +171,15 @@ async def memory_reconcile_loop(
             falkordb_entities = report.get("falkordb", {}).get("orphan_entities_deleted", 0)
             if qdrant_orphans or falkordb_orphans or falkordb_entities:
                 logger.info(
-                    f"Memory reconciliation: {qdrant_orphans} Qdrant orphans, "
-                    f"{falkordb_orphans} FalkorDB memory orphans, "
-                    f"{falkordb_entities} FalkorDB entity orphans cleaned"
+                    "Memory reconciliation: %s Qdrant orphans, %s FalkorDB memory orphans, %s FalkorDB entity orphans cleaned",
+                    qdrant_orphans,
+                    falkordb_orphans,
+                    falkordb_entities,
                 )
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.error(f"Error in memory reconcile loop: {e}")
+            logger.error("Error in memory reconcile loop: %s", e)
         try:
             await sleep_fn(interval_seconds)
         except asyncio.CancelledError:

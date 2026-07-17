@@ -42,7 +42,7 @@ async def code_index_maintenance_loop(
         summarizer: Optional SymbolSummarizer for generating summaries.
         symbol_summary_batch_size: Max symbols to summarize per pass.
     """
-    logger.info(f"Code index maintenance loop started (interval={interval}s)")
+    logger.info("Code index maintenance loop started (interval=%ss)", interval)
     missing_root_observations: dict[str, int] = {}
 
     while True:
@@ -58,7 +58,7 @@ async def code_index_maintenance_loop(
                 missing_root_observations=missing_root_observations,
             )
         except Exception as e:
-            logger.error(f"Code index maintenance error: {e}", exc_info=True)
+            logger.error("Code index maintenance error: %s", e, exc_info=True)
 
         # Wait for interval or shutdown
         if shutdown_flag is not None:
@@ -299,8 +299,10 @@ async def _summarize_unsummarized(
 
     if results:
         logger.debug(
-            f"Generated {len(results)} summaries for {project.id} "
-            f"({len(symbols) - len(results)} skipped/failed)"
+            "Generated %s summaries for %s (%s skipped/failed)",
+            len(results),
+            project.id,
+            len(symbols) - len(results),
         )
 
 

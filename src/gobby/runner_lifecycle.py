@@ -148,7 +148,7 @@ async def run_daemon(runner: GobbyRunner, pid_claim: PidFileClaim | None = None)
                 contended = pid_claim is None
             except OSError as e:
                 # Advisory locking unavailable — fail open and run unlocked.
-                logger.warning(f"Could not claim PID file {pid_file}: {e}")
+                logger.warning("Could not claim PID file %s: %s", pid_file, e)
             if contended:
                 # A held flock means a live owner (locks die with their
                 # process). Exit 0 so launchd (KeepAlive.SuccessfulExit=false)
@@ -161,7 +161,7 @@ async def run_daemon(runner: GobbyRunner, pid_claim: PidFileClaim | None = None)
                 )
                 return
         if pid_claim is not None:
-            logger.info(f"Wrote PID file: {pid_file} (PID {os.getpid()})")
+            logger.info("Wrote PID file: %s (PID %s)", pid_file, os.getpid())
 
         uvicorn_drain_timeout = 15
         config = uvicorn.Config(
@@ -266,7 +266,7 @@ async def run_daemon(runner: GobbyRunner, pid_claim: PidFileClaim | None = None)
             remove_uvicorn_shutdown_filter(shutdown_log_filter)
 
     except Exception as e:
-        logger.error(f"Fatal error: {e}", exc_info=True)
+        logger.error("Fatal error: %s", e, exc_info=True)
         cleanup_owned_pid_file()
         sys.exit(1)
     finally:

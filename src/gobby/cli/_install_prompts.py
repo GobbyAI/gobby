@@ -557,7 +557,7 @@ def _run_voice_install(
         click.echo(f"Voice {state} in daemon config")
         results["voice"] = {"success": True, "enabled": install_voice}
     except Exception as e:
-        logger.warning(f"Failed to update daemon config: {e}")
+        logger.warning("Failed to update daemon config: %s", e)
         click.echo(f"  Warning: Could not enable voice in config: {e}")
         click.echo("  Enable manually: set voice.enabled=true in config")
         results["voice"] = {"success": False, "error": str(e)}

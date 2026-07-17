@@ -51,7 +51,7 @@ def setup_llm_instrumentors(
 
         entry = _INSTRUMENTOR_MAP.get(provider)
         if not entry:
-            logger.debug(f"Unknown LLM provider for instrumentation: {provider}")
+            logger.debug("Unknown LLM provider for instrumentation: %s", provider)
             continue
 
         module_path, class_name = entry
@@ -61,10 +61,10 @@ def setup_llm_instrumentors(
             constructor_kwargs = {"enrich_token_usage": True} if provider == "anthropic" else {}
             instrumentor_cls(**constructor_kwargs).instrument()
             _instrumented.add(provider)
-            logger.info(f"Activated LLM instrumentor for {provider}")
+            logger.info("Activated LLM instrumentor for %s", provider)
         except ImportError:
             logger.debug(
-                f"LLM instrumentor for {provider} not available (install 'llm-tracing' extra)",
+                "LLM instrumentor for %s not available (install 'llm-tracing' extra)", provider
             )
         except Exception:
-            logger.warning(f"Failed to activate LLM instrumentor for {provider}", exc_info=True)
+            logger.warning("Failed to activate LLM instrumentor for %s", provider, exc_info=True)

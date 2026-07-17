@@ -124,7 +124,7 @@ async def _shutdown_websocket_server(runner: GobbyRunner, timeout: float = 5.0) 
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.warning(f"WebSocket startup task failed during shutdown: {e}")
+            logger.warning("WebSocket startup task failed during shutdown: %s", e)
 
     if websocket_server and getattr(websocket_server, "_server", None) is not None:
         logger.debug("Stopping WebSocket server before HTTP shutdown")
@@ -134,7 +134,7 @@ async def _shutdown_websocket_server(runner: GobbyRunner, timeout: float = 5.0) 
         except TimeoutError:
             logger.warning("WebSocket server shutdown timed out")
         except Exception as e:
-            logger.warning(f"WebSocket server shutdown failed: {e}")
+            logger.warning("WebSocket server shutdown failed: %s", e)
 
     if websocket_task is not None:
         runner._websocket_task = None
@@ -293,7 +293,7 @@ async def _reap_remaining_child_processes(
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     pass
     except Exception as e:
-        logger.warning(f"Child process reap failed: {e}")
+        logger.warning("Child process reap failed: %s", e)
 
 
 def _expand_preserved_agent_processes(
@@ -351,7 +351,7 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
         except TimeoutError:
             logger.warning("Wiki watcher shutdown timed out")
         except Exception as e:
-            logger.warning(f"Wiki watcher shutdown failed: {e}")
+            logger.warning("Wiki watcher shutdown failed: %s", e)
 
     periodic_task_attrs = (
         "_metrics_cleanup_task",
@@ -418,7 +418,7 @@ async def _cleanup_pipeline_background_tasks() -> None:
     except TimeoutError:
         logger.warning("Pipeline background tasks cleanup timed out")
     except Exception as e:
-        logger.warning(f"Pipeline background tasks cleanup failed: {e}")
+        logger.warning("Pipeline background tasks cleanup failed: %s", e)
 
 
 async def _stop_started_services(
@@ -515,7 +515,7 @@ async def _close_managers_and_storage(runner: GobbyRunner) -> None:
             try:
                 await hook_manager.shutdown_async()
             except Exception as e:
-                logger.warning(f"HookManager shutdown failed: {e}")
+                logger.warning("HookManager shutdown failed: %s", e)
             else:
                 if getattr(runner.http_server, "_hook_manager", None) is hook_manager:
                     runner.http_server._hook_manager = None
@@ -527,7 +527,7 @@ async def _close_managers_and_storage(runner: GobbyRunner) -> None:
         except TimeoutError:
             logger.warning("MemoryManager close timed out")
         except Exception as e:
-            logger.warning(f"MemoryManager close failed: {e}")
+            logger.warning("MemoryManager close failed: %s", e)
 
     vector_store = getattr(runner, "vector_store", None)
     if vector_store:
@@ -536,7 +536,7 @@ async def _close_managers_and_storage(runner: GobbyRunner) -> None:
         except TimeoutError:
             logger.warning("VectorStore close timed out")
         except Exception as e:
-            logger.warning(f"VectorStore close failed: {e}")
+            logger.warning("VectorStore close failed: %s", e)
 
 
 async def _shutdown_database_executor(db_executor: Any) -> None:
@@ -549,7 +549,7 @@ async def _shutdown_database_executor(db_executor: Any) -> None:
         # that worker again while closing the event loop.
         db_executor.shutdown(wait=False, cancel_futures=True)
     except Exception as e:
-        logger.warning(f"Database executor shutdown failed: {e}")
+        logger.warning("Database executor shutdown failed: %s", e)
 
 
 async def _run_graceful_shutdown_sequence(
@@ -763,7 +763,7 @@ async def shutdown_daemon_services(
         try:
             runner.database.close()
         except Exception as e:
-            logger.warning(f"Database close failed: {e}")
+            logger.warning("Database close failed: %s", e)
 
         try:
             cleanup_pid_file()

@@ -149,7 +149,7 @@ def _generate_machine_id() -> str:
         return str(uuid.uuid4())
     except Exception as e:
         # machineid library failed (hardware access issues, etc.)
-        logger.debug(f"machineid.hashed_id() failed, using UUID fallback: {e}")
+        logger.debug("machineid.hashed_id() failed, using UUID fallback: %s", e)
         return str(uuid.uuid4())
 
 

@@ -248,7 +248,8 @@ class TestExpandEnvVars:
                 result = expand_env_vars("key: ${MISSING_VAR}", secret_resolver=resolver)
                 assert result == "key: ${MISSING_VAR}"
                 mock_logger.warning.assert_called_once()
-                assert "MISSING_VAR" in mock_logger.warning.call_args[0][0]
+                warning_args = mock_logger.warning.call_args.args
+                assert "MISSING_VAR" in warning_args[0] % warning_args[1:]
 
     def test_secret_resolver_exception_falls_through(self) -> None:
         """Test that secret_resolver exceptions are caught and fall through to env."""
@@ -323,7 +324,8 @@ class TestExpandEnvVars:
             result = expand_env_vars("key: $secret:MISSING", secret_resolver=resolver)
             assert result == "key: $secret:MISSING"
             mock_logger.warning.assert_called_once()
-            assert "MISSING" in mock_logger.warning.call_args[0][0]
+            warning_args = mock_logger.warning.call_args.args
+            assert "MISSING" in warning_args[0] % warning_args[1:]
 
     def test_mixed_secret_ref_and_env_var(self) -> None:
         """Test $secret:NAME and ${VAR} in same content."""

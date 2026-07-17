@@ -226,7 +226,7 @@ class TaskTreeBuilder:
                 self._sibling_index_map[parent_task_id] = {}
             self._sibling_index_map[parent_task_id][sibling_index] = task.id
 
-            logger.debug(f"Created task {task.id} (#{task.seq_num}): {title}")
+            logger.debug("Created task %s (#%s): %s", task.id, task.seq_num, title)
 
             # Create children with their sibling indices
             children = node.get("children", [])
@@ -300,7 +300,7 @@ class TaskTreeBuilder:
                             depends_on=blocker_id,
                             dep_type="blocks",
                         )
-                        logger.debug(f"Added dependency: {title} depends on {dep_display}")
+                        logger.debug("Added dependency: %s depends on %s", title, dep_display)
                     except (ValueError, DependencyCycleError) as e:
                         # Ignore duplicate dependency errors
                         if isinstance(e, DependencyCycleError) or "already exists" not in str(e):

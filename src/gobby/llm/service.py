@@ -86,7 +86,7 @@ class LLMService:
 
         # Log enabled providers
         enabled = self.enabled_providers
-        logger.debug(f"LLMService initialized with providers: {enabled}")
+        logger.debug("LLMService initialized with providers: %s", enabled)
 
     async def call_feature(
         self,

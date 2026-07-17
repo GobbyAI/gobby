@@ -87,7 +87,7 @@ async def start_thread(
         client._thread_cwds[thread.id] = result_cwd
     if terminal_context and thread.id:
         client._thread_terminal_contexts[thread.id] = dict(terminal_context)
-    logger.debug(f"Started Codex thread: {thread.id}")
+    logger.debug("Started Codex thread: %s", thread.id)
     return thread
 
 
@@ -117,7 +117,7 @@ async def resume_thread(client: CodexAppServerClient, thread_id: str) -> CodexTh
     result_cwd = result.get("cwd") or thread_data.get("cwd")
     if isinstance(result_cwd, str) and result_cwd:
         client._thread_cwds[thread.id] = result_cwd
-    logger.debug(f"Resumed Codex thread: {thread.id}")
+    logger.debug("Resumed Codex thread: %s", thread.id)
     return thread
 
 
@@ -172,7 +172,7 @@ async def archive_thread(client: CodexAppServerClient, thread_id: str) -> None:
     await client._send_request("thread/archive", {"threadId": thread_id})
     client._threads.pop(thread_id, None)
     client._thread_cwds.pop(thread_id, None)
-    logger.debug(f"Archived Codex thread: {thread_id}")
+    logger.debug("Archived Codex thread: %s", thread_id)
 
 
 async def list_models(
@@ -284,7 +284,7 @@ async def start_turn(
     if turn.id:
         client._turn_prompts[turn.id] = prompt
 
-    logger.debug(f"Started turn {turn.id} in thread {thread_id}")
+    logger.debug("Started turn %s in thread %s", turn.id, thread_id)
     return turn
 
 
@@ -297,7 +297,7 @@ async def interrupt_turn(client: CodexAppServerClient, thread_id: str, turn_id: 
         turn_id: Turn ID to interrupt
     """
     await client._send_request("turn/interrupt", {"threadId": thread_id, "turnId": turn_id})
-    logger.debug(f"Interrupted turn {turn_id}")
+    logger.debug("Interrupted turn %s", turn_id)
 
 
 async def _interrupt_cancelled_turn(

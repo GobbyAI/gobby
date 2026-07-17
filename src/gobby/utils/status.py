@@ -44,7 +44,7 @@ async def fetch_rich_status(http_port: int, timeout: float = 3.0) -> dict[str, A
     except (httpx.ConnectError, httpx.TimeoutException):
         pass
     except Exception as e:
-        logger.debug(f"Failed to fetch daemon status: {e}")
+        logger.debug("Failed to fetch daemon status: %s", e)
     return {}
 
 

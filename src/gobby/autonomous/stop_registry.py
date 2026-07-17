@@ -184,7 +184,7 @@ class StopRegistry:
             )
 
             if result.rowcount > 0:
-                logger.info(f"Stop signal acknowledged for session {session_id}")
+                logger.info("Stop signal acknowledged for session %s", session_id)
                 return True
             return False
 
@@ -206,7 +206,7 @@ class StopRegistry:
             )
 
             if result.rowcount > 0:
-                logger.debug(f"Stop signal cleared for session {session_id}")
+                logger.debug("Stop signal cleared for session %s", session_id)
                 return True
             return False
 
@@ -275,5 +275,5 @@ class StopRegistry:
             )
 
             if result.rowcount > 0:
-                logger.info(f"Cleaned up {result.rowcount} stale stop signal(s)")
+                logger.info("Cleaned up %s stale stop signal(s)", result.rowcount)
             return result.rowcount

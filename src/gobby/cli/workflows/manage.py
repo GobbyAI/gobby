@@ -143,7 +143,7 @@ def _notify_daemon_reload(
         else:
             click.echo(f"Daemon reload returned status {response.status_code}", err=True)
     except Exception as e:
-        logger.debug(f"Could not notify daemon: {e}", exc_info=True)
+        logger.debug("Could not notify daemon: %s", e, exc_info=True)
         click.echo("Daemon not reachable; reload will happen on next restart")
 
 
@@ -299,7 +299,7 @@ def reload_workflows(ctx: click.Context) -> None:
                 click.echo(f"Failed to communicate with daemon: {e}", err=True)
             raise SystemExit(1)
     except Exception as e:
-        logger.debug(f"Error checking daemon status: {e}", exc_info=True)
+        logger.debug("Error checking daemon status: %s", e, exc_info=True)
         raise click.ClickException(f"Failed to check daemon status: {e}") from None
 
     # Fallback: Clear local cache (useful if running in same process or just validating)

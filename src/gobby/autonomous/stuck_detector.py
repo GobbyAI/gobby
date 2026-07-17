@@ -157,7 +157,7 @@ class StuckDetector:
                 ),
             )
 
-        logger.debug(f"Recorded task selection for session {session_id}: task={task_id}")
+        logger.debug("Recorded task selection for session %s: task=%s", session_id, task_id)
 
         return event
 
@@ -203,8 +203,10 @@ class StuckDetector:
         for row in rows:
             if row["count"] >= self.task_loop_threshold:
                 logger.info(
-                    f"Session {session_id} stuck in task loop: "
-                    f"task {row['task_id']} selected {row['count']} times"
+                    "Session %s stuck in task loop: task %s selected %s times",
+                    session_id,
+                    row["task_id"],
+                    row["count"],
                 )
                 return StuckDetectionResult(
                     is_stuck=True,
@@ -236,8 +238,9 @@ class StuckDetector:
 
         if summary.is_stagnant:
             logger.info(
-                f"Session {session_id} progress stagnant: "
-                f"{summary.stagnation_duration_seconds:.0f}s since last progress event"
+                "Session %s progress stagnant: %.0fs since last progress event",
+                session_id,
+                summary.stagnation_duration_seconds,
             )
             return StuckDetectionResult(
                 is_stuck=True,
@@ -301,7 +304,10 @@ class StuckDetector:
             if count >= self.tool_loop_threshold:
                 tool_name = key.split(":")[0]
                 logger.info(
-                    f"Session {session_id} stuck in tool loop: {tool_name} called {count} times"
+                    "Session %s stuck in tool loop: %s called %s times",
+                    session_id,
+                    tool_name,
+                    count,
                 )
                 return StuckDetectionResult(
                     is_stuck=True,
@@ -366,7 +372,7 @@ class StuckDetector:
 
         if result.rowcount > 0:
             logger.debug(
-                f"Cleared {result.rowcount} task selection record(s) for session {session_id}"
+                "Cleared %s task selection record(s) for session %s", result.rowcount, session_id
             )
 
         return result.rowcount

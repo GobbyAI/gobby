@@ -422,7 +422,7 @@ def _install_hooks_file(
         try:
             existing = json.loads(hooks_file.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as e:
-            logger.warning(f"Could not read existing hooks.json, overwriting: {e}")
+            logger.warning("Could not read existing hooks.json, overwriting: %s", e)
 
     previous_gobby_trust_entries: list[HookTrustEntry] = []
     if isinstance(existing.get("hooks"), dict):
@@ -504,7 +504,7 @@ def install_codex(project_path: Path, *, mode: str = "global") -> dict[str, Any]
         Dict with installation results including success status and installed items
     """
     if mode != "global":
-        logger.warning(f"Codex install: mode={mode!r} not supported, falling back to global")
+        logger.warning("Codex install: mode=%r not supported, falling back to global", mode)
     hooks_installed: list[str] = []
     files_installed: list[str] = []
     result: dict[str, Any] = {
@@ -594,14 +594,14 @@ def install_codex(project_path: Path, *, mode: str = "global") -> dict[str, Any]
         result["mcp_configured"] = mcp_result.get("added", False)
         result["mcp_already_configured"] = mcp_result.get("already_configured", False)
     else:
-        logger.warning(f"Failed to configure MCP server: {mcp_result['error']}")
+        logger.warning("Failed to configure MCP server: %s", mcp_result["error"])
 
     # 5b. Strip per-tool approval overrides so tools inherit session approval mode
     strip_result = strip_mcp_tool_overrides_toml(codex_config_path)
     if strip_result["success"] and strip_result.get("stripped"):
         result["mcp_tools_stripped"] = True
     elif not strip_result["success"]:
-        logger.warning(f"Failed to strip MCP tool overrides: {strip_result['error']}")
+        logger.warning("Failed to strip MCP tool overrides: %s", strip_result["error"])
 
     try:
         trust_result = seed_gobby_home_trust("codex")
@@ -750,7 +750,7 @@ def uninstall_codex(project_path: Path | None = None) -> dict[str, Any]:
                     else:
                         hooks_file.unlink()
         except (json.JSONDecodeError, OSError) as e:
-            logger.warning(f"Could not clean hooks.json: {e}")
+            logger.warning("Could not clean hooks.json: %s", e)
 
     # 2. Update config.toml: remove hook feature flags and Gobby trust state
     codex_config_path = codex_home / "config.toml"
@@ -771,7 +771,7 @@ def uninstall_codex(project_path: Path | None = None) -> dict[str, Any]:
                 _dump_toml_config(codex_config_path, updated)
                 result["config_updated"] = True
     except Exception as e:
-        logger.warning(f"Failed to update config.toml during uninstall: {e}")
+        logger.warning("Failed to update config.toml during uninstall: %s", e)
 
     # 4. Remove MCP server from config
     mcp_result = remove_mcp_server_toml(codex_config_path)

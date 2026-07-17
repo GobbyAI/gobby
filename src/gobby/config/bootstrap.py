@@ -161,7 +161,7 @@ def load_bootstrap(
     except BootstrapConfigError:
         raise
     except Exception as e:
-        logger.warning(f"Failed to load bootstrap config from {bootstrap_path}: {e}")
+        logger.warning("Failed to load bootstrap config from %s: %s", bootstrap_path, e)
         return _default_bootstrap_config()
 
 

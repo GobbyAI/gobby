@@ -30,7 +30,7 @@ def mcp_server(ctx: click.Context) -> None:
     try:
         asyncio.run(mcp_main())
     except Exception as e:
-        logger.error(f"MCP server failed: {e}")
+        logger.error("MCP server failed: %s", e)
         # Use simple exit code to avoid scary tracebacks for common errors
         import sys
 

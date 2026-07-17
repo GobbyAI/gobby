@@ -144,21 +144,21 @@ class DaemonClient:
             else:
                 error_reason = f"HTTP {response.status_code}"
                 self._mark_health_failed()
-                self.logger.warning(f"Daemon health check failed: status {response.status_code}")
+                self.logger.warning("Daemon health check failed: status %s", response.status_code)
                 return False, error_reason
         except httpx.ConnectError as e:
             self._mark_health_failed()
             restart_source = self._planned_restart_source()
             if restart_source:
                 self.logger.debug(
-                    f"Daemon not running during planned restart ({restart_source}): {e}"
+                    "Daemon not running during planned restart (%s): %s", restart_source, e
                 )
             else:
-                self.logger.warning(f"Daemon not running: {e}")
+                self.logger.warning("Daemon not running: %s", e)
             return False, DaemonHealthError.NOT_RUNNING
         except httpx.HTTPError as e:
             self._mark_health_failed()
-            self.logger.warning(f"Daemon health check error: {e}")
+            self.logger.warning("Daemon health check error: %s", e)
             return False, str(e)
 
     def _log_health_success(self) -> None:
@@ -270,7 +270,7 @@ class DaemonClient:
             return response
 
         except Exception as e:
-            self.logger.error(f"HTTP API call failed: {method} {endpoint} - {e}")
+            self.logger.error("HTTP API call failed: %s %s - %s", method, endpoint, e)
             raise
 
     def call_mcp_tool(

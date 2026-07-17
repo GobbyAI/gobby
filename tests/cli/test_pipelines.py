@@ -676,12 +676,13 @@ class TestPipelinesDaemonApproval:
         with (
             patch("gobby.config.app.load_config", return_value=MagicMock(daemon_port=1234)),
             patch("gobby.utils.daemon_client.DaemonClient", FakeDaemonClient),
+            patch("gobby.cli.pipelines._cli_actor", return_value="test-user"),
             patch("gobby.cli.pipelines.get_pipeline_executor", return_value=mock_executor),
         ):
             result = runner.invoke(cli, ["pipelines", "approve", "approval-token-xyz"])
 
         assert result.exit_code == 0
-        mock_executor.approve.assert_called_once_with("approval-token-xyz", approved_by=None)
+        mock_executor.approve.assert_called_once_with("approval-token-xyz", approved_by="test-user")
         assert "pe-local" in result.output
 
 

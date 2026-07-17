@@ -170,11 +170,11 @@ def run_git_command(command: list[str], cwd: str | Path, timeout: int = 5) -> st
         if result.returncode == 0:
             return result.stdout.strip()
 
-        logger.debug(f"Git command failed: {' '.join(command)}, stderr: {result.stderr.strip()}")
+        logger.debug("Git command failed: %s, stderr: %s", " ".join(command), result.stderr.strip())
         return None
 
     except subprocess.TimeoutExpired:
-        logger.warning(f"Git command timed out after {timeout}s: {' '.join(command)}")
+        logger.warning("Git command timed out after %ss: %s", timeout, " ".join(command))
         return None
     except FileNotFoundError:
         logger.warning("Git executable not found in PATH")
@@ -238,7 +238,7 @@ def get_github_url(cwd: str | Path) -> str | None:
             first_remote = remote_names[0]
             url = run_git_command(["git", "remote", "get-url", first_remote], cwd)
             if url:
-                logger.debug(f"Using remote '{first_remote}' (origin not found)")
+                logger.debug("Using remote '%s' (origin not found)", first_remote)
                 return url
 
     logger.debug("No git remotes found")
@@ -303,7 +303,7 @@ def get_git_metadata(cwd: str | Path | None = None) -> GitMetadata:
     # Check if directory is in a git repository
     is_git_repo = run_git_command(["git", "rev-parse", "--git-dir"], cwd)
     if not is_git_repo:
-        logger.debug(f"Not a git repository: {cwd}")
+        logger.debug("Not a git repository: %s", cwd)
         return GitMetadata()
 
     # Extract metadata
@@ -314,8 +314,9 @@ def get_git_metadata(cwd: str | Path | None = None) -> GitMetadata:
         metadata["git_branch"] = get_git_branch(cwd)
 
         logger.debug(
-            f"Git metadata extracted: repo={metadata.get('github_url')}, "
-            f"branch={metadata.get('git_branch')}"
+            "Git metadata extracted: repo=%s, branch=%s",
+            metadata.get("github_url"),
+            metadata.get("git_branch"),
         )
 
     except Exception as e:

@@ -394,7 +394,7 @@ class ChatterboxTurboProvider(BaseTTSProvider):
 
             if self._model is None:
                 configured_device = self._config.tts_device
-                logger.info(f"Loading Chatterbox Turbo model (device={configured_device})")
+                logger.info("Loading Chatterbox Turbo model (device=%s)", configured_device)
 
                 guard_reason = self._load_guard.check()
                 if guard_reason is not None:

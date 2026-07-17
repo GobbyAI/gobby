@@ -630,7 +630,7 @@ def auto_link_commits(
 
                 task = task_manager.get_task(resolved_tid)
             except (TaskNotFoundError, ValueError):
-                logger.debug(f"Skipping commit {commit_sha}: task {tid} not found")
+                logger.debug("Skipping commit %s: task %s not found", commit_sha, tid)
                 result.skipped += 1
                 result.skipped_refs.setdefault(tid, []).append(commit_sha)
                 continue
@@ -645,7 +645,7 @@ def auto_link_commits(
                 # Link the commit using UUID
                 task_manager.link_commit(task.id, commit_sha, cwd=cwd)
             except ValueError as error:
-                logger.debug(f"Skipping commit {commit_sha} for task {tid}: {error}")
+                logger.debug("Skipping commit %s for task %s: %s", commit_sha, tid, error)
                 result.skipped += 1
                 continue
 
@@ -655,6 +655,6 @@ def auto_link_commits(
             result.linked_tasks[tid].append(commit_sha)
             result.total_linked += 1
 
-            logger.debug(f"Auto-linked commit {commit_sha} to task {tid}")
+            logger.debug("Auto-linked commit %s to task %s", commit_sha, tid)
 
     return result

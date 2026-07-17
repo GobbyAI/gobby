@@ -91,8 +91,9 @@ class CronScheduler:
             name="cron-scheduler-cleanup",
         )
         logger.info(
-            f"Cron scheduler started (interval={self.config.check_interval_seconds}s, "
-            f"max_concurrent={self.config.max_concurrent_jobs})"
+            "Cron scheduler started (interval=%ss, max_concurrent=%s)",
+            self.config.check_interval_seconds,
+            self.config.max_concurrent_jobs,
         )
 
     def _reconcile_interrupted_runs_on_startup(self) -> None:
@@ -209,7 +210,7 @@ class CronScheduler:
             try:
                 await self._check_due_jobs()
             except Exception as e:
-                logger.error(f"Cron check loop error: {e}", exc_info=True)
+                logger.error("Cron check loop error: %s", e, exc_info=True)
             try:
                 await asyncio.sleep(self.config.check_interval_seconds)
             except asyncio.CancelledError:
@@ -229,9 +230,9 @@ class CronScheduler:
                     self.config.cleanup_after_days,
                 )
                 if deleted > 0:
-                    logger.info(f"Cleaned up {deleted} old cron runs")
+                    logger.info("Cleaned up %s old cron runs", deleted)
             except Exception as e:
-                logger.error(f"Cron cleanup error: {e}", exc_info=True)
+                logger.error("Cron cleanup error: %s", e, exc_info=True)
 
     async def _check_due_jobs(self) -> None:
         """Check for due jobs and dispatch them."""
@@ -252,8 +253,10 @@ class CronScheduler:
 
         if available_slots <= 0:
             logger.debug(
-                f"Skipping {len(due_jobs)} due jobs: "
-                f"{running_count}/{self.config.max_concurrent_jobs} slots used"
+                "Skipping %s due jobs: %s/%s slots used",
+                len(due_jobs),
+                running_count,
+                self.config.max_concurrent_jobs,
             )
             return
 
@@ -277,8 +280,11 @@ class CronScheduler:
                         elapsed = (datetime.now(UTC) - job.last_run_at).total_seconds()
                         if elapsed < backoff:
                             logger.debug(
-                                f"Skipping job {job.id} ({job.name}): "
-                                f"backoff {backoff}s, elapsed {elapsed:.0f}s"
+                                "Skipping job %s (%s): backoff %ss, elapsed %.0fs",
+                                job.id,
+                                job.name,
+                                backoff,
+                                elapsed,
                             )
                             continue
 
@@ -307,12 +313,12 @@ class CronScheduler:
                 self._track_run_task(task, run.id)
                 dispatched += 1
             except Exception as e:
-                logger.error(f"Failed to dispatch cron job {job.id}: {e}", exc_info=True)
+                logger.error("Failed to dispatch cron job %s: %s", job.id, e, exc_info=True)
 
     async def _execute_and_update(self, job: CronJob, run: CronRun | None) -> None:
         """Execute a job and update its status afterward."""
         if not run:
-            logger.error(f"Cannot execute job {job.id}: valid run record required")
+            logger.error("Cannot execute job %s: valid run record required", job.id)
             return
         session_token = set_session_context(None)
         project_token = None
@@ -394,7 +400,7 @@ class CronScheduler:
                 try:
                     await self.on_run_complete(job, result)
                 except Exception as exc:
-                    logger.debug(f"Cron event callback failed: {exc}")
+                    logger.debug("Cron event callback failed: %s", exc)
         finally:
             if project_token is not None:
                 reset_project_context(project_token)
@@ -446,7 +452,7 @@ class CronScheduler:
             )
         if run is None:
             return None
-        logger.info(f"Manual trigger: cron job {job.id} ({job.name}), run {run.id}")
+        logger.info("Manual trigger: cron job %s (%s), run %s", job.id, job.name, run.id)
 
         # Execute in background
         task = asyncio.create_task(

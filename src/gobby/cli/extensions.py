@@ -320,7 +320,7 @@ def hooks_status(json_format: bool) -> None:
                 project_config = json.load(f)
             hooks_disabled = project_config.get("hooks_disabled", False)
         except (json.JSONDecodeError, OSError) as e:
-            logger.debug(f"Failed to read project config {project_json_path}: {e}")
+            logger.debug("Failed to read project config %s: %s", project_json_path, e)
 
     # Check env var
     env_disabled = bool(os.environ.get("GOBBY_HOOKS_DISABLED"))

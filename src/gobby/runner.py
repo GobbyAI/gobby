@@ -264,9 +264,9 @@ def _raise_fd_limit(target: int = 10240) -> None:
     new_soft = min(target, hard) if hard != resource.RLIM_INFINITY else target
     try:
         resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard))
-        logger.info(f"Raised fd limit: {soft} -> {new_soft} (hard={hard})")
+        logger.info("Raised fd limit: %s -> %s (hard=%s)", soft, new_soft, hard)
     except (ValueError, OSError) as e:
-        logger.warning(f"Could not raise fd limit from {soft}: {e}")
+        logger.warning("Could not raise fd limit from %s: %s", soft, e)
 
 
 def main(config_path: Path | None = None, verbose: bool = False) -> None:
@@ -302,7 +302,7 @@ def main(config_path: Path | None = None, verbose: bool = False) -> None:
         contended = pid_claim is None
     except OSError as e:
         # Advisory locking unavailable — run_daemon retries and fails open.
-        logger.warning(f"Could not claim PID file {pid_file} at startup: {e}")
+        logger.warning("Could not claim PID file %s at startup: %s", pid_file, e)
     if contended:
         owner = probe_daemon_lock(pid_file)
         print(
@@ -316,7 +316,7 @@ def main(config_path: Path | None = None, verbose: bool = False) -> None:
     except KeyboardInterrupt:
         sys.exit(0)
     except Exception as e:
-        logger.error(f"Fatal error: {e}", exc_info=True)
+        logger.error("Fatal error: %s", e, exc_info=True)
         sys.exit(1)
     finally:
         # run_daemon releases the claim during shutdown; release() is

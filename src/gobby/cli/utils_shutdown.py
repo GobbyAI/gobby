@@ -26,7 +26,7 @@ def _report_lock_survivor(deps: Any, quiet: bool) -> None:
     owner = probe_daemon_lock(pid_file)
     if owner is None:
         return
-    deps.logger.warning(f"Daemon lock still held by PID {owner or 'unknown'} after stop")
+    deps.logger.warning("Daemon lock still held by PID %s after stop", owner or "unknown")
     if not quiet:
         deps._stop_step(
             f"Warning: daemon lock still held by PID {owner or 'unknown'} — "
@@ -104,7 +104,7 @@ def stop_daemon(
     try:
         from gobby.runner_maintenance import write_shutdown_source
     except ImportError as exc:
-        deps.logger.debug(f"Failed to write shutdown source: {exc}")
+        deps.logger.debug("Failed to write shutdown source: %s", exc)
     else:
         write_shutdown_source(shutdown_source, intent=shutdown_intent)
 
