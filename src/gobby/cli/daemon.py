@@ -3,7 +3,6 @@ Daemon management commands.
 """
 
 import asyncio
-import contextlib
 import json
 import logging
 import os
@@ -19,8 +18,7 @@ import psutil
 
 from gobby.agents.spawners.auth_env import has_auth_env
 from gobby.config.logging import (
-    MAIN_LOG_FILENAME,
-    STDERR_LOG_FILENAME,
+    RUNTIME_LOG_FILENAME,
     UI_LOG_FILENAME,
     resolved_log_path,
     resolved_logs_dir,
@@ -152,19 +150,19 @@ def _step(msg: str, *, error: bool = False, scheduled: bool = False) -> None:
         click.echo(f"  + {msg}")
 
 
-def _show_error_log_tail(error_log_file: Path, n: int = 15) -> None:
-    """Show the last N lines of the error log."""
+def _show_runtime_output_tail(runtime_log_file: Path, n: int = 15) -> None:
+    """Show the last N lines of captured daemon process output."""
     try:
-        if error_log_file.exists():
-            lines = error_log_file.read_text().splitlines()
+        if runtime_log_file.exists():
+            lines = runtime_log_file.read_text().splitlines()
             tail = lines[-n:] if len(lines) > n else lines
             if tail:
                 click.echo("")
-                click.echo("  Recent error log:", err=True)
+                click.echo("  Recent runtime output:", err=True)
                 for line in tail:
                     click.echo(f"    {line}", err=True)
     except Exception:
-        click.echo(f"  Check logs: {error_log_file}", err=True)
+        click.echo(f"  Check runtime output: {runtime_log_file}", err=True)
 
 
 def _poll_startup_progress(http_port: int, max_wait: float = 60.0) -> bool:
@@ -379,12 +377,10 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
 
     gobby_dir = get_gobby_home()
     pid_file = gobby_dir / "gobby.pid"
-    log_file = resolved_log_path(config.logging, MAIN_LOG_FILENAME)
-    stderr_log_file = resolved_log_path(config.logging, STDERR_LOG_FILENAME)
+    runtime_log_file = resolved_log_path(config.logging, RUNTIME_LOG_FILENAME)
 
     gobby_dir.mkdir(parents=True, exist_ok=True)
-    log_file.parent.mkdir(parents=True, exist_ok=True)
-    stderr_log_file.parent.mkdir(parents=True, exist_ok=True)
+    runtime_log_file.parent.mkdir(parents=True, exist_ok=True)
 
     click.echo("Starting Gobby daemon...")
     click.echo("")
@@ -449,15 +445,12 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
             fg="yellow",
         )
 
-    with contextlib.ExitStack() as log_stack:
-        log_f = log_stack.enter_context(open(log_file, "a"))
-        stderr_log_f = log_stack.enter_context(open(stderr_log_file, "a"))
-
+    with open(runtime_log_file, "a") as runtime_log:
         try:
             process = subprocess.Popen(  # nosec B603 # cmd built from sys.executable and module path
                 cmd,
-                stdout=log_f,
-                stderr=stderr_log_f,
+                stdout=runtime_log,
+                stderr=runtime_log,
                 stdin=subprocess.DEVNULL,
                 start_new_session=True,
                 env=os.environ.copy(),
@@ -471,7 +464,7 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
             # Check for immediate crash
             if process.poll() is not None:
                 _step("Daemon process exited immediately", error=True)
-                _show_error_log_tail(stderr_log_file)
+                _show_runtime_output_tail(runtime_log_file)
                 sys.exit(1)
 
             _step(f"Daemon process launched (PID: {process.pid})")
@@ -483,13 +476,13 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
                 _step(f"Health check passed ({elapsed:.1f}s)")
             else:
                 _step("Health check failed", error=True)
-                _show_error_log_tail(stderr_log_file)
+                _show_runtime_output_tail(runtime_log_file)
                 sys.exit(1)
 
             # Poll startup progress from daemon
             if not _poll_startup_progress(http_port):
                 _step("Startup readiness did not complete", error=True)
-                _show_error_log_tail(stderr_log_file)
+                _show_runtime_output_tail(runtime_log_file)
                 sys.exit(1)
 
             # Spawn UI server if enabled
@@ -525,7 +518,7 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
                     websocket_port=ws_port,
                     ui_url=ui_url,
                     ui_mode=ui_mode_display,
-                    log_files=str(log_file.parent),
+                    log_files=str(runtime_log_file.parent),
                 )
             )
             click.echo("")

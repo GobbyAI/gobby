@@ -14,7 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from gobby.config.logging import (
-    STDERR_LOG_FILENAME,
+    RUNTIME_LOG_FILENAME,
     LoggingSettings,
     resolved_log_path,
     resolved_logs_dir,
@@ -61,18 +61,18 @@ def _daemon_rss_and_fds() -> tuple[int | None, int | None]:
 
 def run_resource_check(
     logs_dir: Path,
-    stderr_log: Path,
+    runtime_log: Path,
     previous_sizes: dict[str, int] | None,
     *,
-    set_stderr_capture_over_limit: Callable[[bool], None],
+    set_runtime_output_over_limit: Callable[[bool], None],
     growth_warn_bytes: int,
-    stderr_max_bytes: int,
+    runtime_max_bytes: int,
 ) -> dict[str, int]:
     """One monitor tick: sample sizes and report unhealthy resource growth.
 
     Returns the fresh size sample to carry into the next tick. The first tick
     (``previous_sizes is None``) only records the baseline and checks the
-    stderr capture size.
+    runtime output size.
     """
     sizes = _sample_log_sizes(logs_dir)
     if previous_sizes is not None:
@@ -97,20 +97,20 @@ def run_resource_check(
                 fds if fds is not None else "?",
             )
     try:
-        stderr_size = stderr_log.stat().st_size
+        runtime_size = runtime_log.stat().st_size
     except FileNotFoundError:
-        set_stderr_capture_over_limit(False)
+        set_runtime_output_over_limit(False)
     except OSError:
         pass
     else:
-        over_limit = stderr_size > stderr_max_bytes
-        set_stderr_capture_over_limit(over_limit)
+        over_limit = runtime_size > runtime_max_bytes
+        set_runtime_output_over_limit(over_limit)
         if over_limit:
             logger.warning(
-                "Stderr capture %s is %.1fMB, exceeding the configured %dMB limit",
-                stderr_log,
-                stderr_size / _MB,
-                stderr_max_bytes // _MB,
+                "Runtime output %s is %.1fMB, exceeding the configured %dMB limit",
+                runtime_log,
+                runtime_size / _MB,
+                runtime_max_bytes // _MB,
             )
     return sizes
 
@@ -118,18 +118,18 @@ def run_resource_check(
 async def resource_monitor_loop(
     logging_config: LoggingSettings,
     is_shutdown_requested: Callable[[], bool],
-    set_stderr_capture_over_limit: Callable[[bool], None],
+    set_runtime_output_over_limit: Callable[[bool], None],
     interval_seconds: float = DEFAULT_RESOURCE_MONITOR_INTERVAL_SECONDS,
 ) -> None:
     """Background resource monitor (#18196).
 
     Watches the logs directory for runaway growth (the incident dirtied 137GB
-    of file-backed memory in ~8h) and reports when the fd-level stderr capture
-    file exceeds its configured cap.
+    of file-backed memory in ~8h) and reports when the raw runtime output file
+    exceeds its configured cap.
     """
-    stderr_log = resolved_log_path(logging_config, STDERR_LOG_FILENAME)
+    runtime_log = resolved_log_path(logging_config, RUNTIME_LOG_FILENAME)
     growth_warn_mb = logging_config.growth_warn_mb_per_interval
-    stderr_max_mb = logging_config.runtime_max_size_mb
+    runtime_max_mb = logging_config.runtime_max_size_mb
     logs_dir = resolved_logs_dir(logging_config)
     previous: dict[str, int] | None = None
 
@@ -137,11 +137,11 @@ async def resource_monitor_loop(
         try:
             previous = run_resource_check(
                 logs_dir,
-                stderr_log,
+                runtime_log,
                 previous,
-                set_stderr_capture_over_limit=set_stderr_capture_over_limit,
+                set_runtime_output_over_limit=set_runtime_output_over_limit,
                 growth_warn_bytes=growth_warn_mb * _MB,
-                stderr_max_bytes=stderr_max_mb * _MB,
+                runtime_max_bytes=runtime_max_mb * _MB,
             )
         except asyncio.CancelledError:
             break

@@ -18,8 +18,8 @@ RestartSec=10
 StartLimitIntervalSec=60
 StartLimitBurst=3
 
-StandardOutput=append:{{ log_file }}
-StandardError=append:{{ stderr_log_file }}
+StandardOutput=append:{{ runtime_log_file }}
+StandardError=append:{{ runtime_log_file }}
 
 NoNewPrivileges=yes
 PrivateTmp=yes

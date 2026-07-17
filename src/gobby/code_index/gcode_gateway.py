@@ -14,6 +14,7 @@ from typing import Any
 
 from gobby.install.bin_freshness_models import is_at_least_version
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
+from gobby.runtime_output import forward_subprocess_stderr
 from gobby.utils.native_bin import resolve_native_bin
 
 MIN_GCODE_GRAPH_VERSION = MANAGED_BIN_VERSION_PINS["gcode"]
@@ -400,7 +401,7 @@ class GcodeGateway:
     ) -> GcodeCommandResult:
         binary = await self._ensure_version()
         return await self._run_command_result(
-            [binary, "index", "--project", str(project_root), "--quiet"],
+            [binary, "index", "--project", str(project_root)],
             timeout=timeout,
         )
 
@@ -476,7 +477,7 @@ class GcodeGateway:
         timeout: float | None = None,
     ) -> dict[str, Any]:
         binary = await self._ensure_version()
-        command = [binary, *args, "--format", "json", "--quiet"]
+        command = [binary, *args, "--format", "json"]
         stdout, _stderr = await self._run_command(command, timeout=timeout)
         text = stdout.decode(errors="replace").strip()
         try:
@@ -494,7 +495,7 @@ class GcodeGateway:
         timeout: float | None = None,
     ) -> dict[str, Any]:
         binary = await self._ensure_version()
-        command = [binary, *args, "--format", "json", "--quiet"]
+        command = [binary, *args, "--format", "json"]
         stdout, _stderr = await self._run_command(command, timeout=timeout)
         text = stdout.decode(errors="replace").strip()
         try:
@@ -569,9 +570,9 @@ class GcodeGateway:
                     pass
             raise GcodeTimeoutError(f"gcode timed out: {' '.join(command)}") from exc
 
+        stderr_text = forward_subprocess_stderr(stderr)
         if proc.returncode != 0:
             stdout_text = stdout.decode(errors="replace").strip()
-            stderr_text = stderr.decode(errors="replace").strip()
             if check_version:
                 raise _classify_gcode_command_error(
                     command,
@@ -628,6 +629,7 @@ class GcodeGateway:
             returncode = None
             timed_out = True
 
+        forward_subprocess_stderr(stderr)
         completed_at = datetime.now(UTC).isoformat()
         return GcodeCommandResult(
             command=tuple(command),

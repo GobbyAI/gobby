@@ -38,17 +38,17 @@ def _check(
     previous: dict[str, int] | None,
     *,
     growth_warn_mb: int = 1,
-    stderr_max_mb: int = 1,
-    set_stderr_capture_over_limit: Callable[[bool], None] | None = None,
+    runtime_max_mb: int = 1,
+    set_runtime_output_over_limit: Callable[[bool], None] | None = None,
 ) -> dict[str, int]:
-    update_limit_state = set_stderr_capture_over_limit or (lambda _: None)
+    update_limit_state = set_runtime_output_over_limit or (lambda _: None)
     return run_resource_check(
         logs_dir,
-        logs_dir / "gobby-stderr.log",
+        logs_dir / "runtime.log",
         previous,
-        set_stderr_capture_over_limit=update_limit_state,
+        set_runtime_output_over_limit=update_limit_state,
         growth_warn_bytes=growth_warn_mb * _MB,
-        stderr_max_bytes=stderr_max_mb * _MB,
+        runtime_max_bytes=runtime_max_mb * _MB,
     )
 
 
@@ -106,39 +106,39 @@ def test_shrinking_files_do_not_offset_growth(
     assert "grower.log +2.0MB" in record.getMessage()
 
 
-def test_stderr_log_over_cap_is_left_intact(logs_dir: Path) -> None:
-    stderr_log = logs_dir / "gobby-stderr.log"
+def test_runtime_log_over_cap_is_left_intact(logs_dir: Path) -> None:
+    runtime_log = logs_dir / "runtime.log"
     captured = b"x" * (2 * _MB)
-    stderr_log.write_bytes(captured)
+    runtime_log.write_bytes(captured)
     limit_states: list[bool] = []
 
     sizes = _check(
         logs_dir,
         None,
-        stderr_max_mb=1,
-        set_stderr_capture_over_limit=limit_states.append,
+        runtime_max_mb=1,
+        set_runtime_output_over_limit=limit_states.append,
     )
 
-    assert stderr_log.read_bytes() == captured
-    assert sizes["gobby-stderr.log"] == len(captured)
+    assert runtime_log.read_bytes() == captured
+    assert sizes["runtime.log"] == len(captured)
     assert limit_states == [True]
 
 
-def test_stderr_log_under_cap_untouched(logs_dir: Path) -> None:
-    stderr_log = logs_dir / "gobby-stderr.log"
-    stderr_log.write_bytes(b"x" * 1024)
+def test_runtime_log_under_cap_untouched(logs_dir: Path) -> None:
+    runtime_log = logs_dir / "runtime.log"
+    runtime_log.write_bytes(b"x" * 1024)
     limit_states: list[bool] = []
 
-    _check(logs_dir, None, set_stderr_capture_over_limit=limit_states.append)
+    _check(logs_dir, None, set_runtime_output_over_limit=limit_states.append)
 
-    assert stderr_log.stat().st_size == 1024
+    assert runtime_log.stat().st_size == 1024
     assert limit_states == [False]
 
 
-def test_missing_stderr_log_is_tolerated(logs_dir: Path) -> None:
+def test_missing_runtime_log_is_tolerated(logs_dir: Path) -> None:
     limit_states: list[bool] = []
 
-    _check(logs_dir, None, set_stderr_capture_over_limit=limit_states.append)
+    _check(logs_dir, None, set_runtime_output_over_limit=limit_states.append)
 
     assert limit_states == [False]
 
@@ -186,17 +186,17 @@ def test_start_periodic_tasks_registers_resource_monitor() -> None:
 
     assert runner._resource_monitor_task is not None
     assert monitor_args[0][0] is logging_config
-    set_stderr_capture_over_limit = monitor_args[0][2]
-    set_stderr_capture_over_limit(True)
-    assert runner.degraded_services == {"stderr_capture_over_limit"}
-    set_stderr_capture_over_limit(False)
+    set_runtime_output_over_limit = monitor_args[0][2]
+    set_runtime_output_over_limit(True)
+    assert runner.degraded_services == {"runtime_output_over_limit"}
+    set_runtime_output_over_limit(False)
     assert runner.degraded_services == set()
 
 
-def test_stderr_limit_degradation_is_visible_in_health_endpoint_and_recovers(
+def test_runtime_limit_degradation_is_visible_in_health_endpoint_and_recovers(
     tmp_path: Path,
 ) -> None:
-    stderr_log = tmp_path / "gobby-stderr.log"
+    runtime_log = tmp_path / "runtime.log"
     logging_config = LoggingSettings(
         dir=str(tmp_path),
         growth_warn_mb_per_interval=100,
@@ -209,11 +209,11 @@ def test_stderr_limit_degradation_is_visible_in_health_endpoint_and_recovers(
     app.include_router(create_admin_router(server))
     client = TestClient(app)
 
-    def set_stderr_capture_over_limit(over_limit: bool) -> None:
+    def set_runtime_output_over_limit(over_limit: bool) -> None:
         if over_limit:
-            runner.degraded_services.add("stderr_capture_over_limit")
+            runner.degraded_services.add("runtime_output_over_limit")
         else:
-            runner.degraded_services.discard("stderr_capture_over_limit")
+            runner.degraded_services.discard("runtime_output_over_limit")
 
     def run_monitor_tick() -> None:
         shutdown_checks = 0
@@ -227,7 +227,7 @@ def test_stderr_limit_degradation_is_visible_in_health_endpoint_and_recovers(
             resource_monitor_loop(
                 logging_config,
                 is_shutdown_requested,
-                set_stderr_capture_over_limit,
+                set_runtime_output_over_limit,
                 interval_seconds=0,
             )
         )
@@ -243,27 +243,27 @@ def test_stderr_limit_degradation_is_visible_in_health_endpoint_and_recovers(
         "gobby.servers.routes.admin._health.read_ghook_runtime_diagnostic",
         return_value=diagnostic,
     ):
-        stderr_log.write_bytes(b"x" * (2 * _MB))
+        runtime_log.write_bytes(b"x" * (2 * _MB))
         run_monitor_tick()
         over_limit_response = client.get("/api/admin/health")
 
-        stderr_log.write_bytes(b"x" * 1024)
+        runtime_log.write_bytes(b"x" * 1024)
         run_monitor_tick()
         recovered_response = client.get("/api/admin/health")
 
     assert over_limit_response.status_code == 200
     assert over_limit_response.json()["status"] == "degraded"
-    assert over_limit_response.json()["degraded_services"] == ["stderr_capture_over_limit"]
+    assert over_limit_response.json()["degraded_services"] == ["runtime_output_over_limit"]
     assert recovered_response.status_code == 200
     assert recovered_response.json()["status"] == "ok"
     assert recovered_response.json()["degraded_services"] == []
 
 
-def test_status_message_displays_stderr_capture_degradation() -> None:
+def test_status_message_displays_runtime_output_degradation() -> None:
     message = format_status_message(
         running=True,
-        api_data={"degraded_services": ["stderr_capture_over_limit"]},
+        api_data={"degraded_services": ["runtime_output_over_limit"]},
     )
 
     assert "Health Issues:" in message
-    assert "Degraded service: stderr_capture_over_limit" in message
+    assert "Degraded service: runtime_output_over_limit" in message

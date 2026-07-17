@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 from weakref import WeakKeyDictionary
 
+from gobby.runtime_output import forward_subprocess_stderr
 from gobby.utils.native_bin import resolve_native_bin
 from gobby.utils.wiki_vault import existing_vault_dir, is_vault, resolve_vault_dir
 
@@ -486,6 +487,7 @@ class GwikiGateway:
                     elapsed_seconds = time.monotonic() - started_at
                     await self._kill_process(proc)
                     stdout, stderr = await self._collect_streams(stdout_task, stderr_task)
+                    forward_subprocess_stderr(stderr)
                     return self._timeout_envelope(
                         command_name,
                         stdout=stdout,
@@ -513,7 +515,7 @@ class GwikiGateway:
                 await self._kill_process(proc)
             return self._timeout_envelope(command_name)
 
-        stderr_text = stderr.decode(errors="replace").strip()
+        stderr_text = forward_subprocess_stderr(stderr)
         if proc.returncode != 0:
             payload = self._parse_error_payload(stdout, stderr)
             raise GwikiCommandError(

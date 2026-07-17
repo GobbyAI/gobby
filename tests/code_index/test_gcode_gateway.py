@@ -104,7 +104,6 @@ async def test_gateway_checks_version_once_and_builds_sync_file_args(
             "--allow-missing-indexed-file",
             "--format",
             "json",
-            "--quiet",
         ),
         (
             "/tmp/gcode",
@@ -116,10 +115,26 @@ async def test_gateway_checks_version_once_and_builds_sync_file_args(
             "25",
             "--format",
             "json",
-            "--quiet",
         ),
     ]
     assert gateway.checked_version == GCODE_PIN
+
+
+async def test_gateway_forwards_success_stderr_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    processes = [
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(stdout=b'{"status": "ok"}', stderr=b"gcode diagnostic\n"),
+    ]
+    _patch_subprocess(monkeypatch, processes)
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    assert await gateway.graph_sync_file(tmp_path, "src/app.py") == {"status": "ok"}
+
+    assert capsys.readouterr().err == "gcode diagnostic\n"
 
 
 async def test_gateway_forwards_sync_file_timeouts(
@@ -160,7 +175,6 @@ async def test_gateway_forwards_sync_file_timeouts(
             "--allow-missing-indexed-file",
             "--format",
             "json",
-            "--quiet",
         ),
         (
             "/tmp/gcode",
@@ -173,7 +187,6 @@ async def test_gateway_forwards_sync_file_timeouts(
             "--allow-missing-indexed-file",
             "--format",
             "json",
-            "--quiet",
         ),
     ]
 
@@ -202,7 +215,6 @@ async def test_gateway_builds_clear_and_rebuild_args(
             "proj-1",
             "--format",
             "json",
-            "--quiet",
         ),
         (
             "/tmp/gcode",
@@ -212,7 +224,6 @@ async def test_gateway_builds_clear_and_rebuild_args(
             str(tmp_path),
             "--format",
             "json",
-            "--quiet",
         ),
     ]
 
@@ -274,7 +285,6 @@ async def test_gateway_builds_vector_and_prune_args_with_timeouts(
             "--allow-missing-indexed-file",
             "--format",
             "json",
-            "--quiet",
         ),
         (
             "/tmp/gcode",
@@ -284,7 +294,6 @@ async def test_gateway_builds_vector_and_prune_args_with_timeouts(
             str(tmp_path),
             "--format",
             "json",
-            "--quiet",
         ),
         (
             "/tmp/gcode",
@@ -294,7 +303,6 @@ async def test_gateway_builds_vector_and_prune_args_with_timeouts(
             str(tmp_path),
             "--format",
             "json",
-            "--quiet",
         ),
         (
             "/tmp/gcode",
@@ -304,14 +312,12 @@ async def test_gateway_builds_vector_and_prune_args_with_timeouts(
             str(tmp_path),
             "--format",
             "json",
-            "--quiet",
         ),
         (
             "/tmp/gcode",
             "index",
             "--project",
             str(tmp_path),
-            "--quiet",
         ),
         (
             "/tmp/gcode",
@@ -369,7 +375,6 @@ async def test_gateway_builds_codewiki_args(
         "auto",
         "--format",
         "json",
-        "--quiet",
     )
 
 
@@ -405,7 +410,6 @@ async def test_gateway_builds_graph_read_args(
             str(tmp_path),
             "--format",
             "json",
-            "--quiet",
         ),
         (
             "/tmp/gcode",
@@ -419,7 +423,6 @@ async def test_gateway_builds_graph_read_args(
             "7",
             "--format",
             "json",
-            "--quiet",
         ),
         (
             "/tmp/gcode",
@@ -435,7 +438,6 @@ async def test_gateway_builds_graph_read_args(
             "9",
             "--format",
             "json",
-            "--quiet",
         ),
         (
             "/tmp/gcode",
@@ -451,7 +453,6 @@ async def test_gateway_builds_graph_read_args(
             "11",
             "--format",
             "json",
-            "--quiet",
         ),
         (
             "/tmp/gcode",
@@ -464,7 +465,6 @@ async def test_gateway_builds_graph_read_args(
             "8",
             "--format",
             "json",
-            "--quiet",
         ),
     ]
 
@@ -601,7 +601,10 @@ async def test_gateway_raises_when_binary_missing(monkeypatch: pytest.MonkeyPatc
         await gateway.graph_clear("proj-1")
 
 
-async def test_gateway_raises_for_nonzero_command(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_gateway_raises_for_nonzero_command(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     processes = [
         FakeProcess(stdout=GCODE_PIN_STDOUT),
         FakeProcess(returncode=2, stderr=b"boom"),
@@ -611,6 +614,8 @@ async def test_gateway_raises_for_nonzero_command(monkeypatch: pytest.MonkeyPatc
 
     with pytest.raises(GcodeCommandError, match="gcode exited 2: boom"):
         await gateway.graph_clear("proj-1")
+
+    assert capsys.readouterr().err == "boom\n"
 
 
 async def test_gateway_classifies_project_not_found(

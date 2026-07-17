@@ -27,8 +27,7 @@ _INSTALL_CONTEXT = {
     "mode": "installed",
     "home_dir": r"C:\Users\test",
     "path_env": r"C:\Python313;C:\Windows\system32;C:\Windows",
-    "log_file": r"C:\Users\test\.gobby\logs\gobby.log",
-    "stderr_log_file": r"C:\Users\test\.gobby\logs\gobby-stderr.log",
+    "runtime_log_file": r"C:\Users\test\.gobby\logs\runtime.log",
     "gobby_home": "",
     "verbose": False,
 }
@@ -65,6 +64,7 @@ class TestTemplateRendering:
         assert "@echo off" in content
         assert r"C:\Python313" in content
         assert "-m gobby.runner" in content
+        assert r'>> "C:\Users\test\.gobby\logs\runtime.log" 2>&1' in content
         assert "--verbose" not in content
 
     def test_render_launcher_cmd_verbose(self) -> None:

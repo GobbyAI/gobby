@@ -139,6 +139,22 @@ async def test_graph_builds_stdout_include_argv(monkeypatch: pytest.MonkeyPatch)
     ]
 
 
+async def test_success_forwards_stderr_once(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload = {"command": "graph", "graph": {"documents": [], "links": []}}
+    _patch_subprocess(
+        monkeypatch,
+        [FakeProcess(stdout=_json_bytes(payload), stderr=b"gwiki diagnostic\n")],
+    )
+
+    result = await _gateway().graph(include="knowledge")
+
+    assert result["payload"] == payload
+    assert capsys.readouterr().err == "gwiki diagnostic\n"
+
+
 async def test_pages_passes_optional_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
     payload = {"command": "pages", "pages": [], "outputs": []}
     calls = _patch_subprocess(
@@ -598,7 +614,10 @@ async def test_trust_uses_gateway_scope_args(monkeypatch: pytest.MonkeyPatch) ->
     }
 
 
-async def test_error_preserves_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_error_preserves_stderr(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     payload = {"status": "failed", "error": {"code": "bad_scope"}}
     calls = _patch_subprocess(
         monkeypatch,
@@ -630,6 +649,7 @@ async def test_error_preserves_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
     assert exc_info.value.stderr == "scope does not exist"
     assert exc_info.value.payload == payload
     assert exc_info.value.to_envelope()["stderr"] == "scope does not exist"
+    assert capsys.readouterr().err == "scope does not exist\n"
 
 
 async def test_error_parses_structured_stderr_when_stdout_is_empty(

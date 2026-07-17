@@ -18,7 +18,7 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli import cli
-from gobby.config.logging import STDERR_LOG_FILENAME, resolved_log_path
+from gobby.config.logging import RUNTIME_LOG_FILENAME, resolved_log_path
 
 pytestmark = pytest.mark.unit
 
@@ -325,9 +325,11 @@ class TestStartCommand:
             assert result.exit_code == 0
             assert "PostgreSQL hub initialized" in result.output
             mock_init_storage.assert_called_once()
+            popen_stdout = mock_popen.call_args.kwargs["stdout"]
             popen_stderr = mock_popen.call_args.kwargs["stderr"]
-            assert popen_stderr.name == str(
-                resolved_log_path(mock_daemon_config.logging, STDERR_LOG_FILENAME)
+            assert popen_stdout is popen_stderr
+            assert popen_stdout.name == str(
+                resolved_log_path(mock_daemon_config.logging, RUNTIME_LOG_FILENAME)
             )
             mock_popen.assert_called_once()
 

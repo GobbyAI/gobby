@@ -15,6 +15,7 @@ from gobby.config.logging import (
     MAIN_LOG_FILENAME,
     MCP_CLIENT_LOG_FILENAME,
     MCP_SERVER_LOG_FILENAME,
+    RUNTIME_LOG_FILENAME,
     LoggingSettings,
     resolved_log_path,
 )
@@ -137,6 +138,7 @@ def test_setup_otel_logging_creates_files(telemetry_config, logging_config):
     assert resolved_log_path(logging_config, HOOK_MANAGER_LOG_FILENAME).exists()
     assert resolved_log_path(logging_config, MCP_SERVER_LOG_FILENAME).exists()
     assert resolved_log_path(logging_config, MCP_CLIENT_LOG_FILENAME).exists()
+    assert not resolved_log_path(logging_config, RUNTIME_LOG_FILENAME).exists()
 
     # Verify content
     content = resolved_log_path(logging_config, MAIN_LOG_FILENAME).read_text()

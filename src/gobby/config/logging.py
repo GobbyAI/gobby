@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 
 MAIN_LOG_FILENAME = "gobby.log"
 ERROR_LOG_FILENAME = "gobby-error.log"
-STDERR_LOG_FILENAME = "gobby-stderr.log"
+RUNTIME_LOG_FILENAME = "runtime.log"
 HOOK_MANAGER_LOG_FILENAME = "hook-manager.log"
 MCP_SERVER_LOG_FILENAME = "mcp-server.log"
 MCP_CLIENT_LOG_FILENAME = "mcp-client.log"

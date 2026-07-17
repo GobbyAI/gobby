@@ -43,15 +43,14 @@ class TestTemplateRendering:
             working_directory="/Users/test",
             home_dir="/Users/test",
             path_env="/usr/bin:/bin",
-            log_file="/tmp/gobby.log",
-            stderr_log_file="/tmp/gobby-stderr.log",
+            runtime_log_file="/tmp/runtime.log",
             gobby_home="",
             verbose=False,
         )
         assert '<?xml version="1.0"' in content
         assert "<plist" in content
         assert f"<string>{LAUNCHD_LABEL}</string>" in content
-        assert "<string>/tmp/gobby-stderr.log</string>" in content
+        assert content.count("<string>/tmp/runtime.log</string>") == 2
         assert "<string>/usr/bin/python3</string>" in content
         assert "<key>RunAtLoad</key>" in content
         assert "<key>KeepAlive</key>" in content
@@ -65,8 +64,7 @@ class TestTemplateRendering:
             working_directory="/Users/test",
             home_dir="/Users/test",
             path_env="/usr/bin:/bin",
-            log_file="/tmp/gobby.log",
-            stderr_log_file="/tmp/gobby-stderr.log",
+            runtime_log_file="/tmp/runtime.log",
             gobby_home="",
             verbose=True,
         )
@@ -80,8 +78,7 @@ class TestTemplateRendering:
             working_directory="/Users/test",
             home_dir="/Users/test",
             path_env="/usr/bin:/bin",
-            log_file="/tmp/gobby.log",
-            stderr_log_file="/tmp/gobby-stderr.log",
+            runtime_log_file="/tmp/runtime.log",
             gobby_home="/custom/gobby/home",
             verbose=False,
         )
@@ -96,8 +93,7 @@ class TestTemplateRendering:
             working_directory="/Users/test",
             home_dir="/Users/test",
             path_env="/usr/bin:/bin",
-            log_file="/tmp/gobby.log",
-            stderr_log_file="/tmp/gobby-stderr.log",
+            runtime_log_file="/tmp/runtime.log",
             gobby_home="",
             verbose=False,
         )
@@ -111,15 +107,15 @@ class TestTemplateRendering:
             working_directory="/home/test",
             home_dir="/home/test",
             path_env="/usr/bin:/bin",
-            log_file="/tmp/gobby.log",
-            stderr_log_file="/tmp/gobby-stderr.log",
+            runtime_log_file="/tmp/runtime.log",
             gobby_home="",
             verbose=False,
         )
         assert "[Unit]" in content
         assert "[Service]" in content
         assert "[Install]" in content
-        assert "StandardError=append:/tmp/gobby-stderr.log" in content
+        assert "StandardOutput=append:/tmp/runtime.log" in content
+        assert "StandardError=append:/tmp/runtime.log" in content
         assert "ExecStart=/usr/bin/python3 -m gobby.runner" in content
         assert "Restart=on-failure" in content
         assert "WantedBy=default.target" in content
@@ -133,8 +129,7 @@ class TestTemplateRendering:
             working_directory="/home/test",
             home_dir="/home/test",
             path_env="/usr/bin:/bin",
-            log_file="/tmp/gobby.log",
-            stderr_log_file="/tmp/gobby-stderr.log",
+            runtime_log_file="/tmp/runtime.log",
             gobby_home="",
             verbose=True,
         )
@@ -148,8 +143,7 @@ class TestTemplateRendering:
             working_directory="/home/test",
             home_dir="/home/test",
             path_env="/usr/bin:/bin",
-            log_file="/tmp/gobby.log",
-            stderr_log_file="/tmp/gobby-stderr.log",
+            runtime_log_file="/tmp/runtime.log",
             gobby_home="/custom/gobby/home",
             verbose=False,
         )
@@ -499,8 +493,7 @@ class TestMacOSInstall:
             "mode": "installed",
             "home_dir": "/Users/test",
             "path_env": "/usr/bin:/bin",
-            "log_file": "/tmp/gobby.log",
-            "stderr_log_file": "/tmp/gobby-stderr.log",
+            "runtime_log_file": "/tmp/runtime.log",
             "gobby_home": "",
             "verbose": False,
         }
@@ -540,8 +533,7 @@ class TestMacOSInstall:
             "mode": "installed",
             "home_dir": "/Users/test",
             "path_env": "/usr/bin:/bin",
-            "log_file": "/tmp/gobby.log",
-            "stderr_log_file": "/tmp/gobby-stderr.log",
+            "runtime_log_file": "/tmp/runtime.log",
             "gobby_home": "",
             "verbose": False,
         }
@@ -950,8 +942,7 @@ class TestLinuxInstall:
             "mode": "installed",
             "home_dir": "/home/test",
             "path_env": "/usr/bin:/bin",
-            "log_file": "/tmp/gobby.log",
-            "stderr_log_file": "/tmp/gobby-stderr.log",
+            "runtime_log_file": "/tmp/runtime.log",
             "gobby_home": "",
             "verbose": False,
         }

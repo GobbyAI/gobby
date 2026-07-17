@@ -15,8 +15,7 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader
 
 from gobby.config.logging import (
-    MAIN_LOG_FILENAME,
-    STDERR_LOG_FILENAME,
+    RUNTIME_LOG_FILENAME,
     resolved_log_path,
 )
 from gobby.paths import get_gobby_home
@@ -111,7 +110,7 @@ def _resolve_install_context(*, verbose: bool = False) -> dict[str, str | bool]:
     """Resolve the execution context for service file generation.
 
     Returns dict with: python_executable, working_directory, mode,
-    home_dir, path_env, log_file, stderr_log_file, gobby_home, verbose.
+    home_dir, path_env, runtime_log_file, gobby_home, verbose.
     """
     from gobby.config.app import load_config
 
@@ -119,8 +118,7 @@ def _resolve_install_context(*, verbose: bool = False) -> dict[str, str | bool]:
 
     exe = Path(sys.executable).resolve()
     home_dir = str(Path.home())
-    log_file = str(resolved_log_path(config.logging, MAIN_LOG_FILENAME))
-    stderr_log_file = str(resolved_log_path(config.logging, STDERR_LOG_FILENAME))
+    runtime_log_file = str(resolved_log_path(config.logging, RUNTIME_LOG_FILENAME))
 
     gobby_home = str(get_gobby_home())
 
@@ -144,8 +142,7 @@ def _resolve_install_context(*, verbose: bool = False) -> dict[str, str | bool]:
             "mode": "dev",
             "home_dir": home_dir,
             "path_env": _build_path(dev_exe),
-            "log_file": log_file,
-            "stderr_log_file": stderr_log_file,
+            "runtime_log_file": runtime_log_file,
             "gobby_home": gobby_home,
             "verbose": verbose,
         }
@@ -157,8 +154,7 @@ def _resolve_install_context(*, verbose: bool = False) -> dict[str, str | bool]:
         "mode": "installed",
         "home_dir": home_dir,
         "path_env": _build_path(exe),
-        "log_file": log_file,
-        "stderr_log_file": stderr_log_file,
+        "runtime_log_file": runtime_log_file,
         "gobby_home": gobby_home,
         "verbose": verbose,
     }
