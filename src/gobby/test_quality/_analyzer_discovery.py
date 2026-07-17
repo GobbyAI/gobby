@@ -15,18 +15,19 @@ from gobby.test_quality._analyzer_common import (
 )
 from gobby.test_quality.models import AuditWarning
 
-_EXCLUDED_DIRECTORY_NAMES = frozenset(
+_ALWAYS_EXCLUDED_DIRECTORY_NAMES = frozenset(
     {
         ".git",
         ".mypy_cache",
         ".venv",
         "__pycache__",
-        "build",
         "dist",
         "node_modules",
         "target",
     }
 )
+_BUILD_DIRECTORY_NAME = "build"
+_TEST_TREE_DIRECTORY_NAMES = frozenset({"__tests__", "test", "tests"})
 
 
 def _discover_files(paths: Sequence[str | Path], *, root: Path) -> _DiscoveryResult:
@@ -46,7 +47,9 @@ def _discover_files(paths: Sequence[str | Path], *, root: Path) -> _DiscoveryRes
         if path.is_dir() and not _is_excluded_directory(path):
             for directory, dirnames, filenames in path.walk():
                 dirnames[:] = [
-                    dirname for dirname in dirnames if dirname not in _EXCLUDED_DIRECTORY_NAMES
+                    dirname
+                    for dirname in dirnames
+                    if not _is_excluded_directory(directory / dirname)
                 ]
                 for filename in filenames:
                     candidate = directory / filename
@@ -100,11 +103,19 @@ def _is_unsupported_test_file(path: Path) -> bool:
 
 
 def _is_in_excluded_directory(path: Path) -> bool:
-    return not _EXCLUDED_DIRECTORY_NAMES.isdisjoint(path.parent.parts)
+    return any(_is_excluded_directory_component(parent) for parent in path.parents)
 
 
 def _is_excluded_directory(path: Path) -> bool:
-    return path.name in _EXCLUDED_DIRECTORY_NAMES or _is_in_excluded_directory(path)
+    return _is_excluded_directory_component(path) or _is_in_excluded_directory(path)
+
+
+def _is_excluded_directory_component(path: Path) -> bool:
+    if path.name in _ALWAYS_EXCLUDED_DIRECTORY_NAMES:
+        return True
+    if path.name != _BUILD_DIRECTORY_NAME:
+        return False
+    return _TEST_TREE_DIRECTORY_NAMES.isdisjoint(path.parent.parts)
 
 
 def _unsupported_language_warning(path: Path, root: Path) -> AuditWarning:

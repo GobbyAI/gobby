@@ -582,14 +582,13 @@ def test_discovery_prunes_excluded_directories_before_descent(
 
     audit_paths([tests_dir], root=tmp_path)
 
-    assert descended_into == ["ordinary"]
+    assert descended_into == ["build", "ordinary"]
 
 
 @pytest.mark.parametrize(
     "directory_name",
     [
         ".git",
-        "build",
         "dist",
         "node_modules",
         "target",
@@ -616,6 +615,54 @@ def test_discovery_prunes_excluded_directory_components(
     assert report.files_scanned == 1
     assert report.tests_scanned == 1
     assert report.issues == ()
+
+
+def test_discovery_analyzes_explicit_test_file_in_build_package(tmp_path: Path) -> None:
+    test_file = tmp_path / "tests" / "unit" / "build" / "test_visible.py"
+    test_file.parent.mkdir(parents=True)
+    test_file.write_text(
+        "def test_visible():\n    assert 1 == 1\n",
+        encoding="utf-8",
+    )
+
+    report = audit_paths([test_file], root=tmp_path)
+
+    assert report.files_scanned == 1
+    assert report.tests_scanned == 1
+    assert report.warnings == ()
+
+
+def test_discovery_walks_build_packages_within_test_tree(tmp_path: Path) -> None:
+    tests_dir = tmp_path / "tests"
+    for relative_directory in (Path("build"), Path("unit/build")):
+        test_file = tests_dir / relative_directory / "test_visible.py"
+        test_file.parent.mkdir(parents=True)
+        test_file.write_text(
+            "def test_visible():\n    assert 1 == 1\n",
+            encoding="utf-8",
+        )
+
+    report = audit_paths([tests_dir], root=tmp_path)
+
+    assert report.files_scanned == 2
+    assert report.tests_scanned == 2
+    assert report.warnings == ()
+
+
+def test_discovery_excludes_generated_build_output(tmp_path: Path) -> None:
+    build_test = tmp_path / "build" / "test_generated.py"
+    build_test.parent.mkdir()
+    build_test.write_text(
+        "def test_generated():\n    assert 1 == 1\n",
+        encoding="utf-8",
+    )
+
+    for requested_path in (build_test, tmp_path):
+        report = audit_paths([requested_path], root=tmp_path)
+
+        assert report.files_scanned == 0
+        assert report.tests_scanned == 0
+        assert [warning.code for warning in report.warnings] == ["NO_ANALYZABLE_FILES"]
 
 
 @pytest.mark.parametrize(
