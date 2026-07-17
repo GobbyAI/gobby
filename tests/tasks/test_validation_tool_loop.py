@@ -303,7 +303,8 @@ async def test_prompt_uses_commit_count_first_page_and_cursor_metadata() -> None
     assert "pytest: 12 passed" in request.prompt
     assert "Implemented the requested validator." not in request.prompt
     assert "diff --git" not in request.prompt
-    assert request.limits.max_turns == 4
+    assert request.max_turns == 16
+    assert request.limits.max_turns == 16
     assert request.limits.max_tool_calls == 12
     assert request.limits.tool_timeout_seconds == 30.0
 

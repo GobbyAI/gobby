@@ -40,7 +40,7 @@ from gobby.tasks.diff_paging import (
     read_file_at_commit,
 )
 
-TOOL_LOOP_MAX_TURNS = 4
+TOOL_LOOP_MAX_TURNS = 16
 TOOL_LOOP_MAX_CALLS = 12
 TOOL_LOOP_TOOL_TIMEOUT_SECONDS = 30.0
 FIRST_COMMITS_PAGE_LIMIT = 20

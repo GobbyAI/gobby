@@ -22,6 +22,13 @@ class ClaudeSDKProviderFailure(RuntimeError):
         self.retry_after = retry_after
 
 
+class ClaudeSDKMaxTurns(ClaudeSDKProviderFailure):
+    """Bounded agentic completion caused by the configured turn limit."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, classification="max_turns")
+
+
 class ClaudeSDKRateLimited(ClaudeSDKProviderFailure):
     """The Claude subscription or API reported a usage/rate limit."""
 
@@ -82,6 +89,9 @@ def classify_result_message(
         or any(marker in lowered for marker in _RATE_LIMIT_MARKERS)
     )
     detail = result_text or f"subtype={subtype}"
+    if subtype == "error_max_turns":
+        return ClaudeSDKMaxTurns(f"{operation} reached max_turns: {detail}")
+
     if is_rate_limit:
         reset_at: float | None = float(rl_resets_at) if rl_resets_at else None
         retry_after: float | None = None

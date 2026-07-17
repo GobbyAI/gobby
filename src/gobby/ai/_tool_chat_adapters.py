@@ -25,6 +25,7 @@ from gobby.ai._tool_chat_contracts import (
 )
 from gobby.ai._tool_chat_tools import ToolPolicyError, ToolRuntime
 from gobby.ai.registry import CapabilityBinding
+from gobby.llm.claude_errors import ClaudeSDKMaxTurns
 
 logger = logging.getLogger(__name__)
 
@@ -282,18 +283,32 @@ class ClaudeToolChatAdapter:
         provider = self._provider_factory(binding)
         model = request.model or next(iter(binding.models), None)
         max_turns = _resolve_max_turns(request, default=60)
-        result = await provider.generate_agentic(
-            system_prompt=request.system_prompt,
-            prompt=request.prompt,
-            project_path=request.project_path,
-            model=model,
-            max_turns=max_turns,
-            reasoning_effort=request.reasoning_effort,
-            allowed_tools=tuple(allowed_tools),
-            disallowed_tools=_DISALLOWED_TOOLS,
-            mcp_servers={_REPO_MCP_SERVER_NAME: server},
-            caller=request.caller or "tool_chat-llm_provider",
-        )
+        try:
+            result = await provider.generate_agentic(
+                system_prompt=request.system_prompt,
+                prompt=request.prompt,
+                project_path=request.project_path,
+                model=model,
+                max_turns=max_turns,
+                reasoning_effort=request.reasoning_effort,
+                allowed_tools=tuple(allowed_tools),
+                disallowed_tools=_DISALLOWED_TOOLS,
+                mcp_servers={_REPO_MCP_SERVER_NAME: server},
+                caller=request.caller or "tool_chat-llm_provider",
+            )
+        except ClaudeSDKMaxTurns:
+            return ToolChatResult(
+                text="",
+                provider=binding.provider,
+                model=model,
+                tool_use_count=runtime.calls_used,
+                turns=max_turns,
+                stop_reason="max_turns",
+                trace=tuple(runtime.invocation_log),
+                calls_used=runtime.calls_used,
+                budget_exhausted=True,
+                trace_available=True,
+            )
         return ToolChatResult(
             text=result.text,
             provider=binding.provider,

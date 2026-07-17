@@ -1175,3 +1175,13 @@ class TestClassifyResultMessage:
         assert not isinstance(failure, ClaudeSDKRateLimited)
         assert failure.classification == "error_result"
         assert "context deadline exceeded" in str(failure)
+
+    def test_max_turns_subtype_is_budget_exhaustion(self) -> None:
+        from gobby.llm.claude_errors import ClaudeSDKMaxTurns, classify_result_message
+
+        message = MockResultMessage(result=None, is_error=True, subtype="error_max_turns")
+        failure = classify_result_message(message, "generate_agentic")
+
+        assert isinstance(failure, ClaudeSDKMaxTurns)
+        assert failure.classification == "max_turns"
+        assert "provider degraded" not in str(failure)

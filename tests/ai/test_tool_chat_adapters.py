@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -20,6 +21,7 @@ from gobby.ai._tool_chat_builtins import (
     BuiltinToolSpec,
 )
 from gobby.ai._tool_chat_contracts import ToolChatRequest, ToolLoopLimits, ToolPolicy
+from gobby.llm.claude_errors import classify_result_message
 
 pytestmark = pytest.mark.unit
 
@@ -328,6 +330,39 @@ async def test_claude_adapter_prefers_request_max_turns_over_limits() -> None:
 
     assert provider.kwargs is not None
     assert provider.kwargs["max_turns"] == 12
+
+
+@pytest.mark.asyncio
+async def test_claude_adapter_maps_sdk_max_turns_to_budget_exhaustion() -> None:
+    class MaxTurnsProvider:
+        async def generate_agentic(self, **kwargs: Any) -> _FakeAgenticResult:
+            message = SimpleNamespace(
+                result=None,
+                is_error=True,
+                subtype="error_max_turns",
+                api_error_status=None,
+            )
+            raise classify_result_message(
+                message,
+                "generate_agentic[tasks.validation.tool_loop]",
+            )
+
+    adapter = ClaudeToolChatAdapter(provider_factory=lambda _binding: MaxTurnsProvider())
+    request = ToolChatRequest(
+        prompt="Validate.",
+        tool_policy=ToolPolicy(cli="gcode", tools=("search",)),
+        project_path="/repo",
+        max_turns=16,
+        limits=ToolLoopLimits(max_turns=16, max_tool_calls=12),
+    )
+
+    result = await adapter.chat(request, _claude_binding())
+
+    assert result.stop_reason == "max_turns"
+    assert result.budget_exhausted is True
+    assert result.trace_available is True
+    assert result.turns == 16
+    assert result.provider == "claude"
 
 
 @pytest.mark.asyncio
