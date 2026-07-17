@@ -232,11 +232,25 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
                     elif isinstance(chat_event, ToolResultEvent):
                         pending = pending_tool_calls.pop(chat_event.tool_call_id, {})
                         tool_input = pending.get("tool_input")
+                        structured_success = stream_event.data.get("success")
+                        is_error = (
+                            not structured_success if isinstance(structured_success, bool) else None
+                        )
+                        if is_error is True:
+                            tool_response = chat_event.error
+                        elif is_error is False:
+                            tool_response = chat_event.result
+                        else:
+                            tool_response = (
+                                chat_event.result
+                                if chat_event.result is not None
+                                else chat_event.error
+                            )
                         await self._apply_post_tool_lifecycle(
                             str(pending.get("tool_name", "")),
                             tool_input if isinstance(tool_input, dict) else {},
-                            chat_event.result if chat_event.success else chat_event.error,
-                            is_error=not chat_event.success,
+                            tool_response,
+                            is_error=is_error,
                         )
                         # A completed tool ends the current prose paragraph; a
                         # following heading must start a new line to render. If the

@@ -45,6 +45,15 @@ def _tool_result_error_text(record: dict[str, Any]) -> str | None:
     return str(value) if value is not None else None
 
 
+def _tool_result_is_error(record: dict[str, Any]) -> bool | None:
+    """Return Droid's explicit error flag without coercing ambiguous values."""
+    for key in ("isError", "is_error"):
+        value = record.get(key)
+        if isinstance(value, bool):
+            return value
+    return None
+
+
 def _events_from_content_blocks(content: Any) -> list[StreamEvent]:
     if not isinstance(content, list):
         return []
@@ -280,14 +289,23 @@ def _stream_events_from_droid_record(record: dict[str, Any]) -> list[StreamEvent
             )
         ]
     if record_type == "tool_result":
-        is_error = bool(record.get("isError") or record.get("is_error"))
+        is_error = _tool_result_is_error(record)
+        result_data: dict[str, Any] = {
+            "call_id": record.get("id") or "unknown",
+            "result": record.get("value"),
+            "error": _tool_result_error_text(record) if record.get("error") is not None else None,
+        }
+        if is_error is not None:
+            result_data["success"] = not is_error
+            if is_error:
+                result_data["result"] = None
+                result_data["error"] = _tool_result_error_text(record)
+            else:
+                result_data["error"] = None
         return [
             _content_delta(
                 "tool_result",
-                call_id=record.get("id") or "unknown",
-                success=not is_error,
-                result=record.get("value") if not is_error else None,
-                error=_tool_result_error_text(record) if is_error else None,
+                **result_data,
             )
         ]
     if record_type != "message":

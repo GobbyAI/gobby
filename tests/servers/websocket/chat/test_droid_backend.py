@@ -256,6 +256,25 @@ def test_parse_stream_json_normalizes_content_blocks() -> None:
     assert events[1].data["kind"] == "tool_result"
 
 
+@pytest.mark.parametrize("is_error", [None, "false", 0])
+def test_parse_stream_json_leaves_unproven_tool_result_outcome_unknown(
+    is_error: object,
+) -> None:
+    record: dict[str, Any] = {
+        "type": "tool_result",
+        "id": "tool-ambiguous",
+        "value": "ambiguous output",
+    }
+    if is_error is not None:
+        record["isError"] = is_error
+
+    events = parse_droid_stream_line(json.dumps(record))
+
+    assert len(events) == 1
+    assert events[0].data["kind"] == "tool_result"
+    assert "success" not in events[0].data
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -357,6 +376,41 @@ async def test_managed_session_translates_structured_tool_events() -> None:
     assert events[1].tool_call_id == "tool-1"
     assert events[1].success is True
     assert events[1].result == {"success": True}
+
+
+@pytest.mark.asyncio
+async def test_managed_session_leaves_ambiguous_tool_outcome_unknown() -> None:
+    backend = DroidWebChatBackend()
+    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session._connected = True
+    session._on_post_tool = AsyncMock(return_value=None)
+
+    records = [
+        {
+            "type": "tool_call",
+            "id": "tool-ambiguous",
+            "toolName": "Execute",
+            "parameters": {"command": "sh -c 'exit 7'"},
+        },
+        {
+            "type": "tool_result",
+            "id": "tool-ambiguous",
+            "value": "ambiguous output",
+        },
+    ]
+
+    async def fake_send_message(_session: Any, _prompt: str):
+        for record in records:
+            for event in parse_droid_stream_line(json.dumps(record)):
+                yield event
+
+    backend.send_message = fake_send_message
+
+    events = [event async for event in session.send_message("run ambiguous command")]
+
+    assert any(isinstance(event, ToolResultEvent) for event in events)
+    post_tool_payload = session._on_post_tool.await_args.args[0]
+    assert "is_error" not in post_tool_payload
 
 
 @pytest.mark.asyncio
