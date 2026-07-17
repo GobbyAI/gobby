@@ -139,7 +139,7 @@ class KnowledgeGraphReader:
         except FalkorConnectionError:
             logger.debug("FalkorDB unreachable, skipping vector index creation")
         except Exception as e:
-            logger.warning(f"Failed to ensure vector index: {e}")
+            logger.warning("Failed to ensure vector index: %s", e)
 
     async def search_entities_by_vector(
         self,
@@ -200,7 +200,7 @@ class KnowledgeGraphReader:
                         if key in memory_map and mid:
                             memory_map[key].append(mid)
                 except Exception as e:
-                    logger.debug(f"Failed to batch-fetch memory links: {e}")
+                    logger.debug("Failed to batch-fetch memory links: %s", e)
 
             results = []
             for row in entity_rows:
@@ -223,10 +223,10 @@ class KnowledgeGraphReader:
             return results
 
         except FalkorConnectionError as e:
-            logger.warning(f"FalkorDB unreachable during entity vector search: {e}")
+            logger.warning("FalkorDB unreachable during entity vector search: %s", e)
             return []
         except Exception as e:
-            logger.warning(f"Entity vector search failed: {e}")
+            logger.warning("Entity vector search failed: %s", e)
             return []
 
     def _related_traversal_is_disabled(self) -> bool:
@@ -587,14 +587,14 @@ class KnowledgeGraphReader:
                 self._record_traversal_timeout(e)
                 return RelatedMemoryTraversal()
             self._record_traversal_success()
-            logger.warning(f"FalkorDB unreachable during graph traversal: {e}")
+            logger.warning("FalkorDB unreachable during graph traversal: %s", e)
             return RelatedMemoryTraversal()
         except Exception as e:
             if self._is_query_timeout_error(e):
                 self._record_traversal_timeout(e)
                 return RelatedMemoryTraversal()
             self._record_traversal_success()
-            logger.warning(f"Graph traversal failed: {e}")
+            logger.warning("Graph traversal failed: %s", e)
             return RelatedMemoryTraversal()
 
     async def _attribute_edge_components(
@@ -661,10 +661,10 @@ class KnowledgeGraphReader:
         try:
             graph = await self._falkor.get_entity_graph(limit=limit, project_id=project_id)
         except FalkorConnectionError as e:
-            logger.warning(f"FalkorDB unreachable: {e}")
+            logger.warning("FalkorDB unreachable: %s", e)
             return None
         except Exception as e:
-            logger.warning(f"FalkorDB query failed: {e}")
+            logger.warning("FalkorDB query failed: %s", e)
             return None
         return await self._filter_graph_by_active_memories(graph, project_id)
 
@@ -677,10 +677,10 @@ class KnowledgeGraphReader:
         try:
             graph = await self._falkor.get_entity_neighbors(entity_key, project_id=project_id)
         except FalkorConnectionError as e:
-            logger.warning(f"FalkorDB unreachable: {e}")
+            logger.warning("FalkorDB unreachable: %s", e)
             return None
         except Exception as e:
-            logger.warning(f"FalkorDB query failed: {e}")
+            logger.warning("FalkorDB query failed: %s", e)
             return None
         return await self._filter_graph_by_active_memories(graph, project_id)
 
@@ -762,10 +762,10 @@ class KnowledgeGraphReader:
                 },
             )
         except FalkorConnectionError as e:
-            logger.warning(f"FalkorDB unreachable resolving entity backing memories: {e}")
+            logger.warning("FalkorDB unreachable resolving entity backing memories: %s", e)
             return None
         except Exception as e:
-            logger.warning(f"Failed to resolve entity backing memories: {e}")
+            logger.warning("Failed to resolve entity backing memories: %s", e)
             return None
 
         backing: dict[str, list[str]] = {}
@@ -807,7 +807,7 @@ class KnowledgeGraphReader:
                         for r in results
                     ]
             except Exception as e:
-                logger.debug(f"Vector graph search failed, falling back to substring: {e}")
+                logger.debug("Vector graph search failed, falling back to substring: %s", e)
 
         try:
             rows = await self._falkor.query(
@@ -832,8 +832,8 @@ class KnowledgeGraphReader:
                 allowed_project_ids.add(None)
             return [row for row in rows if row.get("project_id") in allowed_project_ids]
         except FalkorConnectionError as e:
-            logger.warning(f"FalkorDB unreachable: {e}")
+            logger.warning("FalkorDB unreachable: %s", e)
             return []
         except Exception as e:
-            logger.warning(f"Graph search failed: {e}")
+            logger.warning("Graph search failed: %s", e)
             return []

@@ -176,7 +176,7 @@ async def memory_sync_import(memory_sync_manager: Any) -> dict[str, Any]:
         return {"error": "Memory Sync Manager not available"}
 
     count = await memory_sync_manager.import_from_files()
-    logger.info(f"Memory sync import: {count} memories imported")
+    logger.info("Memory sync import: %s memories imported", count)
     return {"imported": {"memories": count}}
 
 
@@ -199,7 +199,7 @@ async def memory_sync_export(
         return {"exported": {"memories": 0}, "skipped": True, "reason": "not_remote_push"}
 
     count = await memory_sync_manager.export_to_files(project_id=project_id)
-    logger.info(f"Memory sync export: {count} memories exported")
+    logger.info("Memory sync export: %s memories exported", count)
     return {"exported": {"memories": count}}
 
 
@@ -251,7 +251,7 @@ async def _read_last_turn_from_transcript(
 
         return prompt_text, response_text
     except Exception as e:
-        logger.warning(f"Failed to read transcript {transcript_path}: {e}")
+        logger.warning("Failed to read transcript %s: %s", transcript_path, e)
         return "", ""
 
 
@@ -330,7 +330,7 @@ async def _read_undigested_turns(
         return batch, segment_pair_offset + start_index + len(batch)
 
     except Exception as e:
-        logger.warning(f"Failed to read undigested turns from {transcript_path}: {e}")
+        logger.warning("Failed to read undigested turns from %s: %s", transcript_path, e)
         return [], digested_pair_index
 
 
@@ -502,7 +502,7 @@ async def _resolve_undigested_pairs(
     if not undigested_pairs:
         user_prompt = prompt_text or ""
         if not user_prompt:
-            logger.debug(f"build_turn_and_digest: No turn content for session {session_id}")
+            logger.debug("build_turn_and_digest: No turn content for session %s", session_id)
             return None
         _stripped = user_prompt.strip()
         if any(
@@ -517,7 +517,9 @@ async def _resolve_undigested_pairs(
     input_hash = hashlib.sha256(combined_content.encode()).hexdigest()[:16]
     if session.last_digest_input_hash == input_hash:
         logger.debug(
-            f"build_turn_and_digest: Skipping duplicate digest for session {session_id} (hash={input_hash})",
+            "build_turn_and_digest: Skipping duplicate digest for session %s (hash=%s)",
+            session_id,
+            input_hash,
         )
         return None
 
@@ -733,13 +735,13 @@ async def build_turn_and_digest(
     """
     if not memory_manager or not memory_manager.config.enabled:
         logger.debug(
-            "build_turn_and_digest: skipped — memory_manager missing or disabled "
-            f"(session_id={session_id})"
+            "build_turn_and_digest: skipped — memory_manager missing or disabled (session_id=%s)",
+            session_id,
         )
         return None
 
     if not llm_service:
-        logger.debug(f"build_turn_and_digest: skipped — no llm_service (session_id={session_id})")
+        logger.debug("build_turn_and_digest: skipped — no llm_service (session_id=%s)", session_id)
         return None
 
     # PromptLoader(db=None) opens (and leaks) a fresh runtime hub pool per
@@ -751,7 +753,7 @@ async def build_turn_and_digest(
     digest_config = getattr(config, "digest", None) if config else None
     if digest_config and not digest_config.enabled:
         logger.debug(
-            f"build_turn_and_digest: skipped — digest config disabled (session_id={session_id})"
+            "build_turn_and_digest: skipped — digest config disabled (session_id=%s)", session_id
         )
         return None
 
@@ -759,7 +761,7 @@ async def build_turn_and_digest(
         # 1. Get session
         session = await _run_sync_io(session_manager.get, session_id) if session_manager else None
         if not session:
-            logger.warning(f"build_turn_and_digest: Session {session_id} not found")
+            logger.warning("build_turn_and_digest: Session %s not found", session_id)
             return None
 
         title_source = str(getattr(session, "title_source", "") or "").strip().lower()
@@ -801,7 +803,7 @@ async def build_turn_and_digest(
             except LLMProviderCancellation as e:
                 return await _provider_cancelled_fallback(session_manager, session_id, e)
             except Exception as e:
-                logger.warning(f"build_turn_and_digest: Title synthesis failed: {e}")
+                logger.warning("build_turn_and_digest: Title synthesis failed: %s", e)
                 return None
 
             if not title:
@@ -865,7 +867,10 @@ async def build_turn_and_digest(
             )
 
         logger.debug(
-            f"build_turn_and_digest: Turn {turn_num} recorded ({len(last_turn)} chars) for session {session_id}",
+            "build_turn_and_digest: Turn %s recorded (%s chars) for session %s",
+            turn_num,
+            len(last_turn),
+            session_id,
         )
 
         result: dict[str, Any] = {
@@ -897,7 +902,9 @@ async def build_turn_and_digest(
         return await _provider_cancelled_fallback(session_manager, session_id, e)
     except Exception as e:
         logger.error(
-            f"build_turn_and_digest: Failed for session {session_id}: {e}",
+            "build_turn_and_digest: Failed for session %s: %s",
+            session_id,
+            e,
             exc_info=True,
         )
         return {"error": str(e)}

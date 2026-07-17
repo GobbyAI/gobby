@@ -388,7 +388,9 @@ async def generate_session_summaries(
     )
 
     logger.info(
-        f"Session summary generated for {session_id} ({(len(full_markdown) if full_markdown else 0)} chars)",
+        "Session summary generated for %s (%s chars)",
+        session_id,
+        (len(full_markdown) if full_markdown else 0),
     )
 
     # Tail: the session wiki page IS the summary. Write the redacted
@@ -409,7 +411,7 @@ async def generate_session_summaries(
             final_summary,
         )
     except Exception as e:  # noqa: BLE001 — boundary: wiki file must not break summary
-        logger.warning(f"Session wiki file write failed for session {session_id}: {e}")
+        logger.warning("Session wiki file write failed for session %s: %s", session_id, e)
         session_wiki_result = {"written": False, "skipped": "error", "error": str(e)}
 
     result = {

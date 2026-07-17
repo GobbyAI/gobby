@@ -289,8 +289,9 @@ class SkillMetadataMixin:
                 and is_bundled_template_path(row.get("source_path"))
             ):
                 logger.warning(
-                    f"Ignoring project-scoped skill '{name}' sourced from "
-                    f"bundled template path {row.get('source_path')}"
+                    "Ignoring project-scoped skill '%s' sourced from bundled template path %s",
+                    name,
+                    row.get("source_path"),
                 )
                 row = None
             # If not found and include_global, try global
@@ -590,9 +591,10 @@ class SkillMetadataMixin:
                 continue
             if self.delete_skill(skill.id):
                 logger.warning(
-                    f"Purged project-scoped skill '{skill.name}' "
-                    f"(project {skill.project_id}) sourced from bundled "
-                    f"template path {skill.source_path}"
+                    "Purged project-scoped skill '%s' (project %s) sourced from bundled template path %s",
+                    skill.name,
+                    skill.project_id,
+                    skill.source_path,
                 )
                 purged.append(skill)
         return purged

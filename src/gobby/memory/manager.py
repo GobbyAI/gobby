@@ -228,7 +228,7 @@ class MemoryManager(MemoryManagerFacadeMethods):
             logger.debug("DedupService initialized")
             return dedup_service
         except Exception as e:
-            logger.warning(f"Failed to initialize DedupService: {e}")
+            logger.warning("Failed to initialize DedupService: %s", e)
             return None
 
     def _build_kg_service(
@@ -297,7 +297,7 @@ class MemoryManager(MemoryManagerFacadeMethods):
             logger.debug("KnowledgeGraphService initialized")
             return kg_service
         except Exception as e:
-            logger.warning(f"Failed to initialize KnowledgeGraphService: {e}")
+            logger.warning("Failed to initialize KnowledgeGraphService: %s", e)
             return None
 
     async def run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -312,7 +312,7 @@ class MemoryManager(MemoryManagerFacadeMethods):
             try:
                 await self._falkor_client.close()
             except Exception as e:
-                logger.warning(f"Failed to close FalkorDB client: {e}")
+                logger.warning("Failed to close FalkorDB client: %s", e)
             self.clear_graph_clients()
 
     def clear_graph_clients(self) -> None:

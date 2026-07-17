@@ -48,7 +48,7 @@ async def kill_terminal_session(terminal_ctx: dict[str, Any], session_id: str) -
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=5.0)
             if proc.returncode == 0:
                 logger.info(
-                    f"Killed terminal session {session_id[:8]} via tmux pane {tmux_pane}",
+                    "Killed terminal session %s via tmux pane %s", session_id[:8], tmux_pane
                 )
                 return True
             else:
@@ -63,15 +63,13 @@ async def kill_terminal_session(terminal_ctx: dict[str, Any], session_id: str) -
                         session_id[:8],
                     )
                     return True
-                logger.debug(
-                    f"tmux kill-pane failed for {tmux_pane}: {stderr_text}",
-                )
+                logger.debug("tmux kill-pane failed for %s: %s", tmux_pane, stderr_text)
         except TimeoutError:
-            logger.warning(f"tmux kill-pane timed out for pane {tmux_pane}")
+            logger.warning("tmux kill-pane timed out for pane %s", tmux_pane)
         except FileNotFoundError:
             logger.debug("tmux not available, skipping pane kill")
         except Exception as e:
-            logger.warning(f"tmux kill-pane error for {tmux_pane}: {e}")
+            logger.warning("tmux kill-pane error for %s: %s", tmux_pane, e)
         return False
 
     # 2. Fallback: PID-based kill
@@ -86,17 +84,15 @@ async def kill_terminal_session(terminal_ctx: dict[str, Any], session_id: str) -
                 )
                 return False
             os.kill(pid, signal.SIGTERM)
-            logger.info(
-                f"Killed terminal session {session_id[:8]} via SIGTERM to PID {pid}",
-            )
+            logger.info("Killed terminal session %s via SIGTERM to PID %s", session_id[:8], pid)
             return True
         except ProcessLookupError:
-            logger.debug(f"PID {parent_pid} already dead for session {session_id[:8]}")
+            logger.debug("PID %s already dead for session %s", parent_pid, session_id[:8])
         except (ValueError, OSError) as e:
-            logger.warning(f"PID kill failed for session {session_id[:8]}: {e}")
+            logger.warning("PID kill failed for session %s: %s", session_id[:8], e)
 
     logger.debug(
-        f"No kill method available for session {session_id[:8]} (no tmux_pane or parent_pid)",
+        "No kill method available for session %s (no tmux_pane or parent_pid)", session_id[:8]
     )
     return False
 

@@ -162,7 +162,7 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
             try:
                 listener()
             except Exception as e:
-                logger.error(f"Error in task change listener: {e}")
+                logger.error("Error in task change listener: %s", e)
 
     def _notify_listeners(self) -> None:
         """Notify listeners immediately or defer until the current commit."""

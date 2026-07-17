@@ -234,7 +234,7 @@ async def find_duplicate_memories(
                 filters=filters,
             )
         except Exception as e:
-            logger.warning(f"Duplicate scan failed for {memory.id}: {e}")
+            logger.warning("Duplicate scan failed for %s: %s", memory.id, e)
             continue
 
         for match_id, score in results:

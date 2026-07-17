@@ -79,10 +79,10 @@ class SkillsMPProvider(HubProvider):
                 result: dict[str, Any] = response.json()
                 return result
             except httpx.HTTPStatusError as e:
-                logger.error(f"SkillsMP API error: {e.response.status_code}")
+                logger.error("SkillsMP API error: %s", e.response.status_code)
                 raise RuntimeError(f"SkillsMP API error: {e.response.status_code}") from e
             except httpx.RequestError as e:
-                logger.error(f"SkillsMP request failed: {e}")
+                logger.error("SkillsMP request failed: %s", e)
                 raise RuntimeError(f"SkillsMP request failed: {e}") from e
 
     async def discover(self) -> dict[str, Any]:
@@ -273,7 +273,7 @@ class SkillsMPProvider(HubProvider):
                 version=version or ref.branch,
             )
         except (RuntimeError, SkillLoadError, OSError, ValueError) as e:
-            logger.error(f"Failed to download SkillsMP skill {slug}: {e}")
+            logger.error("Failed to download SkillsMP skill %s: %s", slug, e)
             return DownloadResult(success=False, slug=slug, error=str(e))
 
     def _download_from_github(

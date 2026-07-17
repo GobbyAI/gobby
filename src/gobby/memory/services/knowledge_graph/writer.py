@@ -95,7 +95,7 @@ class KnowledgeGraphWriter:
                 logger.debug("FalkorDB unreachable during knowledge-graph schema creation")
                 raise
             except Exception as e:
-                logger.warning(f"Failed to ensure knowledge-graph schema: {e}")
+                logger.warning("Failed to ensure knowledge-graph schema: %s", e)
                 raise
 
     async def merge_entity(self, entity: _GraphEntity) -> None:

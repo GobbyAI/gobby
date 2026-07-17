@@ -376,7 +376,7 @@ class WorkflowAuditManager:
             )
             return cursor.rowcount
         except Exception as e:
-            logger.error(f"Failed to cleanup audit entries: {e}")
+            logger.error("Failed to cleanup audit entries: %s", e)
             return 0
 
     def get_entry_count(self, session_id: str | None = None) -> int:

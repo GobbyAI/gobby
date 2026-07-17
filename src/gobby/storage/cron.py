@@ -103,7 +103,7 @@ def compute_next_run(job: CronJob) -> datetime | None:
     try:
         tz = ZoneInfo(job.timezone) if job.timezone else ZoneInfo("UTC")
     except ZoneInfoNotFoundError:
-        logger.warning(f"Invalid timezone {job.timezone!r} for job {job.id}, falling back to UTC")
+        logger.warning("Invalid timezone %r for job %s, falling back to UTC", job.timezone, job.id)
         tz = ZoneInfo("UTC")
     now = datetime.now(tz)
 
@@ -129,14 +129,14 @@ def compute_next_run(job: CronJob) -> datetime | None:
 
     elif job.schedule_type == "once":
         if not job.run_at:
-            logger.debug(f"Job {job.id}: schedule_type='once' but run_at is missing")
+            logger.debug("Job %s: schedule_type='once' but run_at is missing", job.id)
             return None
         run_at_utc = job.run_at.astimezone(ZoneInfo("UTC"))
         # Expired one-shot
         now_utc = datetime.now(ZoneInfo("UTC"))
         if run_at_utc <= now_utc:
             logger.debug(
-                f"Job {job.id}: one-shot run_at {run_at_utc} is in the past (now={now_utc})"
+                "Job %s: one-shot run_at %s is in the past (now=%s)", job.id, run_at_utc, now_utc
             )
             return None
         return run_at_utc

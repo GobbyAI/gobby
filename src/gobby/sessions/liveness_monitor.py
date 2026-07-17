@@ -90,7 +90,7 @@ class SessionLivenessMonitor:
         if self._task is not None:
             return
         self._task = asyncio.create_task(self._poll_loop(), name="session-liveness-monitor")
-        logger.info(f"SessionLivenessMonitor started (interval={self._poll_interval:.0f}s)")
+        logger.info("SessionLivenessMonitor started (interval=%.0fs)", self._poll_interval)
 
     async def stop(self) -> None:
         """Cancel the background polling task."""
@@ -162,38 +162,42 @@ class SessionLivenessMonitor:
                         continue
                 elif record.tmux_pane not in live_panes:
                     logger.info(
-                        f"Detected missing tmux pane {record.tmux_pane} "
-                        f"for session {record.session_id} - expiring",
+                        "Detected missing tmux pane %s for session %s - expiring",
+                        record.tmux_pane,
+                        record.session_id,
                     )
                     await self._expire_session(record.session_id)
                     self._recently_handled[record.session_id] = now
                     continue
                 elif record.parent_pid is None:
                     logger.debug(
-                        f"Session {record.session_id} has live tmux pane "
-                        f"{record.tmux_pane} and no parent PID - refreshing",
+                        "Session %s has live tmux pane %s and no parent PID - refreshing",
+                        record.session_id,
+                        record.tmux_pane,
                     )
                     try:
                         await asyncio.to_thread(self._session_manager.touch, record.session_id)
                     except Exception:
                         logger.warning(
-                            f"SessionLivenessMonitor: failed to touch session {record.session_id}",
+                            "SessionLivenessMonitor: failed to touch session %s",
+                            record.session_id,
                             exc_info=True,
                         )
                     continue
                 else:
                     if not self._is_pid_alive(record.parent_pid):
                         logger.debug(
-                            f"Session {record.session_id} has live tmux pane "
-                            f"{record.tmux_pane} despite dead parent PID "
-                            f"{record.parent_pid} - refreshing",
+                            "Session %s has live tmux pane %s despite dead parent PID %s - refreshing",
+                            record.session_id,
+                            record.tmux_pane,
+                            record.parent_pid,
                         )
                         try:
                             await asyncio.to_thread(self._session_manager.touch, record.session_id)
                         except Exception:
                             logger.warning(
-                                "SessionLivenessMonitor: failed to touch session "
-                                f"{record.session_id}",
+                                "SessionLivenessMonitor: failed to touch session %s",
+                                record.session_id,
                                 exc_info=True,
                             )
                     continue
@@ -213,8 +217,9 @@ class SessionLivenessMonitor:
                 continue
 
             logger.info(
-                f"Detected dead parent PID {record.parent_pid} "
-                f"for session {record.session_id} - expiring",
+                "Detected dead parent PID %s for session %s - expiring",
+                record.parent_pid,
+                record.session_id,
             )
 
             await self._expire_session(record.session_id)
@@ -392,7 +397,8 @@ class SessionLivenessMonitor:
                 self._dispatch_summaries_fn(session_id, False, None)
             except Exception:
                 logger.warning(
-                    f"SessionLivenessMonitor: summary dispatch failed for {session_id}",
+                    "SessionLivenessMonitor: summary dispatch failed for %s",
+                    session_id,
                     exc_info=True,
                 )
         elif self._generate_summaries_fn:
@@ -400,7 +406,8 @@ class SessionLivenessMonitor:
                 await self._generate_summaries_fn(session_id)
             except Exception:
                 logger.warning(
-                    f"SessionLivenessMonitor: summary generation failed for {session_id}",
+                    "SessionLivenessMonitor: summary generation failed for %s",
+                    session_id,
                     exc_info=True,
                 )
 
@@ -409,7 +416,8 @@ class SessionLivenessMonitor:
             await asyncio.to_thread(self._session_manager.expire_if_active, session_id)
         except Exception:
             logger.warning(
-                f"SessionLivenessMonitor: failed to expire session {session_id}",
+                "SessionLivenessMonitor: failed to expire session %s",
+                session_id,
                 exc_info=True,
             )
 
@@ -419,6 +427,7 @@ class SessionLivenessMonitor:
                 self._message_processor.unregister_session(session_id)
             except Exception:
                 logger.debug(
-                    f"SessionLivenessMonitor: failed to unregister session {session_id}",
+                    "SessionLivenessMonitor: failed to unregister session %s",
+                    session_id,
                     exc_info=True,
                 )

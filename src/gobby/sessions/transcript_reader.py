@@ -213,7 +213,7 @@ class TranscriptReader:
                         role,
                     )
                 except DecompressionError as e:
-                    logger.warning(f"Failed to read archive for session {session_id}: {e}")
+                    logger.warning("Failed to read archive for session %s: %s", session_id, e)
                     return []
                 return dicts[offset : offset + limit]
 
@@ -256,7 +256,7 @@ class TranscriptReader:
         try:
             resolved = await self._resolve_windowable(session, session_id)
         except DecompressionError as e:
-            logger.warning(f"Failed to read archive for session {session_id}: {e}")
+            logger.warning("Failed to read archive for session %s: %s", session_id, e)
             return WindowResult(groups=[], returned_count=0, total_groups=0)
 
         if resolved.kind == "native":
@@ -380,7 +380,7 @@ class TranscriptReader:
                 parsed = await self._get_parsed_messages_from_file(session_id)
                 return sum(1 for m in parsed if m.content_type not in NON_MESSAGE_CONTENT_TYPES)
         except (DecompressionError, TranscriptTooLargeError) as e:
-            logger.warning(f"Failed to count transcript messages for session {session_id}: {e}")
+            logger.warning("Failed to count transcript messages for session %s: %s", session_id, e)
             return 0
 
         if resolved.index is not None:
@@ -403,7 +403,7 @@ class TranscriptReader:
                 return _activity_counts_from_index(resolved.index)
             return {"message_count": 0, "turn_count": 0, "tool_call_count": 0}
         except (DecompressionError, TranscriptTooLargeError) as e:
-            logger.warning(f"Failed to count transcript activity for session {session_id}: {e}")
+            logger.warning("Failed to count transcript activity for session %s: %s", session_id, e)
             return {"message_count": 0, "turn_count": 0, "tool_call_count": 0}
 
     async def get_transcript_status(self, session_id: str) -> dict[str, Any]:
@@ -520,11 +520,13 @@ class TranscriptReader:
             await asyncio.to_thread(
                 self._session_manager.update, session_id, transcript_path=derived
             )
-            logger.info(f"Re-derived transcript path for session {session_id}: {derived}")
+            logger.info("Re-derived transcript path for session %s: %s", session_id, derived)
         except (OSError, ValueError) as e:
             logger.warning(
-                f"Failed to persist re-derived transcript path for session {session_id} "
-                f"({derived}): {e}"
+                "Failed to persist re-derived transcript path for session %s (%s): %s",
+                session_id,
+                derived,
+                e,
             )
         return derived
 
@@ -575,7 +577,7 @@ class TranscriptReader:
                 transcript_path=transcript_path,
             )
         except (json.JSONDecodeError, OSError, ValueError) as e:
-            logger.warning(f"Failed to read transcript for session {session_id}: {e}")
+            logger.warning("Failed to read transcript for session %s: %s", session_id, e)
             return []
 
     @staticmethod

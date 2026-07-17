@@ -182,7 +182,7 @@ class KnowledgeGraphRebuildService:
                     )
                 await _emit_progress()
                 if kg_done % 50 == 0 or kg_done == len(all_memories):
-                    logger.info(f"KG extraction progress: {kg_done}/{len(all_memories)}")
+                    logger.info("KG extraction progress: %s/%s", kg_done, len(all_memories))
             return result
 
         await _emit_progress()
@@ -242,7 +242,7 @@ class KnowledgeGraphRebuildService:
                     project_id=project_id,
                 )
             except Exception as e:
-                logger.warning(f"FalkorDB query failed: {e}")
+                logger.warning("FalkorDB query failed: %s", e)
                 return None
         return None
 
@@ -266,6 +266,6 @@ class KnowledgeGraphRebuildService:
                     project_id=project_id,
                 )
             except Exception as e:
-                logger.warning(f"FalkorDB query failed: {e}")
+                logger.warning("FalkorDB query failed: %s", e)
                 return None
         return None

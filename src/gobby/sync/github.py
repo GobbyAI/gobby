@@ -222,7 +222,9 @@ class GitHubSyncService:
                 imported.append(task.to_dict())
 
         all_tasks = imported + updated
-        logger.info(f"GitHub import from {repo}: {len(imported)} imported, {len(updated)} updated")
+        logger.info(
+            "GitHub import from %s: %s imported, %s updated", repo, len(imported), len(updated)
+        )
         return all_tasks
 
     def _find_task_by_github_issue(self, repo: str, issue_number: int | None) -> Any | None:
@@ -298,7 +300,7 @@ class GitHubSyncService:
                 f"#{task.github_issue_number}: expected dict, got {type(result).__name__}"
             )
 
-        logger.info(f"Synced task {task_id} to GitHub issue #{task.github_issue_number}")
+        logger.info("Synced task %s to GitHub issue #%s", task_id, task.github_issue_number)
         return cast(dict[str, Any], result)
 
     async def create_pr_for_task(
@@ -365,7 +367,7 @@ class GitHubSyncService:
                 github_pr_number=pr_number,
                 github_repo=repo,
             )
-            logger.info(f"Created PR #{pr_number} for task {task_id}")
+            logger.info("Created PR #%s for task %s", pr_number, task_id)
 
         return result_dict
 
@@ -444,7 +446,7 @@ class GitHubSyncService:
             )
 
         result_dict = cast(dict[str, Any], result)
-        logger.info(f"Pushed {len(files)} files to {repo}:{branch}")
+        logger.info("Pushed %s files to %s:%s", len(files), repo, branch)
         return result_dict
 
     def map_github_labels_to_gobby(

@@ -205,7 +205,9 @@ class VectorStore:
                 except Exception as e:
                     self._raise_if_recoverable(e)
                     logger.warning(
-                        f"Could not verify collection dimensions for '{self._collection_name}': {e}"
+                        "Could not verify collection dimensions for '%s': %s",
+                        self._collection_name,
+                        e,
                     )
 
     async def _ensure_initialized(self) -> QdrantClient:
@@ -722,7 +724,7 @@ class VectorStore:
                     raise
                 except Exception as e:
                     self._raise_if_recoverable(e)
-                    logger.warning(f"Could not verify collection '{collection_name}': {e}")
+                    logger.warning("Could not verify collection '%s': %s", collection_name, e)
 
     async def delete_collection(self, collection_name: str) -> None:
         """Delete a collection by name."""

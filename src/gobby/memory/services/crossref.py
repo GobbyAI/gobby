@@ -117,7 +117,7 @@ class CrossrefService:
                 await self._run_storage(self._storage.create_crossref, memory.id, other_id, score)
                 count += 1
             except Exception as e:
-                logger.debug(f"Crossref creation failed: {e}")
+                logger.debug("Crossref creation failed: %s", e)
 
         return count
 

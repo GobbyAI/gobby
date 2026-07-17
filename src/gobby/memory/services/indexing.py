@@ -252,7 +252,7 @@ class IndexingService:
                         report["qdrant"]["orphans_deleted"] = len(orphaned)
                     except Exception as e:
                         logger.warning(
-                            f"Batch delete of {len(orphaned)} Qdrant orphans failed: {e}"
+                            "Batch delete of %s Qdrant orphans failed: %s", len(orphaned), e
                         )
                         report["qdrant"]["errors"] += len(orphaned)
                 if not dry_run and reindex_ids:
@@ -274,7 +274,7 @@ class IndexingService:
                     if failures:
                         report["qdrant"]["reindex_failures"] = failures
             except Exception as e:
-                logger.error(f"Qdrant reconciliation failed: {e}")
+                logger.error("Qdrant reconciliation failed: %s", e)
                 report["qdrant"]["error"] = str(e)
                 report["qdrant"]["errors"] += 1
 
@@ -294,7 +294,7 @@ class IndexingService:
                     entities_deleted = await self._kg_service.remove_orphaned_entities(scope="all")
                     report["falkordb"]["orphan_entities_deleted"] = entities_deleted
             except Exception as e:
-                logger.error(f"FalkorDB reconciliation failed: {e}")
+                logger.error("FalkorDB reconciliation failed: %s", e)
                 report["falkordb"]["error"] = str(e)
 
         return report
@@ -404,12 +404,12 @@ class IndexingService:
                 if len(batch) >= REINDEX_PAGE_SIZE:
                     await vector_store.batch_upsert(batch)
                     processed += len(batch)
-                    logger.info(f"Reindex progress: {processed}/{total} vectors")
+                    logger.info("Reindex progress: %s/%s vectors", processed, total)
                     batch = []
             if batch:
                 await vector_store.batch_upsert(batch)
                 processed += len(batch)
-                logger.info(f"Reindex progress: {processed}/{total} vectors")
+                logger.info("Reindex progress: %s/%s vectors", processed, total)
             stale_ids = sorted(existing_ids - incoming_ids)
             for index in range(0, len(stale_ids), REINDEX_PAGE_SIZE):
                 await vector_store.delete_many(stale_ids[index : index + REINDEX_PAGE_SIZE])
@@ -419,7 +419,7 @@ class IndexingService:
             )
             generated = len(memory_dicts)
         except Exception as e:
-            logger.error(f"Failed to rebuild vector store: {e}")
+            logger.error("Failed to rebuild vector store: %s", e)
             return {"success": False, "total_memories": total, "error": str(e)}
 
         return {
@@ -480,7 +480,7 @@ class IndexingService:
             self._last_global_reindex_fingerprint = fingerprint
             self._last_global_reindex_completed_at = asyncio.get_running_loop().time()
         except Exception as e:
-            logger.error(f"Failed to rebuild vector store: {e}")
+            logger.error("Failed to rebuild vector store: %s", e)
             return {"success": False, "total_memories": total, "error": str(e)}
 
         return {
@@ -508,7 +508,7 @@ class IndexingService:
                 self._last_global_reindex_completed_at = None
                 report["vectors_cleared"] = True
             except Exception as e:
-                logger.error(f"Failed to clear vectors: {e}")
+                logger.error("Failed to clear vectors: %s", e)
                 report["vectors_cleared"] = False
                 report["vectors_error"] = str(e)
 
@@ -521,19 +521,19 @@ class IndexingService:
                 deleted = await self._run_storage(self._delete_all_memory_crossrefs)
             report["crossrefs_cleared"] = deleted
         except Exception as e:
-            logger.error(f"Failed to clear crossrefs: {e}")
+            logger.error("Failed to clear crossrefs: %s", e)
             report["crossrefs_cleared"] = 0
             report["crossrefs_error"] = str(e)
 
         scope = f"project {project_id}" if project_id else "all projects"
-        logger.info(f"Indices cleared for {scope}: {report}")
+        logger.info("Indices cleared for %s: %s", scope, report)
         return report
 
     async def rebuild_indices(self, project_id: str | None = None) -> dict[str, Any]:
         """Rebuild all secondary indices from memory storage."""
         report: dict[str, Any] = {}
         scope = f"project {project_id}" if project_id else "all projects"
-        logger.info(f"Starting index rebuild for {scope}")
+        logger.info("Starting index rebuild for %s", scope)
 
         report["embeddings"] = await self.reindex_embeddings(project_id=project_id)
 
@@ -553,17 +553,19 @@ class IndexingService:
                 try:
                     result = await self._crossref_service.rebuild_for_memory(mem)
                 except (CrossrefRebuildError, ValueError) as e:
-                    logger.warning(f"Crossref failed for {mem.id}: {e}")
+                    logger.warning("Crossref failed for %s: %s", mem.id, e)
                     result = 0
                 async with crossref_done_lock:
                     crossref_done += 1
                     if crossref_done % 50 == 0 or crossref_done == total:
-                        logger.info(f"Crossref progress: {crossref_done}/{total}")
+                        logger.info("Crossref progress: %s/%s", crossref_done, total)
                 return result
 
         crossref_results = await asyncio.gather(*[_rebuild_crossref(m) for m in all_memories])
         crossrefs_created = sum(crossref_results)
-        logger.info(f"Crossref rebuild complete: {crossrefs_created} links from {total} memories")
+        logger.info(
+            "Crossref rebuild complete: %s links from %s memories", crossrefs_created, total
+        )
         report["crossrefs"] = {
             "memories_processed": total,
             "crossrefs_created": crossrefs_created,
@@ -572,7 +574,7 @@ class IndexingService:
         if self._kg_service:
             report["graph_rebuilt"] = await self._kg_rebuilder(project_id)
 
-        logger.info(f"Index rebuild complete for {scope}: {report}")
+        logger.info("Index rebuild complete for %s: %s", scope, report)
         return report
 
     async def invalidate_all(self, project_id: str | None = None) -> dict[str, Any]:

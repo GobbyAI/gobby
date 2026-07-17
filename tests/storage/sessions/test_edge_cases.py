@@ -84,8 +84,11 @@ class TestSessionEdgeCases:
         with patch("gobby.storage.session_lifecycle.logger") as mock_logger:
             count = session_manager.expire_stale_sessions(timeout_hours=24)
             assert count == 1
-            mock_logger.info.assert_called_once()
-            assert "Expired 1 stale sessions" in mock_logger.info.call_args[0][0]
+            mock_logger.info.assert_called_once_with(
+                "Expired %s stale sessions (>%sh inactive)",
+                1,
+                24,
+            )
 
     def test_pause_inactive_sessions_logs_when_sessions_paused(
         self,
@@ -110,8 +113,11 @@ class TestSessionEdgeCases:
         with patch("gobby.storage.session_lifecycle.logger") as mock_logger:
             count = session_manager.pause_inactive_active_sessions(timeout_minutes=30)
             assert count == 1
-            mock_logger.info.assert_called_once()
-            assert "Paused 1 inactive active sessions" in mock_logger.info.call_args[0][0]
+            mock_logger.info.assert_called_once_with(
+                "Paused %s inactive active sessions (>%sm)",
+                1,
+                30,
+            )
 
     def test_register_logs_on_new_session(
         self,

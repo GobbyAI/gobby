@@ -39,7 +39,7 @@ class PollingManager:
             interval: Optional custom interval in seconds.
         """
         if self.is_polling(channel_name):
-            logger.warning(f"Already polling channel {channel_name!r}")
+            logger.warning("Already polling channel %r", channel_name)
             return
 
         poll_interval = interval if interval is not None else self._default_interval
@@ -50,7 +50,7 @@ class PollingManager:
             name=f"poll_{channel_name}",
         )
         self._tasks[channel_name] = task
-        logger.info(f"Started polling for {channel_name!r} (interval={poll_interval}s)")
+        logger.info("Started polling for %r (interval=%ss)", channel_name, poll_interval)
 
     def stop_polling(self, channel_name: str) -> None:
         """Stop background polling loop for a channel.
@@ -62,7 +62,7 @@ class PollingManager:
         self._intervals.pop(channel_name, None)
         if task is not None and not task.done():
             task.cancel()
-            logger.info(f"Stopped polling for {channel_name!r}")
+            logger.info("Stopped polling for %r", channel_name)
 
     def stop_all(self) -> None:
         """Stop all background polling loops."""
@@ -113,7 +113,10 @@ class PollingManager:
                 consecutive_failures += 1
                 sleep_duration = min(base_backoff * (2 ** (consecutive_failures - 1)), max_backoff)
                 logger.error(
-                    f"Error polling channel {channel_name!r}: {e} (backing off {sleep_duration}s)",
+                    "Error polling channel %r: %s (backing off %ss)",
+                    channel_name,
+                    e,
+                    sleep_duration,
                     exc_info=True,
                 )
                 await asyncio.sleep(sleep_duration)

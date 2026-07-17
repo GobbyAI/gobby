@@ -873,7 +873,9 @@ class TestBackgroundLoops:
             with patch("asyncio.sleep", side_effect=side_effect_sleep):
                 await manager._expire_loop()
 
-            mock_logger.assert_called_with("Error in expire loop: Boom")
+            mock_logger.assert_called_with(
+                "Error in expire loop: %s", manager._expire_stale_sessions.side_effect
+            )
             assert manager._running is False
 
     @pytest.mark.asyncio

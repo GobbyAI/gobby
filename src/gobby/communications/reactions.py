@@ -58,13 +58,15 @@ class ReactionHandler:
             message_id,
         )
         if not message:
-            logger.debug(f"Reaction {reaction} on unknown message {message_id} in {channel_name}")
+            logger.debug(
+                "Reaction %s on unknown message %s in %s", reaction, message_id, channel_name
+            )
             return
 
         # 2. Extract action mapping from message metadata or routing rules
         action = self._resolve_action(reaction, message.metadata_json)
         if not action:
-            logger.debug(f"No action mapped for reaction {reaction} on message {message_id}")
+            logger.debug("No action mapped for reaction %s on message %s", reaction, message_id)
             return
 
         # 3. Look up identity to map to Gobby user
@@ -74,10 +76,12 @@ class ReactionHandler:
             user_id,
         )
         if not identity:
-            logger.warning(f"Unknown user {user_id} reacted to message {message_id}")
+            logger.warning("Unknown user %s reacted to message %s", user_id, message_id)
             return
 
-        logger.info(f"Executing action {action} triggered by reaction {reaction} from {user_id}")
+        logger.info(
+            "Executing action %s triggered by reaction %s from %s", action, reaction, user_id
+        )
 
         # 4. Execute the action
         await self._execute_action(action, message, identity)
@@ -109,7 +113,7 @@ class ReactionHandler:
         elif action == "reject":
             await self._handle_approval(message, identity, approved=False)
         else:
-            logger.warning(f"Unknown action: {action}")
+            logger.warning("Unknown action: %s", action)
 
     async def _handle_approval(self, message: Any, identity: Any, approved: bool) -> None:
         """Handle pipeline approval actions."""
@@ -127,10 +131,10 @@ class ReactionHandler:
         executor = self._services.pipeline_executor
         if executor:
             if approved:
-                logger.info(f"Approving pipeline {pipeline_run_id} step {step_id}")
+                logger.info("Approving pipeline %s step %s", pipeline_run_id, step_id)
                 await executor.approve(token, approved_by=approver_id)
             else:
-                logger.info(f"Rejecting pipeline {pipeline_run_id} step {step_id}")
+                logger.info("Rejecting pipeline %s step %s", pipeline_run_id, step_id)
                 await executor.reject(token, rejected_by=approver_id)
             return
 
@@ -140,10 +144,10 @@ class ReactionHandler:
             return
 
         if approved:
-            logger.info(f"Approving pipeline {pipeline_run_id} step {step_id}")
+            logger.info("Approving pipeline %s step %s", pipeline_run_id, step_id)
             await approval_manager.approve_step(token, approved_by=approver_id)
         else:
-            logger.info(f"Rejecting pipeline {pipeline_run_id} step {step_id}")
+            logger.info("Rejecting pipeline %s step %s", pipeline_run_id, step_id)
             await approval_manager.reject_step(token, rejected_by=approver_id)
 
     def _get_approval_manager(self) -> Any | None:

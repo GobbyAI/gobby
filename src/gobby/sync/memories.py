@@ -99,7 +99,7 @@ def _normalize_memory_record_timestamps(
             if value in (None, ""):
                 continue
             location = f" at line {line_num}" if line_num is not None else ""
-            logger.warning(f"Skipping memory{location}: malformed {field} timestamp")
+            logger.warning("Skipping memory%s: malformed %s timestamp", location, field)
             return False
         record[field] = parsed
 
@@ -291,7 +291,7 @@ class MemoryBackupManager:
                 project_path = Path(project_ctx["project_path"]).expanduser().resolve()
                 return project_path / self.export_path
         except Exception as e:
-            logger.debug(f"Fallback to cwd since project context unavailable: {e}")
+            logger.debug("Fallback to cwd since project context unavailable: %s", e)
 
         # Fall back to current working directory
         return Path.cwd() / self.export_path
@@ -341,7 +341,7 @@ class MemoryBackupManager:
         except MemoryExportError:
             raise
         except Exception as e:
-            logger.error(f"Failed to backup memories: {e}", exc_info=True)
+            logger.error("Failed to backup memories: %s", e, exc_info=True)
             raise MemoryExportError(f"Failed to backup memories: {e}") from e
 
     # Backward compatibility alias
@@ -368,12 +368,12 @@ class MemoryBackupManager:
             with open(memories_file, encoding="utf-8") as f:
                 lines = [line for line in f if line.strip()]
 
-            logger.info(f"Importing memories from {memories_file}")
+            logger.info("Importing memories from %s", memories_file)
             return self._import_memories_from_lines(lines)
         except MemoryImportError:
             raise
         except Exception as e:
-            logger.warning(f"Failed to import memories: {e}")
+            logger.warning("Failed to import memories: %s", e)
             raise MemoryImportError(f"Failed to import memories: {e}") from e
 
     async def export_to_files(self, project_id: str | None = None, *, force: bool = False) -> int:
@@ -422,7 +422,7 @@ class MemoryBackupManager:
             with open(file_path, encoding="utf-8") as f:
                 lines = [line for line in f if line.strip()]
         except OSError as e:
-            logger.warning(f"Failed to import memories: {e}")
+            logger.warning("Failed to import memories: %s", e)
             return 0
         return self._import_memories_from_lines(lines)
 
@@ -460,15 +460,15 @@ class MemoryBackupManager:
                         continue
                     parsed_records.append(data)
                 except json.JSONDecodeError as exc:
-                    logger.warning(f"Invalid JSON in memories file: {line[:50]}...")
+                    logger.warning("Invalid JSON in memories file: %s...", line[:50])
                     raise MemoryImportError(
                         f"Invalid JSON in memories file on line {line_num}"
                     ) from exc
                 except Exception as e:
-                    logger.debug(f"Skipping memory import: {e}")
+                    logger.debug("Skipping memory import: %s", e)
 
         except Exception as e:
-            logger.error(f"Failed to import memories: {e}")
+            logger.error("Failed to import memories: %s", e)
             raise
 
         for data in self._deduplicate_records_by_id(parsed_records):
@@ -503,11 +503,11 @@ class MemoryBackupManager:
                 )
                 count += 1
             except Exception as e:
-                logger.warning(f"Failed to import memory: {e}")
+                logger.warning("Failed to import memory: %s", e)
                 continue
 
         if skipped > 0:
-            logger.debug(f"Skipped {skipped} duplicate memories during import")
+            logger.debug("Skipped %s duplicate memories during import", skipped)
 
         return count
 
@@ -527,7 +527,7 @@ class MemoryBackupManager:
         # Verify content exists and is a non-empty string
         content = data.get("content")
         if not isinstance(content, str) or not content.strip():
-            logger.warning(f"Skipping memory at line {line_num}: missing or empty content")
+            logger.warning("Skipping memory at line %s: missing or empty content", line_num)
             return False
 
         # Verify tags is a list; auto-convert comma-delimited strings
@@ -535,11 +535,11 @@ class MemoryBackupManager:
         if tags is not None and not isinstance(tags, list):
             if isinstance(tags, str):
                 logger.warning(
-                    f"Auto-converting comma-delimited tags string to list at line {line_num}",
+                    "Auto-converting comma-delimited tags string to list at line %s", line_num
                 )
                 data["tags"] = [t.strip() for t in tags.split(",") if t.strip()]
             else:
-                logger.warning(f"Skipping memory at line {line_num}: tags is not a list")
+                logger.warning("Skipping memory at line %s: tags is not a list", line_num)
                 return False
 
         return True
@@ -617,7 +617,7 @@ class MemoryBackupManager:
                 for prefix in (tilde_path + "/", tilde_path):
                     content = content.replace(prefix, "")
         except Exception as e:
-            logger.debug(f"Best-effort sanitization failed: {e}")
+            logger.debug("Best-effort sanitization failed: %s", e)
 
         return content
 
@@ -783,5 +783,5 @@ class MemoryBackupManager:
         except MemoryExportError:
             raise
         except Exception as e:
-            logger.error(f"Failed to export memories: {e}", exc_info=True)
+            logger.error("Failed to export memories: %s", e, exc_info=True)
             raise MemoryExportError(f"Failed to export memories: {e}") from e

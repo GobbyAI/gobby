@@ -79,16 +79,18 @@ def extract_keywords(
         result_words = result.split()
         if len(result_words) / len(words) < _NOISE_THRESHOLD:
             logger.debug(
-                f"YAKE extraction: {len(words)} words -> {len(result_words)} keywords "
-                f"({len(result_words) / len(words):.0%})"
+                "YAKE extraction: %s words -> %s keywords (%s)",
+                len(words),
+                len(result_words),
+                format(len(result_words) / len(words), ".0%"),
             )
             return result
 
         return None
 
     except ImportError as e:
-        logger.debug(f"YAKE not installed or failed to import: {e}")
+        logger.debug("YAKE not installed or failed to import: %s", e)
         return None
     except Exception as e:
-        logger.debug(f"YAKE extraction failed: {e}")
+        logger.debug("YAKE extraction failed: %s", e)
         return None

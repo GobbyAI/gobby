@@ -244,7 +244,7 @@ class Session:
             result: dict[str, Any] = json.loads(raw)
             return result
         except json.JSONDecodeError:
-            logger.warning(f"Failed to parse {field_name} JSON, returning None")
+            logger.warning("Failed to parse %s JSON, returning None", field_name)
             return None
 
     @property

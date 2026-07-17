@@ -121,7 +121,7 @@ class GitHubCollectionProvider(HubProvider):
             List of skill metadata dictionaries with 'slug', 'name' keys
         """
         if not self._repo or "/" not in self._repo:
-            logger.warning(f"Invalid repo format: {self._repo}")
+            logger.warning("Invalid repo format: %s", self._repo)
             return []
 
         owner, repo = self._repo.split("/", 1)
@@ -188,10 +188,10 @@ class GitHubCollectionProvider(HubProvider):
             return skills
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"GitHub API error: {e.response.status_code} for {url}")
+            logger.error("GitHub API error: %s for %s", e.response.status_code, url)
             return []
         except httpx.RequestError as e:
-            logger.error(f"GitHub API request failed: {e}")
+            logger.error("GitHub API request failed: %s", e)
             return []
 
     async def _dir_has_skill_md(
@@ -250,7 +250,7 @@ class GitHubCollectionProvider(HubProvider):
                     )
             return skills
         except (httpx.HTTPStatusError, httpx.RequestError) as e:
-            logger.debug(f"Failed to fetch subdirectory {category_name}: {e}")
+            logger.debug("Failed to fetch subdirectory %s: %s", category_name, e)
             return []
 
     async def _fetch_skill_content(self, slug: str) -> str | None:
@@ -296,13 +296,13 @@ class GitHubCollectionProvider(HubProvider):
                             label="SKILL.md",
                         )
                     except SkillContentError as e:
-                        logger.debug(f"Could not fetch SKILL.md for {slug}: {e}")
+                        logger.debug("Could not fetch SKILL.md for %s: %s", slug, e)
                         return None
         except httpx.HTTPStatusError as e:
-            logger.debug(f"Could not fetch SKILL.md for {slug}: {e.response.status_code}")
+            logger.debug("Could not fetch SKILL.md for %s: %s", slug, e.response.status_code)
             return None
         except httpx.RequestError as e:
-            logger.debug(f"Request failed fetching SKILL.md for {slug}: {e}")
+            logger.debug("Request failed fetching SKILL.md for %s: %s", slug, e)
             return None
 
     async def _synthesize_description(self, slug: str, content: str) -> str:
@@ -339,7 +339,7 @@ Output ONLY the description text, no quotes, no explanation, no preamble."""
             # Clean up LLM output
             return description.strip().strip('"').strip("'")[:100]
         except Exception as e:
-            logger.warning(f"Failed to synthesize description for {slug}: {e}")
+            logger.warning("Failed to synthesize description for %s: %s", slug, e)
             return ""
 
     async def _clone_skill(
@@ -552,7 +552,7 @@ Output ONLY the description text, no quotes, no explanation, no preamble."""
                 version=version or self.branch,
             )
         except Exception as e:
-            logger.error(f"Failed to download skill {slug}: {e}")
+            logger.error("Failed to download skill %s: %s", slug, e)
             return DownloadResult(
                 success=False,
                 slug=slug,

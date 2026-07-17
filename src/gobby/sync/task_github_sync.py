@@ -196,10 +196,10 @@ class GitHubTaskSyncMixin:
                 "message": f"Imported {imported_count} new issues, updated {len(imported) - imported_count} existing.",
             }
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse GitHub response: {e}")
+            logger.error("Failed to parse GitHub response: %s", e)
             return {"success": False, "error": f"Failed to parse GitHub response: {e}"}
         except Exception as e:
-            logger.error(f"Failed to import from GitHub: {e}")
+            logger.error("Failed to import from GitHub: %s", e)
             return {"success": False, "error": str(e)}
 
     async def _fetch_github_issues_mcp(
@@ -236,7 +236,7 @@ class GitHubTaskSyncMixin:
                             pass
             return []
         except Exception as e:
-            logger.debug(f"GitHub MCP issue fetch failed: {e}")
+            logger.debug("GitHub MCP issue fetch failed: %s", e)
             return None
 
     def _fetch_github_issues_cli(

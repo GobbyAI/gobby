@@ -106,7 +106,7 @@ class HubManager:
             factory: The provider class to instantiate for this type
         """
         self._factories[hub_type] = factory
-        logger.debug(f"Registered provider factory for hub type: {hub_type}")
+        logger.debug("Registered provider factory for hub type: %s", hub_type)
 
     def list_hubs(self) -> list[str]:
         """List all configured hub names.
@@ -229,7 +229,7 @@ class HubManager:
 
         # Create the provider
         provider = factory(**kwargs)
-        logger.debug(f"Created provider for hub: {hub_name} (type: {config.type})")
+        logger.debug("Created provider for hub: %s (type: %s)", hub_name, config.type)
 
         return provider
 
@@ -288,7 +288,7 @@ class HubManager:
         valid_hubs = []
         for hub_name in hubs_to_search:
             if not self.has_hub(hub_name):
-                logger.warning(f"Skipping unknown hub: {hub_name}")
+                logger.warning("Skipping unknown hub: %s", hub_name)
                 errors[hub_name] = f"Unknown hub: {hub_name}"
             else:
                 valid_hubs.append(hub_name)
@@ -305,7 +305,7 @@ class HubManager:
                 hub_results = await provider.search(query, limit=limit)
                 return [r.to_dict() for r in hub_results]
             except Exception as e:
-                logger.error(f"Error searching hub {hub_name}: {e}")
+                logger.error("Error searching hub %s: %s", hub_name, e)
                 hub_errors[hub_name] = str(e)
                 return []
 

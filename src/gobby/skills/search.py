@@ -280,7 +280,7 @@ class SkillSearch:
         await self._searcher.fit_async(items)
         self._indexed = True
         self._pending_updates = 0
-        logger.info(f"Skill search index built with {len(skills)} skills")
+        logger.info("Skill search index built with %s skills", len(skills))
 
     async def search_async(
         self,

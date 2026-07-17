@@ -177,7 +177,7 @@ class DedupService:
                     "Vector search unavailable, falling back to simple store", e
                 )
             else:
-                logger.warning(f"Vector search failed, falling back to simple store: {e}")
+                logger.warning("Vector search failed, falling back to simple store: %s", e)
             return await self._fallback_store(
                 content, project_id, memory_type, tags, source_type, source_session_id
             )
@@ -189,7 +189,7 @@ class DedupService:
 
             if score > NEAR_EXACT_THRESHOLD:
                 # Near-exact duplicate → NOOP
-                logger.debug(f"Near-exact duplicate found (score={score:.3f}), skipping")
+                logger.debug("Near-exact duplicate found (score=%.3f), skipping", score)
                 return result
 
             if score > SIMILAR_THRESHOLD:
@@ -201,8 +201,8 @@ class DedupService:
                 if existing and _is_richer_memory_content(content, existing.content):
                     if exclude_memory_id is not None:
                         logger.debug(
-                            "Similar memory update skipped because content is already stored "
-                            f"by excluded source memory {exclude_memory_id}"
+                            "Similar memory update skipped because content is already stored by excluded source memory %s",
+                            exclude_memory_id,
                         )
                         return result
                     updated = await self._run_storage(

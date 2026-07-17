@@ -341,7 +341,7 @@ class LocalWorkflowDefinitionManager:
             count = cursor.rowcount
         if count:
             bump_workflow_definitions_revision()
-            logger.info(f"Purged {count} soft-deleted workflow definitions")
+            logger.info("Purged %s soft-deleted workflow definitions", count)
         return count
 
     def list_all(

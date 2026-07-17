@@ -242,7 +242,7 @@ class SkillLoader:
                 skill = self.load_skill(item, validate=validate)
                 skills.append(skill)
             except Exception as e:
-                logger.warning(f"Skipping invalid skill: {e}")
+                logger.warning("Skipping invalid skill: %s", e)
                 continue
 
         return skills

@@ -165,7 +165,7 @@ class MergeResolutionManager:
             try:
                 listener()
             except Exception as e:
-                logger.error(f"Error in merge resolution change listener: {e}")
+                logger.error("Error in merge resolution change listener: %s", e)
 
     # =========================================================================
     # Resolution CRUD

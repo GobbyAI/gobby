@@ -210,7 +210,9 @@ class PromptChangeNotifier:
                 listener(event)
             except Exception as e:
                 logger.error(
-                    f"Error in prompt change listener {listener}: {e}",
+                    "Error in prompt change listener %s: %s",
+                    listener,
+                    e,
                     exc_info=True,
                 )
 
@@ -255,7 +257,7 @@ class LocalPromptManager:
                     prompt_name=prompt_name,
                 )
             except Exception as e:
-                logger.error(f"Error in prompt change notifier: {e}")
+                logger.error("Error in prompt change notifier: %s", e)
 
     def _check_bundled_writable(self, scope: str) -> None:
         """Raise ValueError if trying to mutate a bundled record in non-dev mode."""

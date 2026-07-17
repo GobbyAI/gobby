@@ -51,7 +51,7 @@ def backup_transcript(
     """
     source = Path(transcript_path)
     if not source.is_file():
-        logger.debug(f"Transcript source not found, skipping backup: {transcript_path}")
+        logger.debug("Transcript source not found, skipping backup: %s", transcript_path)
         return None
 
     dest_dir = get_archive_dir(archive_dir)
@@ -59,10 +59,10 @@ def backup_transcript(
 
     try:
         write_blocked_gzip_archive(str(source), str(dest))
-        logger.debug(f"Backed up transcript {transcript_path} -> {dest}")
+        logger.debug("Backed up transcript %s -> %s", transcript_path, dest)
         return str(dest)
     except Exception as e:
-        logger.warning(f"Failed to backup transcript {transcript_path}: {e}")
+        logger.warning("Failed to backup transcript %s: %s", transcript_path, e)
         return None
 
 
@@ -91,17 +91,17 @@ def restore_transcript(
     archive = dest_dir / f"{external_id}.jsonl.gz"
 
     if not archive.is_file():
-        logger.debug(f"No archive found for {external_id} at {archive}")
+        logger.debug("No archive found for %s at %s", external_id, archive)
         return False
 
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         with gzip.open(archive, "rb") as f_in, open(target, "wb") as f_out:
             shutil.copyfileobj(f_in, f_out)
-        logger.info(f"Restored transcript {archive} -> {target}")
+        logger.info("Restored transcript %s -> %s", archive, target)
         return True
     except (EOFError, zlib.error, gzip.BadGzipFile, OSError) as e:
-        logger.warning(f"Failed to restore transcript for {external_id}: {e}")
+        logger.warning("Failed to restore transcript for %s: %s", external_id, e)
         # Clean up partial file
         try:
             target.unlink(missing_ok=True)

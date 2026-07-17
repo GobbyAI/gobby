@@ -181,7 +181,7 @@ def load_skill_files(
             with file_path.open("rb") as file:
                 raw = file.read(limits.MAX_LOADED_FILE_BYTES + 1)
         except OSError:
-            logger.debug(f"Skipping unreadable file: {rel_path}")
+            logger.debug("Skipping unreadable file: %s", rel_path)
             continue
 
         size_bytes = len(raw)
@@ -194,7 +194,7 @@ def load_skill_files(
         try:
             content = raw.decode("utf-8")
         except UnicodeDecodeError:
-            logger.debug(f"Skipping unreadable file: {rel_path}")
+            logger.debug("Skipping unreadable file: %s", rel_path)
             continue
         total_size_bytes += size_bytes
 

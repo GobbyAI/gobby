@@ -111,4 +111,4 @@ class LocalSkillManager(SkillMetadataMixin, SkillFilesMixin):
                     metadata=metadata,
                 )
             except Exception as e:
-                logger.error(f"Error in skill change notifier: {e}")
+                logger.error("Error in skill change notifier: %s", e)

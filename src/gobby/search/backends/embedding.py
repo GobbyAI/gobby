@@ -134,7 +134,7 @@ class EmbeddingBackend:
                 self._item_embeddings = item_embeddings
                 self._fitted = True
                 self._needs_refit = False
-            logger.info(f"Embedding index built with {len(items)} items")
+            logger.info("Embedding index built with %s items", len(items))
         except Exception as e:
             # Clear stale state to prevent inconsistent data
             with self._state_lock:
@@ -143,7 +143,7 @@ class EmbeddingBackend:
                 self._item_embeddings = []
                 self._fitted = False
                 self._needs_refit = False
-            logger.error(f"Failed to build embedding index: {e}")
+            logger.error("Failed to build embedding index: %s", e)
             raise
 
     async def search_async(
@@ -180,7 +180,7 @@ class EmbeddingBackend:
                 is_query=True,
             )
         except Exception as e:
-            logger.error(f"Failed to embed query: {e}")
+            logger.error("Failed to embed query: %s", e)
             raise
 
         normalized_query = _normalize_vector(query_embedding)

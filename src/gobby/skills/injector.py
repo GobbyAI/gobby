@@ -224,7 +224,7 @@ class SkillInjector:
         if isinstance(depth_spec, list):
             if all(isinstance(depth, int) for depth in depth_spec):
                 return actual_depth in depth_spec
-            logger.warning(f"Invalid depth_spec list items: {depth_spec!r}")
+            logger.warning("Invalid depth_spec list items: %r", depth_spec)
             return False
         if isinstance(depth_spec, str):
             # Range format: "0-2" means 0, 1, 2
@@ -235,7 +235,7 @@ class SkillInjector:
                     return low <= actual_depth <= high
             except (ValueError, IndexError):
                 pass
-        logger.warning(f"Invalid depth_spec type {type(depth_spec).__name__}: {depth_spec!r}")
+        logger.warning("Invalid depth_spec type %s: %r", type(depth_spec).__name__, depth_spec)
         return False
 
     def _resolve_format(

@@ -163,10 +163,10 @@ class SessionLifecycleManager:
             getattr(self._kg_queue_config, "interval_minutes", 30) if self._kg_queue_config else 30
         )
         logger.info(
-            f"SessionLifecycleManager started "
-            f"(expire every {self.config.expire_check_interval_minutes}m, "
-            f"process every {self.config.transcript_processing_interval_minutes}m, "
-            f"kg_queue every {kg_interval}m)"
+            "SessionLifecycleManager started (expire every %sm, process every %sm, kg_queue every %sm)",
+            self.config.expire_check_interval_minutes,
+            self.config.transcript_processing_interval_minutes,
+            kg_interval,
         )
 
     async def stop(self, drain_timeout: float = 1.0) -> None:
@@ -212,17 +212,17 @@ class SessionLifecycleManager:
             try:
                 await self._expire_stale_sessions()
             except Exception as e:
-                logger.error(f"Error in expire loop: {e}")
+                logger.error("Error in expire loop: %s", e)
 
             try:
                 await self._purge_soft_deleted_definitions()
             except Exception as e:
-                logger.error(f"Error purging soft-deleted definitions: {e}")
+                logger.error("Error purging soft-deleted definitions: %s", e)
 
             try:
                 await self._purge_dream_hidden_memories()
             except Exception as e:
-                logger.error(f"Error purging dream-hidden memories: {e}")
+                logger.error("Error purging dream-hidden memories: %s", e)
 
             try:
                 await asyncio.sleep(interval_seconds)
@@ -237,7 +237,7 @@ class SessionLifecycleManager:
             try:
                 await self._process_pending_transcripts()
             except Exception as e:
-                logger.error(f"Error in process loop: {e}")
+                logger.error("Error in process loop: %s", e)
 
             try:
                 await asyncio.sleep(interval_seconds)
@@ -258,7 +258,7 @@ class SessionLifecycleManager:
             try:
                 await self._process_pending_graph_memories(batch_size)
             except Exception as e:
-                logger.error(f"Error in KG queue loop: {e}")
+                logger.error("Error in KG queue loop: %s", e)
 
             try:
                 await asyncio.sleep(interval_seconds)
@@ -299,7 +299,7 @@ class SessionLifecycleManager:
                     project_id=memory.project_id,
                 )
             except Exception as e:
-                logger.warning(f"KG processing failed for memory {memory.id}: {e}")
+                logger.warning("KG processing failed for memory %s: %s", memory.id, e)
                 try:
                     await self._run_memory_db(
                         self.memory_manager.record_graph_failure,
@@ -337,7 +337,7 @@ class SessionLifecycleManager:
                 logger.warning("Failed to persist KG state for memory %s: %s", memory.id, e)
 
         if processed > 0:
-            logger.debug(f"Processed {processed} memories for knowledge graph")
+            logger.debug("Processed %s memories for knowledge graph", processed)
 
         return processed
 
@@ -394,7 +394,7 @@ class SessionLifecycleManager:
             pass  # Handle directory access errors
 
         if removed > 0:
-            logger.info(f"Cleaned up {removed} stale prompt file(s)")
+            logger.info("Cleaned up %s stale prompt file(s)", removed)
         return removed
 
     async def _purge_soft_deleted_definitions(self) -> None:
@@ -405,7 +405,7 @@ class SessionLifecycleManager:
             wf_mgr = LocalWorkflowDefinitionManager(self.db)
             wf_mgr.purge_deleted(older_than_days=30)
         except Exception as e:
-            logger.error(f"Failed to purge soft-deleted definitions: {e}")
+            logger.error("Failed to purge soft-deleted definitions: %s", e)
 
     async def _purge_dream_hidden_memories(self) -> None:
         """Hard-purge aged dream-hidden memories and prune dream run/snapshot history.
@@ -433,7 +433,7 @@ class SessionLifecycleManager:
                     if inspect.isawaitable(result):
                         await result
                 except Exception as e:
-                    logger.error(f"Failed to purge dream-hidden {action} memories: {e}")
+                    logger.error("Failed to purge dream-hidden %s memories: %s", action, e)
 
         retention_days = getattr(config, "run_retention_days", 30)
         try:
@@ -442,7 +442,7 @@ class SessionLifecycleManager:
             store = MemoryDreamStore(self.db)
             await self._run_memory_db(store.prune_runs, retention_days)
         except Exception as e:
-            logger.error(f"Failed to prune dream run history: {e}")
+            logger.error("Failed to prune dream run history: %s", e)
 
     async def _process_pending_transcripts(self) -> int:
         """Process transcripts for expired sessions.
@@ -476,7 +476,7 @@ class SessionLifecycleManager:
             try:
                 await self._process_session_transcript(session.id, session.transcript_path)
             except Exception as e:
-                logger.error(f"Failed to process transcript for {session.id}: {e}")
+                logger.error("Failed to process transcript for %s: %s", session.id, e)
 
             skip_llm = agent_depth > 0 or source in ("pipeline", "cron")
 
@@ -493,14 +493,14 @@ class SessionLifecycleManager:
                 self.session_manager.mark_transcript_processed(session.id)
                 processed += 1
                 logger.info(
-                    f"Marked session {session.id} as processed "
-                    f"(transcript file missing, no further processing possible)"
+                    "Marked session %s as processed (transcript file missing, no further processing possible)",
+                    session.id,
                 )
                 continue
             if transcript_missing:
                 logger.info(
-                    f"Transcript gone for {session.id}; regenerating digest-backed "
-                    f"artifacts (summary/wiki) from the stored digest"
+                    "Transcript gone for %s; regenerating digest-backed artifacts (summary/wiki) from the stored digest",
+                    session.id,
                 )
 
             if not skip_llm:
@@ -517,8 +517,10 @@ class SessionLifecycleManager:
                 self.session_manager.mark_transcript_processed(session.id)
                 processed += 1
                 logger.debug(
-                    f"Processed transcript for {source} session {session.id} "
-                    f"(depth={agent_depth}, skipped summary)"
+                    "Processed transcript for %s session %s (depth=%s, skipped summary)",
+                    source,
+                    session.id,
+                    agent_depth,
                 )
                 continue
 
@@ -526,7 +528,7 @@ class SessionLifecycleManager:
             try:
                 await self._generate_artifacts_if_needed(session.id)
             except Exception as e:
-                logger.warning(f"Artifact generation failed for {session.id}: {e}")
+                logger.warning("Artifact generation failed for %s: %s", session.id, e)
 
             # Step 3: Decide whether the session is settled enough to mark processed.
             #   - LLM unavailable: nothing more we can do, finalize.
@@ -546,11 +548,11 @@ class SessionLifecycleManager:
             if should_mark:
                 self.session_manager.mark_transcript_processed(session.id)
                 processed += 1
-                logger.debug(f"Processed transcript for session {session.id}")
+                logger.debug("Processed transcript for session %s", session.id)
             else:
                 logger.info(
-                    f"Deferring transcript_processed for {session.id} — "
-                    f"digest-backed artifacts not yet complete"
+                    "Deferring transcript_processed for %s — digest-backed artifacts not yet complete",
+                    session.id,
                 )
 
             # Step 4: Best-effort backup of the transcript archive
@@ -565,16 +567,17 @@ class SessionLifecycleManager:
                     )
                     if archive_path:
                         logger.debug(
-                            f"Archived transcript for session {session.id} "
-                            f"(archived to {archive_path})"
+                            "Archived transcript for session %s (archived to %s)",
+                            session.id,
+                            archive_path,
                         )
                     else:
-                        logger.warning(f"Transcript backup returned None for {session.id}")
+                        logger.warning("Transcript backup returned None for %s", session.id)
                 except Exception as e:
-                    logger.warning(f"Transcript backup failed for {session.id}: {e}")
+                    logger.warning("Transcript backup failed for %s: %s", session.id, e)
 
         if processed > 0:
-            logger.debug(f"Processed {processed} session transcripts")
+            logger.debug("Processed %s session transcripts", processed)
 
         return processed
 
@@ -619,7 +622,7 @@ class SessionLifecycleManager:
                 set_handoff_ready=False,  # already expired, don't change status
             )
         except Exception as e:
-            logger.warning(f"Artifact generation failed for session {session_id}: {e}")
+            logger.warning("Artifact generation failed for session %s: %s", session_id, e)
 
     async def _process_session_transcript(
         self, session_id: str, transcript_path: str | None
@@ -636,7 +639,7 @@ class SessionLifecycleManager:
             transcript_path: Path to transcript JSONL file
         """
         if not transcript_path or not os.path.exists(transcript_path):
-            logger.warning(f"Transcript not found for session {session_id}: {transcript_path}")
+            logger.warning("Transcript not found for session %s: %s", session_id, transcript_path)
             return
 
         # Read entire file
@@ -644,7 +647,7 @@ class SessionLifecycleManager:
             with open(transcript_path, encoding="utf-8") as f:
                 raw = f.read()
         except Exception as e:
-            logger.error(f"Error reading transcript {transcript_path}: {e}")
+            logger.error("Error reading transcript %s: %s", transcript_path, e)
             raise
 
         if not raw.strip():
@@ -678,7 +681,7 @@ class SessionLifecycleManager:
             try:
                 data = json.loads(raw)
             except json.JSONDecodeError as e:
-                logger.error(f"Invalid JSON in transcript {transcript_path}: {e}")
+                logger.error("Invalid JSON in transcript %s: %s", transcript_path, e)
                 return
             messages = [
                 r

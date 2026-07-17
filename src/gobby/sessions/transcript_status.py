@@ -91,7 +91,7 @@ async def _json_transcript_counts(
         )
         return raw_record_count, parsed_message_count, detected_source, False
     except (json.JSONDecodeError, ValueError, OSError) as e:
-        logger.warning(f"Failed to parse JSON transcript for session {session_id}: {e}")
+        logger.warning("Failed to parse JSON transcript for session %s: %s", session_id, e)
         return 0, 0, None, True
 
 
@@ -119,7 +119,7 @@ async def _jsonl_transcript_counts(
         )
         return index.raw_record_count, index.parsed_message_count, detected_source, False
     except (OSError, ValueError) as e:
-        logger.warning(f"Failed to parse JSONL transcript for session {session_id}: {e}")
+        logger.warning("Failed to parse JSONL transcript for session %s: %s", session_id, e)
         return 0, 0, None, True
 
 
@@ -155,7 +155,7 @@ async def _archive_transcript_counts(
         )
         return index.raw_record_count, index.parsed_message_count, detected_source, False
     except (DecompressionError, json.JSONDecodeError, ValueError, OSError) as e:
-        logger.warning(f"Failed to read archive for session {session_id}: {e}")
+        logger.warning("Failed to read archive for session %s: %s", session_id, e)
         return 0, 0, None, True
 
 

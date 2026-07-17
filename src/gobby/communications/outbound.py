@@ -99,18 +99,18 @@ class OutboundCommunications:
         except Exception as e:
             message.status = "failed"
             message.error = str(e)
-            logger.error(f"Failed to send message to {channel_name!r}: {e}", exc_info=True)
+            logger.error("Failed to send message to %r: %s", channel_name, e, exc_info=True)
 
         try:
             await asyncio.to_thread(manager._store.create_message, message)
         except Exception as e:
-            logger.error(f"Failed to store outbound message: {e}", exc_info=True)
+            logger.error("Failed to store outbound message: %s", e, exc_info=True)
 
         if manager.event_callback is not None:
             try:
                 await manager.event_callback("comms.message_sent", message=message)
             except Exception as e:
-                logger.warning(f"Event callback error on send_message: {e}", exc_info=True)
+                logger.warning("Event callback error on send_message: %s", e, exc_info=True)
 
         return message
 
@@ -179,17 +179,17 @@ class OutboundCommunications:
         except NotImplementedError:
             message.status = "failed"
             message.error = f"{channel.channel_type} adapter does not support file attachments"
-            logger.error(f"Adapter {channel_name!r} does not support attachments")
+            logger.error("Adapter %r does not support attachments", channel_name)
         except Exception as e:
             message.status = "failed"
             message.error = str(e)
-            logger.error(f"Failed to send attachment to {channel_name!r}: {e}", exc_info=True)
+            logger.error("Failed to send attachment to %r: %s", channel_name, e, exc_info=True)
 
         try:
             await asyncio.to_thread(manager._store.create_message, message)
             await asyncio.to_thread(manager._store.create_attachment, attachment)
         except Exception as e:
-            logger.error(f"Failed to store outbound attachment: {e}", exc_info=True)
+            logger.error("Failed to store outbound attachment: %s", e, exc_info=True)
 
         if manager.event_callback is not None:
             try:
@@ -197,7 +197,7 @@ class OutboundCommunications:
                     "comms.attachment_sent", message=message, attachment=attachment
                 )
             except Exception as e:
-                logger.warning(f"Event callback error on send_attachment: {e}", exc_info=True)
+                logger.warning("Event callback error on send_attachment: %s", e, exc_info=True)
 
         return message, attachment
 
@@ -227,7 +227,7 @@ class OutboundCommunications:
                 msg = await manager.send_message(channel_name, content, session_id=session_id)
                 messages.append(msg)
             except Exception as e:
-                logger.error(f"send_event: failed to send to {channel_name!r}: {e}")
+                logger.error("send_event: failed to send to %r: %s", channel_name, e)
 
         return messages
 
@@ -266,18 +266,18 @@ class OutboundCommunications:
             message.status = "failed"
             message.error = str(exc)
             logger.error(
-                f"Failed to send proactive message to {channel_name!r}: {exc}", exc_info=True
+                "Failed to send proactive message to %r: %s", channel_name, exc, exc_info=True
             )
 
         try:
             await asyncio.to_thread(manager._store.create_message, message)
         except Exception as exc:
-            logger.error(f"Failed to store proactive outbound message: {exc}", exc_info=True)
+            logger.error("Failed to store proactive outbound message: %s", exc, exc_info=True)
 
         if manager.event_callback is not None:
             try:
                 await manager.event_callback("comms.message_sent", message=message)
             except Exception as exc:
-                logger.warning(f"Event callback error on send_proactive: {exc}", exc_info=True)
+                logger.warning("Event callback error on send_proactive: %s", exc, exc_info=True)
 
         return message

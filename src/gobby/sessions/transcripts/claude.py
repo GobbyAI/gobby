@@ -233,7 +233,7 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             result = turns[-max_turns:] if max_turns and len(turns) > max_turns else turns
             result, removed = self._validate_tool_pairing(result)
             if removed:
-                self.logger.debug(f"Removed {len(removed)} orphaned tool_results: {removed}")
+                self.logger.debug("Removed %s orphaned tool_results: %s", len(removed), removed)
             return result
 
         # Start after the most recent /clear
@@ -258,7 +258,7 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
         result = turns[start_idx:end_idx]
         result, removed = self._validate_tool_pairing(result)
         if removed:
-            self.logger.debug(f"Removed {len(removed)} orphaned tool_results: {removed}")
+            self.logger.debug("Removed %s orphaned tool_results: %s", len(removed), removed)
         return result
 
     def is_session_boundary(self, turn: dict[str, Any]) -> bool:

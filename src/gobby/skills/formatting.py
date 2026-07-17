@@ -157,8 +157,8 @@ def recommend_skills_for_task(
         category = task.get("category")
         return manager.recommend_skills(category=category)
     except (ImportError, ValueError, KeyError, RuntimeError) as e:
-        logger.debug(f"Failed to recommend skills (expected): {e}")
+        logger.debug("Failed to recommend skills (expected): %s", e)
         return []
     except Exception as e:
-        logger.warning(f"Unexpected error recommending skills: {e}")
+        logger.warning("Unexpected error recommending skills: %s", e)
         raise

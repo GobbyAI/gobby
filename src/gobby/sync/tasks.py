@@ -335,10 +335,10 @@ class TaskSyncManager(GitHubTaskSyncMixin):
                 content = "".join(json_dumps(item) + "\n" for item in merged_records)
                 atomic_write_text(target_path, content)
 
-            logger.info(f"Exported {len(merged_records)} tasks to {target_path}")
+            logger.info("Exported %s tasks to %s", len(merged_records), target_path)
 
         except Exception as e:
-            logger.error(f"Failed to export tasks: {e}", exc_info=True)
+            logger.error("Failed to export tasks: %s", e, exc_info=True)
             raise
 
     def import_from_jsonl(self, project_id: str | None = None) -> None:
@@ -352,7 +352,7 @@ class TaskSyncManager(GitHubTaskSyncMixin):
         target_path = self._get_export_path(project_id)
 
         if not target_path.exists():
-            logger.debug(f"No task export file found at {target_path}, skipping import")
+            logger.debug("No task export file found at %s, skipping import", target_path)
             return
 
         try:
@@ -434,14 +434,17 @@ class TaskSyncManager(GitHubTaskSyncMixin):
                     raw_updated_at = data.get("updated_at")
                     if raw_updated_at is None:
                         # Skip tasks without timestamps or use a safe default
-                        logger.warning(f"Task {task_id} missing updated_at, skipping")
+                        logger.warning("Task %s missing updated_at, skipping", task_id)
                         skipped_count += 1
                         continue
                     try:
                         updated_at_file = _parse_timestamp(raw_updated_at)
                     except ValueError as e:
                         logger.warning(
-                            f"Task {task_id}: malformed timestamp '{raw_updated_at}': {e}, skipping"
+                            "Task %s: malformed timestamp '%s': %s, skipping",
+                            task_id,
+                            raw_updated_at,
+                            e,
                         )
                         skipped_count += 1
                         continue
@@ -472,8 +475,10 @@ class TaskSyncManager(GitHubTaskSyncMixin):
                                 updated_at_db = _parse_timestamp(db_updated_at)
                             except ValueError as e:
                                 logger.warning(
-                                    f"Task {task_id}: failed to parse DB timestamp "
-                                    f"'{db_updated_at}': {e}, treating as old"
+                                    "Task %s: failed to parse DB timestamp '%s': %s, treating as old",
+                                    task_id,
+                                    db_updated_at,
+                                    e,
                                 )
                                 updated_at_db = datetime.min.replace(tzinfo=UTC)
                         existing_seq_num = existing_row["seq_num"]
@@ -495,7 +500,7 @@ class TaskSyncManager(GitHubTaskSyncMixin):
                             )
                         except (KeyError, TypeError, ValueError) as e:
                             logger.warning(
-                                f"Task {task_id}: malformed timestamp field: {e}, skipping"
+                                "Task %s: malformed timestamp field: %s, skipping", task_id, e
                             )
                             skipped_count += 1
                             continue
@@ -698,8 +703,9 @@ class TaskSyncManager(GitHubTaskSyncMixin):
                     for depends_on in dependencies:
                         if task_id not in existing_tasks or depends_on not in existing_tasks:
                             logger.warning(
-                                f"Skipping dependency {task_id} -> {depends_on}: "
-                                "endpoint missing after import"
+                                "Skipping dependency %s -> %s: endpoint missing after import",
+                                task_id,
+                                depends_on,
                             )
                             continue
                         conn.execute(
@@ -713,20 +719,23 @@ class TaskSyncManager(GitHubTaskSyncMixin):
                         )
 
             logger.info(
-                f"Import complete: {imported_count} imported, {deleted_count} deleted, "
-                f"{updated_count} updated, {skipped_count} skipped"
+                "Import complete: %s imported, %s deleted, %s updated, %s skipped",
+                imported_count,
+                deleted_count,
+                updated_count,
+                skipped_count,
             )
 
             # Rebuild search index to include imported tasks
             if imported_count > 0 or updated_count > 0 or deleted_count > 0:
                 try:
                     stats = self.task_manager.reindex_search(project_id)
-                    logger.debug(f"Search index rebuilt with {stats.get('item_count', 0)} tasks")
+                    logger.debug("Search index rebuilt with %s tasks", stats.get("item_count", 0))
                 except Exception as e:
-                    logger.warning(f"Failed to rebuild search index: {e}")
+                    logger.warning("Failed to rebuild search index: %s", e)
 
         except Exception as e:
-            logger.error(f"Failed to import tasks: {e}", exc_info=True)
+            logger.error("Failed to import tasks: %s", e, exc_info=True)
             raise
 
     def get_sync_status(self) -> dict[str, Any]:

@@ -170,14 +170,14 @@ class UnifiedSearcher:
 
         # Log warning if configured
         if self._config.notify_on_fallback:
-            logger.warning(f"Search fallback: {reason}")
+            logger.warning("Search fallback: %s", reason)
 
         # Call event callback if provided
         if self._event_callback:
             try:
                 self._event_callback(event)
             except Exception as e:
-                logger.error(f"Fallback callback error: {e}")
+                logger.error("Fallback callback error: %s", e)
 
     async def _fallback_to_keyword(
         self,
@@ -311,7 +311,7 @@ class UnifiedSearcher:
                     self._using_fallback = False
                     self._fallback_reason = None
                 except Exception as e:
-                    logger.warning(f"Hybrid embedding indexing failed: {e}")
+                    logger.warning("Hybrid embedding indexing failed: %s", e)
                     self._emit_fallback_event(
                         f"Hybrid mode embedding failed: {e}",
                         error=e,
@@ -356,8 +356,9 @@ class UnifiedSearcher:
         # Check for mode mismatch between fit and search
         if self._fitted_mode is not None and self._fitted_mode != mode:
             logger.warning(
-                f"Search mode changed from {self._fitted_mode.value} to {mode.value} "
-                "since last fit. Falling back to keyword search. Call fit_async() to reindex."
+                "Search mode changed from %s to %s since last fit. Falling back to keyword search. Call fit_async() to reindex.",
+                self._fitted_mode.value,
+                mode.value,
             )
             if self._keyword_backend is not None and not self._keyword_backend.needs_refit():
                 return await self._keyword_backend.search_async(query, top_k)
@@ -425,7 +426,7 @@ class UnifiedSearcher:
             try:
                 embedding_results = await self._embedding_backend.search_async(query, top_k * 2)
             except Exception as e:
-                logger.warning(f"Hybrid embedding search failed: {e}")
+                logger.warning("Hybrid embedding search failed: %s", e)
                 self._emit_fallback_event(f"Hybrid search embedding failed: {e}", error=e)
                 # Continue with keyword only for this search
 

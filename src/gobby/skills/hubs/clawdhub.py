@@ -70,7 +70,7 @@ class ClawdHubProvider(HubProvider):
 
             if process.returncode == 0:
                 version = stdout.decode().strip() or stderr.decode().strip()
-                logger.debug(f"ClawHub CLI version: {version}")
+                logger.debug("ClawHub CLI version: %s", version)
                 self._cli_binary = "clawhub"
                 return True
             return False
@@ -78,7 +78,7 @@ class ClawdHubProvider(HubProvider):
             logger.warning("ClawHub CLI not found. Install with: npm i -g clawhub")
             return False
         except Exception as e:
-            logger.error(f"Error checking ClawHub CLI: {e}")
+            logger.error("Error checking ClawHub CLI: %s", e)
             return False
 
     async def _run_cli_command(
@@ -123,7 +123,7 @@ class ClawdHubProvider(HubProvider):
 
             if process.returncode != 0:
                 error_msg = stderr.decode().strip() if stderr else "Unknown error"
-                logger.error(f"ClawHub CLI error: {error_msg}")
+                logger.error("ClawHub CLI error: %s", error_msg)
                 raise RuntimeError(f"ClawHub CLI command failed: {error_msg}")
 
             return stdout.decode().strip()
@@ -155,7 +155,7 @@ class ClawdHubProvider(HubProvider):
             parsed: dict[str, Any] | list[Any] = json.loads(output)
             return parsed
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse CLI JSON output: {e}")
+            logger.error("Failed to parse CLI JSON output: %s", e)
             raise RuntimeError(f"Invalid JSON from ClawHub CLI: {e}") from e
 
     @staticmethod

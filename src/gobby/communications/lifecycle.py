@@ -54,12 +54,13 @@ class AdapterLifecycleOperations:
             try:
                 await self.activate_channel(channel)
                 logger.info(
-                    f"Communications: initialized channel {channel.name!r} "
-                    f"({channel.channel_type})",
+                    "Communications: initialized channel %r (%s)",
+                    channel.name,
+                    channel.channel_type,
                 )
             except Exception as e:
-                logger.error(f"Failed to initialize channel {channel.name!r}: {e}", exc_info=True)
-        logger.info(f"CommunicationsManager started ({len(manager._adapters)} channels active)")
+                logger.error("Failed to initialize channel %r: %s", channel.name, e, exc_info=True)
+        logger.info("CommunicationsManager started (%s channels active)", len(manager._adapters))
 
     async def _migrate_plaintext_webhook_secrets(self) -> None:
         """Move legacy plaintext webhook secrets into SecretStore before activation."""
@@ -97,7 +98,7 @@ class AdapterLifecycleOperations:
             try:
                 await adapter.shutdown()
             except Exception as e:
-                logger.error(f"Error shutting down channel {name!r}: {e}", exc_info=True)
+                logger.error("Error shutting down channel %r: %s", name, e, exc_info=True)
         manager._adapters.clear()
         manager._channel_by_name.clear()
         manager._channel_init_errors.clear()
@@ -180,7 +181,7 @@ class AdapterLifecycleOperations:
         try:
             await adapter.shutdown()
         except Exception as e:
-            logger.error(f"Error shutting down channel {name!r}: {e}", exc_info=True)
+            logger.error("Error shutting down channel %r: %s", name, e, exc_info=True)
 
     async def add_channel(
         self,
@@ -227,10 +228,10 @@ class AdapterLifecycleOperations:
 
         try:
             await self.activate_channel(channel_config)
-            logger.info(f"Added channel {name!r} ({channel_type})")
+            logger.info("Added channel %r (%s)", name, channel_type)
         except Exception as e:
             manager._channel_init_errors[name] = str(e)
-            logger.error(f"Failed to initialize adapter for new channel {name!r}: {e}")
+            logger.error("Failed to initialize adapter for new channel %r: %s", name, e)
 
         return channel_config
 
@@ -247,9 +248,9 @@ class AdapterLifecycleOperations:
 
         try:
             await asyncio.to_thread(manager._store.delete_channel, channel.id)
-            logger.info(f"Removed channel {name!r}")
+            logger.info("Removed channel %r", name)
         except Exception as e:
-            logger.error(f"Failed to delete channel {name!r} from DB: {e}")
+            logger.error("Failed to delete channel %r from DB: %s", name, e)
             raise
 
     async def ensure_gobby_chat_channel(self) -> None:
@@ -277,7 +278,7 @@ class AdapterLifecycleOperations:
             await asyncio.to_thread(manager._store.create_channel, channel)
             logger.info("Auto-created gobby_chat channel for unified routing")
         except Exception as e:
-            logger.error(f"Failed to auto-create gobby_chat channel: {e}", exc_info=True)
+            logger.error("Failed to auto-create gobby_chat channel: %s", e, exc_info=True)
 
     def set_websocket_broadcast(self, broadcast: Any) -> None:
         """Wire the WebSocket broadcast callable into the gobby_chat adapter."""
@@ -330,7 +331,7 @@ class AdapterLifecycleOperations:
             await self.activate_channel(updated)
         except Exception as e:
             manager._channel_init_errors[updated.name] = str(e)
-            logger.error(f"Failed to initialize adapter for updated channel {updated.name!r}: {e}")
+            logger.error("Failed to initialize adapter for updated channel %r: %s", updated.name, e)
 
         return updated
 

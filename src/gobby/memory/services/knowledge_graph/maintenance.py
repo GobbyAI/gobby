@@ -43,9 +43,9 @@ class KnowledgeGraphMaintenance:
                 project_id=memory_scope,
             )
         except FalkorConnectionError as e:
-            logger.warning(f"FalkorDB unreachable during memory deletion: {e}")
+            logger.warning("FalkorDB unreachable during memory deletion: %s", e)
         except Exception as e:
-            logger.warning(f"Failed to delete Memory node {memory_id} from graph: {e}")
+            logger.warning("Failed to delete Memory node %s from graph: %s", memory_id, e)
 
     async def remove_memories_from_graph(self, memory_ids: set[str]) -> int:
         """Batch-remove Memory nodes and their MENTIONED_IN edges from FalkorDB.
@@ -75,10 +75,10 @@ class KnowledgeGraphMaintenance:
                 )
             return int(records[0]["deleted"]) if records else 0
         except FalkorConnectionError as e:
-            logger.warning(f"FalkorDB unreachable during batch memory deletion: {e}")
+            logger.warning("FalkorDB unreachable during batch memory deletion: %s", e)
             return 0
         except Exception as e:
-            logger.warning(f"Failed to batch-delete {len(memory_ids)} Memory nodes: {e}")
+            logger.warning("Failed to batch-delete %s Memory nodes: %s", len(memory_ids), e)
             return 0
 
     async def get_all_memory_node_ids(self) -> set[str]:
@@ -90,10 +90,10 @@ class KnowledgeGraphMaintenance:
             )
             return {r["id"] for r in records if r.get("id")}
         except FalkorConnectionError as e:
-            logger.warning(f"FalkorDB unreachable during memory node enumeration: {e}")
+            logger.warning("FalkorDB unreachable during memory node enumeration: %s", e)
             return set()
         except Exception as e:
-            logger.warning(f"Failed to enumerate Memory nodes: {e}")
+            logger.warning("Failed to enumerate Memory nodes: %s", e)
             return set()
 
     async def remove_orphaned_entities(
@@ -132,10 +132,10 @@ class KnowledgeGraphMaintenance:
                 )
             return total
         except FalkorConnectionError as e:
-            logger.warning(f"FalkorDB unreachable during orphan entity cleanup: {e}")
+            logger.warning("FalkorDB unreachable during orphan entity cleanup: %s", e)
             return 0
         except Exception as e:
-            logger.warning(f"Failed to remove orphaned entities: {e}")
+            logger.warning("Failed to remove orphaned entities: %s", e)
             return 0
 
     async def clear_graph(self, project_id: str | None = None) -> dict[str, int]:
@@ -164,10 +164,10 @@ class KnowledgeGraphMaintenance:
                 }
             return await self.clear_project_graph(project_id)
         except FalkorConnectionError as e:
-            logger.warning(f"FalkorDB unreachable during clear_graph: {e}")
+            logger.warning("FalkorDB unreachable during clear_graph: %s", e)
             return {"memories_deleted": 0, "entities_deleted": 0}
         except Exception as e:
-            logger.warning(f"Failed to clear graph: {e}")
+            logger.warning("Failed to clear graph: %s", e)
             return {"memories_deleted": 0, "entities_deleted": 0}
 
     async def clear_project_graph(self, project_id: str) -> dict[str, int]:
@@ -190,8 +190,8 @@ class KnowledgeGraphMaintenance:
                 "entities_deleted": entities_deleted,
             }
         except FalkorConnectionError as e:
-            logger.warning(f"FalkorDB unreachable during clear_project_graph: {e}")
+            logger.warning("FalkorDB unreachable during clear_project_graph: %s", e)
             return {"memories_deleted": 0, "entities_deleted": 0}
         except Exception as e:
-            logger.warning(f"Failed to clear project graph: {e}")
+            logger.warning("Failed to clear project graph: %s", e)
             return {"memories_deleted": 0, "entities_deleted": 0}

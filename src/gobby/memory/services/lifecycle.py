@@ -135,7 +135,7 @@ class MemoryLifecycleService:
                     exclude_memory_id=exclude_memory_id,
                 )
             except Exception as e:
-                logger.warning(f"Background dedup failed: {e}")
+                logger.warning("Background dedup failed: %s", e)
 
         task = asyncio.create_task(_run_dedup(), name="memory-dedup")
         self._background_tasks.add(task)
@@ -150,9 +150,9 @@ class MemoryLifecycleService:
         _ = project_id
         try:
             await self._run_storage(self.storage.mark_pending_graph, memory_id)
-            logger.debug(f"Queued memory {memory_id} for graph processing")
+            logger.debug("Queued memory %s for graph processing", memory_id)
         except Exception as e:
-            logger.warning(f"Failed to queue memory {memory_id} for graph: {e}")
+            logger.warning("Failed to queue memory %s for graph: %s", memory_id, e)
 
     def get_pending_graph_memories(self, limit: int = 20) -> list[Memory]:
         """Get memories pending KG graph processing."""
@@ -192,7 +192,7 @@ class MemoryLifecycleService:
                 normalized_content, project_id
             )
             if existing_record:
-                logger.debug(f"Memory already exists: {existing_record.id}")
+                logger.debug("Memory already exists: %s", existing_record.id)
                 return self._record_to_memory(existing_record)
 
         # A soft-hidden duplicate is reactivated, not re-created as an invisible
@@ -221,7 +221,7 @@ class MemoryLifecycleService:
             try:
                 await self._crossref_service.create(memory)
             except Exception as e:
-                logger.warning(f"Auto-crossref failed for {memory.id}: {e}")
+                logger.warning("Auto-crossref failed for %s: %s", memory.id, e)
 
         if self._dedup_service_provider():
             self.fire_background_dedup(
@@ -289,13 +289,13 @@ class MemoryLifecycleService:
             try:
                 await self._vector_store.delete(memory_id)
             except Exception as e:
-                logger.warning(f"VectorStore delete failed for {memory_id}: {e}")
+                logger.warning("VectorStore delete failed for %s: %s", memory_id, e)
         kg_service = self._kg_service_provider()
         if kg_service:
             try:
                 await kg_service.remove_memory_from_graph(memory_id, project_id=project_id)
             except Exception as e:
-                logger.warning(f"Graph delete failed for {memory_id}: {e}")
+                logger.warning("Graph delete failed for %s: %s", memory_id, e)
 
     async def sync_memory_scope_indices(
         self,

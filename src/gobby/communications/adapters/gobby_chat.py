@@ -116,7 +116,7 @@ class GobbyChatAdapter(BaseChannelAdapter):
         try:
             await self._broadcast(payload)
         except Exception as e:
-            logger.error(f"Failed to broadcast Gobby Chat message: {e}", exc_info=True)
+            logger.error("Failed to broadcast Gobby Chat message: %s", e, exc_info=True)
             raise
 
         return message.id

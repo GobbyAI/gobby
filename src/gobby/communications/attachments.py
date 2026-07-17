@@ -49,7 +49,7 @@ class AttachmentManager:
             await asyncio.to_thread(dest.write_bytes, response.content)
 
         size = (await asyncio.to_thread(dest.stat)).st_size
-        logger.info(f"Downloaded attachment {safe_filename} ({size} bytes)")
+        logger.info("Downloaded attachment %s (%s bytes)", safe_filename, size)
         return dest
 
     async def store(self, content: bytes, filename: str) -> Path:
@@ -57,7 +57,7 @@ class AttachmentManager:
         safe_filename = self._safe_filename(filename)
         dest = self._storage_dir / safe_filename
         await asyncio.to_thread(dest.write_bytes, content)
-        logger.info(f"Stored attachment {safe_filename} ({len(content)} bytes)")
+        logger.info("Stored attachment %s (%s bytes)", safe_filename, len(content))
         return dest
 
     def get_path(self, filename: str) -> Path | None:
@@ -87,7 +87,7 @@ class AttachmentManager:
                 if removed >= limit:
                     break
         if removed:
-            logger.info(f"Cleaned up {removed} attachments older than {days} days")
+            logger.info("Cleaned up %s attachments older than %s days", removed, days)
         return removed
 
     def delete_paths(self, local_paths: Iterable[str]) -> int:

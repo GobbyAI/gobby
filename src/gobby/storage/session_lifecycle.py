@@ -81,7 +81,7 @@ def expire_stale_sessions(db: HubDatabase, timeout_hours: int = 24) -> int:
     )
     count = cursor.rowcount or 0
     if count > 0:
-        logger.info(f"Expired {count} stale sessions (>{timeout_hours}h inactive)")
+        logger.info("Expired %s stale sessions (>%sh inactive)", count, timeout_hours)
     return count
 
 
@@ -113,7 +113,7 @@ def expire_orphaned_handoff_sessions(db: HubDatabase, timeout_minutes: int = 30)
     )
     count = cursor.rowcount or 0
     if count > 0:
-        logger.info(f"Expired {count} orphaned handoff_ready sessions (>{timeout_minutes}m)")
+        logger.info("Expired %s orphaned handoff_ready sessions (>%sm)", count, timeout_minutes)
     return count
 
 
@@ -144,7 +144,7 @@ def pause_inactive_active_sessions(db: HubDatabase, timeout_minutes: int = 30) -
     )
     count = cursor.rowcount or 0
     if count > 0:
-        logger.info(f"Paused {count} inactive active sessions (>{timeout_minutes}m)")
+        logger.info("Paused %s inactive active sessions (>%sm)", count, timeout_minutes)
     return count
 
 
@@ -177,7 +177,9 @@ def expire_empty_sessions(db: HubDatabase, timeout_hours: int = 2) -> int:
     )
     count = cursor.rowcount or 0
     if count > 0:
-        logger.info(f"Fast-expired {count} empty sessions (0 messages, >{timeout_hours}h inactive)")
+        logger.info(
+            "Fast-expired %s empty sessions (0 messages, >%sh inactive)", count, timeout_hours
+        )
     return count
 
 
@@ -226,7 +228,9 @@ def prune_empty_sessions(db: HubDatabase, min_age_hours: int = 1) -> int:
     count = cursor.rowcount or 0
     skipped = max(candidate_count - count, 0)
     if count > 0:
-        logger.info(f"Pruned {count} empty ghost sessions (expired, 0 messages, >{min_age_hours}h)")
+        logger.info(
+            "Pruned %s empty ghost sessions (expired, 0 messages, >%sh)", count, min_age_hours
+        )
     if skipped > 0:
-        logger.info(f"Skipped pruning {skipped} empty ghost sessions with retained references")
+        logger.info("Skipped pruning %s empty ghost sessions with retained references", skipped)
     return count

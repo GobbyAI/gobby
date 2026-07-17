@@ -84,7 +84,7 @@ class TaskAffectedFileManager:
                 if row is not None:
                     results.append(TaskAffectedFile.from_row(row))
                 else:
-                    logger.debug(f"File {file_path} already tracked for task {task_id}")
+                    logger.debug("File %s already tracked for task %s", file_path, task_id)
             return results
 
     def get_files(self, task_id: str) -> list[TaskAffectedFile]:
@@ -117,7 +117,7 @@ class TaskAffectedFileManager:
                 ).fetchone()
                 return TaskAffectedFile.from_row(row) if row is not None else None
         except psycopg.IntegrityError:
-            logger.debug(f"File {file_path} already tracked for task {task_id}")
+            logger.debug("File %s already tracked for task %s", file_path, task_id)
             return None
 
     def remove_file(self, task_id: str, file_path: str) -> bool:

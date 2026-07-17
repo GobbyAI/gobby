@@ -151,7 +151,7 @@ def _handle_existing_gobby_skill(
             always_apply=parsed.always_apply,
             injection_format=parsed.injection_format,
         )
-        logger.info(f"Restored soft-deleted bundled skill: {parsed.name}")
+        logger.info("Restored soft-deleted bundled skill: %s", parsed.name)
         _persist_skill_files(storage, existing.id, parsed.loaded_files)
         result["updated"] += 1
         return
@@ -216,7 +216,7 @@ def sync_bundled_skills(db: HubDatabase) -> dict[str, Any]:
     }
 
     if not skills_path.exists():
-        logger.warning(f"Bundled skills path not found: {skills_path}")
+        logger.warning("Bundled skills path not found: %s", skills_path)
         result["success"] = False
         result["errors"].append(f"Skills path not found: {skills_path}")
         return result
@@ -266,7 +266,7 @@ def sync_bundled_skills(db: HubDatabase) -> dict[str, Any]:
         for skill in all_installed:
             if _is_gobby_owned(skill) and skill.name not in on_disk:
                 storage.delete_skill(skill.id)
-                logger.info(f"Soft-deleted orphaned bundled skill: {skill.name}")
+                logger.info("Soft-deleted orphaned bundled skill: %s", skill.name)
                 result["orphaned"] += 1
 
     # Heal project-scoped rows sourced from bundled template trees: they
@@ -283,11 +283,13 @@ def sync_bundled_skills(db: HubDatabase) -> dict[str, Any]:
 
     total = result["synced"] + result["updated"] + result["skipped"]
     logger.info(
-        f"Skill sync complete: {result['synced']} synced, "
-        f"{result['updated']} updated, {result['skipped']} skipped, "
-        f"{result['orphaned']} orphaned, "
-        f"{result['purged_project_overrides']} project overrides purged, "
-        f"{total} total"
+        "Skill sync complete: %s synced, %s updated, %s skipped, %s orphaned, %s project overrides purged, %s total",
+        result["synced"],
+        result["updated"],
+        result["skipped"],
+        result["orphaned"],
+        result["purged_project_overrides"],
+        total,
     )
 
     return result

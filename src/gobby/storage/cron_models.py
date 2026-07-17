@@ -60,7 +60,7 @@ class CronJob:
         try:
             action_config = json.loads(action_config_raw) if action_config_raw else {}
         except json.JSONDecodeError:
-            logger.warning(f"Bad JSON in action_config for job {row['id']}: {action_config_raw!r}")
+            logger.warning("Bad JSON in action_config for job %s: %r", row["id"], action_config_raw)
             action_config = {}
 
         return cls(

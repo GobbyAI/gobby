@@ -62,7 +62,7 @@ class SessionTaskManager:
                 """,
                 (session_id, task_id, action, now),
             )
-            logger.debug(f"Linked task {task_id} to session {session_id} with action {action}")
+            logger.debug("Linked task %s to session %s with action %s", task_id, session_id, action)
 
     def unlink_task(
         self,
@@ -79,7 +79,9 @@ class SessionTaskManager:
                 """,
                 (session_id, task_id, action),
             )
-            logger.debug(f"Unlinked task {task_id} from session {session_id} for action {action}")
+            logger.debug(
+                "Unlinked task %s from session %s for action %s", task_id, session_id, action
+            )
 
     def get_session_tasks(self, session_id: str) -> list[dict[str, Any]]:
         """

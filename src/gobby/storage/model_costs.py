@@ -91,7 +91,7 @@ class ModelCostStore:
                 rows,
             )
 
-        logger.info(f"Populated model_costs table with {len(rows)} models from registry")
+        logger.info("Populated model_costs table with %s models from registry", len(rows))
         return len(rows)
 
     def get_all(self) -> dict[str, ModelMetadata]:

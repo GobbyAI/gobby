@@ -121,13 +121,17 @@ class SkillManager:
                     self._search.add_skill(skill)
                 except Exception as e:
                     logger.error(
-                        f"Failed to add skill to search index "
-                        f"(event={event.event_type}, skill_id={event.skill_id}): {e}"
+                        "Failed to add skill to search index (event=%s, skill_id=%s): %s",
+                        event.event_type,
+                        event.skill_id,
+                        e,
                     )
             except ValueError as e:
                 logger.debug(
-                    f"Failed to get skill for {event.event_type} event "
-                    f"(skill_id={event.skill_id}): {e}"
+                    "Failed to get skill for %s event (skill_id=%s): %s",
+                    event.event_type,
+                    event.skill_id,
+                    e,
                 )
         elif event.event_type == "update":
             try:
@@ -136,21 +140,27 @@ class SkillManager:
                     self._search.update_skill(skill)
                 except Exception as e:
                     logger.error(
-                        f"Failed to update skill in search index "
-                        f"(event={event.event_type}, skill_id={event.skill_id}): {e}"
+                        "Failed to update skill in search index (event=%s, skill_id=%s): %s",
+                        event.event_type,
+                        event.skill_id,
+                        e,
                     )
             except ValueError as e:
                 logger.debug(
-                    f"Failed to get skill for {event.event_type} event "
-                    f"(skill_id={event.skill_id}): {e}"
+                    "Failed to get skill for %s event (skill_id=%s): %s",
+                    event.event_type,
+                    event.skill_id,
+                    e,
                 )
         elif event.event_type == "delete":
             try:
                 self._search.remove_skill(event.skill_id)
             except Exception as e:
                 logger.error(
-                    f"Failed to remove skill from search index "
-                    f"(event={event.event_type}, skill_id={event.skill_id}): {e}"
+                    "Failed to remove skill from search index (event=%s, skill_id=%s): %s",
+                    event.event_type,
+                    event.skill_id,
+                    e,
                 )
 
     # --- CRUD Operations ---

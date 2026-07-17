@@ -229,7 +229,7 @@ class SkillUpdater:
         except Exception as e:
             # Rollback on unexpected errors too
             rollback_succeeded = self._restore_backup(backup)
-            logger.exception(f"Unexpected error updating skill {skill_id}")
+            logger.exception("Unexpected error updating skill %s", skill_id)
             return SkillUpdateResult(
                 skill_id=skill_id,
                 skill_name=skill.name,
@@ -300,7 +300,7 @@ class SkillUpdater:
             )
             return True
         except Exception as e:
-            logger.error(f"Failed to restore backup for skill {backup.skill_id}: {e}")
+            logger.error("Failed to restore backup for skill %s: %s", backup.skill_id, e)
             return False
 
     def _fetch_from_local(self, skill: Skill) -> ParsedSkill:
@@ -416,7 +416,7 @@ class SkillUpdater:
                     f"external source ({skill.source_type}) without a security scan",
                     skill_id=skill.id,
                 ) from None
-            logger.warning(f"clawcare not installed, skipping security scan for {skill.name}")
+            logger.warning("clawcare not installed, skipping security scan for %s", skill.name)
             return
 
         if not scan_result["is_safe"]:

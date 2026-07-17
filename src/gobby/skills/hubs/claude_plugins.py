@@ -177,10 +177,10 @@ class ClaudePluginsProvider(HubProvider):
                 result: dict[str, Any] = response.json()
                 return result
             except httpx.HTTPStatusError as e:
-                logger.error(f"claude-plugins.dev API error: {e.response.status_code}")
+                logger.error("claude-plugins.dev API error: %s", e.response.status_code)
                 raise RuntimeError(f"claude-plugins.dev API error: {e.response.status_code}") from e
             except httpx.RequestError as e:
-                logger.error(f"claude-plugins.dev request failed: {e}")
+                logger.error("claude-plugins.dev request failed: %s", e)
                 raise RuntimeError(f"claude-plugins.dev request failed: {e}") from e
 
     def _parse_skill_info(self, skill: dict[str, Any]) -> HubSkillInfo:
@@ -237,7 +237,7 @@ class ClaudePluginsProvider(HubProvider):
             skills = result.get("skills", [])
             return [self._parse_skill_info(skill) for skill in skills]
         except RuntimeError:
-            logger.warning(f"Search failed for query: {query}")
+            logger.warning("Search failed for query: %s", query)
             return []
 
     async def list_skills(
@@ -380,14 +380,14 @@ class ClaudePluginsProvider(HubProvider):
             )
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"Failed to download skill {slug}: {e.response.status_code}")
+            logger.error("Failed to download skill %s: %s", slug, e.response.status_code)
             return DownloadResult(
                 success=False,
                 slug=slug,
                 error=f"Download failed: HTTP {e.response.status_code}",
             )
         except httpx.RequestError as e:
-            logger.error(f"Download request failed for skill {slug}: {e}")
+            logger.error("Download request failed for skill %s: %s", slug, e)
             return DownloadResult(
                 success=False,
                 slug=slug,
