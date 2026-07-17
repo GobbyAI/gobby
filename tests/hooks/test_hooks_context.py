@@ -53,7 +53,6 @@ def mock_hook_manager(temp_dir: Path, hub_db: HubDatabase) -> Iterator[HookManag
             daemon_port=60887,
             config=test_config,
             database=db,
-            log_file=str(temp_dir / "logs" / "hook-manager.log"),
         )
 
         # Pre-warm the daemon status cache
@@ -158,10 +157,11 @@ def test_session_start_context_injection(mock_hook_manager: Any) -> None:
         metadata={"_task_title": task_title},
     )
 
-    # Mock project context so _resolve_project_id doesn't raise for /tmp
-    fake_project = {"id": "test-project-id", "name": "test-project"}
-    with patch("gobby.utils.project_context.get_project_context", return_value=fake_project):
-        # Execute real handler for session start (now on _event_handlers)
+    with patch.object(
+        mock_hook_manager._project_id_resolver,
+        "resolve",
+        return_value="test-project-id",
+    ):
         response = mock_hook_manager._event_handlers.handle_session_start(event)
 
     # Verify context injection

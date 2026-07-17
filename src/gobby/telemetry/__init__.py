@@ -1,7 +1,7 @@
 """
 Gobby Telemetry Module.
 
-Provides public API for OpenTelemetry tracing, metrics, and logging integration.
+Provides public API for OpenTelemetry tracing, metrics, and formatted logging.
 Replaces legacy utils/logging.py and utils/metrics.py modules.
 """
 
@@ -11,7 +11,6 @@ import logging
 from typing import TYPE_CHECKING
 
 from opentelemetry import metrics, trace
-from opentelemetry.instrumentation.logging import LoggingInstrumentor
 
 from gobby.telemetry.context import extract_from_env, inject_into_env
 from gobby.telemetry.instruments import (
@@ -22,7 +21,7 @@ from gobby.telemetry.instruments import (
     observe_histogram,
     set_gauge,
 )
-from gobby.telemetry.logging import setup_otel_logging
+from gobby.telemetry.logging import setup_file_logging
 from gobby.telemetry.providers import (
     get_meter_provider,
     get_tracer_provider,
@@ -100,8 +99,8 @@ def init_telemetry(
     meter_provider = get_meter_provider(config)
     metrics.set_meter_provider(meter_provider)
 
-    # 3. Logging bridge and rotating files
-    setup_otel_logging(config, logging_config, verbose=verbose)
+    # 3. Rotating formatted log files
+    setup_file_logging(logging_config, verbose=verbose)
 
 
 def get_tracer(name: str, version: str | None = None) -> Tracer:
@@ -133,13 +132,5 @@ def get_meter(name: str, version: str | None = None) -> Meter:
 
 
 def shutdown_telemetry() -> None:
-    """
-    Shutdown telemetry and clear cache.
-    """
-    # Uninstrument logging bridge
-    instrumentor = LoggingInstrumentor()
-    if instrumentor.is_instrumented_by_opentelemetry:
-        instrumentor.uninstrument()
-
-    # Shutdown OTel providers
+    """Shutdown trace and meter providers and clear their caches."""
     shutdown_providers()

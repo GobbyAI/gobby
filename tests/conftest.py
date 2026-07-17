@@ -380,10 +380,6 @@ def protect_production_resources(
     safe_logs_dir = temp_dir / "logs"
     safe_logs_dir.mkdir(exist_ok=True)
 
-    safe_log_client = safe_logs_dir / "gobby.log"
-    safe_log_error = safe_logs_dir / "gobby-error.log"
-    safe_log_mcp_server = safe_logs_dir / "mcp-server.log"
-    safe_log_mcp_client = safe_logs_dir / "mcp-client.log"
     safe_hooks_dir = temp_dir / "hooks"
     safe_hooks_dir.mkdir(exist_ok=True)
 
@@ -394,10 +390,6 @@ def protect_production_resources(
         "GOBBY_HOME": str(safe_gobby_home_dir),
         "GOBBY_CONFIG_FILE": str(safe_config_file),  # Redirect config reads/writes
         "GOBBY_LOGGING_DIR": str(safe_logs_dir),
-        "GOBBY_LOGGING_CLIENT": str(safe_log_client),
-        "GOBBY_LOGGING_CLIENT_ERROR": str(safe_log_error),
-        "GOBBY_LOGGING_MCP_SERVER": str(safe_log_mcp_server),
-        "GOBBY_LOGGING_MCP_CLIENT": str(safe_log_mcp_client),
         "GOBBY_HOOKS_DIR": str(safe_hooks_dir),
     }
 

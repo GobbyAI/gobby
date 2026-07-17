@@ -116,7 +116,7 @@ def test_hook_manager_has_single_session_attribute() -> None:
         patch("gobby.hooks.session_lookup.SessionLookupService"),
         patch("gobby.storage.inter_session_messages.InterSessionMessageManager"),
     ):
-        manager = HookManager(log_file="/tmp/test-hook-manager.log")
+        manager = HookManager()
 
     assert manager._session_manager is components.session_manager
     assert not hasattr(manager, "_session_storage")

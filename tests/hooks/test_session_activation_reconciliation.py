@@ -1009,7 +1009,7 @@ def test_hook_manager_reconciles_before_rules(
         patch("gobby.hooks.session_lookup.SessionLookupService"),
         patch("gobby.storage.inter_session_messages.InterSessionMessageManager"),
     ):
-        manager = HookManager(log_file="/tmp/test-hook-manager.log")
+        manager = HookManager()
         manager._session_lookup.resolve.return_value = None
         manager._enricher.enrich = MagicMock()
         manager._handle_internal(event)

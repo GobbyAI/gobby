@@ -185,11 +185,7 @@ def test_installed_wheel_serves_packaged_index_html(tmp_path: Path) -> None:
         {
             "HOME": str(home),
             "GOBBY_HOME": str(gobby_home),
-            "GOBBY_LOGGING_CLIENT": str(tmp_path / "client.log"),
-            "GOBBY_LOGGING_CLIENT_ERROR": str(tmp_path / "client-error.log"),
-            "GOBBY_LOGGING_MCP_SERVER": str(tmp_path / "mcp-server.log"),
-            "GOBBY_LOGGING_MCP_CLIENT": str(tmp_path / "mcp-client.log"),
-            "GOBBY_LOGGING_HOOK_MANAGER": str(tmp_path / "hook-manager.log"),
+            "GOBBY_LOGGING_DIR": str(tmp_path / "logs"),
         }
     )
 

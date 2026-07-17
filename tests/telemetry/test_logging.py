@@ -4,17 +4,17 @@ import logging
 import warnings
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
 
+import gobby.telemetry as telemetry
 from gobby.config.logging import (
-    ERROR_LOG_FILENAME,
-    HOOK_MANAGER_LOG_FILENAME,
-    MAIN_LOG_FILENAME,
-    MCP_CLIENT_LOG_FILENAME,
-    MCP_SERVER_LOG_FILENAME,
+    DAEMON_LOG_FILENAME,
+    ERRORS_LOG_FILENAME,
+    HOOKS_LOG_FILENAME,
+    MCP_LOG_FILENAME,
     RUNTIME_LOG_FILENAME,
     LoggingSettings,
     resolved_log_path,
@@ -24,8 +24,8 @@ from gobby.telemetry.config import TelemetrySettings
 from gobby.telemetry.logging import (
     JsonOTelFormatter,
     OTelTraceFormatter,
+    classify_log_surface,
     setup_file_logging,
-    setup_otel_logging,
 )
 
 
@@ -118,45 +118,121 @@ def test_json_otel_formatter_serializes_non_json_extra_values():
     assert data["created_at"] == str(created_at)
 
 
-def test_setup_otel_logging_creates_files(telemetry_config, logging_config):
-    setup_otel_logging(telemetry_config, logging_config)
+@pytest.mark.parametrize(
+    ("logger_name", "expected"),
+    [
+        ("gobby", "daemon"),
+        ("gobby.runner", "daemon"),
+        ("gobby.hooks", "hooks"),
+        ("gobby.hooks.events", "hooks"),
+        ("gobby.hooks_extra", "daemon"),
+        ("gobby.mcp", "mcp"),
+        ("gobby.mcp.server", "mcp"),
+        ("gobby.mcp_proxy", "mcp"),
+        ("gobby.mcp_proxy.manager", "mcp"),
+        ("gobby.servers.routes.mcp", "mcp"),
+        ("gobby.servers.routes.mcp.tools", "mcp"),
+        ("gobby.scheduler.executor", "automation"),
+        ("gobby.dispatch.worker", "automation"),
+        ("gobby.build.runner", "automation"),
+        ("gobby.system_automation", "automation"),
+        ("gobby.workflows.pipeline_heartbeat", "automation"),
+    ],
+)
+def test_classify_log_surface(logger_name: str, expected: str) -> None:
+    assert classify_log_surface(logger_name) == expected
 
-    # Check that handlers are attached to root logger
-    root_logger = logging.getLogger("gobby")
-    assert len(root_logger.handlers) >= 3  # main, error, otel
 
-    # Trigger some logs
-    root_logger.info("Main log message")
-    root_logger.error("Error log message")
+def test_setup_file_logging_routes_each_record_to_one_primary_surface(
+    logging_config: LoggingSettings,
+) -> None:
+    setup_file_logging(logging_config)
 
-    logging.getLogger("gobby.hooks").info("Hook message")
-    logging.getLogger("gobby.mcp.server").info("MCP server message")
-    logging.getLogger("gobby.mcp.client").info("MCP client message")
-    # Verify files exist
-    assert resolved_log_path(logging_config, MAIN_LOG_FILENAME).exists()
-    assert resolved_log_path(logging_config, ERROR_LOG_FILENAME).exists()
-    assert resolved_log_path(logging_config, HOOK_MANAGER_LOG_FILENAME).exists()
-    assert resolved_log_path(logging_config, MCP_SERVER_LOG_FILENAME).exists()
-    assert resolved_log_path(logging_config, MCP_CLIENT_LOG_FILENAME).exists()
+    messages = {
+        "gobby.runner": "daemon-record",
+        "gobby.hooks.events": "hook-record",
+        "gobby.mcp_proxy.manager": "mcp-proxy-record",
+        "gobby.servers.routes.mcp.tools": "mcp-route-record",
+        # #13912 activates automation.log; until then these retain a daemon primary.
+        "gobby.scheduler.executor": "automation-fallback-record",
+    }
+    for logger_name, message in messages.items():
+        logging.getLogger(logger_name).info(message)
+    logging.getLogger("gobby.hooks.events").warning("hook-warning")
+    logging.getLogger("gobby.runner").info("daemon-info")
+
+    paths = {
+        "daemon": resolved_log_path(logging_config, DAEMON_LOG_FILENAME),
+        "errors": resolved_log_path(logging_config, ERRORS_LOG_FILENAME),
+        "hooks": resolved_log_path(logging_config, HOOKS_LOG_FILENAME),
+        "mcp": resolved_log_path(logging_config, MCP_LOG_FILENAME),
+    }
+    contents = {surface: path.read_text() for surface, path in paths.items()}
+
+    assert "daemon-record" in contents["daemon"]
+    assert "automation-fallback-record" in contents["daemon"]
+    assert "hook-record" in contents["hooks"]
+    assert "mcp-proxy-record" in contents["mcp"]
+    assert "mcp-route-record" in contents["mcp"]
+    for message in messages.values():
+        primary_writes = sum(message in contents[surface] for surface in ("daemon", "hooks", "mcp"))
+        assert primary_writes == 1
+
+    assert "hook-warning" in contents["hooks"]
+    assert "hook-warning" in contents["errors"]
+    assert "daemon-info" not in contents["errors"]
     assert not resolved_log_path(logging_config, RUNTIME_LOG_FILENAME).exists()
-
-    # Verify content
-    content = resolved_log_path(logging_config, MAIN_LOG_FILENAME).read_text()
-    assert "Main log message" in content
-
-    error_content = resolved_log_path(logging_config, ERROR_LOG_FILENAME).read_text()
-    assert "Error log message" in error_content
-
-    hook_content = resolved_log_path(logging_config, HOOK_MANAGER_LOG_FILENAME).read_text()
-    assert "Hook message" in hook_content
+    for retired_name in (
+        "gobby.log",
+        "gobby-error.log",
+        "hook-manager.log",
+        "mcp-server.log",
+        "mcp-client.log",
+    ):
+        assert not resolved_log_path(logging_config, retired_name).exists()
 
 
-def test_setup_otel_logging_rotation(telemetry_config, logging_config):
+def test_setup_file_logging_uses_root_handlers_and_shared_formatter_family(
+    logging_config: LoggingSettings,
+) -> None:
+    setup_file_logging(logging_config)
+
+    root_logger = logging.getLogger("gobby")
+    file_handlers = [
+        handler
+        for handler in root_logger.handlers
+        if isinstance(handler, logging.handlers.RotatingFileHandler)
+    ]
+    assert len(file_handlers) == 4
+    assert {type(handler.formatter) for handler in file_handlers} == {OTelTraceFormatter}
+    for name in ("gobby.hooks", "gobby.mcp", "gobby.mcp_proxy", "gobby.servers.routes.mcp"):
+        child = logging.getLogger(name)
+        assert child.propagate
+        assert child.handlers == []
+
+
+def test_setup_file_logging_reconfiguration_closes_replaced_handlers(
+    tmp_path: Path,
+) -> None:
+    first = LoggingSettings(dir=str(tmp_path / "first"), level="debug")
+    second = LoggingSettings(dir=str(tmp_path / "second"), level="debug")
+    setup_file_logging(first)
+    old_handlers = list(logging.getLogger("gobby").handlers)
+
+    setup_file_logging(second)
+
+    assert all(getattr(handler, "stream", None) is None for handler in old_handlers)
+    logging.getLogger("gobby.runner").info("second-phase")
+    assert "second-phase" in resolved_log_path(second, DAEMON_LOG_FILENAME).read_text()
+    assert "second-phase" not in resolved_log_path(first, DAEMON_LOG_FILENAME).read_text()
+
+
+def test_setup_file_logging_rotation(logging_config: LoggingSettings) -> None:
     # Set small max_size_mb for testing rotation
     logging_config.max_size_mb = 1  # 1MB
     logging_config.backup_count = 2
 
-    setup_otel_logging(telemetry_config, logging_config)
+    setup_file_logging(logging_config)
 
     logger = logging.getLogger("gobby")
     # Write a lot of data
@@ -165,20 +241,20 @@ def test_setup_otel_logging_rotation(telemetry_config, logging_config):
         logger.info(large_msg)
 
     # Check if rotated file exists
-    assert Path(f"{resolved_log_path(logging_config, MAIN_LOG_FILENAME)}.1").exists()
+    assert Path(f"{resolved_log_path(logging_config, DAEMON_LOG_FILENAME)}.1").exists()
 
 
-def test_setup_otel_logging_verbose_sets_debug(telemetry_config, logging_config):
+def test_setup_file_logging_verbose_sets_debug(logging_config: LoggingSettings) -> None:
     logging_config.level = "info"
-    setup_otel_logging(telemetry_config, logging_config, verbose=True)
+    setup_file_logging(logging_config, verbose=True)
 
     root_logger = logging.getLogger("gobby")
     assert root_logger.level == logging.DEBUG
 
 
-def test_setup_otel_logging_json_format(telemetry_config, logging_config):
+def test_setup_file_logging_json_format(logging_config: LoggingSettings) -> None:
     logging_config.format = "json"
-    setup_otel_logging(telemetry_config, logging_config)
+    setup_file_logging(logging_config)
 
     root_logger = logging.getLogger("gobby")
     handler = [
@@ -187,42 +263,21 @@ def test_setup_otel_logging_json_format(telemetry_config, logging_config):
     assert isinstance(handler.formatter, JsonOTelFormatter)
 
 
-def test_setup_otel_logging_sub_loggers(telemetry_config, logging_config):
-    setup_otel_logging(telemetry_config, logging_config)
-
-    for name in ["gobby.hooks", "gobby.mcp.server", "gobby.mcp.client"]:
-        logger = logging.getLogger(name)
-        assert not logger.propagate
-        assert len(logger.handlers) >= 1
-        assert any(isinstance(h, logging.handlers.RotatingFileHandler) for h in logger.handlers)
-
-
-def test_setup_otel_logging_suppresses_websockets_info(telemetry_config, logging_config):
+def test_setup_file_logging_suppresses_websockets_info(logging_config: LoggingSettings) -> None:
     logging.getLogger("websockets").setLevel(logging.INFO)
     logging.getLogger("websockets.server").setLevel(logging.INFO)
 
-    setup_otel_logging(telemetry_config, logging_config)
+    setup_file_logging(logging_config)
 
     assert logging.getLogger("websockets").level == logging.WARNING
     assert logging.getLogger("websockets.server").level == logging.WARNING
 
 
-def test_setup_otel_logging_attaches_otel_handler(telemetry_config, logging_config):
+def test_setup_file_logging_has_no_otel_log_handler(logging_config: LoggingSettings) -> None:
     from opentelemetry.sdk._logs import LoggingHandler
 
-    setup_otel_logging(telemetry_config, logging_config)
+    setup_file_logging(logging_config)
 
-    root_logger = logging.getLogger("gobby")
-    assert any(isinstance(h, LoggingHandler) for h in root_logger.handlers)
-
-
-def test_setup_file_logging_does_not_create_otel_provider(logging_config):
-    from opentelemetry.sdk._logs import LoggingHandler
-
-    with patch("gobby.telemetry.logging.get_logger_provider") as get_logger_provider:
-        setup_file_logging(logging_config)
-
-    get_logger_provider.assert_not_called()
     root_logger = logging.getLogger("gobby")
     assert not any(isinstance(h, LoggingHandler) for h in root_logger.handlers)
 
@@ -262,50 +317,12 @@ def test_daemon_init_activates_llm_instrumentor(telemetry_config, logging_config
             _instrumented.discard("anthropic")
 
 
-def test_shutdown_telemetry_skips_uninstrument_when_not_instrumented() -> None:
-    instrumentor = MagicMock()
-    instrumentor.is_instrumented_by_opentelemetry = False
-
-    with (
-        patch("gobby.telemetry.LoggingInstrumentor", return_value=instrumentor),
-        patch("gobby.telemetry.shutdown_providers") as mock_shutdown_providers,
-    ):
+def test_shutdown_telemetry_has_no_logging_bridge_and_shuts_down_providers() -> None:
+    with patch("gobby.telemetry.shutdown_providers") as mock_shutdown_providers:
         shutdown_telemetry()
 
-    instrumentor.uninstrument.assert_not_called()
-    assert instrumentor.uninstrument.call_count == 0
-    assert not instrumentor.uninstrument.called
+    assert not hasattr(telemetry, "LoggingInstrumentor")
     mock_shutdown_providers.assert_called_once()
-    assert mock_shutdown_providers.call_count == 1
-    assert mock_shutdown_providers.call_args is not None
-
-
-def test_shutdown_telemetry_uninstruments_when_active() -> None:
-    instrumentor = MagicMock()
-    instrumentor.is_instrumented_by_opentelemetry = True
-
-    with (
-        patch("gobby.telemetry.LoggingInstrumentor", return_value=instrumentor),
-        patch("gobby.telemetry.shutdown_providers") as mock_shutdown_providers,
-    ):
-        shutdown_telemetry()
-
-    instrumentor.uninstrument.assert_called_once()
-    assert instrumentor.uninstrument.call_count == 1
-    assert instrumentor.uninstrument.call_args is not None
-    mock_shutdown_providers.assert_called_once()
-    assert mock_shutdown_providers.call_count == 1
-    assert mock_shutdown_providers.call_args is not None
-
-
-def test_setup_otel_logging_clears_old_handlers(telemetry_config, logging_config):
-    root_logger = logging.getLogger("gobby")
-    mock_handler = logging.NullHandler()
-    root_logger.addHandler(mock_handler)
-    assert mock_handler in root_logger.handlers
-
-    setup_otel_logging(telemetry_config, logging_config)
-    assert mock_handler not in root_logger.handlers
 
 
 def test_otel_trace_formatter_short_name():

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import inspect
 import logging
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -46,7 +45,7 @@ def _mock_components(database: object, session_manager: object) -> SimpleNamespa
     )
 
 
-def test_hook_manager_forwards_injected_database_and_session_manager(tmp_path: Path) -> None:
+def test_hook_manager_forwards_injected_database_and_session_manager() -> None:
     """HookManager should pass daemon-owned storage handles into the factory."""
     database = MagicMock()
     session_manager = MagicMock()
@@ -65,7 +64,6 @@ def test_hook_manager_forwards_injected_database_and_session_manager(tmp_path: P
             daemon_port=60887,
             database=database,
             session_manager=session_manager,
-            log_file=str(tmp_path / "test-hook-manager.log"),
         )
 
     assert create.call_args.kwargs["database"] is database
@@ -74,7 +72,7 @@ def test_hook_manager_forwards_injected_database_and_session_manager(tmp_path: P
     assert manager._session_manager is session_manager
 
 
-def test_hook_manager_shutdown_leaves_injected_database_open(tmp_path: Path) -> None:
+def test_hook_manager_shutdown_leaves_injected_database_open() -> None:
     """HookManager shutdown should leave daemon-owned storage handles open."""
     database = MagicMock()
     session_manager = MagicMock()
@@ -94,7 +92,6 @@ def test_hook_manager_shutdown_leaves_injected_database_open(tmp_path: Path) -> 
             daemon_port=60887,
             database=database,
             session_manager=session_manager,
-            log_file=str(tmp_path / "test-hook-manager.log"),
         )
 
     manager.shutdown()
@@ -267,7 +264,7 @@ def test_factory_create_memory_fallback_threads_llm_service(
     assert components.memory_manager is fallback_manager
 
 
-def test_hook_manager_forwards_injected_memory_manager(tmp_path: Path) -> None:
+def test_hook_manager_forwards_injected_memory_manager() -> None:
     """HookManager should pass the daemon's MemoryManager into the factory."""
     database = MagicMock()
     session_manager = MagicMock()
@@ -289,7 +286,6 @@ def test_hook_manager_forwards_injected_memory_manager(tmp_path: Path) -> None:
             database=database,
             session_manager=session_manager,
             memory_manager=memory_manager,
-            log_file=str(tmp_path / "test-hook-manager.log"),
         )
 
     assert create.call_args.kwargs["memory_manager"] is memory_manager

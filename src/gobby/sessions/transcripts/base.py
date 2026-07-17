@@ -5,9 +5,10 @@ import logging
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Literal, Protocol, runtime_checkable
+
+from gobby.telemetry.logging import get_parser_error_logger, parser_error_log_path
 
 logger = logging.getLogger(__name__)
 
@@ -29,62 +30,15 @@ NON_MESSAGE_CONTENT_TYPES: frozenset[str] = RENDER_SKIP_CONTENT_TYPES | frozense
 
 
 class TranscriptParserErrorLog:
-    """Logs unrecognized JSONL content to ~/.gobby/logs/{cli}-parser-error.log"""
+    """Write unrecognized JSONL content to the configured parser diagnostic surface."""
 
-    def __init__(self, cli_name: str):
+    def __init__(self, cli_name: str) -> None:
         self.cli_name = cli_name
-        self.log_path = Path.home() / ".gobby" / "logs" / f"{cli_name}-parser-error.log"
+        self.logger = get_parser_error_logger(cli_name)
 
-        self.logger = logging.getLogger(f"gobby.parser_error.{cli_name}")
-        self.logger.setLevel(logging.INFO)
-        self.logger.propagate = False
-
-        try:
-            self.log_path.parent.mkdir(parents=True, exist_ok=True)
-        except OSError:
-            logger.debug(
-                "Failed to create transcript parser error log directory",
-                extra={"cli": cli_name, "path": str(self.log_path.parent)},
-                exc_info=True,
-            )
-            self._add_null_handler()
-            return
-
-        for handler in list(self.logger.handlers):
-            if (
-                isinstance(handler, RotatingFileHandler)
-                and Path(handler.baseFilename) != self.log_path
-            ):
-                self.logger.removeHandler(handler)
-                handler.close()
-
-        if not any(
-            isinstance(handler, RotatingFileHandler) and Path(handler.baseFilename) == self.log_path
-            for handler in self.logger.handlers
-        ):
-            # 10MB rotation, keep 5 backups
-            try:
-                handler = RotatingFileHandler(
-                    self.log_path,
-                    maxBytes=10 * 1024 * 1024,
-                    backupCount=5,
-                )
-            except OSError:
-                logger.debug(
-                    "Failed to open transcript parser error log",
-                    extra={"cli": cli_name, "path": str(self.log_path)},
-                    exc_info=True,
-                )
-                self._add_null_handler()
-                return
-            # Custom formatter to just pass through the message
-            formatter = logging.Formatter("%(message)s")
-            handler.setFormatter(formatter)
-            self.logger.addHandler(handler)
-
-    def _add_null_handler(self) -> None:
-        if not any(isinstance(handler, logging.NullHandler) for handler in self.logger.handlers):
-            self.logger.addHandler(logging.NullHandler())
+    @property
+    def log_path(self) -> Path:
+        return parser_error_log_path(self.cli_name)
 
     def log_unknown_block(
         self, line_num: int, session_id: str | None, block_type: str, raw: dict[str, Any]

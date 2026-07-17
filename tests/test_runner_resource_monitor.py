@@ -55,21 +55,21 @@ def _check(
 def test_first_tick_records_baseline_without_warning(
     logs_dir: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    (logs_dir / "gobby.log").write_bytes(b"x" * (5 * _MB))
+    (logs_dir / "daemon.log").write_bytes(b"x" * (5 * _MB))
 
     with caplog.at_level(logging.WARNING, logger="gobby.runner_maintenance_resources"):
         sizes = _check(logs_dir, None)
 
-    assert sizes == {"gobby.log": 5 * _MB}
+    assert sizes == {"daemon.log": 5 * _MB}
     assert not caplog.records
 
 
 def test_growth_over_cap_warns_with_per_file_attribution(
     logs_dir: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    (logs_dir / "gobby.log").write_bytes(b"x" * (3 * _MB))
+    (logs_dir / "daemon.log").write_bytes(b"x" * (3 * _MB))
     (logs_dir / "recall_signal.jsonl").write_bytes(b"x" * (100 * 1024))
-    previous = {"gobby.log": 0, "recall_signal.jsonl": 50 * 1024}
+    previous = {"daemon.log": 0, "recall_signal.jsonl": 50 * 1024}
 
     with caplog.at_level(logging.WARNING, logger="gobby.runner_maintenance_resources"):
         _check(logs_dir, previous, growth_warn_mb=1)
@@ -77,12 +77,12 @@ def test_growth_over_cap_warns_with_per_file_attribution(
     [record] = caplog.records
     message = record.getMessage()
     assert "grew" in message
-    assert "gobby.log +3.0MB" in message
+    assert "daemon.log +3.0MB" in message
     assert "recall_signal.jsonl" in message
 
 
 def test_steady_state_stays_silent(logs_dir: Path, caplog: pytest.LogCaptureFixture) -> None:
-    (logs_dir / "gobby.log").write_bytes(b"x" * (3 * _MB))
+    (logs_dir / "daemon.log").write_bytes(b"x" * (3 * _MB))
     previous = _check(logs_dir, None)
 
     with caplog.at_level(logging.WARNING, logger="gobby.runner_maintenance_resources"):

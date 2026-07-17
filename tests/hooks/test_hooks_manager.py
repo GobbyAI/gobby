@@ -72,7 +72,6 @@ def hook_manager_with_mocks(
             daemon_port=60887,
             config=test_config,
             database=db,
-            log_file=str(temp_dir / "logs" / "hook-manager.log"),
         )
 
         # Pre-warm the daemon status cache
@@ -643,7 +642,6 @@ class TestHookManagerConfigLoadError:
                 daemon_port=60887,
                 config=None,  # Force config loading
                 database=hub_db,
-                log_file=str(temp_dir / "logs" / "hook-manager.log"),
             )
 
             # Manager should still be created with defaults
@@ -670,7 +668,6 @@ class TestHookManagerConfigLoadError:
                 daemon_port=60887,
                 config=None,
                 database=hub_db,
-                log_file=str(temp_dir / "logs" / "hook-manager.log"),
             )
 
             # Health check should still work with defaults
@@ -2149,49 +2146,15 @@ class TestHookManagerResolveProjectId:
 
 
 class TestHookManagerLogging:
-    """Tests for logging setup."""
+    """Tests for centralized hook logger ownership."""
 
-    def test_setup_logging_creates_log_directory(
+    def test_hook_manager_uses_existing_central_logger(
         self,
-        temp_dir: Path,
         mock_daemon_client: MagicMock,
         hub_db: HubDatabase,
     ) -> None:
-        """Test that logging setup creates the log file directory."""
-        # First ensure the parent directory for logs doesn't exist
-        log_dir = temp_dir / "new_custom_logs"
-        log_path = log_dir / "hook.log"
-
-        # Verify it doesn't exist
-        assert not log_dir.exists()
-
-        with patch("gobby.hooks.factory.DaemonClient") as MockDaemonClient:
-            MockDaemonClient.return_value = mock_daemon_client
-
-            manager = HookManager(
-                daemon_host="localhost",
-                daemon_port=60887,
-                database=hub_db,
-                log_file=str(log_path),
-            )
-
-            # Log directory should be created (as part of _setup_logging)
-            # Note: The logger creates the directory when initializing the file handler
-            assert manager.log_file == str(log_path)
-            assert manager.logger is not None
-
-            manager.shutdown()
-
-    def test_setup_logging_reuses_existing_logger(
-        self,
-        temp_dir: Path,
-        mock_daemon_client: MagicMock,
-        hub_db: HubDatabase,
-    ) -> None:
-        """Test that logging setup reuses existing logger if already configured."""
         import logging
 
-        # Pre-configure the logger with a handler
         logger = logging.getLogger("gobby.hooks")
         handler = logging.StreamHandler()
         logger.addHandler(handler)
@@ -2203,15 +2166,13 @@ class TestHookManagerLogging:
                 daemon_host="localhost",
                 daemon_port=60887,
                 database=hub_db,
-                log_file=str(temp_dir / "logs" / "hook.log"),
             )
 
-            # Logger should be returned without adding duplicate handlers
-            assert manager.logger is not None
+            assert manager.logger is logger
+            assert manager.logger.handlers == [handler]
 
             manager.shutdown()
 
-        # Cleanup
         logger.removeHandler(handler)
 
 

@@ -246,58 +246,6 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
                     "Title listener failed for session %s", session_id, exc_info=True
                 )
 
-    def persist_digest_state(
-        self: _ManagerState,
-        session_id: str,
-        *,
-        last_turn_markdown: str,
-        digest_markdown: str,
-        last_digest_input_hash: str,
-        last_digested_pair_index: int,
-        title: str | None = None,
-        title_source: str | None = None,
-    ) -> Session | None:
-        """Persist digest fields, optionally updating title metadata atomically."""
-        current = self.get(session_id)
-        if current is None:
-            return None
-        if title_source is not None and title_source not in self._VALID_TITLE_SOURCES:
-            raise ValueError(
-                f"Invalid title_source {title_source!r}. Must be one of: {', '.join(sorted(self._VALID_TITLE_SOURCES))}"
-            )
-
-        changed_title = title if title is not None and current.title != title else None
-        source_changed = title_source is not None and current.title_source != title_source
-
-        now = utc_now()
-        values: dict[str, Any] = {
-            "last_turn_markdown": last_turn_markdown,
-            "digest_markdown": digest_markdown,
-            "last_digest_input_hash": last_digest_input_hash,
-            "last_digested_pair_index": last_digested_pair_index,
-            "updated_at": now,
-        }
-        if changed_title is not None:
-            values["title"] = changed_title
-        if source_changed:
-            values["title_source"] = title_source
-
-        set_clause = ", ".join(f"{column} = %s" for column in values)
-        with self.db.transaction() as conn:
-            conn.execute(
-                f"UPDATE sessions SET {set_clause} WHERE id = %s",  # nosec B608
-                (*values.values(), session_id),
-            )
-
-        updated = self.get(session_id)
-        if updated is None:
-            return None
-
-        self._notify_session_change("session_updated", session_id)
-        if changed_title is not None:
-            self._run_title_change_side_effects(updated, changed_title)
-        return updated
-
     def update_model(self: _ManagerState, session_id: str, model: str) -> Session | None:
         """Update session model (LLM model used)."""
         now = utc_now()
@@ -310,78 +258,6 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
         if updated is not None:
             self._notify_session_change("session_updated", session_id)
         return updated
-
-    def update_digest_markdown(
-        self: _ManagerState, session_id: str, digest_markdown: str
-    ) -> Session | None:
-        """Update session rolling digest markdown."""
-        now = utc_now()
-        with self.db.transaction():
-            self.db.execute(
-                """
-                UPDATE sessions
-                SET digest_markdown = %s,
-                    updated_at = %s
-                WHERE id = %s
-                """,
-                (digest_markdown, now, session_id),
-            )
-        updated = self.get(session_id)
-        if updated is not None:
-            self._notify_session_change("session_updated", session_id)
-        return updated
-
-    def update_last_turn_markdown(
-        self: _ManagerState, session_id: str, last_turn_markdown: str
-    ) -> Session | None:
-        """Update session last turn markdown record."""
-        now = utc_now()
-        with self.db.transaction():
-            self.db.execute(
-                """
-                UPDATE sessions
-                SET last_turn_markdown = %s,
-                    updated_at = %s
-                WHERE id = %s
-                """,
-                (last_turn_markdown, now, session_id),
-            )
-        session = self.get(session_id)
-        if session is not None:
-            self._notify_session_change("session_updated", session_id)
-        return session
-
-    def update_last_digest_input_hash(
-        self: _ManagerState, session_id: str, hash_value: str
-    ) -> None:
-        """Update the last digest input hash for idempotency."""
-        now = utc_now()
-        with self.db.transaction():
-            self.db.execute(
-                """
-                UPDATE sessions
-                SET last_digest_input_hash = %s,
-                    updated_at = %s
-                WHERE id = %s
-                """,
-                (hash_value, now, session_id),
-            )
-
-    def update_last_title_synthesis_digest_hash(
-        self: _ManagerState, session_id: str, hash_value: str
-    ) -> None:
-        """Record the digest identity used for a contentless title attempt."""
-        now = utc_now()
-        with self.db.transaction():
-            self.db.execute(
-                """
-                UPDATE sessions
-                SET last_title_synthesis_digest_hash = %s,
-                    updated_at = %s
-                WHERE id = %s
-                """,
-                (hash_value, now, session_id),
-            )
 
     def update_parent_session_id(
         self: _ManagerState, session_id: str, parent_session_id: str | None

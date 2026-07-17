@@ -1,35 +1,99 @@
-"""
-Unified logging configuration using OpenTelemetry logging bridge.
-
-Sets up standard file logging with rotation and bridges to OpenTelemetry
-for unified tracing and structured logging.
-"""
+"""Formatted application logging, routing, and parser diagnostics."""
 
 from __future__ import annotations
 
 import json
 import logging
+import os
+from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 from opentelemetry import trace
-from opentelemetry.sdk._logs import LoggingHandler
 from opentelemetry.trace import format_trace_id
 
 from gobby.config.logging import (
-    ERROR_LOG_FILENAME,
-    HOOK_MANAGER_LOG_FILENAME,
-    MAIN_LOG_FILENAME,
-    MCP_CLIENT_LOG_FILENAME,
-    MCP_SERVER_LOG_FILENAME,
-    resolved_log_path,
+    DAEMON_LOG_FILENAME,
+    ERRORS_LOG_FILENAME,
+    HOOKS_LOG_FILENAME,
+    MCP_LOG_FILENAME,
+    LoggingSettings,
 )
-from gobby.telemetry.providers import get_logger_provider
 
-if TYPE_CHECKING:
-    from gobby.config.logging import LoggingSettings
-    from gobby.telemetry.config import TelemetrySettings
+LogSurface = Literal["daemon", "hooks", "mcp", "automation"]
+
+_PARSER_ERROR_NAMESPACE = "gobby.parser_error"
+_PRIMARY_LOG_FILENAMES: dict[LogSurface, str] = {
+    "daemon": DAEMON_LOG_FILENAME,
+    "hooks": HOOKS_LOG_FILENAME,
+    "mcp": MCP_LOG_FILENAME,
+}
+_MANAGED_CHILD_LOGGERS = (
+    "gobby.hooks",
+    "gobby.mcp",
+    "gobby.mcp.server",
+    "gobby.mcp.client",
+    "gobby.mcp_proxy",
+    "gobby.servers.routes.mcp",
+)
+_MCP_NAMESPACES = ("gobby.mcp", "gobby.mcp_proxy", "gobby.servers.routes.mcp")
+_AUTOMATION_NAMESPACES = (
+    "gobby.scheduler",
+    "gobby.dispatch",
+    "gobby.build",
+    "gobby.system_automation",
+    "gobby.workflows.pipeline_heartbeat",
+)
+
+
+@dataclass(frozen=True)
+class _HandlerConfig:
+    logs_dir: Path
+    max_bytes: int
+    backup_count: int
+
+
+_default_logging_settings = LoggingSettings()
+_active_handler_config = _HandlerConfig(
+    logs_dir=Path(_default_logging_settings.dir),
+    max_bytes=_default_logging_settings.max_size_mb * 1024 * 1024,
+    backup_count=_default_logging_settings.backup_count,
+)
+_registered_parser_loggers: set[str] = set()
+
+
+def _in_namespace(logger_name: str, namespace: str) -> bool:
+    return logger_name == namespace or logger_name.startswith(f"{namespace}.")
+
+
+def classify_log_surface(logger_name: str) -> LogSurface:
+    """Return the semantic primary surface for a Gobby logger name."""
+    if _in_namespace(logger_name, "gobby.hooks"):
+        return "hooks"
+    if any(_in_namespace(logger_name, namespace) for namespace in _MCP_NAMESPACES):
+        return "mcp"
+    if any(_in_namespace(logger_name, namespace) for namespace in _AUTOMATION_NAMESPACES):
+        return "automation"
+    return "daemon"
+
+
+def _routed_primary_surface(logger_name: str) -> LogSurface:
+    surface = classify_log_surface(logger_name)
+    if surface in _PRIMARY_LOG_FILENAMES:
+        return surface
+    return "daemon"
+
+
+class _PrimarySurfaceFilter(logging.Filter):
+    def __init__(self, surface: LogSurface) -> None:
+        super().__init__()
+        self.surface = surface
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if _in_namespace(record.name, _PARSER_ERROR_NAMESPACE):
+            return False
+        return _routed_primary_surface(record.name) == self.surface
 
 
 class OTelTraceFormatter(logging.Formatter):
@@ -146,109 +210,173 @@ class JsonOTelFormatter(logging.Formatter):
         return json.dumps(log_data, default=str)
 
 
-def setup_file_logging(config: LoggingSettings, verbose: bool = False) -> None:
-    """
-    Configure rotating file logging without creating OpenTelemetry providers.
+def _handler_config(settings: LoggingSettings) -> _HandlerConfig:
+    return _HandlerConfig(
+        logs_dir=Path(settings.dir).expanduser(),
+        max_bytes=settings.max_size_mb * 1024 * 1024,
+        backup_count=settings.backup_count,
+    )
 
-    Replaces legacy file logging and setup_mcp_logging.
 
-    Args:
-        config: LoggingSettings instance.
-        verbose: If True, set level to DEBUG regardless of config.
-    """
-    # 1. Determine log level
-    if verbose:
-        level = logging.DEBUG
-    else:
-        level = getattr(logging, config.level.upper(), logging.INFO)
+def _create_rotating_handler(
+    path: Path,
+    config: _HandlerConfig,
+    *,
+    level: int,
+    formatter: logging.Formatter,
+) -> RotatingFileHandler:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handler = RotatingFileHandler(
+        path,
+        maxBytes=config.max_bytes,
+        backupCount=config.backup_count,
+        encoding="utf-8",
+    )
+    handler.setLevel(level)
+    handler.setFormatter(formatter)
+    return handler
 
-    # 2. Configure formatters
-    formatter: logging.Formatter
-    if config.format == "json":
-        formatter = JsonOTelFormatter(datefmt="%Y-%m-%dT%H:%M:%S")
-    else:
-        log_format = "%(asctime)s - %(levelname)-8s - %(short_name)s.%(funcName)s - %(message)s"
-        formatter = OTelTraceFormatter(log_format, datefmt="%Y-%m-%d %H:%M:%S")
 
-    # 3. Create file handlers for all 6 paths
-    max_bytes = config.max_size_mb * 1024 * 1024
-    backup_count = config.backup_count
+def _replace_handlers(target: logging.Logger, handlers: list[logging.Handler]) -> None:
+    old_handlers = list(target.handlers)
+    for handler in old_handlers:
+        target.removeHandler(handler)
+    for handler in old_handlers:
+        handler.close()
+    for handler in handlers:
+        target.addHandler(handler)
 
-    # Mapping of log names to config paths
-    log_paths = {
-        "gobby": resolved_log_path(config, MAIN_LOG_FILENAME),
-        "gobby-error": resolved_log_path(config, ERROR_LOG_FILENAME),
-        "hook-manager": resolved_log_path(config, HOOK_MANAGER_LOG_FILENAME),
-        "mcp-server": resolved_log_path(config, MCP_SERVER_LOG_FILENAME),
-        "mcp-client": resolved_log_path(config, MCP_CLIENT_LOG_FILENAME),
-    }
 
-    # Map logger names to their corresponding files
-    logger_mapping = {
-        "gobby": ["gobby", "gobby-error"],
-        "gobby.hooks": ["hook-manager"],
-        "gobby.mcp.server": ["mcp-server"],
-        "gobby.mcp.client": ["mcp-client"],
-    }
+def _formatted_log_formatter(settings: LoggingSettings) -> logging.Formatter:
+    if settings.format == "json":
+        return JsonOTelFormatter(datefmt="%Y-%m-%dT%H:%M:%S")
+    log_format = "%(asctime)s - %(levelname)-8s - %(short_name)s.%(funcName)s - %(message)s"
+    return OTelTraceFormatter(log_format, datefmt="%Y-%m-%d %H:%M:%S")
 
-    # Helper to create handler
-    def create_handler(path: Path, log_level: int) -> RotatingFileHandler:
-        p = path.expanduser()
-        p.parent.mkdir(parents=True, exist_ok=True)
-        h = RotatingFileHandler(
-            str(p),
-            maxBytes=max_bytes,
-            backupCount=backup_count,
-            encoding="utf-8",
+
+def parser_error_log_path(cli_name: str) -> Path:
+    """Return the active parser diagnostic path for a CLI."""
+    return _effective_handler_config().logs_dir / f"{cli_name}-parser-error.log"
+
+
+def _effective_handler_config() -> _HandlerConfig:
+    configured_dir = os.environ.get("GOBBY_LOGGING_DIR")
+    logs_dir = Path(configured_dir) if configured_dir else _active_handler_config.logs_dir
+    return _HandlerConfig(
+        logs_dir=logs_dir.expanduser(),
+        max_bytes=_active_handler_config.max_bytes,
+        backup_count=_active_handler_config.backup_count,
+    )
+
+
+def _parser_handler_matches(
+    handler: logging.Handler,
+    path: Path,
+    config: _HandlerConfig,
+) -> bool:
+    return (
+        isinstance(handler, RotatingFileHandler)
+        and Path(handler.baseFilename) == path.resolve()
+        and handler.maxBytes == config.max_bytes
+        and handler.backupCount == config.backup_count
+    )
+
+
+def _configure_parser_error_logger(logger_name: str) -> logging.Logger:
+    cli_name = logger_name.removeprefix(f"{_PARSER_ERROR_NAMESPACE}.")
+    config = _effective_handler_config()
+    path = parser_error_log_path(cli_name)
+    parser_logger = logging.getLogger(logger_name)
+    parser_logger.setLevel(logging.INFO)
+    parser_logger.propagate = True
+
+    if len(parser_logger.handlers) == 1 and _parser_handler_matches(
+        parser_logger.handlers[0], path, config
+    ):
+        return parser_logger
+
+    try:
+        handler: logging.Handler = _create_rotating_handler(
+            path,
+            config,
+            level=logging.INFO,
+            formatter=logging.Formatter("%(message)s"),
         )
-        h.setLevel(log_level)
-        h.setFormatter(formatter)
-        return h
+    except OSError:
+        logging.getLogger(__name__).debug(
+            "Failed to configure transcript parser error log",
+            extra={"cli": cli_name, "path": str(path)},
+            exc_info=True,
+        )
+        handler = logging.NullHandler()
+    _replace_handlers(parser_logger, [handler])
+    return parser_logger
 
-    # 4. Configure loggers
-    for logger_name in ("websockets", "websockets.server"):
-        logging.getLogger(logger_name).setLevel(logging.WARNING)
+
+def get_parser_error_logger(cli_name: str) -> logging.Logger:
+    """Return a dedicated parser logger configured for the active logging directory."""
+    logger_name = f"{_PARSER_ERROR_NAMESPACE}.{cli_name}"
+    _registered_parser_loggers.add(logger_name)
+    return _configure_parser_error_logger(logger_name)
+
+
+def _create_formatted_handlers(
+    config: _HandlerConfig,
+    level: int,
+    formatter: logging.Formatter,
+) -> list[logging.Handler]:
+    handlers: list[logging.Handler] = []
+    try:
+        for surface, filename in _PRIMARY_LOG_FILENAMES.items():
+            handler = _create_rotating_handler(
+                config.logs_dir / filename,
+                config,
+                level=level,
+                formatter=formatter,
+            )
+            handler.addFilter(_PrimarySurfaceFilter(surface))
+            handlers.append(handler)
+        handlers.append(
+            _create_rotating_handler(
+                config.logs_dir / ERRORS_LOG_FILENAME,
+                config,
+                level=logging.WARNING,
+                formatter=formatter,
+            )
+        )
+    except Exception:
+        for created_handler in handlers:
+            created_handler.close()
+        raise
+    return handlers
+
+
+def setup_file_logging(config: LoggingSettings, verbose: bool = False) -> None:
+    """Configure exclusive primary routing and WARNING+ aggregation for Gobby records."""
+    global _active_handler_config
+
+    level = logging.DEBUG if verbose else getattr(logging, config.level.upper(), logging.INFO)
+    handler_config = _handler_config(config)
+    handlers = _create_formatted_handlers(
+        handler_config,
+        level,
+        _formatted_log_formatter(config),
+    )
 
     root_logger = logging.getLogger("gobby")
     root_logger.setLevel(level)
     root_logger.propagate = False
+    _replace_handlers(root_logger, handlers)
 
-    # Remove old handlers
-    for h in root_logger.handlers[:]:
-        h.close()
-        root_logger.removeHandler(h)
+    for logger_name in _MANAGED_CHILD_LOGGERS:
+        child_logger = logging.getLogger(logger_name)
+        child_logger.setLevel(logging.NOTSET)
+        child_logger.propagate = True
+        _replace_handlers(child_logger, [])
 
-    # Main and Error logs on root gobby logger
-    root_logger.addHandler(create_handler(log_paths["gobby"], level))
-    root_logger.addHandler(create_handler(log_paths["gobby-error"], logging.ERROR))
+    _active_handler_config = handler_config
+    for logger_name in _registered_parser_loggers:
+        _configure_parser_error_logger(logger_name)
 
-    # Other loggers
-    for logger_name, log_keys in logger_mapping.items():
-        if logger_name == "gobby":
-            continue
-
-        logger = logging.getLogger(logger_name)
-        logger.setLevel(level)
-        logger.propagate = False
-        for h in logger.handlers[:]:
-            h.close()
-            logger.removeHandler(h)
-
-        for key in log_keys:
-            logger.addHandler(create_handler(log_paths[key], level))
-
-
-def setup_otel_logging(
-    telemetry_config: TelemetrySettings,
-    logging_config: LoggingSettings,
-    verbose: bool = False,
-) -> None:
-    """Configure rotating file logging with the OpenTelemetry bridge."""
-    setup_file_logging(logging_config, verbose=verbose)
-
-    level = (
-        logging.DEBUG if verbose else getattr(logging, logging_config.level.upper(), logging.INFO)
-    )
-    logger_provider = get_logger_provider(telemetry_config)
-    otel_handler = LoggingHandler(level=level, logger_provider=logger_provider)
-    logging.getLogger("gobby").addHandler(otel_handler)
+    for logger_name in ("websockets", "websockets.server"):
+        logging.getLogger(logger_name).setLevel(logging.WARNING)

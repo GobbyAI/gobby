@@ -6,12 +6,11 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-MAIN_LOG_FILENAME = "gobby.log"
-ERROR_LOG_FILENAME = "gobby-error.log"
+DAEMON_LOG_FILENAME = "daemon.log"
+ERRORS_LOG_FILENAME = "errors.log"
 RUNTIME_LOG_FILENAME = "runtime.log"
-HOOK_MANAGER_LOG_FILENAME = "hook-manager.log"
-MCP_SERVER_LOG_FILENAME = "mcp-server.log"
-MCP_CLIENT_LOG_FILENAME = "mcp-client.log"
+HOOKS_LOG_FILENAME = "hooks.log"
+MCP_LOG_FILENAME = "mcp.log"
 UI_LOG_FILENAME = "ui.log"
 
 

@@ -5,6 +5,14 @@ from typing import Any
 
 import pytest
 
+from gobby.config.logging import (
+    DAEMON_LOG_FILENAME,
+    ERRORS_LOG_FILENAME,
+    HOOKS_LOG_FILENAME,
+    MCP_LOG_FILENAME,
+    LoggingSettings,
+    resolved_log_path,
+)
 from gobby.sessions.transcript_renderer import render_transcript
 from gobby.sessions.transcripts.base import (
     BaseTranscriptParser,
@@ -14,19 +22,21 @@ from gobby.sessions.transcripts.base import (
     _classify_decode_failure,
     _unknown_block_message,
 )
+from gobby.telemetry.logging import setup_file_logging
 
 pytestmark = pytest.mark.unit
 
 
 def test_parser_error_log_creation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # Mock home directory for testing
-    monkeypatch.setenv("HOME", str(tmp_path))
+    logs_dir = tmp_path / "custom-logs"
+    monkeypatch.setenv("GOBBY_LOGGING_DIR", str(logs_dir))
 
     cli_name = "test-cli"
     error_log = TranscriptParserErrorLog(cli_name)
 
-    expected_path = tmp_path / ".gobby" / "logs" / f"{cli_name}-parser-error.log"
+    expected_path = logs_dir / f"{cli_name}-parser-error.log"
     assert error_log.log_path == expected_path
+    assert error_log.logger.propagate
 
     # A truncated partial write is kept at INFO and reaches the log file.
     raw = '{"bad": "json"'
@@ -46,8 +56,47 @@ def test_parser_error_log_creation(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert raw in content
 
 
+def test_parser_warning_has_dedicated_primary_and_error_aggregate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = LoggingSettings(dir=str(tmp_path / "logs"), level="debug")
+    monkeypatch.setenv("GOBBY_LOGGING_DIR", config.dir)
+    setup_file_logging(config)
+    error_log = TranscriptParserErrorLog("aggregate")
+
+    error_log.logger.warning("parser-warning")
+
+    assert "parser-warning" in error_log.log_path.read_text()
+    assert "parser-warning" in resolved_log_path(config, ERRORS_LOG_FILENAME).read_text()
+    for filename in (DAEMON_LOG_FILENAME, HOOKS_LOG_FILENAME, MCP_LOG_FILENAME):
+        assert "parser-warning" not in resolved_log_path(config, filename).read_text()
+
+
+def test_parser_logger_reconfigures_with_logging_phase(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GOBBY_LOGGING_DIR", raising=False)
+    first = LoggingSettings(dir=str(tmp_path / "first"), level="debug")
+    second = LoggingSettings(dir=str(tmp_path / "second"), level="debug")
+    setup_file_logging(first)
+    error_log = TranscriptParserErrorLog("phase")
+    old_handler = error_log.logger.handlers[0]
+
+    setup_file_logging(second)
+    error_log.log_unknown_block(1, "session", "future", {"type": "future"})
+
+    assert getattr(old_handler, "stream", None) is None
+    assert error_log.log_path == Path(second.dir) / "phase-parser-error.log"
+    assert "Unknown block type: future" in error_log.log_path.read_text()
+    assert (
+        "Unknown block type: future" not in (Path(first.dir) / "phase-parser-error.log").read_text()
+    )
+
+
 def test_log_unknown_block(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("GOBBY_LOGGING_DIR", str(tmp_path / "logs"))
     cli_name = "test-cli-unknown"
     error_log = TranscriptParserErrorLog(cli_name)
 
@@ -222,16 +271,20 @@ def test_log_decode_failure_non_object_is_non_json(
 
 
 def test_rotation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
+    config = LoggingSettings(
+        dir=str(tmp_path / "logs"),
+        max_size_mb=2,
+        backup_count=3,
+    )
+    monkeypatch.setenv("GOBBY_LOGGING_DIR", config.dir)
+    setup_file_logging(config)
     cli_name = "test-cli-rotation"
     error_log = TranscriptParserErrorLog(cli_name)
 
-    # We want to test rotation at 10MB, but creating 10MB of logs in a test is slow.
-    # We can check if the handler is RotatingFileHandler with correct maxBytes.
     from logging.handlers import RotatingFileHandler
 
     handler = error_log.logger.handlers[0]
     assert isinstance(handler, RotatingFileHandler)
     assert handler.baseFilename == str(error_log.log_path)
-    assert handler.maxBytes == 10 * 1024 * 1024
-    assert handler.backupCount == 5
+    assert handler.maxBytes == 2 * 1024 * 1024
+    assert handler.backupCount == 3

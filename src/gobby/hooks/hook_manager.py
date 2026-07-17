@@ -31,7 +31,6 @@ from gobby.hooks.session_ref_resolution import (
 from gobby.hooks.session_summary_dispatcher import SessionSummaryDispatcher
 from gobby.hooks.session_types import HookSessionManager
 from gobby.memory.recall_constants import MEMORY_RECALL_PRODUCER
-from gobby.paths import get_gobby_home
 from gobby.servers.routes.sessions.statusline_activity import record_session_activity
 from gobby.storage.machines import LocalMachineManager, normalize_machine_id
 from gobby.telemetry.tracing import create_span
@@ -64,9 +63,6 @@ class HookManager:
         daemon_port: int = 60887,
         llm_service: "LLMService | None" = None,
         config: Any | None = None,
-        log_file: str | None = None,
-        log_max_bytes: int = 10 * 1024 * 1024,  # 10MB
-        log_backup_count: int = 5,
         broadcaster: Any | None = None,
         tool_proxy_getter: Any | None = None,
         message_processor: Any | None = None,
@@ -82,9 +78,6 @@ class HookManager:
         self.daemon_host = daemon_host
         self.daemon_port = daemon_port
         self.daemon_url = f"http://{daemon_host}:{daemon_port}"
-        self.log_file = log_file or str(get_gobby_home() / "logs" / "hook-manager.log")
-        self.log_max_bytes = log_max_bytes
-        self.log_backup_count = log_backup_count
         self.broadcaster = broadcaster
         self.tool_proxy_getter = tool_proxy_getter
         self._message_processor = message_processor

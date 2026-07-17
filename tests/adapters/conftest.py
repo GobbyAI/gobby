@@ -85,7 +85,6 @@ def manager_with_mocks(mock_components: MagicMock) -> Iterator[HookManager]:
         manager = HookManager(
             daemon_host="localhost",
             daemon_port=60887,
-            log_file="/tmp/test-adapters-hook-manager.log",
         )
         manager._health_monitor.get_cached_status.return_value = (True, "ready", "ready", None)
         manager._health_monitor.check_now.return_value = True
