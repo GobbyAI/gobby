@@ -224,7 +224,7 @@ class TestProviderModelCatalog:
         assert status["droid"]["source"] == "live"
         assert status["grok"]["source"] == "static"
         assert status["codex"]["source"] == "cache"
-        assert "gemini" not in status
+        assert set(status) == {"claude", "codex", "droid", "grok", "qwen", "agy"}
         assert status["codex"]["model_count"] == 1
         assert status["codex"]["error"] == "codex probe failed"
 
@@ -415,7 +415,7 @@ class TestProviderModelCatalog:
             status = await catalog.refresh()
 
         assert status["claude"]["source"] == "failed"
-        assert "gemini" not in status
+        assert set(status) == {"claude", "codex", "droid", "grok", "qwen", "agy"}
         assert status["droid"]["source"] == "static"
         assert status["droid"]["model_count"] == 26
         assert status["grok"]["source"] == "static"

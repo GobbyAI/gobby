@@ -317,7 +317,7 @@ class TestSessionEdgeCases:
         session_manager.register(
             external_id="all-filters-2",
             machine_id="m2",
-            source="gemini",
+            source="qwen",
             project_id=sample_project["id"],
         )
 
@@ -346,7 +346,7 @@ class TestSessionEdgeCases:
         session_manager.register(
             external_id="list-all-filters-2",
             machine_id="m2",
-            source="gemini",
+            source="qwen",
             project_id=sample_project["id"],
         )
 

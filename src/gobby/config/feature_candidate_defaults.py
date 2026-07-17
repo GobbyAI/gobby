@@ -105,8 +105,6 @@ def _get_stale_candidate_key(row: Any) -> str | None:
     if value is None:
         return None
     profile = _FEATURE_CANDIDATE_PROFILES[key]
-    if any(candidate.startswith("gemini/") for candidate in value):
-        return key
     if profile == FeatureProfile.MID and _OLD_SPARK_CANDIDATE in value:
         return key
     candidates = tuple(value)

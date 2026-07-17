@@ -68,7 +68,7 @@ class TestSessionManagerRegistration:
         session_id = session_mgr.register_session(
             external_id="full-cli-123",
             machine_id="machine-xyz",
-            source="gemini",
+            source="qwen",
             project_id=test_project["id"],
             parent_session_id=None,  # Use None instead of invalid UUID
             transcript_path="/path/to/transcript.jsonl",
@@ -204,7 +204,7 @@ class TestSessionManagerLookup:
         session_id = session_mgr.register_session(
             external_id="full-data",
             machine_id="machine",
-            source="gemini",
+            source="qwen",
             project_id=test_project["id"],
             title="Full Data Session",
         )
@@ -213,7 +213,7 @@ class TestSessionManagerLookup:
         assert session is not None
         assert session.id == session_id
         assert session.external_id == "full-data"
-        assert session.source == "gemini"
+        assert session.source == "qwen"
         assert session.title == "Full Data Session"
 
     def test_get_session_nonexistent(self, session_mgr: SessionManager) -> None:
@@ -248,14 +248,14 @@ class TestSessionManagerLookup:
 
         recovered = session_mgr.recover_session(
             external_id="shared-external-id",
-            source="gemini",
+            source="qwen",
             machine_id="machine-1",
             project_id=test_project["id"],
         )
 
         assert recovered is not None
         assert recovered.id == preferred.id
-        assert session_mgr.get_session_id("shared-external-id", "gemini") == preferred.id
+        assert session_mgr.get_session_id("shared-external-id", "qwen") == preferred.id
 
     def test_recover_session_rejects_score_ties_even_when_rank_differs(
         self,
@@ -279,13 +279,13 @@ class TestSessionManagerLookup:
 
         recovered = session_mgr.recover_session(
             external_id="ranked-external-id",
-            source="gemini",
+            source="qwen",
             machine_id="machine-1",
             project_id=test_project["id"],
         )
 
         assert recovered is None
-        assert session_mgr.get_session_id("ranked-external-id", "gemini") is None
+        assert session_mgr.get_session_id("ranked-external-id", "qwen") is None
 
     def test_recover_session_none_project_searches_real_project(
         self,
@@ -302,7 +302,7 @@ class TestSessionManagerLookup:
 
         recovered = session_mgr.recover_session(
             external_id="real-project-external-id",
-            source="gemini",
+            source="qwen",
             machine_id="machine-1",
             project_id=None,
         )
@@ -334,7 +334,7 @@ class TestSessionManagerLookup:
 
         recovered = session_mgr.recover_session(
             external_id="colliding-external-id",
-            source="gemini",
+            source="qwen",
             machine_id="machine-1",
             project_id=None,
         )

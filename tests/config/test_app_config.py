@@ -976,39 +976,22 @@ class TestLoadConfig:
         )
 
     def test_load_config_deletes_seeded_stale_feature_candidates(self, temp_dir: Path) -> None:
-        """Old seeded Gemini, Claude-only, and Spark rows fall through to profiles."""
+        """Old seeded Claude-only and Spark rows fall through to profiles."""
 
         values = {
-            "ai.generation.profile_defaults.feature_low": [
-                "claude/haiku",
-                "gemini/gemini-3.5-flash",
-                "codex/gpt-5.4-mini",
-            ],
-            "ai.generation.profile_defaults.feature_mid": [
-                "gemini/gemini-3.5-flash",
-                "claude/sonnet",
-                "codex/gpt-5.5",
-            ],
-            "ai.generation.profile_defaults.feature_high": [
-                {"candidate": "codex/gpt-5.5", "reasoning_effort": "xhigh"},
-                {"candidate": "claude/opus", "reasoning_effort": "high"},
-                "gemini/gemini-3.1-pro-preview",
-            ],
+            "ai.generation.profile_defaults.feature_low": ["claude/haiku"],
+            "ai.generation.profile_defaults.feature_mid": ["claude/sonnet"],
+            "ai.generation.profile_defaults.feature_high": ["claude/opus"],
             "digest.candidates": ["claude/claude-haiku-4-5"],
             "memory.kg.candidates": ["claude/haiku"],
             "tool_summarizer.candidates": ["claude/haiku"],
             "import_mcp_server.candidates": ["claude/haiku"],
             "skill_description.candidates": ["claude/haiku"],
             "code_index.symbol_summary.candidates": ["claude/haiku"],
-            "memory.dream.candidates": [
-                "gemini/gemini-3.5-flash",
-                "codex/gpt-5.3-codex-spark",
-                "claude/sonnet",
-            ],
+            "memory.dream.candidates": ["codex/gpt-5.3-codex-spark", "claude/sonnet"],
             "recommend_tools.candidates": ["codex/gpt-5.3-codex-spark", "claude/sonnet"],
             "merge_resolution.candidates": ["claude/claude-sonnet-4-5"],
             "gobby-tasks.validation.candidates": [
-                "gemini/gemini-3.5-flash",
                 "codex/gpt-5.3-codex-spark",
                 "claude/sonnet",
             ],

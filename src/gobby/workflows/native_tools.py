@@ -83,8 +83,8 @@ _CODEX_TOOLS = {
     "view_image",
 }
 
-# Gemini CLI / QwenCode native tools.
-_GEMINI_FAMILY_TOOLS = {
+# QwenCode native tools.
+_QWEN_TOOLS = {
     "edit_file",
     "glob",
     "google_web_search",
@@ -120,7 +120,7 @@ NATIVE_TOOL_CATALOG: frozenset[str] = frozenset(
     _CLAUDE_CODE_TOOLS
     | _CLAUDE_CODE_LEGACY_TOOLS
     | _CODEX_TOOLS
-    | _GEMINI_FAMILY_TOOLS
+    | _QWEN_TOOLS
     | _GOBBY_PROXY_ALIASES
 )
 

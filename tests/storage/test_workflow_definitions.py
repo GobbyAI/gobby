@@ -83,7 +83,7 @@ enabled: true
 priority: 50
 sources:
   - claude
-  - gemini
+  - qwen
 steps:
   - id: research
     exec: echo research
@@ -142,7 +142,7 @@ def test_create_with_all_fields(manager: LocalWorkflowDefinitionManager) -> None
         version="2.0",
         enabled=True,
         priority=50,
-        sources=["claude", "gemini"],
+        sources=["claude", "qwen"],
         canvas_json='{"nodes": [], "edges": []}',
         source="installed",
         tags=["tag1", "tag2"],
@@ -155,7 +155,7 @@ def test_create_with_all_fields(manager: LocalWorkflowDefinitionManager) -> None
     assert row.version == "2.0"
     assert row.enabled is True
     assert row.priority == 50
-    assert row.sources == ["claude", "gemini"]
+    assert row.sources == ["claude", "qwen"]
     assert row.canvas_json is not None
     assert json.loads(row.canvas_json) == {"nodes": [], "edges": []}
     assert row.source == "installed"
@@ -353,11 +353,11 @@ def test_update_json_fields(manager: LocalWorkflowDefinitionManager) -> None:
 
     updated = manager.update(
         created.id,
-        sources=["claude", "gemini"],
+        sources=["claude", "qwen"],
         tags=["production"],
     )
 
-    assert updated.sources == ["claude", "gemini"]
+    assert updated.sources == ["claude", "qwen"]
     assert updated.tags == ["production"]
 
 
@@ -503,7 +503,7 @@ def test_import_from_yaml(manager: LocalWorkflowDefinitionManager) -> None:
     assert row.version == "2.0"
     assert row.enabled is True
     assert row.priority == 50
-    assert row.sources == ["claude", "gemini"]
+    assert row.sources == ["claude", "qwen"]
     assert row.source == "installed"
 
     # Verify definition_json round-trips

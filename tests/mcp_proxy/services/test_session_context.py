@@ -19,9 +19,9 @@ class _Service:
         return self._hook_manager
 
 
-def test_resolve_tool_event_context_tolerates_legacy_gemini_source() -> None:
+def test_resolve_tool_event_context_tolerates_unsupported_source() -> None:
     session = SimpleNamespace(
-        source="gemini",
+        source="unsupported",
         project_id="project-1",
         external_id="external-1",
     )

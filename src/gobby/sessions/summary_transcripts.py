@@ -36,12 +36,12 @@ async def _read_transcript(
 
     Args:
         path: Path to the transcript file.
-        source: Session source (``"claude"``, ``"gemini"``, ``"qwen"``, ``"codex"``,
+        source: Session source (``"claude"``, ``"qwen"``, ``"codex"``,
             ``"droid"``).
     """
     # Typed JSON session files are a single JSON object, not JSONL. Legacy
     # registrations may have source="unknown" even when the file shape is typed.
-    if path.suffix == ".json" and source in {"gemini", "qwen", "unknown"}:
+    if path.suffix == ".json" and source in {"qwen", "unknown"}:
         typed_turns = await _read_typed_json_transcript(path)
         return typed_turns[-max_turns:] if max_turns is not None else typed_turns
 

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+#### ghook
+
+- **Reject unsupported CLIs uniformly** — return `{}` with exit code 2 before dispatch
+  side effects instead of falling back to Claude configuration.
+
 ## [0.8.1] — gobby-core — 2026-07-14
 
 Patch release required by daemon-authenticated Rust clients, including

@@ -360,7 +360,7 @@ class TestSessionStartAndHelpers:
             assert resp.decision == "allow"
 
     def test_handle_session_start_skips_acp_child(self) -> None:
-        """Sessions spawned by daemon-owned qwen --acp / gemini --acp must not
+        """Sessions spawned by daemon-owned qwen --acp must not
         register — the envelope carries gobby_acp_child='1' in terminal_context.
         """
         handler = _TestHandler()
@@ -631,12 +631,12 @@ class TestSessionMoreCoverage:
             assert "## Role\nRole" in result.context
             assert "## Personality" in result.context
 
-    def test_handle_session_start_gemini_terminal(self) -> None:
+    def test_handle_session_start_qwen_terminal(self) -> None:
         handler = _TestHandler()
         event = _make_event(
             event_type=HookEventType.SESSION_START,
             session_id="ext-2",
-            data={"terminal_context": {"gobby_session_id": "gemini-123"}},
+            data={"terminal_context": {"gobby_session_id": "qwen-123"}},
         )
 
         # Existing session check fails, but gobby_session_id check succeeds

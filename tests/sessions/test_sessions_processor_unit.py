@@ -1707,7 +1707,7 @@ class TestUnregisterCleansMtime:
 
 
 class TestProcessJsonSession:
-    """Tests for _process_json_session (Gemini native JSON format)."""
+    """Tests for _process_json_session (Qwen typed-JSON format)."""
 
     @pytest.mark.asyncio
     async def test_process_json_session_basic(self, mock_db, tmp_path) -> None:

@@ -41,7 +41,7 @@ class TestSessionManagerReferenceResolution:
         session = session_manager.register(
             external_id="parent-any",
             machine_id="machine-1",
-            source="gemini",
+            source="qwen",
             project_id=sample_project["id"],
         )
         session_manager.update_status(session.id, "handoff_ready")

@@ -44,7 +44,7 @@ async def test_non_claude_transcript_events_keep_source_and_session_model_attrib
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
-    """Codex/Gemini token events should aggregate under their source and model names."""
+    """Codex/Qwen token events should aggregate under their source and model names."""
     project = LocalProjectManager(temp_db).create(
         name="token-attribution-project",
         repo_path=str(tmp_path),

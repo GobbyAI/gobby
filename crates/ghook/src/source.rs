@@ -53,39 +53,42 @@ mod tests {
     fn detect_source_respects_override_only_for_claude() {
         let _env = SourceEnvGuard::new();
 
-        assert_eq!(detect_source(&CliConfig::for_dispatch("claude")), "claude");
+        assert_eq!(
+            detect_source(&CliConfig::for_cli("claude").expect("supported CLI")),
+            "claude"
+        );
 
         set_source_env("CLAUDE_CODE_ENTRYPOINT", "sdk-py");
         assert_eq!(
-            detect_source(&CliConfig::for_dispatch("claude")),
+            detect_source(&CliConfig::for_cli("claude").expect("supported CLI")),
             "claude",
             "entrypoint alone should not remap the source"
         );
 
         set_source_env("GOBBY_SOURCE", "session-override");
         assert_eq!(
-            detect_source(&CliConfig::for_dispatch("claude")),
+            detect_source(&CliConfig::for_cli("claude").expect("supported CLI")),
             "session-override"
         );
         assert_eq!(
-            detect_source(&CliConfig::for_dispatch("codex")),
+            detect_source(&CliConfig::for_cli("codex").expect("supported CLI")),
             "codex",
             "non-claude CLIs should keep their canonical source"
         );
         assert_eq!(
-            detect_source(&CliConfig::for_dispatch("agy")),
+            detect_source(&CliConfig::for_cli("agy").expect("supported CLI")),
             "agy",
             "Antigravity CLI should keep its canonical source"
         );
         assert_eq!(
-            detect_source(&CliConfig::for_dispatch("grok")),
+            detect_source(&CliConfig::for_cli("grok").expect("supported CLI")),
             "grok",
             "GOBBY_SOURCE should remain a Claude-only compatibility override"
         );
 
         set_source_env("GOBBY_SOURCE", "");
         assert_eq!(
-            detect_source(&CliConfig::for_dispatch("claude")),
+            detect_source(&CliConfig::for_cli("claude").expect("supported CLI")),
             "claude",
             "empty overrides should be ignored"
         );

@@ -312,7 +312,7 @@ class TranscriptParser(Protocol):
     """
     Protocol for transcript parsers.
 
-    Each CLI tool (Claude Code, Codex, Gemini) has its own
+    Each CLI tool (Claude Code, Codex, Qwen) has its own
     transcript format. Implementations of this protocol handle parsing
     and extracting conversation data from each format.
     """
@@ -379,7 +379,7 @@ class TranscriptParser(Protocol):
         What constitutes a "session boundary" varies by CLI:
         - Claude Code: /clear command
         - Codex: New session in history
-        - Gemini: Session delimiter
+        - Qwen: Session delimiter
 
         Args:
             turns: List of all transcript turns
@@ -478,7 +478,7 @@ class BaseTranscriptParser:
         ``start_index + offset`` (blank lines consume an offset slot, preserving the
         original index gaps). Has no forward lookahead, so every event is
         ``parser_safe``. Subclasses that assign indices per parsed message (Codex,
-        Droid, Gemini) or do lookahead (Claude) override this.
+        Droid, Qwen) or do lookahead (Claude) override this.
         """
         offset = 0
         for raw in raw_lines:

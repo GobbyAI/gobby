@@ -1557,13 +1557,13 @@ def test_initial_goal_handles_list_content() -> None:
 
 
 # ------------------------------------------------------------------
-# Gemini JSON session format
+# Qwen typed-JSON session format
 # ------------------------------------------------------------------
 
 
 @pytest.fixture
-def gemini_turns():
-    """Turns in Gemini JSON session format (type: user/gemini)."""
+def qwen_turns():
+    """Turns in Qwen typed-JSON format (type: user/gemini)."""
     return [
         {
             "id": "msg-1",
@@ -1600,38 +1600,38 @@ def gemini_turns():
     ]
 
 
-def test_gemini_initial_goal(gemini_turns) -> None:
-    """Gemini format: initial goal extracted from first user message."""
+def test_qwen_initial_goal(qwen_turns) -> None:
+    """Qwen format: initial goal extracted from first user message."""
     analyzer = TranscriptAnalyzer()
-    ctx = analyzer.extract_handoff_context(gemini_turns)
+    ctx = analyzer.extract_handoff_context(qwen_turns)
     assert ctx.initial_goal == "Fix the auth bug"
 
 
-def test_gemini_tool_calls_detected(gemini_turns) -> None:
-    """Gemini format: tool calls from toolCalls array are detected."""
+def test_qwen_tool_calls_detected(qwen_turns) -> None:
+    """Qwen format: tool calls from toolCalls array are detected."""
     analyzer = TranscriptAnalyzer()
-    ctx = analyzer.extract_handoff_context(gemini_turns)
+    ctx = analyzer.extract_handoff_context(qwen_turns)
     assert len(ctx.recent_activity) > 0
 
 
-def test_gemini_key_decisions(gemini_turns) -> None:
-    """Gemini format: key decisions from assistant text content are extracted."""
+def test_qwen_key_decisions(qwen_turns) -> None:
+    """Qwen format: key decisions from assistant text content are extracted."""
     analyzer = TranscriptAnalyzer()
-    ctx = analyzer.extract_handoff_context(gemini_turns)
+    ctx = analyzer.extract_handoff_context(qwen_turns)
     assert ctx.key_decisions is not None
     assert any("decided" in d.lower() or "because" in d.lower() for d in ctx.key_decisions)
 
 
-def test_gemini_empty_turns() -> None:
-    """Gemini format: empty turns produce empty context."""
+def test_qwen_empty_turns() -> None:
+    """Qwen format: empty turns produce empty context."""
     analyzer = TranscriptAnalyzer()
     ctx = analyzer.extract_handoff_context([])
     assert ctx.initial_goal == ""
     assert not ctx.active_gobby_task
 
 
-def test_gemini_user_content_as_string() -> None:
-    """Gemini format: user content can also be a plain string."""
+def test_qwen_user_content_as_string() -> None:
+    """Qwen format: user content can also be a plain string."""
     turns = [
         {"type": "user", "content": "Hello world"},
         {"type": "gemini", "content": "Hi!"},

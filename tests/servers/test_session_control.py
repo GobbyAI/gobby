@@ -1475,7 +1475,7 @@ class TestContinueInChatTerminalKill:
         source_session.external_id = "cli-session-456"
         source_session.project_id = "project-1"
         source_session.seq_num = 43
-        source_session.source = "gemini"
+        source_session.source = "agy"
         source_session.title = "Handoff Session"
         source_session.status = "handoff_ready"
         source_session.model = "gemini-2.5-pro"

@@ -140,19 +140,6 @@ def test_codex_transcript_scan_treats_external_id_as_literal(
     assert _find_transcript_on_disk("codex", "ext[abc]", max_days=1) == str(literal)
 
 
-def test_gemini_transcript_scan_requires_full_prefix(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    chats_dir = tmp_path / ".gemini" / "tmp" / "project" / "chats"
-    chats_dir.mkdir(parents=True)
-    target = chats_dir / "session-2026-short.json"
-    target.write_text("[]", encoding="utf-8")
-
-    assert _find_transcript_on_disk("gemini", "short", max_days=1) is None
-
-
 def test_is_recent_file_rejects_non_positive_max_days(tmp_path: Path) -> None:
     target = tmp_path / "session.jsonl"
     target.write_text("{}\n", encoding="utf-8")
@@ -817,12 +804,12 @@ class TestTranscriptReaderRendered:
         assert status["parsed_message_count"] == 0
 
 
-def _gemini_json_reader(
+def _qwen_json_reader(
     tmp_path: Path,
     filename: str,
     messages: list[dict[str, object]],
     *,
-    session_id: str = "gemini-session-uuid",
+    session_id: str = "qwen-session-uuid",
 ) -> TranscriptReader:
     json_path = tmp_path / filename
     json_path.write_text(
@@ -831,7 +818,7 @@ def _gemini_json_reader(
     )
 
     session = MagicMock()
-    session.source = "gemini"
+    session.source = "qwen"
     session.transcript_path = str(json_path)
     session.external_id = None
 
@@ -840,17 +827,17 @@ def _gemini_json_reader(
     return TranscriptReader(session_manager)
 
 
-class TestTranscriptReaderGeminiJSON:
-    """TranscriptReader handles Gemini native JSON session files."""
+class TestTranscriptReaderQwenJSON:
+    """TranscriptReader handles Qwen typed-JSON session files."""
 
     @pytest.mark.asyncio
-    async def test_read_gemini_json_get_messages(self, tmp_path: Path):
-        """get_messages works with Gemini JSON session files."""
-        reader = _gemini_json_reader(
+    async def test_read_qwen_json_get_messages(self, tmp_path: Path):
+        """get_messages works with Qwen typed-JSON session files."""
+        reader = _qwen_json_reader(
             tmp_path,
             "session-2025-03-23T10-00-00-abc12345.json",
             [
-                {"type": "user", "content": "hello gemini", "timestamp": "2025-03-23T10:00:00Z"},
+                {"type": "user", "content": "hello qwen", "timestamp": "2025-03-23T10:00:00Z"},
                 {"type": "gemini", "content": "hi there!", "timestamp": "2025-03-23T10:00:01Z"},
             ],
             session_id="abc12345-full-uuid",
@@ -859,14 +846,14 @@ class TestTranscriptReaderGeminiJSON:
 
         assert len(result) == 2
         assert result[0]["role"] == "user"
-        assert result[0]["content"] == "hello gemini"
+        assert result[0]["content"] == "hello qwen"
         assert result[1]["role"] == "assistant"
         assert result[1]["content"] == "hi there!"
 
     @pytest.mark.asyncio
-    async def test_read_gemini_json_rendered(self, tmp_path: Path):
-        """get_rendered_messages works with Gemini JSON session files."""
-        reader = _gemini_json_reader(
+    async def test_read_qwen_json_rendered(self, tmp_path: Path):
+        """get_rendered_messages works with Qwen typed-JSON session files."""
+        reader = _qwen_json_reader(
             tmp_path,
             "session-2025-03-23T10-00-00-abc12345.json",
             [
@@ -884,9 +871,9 @@ class TestTranscriptReaderGeminiJSON:
         assert result[1].role == "assistant"
 
     @pytest.mark.asyncio
-    async def test_count_gemini_json_messages(self, tmp_path: Path):
-        """count_messages works with Gemini JSON session files."""
-        reader = _gemini_json_reader(
+    async def test_count_qwen_json_messages(self, tmp_path: Path):
+        """count_messages works with Qwen typed-JSON session files."""
+        reader = _qwen_json_reader(
             tmp_path,
             "session-test.json",
             [
@@ -901,9 +888,9 @@ class TestTranscriptReaderGeminiJSON:
         assert count == 3
 
     @pytest.mark.asyncio
-    async def test_gemini_json_with_tool_calls(self, tmp_path: Path):
-        """Gemini JSON with embedded toolCalls parses correctly."""
-        reader = _gemini_json_reader(
+    async def test_qwen_json_with_tool_calls(self, tmp_path: Path):
+        """Qwen typed JSON with embedded toolCalls parses correctly."""
+        reader = _qwen_json_reader(
             tmp_path,
             "session-tools.json",
             [
@@ -926,41 +913,6 @@ class TestTranscriptReaderGeminiJSON:
         tool_msgs = [m for m in result if m["content_type"] == "tool_use"]
         assert len(tool_msgs) >= 1
         assert tool_msgs[0]["tool_name"] == "ReadFile"
-
-    @pytest.mark.asyncio
-    async def test_jsonl_still_works_for_gemini(self, tmp_path: Path):
-        """Gemini source with .jsonl file still uses JSONL parsing (regression test)."""
-        jsonl_path = tmp_path / "transcript.jsonl"
-        lines = [
-            {
-                "type": "message",
-                "role": "user",
-                "content": "hello",
-                "timestamp": "2025-03-23T10:00:00Z",
-            },
-            {
-                "type": "message",
-                "role": "model",
-                "content": "hi",
-                "timestamp": "2025-03-23T10:00:01Z",
-            },
-        ]
-        _write_jsonl_file(jsonl_path, lines)
-
-        session = MagicMock()
-        session.source = "gemini"
-        session.transcript_path = str(jsonl_path)
-        session.external_id = None
-
-        session_manager = MagicMock()
-        session_manager.get.return_value = session
-
-        reader = TranscriptReader(session_manager)
-        result = await reader.get_messages("sess-1", limit=50)
-
-        assert len(result) == 2
-        assert result[0]["role"] == "user"
-        assert result[1]["role"] == "assistant"
 
 
 def _jsonl_reader_with_user_msgs(tmp_path: Path, count: int) -> TranscriptReader:
@@ -1229,7 +1181,7 @@ class TestTranscriptReaderWindowed:
             )
         )
         session = MagicMock()
-        session.source = "gemini"
+        session.source = "qwen"
         session.transcript_path = str(json_path)
         session.external_id = None
         session_manager = MagicMock()
@@ -1259,7 +1211,7 @@ class TestTranscriptReaderWindowed:
             )
         )
         session = MagicMock()
-        session.source = "gemini"
+        session.source = "qwen"
         session.transcript_path = str(json_path)
         session.external_id = None
         session_manager = MagicMock()
@@ -1288,7 +1240,7 @@ class TestTranscriptReaderWindowed:
             )
         )
         session = MagicMock()
-        session.source = "gemini"
+        session.source = "qwen"
         session.transcript_path = str(json_path)
         session.external_id = None
         session_manager = MagicMock()
@@ -1317,7 +1269,7 @@ class TestTranscriptReaderWindowed:
             )
         )
         session = MagicMock()
-        session.source = "gemini"
+        session.source = "qwen"
         session.transcript_path = str(json_path)
         session.external_id = None
         session_manager = MagicMock()

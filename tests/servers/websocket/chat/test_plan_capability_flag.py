@@ -7,7 +7,7 @@ auto-switch; managed CLIs (no protocol session/set_mode) advertise False.
 
 The permission/plan helpers are unified in a single protocol-neutral
 ``ManagedWebChatPermissionsMixin`` (#15631), shared by the ACP sessions
-(Gemini/Grok/Qwen), Codex (app-server), and Droid (stream-jsonrpc).
+(Grok/Qwen), Codex (app-server), and Droid (stream-jsonrpc).
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ def test_unified_mixin_defaults_to_manual_plan_switch() -> None:
 
 def test_all_managed_sessions_share_the_unified_mixin() -> None:
     # The whole point of the unification: ACP, Codex, and Droid sessions all
-    # inherit the one permission mixin — none reaches a "Gemini"-named class.
+    # inherit the one permission mixin.
     assert issubclass(ACPManagedChatSession, ManagedWebChatPermissionsMixin)
     assert issubclass(CodexManagedChatSession, ManagedWebChatPermissionsMixin)
     assert issubclass(DroidManagedChatSession, ManagedWebChatPermissionsMixin)

@@ -44,9 +44,6 @@ _CODEX_PLAN_MENU_PANE = (
 _DROID_PLAN_MENU_PANE = (
     "1. Proceed with the proposal\n4. No and explain why\nup/down navigate   1-4 select\n"
 )
-_GEMINI_PLAN_MENU_PANE = (
-    "Apply this change?\n1. Allow once\n2. Allow for this session\n4. No, suggest changes (esc)\n"
-)
 _GROK_PLAN_MENU_PANE = "1 [*] Yes, and don't ask again\n4 [ ] No, reject (type to add feedback)\n"
 _QWEN_PLAN_MENU_PANE = (
     "Apply this change?\n1. Yes, allow once\n2. Yes, allow always\n3. No, suggest changes (esc)\n"
@@ -540,14 +537,14 @@ class TestAttachedPlanApprovalDroid:
         server._send_error.assert_not_awaited()
 
 
-class TestAttachedPlanApprovalGemini:
-    """Gemini is retired and should not have plan-approval keystrokes."""
+class TestAttachedPlanApprovalUnsupported:
+    """Unsupported sources have no plan-approval keystrokes."""
 
     @pytest.mark.asyncio
-    async def test_gemini_source_is_unmapped(self) -> None:
+    async def test_unsupported_source_is_unmapped(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
-        server.session_manager.get.return_value = _make_terminal_session(source="gemini")
+        server.session_manager.get.return_value = _make_terminal_session(source="unsupported")
 
         await handle_attached_plan_approval(
             server,
@@ -657,7 +654,7 @@ class TestAttachedPlanApprovalGrok:
 
 
 class TestAttachedPlanApprovalQwen:
-    """Qwen Code's guarded static approval-menu path (a Gemini-CLI fork):
+    """Qwen Code's guarded static approval-menu path:
     distinct approve digits (1 vs 2) and a shape-independent Esc key for reject."""
 
     @pytest.mark.asyncio
@@ -735,7 +732,7 @@ class TestAttachedPlanApprovalQwen:
 
         tmux_manager.capture_pane.assert_awaited_once()
         # request-changes is the named Esc key (literal=False) -- the reject digit
-        # varies by tool type, but "(esc)" always rejects (matches gemini).
+        # varies by tool type, and "(esc)" always rejects.
         tmux_manager.send_keys.assert_awaited_once_with("%11", "Escape", literal=False)
         assert ws.send.await_count == 1
         msg = json.loads(ws.send.await_args.args[0])

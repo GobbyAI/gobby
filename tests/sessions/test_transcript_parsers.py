@@ -1,5 +1,5 @@
 """
-Tests for Transcript Parsers (Claude, Codex, Gemini, Cursor).
+Tests for transcript parsers (Claude, Codex, Qwen, Droid, and Grok).
 Consolidated from individual files.
 """
 
@@ -2622,7 +2622,7 @@ class TestQwenTranscriptParser:
         assert msgs[1].index == 1
 
     def test_qwen_parse_session_json_with_tool_calls(self, parser) -> None:
-        """Test parse_session_json with gemini message containing toolCalls."""
+        """Test parse_session_json with an assistant message containing toolCalls."""
         data = {
             "sessionId": "abc-123",
             "messages": [
@@ -2700,8 +2700,8 @@ class TestQwenTranscriptParser:
         msgs = parser.parse_session_json(data)
         assert msgs == []
 
-    def test_qwen_parse_session_json_gemini_no_content(self, parser) -> None:
-        """Test gemini message with no text content but with toolCalls."""
+    def test_qwen_parse_session_json_assistant_no_content(self, parser) -> None:
+        """Test assistant message with no text content and toolCalls."""
         data = {
             "sessionId": "abc-123",
             "messages": [
@@ -2858,8 +2858,8 @@ class TestParserRegistry:
 
     def test_registry_has_correct_parsers(self) -> None:
         """Verify each source maps to the correct parser class."""
+        assert set(PARSER_REGISTRY) == {"claude", "grok", "qwen", "codex", "droid"}
         assert PARSER_REGISTRY["claude"] is ClaudeTranscriptParser
-        assert "gemini" not in PARSER_REGISTRY
         assert PARSER_REGISTRY["grok"] is GrokTranscriptParser
         assert PARSER_REGISTRY["qwen"] is QwenTranscriptParser
         assert PARSER_REGISTRY["codex"] is CodexTranscriptParser

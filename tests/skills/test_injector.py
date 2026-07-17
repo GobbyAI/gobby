@@ -104,9 +104,9 @@ class TestAgentContextFromSession:
         assert ctx.source == "claude"
 
     def test_source_string(self) -> None:
-        session = MagicMock(agent_depth=0, source="gemini")
+        session = MagicMock(agent_depth=0, source="qwen")
         ctx = AgentContext.from_session(session)
-        assert ctx.source == "gemini"
+        assert ctx.source == "qwen"
 
     def test_workflow_state_extracts_name_and_step(self) -> None:
         session = MagicMock(agent_depth=0, source=None)
@@ -410,7 +410,7 @@ class TestMatchesAudience:
 
     def test_sources_list_rejects(self) -> None:
         config = SkillAudienceConfig(audience="all", sources=["claude"])
-        ctx = AgentContext(source="gemini")
+        ctx = AgentContext(source="qwen")
         assert self.injector._matches_audience(config, ctx) is False
 
     def test_sources_none_context_rejects(self) -> None:

@@ -62,7 +62,7 @@ class TestSession:
         session = session_manager.register(
             external_id="dict-test",
             machine_id="machine-1",
-            source="gemini",
+            source="qwen",
             project_id=sample_project["id"],
             title="Test Session",
         )
@@ -71,7 +71,7 @@ class TestSession:
         assert d["id"] == session.id
         assert d["external_id"] == "dict-test"
         assert d["machine_id"] == "machine-1"
-        assert d["source"] == "gemini"
+        assert d["source"] == "qwen"
         assert d["title"] == "Test Session"
         assert d["title_source"] is None
         assert d["status"] == "active"
@@ -81,7 +81,7 @@ class TestSession:
             id="sess-title-source",
             external_id="ext-title-source",
             machine_id="machine-1",
-            source="gemini",
+            source="qwen",
             project_id="proj-1",
             title="Titled Session",
             title_source="manual",

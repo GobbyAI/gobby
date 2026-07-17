@@ -158,7 +158,7 @@ class TranscriptAnalyzer:
         - The original user goal (first user message)
         - Recent tool activity summaries
 
-        Handles both Claude JSONL and Gemini JSON session formats
+        Handles both Claude JSONL and Qwen typed-JSON session formats
         transparently via ``_iter_content_blocks`` / ``_get_user_text``.
 
         Args:

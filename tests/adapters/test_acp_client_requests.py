@@ -112,8 +112,8 @@ def _recording_client(root: Path | None = None) -> SimpleNamespace:
         _cwd=None,
         _session_state=SimpleNamespace(root_uris=root_uris),
         session_id="sess-1",
-        cli_name="gemini",
-        display_name="Gemini",
+        cli_name="qwen",
+        display_name="Qwen",
     )
 
 
@@ -122,7 +122,7 @@ def _written_messages(client: SimpleNamespace) -> list[dict[str, Any]]:
     return [json.loads(line) for line in raw.decode().splitlines() if line.strip()]
 
 
-# Mirrors a real Gemini ACP `session/request_permission` option set.
+# Mirrors a real Qwen ACP `session/request_permission` option set.
 _REAL_PERMISSION_OPTIONS = [
     {"optionId": "proceed_always_server", "name": "Allow all", "kind": "allow_always"},
     {"optionId": "proceed_always_tool", "name": "Allow tool", "kind": "allow_always"},

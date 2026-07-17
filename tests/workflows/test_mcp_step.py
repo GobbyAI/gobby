@@ -35,7 +35,7 @@ class TestMCPStepConfig:
         config = MCPStepConfig(
             server="gobby-agents",
             tool="spawn_agent",
-            arguments={"prompt": "Do work", "agent": "developer-gemini", "timeout": 600},
+            arguments={"prompt": "Do work", "agent": "developer-qwen", "timeout": 600},
         )
         assert config.server == "gobby-agents"
         assert config.tool == "spawn_agent"

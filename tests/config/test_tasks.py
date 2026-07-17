@@ -214,8 +214,8 @@ class TestTaskExpansionConfigCustom:
         """Test setting custom candidate provider."""
         from gobby.config.tasks import TaskExpansionConfig
 
-        config = TaskExpansionConfig(candidates=["gemini/gemini-2.0-flash"])
-        assert candidate_labels(config.candidates) == ("gemini/gemini-2.0-flash",)
+        config = TaskExpansionConfig(candidates=["agy/gemini-3.5-flash"])
+        assert candidate_labels(config.candidates) == ("agy/gemini-3.5-flash",)
 
     def category_options(self) -> None:
         """Test different strategy options."""

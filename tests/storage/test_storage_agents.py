@@ -1751,7 +1751,7 @@ class TestAgentRunEdgeCases:
         sample_session: dict,
     ) -> None:
         """Test creating agent runs with different providers."""
-        providers = ["claude", "gemini", "codex", "openai"]
+        providers = ["claude", "qwen", "codex", "openai"]
 
         for provider in providers:
             run = agent_manager.create(

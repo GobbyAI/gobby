@@ -466,24 +466,6 @@ class TestDroidPlanMenu:
 # the per-action approval menus shown in manual/default mode. The reject option's
 # DIGIT differs between tool types (4 vs 3) while "Allow once"/"Allow for this
 # session" stay at positions 1/2 and the "(esc)" shortcut always rejects.
-_GEMINI_EDIT_MENU_PANE = """\
- Apply this change?
-
- ● 1. Allow once
-   2. Allow for this session
-   3. Modify with external editor
-   4. No, suggest changes (esc)
-"""
-
-_GEMINI_SHELL_MENU_PANE = """\
- Allow execution of [Shell]?
-
- ● 1. Allow once
-   2. Allow for this session
-   3. No, suggest changes (esc)
-"""
-
-
 # Verbatim captures from Grok ("Grok Build" Beta 0.2.38, xAI) driven on a pty in
 # `--permission-mode default`: the per-action approval menus. The option numbers
 # (1 always-approve / 3 single-approve / 4 reject) stay positionally stable; only
@@ -550,7 +532,7 @@ class TestGrokPlanMenu:
         assert all(s.literal for s in seq.strokes)
 
     def test_reject_uses_stable_digit_not_escape(self) -> None:
-        # Unlike gemini, grok's reject is the stable digit 4 (identical "No,
+        # Grok's reject is the stable digit 4 (identical "No,
         # reject" item across menu shapes); Esc only "unselects" the radio.
         seq = DEFAULT_PLAN_KEYSTROKES.resolve("grok", REQUEST_CHANGES_OPTION_ID)
         assert seq is not None
@@ -576,8 +558,8 @@ class TestGrokPlanMenu:
 
 # Verbatim capture from Qwen Code (Qwen CLI TUI, v0.17.0) driven on a pty in
 # `--approval-mode default` against a working local LM Studio backend: the
-# WriteFile tool-approval menu. Qwen Code is a Gemini-CLI fork, so the menu
-# matches gemini's RadioButtonSelect verbatim (› = the default-highlighted
+# WriteFile tool-approval menu. Qwen uses RadioButtonSelect (› marks the
+# default-highlighted
 # item). A `run_shell_command` echo auto-approved in default mode, so only the
 # write/edit menu shape was observed.
 _QWEN_EDIT_MENU_PANE = """\
@@ -595,8 +577,8 @@ _QWEN_EDIT_MENU_PANE = """\
 
 class TestQwenPlanMenu:
     """Qwen Code's (Qwen CLI TUI) per-action approval menu -- a static (non-pane)
-    map. Qwen Code is a Gemini-CLI fork, so its confirmation menu matches
-    gemini's: digit 1 = "Yes, allow once" (single approval), digit 2 = "Yes,
+    map. Qwen's confirmation menu uses digit 1 for "Yes, allow once" (single
+    approval), digit 2 for "Yes,
     allow always" (bypass), and Escape rejects (the menu's "(esc)" shortcut)."""
 
     def test_qwen_is_registered_static(self) -> None:
@@ -635,7 +617,7 @@ class TestQwenPlanMenu:
         assert all(s.literal for s in seq.strokes)
 
     def test_reject_uses_escape(self) -> None:
-        # Like gemini (qwen Code is a gemini-cli fork), reject is the shape-
+        # Qwen's reject is the shape-
         # independent Escape -- verified live: Esc on the write menu cancelled
         # the write and the probe file was never created. Escape is a key NAME
         # (literal=False), not a typed character.
@@ -665,4 +647,3 @@ class TestDefaultRegistry:
         # (#15732). No per-CLI source remains pending.
         for source in ("claude", "codex", "droid", "grok", "qwen"):
             assert DEFAULT_PLAN_KEYSTROKES.has_source(source) is True
-        assert DEFAULT_PLAN_KEYSTROKES.has_source("gemini") is False

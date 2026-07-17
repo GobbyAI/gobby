@@ -176,11 +176,11 @@ class TestDbSkillToParsed:
         """sources field round-trips through DB."""
         from gobby.hooks.skill_manager import _db_skill_to_parsed
 
-        skill = _make_mock_skill(metadata={"gobby": {"sources": ["claude", "gemini"]}})
+        skill = _make_mock_skill(metadata={"gobby": {"sources": ["claude", "qwen"]}})
         parsed = _db_skill_to_parsed(skill)
 
         assert parsed.audience_config is not None
-        assert parsed.audience_config.sources == ["claude", "gemini"]
+        assert parsed.audience_config.sources == ["claude", "qwen"]
 
     def test_no_gobby_meta_returns_none(self) -> None:
         """audience_config is None when metadata lacks gobby key."""

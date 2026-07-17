@@ -47,8 +47,6 @@ class TestBuildCliCommand:
     def test_unsupported_provider_raises(self) -> None:
         with pytest.raises(ValueError, match="Unsupported CLI: unsupported"):
             build_cli_command("unsupported", prompt="hello")
-        with pytest.raises(ValueError, match="Unsupported CLI: gemini"):
-            build_cli_command("gemini", prompt="hello")
 
     def test_codex_basic(self) -> None:
         cmd, _env = build_cli_command("codex", prompt="hello")

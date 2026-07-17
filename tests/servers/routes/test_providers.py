@@ -45,9 +45,9 @@ class TestProviderRoutes:
             response = client.get("/api/providers")
             data = response.json()
             providers = {p["name"]: p for p in data["providers"]}
+            assert set(providers) == {"claude", "codex", "droid", "grok", "qwen", "agy"}
             assert providers["claude"]["available"] is True
             assert providers["claude"]["path"] == "/usr/bin/claude"
-            assert "gemini" not in providers
             assert providers["grok"]["available"] is False
             assert providers["grok"]["path"] is None
             assert providers["qwen"]["available"] is False
@@ -88,7 +88,7 @@ class TestProviderRoutes:
                 assert p["available"] is (p["name"] != "agy")
                 assert p["path"] == paths[p["name"]]
             providers = {p["name"]: p for p in data["providers"]}
-            assert "gemini" not in providers
+            assert set(providers) == set(paths)
             assert providers["grok"]["supports_agent_spawn"] is True
             assert providers["agy"]["unavailable_reason"]
 
@@ -140,8 +140,6 @@ class TestProviderModelsRoute:
             "droid",
             "agy",
         }
-        assert "gemini" not in providers
-
         # Claude should expose explicit shorthand choices.
         claude_values = [m["value"] for m in providers["claude"]["models"]]
         assert claude_values == ["fable", "opus", "sonnet", "haiku"]
@@ -260,8 +258,8 @@ class TestProviderModelsRoute:
         ):
             response = client.get("/api/providers/models")
             providers = {p["provider"]: p for p in response.json()["providers"]}
+            assert set(providers) == {"claude", "codex", "droid", "grok", "qwen", "agy"}
             assert providers["claude"]["available"] is True
-            assert "gemini" not in providers
             assert providers["grok"]["available"] is False
             assert providers["qwen"]["available"] is False
             assert providers["codex"]["available"] is False
@@ -352,8 +350,8 @@ class TestProviderModelsRoute:
             response = client.get("/api/providers/models")
 
         providers = {p["provider"]: p for p in response.json()["providers"]}
+        assert set(providers) == {"claude", "codex", "droid", "grok", "qwen", "agy"}
         assert providers["claude"]["models"][0]["value"] == "claude-model"
-        assert "gemini" not in providers
         assert providers["qwen"]["models"][0]["value"] == "qwen-model"
         assert providers["codex"]["models"][0]["value"] == "gpt-5.4"
         assert providers["codex"]["models"][0]["context_length"] == 258_400
@@ -534,7 +532,7 @@ class TestProviderModelsRoute:
         response = client.get("/api/providers/models")
         providers = {p["provider"]: p for p in response.json()["providers"]}
 
-        assert "gemini" not in providers
+        assert set(providers) == {"claude", "codex", "droid", "grok", "qwen", "agy"}
         assert providers["droid"]["source"] == "static"
         assert providers["codex"]["source"] == "static"
         assert [m["value"] for m in providers["claude"]["models"]] == [

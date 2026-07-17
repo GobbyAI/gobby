@@ -58,10 +58,6 @@ impl CliConfig {
         }
     }
 
-    pub fn for_dispatch(cli: &str) -> Self {
-        Self::for_cli(cli).unwrap_or_else(|| Self::for_cli("claude").expect("claude config"))
-    }
-
     pub fn is_critical_hook(&self, hook_type: &str) -> bool {
         self.critical_hooks.contains(hook_type)
     }
@@ -80,11 +76,6 @@ mod tests {
         assert!(c.critical_hooks.contains("pre-compact"));
         assert!(!c.critical_hooks.contains("Stop"));
         assert!(!c.critical_hooks.contains("SessionStart"));
-    }
-
-    #[test]
-    fn gemini_is_no_longer_registered() {
-        assert!(CliConfig::for_cli("gemini").is_none());
     }
 
     #[test]
@@ -139,7 +130,7 @@ mod tests {
 
     #[test]
     fn unknown_cli_returns_none() {
-        assert!(CliConfig::for_cli("cursor").is_none());
+        assert!(CliConfig::for_cli("unsupported").is_none());
     }
 
     #[test]
@@ -156,13 +147,5 @@ mod tests {
             let config = CliConfig::for_cli(cli).expect("installer CLI must be recognized");
             assert_eq!(config.source, cli, "{cli} must preserve its source");
         }
-    }
-
-    #[test]
-    fn unknown_cli_falls_back_to_claude_for_dispatch() {
-        let c = CliConfig::for_dispatch("cursor");
-        assert_eq!(c.source, "claude");
-        assert!(c.is_critical_hook("session-start"));
-        assert_eq!(c.json_error_exit_code, 2);
     }
 }

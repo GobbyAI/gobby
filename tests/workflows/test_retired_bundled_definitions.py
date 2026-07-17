@@ -25,7 +25,7 @@ RETIRED_PIPELINES = (
     "dev-orchestrator",
     "delivery-orchestrator",
 )
-RETIRED_AGENTS = ("developer", "pipeline-worker", "gemini-image-gen")
+RETIRED_AGENTS = ("developer", "pipeline-worker")
 
 
 def test_no_external_conductor_imports_remain() -> None:

@@ -127,7 +127,7 @@ class TestSessionManagerLifecycle:
         session_manager.register(
             external_id="list-2",
             machine_id="m2",
-            source="gemini",
+            source="qwen",
             project_id=sample_project["id"],
         )
 
@@ -149,7 +149,7 @@ class TestSessionManagerLifecycle:
         session_manager.register(
             external_id="filter-2",
             machine_id="m2",
-            source="gemini",
+            source="qwen",
             project_id=sample_project["id"],
         )
         session_manager.update_status(s1.id, "paused")
@@ -591,7 +591,7 @@ class TestSessionManagerLifecycle:
         session_manager.register(
             external_id="count-2",
             machine_id="m2",
-            source="gemini",
+            source="qwen",
             project_id=sample_project["id"],
         )
 
@@ -613,7 +613,7 @@ class TestSessionManagerLifecycle:
         session_manager.register(
             external_id="count-filter-2",
             machine_id="m2",
-            source="gemini",
+            source="qwen",
             project_id=sample_project["id"],
         )
         session_manager.update_status(s1.id, "paused")
@@ -805,7 +805,7 @@ class TestSessionManagerLifecycle:
         session_manager.register(
             external_id="list-all-2",
             machine_id="m2",
-            source="gemini",
+            source="qwen",
             project_id=sample_project["id"],
         )
 

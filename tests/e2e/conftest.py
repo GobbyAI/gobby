@@ -779,7 +779,7 @@ class CLIEventSimulator:
             "claude": "user-prompt-submit",
             "codex": "UserPromptSubmit",
             "droid": "UserPromptSubmit",
-            "gemini": "BeforeAgent",
+            "qwen": "BeforeAgent",
         }
         hook_type = hook_type_by_source[source]
         input_data: dict[str, Any] = {
@@ -795,7 +795,7 @@ class CLIEventSimulator:
             input_data["user_prompt"] = prompt
         else:
             input_data["prompt"] = prompt
-        if source == "gemini":
+        if source == "qwen":
             input_data["hook_event_name"] = hook_type
 
         payload = {

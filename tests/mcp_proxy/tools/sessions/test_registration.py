@@ -186,7 +186,7 @@ class TestRegisterSession:
         mock_session.seq_num = 99
         mock_session.external_id = "ext-opt"
         mock_session.status = "active"
-        mock_session.source = "gemini"
+        mock_session.source = "qwen"
         mock_session.project_id = "11111111-1111-4111-8111-111111110001"
         session_manager.register.return_value = mock_session
 
@@ -196,7 +196,7 @@ class TestRegisterSession:
 
         register(
             external_id="ext-opt",
-            source="gemini",
+            source="qwen",
             machine_id="m1",
             project_id="11111111-1111-4111-8111-111111110001",
             title="My Session",
@@ -208,7 +208,7 @@ class TestRegisterSession:
         session_manager.register.assert_called_once_with(
             external_id="ext-opt",
             machine_id="m1",
-            source="gemini",
+            source="qwen",
             project_id="11111111-1111-4111-8111-111111110001",
             title="My Session",
             git_branch="feature/foo",

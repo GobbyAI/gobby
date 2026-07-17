@@ -48,8 +48,8 @@ def sample_sessions():
             usage_output_tokens=2500,
             usage_cache_creation_tokens=None,
             usage_cache_read_tokens=None,
-            model="gemini/gemini-2.0-flash-exp",
-            source="gemini",
+            model="gemini-3.5-flash",
+            source="agy",
             created_at=(now - timedelta(days=2)).isoformat(),
         ),
     ]
@@ -123,7 +123,7 @@ class TestGetUsageSummary:
 
         assert "usage_by_model" in summary
         assert "claude-3-5-sonnet-20241022" in summary["usage_by_model"]
-        assert "gemini/gemini-2.0-flash-exp" in summary["usage_by_model"]
+        assert "gemini-3.5-flash" in summary["usage_by_model"]
 
         claude_usage = summary["usage_by_model"]["claude-3-5-sonnet-20241022"]
         assert claude_usage["input_tokens"] == 3000
@@ -142,16 +142,16 @@ class TestGetUsageSummary:
 
         assert "usage_by_source" in summary
         assert "claude" in summary["usage_by_source"]
-        assert "gemini" in summary["usage_by_source"]
+        assert "agy" in summary["usage_by_source"]
 
         claude_usage = summary["usage_by_source"]["claude"]
         assert claude_usage["input_tokens"] == 3000  # 1000 + 2000
         assert claude_usage["output_tokens"] == 1500  # 500 + 1000
         assert claude_usage["sessions"] == 2
 
-        gemini_usage = summary["usage_by_source"]["gemini"]
-        assert gemini_usage["input_tokens"] == 5000
-        assert gemini_usage["sessions"] == 1
+        agy_usage = summary["usage_by_source"]["agy"]
+        assert agy_usage["input_tokens"] == 5000
+        assert agy_usage["sessions"] == 1
 
     def test_get_usage_summary_passes_project_id(self, mock_session_storage: MagicMock) -> None:
         """Project ID is forwarded to storage layer."""

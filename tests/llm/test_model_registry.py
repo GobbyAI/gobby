@@ -322,9 +322,9 @@ class TestGroupByProvider:
             ModelInfo("openai/c", "C", "codex", 128000, None),
         ]
         grouped = group_by_provider(models)
+        assert set(grouped) == {"claude", "codex"}
         assert len(grouped["claude"]) == 2
         assert len(grouped["codex"]) == 1
-        assert "gemini" not in grouped
 
     def test_empty_list(self) -> None:
         assert group_by_provider([]) == {}

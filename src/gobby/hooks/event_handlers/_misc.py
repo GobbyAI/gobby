@@ -126,7 +126,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
                 if isinstance(usage, dict) and usage:
                     # De-overlap cached input and fold thinking tokens into output
                     # via the shared helper so live usage matches replayed
-                    # transcripts (Gemini has no cache_creation split here → 0).
+                    # transcripts (typed JSON has no cache_creation split here → 0).
                     tokens = typed_json_token_usage(usage)
 
                     # Update session usage in DB

@@ -49,9 +49,6 @@ class TestFeatureProfile:
         )
         for candidates in DEFAULT_PROFILE_CANDIDATES.values():
             assert "claude/fable" not in candidate_labels(candidates)
-            assert all(
-                not candidate.startswith("gemini/") for candidate in candidate_labels(candidates)
-            )
 
     def test_profile_candidate_reasoning_pins(self) -> None:
         high_candidates = DEFAULT_PROFILE_CANDIDATES[FeatureProfile.HIGH]

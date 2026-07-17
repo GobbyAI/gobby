@@ -178,9 +178,9 @@ class TestStatusUtils:
                 },
                 "coding_clis": {
                     "claude": "installed",
-                    "gemini": None,
+                    "qwen": None,
                     "codex": None,
-                    "hooks": {"claude": True, "gemini": False, "codex": False},
+                    "hooks": {"claude": True, "qwen": False, "codex": False},
                 },
                 "dependencies": {
                     "tmux": "installed",

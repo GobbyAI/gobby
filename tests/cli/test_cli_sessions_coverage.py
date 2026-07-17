@@ -200,7 +200,7 @@ def test_session_stats(mock_session_manager) -> None:
         id="s2",
         project_id="p1",
         status="completed",
-        source="gemini",
+        source="qwen",
         created_at="2026-01-01T00:00:00+00:00",
         updated_at="2026-01-01T00:00:00+00:00",
         title=None,
@@ -222,7 +222,7 @@ def test_session_stats(mock_session_manager) -> None:
     assert "active: 1" in result.output
     assert "completed: 1" in result.output
     assert "claude: 1" in result.output
-    assert "gemini: 1" in result.output
+    assert "qwen: 1" in result.output
 
 
 def test_show_messages(mock_session_manager, mock_resolve_session) -> None:

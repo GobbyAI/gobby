@@ -40,7 +40,7 @@ def test_edit_history_flow(temp_db, tmp_path) -> None:
     session = session_manager.register(
         external_id="test-session-1",
         machine_id="test-machine",
-        source="gemini",
+        source="codex",
         project_id=project_id,
         title="Test Session",
     )
@@ -177,7 +177,7 @@ def test_edit_history_ignores_out_of_repo_paths(temp_db, tmp_path) -> None:
     session = session_manager.register(
         external_id="test-session-outside",
         machine_id="test-machine",
-        source="gemini",
+        source="codex",
         project_id=project.id,
         title="Out-of-Repo Edit Session",
     )

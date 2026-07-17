@@ -1108,7 +1108,7 @@ class TestGenerateSummary:
             ),
             (
                 ".json",
-                "gemini",
+                "unknown",
                 json.dumps(
                     {
                         "messages": [

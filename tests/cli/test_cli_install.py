@@ -313,8 +313,6 @@ class TestInstallCommand:
         assert result.exit_code == 0
         assert "Install Gobby hooks" in result.output
         assert "--claude" in result.output
-        retired_flag = "--" + "gemini"
-        assert retired_flag not in result.output
         assert "--agy" in result.output
         assert "--qwen" in result.output
         assert "--codex" in result.output
@@ -648,8 +646,6 @@ class TestUninstallCommand:
         assert result.exit_code == 0
         assert "Uninstall Gobby hooks" in result.output
         assert "--claude" in result.output
-        retired_flag = "--" + "gemini"
-        assert retired_flag not in result.output
         assert "--agy" in result.output
         assert "--qwen" in result.output
         assert "--codex" in result.output

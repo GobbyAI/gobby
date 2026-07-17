@@ -112,7 +112,7 @@ fn missing_cli_or_type_prints_empty_json_and_exits_two() -> TestResult {
 }
 
 #[test]
-fn removed_gemini_cli_noops_before_dispatch_side_effects() -> TestResult {
+fn unsupported_cli_exits_two_before_dispatch_side_effects() -> TestResult {
     let home = tempfile::tempdir()?;
     let gobby_home = tempfile::tempdir()?;
     let daemon_url = closed_local_url()?;
@@ -120,19 +120,19 @@ fn removed_gemini_cli_noops_before_dispatch_side_effects() -> TestResult {
     let output = run_ghook_with_dirs(
         home.path(),
         gobby_home.path(),
-        Some("gemini"),
+        Some("unsupported"),
         Some("SessionStart"),
         &daemon_url,
         VALID_STDIN,
         &[],
     )?;
 
-    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(output.status.code(), Some(2));
     assert_json_stdout(&output, serde_json::json!({}))?;
-    assert_stderr_empty(&output, "removed gemini")?;
+    assert_stderr_empty(&output, "unsupported CLI")?;
     assert!(
         !gobby_home.path().join("hooks").exists(),
-        "removed Gemini invocations must not create an inbox"
+        "unsupported CLI invocations must not create an inbox"
     );
 
     Ok(())

@@ -72,7 +72,7 @@ class TestProjectResolutionEndpoints:
         session = session_storage.register(
             external_id="find-current",
             machine_id="my-machine",
-            source="gemini",
+            source="qwen",
             project_id=test_project["id"],
         )
 
@@ -81,7 +81,7 @@ class TestProjectResolutionEndpoints:
             json={
                 "external_id": "find-current",
                 "machine_id": "my-machine",
-                "source": "gemini",
+                "source": "qwen",
                 "project_id": test_project["id"],
             },
         )

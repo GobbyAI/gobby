@@ -38,7 +38,7 @@ class TestSessionSource:
         assert parse_session_source("claude") is SessionSource.CLAUDE
         assert parse_session_source(" CLAUDE ") is SessionSource.CLAUDE
         assert parse_session_source(SessionSource.QWEN) is SessionSource.QWEN
-        assert parse_session_source("gemini") is SessionSource.UNKNOWN
+        assert parse_session_source("unsupported") is SessionSource.UNKNOWN
         assert parse_session_source("future-cli") is SessionSource.UNKNOWN
         assert parse_session_source(None) is SessionSource.UNKNOWN
         assert parse_session_source(None, default=SessionSource.CLAUDE) is SessionSource.CLAUDE

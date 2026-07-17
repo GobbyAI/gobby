@@ -162,9 +162,6 @@ class TestCompactSelfCLIMap:
     def test_codex_maps_to_slash_compact(self) -> None:
         assert _CLI_COMPACT_COMMANDS["codex"] == "/compact"
 
-    def test_gemini_is_retired(self) -> None:
-        assert "gemini" not in _CLI_COMPACT_COMMANDS
-
     def test_qwen_maps_to_slash_compress(self) -> None:
         assert _CLI_COMPACT_COMMANDS["qwen"] == "/compress"
 
@@ -258,8 +255,8 @@ class TestCompactSelfTerminalPath:
         assert "compaction interrupt" in reason
         tmux.send_keys.assert_awaited_once_with("%12", "C-c", literal=False)
 
-    def test_gemini_session_is_not_compactable(self) -> None:
-        session = _make_terminal_session("gemini")
+    def test_unsupported_session_is_not_compactable(self) -> None:
+        session = _make_terminal_session("unsupported")
         registry, tmux = _register_compact_self(session)
 
         result = _call_compact_self(registry, tmux, session_id="s1")

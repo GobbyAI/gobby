@@ -217,8 +217,6 @@ class TestFormatStatusMessage:
         assert "hooks installed, 3 models available" in _status_line(result, "Claude Code")
         assert "Codex CLI:" in result
         assert "4 models available" in _status_line(result, "Codex CLI")
-        retired_cli_name = "Gemini " + "CLI"
-        assert retired_cli_name not in result
         assert "Models claude:" not in result
         assert "(live)" not in result
         assert "using cache (probe failed)" in result
@@ -247,7 +245,7 @@ class TestFormatStatusMessage:
                     "gwiki": "0.1.0",
                     "gwiki_path": "/Users/test/.gobby/bin/gwiki",
                 },
-                "coding_clis": {"claude": "installed", "gemini": None, "codex": None, "hooks": {}},
+                "coding_clis": {"claude": "installed", "qwen": None, "codex": None, "hooks": {}},
                 "dependencies": {
                     "tmux": "installed",
                     "docker": None,
@@ -285,7 +283,6 @@ class TestFormatStatusMessage:
                     "claude": "installed",
                     "codex": "installed",
                     "droid": "installed",
-                    "gemini": "installed",
                     "qwen": "installed",
                     "hooks": {"droid": True, "qwen": True},
                 },

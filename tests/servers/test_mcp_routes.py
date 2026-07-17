@@ -185,6 +185,7 @@ class FakeServerConfig:
         self.requires_oauth = False
         self.oauth_provider: str | None = None
         self.connect_timeout = 30.0
+        self.tools: list[dict[str, Any]] | None = None
 
 
 class FakeTool:
@@ -3075,11 +3076,11 @@ class TestHooksEndpoints:
             "input_data": {"session_id": "claude-envelope"},
         }
 
-    def test_execute_hook_rejects_removed_gemini_source(
+    def test_execute_hook_rejects_unsupported_source(
         self,
         session_storage: SessionManager,
     ) -> None:
-        """Gemini is no longer a hook provider surface."""
+        """Unsupported hook sources are rejected."""
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -3091,11 +3092,11 @@ class TestHooksEndpoints:
         with TestClient(server.app) as client:
             response = client.post(
                 "/api/hooks/execute",
-                json=_hook_envelope(hook_type="session-start", source="gemini"),
+                json=_hook_envelope(hook_type="session-start", source="unsupported"),
             )
 
         assert response.status_code == 400
-        assert "Unsupported source: gemini" in response.json()["detail"]
+        assert "Unsupported source: unsupported" in response.json()["detail"]
 
     def test_execute_hook_droid_source(self, session_storage: SessionManager) -> None:
         """Test execute hook with Droid source."""

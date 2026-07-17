@@ -108,9 +108,9 @@ class TestPendingProviderOverride:
     async def test_pending_provider_takes_precedence_over_agent_or_default(self) -> None:
         """Queued provider overrides should route the next session creation."""
         mixin = _make_mixin()
-        mixin._pending_providers["test-conv-routing"] = "gemini"
+        mixin._pending_providers["test-conv-routing"] = "qwen"
         mock_session = AsyncMock()
-        mock_session.provider = "gemini"
+        mock_session.provider = "qwen"
         mock_session.chat_mode = "plan"
         mock_session.db_session_id = None
         mock_session.resume_session_id = None
@@ -122,7 +122,7 @@ class TestPendingProviderOverride:
 
         session = await _create_session_for_provider(mixin, provider=None)
 
-        assert session.provider == "gemini"
+        assert session.provider == "qwen"
 
     @pytest.mark.asyncio
     async def test_daemon_chat_provider_used_when_request_has_no_provider(self) -> None:

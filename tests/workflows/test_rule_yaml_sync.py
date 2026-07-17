@@ -134,7 +134,7 @@ class TestMultiRuleYamlWithDefaults:
             """
 group: tool-hygiene
 tags: [enforcement]
-sources: [claude, gemini]
+sources: [claude, qwen]
 
 rules:
   rule-a:

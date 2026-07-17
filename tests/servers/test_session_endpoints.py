@@ -240,7 +240,7 @@ class TestSessionEndpoints:
         session_storage.register(
             external_id="list-test-2",
             machine_id="machine",
-            source="gemini",
+            source="qwen",
             project_id=test_project["id"],
         )
 
@@ -269,7 +269,7 @@ class TestSessionEndpoints:
         session_storage.register(
             external_id="filter-test-2",
             machine_id="machine",
-            source="gemini",
+            source="qwen",
             project_id=test_project["id"],
         )
 

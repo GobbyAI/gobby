@@ -489,7 +489,7 @@ mod tests {
     fn action_from_failure_blocks_critical_hooks() {
         let action = action_from_failure(
             "SessionStart",
-            &CliConfig::for_dispatch("codex"),
+            &CliConfig::for_cli("codex").expect("supported CLI"),
             DeliveryFailureKind::Http,
             "Internal Server Error",
         );
@@ -507,7 +507,7 @@ mod tests {
     fn action_from_failure_returns_json_for_noncritical_hooks() {
         let action = action_from_failure(
             "PostToolUse",
-            &CliConfig::for_dispatch("codex"),
+            &CliConfig::for_cli("codex").expect("supported CLI"),
             DeliveryFailureKind::Connect,
             "ignored",
         );
@@ -523,7 +523,7 @@ mod tests {
     fn action_from_failure_treats_timeout_like_python() {
         let action = action_from_failure(
             "PreToolUse",
-            &CliConfig::for_dispatch("claude"),
+            &CliConfig::for_cli("claude").expect("supported CLI"),
             DeliveryFailureKind::Timeout,
             "timed out reading response",
         );
@@ -536,7 +536,7 @@ mod tests {
     fn action_from_failure_treats_connect_on_critical_hook_as_exit_two() {
         let action = action_from_failure(
             "Stop",
-            &CliConfig::for_dispatch("codex"),
+            &CliConfig::for_cli("codex").expect("supported CLI"),
             DeliveryFailureKind::Connect,
             "connection failed",
         );
@@ -552,7 +552,7 @@ mod tests {
     fn action_from_failure_returns_stderr_for_droid_transport_errors() {
         let action = action_from_failure(
             "PreToolUse",
-            &CliConfig::for_dispatch("droid"),
+            &CliConfig::for_cli("droid").expect("supported CLI"),
             DeliveryFailureKind::Http,
             "Internal Server Error",
         );

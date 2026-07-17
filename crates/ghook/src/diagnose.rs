@@ -141,16 +141,7 @@ mod tests {
 
     #[test]
     fn unknown_cli_marked_not_recognized() {
-        let d = diagnose("cursor", "session-start");
-        assert!(!d.cli_recognized);
-        assert!(d.source.is_none());
-        assert!(!d.critical);
-        assert!(!d.terminal_context_enabled);
-    }
-
-    #[test]
-    fn gemini_cli_marked_not_recognized() {
-        let d = diagnose("gemini", "SessionStart");
+        let d = diagnose("unsupported", "session-start");
         assert!(!d.cli_recognized);
         assert!(d.source.is_none());
         assert!(!d.critical);
@@ -207,8 +198,6 @@ mod tests {
             assert_eq!(output.source.as_deref(), Some(cli));
             assert_eq!(output.critical, critical, "{cli} {hook_type}");
         }
-
-        assert!(!diagnose("gemini", "Stop").cli_recognized);
     }
 
     #[test]

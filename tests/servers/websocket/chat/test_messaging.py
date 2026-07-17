@@ -214,8 +214,9 @@ class TestInjectPendingMessages:
         mixin.inter_session_msg_manager = MagicMock()
         mixin.inter_session_msg_manager.mark_delivered.side_effect = ValueError("already claimed")
 
-        mixin._mark_pending_messages_delivered(["claimed"], "sid")
+        result = mixin._mark_pending_messages_delivered(["claimed"], "sid")
 
+        assert result is None
         mixin.inter_session_msg_manager.mark_delivered.assert_called_once_with("claimed", "sid")
 
 
@@ -492,11 +493,11 @@ class TestFireLifecycle:
         assert captured_event.metadata["project_path"] == "/tmp/project"
 
     @pytest.mark.asyncio
-    async def test_fire_lifecycle_tolerates_legacy_gemini_provider(self) -> None:
+    async def test_fire_lifecycle_accepts_qwen_provider(self) -> None:
         mixin = DummyLifecycleMixin()
         mixin._chat_sessions["conv-1"] = SimpleNamespace(
             db_session_id="db-session",
-            provider="gemini",
+            provider="qwen",
             project_id="project-123",
             project_path="/tmp/project",
             seq_num=None,
@@ -517,7 +518,7 @@ class TestFireLifecycle:
 
         assert result is not None
         assert captured_event is not None
-        assert captured_event.source is SessionSource.UNKNOWN
+        assert captured_event.source is SessionSource.QWEN
 
 
 class TestHeartbeatScope:

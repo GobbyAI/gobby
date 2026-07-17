@@ -304,7 +304,6 @@ class TestSessionManagerRegistration:
         [
             ("claude", "claude"),
             ("codex", "codex"),
-            ("gemini", "gemini"),
             ("grok", "grok"),
             ("qwen", "qwen"),
             ("droid", "droid"),
@@ -426,14 +425,14 @@ class TestSessionManagerRegistration:
         session = session_manager.create_web_chat_session(
             machine_id="machine",
             project_id=sample_project["id"],
-            source="gemini",
-            model="gemini-pro",
+            source="droid",
+            model="gemini-3.5-flash",
             sandbox_enabled=True,
             sandbox_policy_hash="policy-hash-123",
         )
 
         assert session.session_type == "web_chat"
-        assert session.title == f"#{session.seq_num} gemini"
+        assert session.title == f"#{session.seq_num} droid"
         assert session.title_source == PROVISIONAL_TITLE_SOURCE
 
     def test_register_recreates_missing_system_parent_session(
