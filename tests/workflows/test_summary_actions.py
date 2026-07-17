@@ -1759,7 +1759,7 @@ class TestGenerateSummary:
 
         with (
             patch(
-                "gobby.workflows.summary_actions._load_summary_prompt_template",
+                "gobby.workflows.summary_actions.load_summary_prompt_template",
                 return_value=installed_prompt,
             ),
             patch("gobby.workflows.summary_actions.get_git_status", return_value="clean"),

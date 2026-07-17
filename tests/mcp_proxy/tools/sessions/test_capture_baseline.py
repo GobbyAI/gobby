@@ -11,6 +11,7 @@ import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -42,8 +43,21 @@ class TestCaptureBaselineDirtyFiles:
         database = temp_db
         yield database
 
+    @pytest.fixture
+    def session_id(self, db: HubDatabase) -> str:
+        return (
+            SessionManager(db)
+            .register(
+                external_id="capture-baseline-ext",
+                machine_id="test-machine",
+                source="claude",
+                project_id=None,
+            )
+            .id
+        )
+
     @patch("gobby.mcp_proxy.tools.sessions._actions.get_dirty_files")
-    def test_persists_baseline_to_session_variables(self, mock_dirty, db) -> None:
+    def test_persists_baseline_to_session_variables(self, mock_dirty, db, session_id) -> None:
         """Should store baseline_dirty_files in session variables."""
         mock_dirty.return_value = {"file_a.py", "file_b.py"}
 
@@ -51,14 +65,14 @@ class TestCaptureBaselineDirtyFiles:
         tool = registry.get_tool("capture_baseline_dirty_files")
         assert tool is not None
 
-        with session_context_for_test("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4005"):
+        with session_context_for_test(session_id):
             result = asyncio.run(tool(project_path="/tmp"))
 
         assert result["success"] is True
         assert result["file_count"] == 2
 
         svm = SessionVariableManager(db=db)
-        variables = svm.get_variables("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4005")
+        variables = svm.get_variables(session_id)
         assert sorted(variables["baseline_dirty_files"]) == ["file_a.py", "file_b.py"]
         assert variables["active_task_id"] is None
         assert variables["task_edited_files"] == {}
@@ -93,7 +107,7 @@ class TestCaptureBaselineDirtyFiles:
         assert result["file_count"] == 1
 
     @patch("gobby.mcp_proxy.tools.sessions._actions.get_dirty_files")
-    def test_empty_baseline_persisted(self, mock_dirty, db) -> None:
+    def test_empty_baseline_persisted(self, mock_dirty, db, session_id) -> None:
         """Should persist empty list when no dirty files."""
         mock_dirty.return_value = set()
 
@@ -101,20 +115,20 @@ class TestCaptureBaselineDirtyFiles:
         tool = registry.get_tool("capture_baseline_dirty_files")
         assert tool is not None
 
-        with session_context_for_test("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4005"):
+        with session_context_for_test(session_id):
             result = asyncio.run(tool(project_path="/tmp"))
 
         assert result["success"] is True
         assert result["file_count"] == 0
 
         svm = SessionVariableManager(db=db)
-        variables = svm.get_variables("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4005")
+        variables = svm.get_variables(session_id)
         assert variables["baseline_dirty_files"] == []
         assert variables["active_task_id"] is None
         assert variables["task_edited_files"] == {}
 
     @patch("gobby.mcp_proxy.tools.sessions._actions.get_dirty_files")
-    def test_blocking_work_is_offloaded_to_thread(self, mock_dirty, db) -> None:
+    def test_blocking_work_is_offloaded_to_thread(self, mock_dirty, db, session_id) -> None:
         """Git status and session variable writes should not run on the event loop."""
         mock_dirty.return_value = {"file_a.py"}
 
@@ -129,7 +143,7 @@ class TestCaptureBaselineDirtyFiles:
             "gobby.mcp_proxy.tools.sessions._actions.asyncio.to_thread",
             side_effect=fake_to_thread,
         ) as mock_to_thread:
-            with session_context_for_test("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4005"):
+            with session_context_for_test(session_id):
                 result = asyncio.run(tool(project_path="/tmp"))
 
         assert result["success"] is True
@@ -139,5 +153,5 @@ class TestCaptureBaselineDirtyFiles:
         merge_call = mock_to_thread.call_args_list[1]
         assert dirty_call.args == (mock_dirty, "/tmp")
         assert merge_call.args[0].__name__ == "merge_variables"
-        assert merge_call.args[1] == "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4005"
+        assert merge_call.args[1] == session_id
         assert merge_call.args[2]["baseline_dirty_files"] == ["file_a.py"]

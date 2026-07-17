@@ -44,7 +44,7 @@ def _summary_context_db(
     return None if _looks_like_mock(resolved_db) else resolved_db
 
 
-def _load_summary_prompt_template(
+def load_summary_prompt_template(
     *,
     path: str,
     session_summary_config: SessionSummaryConfigProtocol | None,

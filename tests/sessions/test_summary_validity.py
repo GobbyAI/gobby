@@ -50,6 +50,30 @@ def test_accepts_tolerated_semantic_heading_variants(
 
 
 @pytest.mark.parametrize(
+    ("current_line", "next_line"),
+    [
+        ("Current state:", "Next steps:"),
+        ("current state", "next steps"),
+    ],
+)
+def test_rejects_plain_text_section_labels_without_markdown_structure(
+    current_line: str,
+    next_line: str,
+) -> None:
+    summary = (
+        f"{current_line}\n\n"
+        + ("Detailed implementation state. " * 5)
+        + f"\n\n{next_line}\n\n"
+        + ("Continue with the verified handoff action. " * 4)
+    )
+
+    assert summary_markdown_validation_error(summary) == (
+        "summary is missing required section(s): Current State, Next Steps"
+    )
+    assert is_summary_markdown_valid(summary) is False
+
+
+@pytest.mark.parametrize(
     "summary",
     [
         None,

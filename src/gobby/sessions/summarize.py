@@ -20,10 +20,10 @@ from gobby.sessions.summary_context import (
     _build_summary_prompt_context,
     _get_claimed_tasks,
     _get_session_memories,
-    _load_summary_prompt_template,
     _looks_like_mock,
     _source_hash_payload,
     _summary_context_db,
+    load_summary_prompt_template,
 )
 from gobby.sessions.summary_generation import (
     _generate_delta_summary,
@@ -82,7 +82,6 @@ __all__ = [
     "_generate_full_summary",
     "_get_claimed_tasks",
     "_get_session_memories",
-    "_load_summary_prompt_template",
     "_looks_like_mock",
     "_persist_summary_markdown",
     "_read_typed_json_transcript",
@@ -97,6 +96,7 @@ __all__ = [
     "_write_files",
     "async_enumerate",
     "generate_session_summaries",
+    "load_summary_prompt_template",
 ]
 
 
@@ -278,7 +278,7 @@ async def generate_session_summaries(
         run_db=db_runner,
         project_path=str(cwd),
     )
-    full_prompt_template = _load_summary_prompt_template(
+    full_prompt_template = load_summary_prompt_template(
         path="handoff/session_end",
         session_summary_config=session_summary_config,
         db=db,

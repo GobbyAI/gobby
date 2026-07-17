@@ -16,7 +16,7 @@ import aiofiles
 
 from gobby.hooks.background_tasks import create_background_task
 from gobby.memory.title_heuristics import normalize_title_candidate
-from gobby.sessions.summary_context import _load_summary_prompt_template
+from gobby.sessions.summary_context import load_summary_prompt_template
 from gobby.sessions.summary_transcripts import (
     DIGEST_FALLBACK_MAX_CHARS,
     TRANSCRIPT_FALLBACK_MAX_CHARS,
@@ -672,7 +672,7 @@ async def generate_summary(
 
     if not template:
         template = await asyncio.to_thread(
-            _load_summary_prompt_template,
+            load_summary_prompt_template,
             path="handoff/session_end",
             session_summary_config=session_summary_config,
             db=getattr(session_manager, "db", None),

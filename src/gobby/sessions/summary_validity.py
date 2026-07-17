@@ -74,14 +74,28 @@ def summary_prompt_validation_error(prompt_template: str | None) -> str | None:
     return None
 
 
-def _semantic_heading(line: str) -> str:
-    """Normalize tolerated Markdown heading variants to their semantic label."""
-    candidate = _HEADING_PREFIX_RE.sub("", line.strip()).strip()
+def _semantic_heading(line: str) -> str | None:
+    """Normalize tolerated Markdown heading variants to their semantic label.
+
+    Returns None for lines with no Markdown heading structure (ATX prefix or
+    full emphasis wrapping), so plain prose never satisfies a section check.
+    """
+    stripped = line.strip()
+    prefix_match = _HEADING_PREFIX_RE.match(stripped)
+    candidate = stripped[prefix_match.end() :].strip() if prefix_match else stripped
     candidate = candidate.removesuffix(":").strip()
 
+    emphasized = False
     for marker in _EMPHASIS_MARKERS:
-        if candidate.startswith(marker) and candidate.endswith(marker):
+        if (
+            len(candidate) > 2 * len(marker)
+            and candidate.startswith(marker)
+            and candidate.endswith(marker)
+        ):
             candidate = candidate[len(marker) : -len(marker)].strip()
+            emphasized = True
             break
 
+    if prefix_match is None and not emphasized:
+        return None
     return candidate.removesuffix(":").strip().casefold()

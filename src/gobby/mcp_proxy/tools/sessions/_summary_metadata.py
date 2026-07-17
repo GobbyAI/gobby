@@ -31,8 +31,8 @@ async def compact_summary_metadata_matches(
     from gobby.sessions.summarize import (
         _build_summary_prompt_context,
         _digest_markdown_for_summary,
-        _load_summary_prompt_template,
         _source_hash_payload,
+        load_summary_prompt_template,
     )
     from gobby.sessions.summary_refresh import (
         coerce_digest_turn_count,
@@ -70,7 +70,7 @@ async def compact_summary_metadata_matches(
             session_manager=session_manager,
             project_path=str(cwd) if cwd is not None else None,
         )
-        prompt_template = _load_summary_prompt_template(
+        prompt_template = load_summary_prompt_template(
             path="handoff/session_end",
             session_summary_config=session_summary_config,
             db=db,

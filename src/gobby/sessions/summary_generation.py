@@ -86,7 +86,7 @@ async def _generate_full_summary(
             return None, "Session summary LLM feature config not available"
 
         if prompt_template is None:
-            load_summary_prompt_template = _facade_attr("_load_summary_prompt_template")
+            load_summary_prompt_template = _facade_attr("load_summary_prompt_template")
             prompt_template = load_summary_prompt_template(
                 path="handoff/session_end",
                 session_summary_config=session_summary_config,
@@ -156,7 +156,7 @@ async def _generate_delta_summary(
         if llm_service is None or session_summary_config is None:
             return None, "Session summary LLM feature config not available"
 
-        load_summary_prompt_template = _facade_attr("_load_summary_prompt_template")
+        load_summary_prompt_template = _facade_attr("load_summary_prompt_template")
         prompt_template = load_summary_prompt_template(
             path="handoff/session_delta_merge",
             session_summary_config=None,
