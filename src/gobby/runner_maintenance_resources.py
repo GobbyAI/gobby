@@ -2,16 +2,14 @@
 
 psutil ``io_counters()`` is not implemented on macOS, so disk churn is observed
 by sampling per-file sizes in the logs directory each interval — that sampling
-is the design, not a fallback. The loop also truncates the OS-level stderr
-capture file (``log_file_stderr``) when it exceeds its cap; every writer holds
-it in append mode, so truncation to zero is safe.
+is the design, not a fallback. The loop reports when the OS-level stderr capture
+file (``log_file_stderr``) exceeds its configured cap.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -55,36 +53,20 @@ def _daemon_rss_and_fds() -> tuple[int | None, int | None]:
         return None, None
 
 
-def truncate_stderr_log_if_over_cap(stderr_log: Path, max_bytes: int) -> bool:
-    """Truncate the stderr capture file when it exceeds ``max_bytes``.
-
-    All writers (Popen stderr, launchd StandardErrorPath, systemd append:)
-    hold the file in append mode, so truncating to zero cannot corrupt or
-    interleave subsequent writes.
-    """
-    try:
-        if stderr_log.stat().st_size <= max_bytes:
-            return False
-        os.truncate(stderr_log, 0)
-    except OSError:
-        return False
-    logger.warning("Truncated %s: exceeded %d MB stderr capture cap", stderr_log, max_bytes // _MB)
-    return True
-
-
 def run_resource_check(
     logs_dir: Path,
     stderr_log: Path,
     previous_sizes: dict[str, int] | None,
     *,
+    set_stderr_capture_over_limit: Callable[[bool], None],
     growth_warn_bytes: int,
     stderr_max_bytes: int,
 ) -> dict[str, int]:
-    """One monitor tick: sample sizes, warn on growth, enforce the stderr cap.
+    """One monitor tick: sample sizes and report unhealthy resource growth.
 
     Returns the fresh size sample to carry into the next tick. The first tick
-    (``previous_sizes is None``) only records the baseline and enforces the
-    stderr cap, which doubles as the truncate-at-daemon-start pass.
+    (``previous_sizes is None``) only records the baseline and checks the
+    stderr capture size.
     """
     sizes = _sample_log_sizes(logs_dir)
     if previous_sizes is not None:
@@ -108,21 +90,36 @@ def run_resource_check(
                 f"{rss / _MB:.0f}" if rss is not None else "?",
                 fds if fds is not None else "?",
             )
-    if truncate_stderr_log_if_over_cap(stderr_log, stderr_max_bytes):
-        sizes[stderr_log.name] = 0
+    try:
+        stderr_size = stderr_log.stat().st_size
+    except FileNotFoundError:
+        set_stderr_capture_over_limit(False)
+    except OSError:
+        pass
+    else:
+        over_limit = stderr_size > stderr_max_bytes
+        set_stderr_capture_over_limit(over_limit)
+        if over_limit:
+            logger.warning(
+                "Stderr capture %s is %.1fMB, exceeding the configured %dMB limit",
+                stderr_log,
+                stderr_size / _MB,
+                stderr_max_bytes // _MB,
+            )
     return sizes
 
 
 async def resource_monitor_loop(
     telemetry_config: Any,
     is_shutdown_requested: Callable[[], bool],
+    set_stderr_capture_over_limit: Callable[[bool], None],
     interval_seconds: float = DEFAULT_RESOURCE_MONITOR_INTERVAL_SECONDS,
 ) -> None:
-    """Background bounded-resource monitor (#18196).
+    """Background resource monitor (#18196).
 
     Watches the logs directory for runaway growth (the incident dirtied 137GB
-    of file-backed memory in ~8h) and keeps the fd-level stderr capture file
-    under its cap, since no rotating handler owns it.
+    of file-backed memory in ~8h) and reports when the fd-level stderr capture
+    file exceeds its configured cap.
     """
     log_file = Path(
         str(getattr(telemetry_config, "log_file", "~/.gobby/logs/gobby.log"))
@@ -147,6 +144,7 @@ async def resource_monitor_loop(
                 logs_dir,
                 stderr_log,
                 previous,
+                set_stderr_capture_over_limit=set_stderr_capture_over_limit,
                 growth_warn_bytes=growth_warn_mb * _MB,
                 stderr_max_bytes=stderr_max_mb * _MB,
             )

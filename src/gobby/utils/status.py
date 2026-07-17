@@ -445,6 +445,13 @@ def format_status_message(
     if control_plane_error:
         health_issues.append(f"Daemon control plane: {control_plane_error}")
 
+    degraded_services = data.get("degraded_services")
+    if isinstance(degraded_services, list):
+        for service_name in degraded_services:
+            service = _safe_status_text(service_name)
+            if service:
+                health_issues.append(f"Degraded service: {service}")
+
     hook_runtime = data.get("hook_runtime")
     if isinstance(hook_runtime, dict):
         runtime_state = _safe_status_text(hook_runtime.get("state"))
