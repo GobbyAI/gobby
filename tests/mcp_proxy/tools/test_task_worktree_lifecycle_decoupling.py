@@ -1,6 +1,7 @@
 """MCP task lifecycle regressions for task/worktree decoupling."""
 
 from collections.abc import Iterator
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,6 +12,8 @@ from gobby.sync.tasks import TaskSyncManager
 from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
+
+TEST_REPO_PATH = str(Path(__file__).resolve().parents[3])
 
 
 @pytest.fixture
@@ -50,7 +53,7 @@ async def test_close_task_does_not_mutate_worktree_status(
         mock_wt_instance = MagicMock()
         MockWorktreeManager.return_value = mock_wt_instance
         mock_proj_instance = MagicMock()
-        mock_proj_instance.get.return_value = None
+        mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
         MockProjManager.return_value = mock_proj_instance
         mock_git.return_value = "abc123"
 
@@ -76,12 +79,9 @@ async def test_close_task_does_not_mutate_worktree_status(
         )
 
     assert result == {"success": True}
+    mock_task_manager.close_task.assert_called_once()
+    assert mock_task_manager.close_task.call_args.args == (mock_task.id,)
+    assert mock_task_manager.close_task.call_args.kwargs["reason"] == reason
     mock_wt_instance.get_by_task.assert_not_called()
-    assert mock_wt_instance.get_by_task.call_count == 0
-    assert not mock_wt_instance.get_by_task.called
     mock_wt_instance.mark_merged.assert_not_called()
-    assert mock_wt_instance.mark_merged.call_count == 0
-    assert not mock_wt_instance.mark_merged.called
     mock_wt_instance.mark_abandoned.assert_not_called()
-    assert mock_wt_instance.mark_abandoned.call_count == 0
-    assert not mock_wt_instance.mark_abandoned.called

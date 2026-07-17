@@ -11,6 +11,27 @@ import pytest
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, TaskStaleStateError, _transitions
 
+UNKNOWN_TASK_ID = "99999999-9999-9999-9999-999999999999"
+
+
+def test_close_missing_task_raises_not_found(temp_db: HubDatabase) -> None:
+    manager = LocalTaskManager(temp_db)
+
+    with pytest.raises(ValueError, match="not found"):
+        manager.close_task(UNKNOWN_TASK_ID)
+
+
+def test_close_existing_task_with_changed_updated_at_raises_stale(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    snapshot = manager.create_task(sample_project["id"], "Concurrent close")
+    manager.update_task(snapshot.id, title="Changed concurrently")
+
+    with pytest.raises(TaskStaleStateError):
+        manager.close_task(snapshot.id, expected_updated_at=snapshot.updated_at)
+
 
 def _run_concurrently(
     *operations: Callable[[], object],

@@ -115,6 +115,16 @@ def _close_task_in_txn(
         ),
     )
     if cursor.rowcount == 0:
+        current = conn.execute(
+            "SELECT closed_at, updated_at FROM tasks WHERE id = %s",
+            (task_id,),
+        ).fetchone()
+        if current is None:
+            raise ValueError(f"Task {task_id} not found")
+        if expected_updated_at is not None and current["updated_at"] != expected_updated_at:
+            raise TaskStaleStateError(task_id)
+        if current["closed_at"] is not None:
+            return
         raise TaskStaleStateError(task_id)
     if cascade_descendants:
         _cascade_close_descendants(conn, task_id, now, persisted_session_id, commit_sha)

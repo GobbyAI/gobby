@@ -104,7 +104,7 @@ async def test_record_with_suggestions_routes_to_ready(stage_ops_registry, mock_
         patch(
             "gobby.mcp_proxy.tools.tasks._stage_review.notify_parent_on_task_state_change"
         ) as notify,
-        patch("gobby.mcp_proxy.tools.tasks._stage_review._clear_prior_claim_session_variables"),
+        patch("gobby.mcp_proxy.tools.tasks._stage_review.clear_prior_claim_session_variables"),
     ):
         result = await registry.call(
             "record_plan_enhancement",
@@ -151,7 +151,7 @@ async def test_record_converged_leaves_needs_review(stage_ops_registry, mock_tas
         patch(
             "gobby.mcp_proxy.tools.tasks._stage_review.notify_parent_on_task_state_change"
         ) as notify,
-        patch("gobby.mcp_proxy.tools.tasks._stage_review._clear_prior_claim_session_variables"),
+        patch("gobby.mcp_proxy.tools.tasks._stage_review.clear_prior_claim_session_variables"),
     ):
         result = await registry.call(
             "record_plan_enhancement",

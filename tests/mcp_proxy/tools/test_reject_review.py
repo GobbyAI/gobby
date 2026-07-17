@@ -212,7 +212,7 @@ class TestMarkTaskReviewRejected:
                 return_value=sample_task_in_progress.id,
             ),
             patch("gobby.mcp_proxy.tools.tasks._stage_review.notify_parent_on_task_state_change"),
-            patch("gobby.mcp_proxy.tools.tasks._stage_review._clear_prior_claim_session_variables"),
+            patch("gobby.mcp_proxy.tools.tasks._stage_review.clear_prior_claim_session_variables"),
         ):
             result = await registry.call(
                 "reject_review",

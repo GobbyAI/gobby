@@ -1230,7 +1230,7 @@ class TestSessionVariableMirroring:
     async def test_close_task_mirrors_clear_to_session_variables(
         self, mock_task_manager, mock_sync_manager
     ):
-        """close_task must mirror task_claimed=False to session_variables."""
+        """close_task must clear claim and commit state in session_variables."""
         task_uuid = "550e8400-e29b-41d4-a716-446655440099"
 
         with (
@@ -1294,6 +1294,7 @@ class TestSessionVariableMirroring:
                     "claimed_tasks": {},
                     "active_task_id": None,
                     "task_edited_files": {},
+                    "task_has_commits": False,
                 },
             )
             assert mock_sv_manager.merge_variables.call_count == 1
