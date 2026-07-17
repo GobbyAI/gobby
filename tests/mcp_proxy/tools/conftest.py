@@ -1,16 +1,22 @@
 """Shared fixtures for task MCP tool coverage tests."""
 
+from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks import create_task_registry
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_models import Session
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.sync.tasks import TaskSyncManager
 
 
 @pytest.fixture
-def mock_task_manager():
+def mock_task_manager() -> MagicMock:
     """Create a mock task manager."""
     manager = MagicMock(spec=LocalTaskManager)
     manager.db = MagicMock()
@@ -18,13 +24,40 @@ def mock_task_manager():
 
 
 @pytest.fixture
-def mock_sync_manager():
+def mock_sync_manager() -> MagicMock:
     """Create a mock sync manager."""
     return MagicMock(spec=TaskSyncManager)
 
 
 @pytest.fixture
-def mock_task_validator():
+def canonical_task_session(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> Session:
+    """Register a real session whose project is authoritative for task tools."""
+    return SessionManager(temp_db).register(
+        external_id="task-tool-test-session",
+        machine_id="task-tool-test-machine",
+        source="codex",
+        project_id=sample_project["id"],
+        title="Task tool test session",
+    )
+
+
+@pytest.fixture
+def personal_task_session(temp_db: HubDatabase) -> Session:
+    """Register a real task-tool session in the personal project."""
+    return SessionManager(temp_db).register(
+        external_id="personal-task-tool-test-session",
+        machine_id="task-tool-test-machine",
+        source="codex",
+        project_id=None,
+        title="Personal task tool test session",
+    )
+
+
+@pytest.fixture
+def mock_task_validator() -> AsyncMock:
     """Create a mock task validator."""
     validator = AsyncMock()
     validator.validate_task = AsyncMock()
@@ -32,7 +65,7 @@ def mock_task_validator():
 
 
 @pytest.fixture
-def mock_config():
+def mock_config() -> MagicMock:
     """Create a mock daemon config."""
     config = MagicMock()
     tasks_config = MagicMock()
@@ -46,13 +79,16 @@ def mock_config():
 
 
 @pytest.fixture
-def task_registry(mock_task_manager, mock_sync_manager):
+def task_registry(
+    mock_task_manager: MagicMock,
+    mock_sync_manager: MagicMock,
+) -> InternalToolRegistry:
     """Create a task registry with mocked dependencies."""
     return create_task_registry(mock_task_manager, mock_sync_manager)
 
 
 @pytest.fixture
-def sample_task():
+def sample_task() -> Task:
     """Create a sample task for testing."""
     return Task(
         id="550e8400-e29b-41d4-a716-446655440000",
@@ -60,8 +96,8 @@ def sample_task():
         title="Test Task",
         priority=2,
         task_type="task",
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2024, 1, 1, tzinfo=UTC),
         description="Test description",
         labels=["test"],
     )

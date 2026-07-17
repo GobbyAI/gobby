@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._crud import build_task_tree, create_crud_registry
 from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
@@ -20,8 +23,8 @@ from tests.storage.tasks._stage_test_helpers import stage_row
 
 @pytest.mark.asyncio
 async def test_create_task_fails_closed_when_session_project_lookup_errors(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     fallback_project = LocalProjectManager(temp_db).create(
@@ -39,9 +42,13 @@ async def test_create_task_fails_closed_when_session_project_lookup_errors(
     registry = create_crud_registry(ctx)
     session_count = manager.count_tasks(project_id=sample_project["id"])
     fallback_count = manager.count_tasks(project_id=fallback_project.id)
-    ctx.session_manager.get = MagicMock(side_effect=RuntimeError("session database unavailable"))
 
     with (
+        patch.object(
+            ctx.session_manager,
+            "get",
+            side_effect=RuntimeError("session database unavailable"),
+        ) as mock_get,
         patch(
             "gobby.mcp_proxy.tools.tasks._context.get_project_context",
             return_value={"id": fallback_project.id},
@@ -55,15 +62,15 @@ async def test_create_task_fails_closed_when_session_project_lookup_errors(
         )
 
     assert "session database unavailable" in result["error"]
-    ctx.session_manager.get.assert_called_once_with(session.id)
+    mock_get.assert_called_once_with(session.id)
     assert manager.count_tasks(project_id=sample_project["id"]) == session_count
     assert manager.count_tasks(project_id=fallback_project.id) == fallback_count
     assert "Cannot resolve project" in caplog.text
 
 
 def test_build_task_tree_fails_closed_when_session_project_lookup_errors(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     session = SessionManager(temp_db).register(
         external_id="task-tree-project-error",
@@ -74,13 +81,16 @@ def test_build_task_tree_fails_closed_when_session_project_lookup_errors(
     manager = LocalTaskManager(temp_db)
     ctx = RegistryContext(task_manager=manager, sync_manager=MagicMock())
     before_count = manager.count_tasks(project_id=sample_project["id"])
-    ctx.session_manager.get = MagicMock(side_effect=RuntimeError("session database unavailable"))
-
-    result = build_task_tree(
-        ctx,
-        {"title": "Must not build", "task_type": "epic", "children": []},
-        session.id,
-    )
+    with patch.object(
+        ctx.session_manager,
+        "get",
+        side_effect=RuntimeError("session database unavailable"),
+    ):
+        result = build_task_tree(
+            ctx,
+            {"title": "Must not build", "task_type": "epic", "children": []},
+            session.id,
+        )
 
     assert result["success"] is False
     assert result["tasks_created"] == 0
@@ -91,8 +101,9 @@ def test_build_task_tree_fails_closed_when_session_project_lookup_errors(
 pytestmark = pytest.mark.unit
 
 
-def test_simple_fix_type(task_registry) -> None:
+def test_simple_fix_type(task_registry: InternalToolRegistry) -> None:
     schema = task_registry.get_schema("create_task")
+    assert schema is not None
     task_type_schema = schema["inputSchema"]["properties"]["task_type"]
 
     assert "simple_fix" in task_type_schema.get("enum", [])
@@ -100,7 +111,10 @@ def test_simple_fix_type(task_registry) -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_task_does_not_accept_or_seed_stage_caps(temp_db, sample_project) -> None:
+async def test_create_task_does_not_accept_or_seed_stage_caps(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
     session = SessionManager(temp_db).register(
         external_id="stage-caps-mcp",
         machine_id="test-machine",
@@ -111,6 +125,7 @@ async def test_create_task_does_not_accept_or_seed_stage_caps(temp_db, sample_pr
     registry = create_task_registry(manager, MagicMock())
     schema = registry.get_schema("create_task")
 
+    assert schema is not None
     assert "stage_caps" not in schema["inputSchema"]["properties"]
 
     with session_context_for_test(session.id):
@@ -128,7 +143,10 @@ async def test_create_task_does_not_accept_or_seed_stage_caps(temp_db, sample_pr
 
 
 @pytest.mark.asyncio
-async def test_create_and_update_task_round_trip_schedule_fields(temp_db, sample_project) -> None:
+async def test_create_and_update_task_round_trip_schedule_fields(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
     session = SessionManager(temp_db).register(
         external_id="schedule-fields-mcp",
         machine_id="test-machine",
@@ -166,25 +184,51 @@ async def test_create_and_update_task_round_trip_schedule_fields(temp_db, sample
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("field_name,value", [("verification", "Run tests"), ("sequence_order", 1)])
-async def test_update_task_reports_unsupported_fields(
-    temp_db, sample_project, field_name, value
+async def test_update_task_schema_rejects_unsupported_fields(
+    temp_db: HubDatabase,
+    field_name: str,
+    value: str | int,
 ) -> None:
     manager = LocalTaskManager(temp_db)
-    task = manager.create_task(sample_project["id"], "Unsupported update")
     registry = create_task_registry(manager, MagicMock())
 
-    result = await registry.call(
-        "update_task",
-        {"task_id": task.id, field_name: value},
-    )
-
-    assert result == {
-        "error": f"LocalTaskManager.update_task received unsupported fields: {field_name}"
+    schema = registry.get_schema("update_task")
+    assert schema is not None
+    assert schema["inputSchema"]["required"] == ["task_id"]
+    assert set(schema["inputSchema"]["properties"]) == {
+        "task_id",
+        "title",
+        "description",
+        "priority",
+        "labels",
+        "validation_criteria",
+        "parent_task_id",
+        "category",
+        "task_type",
+        "start_date",
+        "due_date",
+        "allow_automation",
+        "isolation",
+        "assigned_agent",
+        "implementation_domain",
+        "additional_skills",
     }
+
+    with pytest.raises(
+        ValueError,
+        match=rf"Unknown argument\(s\) for tool 'update_task': {field_name}",
+    ):
+        await registry.call(
+            "update_task",
+            {"task_id": "#1", field_name: value},
+        )
 
 
 @pytest.mark.asyncio
-async def test_initialize_task_manifest_persists_review_anchor_cap(temp_db, sample_project) -> None:
+async def test_initialize_task_manifest_persists_review_anchor_cap(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(
         project_id=sample_project["id"],
@@ -196,6 +240,7 @@ async def test_initialize_task_manifest_persists_review_anchor_cap(temp_db, samp
     registry = create_stage_ops_registry(ctx)
     schema = registry.get_schema("initialize_task_manifest")
 
+    assert schema is not None
     assert "stage_caps" in schema["inputSchema"]["properties"]
 
     result = await registry.call(
@@ -214,7 +259,10 @@ async def test_initialize_task_manifest_persists_review_anchor_cap(temp_db, samp
 
 
 @pytest.mark.asyncio
-async def test_initialize_task_manifest_rejects_unknown_stage(temp_db, sample_project) -> None:
+async def test_initialize_task_manifest_rejects_unknown_stage(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(
         project_id=sample_project["id"],

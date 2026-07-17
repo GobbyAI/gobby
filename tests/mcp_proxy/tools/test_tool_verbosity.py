@@ -1,4 +1,5 @@
 import unittest.mock
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -7,12 +8,18 @@ from gobby.mcp_proxy.tools.memory import create_memory_registry
 from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.mcp_proxy.tools.worktrees import create_worktrees_registry
+from gobby.sessions.transcript_reader import TranscriptReader
+from gobby.sessions.transcript_render_models import RenderedMessage
+from gobby.sessions.transcript_window import WindowResult
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_models import Session
+from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
-async def test_memory_verbosity_reduction():
+async def test_memory_verbosity_reduction() -> None:
     """Verify create/update don't echo back full content."""
     mock_manager = AsyncMock()
     # Mock return value behaves like a Memory object
@@ -35,13 +42,18 @@ async def test_memory_verbosity_reduction():
 
 
 @pytest.mark.asyncio
-async def test_task_verbosity_reduction():
+async def test_task_verbosity_reduction(
+    temp_db: HubDatabase,
+    canonical_task_session: Session,
+) -> None:
     """Verify create_task doesn't echo back full task."""
     mock_manager = MagicMock()
+    mock_manager.db = temp_db
     mock_sync = MagicMock()
 
     mock_task = MagicMock()
     mock_task.id = "task-123"
+    mock_task.seq_num = 123
     mock_task.to_dict.return_value = {
         "id": "task-123",
         "title": "Big Task",
@@ -56,18 +68,14 @@ async def test_task_verbosity_reduction():
 
     registry = create_task_registry(mock_manager, mock_sync)
 
-    # Test create
-    from gobby.utils.session_context import session_context_for_test
-
-    with session_context_for_test("test-session"):
+    with session_context_for_test(canonical_task_session.id):
         result = await registry.call("create_task", {"title": "test", "category": "research"})
     assert result["id"] == "task-123"
-    # Should NOT contain full dict in improved version
     assert "description" not in result
 
 
 @pytest.mark.asyncio
-async def test_worktree_verbosity_reduction():
+async def test_worktree_verbosity_reduction() -> None:
     """Verify create_worktree returns minimal info."""
     mock_storage = MagicMock()
     mock_git = MagicMock()
@@ -99,34 +107,26 @@ async def test_worktree_verbosity_reduction():
 
 
 @pytest.mark.asyncio
-async def test_session_message_truncation():
+async def test_session_message_truncation() -> None:
     """Verify get_session_messages truncates large content."""
     mock_session_manager = MagicMock()
-
-    class FakeRenderedMessage:
-        def __init__(self, data: dict):
-            self._data = data
-
-        def to_dict(self):
-            return dict(self._data)
-
-    class FakeTranscriptReader:
-        async def get_rendered_window(self, *args, **kwargs):
-            from gobby.sessions.transcript_window import WindowResult
-
-            return WindowResult(
-                groups=[
-                    FakeRenderedMessage({"role": "user", "content": "A" * 1000, "tool_calls": []})
-                ],
-                returned_count=1,
-                total_groups=1,
-                parsed_message_count=1,
-            )
-
-        async def count_messages(self, *args, **kwargs):
-            return 1
-
-    mock_reader = FakeTranscriptReader()
+    mock_reader = MagicMock(spec=TranscriptReader)
+    mock_reader.get_rendered_window = AsyncMock(
+        return_value=WindowResult(
+            groups=[
+                RenderedMessage(
+                    id="message-1",
+                    role="user",
+                    content="A" * 1000,
+                    timestamp=datetime(2026, 7, 17, tzinfo=UTC),
+                )
+            ],
+            returned_count=1,
+            total_groups=1,
+            parsed_message_count=1,
+        )
+    )
+    mock_reader.count_messages = AsyncMock(return_value=1)
 
     registry = create_session_messages_registry(
         transcript_reader=mock_reader, session_manager=mock_session_manager

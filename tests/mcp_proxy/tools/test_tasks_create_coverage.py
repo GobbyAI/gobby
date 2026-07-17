@@ -1,11 +1,14 @@
 """Focused coverage tests for task MCP tools."""
 
-from unittest.mock import MagicMock, patch
+from collections.abc import Iterator
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.mcp_proxy.tools.tasks import create_task_registry
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID
+from gobby.storage.session_models import Session
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.utils.session_context import session_context_for_test
 
@@ -16,12 +19,22 @@ class TestCreateTaskTool:
     """Tests for create_task MCP tool."""
 
     @pytest.fixture(autouse=True)
-    def _set_session_context(self):
-        with session_context_for_test("test-session"):
+    def _set_session_context(
+        self,
+        mock_task_manager: MagicMock,
+        temp_db: HubDatabase,
+        canonical_task_session: Session,
+    ) -> Iterator[None]:
+        mock_task_manager.db = temp_db
+        with session_context_for_test(canonical_task_session.id):
             yield
 
     @pytest.mark.asyncio
-    async def test_create_task_minimal(self, mock_task_manager, mock_sync_manager):
+    async def test_create_task_minimal(
+        self,
+        mock_task_manager: MagicMock,
+        mock_sync_manager: MagicMock,
+    ) -> None:
         """Test create_task with minimal arguments."""
         registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
@@ -38,24 +51,21 @@ class TestCreateTaskTool:
         }
         mock_task_manager.get_task.return_value = mock_task
 
-        with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-            mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
+        result = await registry.call(
+            "create_task",
+            {"title": "New Task", "category": "research"},
+        )
 
-            result = await registry.call(
-                "create_task",
-                {"title": "New Task", "category": "research"},
-            )
-
-            assert result == {
-                "id": "550e8400-e29b-41d4-a716-446655440001",
-                "seq_num": 42,
-                "ref": "#42",
-            }
-            mock_task_manager.create_task_with_decomposition.assert_called_once()
+        assert result == {
+            "id": "550e8400-e29b-41d4-a716-446655440001",
+            "seq_num": 42,
+            "ref": "#42",
+        }
+        mock_task_manager.create_task_with_decomposition.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_create_task_accepts_refactor_category(
-        self, mock_task_manager, mock_sync_manager
+        self, mock_task_manager: MagicMock, mock_sync_manager: MagicMock
     ) -> None:
         """Happy-path: create_task(category='refactor') succeeds.
 
@@ -79,22 +89,18 @@ class TestCreateTaskTool:
         }
         mock_task_manager.get_task.return_value = mock_task
 
-        with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-            mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
+        result = await registry.call(
+            "create_task",
+            {"title": "Refactor extraction", "category": "refactor"},
+        )
 
-            result = await registry.call(
-                "create_task",
-                {"title": "Refactor extraction", "category": "refactor"},
-            )
-
-            assert result["id"] == "550e8400-e29b-41d4-a716-446655440099"
-            # Confirm the category made it through the call unchanged
-            call_kwargs = mock_task_manager.create_task_with_decomposition.call_args.kwargs
-            assert call_kwargs["category"] == "refactor"
+        assert result["id"] == "550e8400-e29b-41d4-a716-446655440099"
+        call_kwargs = mock_task_manager.create_task_with_decomposition.call_args.kwargs
+        assert call_kwargs["category"] == "refactor"
 
     @pytest.mark.asyncio
     async def test_create_task_accepts_additional_skills_and_affected_files(
-        self, mock_task_manager, mock_sync_manager
+        self, mock_task_manager: MagicMock, mock_sync_manager: MagicMock
     ) -> None:
         """create_task forwards skill metadata and stores explicit affected files."""
         with patch(
@@ -114,20 +120,17 @@ class TestCreateTaskTool:
             }
             mock_task_manager.get_task.return_value = mock_task
 
-            with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-                mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
-
-                result = await registry.call(
-                    "create_task",
-                    {
-                        "title": "Metadata task",
-                        "category": "code",
-                        "implementation_domain": "backend",
-                        "validation_criteria": "Update src/gobby/tasks/demo.py",
-                        "additional_skills": ["test-driven-development"],
-                        "affected_files": ["src/gobby/tasks/demo.py"],
-                    },
-                )
+            result = await registry.call(
+                "create_task",
+                {
+                    "title": "Metadata task",
+                    "category": "code",
+                    "implementation_domain": "backend",
+                    "validation_criteria": "Update src/gobby/tasks/demo.py",
+                    "additional_skills": ["test-driven-development"],
+                    "affected_files": ["src/gobby/tasks/demo.py"],
+                },
+            )
 
             assert result["id"] == mock_task.id
             call_kwargs = mock_task_manager.create_task_with_decomposition.call_args.kwargs
@@ -139,7 +142,11 @@ class TestCreateTaskTool:
             )
 
     @pytest.mark.asyncio
-    async def test_create_task_with_blocks(self, mock_task_manager, mock_sync_manager):
+    async def test_create_task_with_blocks(
+        self,
+        mock_task_manager: MagicMock,
+        mock_sync_manager: MagicMock,
+    ) -> None:
         """Test create_task with blocks argument creates dependencies."""
         with patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager") as MockDepManager:
             mock_dep_instance = MagicMock()
@@ -155,37 +162,37 @@ class TestCreateTaskTool:
             }
             mock_task_manager.get_task.return_value = mock_task
 
-            with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-                mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
+            result = await registry.call(
+                "create_task",
+                {
+                    "title": "Blocker Task",
+                    "category": "research",
+                    "blocks": [
+                        "550e8400-e29b-41d4-a716-446655440003",
+                        "550e8400-e29b-41d4-a716-446655440004",
+                    ],
+                },
+            )
 
-                result = await registry.call(
-                    "create_task",
-                    {
-                        "title": "Blocker Task",
-                        "category": "research",
-                        "blocks": [
-                            "550e8400-e29b-41d4-a716-446655440003",
-                            "550e8400-e29b-41d4-a716-446655440004",
-                        ],
-                    },
-                )
-
-                assert result["id"] == "550e8400-e29b-41d4-a716-446655440002"
-                # Verify dependencies were added
-                assert mock_dep_instance.add_dependency.call_count == 2
-                mock_dep_instance.add_dependency.assert_any_call(
-                    "550e8400-e29b-41d4-a716-446655440003",
-                    "550e8400-e29b-41d4-a716-446655440002",
-                    "blocks",
-                )
-                mock_dep_instance.add_dependency.assert_any_call(
-                    "550e8400-e29b-41d4-a716-446655440004",
-                    "550e8400-e29b-41d4-a716-446655440002",
-                    "blocks",
-                )
+            assert result["id"] == "550e8400-e29b-41d4-a716-446655440002"
+            assert mock_dep_instance.add_dependency.call_count == 2
+            mock_dep_instance.add_dependency.assert_any_call(
+                "550e8400-e29b-41d4-a716-446655440003",
+                "550e8400-e29b-41d4-a716-446655440002",
+                "blocks",
+            )
+            mock_dep_instance.add_dependency.assert_any_call(
+                "550e8400-e29b-41d4-a716-446655440004",
+                "550e8400-e29b-41d4-a716-446655440002",
+                "blocks",
+            )
 
     @pytest.mark.asyncio
-    async def test_create_task_with_depends_on(self, mock_task_manager, mock_sync_manager):
+    async def test_create_task_with_depends_on(
+        self,
+        mock_task_manager: MagicMock,
+        mock_sync_manager: MagicMock,
+    ) -> None:
         """Test create_task with depends_on argument creates dependencies."""
         with patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager") as MockDepManager:
             mock_dep_instance = MagicMock()
@@ -201,38 +208,37 @@ class TestCreateTaskTool:
             }
             mock_task_manager.get_task.return_value = mock_task
 
-            with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-                mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
-                with patch(
-                    "gobby.mcp_proxy.tools.tasks._crud.resolve_task_id_for_mcp"
-                ) as mock_resolve:
-                    mock_resolve.side_effect = lambda mgr, ref, pid: ref  # Pass through
+            with patch("gobby.mcp_proxy.tools.tasks._crud.resolve_task_id_for_mcp") as mock_resolve:
+                mock_resolve.side_effect = lambda mgr, ref, pid: ref
 
-                    result = await registry.call(
-                        "create_task",
-                        {
-                            "title": "Dependent Task",
-                            "category": "research",
-                            "depends_on": ["blocker-1", "blocker-2"],
-                        },
-                    )
+                result = await registry.call(
+                    "create_task",
+                    {
+                        "title": "Dependent Task",
+                        "category": "research",
+                        "depends_on": ["blocker-1", "blocker-2"],
+                    },
+                )
 
-                    assert result["id"] == "550e8400-e29b-41d4-a716-446655440010"
-                    # Verify dependencies were added (blocker blocks the new task)
-                    assert mock_dep_instance.add_dependency.call_count == 2
-                    mock_dep_instance.add_dependency.assert_any_call(
-                        "550e8400-e29b-41d4-a716-446655440010",
-                        "blocker-1",
-                        "blocks",
-                    )
-                    mock_dep_instance.add_dependency.assert_any_call(
-                        "550e8400-e29b-41d4-a716-446655440010",
-                        "blocker-2",
-                        "blocks",
-                    )
+                assert result["id"] == "550e8400-e29b-41d4-a716-446655440010"
+                assert mock_dep_instance.add_dependency.call_count == 2
+                mock_dep_instance.add_dependency.assert_any_call(
+                    "550e8400-e29b-41d4-a716-446655440010",
+                    "blocker-1",
+                    "blocks",
+                )
+                mock_dep_instance.add_dependency.assert_any_call(
+                    "550e8400-e29b-41d4-a716-446655440010",
+                    "blocker-2",
+                    "blocks",
+                )
 
     @pytest.mark.asyncio
-    async def test_create_task_depends_on_with_errors(self, mock_task_manager, mock_sync_manager):
+    async def test_create_task_depends_on_with_errors(
+        self,
+        mock_task_manager: MagicMock,
+        mock_sync_manager: MagicMock,
+    ) -> None:
         """Test create_task with depends_on handles invalid refs gracefully."""
         with patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager") as MockDepManager:
             mock_dep_instance = MagicMock()
@@ -249,35 +255,31 @@ class TestCreateTaskTool:
             }
             mock_task_manager.get_task.return_value = mock_task
 
-            with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-                mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
-                with patch(
-                    "gobby.mcp_proxy.tools.tasks._crud.resolve_task_id_for_mcp"
-                ) as mock_resolve:
-                    # First blocker found, second not found
-                    mock_resolve.side_effect = [
-                        "valid-blocker",
-                        TaskNotFoundError("not found"),
-                    ]
+            with patch("gobby.mcp_proxy.tools.tasks._crud.resolve_task_id_for_mcp") as mock_resolve:
+                mock_resolve.side_effect = [
+                    "valid-blocker",
+                    TaskNotFoundError("not found"),
+                ]
 
-                    result = await registry.call(
-                        "create_task",
-                        {
-                            "title": "Partial Deps Task",
-                            "category": "research",
-                            "depends_on": ["valid-ref", "invalid-ref"],
-                        },
-                    )
+                result = await registry.call(
+                    "create_task",
+                    {
+                        "title": "Partial Deps Task",
+                        "category": "research",
+                        "depends_on": ["valid-ref", "invalid-ref"],
+                    },
+                )
 
-                    # Task should still be created
-                    assert result["id"] == "550e8400-e29b-41d4-a716-446655440011"
-                    # But with warning about failed dependencies
-                    assert "dependency_errors" in result
-                    assert len(result["dependency_errors"]) == 1
-                    assert "warning" in result
+                assert result["id"] == "550e8400-e29b-41d4-a716-446655440011"
+                assert len(result["dependency_errors"]) == 1
+                assert "warning" in result
 
     @pytest.mark.asyncio
-    async def test_create_task_with_labels(self, mock_task_manager, mock_sync_manager):
+    async def test_create_task_with_labels(
+        self,
+        mock_task_manager: MagicMock,
+        mock_sync_manager: MagicMock,
+    ) -> None:
         """Test create_task with labels argument."""
         registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
@@ -292,48 +294,41 @@ class TestCreateTaskTool:
         }
         mock_task_manager.get_task.return_value = mock_task
 
-        with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-            mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
+        await registry.call(
+            "create_task",
+            {
+                "title": "Labeled Task",
+                "category": "research",
+                "labels": ["urgent", "bug"],
+            },
+        )
 
-            await registry.call(
-                "create_task",
-                {
-                    "title": "Labeled Task",
-                    "category": "research",
-                    "labels": ["urgent", "bug"],
-                },
-            )
-
-            mock_task_manager.create_task_with_decomposition.assert_called_once()
-            call_kwargs = mock_task_manager.create_task_with_decomposition.call_args.kwargs
-            assert call_kwargs["labels"] == ["urgent", "bug"]
+        mock_task_manager.create_task_with_decomposition.assert_called_once()
+        call_kwargs = mock_task_manager.create_task_with_decomposition.call_args.kwargs
+        assert call_kwargs["labels"] == ["urgent", "bug"]
 
     @pytest.mark.asyncio
     async def test_create_code_task_requires_validation_criteria(
-        self, mock_task_manager, mock_sync_manager
-    ):
+        self, mock_task_manager: MagicMock, mock_sync_manager: MagicMock
+    ) -> None:
         """Test that code tasks are rejected without validation_criteria."""
         registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
-        with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-            mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
+        result = await registry.call(
+            "create_task",
+            {
+                "title": "Implement new feature",
+                "category": "code",
+            },
+        )
 
-            result = await registry.call(
-                "create_task",
-                {
-                    "title": "Implement new feature",
-                    "category": "code",
-                },
-            )
-
-            assert "error" in result
-            assert "validation_criteria" in result["error"]
-            mock_task_manager.create_task_with_decomposition.assert_not_called()
+        assert "validation_criteria" in result["error"]
+        mock_task_manager.create_task_with_decomposition.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_create_code_task_with_validation_criteria_succeeds(
-        self, mock_task_manager, mock_sync_manager
-    ):
+        self, mock_task_manager: MagicMock, mock_sync_manager: MagicMock
+    ) -> None:
         """Test that code tasks succeed when validation_criteria is provided."""
         registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
@@ -345,27 +340,25 @@ class TestCreateTaskTool:
         }
         mock_task_manager.get_task.return_value = mock_task
 
-        with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-            mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
+        await registry.call(
+            "create_task",
+            {
+                "title": "Implement new feature",
+                "category": "code",
+                "validation_criteria": "Tests pass and feature works",
+                "implementation_domain": "backend",
+            },
+        )
 
-            await registry.call(
-                "create_task",
-                {
-                    "title": "Implement new feature",
-                    "category": "code",
-                    "validation_criteria": "Tests pass and feature works",
-                    "implementation_domain": "backend",
-                },
-            )
-
-            mock_task_manager.create_task_with_decomposition.assert_called_once()
-            call_kwargs = mock_task_manager.create_task_with_decomposition.call_args.kwargs
-            assert call_kwargs["category"] == "code"
+        mock_task_manager.create_task_with_decomposition.assert_called_once()
+        call_kwargs = mock_task_manager.create_task_with_decomposition.call_args.kwargs
+        assert call_kwargs["category"] == "code"
+        assert call_kwargs["validation_criteria"] == "Tests pass and feature works"
 
     @pytest.mark.asyncio
     async def test_create_non_code_task_without_validation_criteria(
-        self, mock_task_manager, mock_sync_manager
-    ):
+        self, mock_task_manager: MagicMock, mock_sync_manager: MagicMock
+    ) -> None:
         """Test that non-code tasks succeed without validation_criteria."""
         registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
@@ -377,71 +370,70 @@ class TestCreateTaskTool:
         }
         mock_task_manager.get_task.return_value = mock_task
 
-        with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-            mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
+        await registry.call(
+            "create_task",
+            {
+                "title": "Research auth options",
+                "category": "research",
+            },
+        )
 
-            await registry.call(
-                "create_task",
-                {
-                    "title": "Research auth options",
-                    "category": "research",
-                },
-            )
-
-            mock_task_manager.create_task_with_decomposition.assert_called_once()
-            call_kwargs = mock_task_manager.create_task_with_decomposition.call_args.kwargs
-            assert call_kwargs["category"] == "research"
+        mock_task_manager.create_task_with_decomposition.assert_called_once()
+        call_kwargs = mock_task_manager.create_task_with_decomposition.call_args.kwargs
+        assert call_kwargs["category"] == "research"
+        assert call_kwargs["validation_criteria"] is None
 
     @pytest.mark.asyncio
-    async def test_create_task_with_all_optional_fields(self, mock_task_manager, mock_sync_manager):
+    async def test_create_task_with_all_optional_fields(
+        self,
+        mock_task_manager: MagicMock,
+        mock_sync_manager: MagicMock,
+        canonical_task_session: Session,
+    ) -> None:
         """Test create_task with all optional fields."""
-        with patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager:
-            # Mock session manager to return the session_id as-is
-            mock_session_manager = MagicMock()
-            mock_session_manager.resolve_session_reference.return_value = "sess-123"
-            MockSessionManager.return_value = mock_session_manager
+        registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
-            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+        mock_task = MagicMock()
+        mock_task.id = "550e8400-e29b-41d4-a716-446655440008"
+        mock_task.to_dict.return_value = {"id": "550e8400-e29b-41d4-a716-446655440008"}
+        mock_task_manager.create_task_with_decomposition.return_value = {
+            "task": {"id": "550e8400-e29b-41d4-a716-446655440008"},
+        }
+        mock_task_manager.get_task.return_value = mock_task
 
-            mock_task = MagicMock()
-            mock_task.id = "550e8400-e29b-41d4-a716-446655440008"
-            mock_task.to_dict.return_value = {"id": "550e8400-e29b-41d4-a716-446655440008"}
-            mock_task_manager.create_task_with_decomposition.return_value = {
-                "task": {"id": "550e8400-e29b-41d4-a716-446655440008"},
-            }
-            mock_task_manager.get_task.return_value = mock_task
+        await registry.call(
+            "create_task",
+            {
+                "title": "Full Task",
+                "description": "Detailed description",
+                "priority": 1,
+                "task_type": "feature",
+                "parent_task_id": "550e8400-e29b-41d4-a716-446655440009",
+                "labels": ["important"],
+                "category": "automated",
+                "validation_criteria": "Must pass tests",
+            },
+        )
 
-            with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-                mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
-
-                await registry.call(
-                    "create_task",
-                    {
-                        "title": "Full Task",
-                        "description": "Detailed description",
-                        "priority": 1,
-                        "task_type": "feature",
-                        "parent_task_id": "550e8400-e29b-41d4-a716-446655440009",
-                        "labels": ["important"],
-                        "category": "automated",
-                        "validation_criteria": "Must pass tests",
-                    },
-                )
-
-                call_kwargs = mock_task_manager.create_task_with_decomposition.call_args.kwargs
-                assert call_kwargs["title"] == "Full Task"
-                assert call_kwargs["description"] == "Detailed description"
-                assert call_kwargs["priority"] == 1
-                assert call_kwargs["task_type"] == "feature"
-                assert call_kwargs["parent_task_id"] == "550e8400-e29b-41d4-a716-446655440009"
-                assert call_kwargs["labels"] == ["important"]
-                assert call_kwargs["category"] == "automated"
-                assert call_kwargs["validation_criteria"] == "Must pass tests"
-                assert call_kwargs["created_in_session_id"] == "sess-123"
+        call_kwargs = mock_task_manager.create_task_with_decomposition.call_args.kwargs
+        assert call_kwargs["title"] == "Full Task"
+        assert call_kwargs["description"] == "Detailed description"
+        assert call_kwargs["priority"] == 1
+        assert call_kwargs["task_type"] == "feature"
+        assert call_kwargs["parent_task_id"] == "550e8400-e29b-41d4-a716-446655440009"
+        assert call_kwargs["labels"] == ["important"]
+        assert call_kwargs["category"] == "automated"
+        assert call_kwargs["validation_criteria"] == "Must pass tests"
+        assert call_kwargs["created_in_session_id"] == canonical_task_session.id
 
     @pytest.mark.asyncio
-    async def test_create_task_uses_personal_project(self, mock_task_manager, mock_sync_manager):
-        """Test create_task uses personal workspace when no project context exists."""
+    async def test_create_task_uses_personal_project(
+        self,
+        mock_task_manager: MagicMock,
+        mock_sync_manager: MagicMock,
+        personal_task_session: Session,
+    ) -> None:
+        """Test create_task uses the canonical session's personal project."""
         registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
         mock_task = MagicMock()
@@ -452,22 +444,22 @@ class TestCreateTaskTool:
         }
         mock_task_manager.get_task.return_value = mock_task
 
-        with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-            mock_ctx.return_value = None  # No project context
-
+        with session_context_for_test(personal_task_session.id):
             await registry.call(
                 "create_task",
                 {"title": "Task", "category": "research"},
             )
 
-            # When no project context, should fall back to PERSONAL_PROJECT_ID
-            call_kwargs = mock_task_manager.create_task_with_decomposition.call_args.kwargs
-            assert call_kwargs["project_id"] == PERSONAL_PROJECT_ID
+        call_kwargs = mock_task_manager.create_task_with_decomposition.call_args.kwargs
+        assert call_kwargs["project_id"] == PERSONAL_PROJECT_ID
 
     @pytest.mark.asyncio
     async def test_create_task_with_show_result_on_create(
-        self, mock_task_manager, mock_sync_manager, mock_config
-    ):
+        self,
+        mock_task_manager: MagicMock,
+        mock_sync_manager: MagicMock,
+        mock_config: MagicMock,
+    ) -> None:
         """Test create_task returns full result when show_result_on_create is True."""
         mock_config.get_gobby_tasks_config.return_value.show_result_on_create = True
 
@@ -489,25 +481,25 @@ class TestCreateTaskTool:
         }
         mock_task_manager.get_task.return_value = mock_task
 
-        with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-            mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
+        result = await registry.call(
+            "create_task",
+            {"title": "Full Task", "category": "research"},
+        )
 
-            result = await registry.call(
-                "create_task",
-                {"title": "Full Task", "category": "research"},
-            )
-
-            # Should return full task dict, not minimal
-            assert result == {
-                "id": "550e8400-e29b-41d4-a716-446655440011",
-                "title": "Full Task",
-                "status": "open",
-            }
+        assert result == {
+            "id": "550e8400-e29b-41d4-a716-446655440011",
+            "title": "Full Task",
+            "status": "open",
+        }
 
     @pytest.mark.asyncio
     async def test_create_task_auto_generates_validation(
-        self, mock_task_manager, mock_sync_manager, mock_task_validator, mock_config
-    ):
+        self,
+        mock_task_manager: MagicMock,
+        mock_sync_manager: MagicMock,
+        mock_task_validator: AsyncMock,
+        mock_config: MagicMock,
+    ) -> None:
         """Test create_task auto-generates validation criteria when enabled."""
         mock_config.get_gobby_tasks_config.return_value.validation.auto_generate_on_create = True
 
@@ -527,34 +519,27 @@ class TestCreateTaskTool:
         }
         mock_task_manager.get_task.return_value = mock_task
 
-        with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-            mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
+        result = await registry.call(
+            "create_task",
+            {"title": "Task", "category": "research"},
+        )
 
-            result = await registry.call(
-                "create_task",
-                {"title": "Task", "category": "research"},
-            )
-
-            # Without claim=True, update_task should NOT be called (no auto-claim)
-            mock_task_manager.update_task.assert_not_called()
-            assert "validation_generated" not in result
+        mock_task_manager.update_task.assert_not_called()
+        assert "validation_generated" not in result
 
     @pytest.mark.asyncio
-    async def test_create_task_default_no_claim(self, mock_task_manager, mock_sync_manager):
+    async def test_create_task_default_no_claim(
+        self,
+        mock_task_manager: MagicMock,
+        mock_sync_manager: MagicMock,
+        canonical_task_session: Session,
+    ) -> None:
         """Test create_task without claim parameter does NOT auto-claim."""
-        with (
-            patch(
-                "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
-            ) as MockSessionTaskManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
-        ):
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
+        ) as MockSessionTaskManager:
             mock_st_instance = MagicMock()
             MockSessionTaskManager.return_value = mock_st_instance
-
-            # Mock session manager to return the session_id as-is
-            mock_session_manager = MagicMock()
-            mock_session_manager.resolve_session_reference.return_value = "test-session"
-            MockSessionManager.return_value = mock_session_manager
 
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
@@ -573,48 +558,32 @@ class TestCreateTaskTool:
             }
             mock_task_manager.get_task.return_value = mock_task
 
-            with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-                mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
+            result = await registry.call(
+                "create_task",
+                {"title": "New Task", "category": "research"},
+            )
 
-                result = await registry.call(
-                    "create_task",
-                    {"title": "New Task", "category": "research"},
-                )
-
-                # Task should be created
-                assert result["id"] == "550e8400-e29b-41d4-a716-446655440020"
-
-                # update_task should NOT be called (no auto-claim)
-                mock_task_manager.update_task.assert_not_called()
-                assert mock_task_manager.update_task.call_count == 0
-                assert not mock_task_manager.update_task.called
-
-                # Session link should be "created", not "claimed"
-                mock_st_instance.link_task.assert_called_once_with(
-                    "test-session", "550e8400-e29b-41d4-a716-446655440020", "created"
-                )
-                assert mock_st_instance.link_task.call_count == 1
-                assert mock_st_instance.link_task.call_args is not None
+            assert result["id"] == "550e8400-e29b-41d4-a716-446655440020"
+            mock_task_manager.update_task.assert_not_called()
+            mock_st_instance.link_task.assert_called_once_with(
+                canonical_task_session.id,
+                "550e8400-e29b-41d4-a716-446655440020",
+                "created",
+            )
 
     @pytest.mark.asyncio
-    async def test_create_task_with_claim_true(self, mock_task_manager, mock_sync_manager):
+    async def test_create_task_with_claim_true(
+        self,
+        mock_task_manager: MagicMock,
+        mock_sync_manager: MagicMock,
+        canonical_task_session: Session,
+    ) -> None:
         """Test create_task with claim=True auto-claims the task."""
-        with (
-            patch(
-                "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
-            ) as MockSessionTaskManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
-        ):
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
+        ) as MockSessionTaskManager:
             mock_st_instance = MagicMock()
             MockSessionTaskManager.return_value = mock_st_instance
-
-            # Mock session manager to return the session_id as-is
-            mock_session_manager = MagicMock()
-            mock_session_manager.resolve_session_reference.return_value = "test-session"
-            mock_session_manager.get.return_value = MagicMock(
-                project_id="11111111-1111-4111-8111-111111110001"
-            )
-            MockSessionManager.return_value = mock_session_manager
 
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
@@ -634,38 +603,38 @@ class TestCreateTaskTool:
             mock_task_manager.get_task.return_value = mock_task
             mock_task_manager.claim_task.return_value = mock_task
 
-            with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-                mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
+            result = await registry.call(
+                "create_task",
+                {
+                    "title": "New Task",
+                    "category": "research",
+                    "claim": True,
+                },
+            )
 
-                result = await registry.call(
-                    "create_task",
-                    {
-                        "title": "New Task",
-                        "category": "research",
-                        "claim": True,
-                    },
-                )
-
-                # Task should be created
-                assert result["id"] == "550e8400-e29b-41d4-a716-446655440021"
-
-                mock_task_manager.claim_task.assert_called_once_with(
-                    "550e8400-e29b-41d4-a716-446655440021",
-                    "test-session",
-                )
-
-                # Session links should include both "created" and "claimed"
-                assert mock_st_instance.link_task.call_count == 2
-                mock_st_instance.link_task.assert_any_call(
-                    "test-session", "550e8400-e29b-41d4-a716-446655440021", "created"
-                )
-                mock_st_instance.link_task.assert_any_call(
-                    "test-session", "550e8400-e29b-41d4-a716-446655440021", "claimed"
-                )
+            assert result["id"] == "550e8400-e29b-41d4-a716-446655440021"
+            mock_task_manager.claim_task.assert_called_once_with(
+                "550e8400-e29b-41d4-a716-446655440021",
+                canonical_task_session.id,
+            )
+            assert mock_st_instance.link_task.call_count == 2
+            mock_st_instance.link_task.assert_any_call(
+                canonical_task_session.id,
+                "550e8400-e29b-41d4-a716-446655440021",
+                "created",
+            )
+            mock_st_instance.link_task.assert_any_call(
+                canonical_task_session.id,
+                "550e8400-e29b-41d4-a716-446655440021",
+                "claimed",
+            )
 
     @pytest.mark.asyncio
     async def test_create_task_with_claim_sets_task_claimed_via_session_variables(
-        self, mock_task_manager, mock_sync_manager
+        self,
+        mock_task_manager: MagicMock,
+        mock_sync_manager: MagicMock,
+        canonical_task_session: Session,
     ) -> None:
         """create_task(claim=True) must set task_claimed via session_var_manager.
 
@@ -675,18 +644,10 @@ class TestCreateTaskTool:
             patch(
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
             ) as MockSessionTaskManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
         ):
             mock_st_instance = MagicMock()
             MockSessionTaskManager.return_value = mock_st_instance
-
-            mock_session_manager = MagicMock()
-            mock_session_manager.resolve_session_reference.return_value = "test-session"
-            mock_session_manager.get.return_value = MagicMock(
-                project_id="11111111-1111-4111-8111-111111110001"
-            )
-            MockSessionManager.return_value = mock_session_manager
 
             mock_sv_manager = MagicMock()
             mock_sv_manager.get_variables.return_value = {}
@@ -705,48 +666,35 @@ class TestCreateTaskTool:
             mock_task_manager.get_task.return_value = mock_task
             mock_task_manager.claim_task.return_value = mock_task
 
-            with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-                mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
+            result = await registry.call(
+                "create_task",
+                {
+                    "title": "New Task",
+                    "category": "research",
+                    "claim": True,
+                },
+            )
 
-                result = await registry.call(
-                    "create_task",
-                    {
-                        "title": "New Task",
-                        "category": "research",
-                        "claim": True,
-                    },
-                )
-
-                assert result["id"] == "550e8400-e29b-41d4-a716-446655440021"
-
-                # merge_variables must have been called with task_claimed
-                mock_sv_manager.merge_variables.assert_called_once()
-                call_args = mock_sv_manager.merge_variables.call_args
-                assert call_args[0][0] == "test-session"
-                merged_vars = call_args[0][1]
-                assert merged_vars["task_claimed"] is True
-                assert mock_task.id in merged_vars["claimed_tasks"]
+            assert result["id"] == "550e8400-e29b-41d4-a716-446655440021"
+            mock_sv_manager.merge_variables.assert_called_once()
+            call_args = mock_sv_manager.merge_variables.call_args
+            assert call_args[0][0] == canonical_task_session.id
+            merged_vars = call_args[0][1]
+            assert merged_vars["task_claimed"] is True
+            assert mock_task.id in merged_vars["claimed_tasks"]
 
     @pytest.mark.asyncio
     async def test_create_task_with_claim_sets_required_skill_metadata(
-        self, mock_task_manager, mock_sync_manager
+        self, mock_task_manager: MagicMock, mock_sync_manager: MagicMock
     ) -> None:
         """create_task(claim=True) persists proactive claimed-task skill metadata."""
         with (
             patch(
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
             ) as MockSessionTaskManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
         ):
             MockSessionTaskManager.return_value = MagicMock()
-
-            mock_session_manager = MagicMock()
-            mock_session_manager.resolve_session_reference.return_value = "test-session"
-            mock_session_manager.get.return_value = MagicMock(
-                project_id="11111111-1111-4111-8111-111111110001"
-            )
-            MockSessionManager.return_value = mock_session_manager
 
             mock_sv_manager = MagicMock()
             mock_sv_manager.get_variables.return_value = {}
@@ -770,19 +718,16 @@ class TestCreateTaskTool:
             mock_task_manager.get_task.return_value = mock_task
             mock_task_manager.claim_task.return_value = mock_task
 
-            with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-                mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
-
-                result = await registry.call(
-                    "create_task",
-                    {
-                        "title": mock_task.title,
-                        "category": "code",
-                        "implementation_domain": "backend",
-                        "validation_criteria": mock_task.validation_criteria,
-                        "claim": True,
-                    },
-                )
+            result = await registry.call(
+                "create_task",
+                {
+                    "title": mock_task.title,
+                    "category": "code",
+                    "implementation_domain": "backend",
+                    "validation_criteria": mock_task.validation_criteria,
+                    "claim": True,
+                },
+            )
 
             assert result["id"] == mock_task.id
             merged_vars = mock_sv_manager.merge_variables.call_args[0][1]
@@ -802,14 +747,14 @@ class TestCreateTaskCrossProjectClaimBlocking:
     """Tests for cross-project claim blocking in create_task."""
 
     @pytest.fixture(autouse=True)
-    def _set_session_context(self):
+    def _set_session_context(self) -> Iterator[None]:
         with session_context_for_test("test-session"):
             yield
 
     @pytest.mark.asyncio
     async def test_create_task_claim_skipped_when_cross_project(
-        self, mock_task_manager, mock_sync_manager
-    ):
+        self, mock_task_manager: MagicMock, mock_sync_manager: MagicMock
+    ) -> None:
         """create_task(claim=True) creates the task but skips claiming when cross-project."""
         with (
             patch(
@@ -870,8 +815,8 @@ class TestCreateTaskCrossProjectClaimBlocking:
 
     @pytest.mark.asyncio
     async def test_create_task_claim_allowed_when_same_project(
-        self, mock_task_manager, mock_sync_manager
-    ):
+        self, mock_task_manager: MagicMock, mock_sync_manager: MagicMock
+    ) -> None:
         """create_task(claim=True) claims normally when projects match."""
         with (
             patch(
