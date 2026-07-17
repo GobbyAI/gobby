@@ -250,4 +250,41 @@ describe("useChat plan actions", () => {
     expect(result.current.planPendingApproval).toBe(false);
     expect(onModeChanged).toHaveBeenLastCalledWith("normal");
   });
+
+  it("mode_changed plan_approval_timed_out dismisses the pending plan", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      ws.simulateMessage({
+        type: "mode_changed",
+        mode: "plan",
+        conversation_id: result.current.conversationId,
+      });
+      ws.simulateMessage({
+        type: "plan_pending_approval",
+        conversation_id: result.current.conversationId,
+        plan_content: "# My Plan\n\nStep 1...",
+        options: [{ id: "approve", label: "Approve" }],
+      });
+    });
+    expect(result.current.planPendingApproval).toBe(true);
+    expect(result.current.planApprovalOptions).toHaveLength(1);
+
+    act(() => {
+      ws.simulateMessage({
+        type: "mode_changed",
+        mode: "plan",
+        reason: "plan_approval_timed_out",
+        conversation_id: result.current.conversationId,
+      });
+    });
+
+    expect(result.current.planPendingApproval).toBe(false);
+    expect(result.current.planApproved).toBe(false);
+    expect(result.current.planApprovalOptions).toEqual([]);
+  });
 });

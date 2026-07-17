@@ -8,7 +8,7 @@ import json
 import shutil
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -755,13 +755,18 @@ async def test_plan_mode_still_cancels_write_tool_without_blocking() -> None:
 
 @pytest.mark.asyncio
 async def test_wait_for_plan_decision_times_out_to_reject() -> None:
-    # The blocking primitive defaults to "deny" (reject) on timeout.
     backend = DroidWebChatBackend()
     session, _broadcasts = _exit_spec_session(backend)
+    session._pending_plan_content = "## Spec"
+    session._on_mode_changed = AsyncMock()
 
-    decision = await session._wait_for_plan_decision(timeout=0.01)
+    with patch.object(session, "interrupt", new_callable=AsyncMock) as interrupt:
+        decision = await session._wait_for_plan_decision(timeout=0.01)
 
-    assert decision == "deny"
+    assert decision == "timeout"
+    interrupt.assert_awaited_once()
+    session._on_mode_changed.assert_awaited_once_with("plan", "plan_approval_timed_out")
+    assert session._pending_plan_content is None
     assert session.has_blocking_plan_decision is False
 
 
@@ -778,6 +783,20 @@ async def test_wait_for_plan_decision_cancellation_clears_gate() -> None:
     with pytest.raises(asyncio.CancelledError):
         await task
 
+    assert session.has_blocking_plan_decision is False
+
+
+async def test_interrupt_releases_parked_plan_decision() -> None:
+    backend = DroidWebChatBackend()
+    session, _broadcasts = _exit_spec_session(backend)
+
+    task = asyncio.create_task(session._wait_for_plan_decision(timeout=30.0))
+    await _park_on_plan_gate(session)
+
+    await session.interrupt()
+    decision = await asyncio.wait_for(task, timeout=0.2)
+
+    assert decision == "deny"
     assert session.has_blocking_plan_decision is False
 
 

@@ -230,6 +230,51 @@ class TestCanUseTool:
         assert "too complex" in result.message
         assert session.chat_mode == "plan"  # Should stay in plan mode
 
+    async def test_exit_plan_mode_timeout_stops_turn_and_reconciles(
+        self, session: ChatSession
+    ) -> None:
+        session.set_chat_mode("plan")
+        session._on_plan_ready = AsyncMock()
+        session._on_mode_changed = AsyncMock()
+
+        with (
+            patch(
+                "gobby.servers.chat_session_permissions.PLAN_DECISION_TIMEOUT_SECONDS",
+                0.01,
+            ),
+            patch.object(session, "interrupt", new_callable=AsyncMock) as interrupt,
+        ):
+            result = await session._can_use_tool(
+                "ExitPlanMode",
+                {"plan": "# Plan\nDo the thing"},
+                ToolPermissionContext(tool_use_id="tool-timeout"),
+            )
+
+        assert isinstance(result, PermissionResultDeny)
+        assert result.message == "Plan approval timed out; the turn was stopped."
+        interrupt.assert_awaited_once()
+        session._on_mode_changed.assert_awaited_once_with("plan", "plan_approval_timed_out")
+        assert session.has_pending_plan is False
+        assert session._pending_plan_content is None
+        assert session._plan_broadcast_sent is False
+
+    async def test_interrupt_releases_pending_exit_plan_mode(self, session: ChatSession) -> None:
+        session.set_chat_mode("plan")
+        task = asyncio.create_task(
+            session._can_use_tool(
+                "ExitPlanMode",
+                {"plan": "# Plan\nDo the thing"},
+                ToolPermissionContext(tool_use_id="tool-interrupt"),
+            )
+        )
+        await wait_for_async_condition(lambda: session.has_pending_plan, description="pending plan")
+
+        await session.interrupt()
+        result = await asyncio.wait_for(task, timeout=0.2)
+
+        assert isinstance(result, PermissionResultDeny)
+        assert session.has_pending_plan is False
+
     @pytest.mark.asyncio
     async def test_plan_mode_blocks_writes(self, session: ChatSession) -> None:
         """Write tools should be blocked in plan mode if unapproved."""

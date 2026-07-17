@@ -107,6 +107,7 @@ class ManagedWebChatPermissionsMixin:
     # (Codex / ACP / Droid-prose) never set the event and so never block.
     _pending_plan_event: asyncio.Event | None
     _pending_plan_decision: str | None
+    interrupt: Callable[[], Awaitable[None]]
 
     def provide_answer(self, tool_use_id: str, answers: dict[str, Any]) -> bool:
         self._pending_answers = answers
@@ -168,9 +169,9 @@ class ManagedWebChatPermissionsMixin:
         Mirrors the native ExitPlanMode gate: a tool-plan CLI (Droid
         ExitSpecMode) parks its plan-exit tool here while the web UI shows
         plan_pending_approval. :meth:`provide_plan_decision` unblocks it. A
-        timeout defaults to ``"deny"`` (reject) so the CLI stays in plan mode
-        rather than silently proceeding. ``timeout`` is resolved from the module
-        constant at call time when not given, so tests can patch it.
+        Timeout returns the distinct ``"timeout"`` outcome, reconciles the UI,
+        and interrupts the provider turn. ``timeout`` is resolved from the
+        module constant at call time when not given, so tests can patch it.
         """
         wait_timeout = MANAGED_PLAN_DECISION_TIMEOUT_SECONDS if timeout is None else timeout
         self._pending_plan_event = asyncio.Event()
@@ -179,8 +180,14 @@ class ManagedWebChatPermissionsMixin:
             try:
                 await asyncio.wait_for(self._pending_plan_event.wait(), timeout=wait_timeout)
             except TimeoutError:
-                self._pending_plan_decision = "deny"
-                logger.warning("Managed plan-decision gate timed out; defaulting to reject")
+                self._pending_plan_decision = "timeout"
+                self._clear_pending_plan_prompt()
+                logger.warning("Managed plan-decision gate timed out; stopping provider turn")
+                try:
+                    if self._on_mode_changed is not None:
+                        await self._on_mode_changed("plan", "plan_approval_timed_out")
+                finally:
+                    await self.interrupt()
             return self._pending_plan_decision or "deny"
         finally:
             self._pending_plan_event = None
@@ -393,6 +400,10 @@ class ManagedWebChatPermissionsMixin:
         for tool_use_id, event in self._pending_approval_events.items():
             self._pending_approval_decisions[tool_use_id] = "reject"
             event.set()
+        if self._pending_plan_event is not None:
+            if self._pending_plan_decision is None:
+                self._pending_plan_decision = "deny"
+            self._pending_plan_event.set()
 
     async def sync_sdk_permission_mode(self) -> None:
         """Apply the post-plan mode transition for managed CLIs.

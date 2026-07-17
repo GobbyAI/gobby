@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -66,6 +66,7 @@ class ChatSessionMessagesMixin:
     _max_history_total_chars: int
     _message_manager: Any | None
     _message_manager_source_session_id: str | None
+    _abort_pending_interactions: Callable[[], None]
 
     async def _load_history_context(self, max_total_chars: int | None = None) -> str | None:
         """Load prior conversation messages and format as context for injection.
@@ -340,6 +341,7 @@ class ChatSessionMessagesMixin:
 
     async def interrupt(self) -> None:
         """Interrupt the current response stream."""
+        self._abort_pending_interactions()
         if self._client and self._connected:
             try:
                 await self._client.interrupt()

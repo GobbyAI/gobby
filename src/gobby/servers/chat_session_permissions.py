@@ -36,6 +36,8 @@ from gobby.storage.config_store import ConfigStore
 
 logger = logging.getLogger(__name__)
 
+PLAN_DECISION_TIMEOUT_SECONDS = 600.0
+
 
 def _resolve_session_lifecycle_block_reason(
     *,
@@ -88,6 +90,7 @@ class ChatSessionPermissionsMixin:
     _pending_post_plan_mode: str | None
     _pending_plan_events: dict[str, asyncio.Event]
     _pending_plan_decisions: dict[str, str]
+    interrupt: Callable[[], Awaitable[None]]
     _plan_broadcast_sent: bool
     _on_mode_persist: Callable[[str], None] | None
     _on_plan_ready: Callable[[str | None, dict[str, Any], str | None], Awaitable[None]] | None
@@ -173,11 +176,11 @@ class ChatSessionPermissionsMixin:
             self._pending_plan_events[tool_use_id] = pending_event
 
             try:
-                await asyncio.wait_for(pending_event.wait(), timeout=600.0)
+                await asyncio.wait_for(pending_event.wait(), timeout=PLAN_DECISION_TIMEOUT_SECONDS)
             except TimeoutError:
-                self._pending_plan_decisions[tool_use_id] = "deny"
+                self._pending_plan_decisions[tool_use_id] = "timeout"
                 logger.warning(
-                    "Plan approval timed out, defaulting to deny",
+                    "Plan approval timed out; stopping the provider turn",
                     extra={"conversation_id": self.conversation_id},
                 )
 
@@ -187,6 +190,18 @@ class ChatSessionPermissionsMixin:
             self._pending_plan_events.pop(tool_use_id, None)
             self._pending_plan_decisions.pop(tool_use_id, None)
 
+            if decision == "timeout":
+                self._pending_post_plan_mode = None
+                self._plan_broadcast_sent = False
+                self._clear_pending_plan_prompt()
+                try:
+                    if self._on_mode_changed:
+                        await self._on_mode_changed("plan", "plan_approval_timed_out")
+                finally:
+                    await self.interrupt()
+                return PermissionResultDeny(
+                    message="Plan approval timed out; the turn was stopped."
+                )
             if decision == "approve":
                 approved_mode = self._pending_post_plan_mode or self.chat_mode
                 self._pending_post_plan_mode = None
@@ -707,7 +722,7 @@ class ChatSessionPermissionsMixin:
         self.cancel_pending_approval()
 
         for tool_use_id, event in self._pending_plan_events.items():
-            self._pending_plan_decisions[tool_use_id] = "deny"
+            self._pending_plan_decisions.setdefault(tool_use_id, "deny")
             event.set()
 
         for tool_use_id, event in self._pending_answer_events.items():

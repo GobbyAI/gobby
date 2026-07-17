@@ -137,16 +137,23 @@ export function handleModeChanged(
     const reason = data.reason as string | undefined;
     if (newMode) {
       ctx.lastServerModeTimestampRef.current = Date.now();
-      // Clear plan state on approval — for rejection, the eager
-      // clear in requestPlanChanges() already handled it, and
-      // clearing here would race with a new plan_pending_approval
-      // that may have arrived before this mode_changed.
+      // Approval and timeout are authoritative backend resolutions. User
+      // rejection clears eagerly in requestPlanChanges(); clearing that case
+      // here could race with a revised plan_pending_approval frame.
       if (reason === "plan_approved") {
         ctx.setPlanPendingApproval(false);
         // Authoritative approval signal for the Plans panel (#15681).
         ctx.setPlanApproved(true);
         ctx.planContentRef.current = null;
         ctx.planToolCallIdRef.current = null;
+      }
+      if (reason === "plan_approval_timed_out") {
+        ctx.setPlanPendingApproval(false);
+        ctx.setPlanApproved(false);
+        ctx.setPlanApprovalOptions([]);
+        ctx.planContentRef.current = null;
+        ctx.planToolCallIdRef.current = null;
+        ctx.pendingPlanFeedbackRef.current = null;
       }
       if (
         reason === "plan_changes_requested" &&

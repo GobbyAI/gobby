@@ -371,6 +371,7 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
                 return
 
     async def interrupt(self) -> None:
+        self.cancel_pending_approval()
         await self._backend.interrupt(self)
 
 
