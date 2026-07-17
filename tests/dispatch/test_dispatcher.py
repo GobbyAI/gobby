@@ -1154,6 +1154,7 @@ async def test_run_heartbeat_max_actions_stops_after_one_lifecycle_action(
 async def test_run_heartbeat_blocks_ready_task_behind_active_overlapping_write_set(
     temp_db,
     sample_project,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Run heartbeat blocks ready task behind active overlapping write set."""
     from gobby.dispatch import dispatcher
@@ -1170,11 +1171,18 @@ async def test_run_heartbeat_blocks_ready_task_behind_active_overlapping_write_s
     af_manager = TaskAffectedFileManager(temp_db)
     af_manager.set_files(active.id, ["src/gobby/config/bootstrap.py"], source="expansion")
     af_manager.set_files(waiting.id, ["src/gobby/config/bootstrap.py"], source="expansion")
+    metric_outcomes: list[str] = []
+    monkeypatch.setattr(
+        dispatcher,
+        "record_automation_event",
+        lambda component, outcome: metric_outcomes.append(f"{component}:{outcome}"),
+    )
 
     result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
     assert result.executed == 0
     assert result.skipped == 1
+    assert metric_outcomes == ["dispatcher:skipped"]
     assert LocalTaskManager(temp_db).stage_states.get(waiting.id, "development").state == "ready"
 
 
@@ -3595,6 +3603,7 @@ async def test_bad_candidate_is_skipped_and_next_candidate_executes(
     first = _task(temp_db, sample_project, "first")
     second = _task(temp_db, sample_project, "second")
     executed: list[str] = []
+    metric_outcomes: list[str] = []
 
     def action_for(task, *_args):
         return _audit_action(task.id)
@@ -3612,12 +3621,18 @@ async def test_bad_candidate_is_skipped_and_next_candidate_executes(
 
     monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", action_for)
     monkeypatch.setattr(dispatcher, "execute_action", flaky_execute)
+    monkeypatch.setattr(
+        dispatcher,
+        "record_automation_event",
+        lambda component, outcome: metric_outcomes.append(f"{component}:{outcome}"),
+    )
 
     result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
     assert result.executed == 1
     assert result.skipped == 1
     assert executed == [second.id]
+    assert metric_outcomes == ["dispatcher:failed", "dispatcher:succeeded"]
     assert "### Dispatch failed" in get_task(temp_db, first.id).description
 
 

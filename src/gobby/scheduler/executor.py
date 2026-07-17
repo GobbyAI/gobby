@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from gobby.config.cron import CronConfig
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob, CronRun, CronRunStatus
+from gobby.telemetry.health_metrics import record_automation_event
 
 if TYPE_CHECKING:
     from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -141,6 +142,7 @@ class CronExecutor:
         """
         now = datetime.now(UTC).isoformat()
         await self._run_db(self.storage.update_run, run.id, status="running", started_at=now)
+        record_automation_event("cron", "fired")
 
         outcome: ActionOutcome
         try:
@@ -189,6 +191,9 @@ class CronExecutor:
                 name=outcome.background_name,
             )
             self._track_background_task(task)
+        else:
+            terminal_outcome = "failed" if outcome.status == "failed" else "succeeded"
+            record_automation_event("cron", terminal_outcome)
         return updated or run
 
     def _coerce_action_result(self, result: object) -> ActionOutcome:
@@ -514,6 +519,7 @@ class CronExecutor:
                     execution_id,
                     str(e),
                 )
+                record_automation_event("cron", "failed")
                 return
 
             execution_status = getattr(
@@ -529,6 +535,7 @@ class CronExecutor:
                     execution_id,
                     error,
                 )
+                record_automation_event("cron", "failed")
             elif execution_status == ExecutionStatus.CANCELLED:
                 error = f"Pipeline cancelled: execution_id={execution_id}"
                 await self._run_db(
@@ -537,6 +544,7 @@ class CronExecutor:
                     execution_id,
                     error,
                 )
+                record_automation_event("cron", "failed")
             else:
                 await self._run_db(
                     self.storage.update_run,
@@ -546,6 +554,7 @@ class CronExecutor:
                     output=f"Pipeline completed: execution_id={execution_id}",
                     error=None,
                 )
+                record_automation_event("cron", "succeeded")
         finally:
             reset_project_context(token)
 

@@ -6,11 +6,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from opentelemetry.exporter.prometheus import PrometheusMetricReader
+from opentelemetry.sdk.metrics import MeterProvider
 
 from gobby.config.persistence import DatabasesConfig
 from gobby.hooks.runtime_compat import GhookRuntimeDiagnostic, GhookRuntimeState
 from gobby.servers.routes.admin import create_admin_router
 from gobby.shutdown_intent import ShutdownIntent, read_shutdown_intent, write_shutdown_intent
+from gobby.telemetry import health_metrics
+from gobby.telemetry.health_metrics import (
+    configure_health_metrics,
+    record_automation_event,
+    record_logging_record,
+)
+from gobby.telemetry.instruments import TelemetryMetrics
 
 pytestmark = pytest.mark.unit
 
@@ -575,6 +584,32 @@ class TestAdminRoutes:
         assert response.status_code == 200
         assert response.text == "metric_name 1.0\n"
         assert "text/plain" in response.headers["content-type"]
+
+    def test_metrics_endpoint_exposes_logging_and_automation_health(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        reader = PrometheusMetricReader()
+        provider = MeterProvider(metric_readers=[reader])
+        collector = TelemetryMetrics(provider.get_meter("admin-health-test"))
+        monkeypatch.setattr(health_metrics, "get_telemetry_metrics", lambda: collector)
+        configure_health_metrics(enabled=True)
+        try:
+            record_logging_record("daemon", "WARNING")
+            record_automation_event("cron", "fired")
+            with (
+                patch("gobby.servers.routes.admin._health.update_daemon_metrics"),
+                patch("gobby.servers.routes.admin._health.set_gauge"),
+            ):
+                response = client.get("/api/admin/metrics")
+        finally:
+            configure_health_metrics(enabled=False)
+            provider.shutdown()
+
+        assert response.status_code == 200
+        assert 'logging_records_total{severity="WARNING",surface="daemon"} 1.0' in response.text
+        assert 'automation_events_total{component="cron",outcome="fired"} 1.0' in response.text
 
     @patch("gobby.servers.routes.admin._config.get_version")
     def test_config_endpoint(self, mock_get_version, client) -> None:

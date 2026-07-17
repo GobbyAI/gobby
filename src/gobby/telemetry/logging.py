@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -63,6 +64,7 @@ _active_handler_config = _HandlerConfig(
     backup_count=_default_logging_settings.backup_count,
 )
 _registered_parser_loggers: set[str] = set()
+_logging_metric_handler: _LoggingMetricHandler | None = None
 
 
 def _in_namespace(logger_name: str, namespace: str) -> bool:
@@ -78,6 +80,70 @@ def classify_log_surface(logger_name: str) -> LogSurface:
     if any(_in_namespace(logger_name, namespace) for namespace in _AUTOMATION_NAMESPACES):
         return "automation"
     return "daemon"
+
+
+class _LoggingMetricHandler(logging.Handler):
+    """Count bounded WARNING+ source records without emitting diagnostics."""
+
+    _severity_by_level: ClassVar[dict[int, str]] = {
+        logging.WARNING: "WARNING",
+        logging.ERROR: "ERROR",
+        logging.CRITICAL: "CRITICAL",
+    }
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.WARNING)
+        self._emitting = threading.local()
+
+    def emit(self, record: logging.LogRecord) -> None:
+        severity = self._severity_by_level.get(record.levelno)
+        if severity is None or getattr(self._emitting, "active", False):
+            return
+
+        surface = (
+            "parser"
+            if _in_namespace(record.name, _PARSER_ERROR_NAMESPACE)
+            else classify_log_surface(record.name)
+        )
+        self._emitting.active = True
+        try:
+            from gobby.telemetry.health_metrics import record_logging_record
+
+            record_logging_record(surface, severity)
+        except Exception:
+            pass
+        finally:
+            self._emitting.active = False
+
+
+def configure_logging_metrics(*, enabled: bool) -> None:
+    """Attach one health metric handler to the Gobby logging root."""
+    global _logging_metric_handler
+
+    root_logger = logging.getLogger("gobby")
+    existing = [
+        existing_handler
+        for existing_handler in root_logger.handlers
+        if isinstance(existing_handler, _LoggingMetricHandler)
+    ]
+    if not enabled:
+        for existing_handler in existing:
+            root_logger.removeHandler(existing_handler)
+            existing_handler.close()
+        if _logging_metric_handler is not None and _logging_metric_handler not in existing:
+            _logging_metric_handler.close()
+        _logging_metric_handler = None
+        return
+
+    metric_handler = existing[0] if existing else _LoggingMetricHandler()
+    if _logging_metric_handler is not None and _logging_metric_handler is not metric_handler:
+        _logging_metric_handler.close()
+    for duplicate in existing[1:]:
+        root_logger.removeHandler(duplicate)
+        duplicate.close()
+    if metric_handler not in root_logger.handlers:
+        root_logger.addHandler(metric_handler)
+    _logging_metric_handler = metric_handler
 
 
 def _routed_primary_surface(logger_name: str) -> LogSurface:
@@ -244,7 +310,8 @@ def _replace_handlers(target: logging.Logger, handlers: list[logging.Handler]) -
     for handler in old_handlers:
         target.removeHandler(handler)
     for handler in old_handlers:
-        handler.close()
+        if handler not in handlers:
+            handler.close()
     for handler in handlers:
         target.addHandler(handler)
 
@@ -364,6 +431,8 @@ def setup_file_logging(config: LoggingSettings, verbose: bool = False) -> None:
         level,
         _formatted_log_formatter(config),
     )
+    if _logging_metric_handler is not None:
+        handlers.append(_logging_metric_handler)
 
     root_logger = logging.getLogger("gobby")
     root_logger.setLevel(level)

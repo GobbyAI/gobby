@@ -118,9 +118,16 @@ async def test_stalled_no_agents_marks_failed(
     heartbeat: PipelineHeartbeat,
     exec_manager: LocalPipelineExecutionManager,
     temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Stalled execution with no alive agents → FAILED."""
     exe_id = _create_stalled_execution(exec_manager, temp_db)
+
+    outcomes: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "gobby.workflows.pipeline_heartbeat.record_automation_event",
+        lambda component, outcome: outcomes.append((component, outcome)),
+    )
 
     count = await heartbeat.check_stalled_executions()
     assert count == 1
@@ -129,6 +136,7 @@ async def test_stalled_no_agents_marks_failed(
     assert exe is not None
     assert exe.status == ExecutionStatus.FAILED
     assert "stalled" in (exe.outputs_json or "").lower()
+    assert outcomes == [("pipeline-heartbeat", "failed")]
 
 
 async def test_stale_pending_execution_fails_and_releases_dispatch_mutex(
@@ -450,6 +458,7 @@ async def test_stale_task_with_terminal_agent_run_recovered(
     task_manager: LocalTaskManager,
     agent_run_manager: LocalAgentRunManager,
     temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """In-progress task with terminal agent run and no live agent moves back to ready."""
     _seed_db(temp_db)
@@ -468,13 +477,19 @@ async def test_stale_task_with_terminal_agent_run_recovered(
     agent_run_manager.start(run_id)
     agent_run_manager.fail(run_id, error="Agent died")
 
+    outcomes: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "gobby.workflows.pipeline_heartbeat.record_automation_event",
+        lambda component, outcome: outcomes.append((component, outcome)),
+    )
+
     result = await heartbeat_with_tasks.check_stale_tasks()
     assert result.recovered == 1
+    assert outcomes == [("pipeline-heartbeat", "recovered")]
 
     task = task_manager.get_task(task_id)
     assert task is not None
     assert projected_task_state(task) == "ready"
-    assert task.claimed_by_session_id is None
     assert task.claimed_by_session_id is None
     assert task.is_escalated is False
     stage = task_manager.stage_states.get(task_id, "development")

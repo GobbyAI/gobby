@@ -172,6 +172,16 @@ class TelemetryMetrics:
             "Total number of background tasks that failed",
         )
 
+        # Logging and automation health metrics
+        self._register_counter(
+            "logging_records_total",
+            "Python warning and error records by bounded logging surface",
+        )
+        self._register_counter(
+            "automation_events_total",
+            "Automation state transitions by bounded component and outcome",
+        )
+
         # Daemon health metrics (using ObservableGauges)
         self._meter.create_observable_gauge(
             "daemon_uptime_seconds",

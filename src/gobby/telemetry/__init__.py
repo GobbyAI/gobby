@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from opentelemetry import metrics, trace
 
 from gobby.telemetry.context import extract_from_env, inject_into_env
+from gobby.telemetry.health_metrics import configure_health_metrics
 from gobby.telemetry.instruments import (
     dec_gauge,
     get_telemetry_metrics,
@@ -102,6 +103,9 @@ def init_telemetry(
     # 3. Rotating formatted log files
     setup_file_logging(logging_config, verbose=verbose)
 
+    # 4. Logging health metrics require the phase-two meter provider.
+    configure_health_metrics(enabled=config.metrics_enabled)
+
 
 def get_tracer(name: str, version: str | None = None) -> Tracer:
     """
@@ -133,4 +137,5 @@ def get_meter(name: str, version: str | None = None) -> Meter:
 
 def shutdown_telemetry() -> None:
     """Shutdown trace and meter providers and clear their caches."""
+    configure_health_metrics(enabled=False)
     shutdown_providers()

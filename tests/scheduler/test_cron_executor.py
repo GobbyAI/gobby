@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -68,9 +68,15 @@ async def test_execute_shell_success(cron_storage: CronJobStorage, executor: Cro
     job = _make_job(cron_storage, "shell", {"command": "echo", "args": ["hello world"]})
     run = cron_storage.create_run(job.id)
 
-    result = await executor.execute(job, run)
+    with patch("gobby.scheduler.executor.record_automation_event") as record_event:
+        result = await executor.execute(job, run)
+
     assert result.status == "completed"
     assert "hello world" in (result.output or "")
+    assert record_event.call_args_list == [
+        call("cron", "fired"),
+        call("cron", "succeeded"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -98,9 +104,15 @@ async def test_execute_shell_failure(cron_storage: CronJobStorage, executor: Cro
     )
     run = cron_storage.create_run(job.id)
 
-    result = await executor.execute(job, run)
+    with patch("gobby.scheduler.executor.record_automation_event") as record_event:
+        result = await executor.execute(job, run)
+
     assert result.status == "failed"
     assert result.error is not None
+    assert record_event.call_args_list == [
+        call("cron", "fired"),
+        call("cron", "failed"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -524,8 +536,9 @@ async def test_execute_pipeline_background_success_completes_cron_run(
     job = _make_job(cron_storage, "pipeline", {"pipeline_name": "cron-success"})
     run = cron_storage.create_run(job.id)
 
-    dispatched = await executor.execute(job, run)
-    await asyncio.gather(*list(executor._background_tasks))
+    with patch("gobby.scheduler.executor.record_automation_event") as record_event:
+        dispatched = await executor.execute(job, run)
+        await asyncio.gather(*list(executor._background_tasks))
 
     persisted = cron_storage.get_run(run.id)
     assert dispatched.status == "dispatched"
@@ -534,6 +547,10 @@ async def test_execute_pipeline_background_success_completes_cron_run(
     assert persisted.error is None
     assert persisted.completed_at is not None
     assert persisted.pipeline_execution_id == execution.id
+    assert record_event.call_args_list == [
+        call("cron", "fired"),
+        call("cron", "succeeded"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -560,8 +577,9 @@ async def test_execute_pipeline_background_failure_fails_cron_run(
     job = _make_job(cron_storage, "pipeline", {"pipeline_name": "cron-failure"})
     run = cron_storage.create_run(job.id)
 
-    dispatched = await executor.execute(job, run)
-    await asyncio.gather(*list(executor._background_tasks))
+    with patch("gobby.scheduler.executor.record_automation_event") as record_event:
+        dispatched = await executor.execute(job, run)
+        await asyncio.gather(*list(executor._background_tasks))
 
     persisted = cron_storage.get_run(run.id)
     assert dispatched.status == "dispatched"
@@ -570,6 +588,10 @@ async def test_execute_pipeline_background_failure_fails_cron_run(
     assert persisted.error == error
     assert persisted.completed_at is not None
     assert persisted.pipeline_execution_id == execution.id
+    assert record_event.call_args_list == [
+        call("cron", "fired"),
+        call("cron", "failed"),
+    ]
 
 
 @pytest.mark.asyncio

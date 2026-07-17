@@ -78,6 +78,7 @@ from gobby.storage.tasks._read import get_task
 from gobby.storage.tasks._stage_states import StageStatesManager
 from gobby.storage.tasks._transitions import escalate_task as _escalate_task
 from gobby.storage.tasks._updates import update_task
+from gobby.telemetry.health_metrics import record_automation_event
 from gobby.utils.datetime import parse_stored_datetime
 
 logger = logging.getLogger(__name__)
@@ -92,13 +93,17 @@ async def run_db(func: Callable[_P, _T], *args: _P.args, **kwargs: _P.kwargs) ->
 
 
 HeartbeatResult = dispatch_results.HeartbeatResult
-_skipped = dispatch_results.skipped
 _cap_reached = dispatch_results.cap_reached
 _action_cap_reached = dispatch_results.action_cap_reached
 _unavailable = dispatch_results.unavailable
 
 
 _AGENT_CAP_REACHED = object()
+
+
+def _skipped(result: HeartbeatResult) -> HeartbeatResult:
+    record_automation_event("dispatcher", "skipped")
+    return dispatch_results.skipped(result)
 
 
 def _database_error_aborts_scan(error: psycopg.Error) -> bool:
@@ -122,16 +127,20 @@ async def run_heartbeat(
 ) -> HeartbeatResult:
     """Serialize heartbeat entry points before scanning and dispatching tasks."""
     async with _HEARTBEAT_LOCK:
-        return await _run_heartbeat_unlocked(
-            db=db,
-            project_id=project_id,
-            startup=startup,
-            max_active_agents=max_active_agents,
-            holder=holder,
-            ttl_seconds=ttl_seconds,
-            services=services,
-            max_actions=max_actions,
-        )
+        try:
+            return await _run_heartbeat_unlocked(
+                db=db,
+                project_id=project_id,
+                startup=startup,
+                max_active_agents=max_active_agents,
+                holder=holder,
+                ttl_seconds=ttl_seconds,
+                services=services,
+                max_actions=max_actions,
+            )
+        except Exception:
+            record_automation_event("dispatcher", "failed")
+            raise
 
 
 async def _run_heartbeat_unlocked(
@@ -151,6 +160,7 @@ async def _run_heartbeat_unlocked(
     readiness_reason = spawn_readiness_blocker(services)
     if readiness_reason is not None:
         logger.info("Dispatcher heartbeat skipped: %s", readiness_reason)
+        record_automation_event("dispatcher", "skipped")
         return _unavailable(HeartbeatResult(), readiness_reason)
 
     if db is None:
@@ -273,9 +283,11 @@ async def _run_heartbeat_unlocked(
             ):
                 write_set_guard.reserve(action.task_id)
             result = replace(result, executed=result.executed + 1)
+            record_automation_event("dispatcher", "succeeded")
         except DispatchSpawnUnavailable as exc:
             await run_db(mutex.release)
             logger.info("Dispatcher heartbeat unavailable: %s", exc)
+            record_automation_event("dispatcher", "skipped")
             return _unavailable(result, str(exc))
         except Exception as exc:
             if isinstance(exc, (TypeError, AttributeError)) or (
@@ -296,7 +308,8 @@ async def _run_heartbeat_unlocked(
                 logger.debug("Failed to append dispatch failure audit marker", exc_info=True)
             if mutex.run_id is None:
                 await run_db(mutex.release)
-            result = _skipped(result)
+            result = dispatch_results.skipped(result)
+            record_automation_event("dispatcher", "failed")
             continue
         finally:
             if mutex.run_id is None:

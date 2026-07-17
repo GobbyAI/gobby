@@ -21,6 +21,7 @@ from gobby.tasks.state_semantics import (
     get_claimed_session_id,
     is_task_actively_claimed,
 )
+from gobby.telemetry.health_metrics import record_automation_event
 from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
 
 if TYPE_CHECKING:
@@ -191,6 +192,7 @@ class PipelineHeartbeat:
                 "Heartbeat: marked execution %s as FAILED (never started)",
                 execution.id,
             )
+            record_automation_event("pipeline-heartbeat", "failed")
             return 1
 
         if not execution.session_id:
@@ -242,6 +244,7 @@ class PipelineHeartbeat:
         logger.warning(
             "Heartbeat: marked execution %s as FAILED (stalled, no agents)", execution.id
         )
+        record_automation_event("pipeline-heartbeat", "failed")
         return 1
 
     def _has_alive_agents(self, execution: PipelineExecution) -> bool:
@@ -339,6 +342,7 @@ class PipelineHeartbeat:
                     )
                 if action is not None:
                     recovered += 1
+                    record_automation_event("pipeline-heartbeat", "recovered")
             except Exception:
                 logger.exception("Heartbeat: error checking task %s for staleness", task.id)
         return StaleTaskCheckResult(recovered=recovered, candidates=len(candidates))
