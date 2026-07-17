@@ -6,6 +6,7 @@ from typing import Any
 import click
 
 from gobby.cli.tasks._crud_services import CrudServices
+from gobby.storage.tasks import TaskStaleStateError
 from gobby.tasks.state_semantics import is_task_closed
 
 
@@ -161,7 +162,13 @@ def close_task_impl(
                     failed_count += 1
                     continue
 
-        task = manager.close_task(resolved.id, reason=reason)
+        try:
+            task = manager.close_task(resolved.id, reason=reason)
+        except TaskStaleStateError:
+            task_ref = f"#{resolved.seq_num}" if resolved.seq_num else resolved.id[:8]
+            click.echo(f"Cannot close {task_ref}: task is already closed", err=True)
+            failed_count += 1
+            continue
 
         task_ref = f"#{task.seq_num}" if task.seq_num else task.id[:8]
         click.echo(f"Closed task {task_ref} ({reason})")

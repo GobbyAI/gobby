@@ -168,6 +168,37 @@ def test_concurrent_valid_and_invalid_verdict_first_transition_wins(
         assert final.is_escalated is True
 
 
+def test_deliberate_close_of_escalated_task_succeeds_and_clears_escalation(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """A caller that read the escalated row may close it; only racing closes lose."""
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(sample_project["id"], "Escalated resolution close")
+    manager.escalate_task(task.id, reason="ready for QA review")
+    snapshot = manager.get_task(task.id)
+
+    closed = _transitions.close_task(
+        temp_db,
+        task.id,
+        expected_updated_at=snapshot.updated_at,
+        reset_validation_fail_count=True,
+        validation_status="valid",
+        validation_feedback="QA approved",
+    )
+
+    assert closed.closed_at is not None
+    assert closed.is_escalated is False
+    assert closed.escalated_at is None
+
+    with pytest.raises(TaskStaleStateError):
+        _transitions.close_task(
+            temp_db,
+            task.id,
+            expected_updated_at=snapshot.updated_at,
+        )
+
+
 def test_manual_escalation_reopen_resets_validation_fail_count(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],

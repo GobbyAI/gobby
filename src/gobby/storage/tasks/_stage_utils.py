@@ -75,6 +75,10 @@ def _close_task_in_txn(
         completed_by_session_id=persisted_session_id,
         commit_sha=commit_sha,
     )
+    # No is_escalated predicate here: every escalation bumps updated_at, so the
+    # freshness guard already rejects closes racing a concurrent escalation.
+    # A close whose caller read the escalated row (fresh updated_at, or no
+    # expected_updated_at) is a deliberate resolution and clears escalation.
     cursor = conn.execute(
         """
         UPDATE tasks
@@ -93,8 +97,7 @@ def _close_task_in_txn(
                updated_at = %s
          WHERE id = %s
            AND closed_at IS NULL
-           AND is_escalated = FALSE
-           AND (%s IS NULL OR updated_at = %s)
+           AND (%s::timestamptz IS NULL OR updated_at = %s)
         """,
         (
             now,
