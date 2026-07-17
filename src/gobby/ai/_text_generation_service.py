@@ -782,6 +782,7 @@ class TextGenerationService:
                 "profile": request.profile,
                 "provider": provider,
                 "model": model,
+                "candidate": _candidate_debug_label(request),
                 "latency_ms": round(latency_ms, 2),
                 "success": success,
                 "error": str(error) if error else None,

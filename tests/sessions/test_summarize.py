@@ -16,6 +16,7 @@ from gobby.sessions.summarize import (
     TRANSCRIPT_FALLBACK_MAX_TURNS,
     _build_summary_prompt_context,
     _digest_markdown_for_summary,
+    _generate_delta_summary,
     _generate_full_summary,
     _source_hash_payload,
     generate_session_summaries,
@@ -75,13 +76,35 @@ def _write_transcript(tmp_path: Path) -> str:
     return str(transcript)
 
 
+def _valid_summary_prompt(body: str) -> str:
+    return f"{body}\n\n## Current State\n\n## Next Steps"
+
+
 def _summary_config(prompt: str = "Summary:\n{transcript_summary}") -> SessionSummaryConfig:
-    return SessionSummaryConfig(prompt=prompt, candidates=["claude/haiku"])
+    return SessionSummaryConfig(
+        prompt=_valid_summary_prompt(prompt),
+        candidates=["claude/haiku"],
+    )
 
 
 def _mock_llm(summary: str) -> MagicMock:
     service = MagicMock()
     service.call_feature = AsyncMock(return_value=summary)
+    return service
+
+
+def _mock_candidate_llm(outputs: list[str]) -> MagicMock:
+    service = MagicMock()
+
+    async def call_feature(*_args: object, **kwargs: object) -> str:
+        output_validator = kwargs.get("output_validator")
+        assert callable(output_validator)
+        for output in outputs:
+            if output_validator(output) is None:
+                return output
+        raise RuntimeError("all candidates failed summary validation")
+
+    service.call_feature = AsyncMock(side_effect=call_feature)
     return service
 
 
@@ -360,6 +383,51 @@ class TestGenerateSessionSummaries:
                 "summary_path": None,
             }
         ]
+
+    @pytest.mark.asyncio
+    async def test_all_invalid_candidate_reasons_persist_with_digest_fallback(self) -> None:
+        session = _make_session(
+            session_id="sess-invalid-candidates",
+            digest_markdown="### Turn 1\nInitial digest.",
+        )
+        manager = _RevisionAwareSummaryManager(session)
+        candidate_error = (
+            "No text generation candidate succeeded "
+            "(tried: ['qwen/qwen-model', 'claude/haiku']; "
+            "errors: [('qwen/qwen-model', 'missing Current State'), "
+            "('claude/haiku', 'missing Next Steps')])"
+        )
+
+        with (
+            patch("gobby.sessions.summarize._enrich_git_context"),
+            patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
+            patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
+            patch(
+                "gobby.workflows.summary_actions._format_structured_context",
+                return_value="structured",
+            ),
+            patch(
+                "gobby.sessions.summarize._generate_full_summary",
+                return_value=(None, candidate_error),
+            ),
+            patch(
+                "gobby.sessions.summarize._format_deterministic_summary",
+                return_value=VALID_SUMMARY,
+            ),
+        ):
+            result = await generate_session_summaries(
+                session_id=session.id,
+                session_manager=manager,
+                llm_service=_mock_llm(VALID_SUMMARY),
+                session_summary_config=_summary_config(),
+                set_handoff_ready=False,
+            )
+
+        assert result["success"] is True
+        assert result["generation_mode"] == "digest_fallback"
+        metadata = manager.persist_calls[0]["metadata_json"]
+        assert isinstance(metadata, dict)
+        assert metadata["full_error"] == candidate_error
 
     @pytest.mark.asyncio
     async def test_source_hash_match_returns_existing_summary_without_regeneration(self) -> None:
@@ -679,7 +747,9 @@ class TestGenerateSessionSummaries:
             ),
             patch("gobby.workflows.summary_actions.format_turns_for_llm", return_value="turns"),
         ):
-            MockPromptLoader.return_value.load.return_value.content = "Droid:\n{transcript_summary}"
+            MockPromptLoader.return_value.load.return_value.content = _valid_summary_prompt(
+                "Droid:\n{transcript_summary}"
+            )
             MockParser.return_value.extract_turns_since_clear.return_value = [{"type": "message"}]
             MockParser.return_value.extract_last_messages.return_value = [
                 {"role": "user", "content": "hi"}
@@ -726,7 +796,9 @@ class TestGenerateSessionSummaries:
             ),
             patch("gobby.workflows.summary_actions.format_turns_for_llm", return_value="turns"),
         ):
-            MockPromptLoader.return_value.load.return_value.content = "Qwen:\n{transcript_summary}"
+            MockPromptLoader.return_value.load.return_value.content = _valid_summary_prompt(
+                "Qwen:\n{transcript_summary}"
+            )
             MockQwenParser.return_value.extract_turns_since_clear.return_value = [
                 {"type": "message"}
             ]
@@ -771,7 +843,7 @@ class TestGenerateSessionSummaries:
             ),
             patch("gobby.workflows.summary_actions.format_turns_for_llm") as mock_format,
         ):
-            MockPromptLoader.return_value.load.return_value.content = (
+            MockPromptLoader.return_value.load.return_value.content = _valid_summary_prompt(
                 "Transcript:\n{transcript_summary}\nLast:\n{last_messages}"
             )
 
@@ -818,7 +890,7 @@ class TestGenerateSessionSummaries:
             ),
             patch("gobby.workflows.summary_actions.format_turns_for_llm") as mock_format,
         ):
-            MockPromptLoader.return_value.load.return_value.content = (
+            MockPromptLoader.return_value.load.return_value.content = _valid_summary_prompt(
                 "Transcript:\n{transcript_summary}\nLast:\n{last_messages}"
             )
 
@@ -840,7 +912,10 @@ class TestGenerateSessionSummaries:
         prompt = llm_service.call_feature.await_args.args[1]
         assert "Old coordinator state." in prompt
         assert "Current build state: #12746 is development:in_progress." in prompt
-        assert prompt.rstrip().endswith("Current build state: #12746 is development:in_progress.")
+        prompt_body = prompt.split("\n\n## Current State", maxsplit=1)[0]
+        assert prompt_body.rstrip().endswith(
+            "Current build state: #12746 is development:in_progress."
+        )
 
     @pytest.mark.asyncio
     async def test_digest_primary_context_includes_current_assistant_content(self) -> None:
@@ -867,7 +942,7 @@ class TestGenerateSessionSummaries:
             ),
             patch("gobby.workflows.summary_actions.format_turns_for_llm") as mock_format,
         ):
-            MockPromptLoader.return_value.load.return_value.content = (
+            MockPromptLoader.return_value.load.return_value.content = _valid_summary_prompt(
                 "Transcript:\n{transcript_summary}\nLast:\n{last_messages}"
             )
 
@@ -889,7 +964,10 @@ class TestGenerateSessionSummaries:
         prompt = llm_service.call_feature.await_args.args[1]
         assert "Old coordinator state." in prompt
         assert "Current handoff: #14997 open and #12746 still running." in prompt
-        assert prompt.rstrip().endswith("Current handoff: #14997 open and #12746 still running.")
+        prompt_body = prompt.split("\n\n## Current State", maxsplit=1)[0]
+        assert prompt_body.rstrip().endswith(
+            "Current handoff: #14997 open and #12746 still running."
+        )
 
     @pytest.mark.asyncio
     async def test_full_summary_enrichment_uses_run_db(self) -> None:
@@ -926,7 +1004,7 @@ class TestGenerateSessionSummaries:
                 return_value="memory context",
             ) as memories,
         ):
-            MockPromptLoader.return_value.load.return_value.content = (
+            MockPromptLoader.return_value.load.return_value.content = _valid_summary_prompt(
                 "Tasks:\n{claimed_tasks}\nMemories:\n{session_memories}"
             )
 
@@ -1013,7 +1091,7 @@ class TestGenerateSessionSummaries:
                 return_value=formatted,
             ) as mock_format,
         ):
-            MockPromptLoader.return_value.load.return_value.content = (
+            MockPromptLoader.return_value.load.return_value.content = _valid_summary_prompt(
                 "Transcript:\n{transcript_summary}"
             )
             MockParser.return_value.extract_turns_since_clear.return_value = turns
@@ -1034,9 +1112,102 @@ class TestGenerateSessionSummaries:
         formatted_turns = mock_format.call_args.args[0]
         assert len(formatted_turns) == TRANSCRIPT_FALLBACK_MAX_TURNS
         prompt = llm_service.call_feature.await_args.args[1]
-        transcript_summary = prompt.removeprefix("Transcript:\n")
+        transcript_summary = prompt.removeprefix("Transcript:\n").split(
+            "\n\n## Current State",
+            maxsplit=1,
+        )[0]
         assert len(transcript_summary) <= TRANSCRIPT_FALLBACK_MAX_CHARS + 4
         assert transcript_summary.endswith("...")
+
+    @pytest.mark.asyncio
+    async def test_full_summary_uses_secondary_candidate_after_validation_rejection(
+        self,
+    ) -> None:
+        session = _make_session(
+            session_id="sess-secondary",
+            digest_markdown="### Turn 1\nDigest source.",
+        )
+        session_manager = MagicMock()
+        llm_service = _mock_candidate_llm(
+            [
+                "Detailed prose without the mandatory semantic sections. " * 4,
+                VALID_SUMMARY,
+            ]
+        )
+
+        full_markdown, full_error = await _generate_full_summary(
+            session=session,
+            turns=[],
+            handoff_ctx=MagicMock(),
+            llm_service=llm_service,
+            session_summary_config=_summary_config(),
+            db=None,
+            session_manager=session_manager,
+            summary_context={},
+            prompt_template=_valid_summary_prompt("Summarize the session."),
+        )
+
+        assert full_markdown == VALID_SUMMARY
+        assert full_error is None
+
+    @pytest.mark.asyncio
+    async def test_delta_summary_uses_secondary_candidate_after_validation_rejection(
+        self,
+    ) -> None:
+        session = _make_session(session_id="sess-delta-secondary")
+        session_manager = MagicMock()
+        llm_service = _mock_candidate_llm(
+            [
+                "Detailed prose without the mandatory semantic sections. " * 4,
+                VALID_SUMMARY,
+            ]
+        )
+
+        with patch("gobby.prompts.loader.PromptLoader") as prompt_loader:
+            prompt_loader.return_value.load.return_value.content = _valid_summary_prompt(
+                "Previous: {previous_summary}\nNew: {new_digest_turns}"
+            )
+            merged_markdown, merge_error = await _generate_delta_summary(
+                session=session,
+                previous_summary=VALID_SUMMARY,
+                new_digest_turns="### Turn 2\nNew state.",
+                summary_context={},
+                llm_service=llm_service,
+                session_summary_config=_summary_config(),
+                db=None,
+                session_manager=session_manager,
+            )
+
+        assert merged_markdown == VALID_SUMMARY
+        assert merge_error is None
+
+    @pytest.mark.asyncio
+    async def test_invalid_custom_full_prompt_skips_llm_call(self) -> None:
+        session = _make_session(session_id="sess-invalid-prompt")
+        session_manager = MagicMock()
+        llm_service = _mock_llm(VALID_SUMMARY)
+
+        full_markdown, full_error = await _generate_full_summary(
+            session=session,
+            turns=[],
+            handoff_ctx=MagicMock(),
+            llm_service=llm_service,
+            session_summary_config=SessionSummaryConfig(
+                prompt="Summarize without the required headings.",
+                candidates=["claude/haiku"],
+            ),
+            db=None,
+            session_manager=session_manager,
+            summary_context={},
+            prompt_template="Summarize without the required headings.",
+        )
+
+        assert full_markdown is None
+        assert full_error == (
+            "Invalid summary prompt template: summary prompt must include literal "
+            "required heading(s): ## Current State, ## Next Steps"
+        )
+        llm_service.call_feature.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_invalid_provider_summary_returns_generic_error(self) -> None:
@@ -1060,7 +1231,7 @@ class TestGenerateSessionSummaries:
                 return_value="structured",
             ),
         ):
-            MockPromptLoader.return_value.load.return_value.content = (
+            MockPromptLoader.return_value.load.return_value.content = _valid_summary_prompt(
                 "Summary:\n{transcript_summary}"
             )
 
@@ -1075,7 +1246,9 @@ class TestGenerateSessionSummaries:
             )
 
         assert full_markdown is None
-        assert full_error == "Generated session summary was invalid"
+        assert full_error == (
+            "Generated session summary was invalid: summary begins with a provider failure sentinel"
+        )
 
     @pytest.mark.asyncio
     async def test_provider_failure_string_is_not_persisted(self, tmp_path: Path) -> None:

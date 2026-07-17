@@ -391,6 +391,8 @@ class TestSessionSummaryConfig:
         # prompt now has a default template with placeholders
         assert config.prompt is not None
         assert "Generate a concise session summary" in config.prompt
+        assert "## Current State" in config.prompt
+        assert "## Next Steps" in config.prompt
 
     def test_custom_values(self) -> None:
         """Test custom session summary config."""

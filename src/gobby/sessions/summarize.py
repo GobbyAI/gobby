@@ -145,6 +145,7 @@ class LLMServiceProtocol(Protocol):
         *,
         caller: str | None = None,
         cwd: str | None = None,
+        output_validator: Callable[[str], str | None] | None = None,
     ) -> str: ...
 
 
@@ -347,7 +348,9 @@ async def generate_session_summaries(
 
     if decision.mode != "noop" and not is_summary_markdown_valid(full_markdown):
         logger.warning(
-            f"Full LLM summary failed ({full_error}), falling back to code-only",
+            "Full LLM summary failed for %s (%s), falling back to code-only",
+            session_id,
+            full_error,
         )
         full_markdown = _format_deterministic_summary(handoff_ctx, digest_markdown)
         generation_mode = "digest_fallback"

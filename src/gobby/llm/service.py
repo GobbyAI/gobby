@@ -1,6 +1,7 @@
 """LLM service facade for feature generation."""
 
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.ai.text_generation import (
@@ -43,6 +44,7 @@ def _feature_request(
     max_tokens: int | None = None,
     caller: str | None,
     cwd: str | None = None,
+    output_validator: Callable[[str], str | None] | None = None,
 ) -> TextGenerationRequest:
     candidates = tuple(getattr(feature_config, "candidates", ()) or ())
     profile = getattr(feature_config, "profile", None)
@@ -58,6 +60,7 @@ def _feature_request(
         cwd=cwd,
         candidate_timeout_seconds=candidate_timeout_seconds,
         cli_candidate_timeout_seconds=cli_candidate_timeout_seconds,
+        output_validator=output_validator,
     )
 
 
@@ -94,6 +97,7 @@ class LLMService:
         *,
         caller: str | None = None,
         cwd: str | None = None,
+        output_validator: Callable[[str], str | None] | None = None,
     ) -> str:
         """Call text generation for a feature config through profile candidates.
 
@@ -115,6 +119,7 @@ class LLMService:
                 max_tokens=max_tokens,
                 caller=caller,
                 cwd=cwd,
+                output_validator=output_validator,
             )
         )
 

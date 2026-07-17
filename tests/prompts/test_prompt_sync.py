@@ -78,6 +78,8 @@ class TestSyncBundledPrompts:
         known_templates = [
             "expansion/system",
             "expansion/user",
+            "handoff/session_delta_merge",
+            "handoff/session_end",
             "validation/validate",
         ]
 
@@ -85,3 +87,9 @@ class TestSyncBundledPrompts:
             record = manager.get_by_name(name)
             assert record is not None, f"Expected bundled template '{name}' not found"
             assert record.content != ""
+
+        for name in ("handoff/session_delta_merge", "handoff/session_end"):
+            record = manager.get_by_name(name)
+            assert record is not None
+            assert "## Current State" in record.content
+            assert "## Next Steps" in record.content

@@ -2481,6 +2481,160 @@ async def test_text_generation_service_falls_back_when_candidate_errors() -> Non
 
 
 @pytest.mark.asyncio
+async def test_text_generation_service_falls_back_when_output_validator_rejects() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="qwen",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=("qwen-model",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                available=True,
+                models=("haiku",),
+            ),
+        ]
+    )
+    qwen = StaticTextAdapter("invalid summary")
+    claude = StaticTextAdapter("valid summary")
+    service = TextGenerationService(registry, {"qwen": qwen, "claude": claude})
+
+    def validate(text: str) -> str | None:
+        return None if text == "valid summary" else "missing required summary sections"
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="summarize",
+            profile="feature_low",
+            candidates=("qwen/qwen-model", "claude/haiku"),
+            output_validator=validate,
+        )
+    )
+
+    assert result.text == "valid summary"
+    assert qwen.requests[0].output_validator is validate
+    assert claude.requests[0].output_validator is validate
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_reports_all_output_validation_failures() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="qwen",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=("qwen-model",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                available=True,
+                models=("haiku",),
+            ),
+        ]
+    )
+    service = TextGenerationService(
+        registry,
+        {
+            "qwen": StaticTextAdapter("private rejected output one"),
+            "claude": StaticTextAdapter("private rejected output two"),
+        },
+    )
+    reasons = iter(("missing Current State", "missing Next Steps"))
+
+    with pytest.raises(FeatureGenerationUnavailableError) as exc_info:
+        await service.generate_result(
+            TextGenerationRequest(
+                prompt="summarize",
+                profile="feature_low",
+                candidates=("qwen/qwen-model", "claude/haiku"),
+                output_validator=lambda _text: next(reasons),
+            )
+        )
+
+    error = str(exc_info.value)
+    assert "qwen/qwen-model" in error
+    assert "claude/haiku" in error
+    assert "missing Current State" in error
+    assert "missing Next Steps" in error
+    assert "private rejected output" not in error
+
+
+@pytest.mark.asyncio
+async def test_output_validation_rejection_records_breaker_transport_success() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                available=True,
+                models=("haiku",),
+            )
+        ]
+    )
+    adapter = StaticTextAdapter("structurally invalid")
+    service = TextGenerationService(
+        registry,
+        {"claude": adapter},
+        circuit_breaker_failure_threshold=1,
+        circuit_breaker_cooldown_seconds=60.0,
+    )
+    request = TextGenerationRequest(
+        prompt="summarize",
+        provider="claude",
+        model="haiku",
+        output_validator=lambda _text: "missing required summary sections",
+    )
+
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="missing required summary sections"):
+            await service.generate(request)
+
+    assert len(adapter.requests) == 2
+    assert service._breaker_failures == {}
+    assert service._breaker_open_until == {}
+
+
+@pytest.mark.asyncio
+async def test_output_validation_reason_is_bounded() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                available=True,
+                models=("haiku",),
+            )
+        ]
+    )
+    service = TextGenerationService(registry, {"claude": StaticTextAdapter("invalid")})
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await service.generate(
+            TextGenerationRequest(
+                prompt="summarize",
+                provider="claude",
+                model="haiku",
+                output_validator=lambda _text: "x" * 1000,
+            )
+        )
+
+    error = str(exc_info.value)
+    assert "x" * 500 in error
+    assert "x" * 501 not in error
+
+
+@pytest.mark.asyncio
 async def test_json_text_generation_composes_json_instruction() -> None:
     class RecordingJSONTextAdapter:
         def __init__(self) -> None:

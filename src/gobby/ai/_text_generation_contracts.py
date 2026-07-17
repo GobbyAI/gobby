@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.config.feature_base import FeatureCandidateInput
@@ -29,6 +29,11 @@ class TextGenerationRequest:
     candidate_timeout_seconds: float | None = None
     cli_candidate_timeout_seconds: float | None = None
     total_timeout_seconds: float | None = None
+    output_validator: Callable[[str], str | None] | None = field(
+        default=None,
+        compare=False,
+        repr=False,
+    )
 
 
 class TextGenerateAdapter(Protocol):

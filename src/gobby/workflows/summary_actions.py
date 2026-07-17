@@ -16,6 +16,7 @@ import aiofiles
 
 from gobby.hooks.background_tasks import create_background_task
 from gobby.memory.title_heuristics import normalize_title_candidate
+from gobby.sessions.summary_context import _load_summary_prompt_template
 from gobby.sessions.summary_transcripts import (
     DIGEST_FALLBACK_MAX_CHARS,
     TRANSCRIPT_FALLBACK_MAX_CHARS,
@@ -24,7 +25,10 @@ from gobby.sessions.summary_transcripts import (
     _read_transcript,
     _truncate_markdown,
 )
-from gobby.sessions.summary_validity import is_summary_markdown_valid
+from gobby.sessions.summary_validity import (
+    summary_markdown_validation_error,
+    summary_prompt_validation_error,
+)
 from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
 from gobby.sessions.workspace_context import resolve_session_workspace
 from gobby.workflows.git_utils import (
@@ -667,11 +671,23 @@ async def generate_summary(
         return {"error": "No transcript path"}
 
     if not template:
-        template = getattr(session_summary_config, "prompt", None) or (
-            "Summarize this session, focusing on what was accomplished, "
-            "key decisions, and what is left to do.\n\n"
-            "Transcript:\n{transcript_summary}"
+        template = await asyncio.to_thread(
+            _load_summary_prompt_template,
+            path="handoff/session_end",
+            session_summary_config=session_summary_config,
+            db=getattr(session_manager, "db", None),
+            session_manager=session_manager,
+            allow_runtime_db=False,
         )
+
+    prompt_error = summary_prompt_validation_error(template)
+    if prompt_error is not None:
+        logger.warning(
+            "Invalid on-demand summary prompt",
+            extra={"session_id": session_id, "error": prompt_error},
+        )
+        return {"error": f"Invalid summary prompt template: {prompt_error}"}
+    assert isinstance(template, str)
 
     # 1. Process Transcript
     try:
@@ -772,14 +788,23 @@ async def generate_summary(
                 "You are a session summary generator. Create comprehensive, actionable summaries."
             ),
             caller="workflows.generate_summary",
+            output_validator=summary_markdown_validation_error,
         )
     except Exception as e:
-        logger.error(f"LLM generation failed: {e}")
+        logger.error(
+            "LLM generation failed",
+            extra={"session_id": session_id, "error": str(e)},
+        )
         return {"error": f"LLM error: {e}"}
 
-    if not is_summary_markdown_valid(summary_content):
-        logger.warning("LLM returned invalid summary for session %s", session_id)
-        return {"error": "LLM returned invalid summary"}
+    validation_error = summary_markdown_validation_error(summary_content)
+    if validation_error is not None:
+        logger.warning(
+            "LLM returned invalid summary for session %s: %s",
+            session_id,
+            validation_error,
+        )
+        return {"error": f"LLM returned invalid summary: {validation_error}"}
 
     # 4. Save to session
     await asyncio.to_thread(

@@ -56,12 +56,13 @@ Keep total response under 2000 words.
 ---
 
 Create a markdown summary with the same section contract as the session end handoff.
-Omit empty sections entirely. Do NOT write "None" for empty sections.
+Always include Current State and Next Steps. All other sections are optional; omit an optional section if no relevant information exists. Do NOT write "None" for empty sections.
 Do NOT include a top-level '# Session Summary' header.
 
 ## Current State
 [What is working, what is broken, uncommitted changes, failing tests.
-This is what the next session needs to know first.]
+This section is mandatory. This is what the next session needs to know first.
+If the work is complete, state completion explicitly.]
 
 ## Files Changed
 [For each file: explain the specific change using diff content. Include file paths.
@@ -82,6 +83,7 @@ Each bullet should name the file and describe the specific change.]
 Different from Problems Encountered. These are dead ends that future sessions should not retry.]
 
 ## Next Steps
-[Numbered list. Each item must be actionable without additional context - include file names, function names, and what specifically to do.]
+[This section is mandatory. Use a numbered list where each item is actionable without additional context - include file names, function names, and what specifically to do.
+If implementation is complete, state the remaining handoff action such as commit, validation, commit linking, or task closure.]
 
 Use only ASCII-safe characters. Replace: em-dashes with hyphens (-), smart quotes with straight quotes (' "), bullet points with asterisks (*), ellipses with three periods (...).

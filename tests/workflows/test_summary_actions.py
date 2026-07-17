@@ -41,6 +41,10 @@ Continue with the remaining task validation and lifecycle handoff steps.
 """
 
 
+def _valid_summary_template(body: str) -> str:
+    return f"{body}\n\n## Current State\n\n## Next Steps"
+
+
 @pytest.mark.asyncio
 async def test_scheduled_tmux_rename_is_retained_until_done() -> None:
     from gobby.hooks import background_tasks
@@ -1207,7 +1211,7 @@ class TestGenerateSummary:
 
         assert result is not None
         assert result["summary_generated"] is True
-        assert to_thread.await_count == 6
+        assert to_thread.await_count == 7
         status.assert_called_once_with(str(tmp_path))
         changes.assert_called_once_with(str(tmp_path))
         diff.assert_called_once_with(8000, str(tmp_path))
@@ -1250,7 +1254,7 @@ class TestGenerateSummary:
                 llm_service=mock_llm_service,
                 transcript_processor=mock_transcript_processor,
                 session_summary_config=summary_config,
-                template="{transcript_summary}|{structured_context}",
+                template=_valid_summary_template("{transcript_summary}|{structured_context}"),
             )
 
         assert result is not None
@@ -1259,7 +1263,7 @@ class TestGenerateSummary:
             1
         ].split("|", maxsplit=1)
         assert len(transcript_context) <= TRANSCRIPT_FALLBACK_MAX_CHARS + 4
-        assert len(structured_context) <= TRANSCRIPT_FALLBACK_MAX_CHARS + 4
+        assert len(structured_context) <= TRANSCRIPT_FALLBACK_MAX_CHARS + 80
 
     @pytest.mark.parametrize("llm_output", ["", "   \n"])
     async def test_generate_summary_rejects_invalid_llm_output(
@@ -1296,7 +1300,9 @@ class TestGenerateSummary:
                 session_summary_config=summary_config,
             )
 
-        assert result == {"error": "LLM returned invalid summary"}
+        assert result == {
+            "error": "LLM returned invalid summary: summary is shorter than 100 characters"
+        }
         mock_session_manager.update_summary.assert_not_called()
         assert session.summary_markdown == "Existing good summary"
 
@@ -1357,7 +1363,7 @@ class TestGenerateSummary:
                 llm_service=mock_llm_service,
                 transcript_processor=mock_transcript_processor,
                 session_summary_config=summary_config,
-                template="Mode: {mode}\nTranscript:\n{transcript_summary}",
+                template=_valid_summary_template("Mode: {mode}\nTranscript:\n{transcript_summary}"),
                 mode="clear",
                 write_file=True,
                 output_path=str(tmp_path),
@@ -1402,7 +1408,7 @@ class TestGenerateSummary:
                 llm_service=mock_llm_service,
                 transcript_processor=mock_transcript_processor,
                 session_summary_config=summary_config,
-                template="Mode: {mode}\nTranscript:\n{transcript_summary}",
+                template=_valid_summary_template("Mode: {mode}\nTranscript:\n{transcript_summary}"),
                 mode="compact",
                 write_file=True,
                 output_path=str(tmp_path),
@@ -1447,7 +1453,7 @@ class TestGenerateSummary:
                 llm_service=mock_llm_service,
                 transcript_processor=mock_transcript_processor,
                 session_summary_config=summary_config,
-                template="Previous:\n{previous_summary}\nMode: {mode}",
+                template=_valid_summary_template("Previous:\n{previous_summary}\nMode: {mode}"),
                 previous_summary=previous,
                 mode="compact",
             )
@@ -1649,7 +1655,7 @@ class TestGenerateSummary:
         mock_transcript_processor.extract_turns_since_clear.return_value = []
         mock_transcript_processor.extract_last_messages.return_value = []
 
-        custom_template = "Custom summary template: {transcript_summary}"
+        custom_template = _valid_summary_template("Custom summary template: {transcript_summary}")
 
         with (
             patch("gobby.workflows.summary_actions.get_git_status", return_value="clean"),
@@ -1669,6 +1675,167 @@ class TestGenerateSummary:
         assert mock_llm_service.call_feature.await_args.args[0] is summary_config
         prompt = mock_llm_service.call_feature.await_args.args[1]
         assert prompt.startswith("Custom summary template:")
+
+    @pytest.mark.asyncio
+    async def test_generate_summary_rejects_invalid_custom_prompt_before_llm_call(
+        self,
+        mock_session_manager,
+        mock_llm_service,
+        mock_transcript_processor,
+        summary_config,
+    ) -> None:
+        session = MagicMock()
+        session.transcript_path = "/tmp/unused-transcript.jsonl"
+        mock_session_manager.get.return_value = session
+
+        result = await generate_summary(
+            session_manager=mock_session_manager,
+            session_id="test-session",
+            llm_service=mock_llm_service,
+            transcript_processor=mock_transcript_processor,
+            session_summary_config=summary_config,
+            template="Custom prompt without required headings",
+        )
+
+        assert result == {
+            "error": (
+                "Invalid summary prompt template: summary prompt must include literal "
+                "required heading(s): ## Current State, ## Next Steps"
+            )
+        }
+        mock_llm_service.call_feature.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_generate_summary_rejects_invalid_config_prompt_before_llm_call(
+        self,
+        mock_session_manager,
+        mock_llm_service,
+        mock_transcript_processor,
+    ) -> None:
+        session = MagicMock()
+        session.transcript_path = "/tmp/unused-transcript.jsonl"
+        mock_session_manager.get.return_value = session
+        config = SessionSummaryConfig(
+            prompt="Configured prompt without required headings",
+            candidates=["claude/haiku"],
+        )
+
+        result = await generate_summary(
+            session_manager=mock_session_manager,
+            session_id="test-session",
+            llm_service=mock_llm_service,
+            transcript_processor=mock_transcript_processor,
+            session_summary_config=config,
+        )
+
+        assert result == {
+            "error": (
+                "Invalid summary prompt template: summary prompt must include literal "
+                "required heading(s): ## Current State, ## Next Steps"
+            )
+        }
+        mock_llm_service.call_feature.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_generate_summary_prefers_installed_prompt_over_config_fallback(
+        self,
+        mock_session_manager,
+        mock_llm_service,
+        mock_transcript_processor,
+        tmp_path: Path,
+    ) -> None:
+        transcript_file = tmp_path / "transcript.jsonl"
+        transcript_file.write_text(
+            json.dumps({"message": {"role": "user", "content": "Test"}}) + "\n"
+        )
+        session = MagicMock()
+        session.transcript_path = str(transcript_file)
+        mock_session_manager.get.return_value = session
+        config = SessionSummaryConfig(
+            prompt=_valid_summary_template("Configured: {transcript_summary}"),
+            candidates=["claude/haiku"],
+        )
+        installed_prompt = _valid_summary_template("Installed: {transcript_summary}")
+
+        with (
+            patch(
+                "gobby.workflows.summary_actions._load_summary_prompt_template",
+                return_value=installed_prompt,
+            ),
+            patch("gobby.workflows.summary_actions.get_git_status", return_value="clean"),
+            patch("gobby.workflows.summary_actions.get_file_changes", return_value="No changes"),
+            patch("gobby.workflows.summary_actions.get_git_diff_summary", return_value=""),
+        ):
+            result = await generate_summary(
+                session_manager=mock_session_manager,
+                session_id="test-session",
+                llm_service=mock_llm_service,
+                transcript_processor=mock_transcript_processor,
+                session_summary_config=config,
+            )
+
+        assert result is not None
+        assert result["summary_generated"] is True
+        prompt = mock_llm_service.call_feature.await_args.args[1]
+        assert prompt.startswith("Installed:")
+        assert "Configured:" not in prompt
+
+    @pytest.mark.asyncio
+    async def test_generate_summary_uses_secondary_candidate_after_validation_rejection(
+        self,
+        mock_session_manager,
+        mock_llm_service,
+        mock_transcript_processor,
+        summary_config,
+        tmp_path: Path,
+    ) -> None:
+        transcript_file = tmp_path / "transcript.jsonl"
+        transcript_file.write_text(
+            json.dumps({"message": {"role": "user", "content": "Test"}}) + "\n"
+        )
+        session = MagicMock()
+        session.transcript_path = str(transcript_file)
+        mock_session_manager.get.return_value = session
+        attempted: list[str] = []
+
+        async def call_feature(*_args: object, **kwargs: object) -> str:
+            output_validator = kwargs.get("output_validator")
+            assert callable(output_validator)
+            for output in (
+                "Detailed prose without the mandatory semantic sections. " * 4,
+                VALID_SUMMARY_CONTENT,
+            ):
+                attempted.append(output)
+                if output_validator(output) is None:
+                    return output
+            raise AssertionError("expected secondary candidate to validate")
+
+        mock_llm_service.call_feature.side_effect = call_feature
+
+        with (
+            patch("gobby.workflows.summary_actions.get_git_status", return_value="clean"),
+            patch("gobby.workflows.summary_actions.get_file_changes", return_value="No changes"),
+            patch("gobby.workflows.summary_actions.get_git_diff_summary", return_value=""),
+        ):
+            result = await generate_summary(
+                session_manager=mock_session_manager,
+                session_id="test-session",
+                llm_service=mock_llm_service,
+                transcript_processor=mock_transcript_processor,
+                session_summary_config=summary_config,
+                template=_valid_summary_template("Transcript: {transcript_summary}"),
+            )
+
+        assert result is not None
+        assert result["summary_generated"] is True
+        assert attempted == [
+            "Detailed prose without the mandatory semantic sections. " * 4,
+            VALID_SUMMARY_CONTENT,
+        ]
+        mock_session_manager.update_summary.assert_called_once_with(
+            "test-session",
+            summary_markdown=VALID_SUMMARY_CONTENT,
+        )
 
     @pytest.mark.asyncio
     async def test_generate_summary_includes_git_context(
@@ -1705,7 +1872,7 @@ class TestGenerateSummary:
                 llm_service=mock_llm_service,
                 transcript_processor=mock_transcript_processor,
                 session_summary_config=summary_config,
-                template="Git:\n{git_status}\nFiles:\n{file_changes}",
+                template=_valid_summary_template("Git:\n{git_status}\nFiles:\n{file_changes}"),
             )
 
         assert result["summary_generated"] is True
@@ -1802,7 +1969,7 @@ class TestGenerateSummary:
                 llm_service=mock_llm_service,
                 transcript_processor=mock_transcript_processor,
                 session_summary_config=summary_config,
-                template="Messages:\n{last_messages}",
+                template=_valid_summary_template("Messages:\n{last_messages}"),
             )
 
         assert result["summary_generated"] is True

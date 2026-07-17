@@ -6,7 +6,10 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
-from gobby.sessions.summary_validity import is_summary_markdown_valid
+from gobby.sessions.summary_validity import (
+    summary_markdown_validation_error,
+    summary_prompt_validation_error,
+)
 from gobby.storage.hub.protocol import HubDatabase
 
 if TYPE_CHECKING:
@@ -94,6 +97,10 @@ async def _generate_full_summary(
         if not prompt_template:
             return None, "Missing prompt template: handoff/session_end"
 
+        prompt_error = summary_prompt_validation_error(prompt_template)
+        if prompt_error is not None:
+            return None, f"Invalid summary prompt template: {prompt_error}"
+
         if summary_context is None:
             build_summary_prompt_context = _facade_attr("_build_summary_prompt_context")
             summary_context = await build_summary_prompt_context(
@@ -117,11 +124,11 @@ async def _generate_full_summary(
             ),
             caller="sessions.summary",
             cwd=project_path,
+            output_validator=summary_markdown_validation_error,
         )
-        if not is_summary_markdown_valid(full_markdown):
-            if full_markdown and full_markdown.strip():
-                return None, "Generated session summary was invalid"
-            return None, "Generated session summary was empty"
+        validation_error = summary_markdown_validation_error(full_markdown)
+        if validation_error is not None:
+            return None, f"Generated session summary was invalid: {validation_error}"
         return full_markdown, None
 
     except Exception as e:
@@ -159,6 +166,10 @@ async def _generate_delta_summary(
         if not prompt_template:
             return None, "Missing prompt template: handoff/session_delta_merge"
 
+        prompt_error = summary_prompt_validation_error(prompt_template)
+        if prompt_error is not None:
+            return None, f"Invalid delta summary prompt template: {prompt_error}"
+
         context = dict(summary_context)
         context.update(
             {
@@ -178,11 +189,11 @@ async def _generate_delta_summary(
             ),
             caller="sessions.summary.delta",
             cwd=summary_context.get("project_path"),
+            output_validator=summary_markdown_validation_error,
         )
-        if not is_summary_markdown_valid(merged_markdown):
-            if merged_markdown and merged_markdown.strip():
-                return None, "Generated delta session summary was invalid"
-            return None, "Generated delta session summary was empty"
+        validation_error = summary_markdown_validation_error(merged_markdown)
+        if validation_error is not None:
+            return None, f"Generated delta session summary was invalid: {validation_error}"
         return merged_markdown, None
     except Exception as e:
         logger.error(

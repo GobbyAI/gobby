@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
 
 _PROMPT_ECHO_PREFIX_MIN_CHARS = 200
+_OUTPUT_VALIDATION_ERROR_MAX_CHARS = 500
 
 
 class _InvalidTextGenerationOutputError(RuntimeError):
@@ -108,6 +109,28 @@ def _validate_text_generation_output(request: TextGenerationRequest, text: str) 
             raise _InvalidTextGenerationOutputError(
                 "text generation output started with the prompt instead of generated text"
             )
+
+    if request.output_validator is None:
+        return
+
+    try:
+        validation_error = request.output_validator(text)
+    except Exception as exc:
+        reason = _bounded_output_validation_reason(f"{type(exc).__name__}: {exc}")
+        raise _InvalidTextGenerationOutputError(
+            f"text generation output validator failed: {reason}"
+        ) from exc
+
+    if validation_error is not None:
+        reason = _bounded_output_validation_reason(validation_error)
+        raise _InvalidTextGenerationOutputError(
+            f"text generation output failed validation: {reason}"
+        )
+
+
+def _bounded_output_validation_reason(reason: str) -> str:
+    normalized = " ".join(reason.strip().split()) or "output rejected by validator"
+    return normalized[:_OUTPUT_VALIDATION_ERROR_MAX_CHARS]
 
 
 def _prompt_echo_targets(request: TextGenerationRequest) -> tuple[str, ...]:

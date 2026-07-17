@@ -74,12 +74,16 @@ async def test_call_feature_delegates_to_text_generation(llm_config: DaemonConfi
     service = LLMService(llm_config, text_generation=fake_generation)
     config = DigestConfig(candidates=["claude/haiku"])
 
+    def validate_output(text: str) -> str | None:
+        return None if text else "empty"
+
     result = await service.call_feature(
         config,
         "prompt",
         system_prompt="system",
         caller="test",
         cwd="/tmp/project",
+        output_validator=validate_output,
     )
 
     assert result == "generated text"
@@ -92,6 +96,7 @@ async def test_call_feature_delegates_to_text_generation(llm_config: DaemonConfi
     assert request.candidates[0].reasoning_effort is None
     assert request.caller == "test"
     assert request.cwd == "/tmp/project"
+    assert request.output_validator is validate_output
 
 
 @pytest.mark.asyncio

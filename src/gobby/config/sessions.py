@@ -117,10 +117,18 @@ File Changes:
 {session_tasks}
 
 ## Instructions
-Create a summary with these sections:
-1. **What was accomplished** - Key completions in 2-3 bullet points
-2. **Current state** - What's in progress or pending
-3. **Next steps** - Clear actionable items for continuation
+Always include these two mandatory sections using the exact headings:
+
+## Current State
+State what is working, broken, in progress, or complete. When the session's work is
+complete, say so explicitly.
+
+## Next Steps
+List clear continuation actions. When implementation is complete, state the remaining
+handoff action, such as committing, linking the commit, validating, or closing the task.
+
+Optional sections may describe what was accomplished, files changed, technical decisions,
+or problems encountered. Omit optional sections that have no relevant information.
 
 Be concise. Focus on what the next agent needs to know to continue effectively.""",
         description="Prompt template for session summary (use placeholders: {transcript_summary}, {git_status}, {file_changes}, {session_tasks})",
