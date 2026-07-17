@@ -169,6 +169,7 @@ version: 1.0
 
     assert imported["success"] is True
     assert fetched["success"] is True
+    assert fetched["enabled"] is expected_enabled
     assert loaded_by_path is not None
     assert loaded_by_path.enabled is expected_enabled
     assert (

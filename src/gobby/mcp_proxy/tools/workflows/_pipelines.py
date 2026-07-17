@@ -183,6 +183,7 @@ def register_pipeline_tools(
             "type": "pipeline",
             "description": definition.description,
             "version": definition.version,
+            "enabled": definition.enabled,
             "inputs": definition.inputs,
             "outputs": definition.outputs,
             "expose_as_tool": definition.expose_as_tool,

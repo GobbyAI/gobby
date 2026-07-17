@@ -340,11 +340,75 @@ async def test_execute_pipeline_no_executor(
 
 
 @pytest.mark.asyncio
+async def test_execute_pipeline_disabled_is_skipped_without_side_effects(
+    cron_storage: CronJobStorage,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    pipeline = SimpleNamespace(name="disabled-pipeline", enabled=False)
+    load_pipeline = AsyncMock(return_value=pipeline)
+    session_manager = MagicMock()
+    execution_manager = MagicMock()
+    execute_pipeline = AsyncMock()
+    pipeline_executor = SimpleNamespace(
+        loader=SimpleNamespace(load_pipeline=load_pipeline),
+        session_manager=session_manager,
+        execution_manager=execution_manager,
+        execute=execute_pipeline,
+    )
+    executor = CronExecutor(storage=cron_storage, pipeline_executor=pipeline_executor)
+    job = _make_job(
+        cron_storage,
+        "pipeline",
+        {"pipeline_name": "disabled-pipeline"},
+    )
+    run = cron_storage.create_run(job.id)
+
+    result = await executor.execute(job, run)
+
+    assert result.status == "skipped"
+    assert result.output == "Skipped: pipeline 'disabled-pipeline' is disabled"
+    assert result.error is None
+    assert result.pipeline_execution_id is None
+    load_pipeline.assert_awaited_once_with("disabled-pipeline", job.project_id)
+    session_manager.register.assert_not_called()
+    execution_manager.create_execution.assert_not_called()
+    execute_pipeline.assert_not_awaited()
+    assert not executor._background_tasks
+    assert all(record.levelname != "ERROR" for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_execute_pipeline_missing_target_still_fails(
+    cron_storage: CronJobStorage,
+) -> None:
+    load_pipeline = AsyncMock(return_value=None)
+    pipeline_executor = SimpleNamespace(
+        loader=SimpleNamespace(load_pipeline=load_pipeline),
+        session_manager=MagicMock(),
+        execution_manager=MagicMock(),
+        execute=AsyncMock(),
+    )
+    executor = CronExecutor(storage=cron_storage, pipeline_executor=pipeline_executor)
+    job = _make_job(
+        cron_storage,
+        "pipeline",
+        {"pipeline_name": "missing-pipeline"},
+    )
+    run = cron_storage.create_run(job.id)
+
+    result = await executor.execute(job, run)
+
+    assert result.status == "failed"
+    assert result.error == "Pipeline 'missing-pipeline' not found"
+
+
+@pytest.mark.asyncio
 async def test_execute_pipeline_resolves_executor_for_job_project(
     cron_storage: CronJobStorage,
 ) -> None:
     pipeline = SimpleNamespace(
         name="cron-test-pipeline",
+        enabled=True,
         model_dump_json=lambda: '{"name":"cron-test-pipeline"}',
     )
     load_pipeline = AsyncMock(return_value=pipeline)

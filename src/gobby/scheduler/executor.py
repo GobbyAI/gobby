@@ -373,6 +373,11 @@ class CronExecutor:
         pipeline = await loader.load_pipeline(pipeline_name, job.project_id)
         if not pipeline:
             raise ValueError(f"Pipeline '{pipeline_name}' not found")
+        if not pipeline.enabled:
+            return ActionOutcome(
+                status="skipped",
+                output=f"Skipped: pipeline '{pipeline_name}' is disabled",
+            )
 
         # Create a session for the cron-triggered pipeline so spawned agents
         # have a valid parent_session_id (required by spawn_agent).
