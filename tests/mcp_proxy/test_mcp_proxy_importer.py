@@ -1,13 +1,20 @@
 """Tests for the MCP proxy importer module."""
 
-from typing import Any
+from collections.abc import Iterator
+from typing import Any, cast
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from pytest import MonkeyPatch
 
-from gobby.config.app import DaemonConfig, ImportMCPServerConfig
-from gobby.mcp_proxy.importer import SECRET_PLACEHOLDER_PATTERN, MCPServerImporter
+from gobby.config.app import DaemonConfig
+from gobby.config.features import ImportMCPServerConfig
+from gobby.mcp_proxy.importer import (
+    MAX_IMPORT_CONTEXT_CHARS,
+    SECRET_PLACEHOLDER_PATTERN,
+    MCPServerImporter,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -132,13 +139,16 @@ def mock_config_disabled() -> DaemonConfig:
 
 
 @pytest.fixture
-def mock_db():
+def mock_db() -> MagicMock:
     """Create a mock database."""
     return MagicMock()
 
 
 @pytest.fixture
-def importer(mock_config, mock_db):
+def importer(
+    mock_config: DaemonConfig,
+    mock_db: MagicMock,
+) -> Iterator[MCPServerImporter]:
     """Create an MCPServerImporter instance."""
     with patch("gobby.mcp_proxy.importer.LocalMCPManager") as mock_mcp_manager_cls:
         with patch("gobby.mcp_proxy.importer.LocalProjectManager") as mock_project_manager_cls:
@@ -196,7 +206,7 @@ class TestSecretPlaceholderPattern:
 class TestMCPServerImporterInit:
     """Tests for MCPServerImporter initialization."""
 
-    def test_init_stores_config(self, mock_config, mock_db) -> None:
+    def test_init_stores_config(self, mock_config: DaemonConfig, mock_db: MagicMock) -> None:
         """Test initialization stores configuration."""
         importer = MCPServerImporter(
             config=mock_config,
@@ -208,7 +218,7 @@ class TestMCPServerImporterInit:
         assert importer.db == mock_db
         assert importer.current_project_id == "project-123"
 
-    def test_init_with_mcp_manager(self, mock_config, mock_db) -> None:
+    def test_init_with_mcp_manager(self, mock_config: DaemonConfig, mock_db: MagicMock) -> None:
         """Test initialization with MCP client manager."""
         mock_manager = MagicMock()
 
@@ -225,7 +235,7 @@ class TestMCPServerImporterInit:
 class TestExtractJson:
     """Tests for _extract_json method."""
 
-    def test_extracts_json_from_code_block(self, importer) -> None:
+    def test_extracts_json_from_code_block(self, importer: MCPServerImporter) -> None:
         """Test extracts JSON from markdown code block."""
         text = """
 Here is the config:
@@ -239,7 +249,7 @@ Here is the config:
         assert result["name"] == "test-server"
         assert result["transport"] == "http"
 
-    def test_extracts_json_from_code_block_no_language(self, importer) -> None:
+    def test_extracts_json_from_code_block_no_language(self, importer: MCPServerImporter) -> None:
         """Test extracts JSON from code block without language."""
         text = """
 ```
@@ -251,7 +261,7 @@ Here is the config:
         assert result is not None
         assert result["name"] == "server"
 
-    def test_extracts_raw_json(self, importer) -> None:
+    def test_extracts_raw_json(self, importer: MCPServerImporter) -> None:
         """Test extracts raw JSON from text."""
         text = 'The config is {"name": "raw", "transport": "http"} here.'
 
@@ -260,14 +270,14 @@ Here is the config:
         assert result is not None
         assert result["name"] == "raw"
 
-    def test_returns_none_for_invalid_json(self, importer) -> None:
+    def test_returns_none_for_invalid_json(self, importer: MCPServerImporter) -> None:
         """Test returns None for invalid JSON."""
         text = "This is not JSON at all"
 
         result = importer._extract_json(text)
         assert result is None
 
-    def test_prefers_valid_server_config(self, importer) -> None:
+    def test_prefers_valid_server_config(self, importer: MCPServerImporter) -> None:
         """Test extracts first JSON that looks like server config."""
         # When text contains only server config JSON, it should be extracted
         text = """
@@ -279,7 +289,7 @@ Here is the config:
         assert result is not None
         assert result.get("name") == "real-server"
 
-    def test_rejects_non_server_config_json(self, importer) -> None:
+    def test_rejects_non_server_config_json(self, importer: MCPServerImporter) -> None:
         """Test returns None when first JSON doesn't look like server config."""
         # When first JSON lacks name/transport, extraction returns None
         text = """
@@ -295,7 +305,7 @@ Here is the config:
 class TestFindMissingSecrets:
     """Tests for _find_missing_secrets method."""
 
-    def test_finds_placeholder_in_string(self, importer) -> None:
+    def test_finds_placeholder_in_string(self, importer: MCPServerImporter) -> None:
         """Test finds placeholder in simple string."""
         config = {"api_key": "<YOUR_API_KEY>"}
 
@@ -303,7 +313,7 @@ class TestFindMissingSecrets:
 
         assert "<YOUR_API_KEY>" in result
 
-    def test_finds_placeholder_in_nested_dict(self, importer) -> None:
+    def test_finds_placeholder_in_nested_dict(self, importer: MCPServerImporter) -> None:
         """Test finds placeholder in nested dict."""
         config = {"name": "server", "headers": {"Authorization": "Bearer <YOUR_TOKEN>"}}
 
@@ -311,7 +321,7 @@ class TestFindMissingSecrets:
 
         assert "<YOUR_TOKEN>" in result
 
-    def test_finds_placeholder_in_list(self, importer) -> None:
+    def test_finds_placeholder_in_list(self, importer: MCPServerImporter) -> None:
         """Test finds placeholder in list."""
         config = {"args": ["--key", "<YOUR_SECRET_KEY>"]}
 
@@ -319,7 +329,7 @@ class TestFindMissingSecrets:
 
         assert "<YOUR_SECRET_KEY>" in result
 
-    def test_returns_empty_for_no_placeholders(self, importer) -> None:
+    def test_returns_empty_for_no_placeholders(self, importer: MCPServerImporter) -> None:
         """Test returns empty list when no placeholders."""
         config = {
             "name": "server",
@@ -330,7 +340,7 @@ class TestFindMissingSecrets:
 
         assert result == []
 
-    def test_finds_multiple_placeholders(self, importer) -> None:
+    def test_finds_multiple_placeholders(self, importer: MCPServerImporter) -> None:
         """Test finds multiple placeholders."""
         config = {
             "headers": {
@@ -350,7 +360,7 @@ class TestImportFromProject:
     """Tests for import_from_project method."""
 
     @pytest.mark.asyncio
-    async def test_returns_error_for_unknown_project(self, importer) -> None:
+    async def test_returns_error_for_unknown_project(self, importer: MCPServerImporter) -> None:
         """Test returns error when project not found."""
         with patch.object(importer.project_manager, "get_by_name", return_value=None):
             with patch.object(importer.project_manager, "get", return_value=None):
@@ -361,7 +371,7 @@ class TestImportFromProject:
                     assert "not found" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_returns_error_for_empty_project(self, importer) -> None:
+    async def test_returns_error_for_empty_project(self, importer: MCPServerImporter) -> None:
         """Test returns error when project has no servers."""
         mock_project = MagicMock()
         mock_project.id = "proj-123"
@@ -375,7 +385,7 @@ class TestImportFromProject:
                 assert "No MCP servers found" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_imports_servers_successfully(self, importer) -> None:
+    async def test_imports_servers_successfully(self, importer: MCPServerImporter) -> None:
         """Test successfully imports servers."""
         mock_project = MagicMock()
         mock_project.id = "source-proj"
@@ -410,7 +420,7 @@ class TestImportFromProject:
                     assert "test-server" in result["imported"]
 
     @pytest.mark.asyncio
-    async def test_skips_existing_servers(self, importer) -> None:
+    async def test_skips_existing_servers(self, importer: MCPServerImporter) -> None:
         """Test skips servers that already exist."""
         mock_project = MagicMock()
         mock_project.id = "source-proj"
@@ -438,7 +448,7 @@ class TestImportFromProject:
                 assert result["success"] is True
 
     @pytest.mark.asyncio
-    async def test_filters_by_server_names(self, importer) -> None:
+    async def test_filters_by_server_names(self, importer: MCPServerImporter) -> None:
         """Test filters by specified server names."""
         mock_project = MagicMock()
         mock_project.id = "proj"
@@ -483,7 +493,9 @@ class TestImportFromGithub:
     """Tests for import_from_github method."""
 
     @pytest.mark.asyncio
-    async def test_returns_error_when_disabled(self, mock_config_disabled, mock_db) -> None:
+    async def test_returns_error_when_disabled(
+        self, mock_config_disabled: DaemonConfig, mock_db: MagicMock
+    ) -> None:
         """Test returns error when import is disabled."""
         importer = MCPServerImporter(
             config=mock_config_disabled,
@@ -497,7 +509,12 @@ class TestImportFromGithub:
         assert "disabled" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_uses_feature_call(self, mock_config, mock_db) -> None:
+    async def test_uses_feature_call(
+        self,
+        mock_config: DaemonConfig,
+        mock_db: MagicMock,
+        monkeypatch: MonkeyPatch,
+    ) -> None:
         """GitHub import routes synthesis through import_mcp_server feature config."""
         llm_service = MagicMock()
         llm_service.call_feature = AsyncMock(return_value='{"name": "example"}')
@@ -507,20 +524,21 @@ class TestImportFromGithub:
             current_project_id="proj",
             llm_service=llm_service,
         )
-        importer._loader.render = MagicMock(
+        render = MagicMock(
             side_effect=lambda path, context: (
                 "system prompt" if path == "import/system" else f"fetch {context['github_url']}"
             )
         )
-        importer._fetch_github_repository_context = AsyncMock(
-            return_value="README docs with npx example-mcp"
-        )
-        importer._parse_and_add_config = AsyncMock(return_value={"success": True})
+        monkeypatch.setattr(importer._loader, "render", render)
+        fetch_context = AsyncMock(return_value="README docs with npx example-mcp")
+        parse_config = AsyncMock(return_value={"success": True})
+        monkeypatch.setattr(importer, "_fetch_github_repository_context", fetch_context)
+        monkeypatch.setattr(importer, "_parse_and_add_config", parse_config)
 
         result = await importer.import_from_github("https://github.com/example/mcp-server")
 
         assert result == {"success": True}
-        importer._fetch_github_repository_context.assert_awaited_once_with(
+        fetch_context.assert_awaited_once_with(
             ANY,
             "https://github.com/example/mcp-server",
         )
@@ -531,14 +549,19 @@ class TestImportFromGithub:
         assert "README docs with npx example-mcp" in kwargs["prompt"]
         assert kwargs["system_prompt"] == "system prompt"
         assert kwargs["caller"] == "mcp_proxy.importer.github"
-        importer._parse_and_add_config.assert_awaited_once_with('{"name": "example"}')
+        parse_config.assert_awaited_once_with('{"name": "example"}')
 
 
 class TestRenderImportPrompt:
     """Tests for import prompt context rendering."""
 
-    def test_uses_fetched_context_without_legacy_alias(self, importer) -> None:
-        importer._loader.render = MagicMock(return_value="base prompt")
+    def test_uses_fetched_context_without_legacy_alias(
+        self,
+        importer: MCPServerImporter,
+        monkeypatch: MonkeyPatch,
+    ) -> None:
+        render = MagicMock(return_value="base prompt")
+        monkeypatch.setattr(importer._loader, "render", render)
 
         prompt = importer._render_import_prompt(
             "import/custom",
@@ -546,7 +569,7 @@ class TestRenderImportPrompt:
             "README docs",
         )
 
-        importer._loader.render.assert_called_once_with(
+        render.assert_called_once_with(
             "import/custom",
             {
                 "search_query": "example mcp",
@@ -556,18 +579,48 @@ class TestRenderImportPrompt:
         assert "Fetched documentation context:" in prompt
         assert "README docs" in prompt
 
+    @pytest.mark.parametrize(
+        ("context", "expected_source"),
+        [
+            ({"github_url": "https://github.com/example/mcp"}, "https://github.com/example/mcp"),
+            ({"search_query": "example mcp"}, "example mcp"),
+        ],
+    )
+    def test_marks_truncated_context_with_counts_and_source(
+        self,
+        importer: MCPServerImporter,
+        monkeypatch: MonkeyPatch,
+        context: dict[str, str],
+        expected_source: str,
+    ) -> None:
+        monkeypatch.setattr(importer._loader, "render", MagicMock(return_value="base prompt"))
+        fetched_context = "x" * (MAX_IMPORT_CONTEXT_CHARS - 1) + " " + "tail"
+
+        prompt = importer._render_import_prompt(
+            "import/custom",
+            context,
+            fetched_context,
+        )
+
+        assert (
+            f"[docs truncated: first {MAX_IMPORT_CONTEXT_CHARS - 1} "
+            f"of {len(fetched_context)} chars; source: {expected_source}]"
+        ) in prompt
+
 
 class TestGithubContextFetch:
     """Tests for deterministic GitHub context fetch helpers."""
 
     @pytest.mark.asyncio
-    async def test_fetches_repository_metadata_and_readme(self, importer, monkeypatch) -> None:
+    async def test_fetches_repository_metadata_and_readme(
+        self, importer: MCPServerImporter, monkeypatch: MonkeyPatch
+    ) -> None:
         """Repository context uses GitHub API metadata plus README content."""
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
         client = FakeGitHubClient()
 
         context = await importer._fetch_github_repository_context(
-            client,
+            cast(httpx.AsyncClient, client),
             "https://github.com/example/mcp-server/tree/main",
         )
 
@@ -578,12 +631,14 @@ class TestGithubContextFetch:
         assert "Run with npx example-mcp." in context
 
     @pytest.mark.asyncio
-    async def test_fetches_repository_context_when_readme_unavailable(self, importer) -> None:
+    async def test_fetches_repository_context_when_readme_unavailable(
+        self, importer: MCPServerImporter
+    ) -> None:
         """Repository import falls back to metadata when README fetch fails."""
         client = FakeGitHubClient(readme_status_code=404)
 
         context = await importer._fetch_github_repository_context(
-            client,
+            cast(httpx.AsyncClient, client),
             "https://github.com/example/mcp-server",
         )
 
@@ -593,12 +648,16 @@ class TestGithubContextFetch:
         assert "GitHub request failed" in context
 
     @pytest.mark.asyncio
-    async def test_fetches_search_candidates_and_readmes(self, importer, monkeypatch) -> None:
+    async def test_fetches_search_candidates_and_readmes(
+        self, importer: MCPServerImporter, monkeypatch: MonkeyPatch
+    ) -> None:
         """Query import context uses GitHub repository search and candidate READMEs."""
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
         client = FakeGitHubClient()
 
-        context = await importer._fetch_github_search_context(client, "example mcp")
+        context = await importer._fetch_github_search_context(
+            cast(httpx.AsyncClient, client), "example mcp"
+        )
 
         assert client.calls[0] == {
             "url": "https://api.github.com/search/repositories",
@@ -618,19 +677,23 @@ class TestGithubContextFetch:
         assert "Run with npx example-mcp." in context
 
     @pytest.mark.asyncio
-    async def test_fetch_uses_github_token_auth_header(self, importer, monkeypatch) -> None:
+    async def test_fetch_uses_github_token_auth_header(
+        self, importer: MCPServerImporter, monkeypatch: MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_secret")
         client = FakeGitHubClient()
 
         await importer._fetch_github_repository_context(
-            client,
+            cast(httpx.AsyncClient, client),
             "https://github.com/example/mcp-server",
         )
 
         assert client.calls[0]["headers"]["Authorization"] == "Bearer ghp_secret"
 
     @pytest.mark.asyncio
-    async def test_fetch_retries_transient_github_failure(self, importer) -> None:
+    async def test_fetch_retries_transient_github_failure(
+        self, importer: MCPServerImporter
+    ) -> None:
         client = QueuedGitHubClient(
             [
                 FakeGitHubResponse(status_code=503, headers={"Retry-After": "0"}),
@@ -639,14 +702,16 @@ class TestGithubContextFetch:
         )
 
         with patch("gobby.mcp_proxy.importer.asyncio.sleep", AsyncMock()) as sleep:
-            data = await importer._fetch_github_json(client, "/rate-test")
+            data = await importer._fetch_github_json(cast(httpx.AsyncClient, client), "/rate-test")
 
         assert data == {"ok": True}
         assert len(client.calls) == 2
         sleep.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_rate_limit_error_mentions_github_token(self, importer, monkeypatch) -> None:
+    async def test_rate_limit_error_mentions_github_token(
+        self, importer: MCPServerImporter, monkeypatch: MonkeyPatch
+    ) -> None:
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
         client = QueuedGitHubClient(
             [
@@ -672,14 +737,16 @@ class TestGithubContextFetch:
             patch("gobby.mcp_proxy.importer.asyncio.sleep", AsyncMock()),
             pytest.raises(RuntimeError, match="GITHUB_TOKEN"),
         ):
-            await importer._fetch_github_json(client, "/rate-test")
+            await importer._fetch_github_json(cast(httpx.AsyncClient, client), "/rate-test")
 
 
 class TestImportFromQuery:
     """Tests for import_from_query method."""
 
     @pytest.mark.asyncio
-    async def test_returns_error_when_disabled(self, mock_config_disabled, mock_db) -> None:
+    async def test_returns_error_when_disabled(
+        self, mock_config_disabled: DaemonConfig, mock_db: MagicMock
+    ) -> None:
         """Test returns error when import is disabled."""
         importer = MCPServerImporter(
             config=mock_config_disabled,
@@ -693,7 +760,12 @@ class TestImportFromQuery:
         assert "disabled" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_uses_feature_call(self, mock_config, mock_db) -> None:
+    async def test_uses_feature_call(
+        self,
+        mock_config: DaemonConfig,
+        mock_db: MagicMock,
+        monkeypatch: MonkeyPatch,
+    ) -> None:
         """Query import routes synthesis through import_mcp_server feature config."""
         llm_service = MagicMock()
         llm_service.call_feature = AsyncMock(return_value='{"name": "example"}')
@@ -703,20 +775,21 @@ class TestImportFromQuery:
             current_project_id="proj",
             llm_service=llm_service,
         )
-        importer._loader.render = MagicMock(
+        render = MagicMock(
             side_effect=lambda path, context: (
                 "system prompt" if path == "import/system" else f"search {context['search_query']}"
             )
         )
-        importer._fetch_github_search_context = AsyncMock(
-            return_value="Candidate README with npx example-mcp"
-        )
-        importer._parse_and_add_config = AsyncMock(return_value={"success": True})
+        monkeypatch.setattr(importer._loader, "render", render)
+        fetch_context = AsyncMock(return_value="Candidate README with npx example-mcp")
+        parse_config = AsyncMock(return_value={"success": True})
+        monkeypatch.setattr(importer, "_fetch_github_search_context", fetch_context)
+        monkeypatch.setattr(importer, "_parse_and_add_config", parse_config)
 
         result = await importer.import_from_query("example mcp")
 
         assert result == {"success": True}
-        importer._fetch_github_search_context.assert_awaited_once_with(ANY, "example mcp")
+        fetch_context.assert_awaited_once_with(ANY, "example mcp")
         llm_service.call_feature.assert_awaited_once()
         feature_config = llm_service.call_feature.await_args.args[0]
         kwargs = llm_service.call_feature.await_args.kwargs
@@ -724,14 +797,14 @@ class TestImportFromQuery:
         assert "Candidate README with npx example-mcp" in kwargs["prompt"]
         assert kwargs["system_prompt"] == "system prompt"
         assert kwargs["caller"] == "mcp_proxy.importer.query"
-        importer._parse_and_add_config.assert_awaited_once_with('{"name": "example"}')
+        parse_config.assert_awaited_once_with('{"name": "example"}')
 
 
 class TestParseAndAddConfig:
     """Tests for _parse_and_add_config method."""
 
     @pytest.mark.asyncio
-    async def test_returns_error_for_invalid_json(self, importer) -> None:
+    async def test_returns_error_for_invalid_json(self, importer: MCPServerImporter) -> None:
         """Test returns error when JSON cannot be extracted."""
         result = await importer._parse_and_add_config("No JSON here")
 
@@ -739,7 +812,9 @@ class TestParseAndAddConfig:
         assert "Could not extract" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_returns_needs_configuration_for_secrets(self, importer) -> None:
+    async def test_returns_needs_configuration_for_secrets(
+        self, importer: MCPServerImporter
+    ) -> None:
         """Test returns needs_configuration when secrets are needed."""
         text = '{"name": "server", "transport": "http", "headers": {"key": "<YOUR_API_KEY>"}}'
 
@@ -750,7 +825,9 @@ class TestParseAndAddConfig:
         assert "<YOUR_API_KEY>" in result["missing"]
 
     @pytest.mark.asyncio
-    async def test_returns_approval_preview_without_secrets(self, importer) -> None:
+    async def test_returns_approval_preview_without_secrets(
+        self, importer: MCPServerImporter
+    ) -> None:
         """Test synthesized config is previewed when no secrets are needed."""
         text = '{"name": "no-secrets", "transport": "http", "url": "http://localhost"}'
 
@@ -765,7 +842,7 @@ class TestParseAndAddConfig:
         assert result["config"]["name"] == "no-secrets"
 
     @pytest.mark.asyncio
-    async def test_returns_error_for_missing_name(self, importer) -> None:
+    async def test_returns_error_for_missing_name(self, importer: MCPServerImporter) -> None:
         """Test returns error when name is missing."""
         text = '{"transport": "http"}'
 
@@ -775,7 +852,7 @@ class TestParseAndAddConfig:
         assert "missing required fields" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_returns_error_for_missing_transport(self, importer) -> None:
+    async def test_returns_error_for_missing_transport(self, importer: MCPServerImporter) -> None:
         """Test returns error when transport is missing."""
         text = '{"name": "server"}'
 
@@ -785,7 +862,7 @@ class TestParseAndAddConfig:
         assert "missing required fields" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_includes_instructions_when_present(self, importer) -> None:
+    async def test_includes_instructions_when_present(self, importer: MCPServerImporter) -> None:
         """Test includes instructions in needs_configuration result."""
         text = '{"name": "s", "transport": "http", "headers": {"key": "<YOUR_KEY>"}, "instructions": "Get key from..."}'
 
@@ -800,9 +877,10 @@ class TestAddServer:
     """Tests for _add_server method."""
 
     @pytest.mark.asyncio
-    async def test_falls_back_to_db_without_manager(self, importer) -> None:
+    async def test_falls_back_to_db_without_manager(self, importer: MCPServerImporter) -> None:
         """Test falls back to DB when no manager available."""
         # importer fixture already has mocked mcp_db_manager
+        manager = cast(MagicMock, importer.mcp_db_manager)
         result = await importer._add_server(
             name="test-server",
             transport="http",
@@ -810,14 +888,15 @@ class TestAddServer:
         )
 
         # Should use mcp_db_manager.upsert
-        importer.mcp_db_manager.upsert.assert_called_once()
+        manager.upsert.assert_called_once()
         assert result["success"] is True
         assert "restart daemon" in result["message"]
 
     @pytest.mark.asyncio
-    async def test_handles_add_failure(self, importer) -> None:
+    async def test_handles_add_failure(self, importer: MCPServerImporter) -> None:
         """Test handles add server failure."""
-        importer.mcp_db_manager.upsert.side_effect = Exception("DB error")
+        manager = cast(MagicMock, importer.mcp_db_manager)
+        manager.upsert.side_effect = Exception("DB error")
 
         result = await importer._add_server(
             name="failing",

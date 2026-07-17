@@ -143,13 +143,16 @@ async def test_summarize_one_truncates_source(
     fake_text_adapter: _FakeTextGenerateAdapter,
     summarizer: SymbolSummarizer,
 ) -> None:
-    """Source longer than _MAX_SOURCE_CHARS is truncated."""
+    """Truncation marker reports rendered, consumed, and total source chars."""
     sym = _make_symbol()
-    long_source = "x" * (_MAX_SOURCE_CHARS + 500)
+    long_source = "x" * (_MAX_SOURCE_CHARS - 1) + "\x00" + "y" * 500
     await summarizer.summarize_one(sym, long_source)
 
     prompt = fake_text_adapter.requests[0].prompt
     assert len(prompt) < len(long_source)
+    assert (
+        "[truncated: rendered 1999 chars from first 2000 of 2500; full source: src/app.py:1-5]"
+    ) in prompt
 
 
 @pytest.mark.asyncio

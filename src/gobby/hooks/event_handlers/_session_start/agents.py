@@ -143,7 +143,10 @@ def load_wiki_overview(project_root: Path) -> str | None:
         return None
     words = overview.split()
     if len(words) > _WIKI_OVERVIEW_WORD_CAP:
-        overview = " ".join(words[:_WIKI_OVERVIEW_WORD_CAP])
+        overview = (
+            " ".join(words[:_WIKI_OVERVIEW_WORD_CAP])
+            + " ... (truncated; full overview in wiki _index.md)"
+        )
     sanitized = sanitize_wiki_overview(overview)
     return sanitized or None
 
