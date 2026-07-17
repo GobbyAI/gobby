@@ -357,7 +357,58 @@ class TestSessionEndHandling:
             "sess-123", "expired"
         )
 
-    def test_session_end_handoff_ready_error_handled(self, mock_dependencies: dict) -> None:
+    def test_session_end_idle_reason_pauses_session(self, mock_dependencies: dict) -> None:
+        """Idle eviction keeps a durable web-chat row resumable."""
+        mock_session = MagicMock()
+        mock_session.created_at = "2024-01-01T00:00:00Z"
+        mock_session.agent_run_id = None
+        mock_session.session_type = "web_chat"
+        mock_dependencies["session_storage"].get.return_value = mock_session
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_END,
+            session_id="ext-123",
+            data={"reason": "idle"},
+            metadata={"_platform_session_id": "sess-123"},
+        )
+
+        response = handlers.handle_session_end(event)
+
+        assert response.decision == "allow"
+        mock_dependencies["session_storage"].update_status.assert_called_once_with(
+            "sess-123", "paused"
+        )
+
+    def test_session_end_idle_reason_expires_terminal_session(
+        self, mock_dependencies: dict
+    ) -> None:
+        mock_session = MagicMock()
+        mock_session.created_at = "2024-01-01T00:00:00Z"
+        mock_session.agent_run_id = None
+        mock_session.session_type = "terminal"
+        mock_dependencies["session_storage"].get.return_value = mock_session
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_END,
+            session_id="ext-123",
+            data={"reason": "idle"},
+            metadata={"_platform_session_id": "sess-123"},
+        )
+
+        response = handlers.handle_session_end(event)
+
+        assert response.decision == "allow"
+        mock_dependencies["session_storage"].update_status.assert_called_once_with(
+            "sess-123", "expired"
+        )
+
+    def test_session_end_handoff_ready_error_handled(
+        self,
+        mock_dependencies: dict,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         """Test error marking handoff_ready doesn't block response."""
         mock_session = MagicMock()
         mock_session.created_at = "2024-01-01T00:00:00Z"
@@ -376,6 +427,7 @@ class TestSessionEndHandling:
 
         # Should still allow despite error
         assert response.decision == "allow"
+        assert "sess-123" in caplog.text
 
     def test_session_end_marks_liveness_monitor_recently_handled(
         self, mock_dependencies: dict

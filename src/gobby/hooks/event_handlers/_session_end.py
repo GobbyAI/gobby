@@ -161,9 +161,18 @@ class SessionEndMixin(EventHandlersBase):
                 except (TypeError, ValueError):
                     end_reason = SessionEndReason.OTHER
                 handoff_reasons = {SessionEndReason.CLEAR, SessionEndReason.COMPACT}
-                end_status = "handoff_ready" if end_reason in handoff_reasons else "expired"
+                if end_reason in handoff_reasons:
+                    end_status = "handoff_ready"
+                elif (
+                    end_reason == SessionEndReason.IDLE
+                    and session is not None
+                    and session.session_type == "web_chat"
+                ):
+                    end_status = "paused"
+                else:
+                    end_status = "expired"
                 self._session_manager.update_status(session_id, end_status)
             except Exception as e:
-                self.logger.warning(f"Failed to update session status on end: {e}")
+                self.logger.warning(f"Failed to update session {session_id} status on end: {e}")
 
         return HookResponse(decision="allow")

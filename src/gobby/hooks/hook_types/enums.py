@@ -124,6 +124,9 @@ class SessionEndReason(str, Enum):
     COMPACT = "compact"
     """Session ended because context was compacted for handoff"""
 
+    IDLE = "idle"
+    """Durable session runtime was evicted after becoming idle"""
+
     LOGOUT = "logout"
     """User logged out"""
 

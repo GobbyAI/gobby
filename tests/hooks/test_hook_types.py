@@ -131,6 +131,7 @@ class TestSessionEndReasonEnum:
             "CLEAR",
             "RESUME",
             "COMPACT",
+            "IDLE",
             "LOGOUT",
             "PROMPT_INPUT_EXIT",
             "EXIT",

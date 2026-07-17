@@ -57,6 +57,37 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
             self._notify_session_change(event, session_id)
         return updated
 
+    def activate_web_chat_session(self: _ManagerState, session_id: str) -> Session | None:
+        """Activate a durable web-chat row after its runtime starts successfully.
+
+        This is the sole lifecycle path that may revive an expired web-chat row.
+        Terminal sessions and deleted conversations remain unchanged.
+        """
+        current = self.get(session_id)
+        if current is None:
+            return None
+        if current.session_type != "web_chat" or current.status == "deleted":
+            return current
+        if current.status == "active":
+            return current
+
+        now = utc_now()
+        with self.db.transaction():
+            self.db.execute(
+                """
+                UPDATE sessions
+                SET status = 'active', updated_at = %s
+                WHERE id = %s
+                AND session_type = 'web_chat'
+                AND status != 'deleted'
+                """,
+                (now, session_id),
+            )
+        updated = self.get(session_id)
+        if updated is not None and updated.status == "active":
+            self._notify_session_change("session_updated", session_id)
+        return updated
+
     def expire_if_active(self: _ManagerState, session_id: str) -> Session | None:
         """Expire an active or paused session without overwriting a newer status."""
         now = utc_now()

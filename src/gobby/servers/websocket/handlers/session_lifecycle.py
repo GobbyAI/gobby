@@ -10,6 +10,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from gobby.hooks.hook_types import SessionEndReason
 from gobby.servers.chat_attachment_files import unlink_stored_attachment_file
 from gobby.servers.websocket.db import run_db
 from gobby.servers.websocket.models import (
@@ -216,7 +217,7 @@ async def cleanup_idle_sessions(mixin: SessionControlMixin) -> None:
             cleaned_count = 0
             for conv_id, session in stale_sessions:
                 # Fire SESSION_END before teardown (needs session in dict for lookup)
-                await mixin._fire_session_end(conv_id)
+                await mixin._fire_session_end(conv_id, reason=SessionEndReason.IDLE)
                 await mixin._cancel_active_chat(conv_id)
                 # Awaited teardown may have allowed a replacement session to register.
                 # Only remove the same stale session selected by this cleanup pass.
@@ -229,19 +230,6 @@ async def cleanup_idle_sessions(mixin: SessionControlMixin) -> None:
                     mixin._chat_sessions.pop(conv_id, None)
                 if hasattr(mixin, "_session_create_locks"):
                     mixin._session_create_locks.pop(conv_id, None)
-                # Mark as paused in database before stopping
-                if session.db_session_id:
-                    session_manager = getattr(mixin, "session_manager", None)
-                    if session_manager:
-                        try:
-                            await run_db(
-                                mixin,
-                                session_manager.update,
-                                session.db_session_id,
-                                status="paused",
-                            )
-                        except Exception as e:
-                            logger.warning(f"Failed to update session status: {e}")
                 await session.stop()
                 cleaned_count += 1
                 logger.debug(f"Cleaned up idle chat session {conv_id}")

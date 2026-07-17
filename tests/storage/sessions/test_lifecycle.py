@@ -291,6 +291,53 @@ class TestSessionManagerLifecycle:
         pending = session_manager.get_pending_transcript_sessions()
         assert pending == []
 
+    @pytest.mark.parametrize("resumable_status", ["paused", "expired"])
+    def test_activate_web_chat_session_activates_resumable_row(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+        resumable_status: str,
+    ) -> None:
+        session = session_manager.register(
+            external_id=f"web-chat-activate-{resumable_status}",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            session_type="web_chat",
+        )
+        session_manager.update_status(session.id, resumable_status)
+
+        activated = session_manager.activate_web_chat_session(session.id)
+
+        assert activated is not None
+        assert activated.status == "active"
+
+    @pytest.mark.parametrize(
+        ("session_type", "terminal_status"),
+        [("terminal", "expired"), ("web_chat", "deleted")],
+    )
+    def test_activate_web_chat_session_preserves_ineligible_row(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+        session_type: str,
+        terminal_status: str,
+    ) -> None:
+        session = session_manager.register(
+            external_id=f"web-chat-ineligible-{session_type}-{terminal_status}",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            session_type=session_type,
+        )
+        session_manager.update_status(session.id, terminal_status)
+
+        unchanged = session_manager.activate_web_chat_session(session.id)
+
+        assert unchanged is not None
+        assert unchanged.status == terminal_status
+        assert unchanged.session_type == session_type
+
     def test_mark_transcript_processed_does_not_clobber_revival(
         self,
         session_manager: SessionManager,

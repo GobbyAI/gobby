@@ -524,6 +524,51 @@ class TestCreateChatSessionInner:
         assert mixin.web_chat_runtime_manager.create_session.call_args is not None
 
     @pytest.mark.asyncio
+    async def test_expired_web_chat_activates_after_successful_hydration(
+        self, mixin: DummyMixin
+    ) -> None:
+        existing_db_sess = MagicMock()
+        existing_db_sess.id = "db-expired"
+        existing_db_sess.seq_num = 89
+        existing_db_sess.session_type = "web_chat"
+        existing_db_sess.status = "expired"
+        existing_db_sess.source = "codex"
+        existing_db_sess.project_id = "proj-1"
+        existing_db_sess.external_id = None
+        existing_db_sess.usage_output_tokens = 0
+        existing_db_sess.chat_mode = None
+        existing_db_sess.approved_tools_json = None
+
+        activated_db_sess = MagicMock()
+        activated_db_sess.status = "active"
+        lifecycle_order: list[str] = []
+        mock_session = AsyncMock()
+        mock_session.provider = "codex"
+        mock_session.chat_mode = "plan"
+        mock_session.db_session_id = None
+        mock_session.resume_session_id = None
+        mock_session.project_path = None
+        mock_session.project_id = None
+        mock_session.system_prompt_override = None
+        mock_session.start.side_effect = lambda **_kwargs: lifecycle_order.append("start")
+
+        mixin.web_chat_runtime_manager = MagicMock()
+        mixin.web_chat_runtime_manager.create_session.return_value = mock_session
+        mixin.session_manager = MagicMock()
+        mixin.session_manager.db = MagicMock()
+        mixin.session_manager.get.return_value = existing_db_sess
+        mixin.session_manager.activate_web_chat_session.side_effect = (
+            lambda _session_id: lifecycle_order.append("activate") or activated_db_sess
+        )
+
+        session = await mixin._create_chat_session_inner("db-expired")
+
+        assert session is mock_session
+        mock_session.start.assert_awaited_once_with(model=None)
+        mixin.session_manager.activate_web_chat_session.assert_called_once_with("db-expired")
+        assert lifecycle_order == ["start", "activate"]
+
+    @pytest.mark.asyncio
     async def test_resume_reuses_existing_terminal_session_row(self, mixin: DummyMixin):
         existing_terminal = MagicMock()
         existing_terminal.id = "term-row-id"

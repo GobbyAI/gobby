@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.hooks.hook_types import SessionEndReason
 from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
 from gobby.servers.websocket.handlers import session_lifecycle
 
@@ -100,6 +101,35 @@ async def test_idle_cleanup_unregisters_registry_state(
     queued_compaction_task.cancel.assert_called_once_with()
     queued_wake_task.cancel.assert_called_once_with()
     stale_session.stop.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_idle_cleanup_uses_single_paused_lifecycle_transition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = WebChatSessionRegistry()
+    stale_session = _chat_session(stale=True)
+    stale_session.db_session_id = "db-session-123"
+    registry.register("conversation", stale_session)
+    session_manager = MagicMock()
+    mixin = SimpleNamespace(
+        _chat_sessions=registry.sessions,
+        _fire_session_end=AsyncMock(),
+        _cancel_active_chat=AsyncMock(),
+        _session_create_locks={"conversation": asyncio.Lock()},
+        web_chat_session_registry=registry,
+        session_manager=session_manager,
+    )
+    _stop_after_one_pass(monkeypatch)
+
+    await session_lifecycle.cleanup_idle_sessions(mixin)
+
+    mixin._fire_session_end.assert_awaited_once_with(
+        "conversation",
+        reason=SessionEndReason.IDLE,
+    )
+    session_manager.update.assert_not_called()
+    assert "conversation" not in registry.sessions
 
 
 @pytest.mark.asyncio

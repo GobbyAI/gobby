@@ -131,6 +131,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "reset_transcript_processed": "(self, session_id: 'str') -> 'Session | None'",
     "recover_session": "(self, external_id: 'str', source: 'str', machine_id: 'str', "
     "project_id: 'str | None', session_type: 'str | None' = None) -> 'Session | None'",
+    "activate_web_chat_session": "(self, session_id: 'str') -> 'Session | None'",
     "revive_expired_terminal_session": "(self, session_id: 'str') -> 'Session | None'",
     "resolve_session_reference": "(self, ref: 'str', project_id: 'str | None' = None) -> 'str'",
     "touch": "(self, session_id: 'str') -> 'None'",

@@ -18,6 +18,7 @@ from gobby.agents.sandbox import (
 )
 from gobby.config.feature_base import parse_feature_candidate
 from gobby.hooks.events import HookEvent, HookEventType
+from gobby.hooks.hook_types import SessionEndReason
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.tool_approvals import normalize_approved_tool_keys
@@ -778,6 +779,39 @@ class ChatSessionMixin:
             else:
                 raise
 
+        existing_status = getattr(existing_db_session, "status", None)
+        if (
+            session_manager
+            and session.db_session_id
+            and existing_db_session
+            and getattr(existing_db_session, "session_type", None) == "web_chat"
+            and isinstance(existing_status, str)
+            and existing_status != "active"
+        ):
+            try:
+                activated = await run_db(
+                    self,
+                    session_manager.activate_web_chat_session,
+                    session.db_session_id,
+                )
+                if activated is None or activated.status != "active":
+                    raise RuntimeError(
+                        f"Web-chat session {session.db_session_id} is ineligible for activation"
+                    )
+            except Exception:
+                logger.exception(
+                    "Failed to activate hydrated web-chat session %s",
+                    session.db_session_id,
+                )
+                try:
+                    await session.stop()
+                except Exception:
+                    logger.exception(
+                        "Failed to stop web-chat runtime after activation failure for session %s",
+                        session.db_session_id,
+                    )
+                raise
+
         if session_manager and session.db_session_id:
             update_kwargs: dict[str, str] = {}
             runtime_external_id = _get_runtime_external_id(session)
@@ -876,13 +910,19 @@ class ChatSessionMixin:
 
         return session
 
-    async def _fire_session_end(self, conversation_id: str) -> None:
+    async def _fire_session_end(
+        self,
+        conversation_id: str,
+        *,
+        reason: SessionEndReason | None = None,
+    ) -> None:
         """Fire SESSION_END event for a chat session (best-effort).
 
         Called before session cleanup in clear, delete, idle cleanup, and
         server shutdown paths to maintain parity with CLI adapters.
         """
         try:
-            await self._fire_lifecycle(conversation_id, HookEventType.SESSION_END, {})
+            data = {"reason": reason.value} if reason is not None else {}
+            await self._fire_lifecycle(conversation_id, HookEventType.SESSION_END, data)
         except Exception:
             logger.debug(f"SESSION_END fire failed for {conversation_id[:8]}", exc_info=True)
