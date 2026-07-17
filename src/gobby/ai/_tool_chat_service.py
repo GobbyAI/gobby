@@ -41,6 +41,13 @@ from gobby.config.feature_base import (
 logger = logging.getLogger(__name__)
 
 ToolChatAdapterFactory = Callable[[], ToolChatAdapter]
+_RUNTIME_ADAPTER_STYLES = frozenset(
+    {
+        AIAdapterStyle.LLM_PROVIDER,
+        AIAdapterStyle.LOCAL,
+        AIAdapterStyle.OPENAI_COMPATIBLE,
+    }
+)
 
 
 class ToolChatService:
@@ -187,11 +194,31 @@ class ToolChatService:
         return (request,)
 
     def _select_binding(self, request: ToolChatRequest) -> CapabilityBinding:
-        return self._registry.select(
+        binding = self._registry.select(
             AICapability.TOOL_CHAT,
             provider=request.provider,
             model=request.model,
         )
+        allowed_styles = request.allowed_adapter_styles
+        if allowed_styles is not None and binding.adapter_style not in allowed_styles:
+            raise CapabilityUnavailableError(
+                AICapability.TOOL_CHAT,
+                provider=binding.provider,
+                model=request.model,
+                reason=(
+                    f"Adapter style '{binding.adapter_style.value}' is disallowed for this request."
+                ),
+            )
+        if request.builtins and binding.adapter_style not in _RUNTIME_ADAPTER_STYLES:
+            raise CapabilityUnavailableError(
+                AICapability.TOOL_CHAT,
+                provider=binding.provider,
+                model=request.model,
+                reason=(
+                    f"Adapter style '{binding.adapter_style.value}' cannot execute builtin tools."
+                ),
+            )
+        return binding
 
     def _adapter_for_style(self, adapter_style: AIAdapterStyle) -> ToolChatAdapter:
         adapter = self._adapters.get(adapter_style)

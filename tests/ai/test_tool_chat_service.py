@@ -104,6 +104,19 @@ async def test_openai_compatible_candidate_dispatches_to_openai_adapter() -> Non
 
 
 @pytest.mark.asyncio
+async def test_disallowed_adapter_style_is_capability_unavailable() -> None:
+    service, _, _ = _service()
+
+    with pytest.raises(CapabilityUnavailableError, match="disallowed"):
+        await service.chat_result(
+            _request(
+                candidates=("claude/haiku",),
+                allowed_adapter_styles=(AIAdapterStyle.OPENAI_COMPATIBLE,),
+            )
+        )
+
+
+@pytest.mark.asyncio
 async def test_same_path_skips_unavailable_candidate_then_dispatches_by_style() -> None:
     # codex maps to the daemon style (no tool_chat adapter yet): unavailable, so
     # selection moves to the next candidate. Switching which candidate wins

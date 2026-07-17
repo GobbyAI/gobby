@@ -14,6 +14,11 @@ from gobby.ai._tool_chat_adapters import (
     OpenAICompatibleToolChatAdapter,
     _make_tool_handler,
 )
+from gobby.ai._tool_chat_builtins import (
+    BuiltinExecutionContext,
+    BuiltinToolResult,
+    BuiltinToolSpec,
+)
 from gobby.ai._tool_chat_contracts import ToolChatRequest, ToolLoopLimits, ToolPolicy
 
 pytestmark = pytest.mark.unit
@@ -224,6 +229,10 @@ async def test_openai_loop_stops_at_max_tool_calls(
 
     assert result.stop_reason == "max_tool_calls"
     assert result.tool_use_count == 1
+    assert result.calls_used == 1
+    assert result.budget_exhausted is True
+    assert result.trace_available is True
+    assert len(result.trace) == 1
 
 
 # --- Family B (llm_provider / Claude Agent SDK) ---
@@ -322,6 +331,62 @@ async def test_claude_adapter_prefers_request_max_turns_over_limits() -> None:
 
 
 @pytest.mark.asyncio
+async def test_claude_budget_exhaustion_comes_from_runtime_trace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_box: dict[str, tools.ToolRuntime] = {}
+
+    async def handler(
+        arguments: dict[str, Any], context: BuiltinExecutionContext
+    ) -> BuiltinToolResult:
+        return BuiltinToolResult(payload={"ok": True})
+
+    builtin = BuiltinToolSpec(
+        name="read_page",
+        description="Read a page.",
+        input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+        handler=handler,
+    )
+
+    def fake_build_repo_mcp_server(
+        runtime: tools.ToolRuntime,
+    ) -> tuple[dict[str, object], list[str]]:
+        runtime_box["runtime"] = runtime
+        return {}, []
+
+    class BudgetProvider:
+        async def generate_agentic(self, **kwargs: Any) -> _FakeAgenticResult:
+            runtime = runtime_box["runtime"]
+            await runtime.execute("read_page", {})
+            await runtime.execute("read_page", {})
+            return _FakeAgenticResult()
+
+    monkeypatch.setattr(
+        "gobby.ai._tool_chat_adapters.build_repo_mcp_server",
+        fake_build_repo_mcp_server,
+    )
+    adapter = ClaudeToolChatAdapter(provider_factory=lambda _binding: BudgetProvider())
+    request = ToolChatRequest(
+        prompt="Validate.",
+        tool_policy=ToolPolicy(cli="gcode", tools=("search",)),
+        project_path="/repo",
+        limits=ToolLoopLimits(max_tool_calls=1),
+        builtins=(builtin,),
+    )
+
+    result = await adapter.chat(request, _claude_binding())
+
+    assert result.stop_reason == "completed"
+    assert result.calls_used == 1
+    assert result.budget_exhausted is True
+    assert result.trace_available is True
+    assert [entry["error_code"] for entry in result.trace] == [
+        None,
+        "tool_call_budget_exhausted",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_repo_mcp_tool_handler_executes_then_denies(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -340,3 +405,12 @@ async def test_repo_mcp_tool_handler_executes_then_denies(
     out = await denied({"args": []})
     assert out["is_error"] is True
     assert out["content"][0]["text"].startswith("[error")
+
+    exhausted_runtime = tools.ToolRuntime(
+        ToolPolicy(cli="gcode", tools=("outline",)),
+        project_path="/repo",
+        limits=ToolLoopLimits(max_tool_calls=0),
+    )
+    exhausted = await _make_tool_handler(exhausted_runtime, "gcode_outline")({"args": []})
+    assert exhausted["is_error"] is True
+    assert '"error_code":"tool_call_budget_exhausted"' in exhausted["content"][0]["text"]

@@ -421,6 +421,10 @@ class CodexSpawnToolChatAdapter:
             tools=tools,
             applied_reasoning_effort=request.reasoning_effort,
             stop_reason="completed",
+            trace=(),
+            calls_used=0,
+            budget_exhausted=False,
+            trace_available=False,
         )
 
 
@@ -543,6 +547,10 @@ class DroidSpawnToolChatAdapter:
             tools=tools,
             applied_reasoning_effort=request.reasoning_effort,
             stop_reason="completed",
+            trace=(),
+            calls_used=0,
+            budget_exhausted=False,
+            trace_available=False,
         )
 
 
@@ -641,6 +649,10 @@ class GrokSpawnToolChatAdapter:
             tools=tools,
             applied_reasoning_effort=request.reasoning_effort,
             stop_reason="completed",
+            trace=(),
+            calls_used=0,
+            budget_exhausted=False,
+            trace_available=False,
         )
 
 
@@ -753,6 +765,10 @@ class QwenSpawnToolChatAdapter:
             tools=tools,
             applied_reasoning_effort=request.reasoning_effort,
             stop_reason="completed",
+            trace=(),
+            calls_used=0,
+            budget_exhausted=False,
+            trace_available=False,
         )
 
 
