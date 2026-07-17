@@ -2,6 +2,12 @@
 
 Captured against Grok `0.1.216 (b139744655)` on 2026-05-22.
 
+The focused shell-outcome fixture was recaptured against Grok
+`0.2.67 (03e13f99286)` on 2026-07-17. Current normal `PostToolUse` payloads expose
+`toolResult.exit_code`; both exit `0` and exit `7` were observed. The earlier
+0.1.216 payloads expose only `toolResult.status: "completed"` for both outcomes
+and remain as the ambiguous legacy contract fixture.
+
 Capture procedure:
 
 1. Record `grok version`, `grok --help`, `grok agent --help`, `grok models`,

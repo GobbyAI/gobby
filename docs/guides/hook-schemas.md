@@ -389,6 +389,38 @@ Claude-style names such as `Read`, `Write`, `Edit`, `Glob`, and `Grep`.
 }
 ```
 
+### Grok
+
+Grok `0.2.67` normal `PostToolUse` payloads include a definitive shell exit code:
+
+```json
+{
+  "source": "grok",
+  "hook_type": "post_tool_use",
+  "input_data": {
+    "hookEventName": "post_tool_use",
+    "sessionId": "grok-session-123",
+    "toolName": "run_terminal_command",
+    "toolInput": {
+      "command": "uv run pytest tests/workflows/test_hooks.py -q"
+    },
+    "toolResult": {
+      "exit_code": 7,
+      "output_for_prompt": "exit: 7\n"
+    }
+  }
+}
+```
+
+The adapter normalizes `toolInput` and `toolResult` to `tool_input` and
+`tool_output`. Exit `0` records successful validation evidence; a nonzero exit
+records failure and clears readiness. Older Grok payloads used
+`toolResult.status: "completed"` for both zero and nonzero exits. Payloads
+without a definitive exit code remain unknown and cannot satisfy readiness;
+record the inspected result explicitly with
+`gobby-sessions:record_verification_evidence` when validating through such a
+Grok version.
+
 ## Unified HookEvent Model
 
 All adapter events are normalized to this internal dataclass:

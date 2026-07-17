@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
+from gobby.adapters.grok import GrokAdapter
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.hub.protocol import HubDatabase
@@ -44,6 +45,9 @@ CODEX_COMMAND_EXECUTION_FIXTURE = (
     / "codex"
     / "command-execution-items.json"
 )
+GROK_CONTRACT_ROOT = Path(__file__).parents[1] / "fixtures" / "provider_contracts" / "grok"
+GROK_SHELL_OUTCOMES_FIXTURE = GROK_CONTRACT_ROOT / "shell-outcomes-0.2.67.jsonl"
+GROK_LEGACY_HOOK_FIXTURE = GROK_CONTRACT_ROOT / "hook-payloads.jsonl"
 
 
 @pytest.fixture
@@ -1798,6 +1802,58 @@ class TestDetectVerificationEvidence:
         assert variables["verification_evidence_recorded"] is True
         assert variables["verification_evidence"][-1]["success"] is True
         assert variables["verification_evidence"][-1]["exit_code"] == 0
+
+    def test_live_grok_exit_codes_drive_readiness_recovery(self, variables) -> None:
+        records = [
+            json.loads(line) for line in GROK_SHELL_OUTCOMES_FIXTURE.read_text().splitlines()
+        ]
+        assert all(record["capture_status"] == "live_proven" for record in records)
+        payload_by_exit_code = {
+            record["payload"]["toolResult"]["exit_code"]: record["payload"] for record in records
+        }
+
+        failed_payload = payload_by_exit_code[7]
+        failed_payload["toolInput"]["command"] = (
+            "GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_hooks.py -q"
+        )
+        failed = GrokAdapter().translate_to_hook_event(failed_payload)
+
+        succeeded_payload = payload_by_exit_code[0]
+        succeeded_payload["toolInput"]["command"] = (
+            "GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_hooks.py -q"
+        )
+        succeeded = GrokAdapter().translate_to_hook_event(succeeded_payload)
+
+        detect_verification_evidence(failed, variables, SESSION_ID)
+        assert variables["verification_evidence_recorded"] is False
+        assert variables["verification_evidence"][-1]["success"] is False
+        assert variables["verification_evidence"][-1]["exit_code"] == 7
+
+        detect_verification_evidence(succeeded, variables, SESSION_ID)
+        assert variables["verification_evidence_recorded"] is True
+        assert variables["verification_evidence"][-1]["success"] is True
+        assert variables["verification_evidence"][-1]["exit_code"] == 0
+
+    def test_legacy_grok_ambiguous_result_requires_manual_readiness_evidence(
+        self, variables
+    ) -> None:
+        records = [json.loads(line) for line in GROK_LEGACY_HOOK_FIXTURE.read_text().splitlines()]
+        native = next(
+            record["payload"]
+            for record in records
+            if record["event"] == "post_tool_use_nonzero_exit"
+        )
+        native["toolInput"]["command"] = (
+            "GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_hooks.py -q"
+        )
+        event = GrokAdapter().translate_to_hook_event(native)
+
+        detect_verification_evidence(event, variables, SESSION_ID)
+
+        assert "verification_evidence_recorded" not in variables
+        evidence = variables["verification_evidence"][-1]
+        assert evidence["success"] is None
+        assert "exit_code" not in evidence
 
     @pytest.mark.parametrize(
         "outcome",

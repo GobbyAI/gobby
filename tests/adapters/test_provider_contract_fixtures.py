@@ -101,3 +101,22 @@ def test_grok_hook_payload_fixture_translates_to_unified_events() -> None:
     assert by_native_event["pre_tool_use"].data["tool_name"] == "Bash"
     assert by_native_event["post_tool_use"].event_type is HookEventType.AFTER_TOOL
     assert by_native_event["post_tool_use"].data["tool_name"] == "Bash"
+
+    legacy_nonzero = next(
+        record for record in records if record["event"] == "post_tool_use_nonzero_exit"
+    )
+    legacy_event = adapter.translate_to_hook_event(legacy_nonzero["payload"])
+    assert legacy_event.data["tool_input"]["command"] == "false"
+    assert legacy_event.data["tool_output"] == {"status": "completed"}
+
+
+def test_grok_live_shell_outcomes_normalize_exit_codes() -> None:
+    records = _load_jsonl(PROVIDER_CONTRACT_ROOT / "grok" / "shell-outcomes-0.2.67.jsonl")
+    assert all(record["capture_status"] == "live_proven" for record in records)
+    assert all(record["cli_version"] == "0.2.67" for record in records)
+
+    events = [GrokAdapter().translate_to_hook_event(record["payload"]) for record in records]
+    by_exit_code = {event.data["tool_output"]["exit_code"]: event for event in events}
+
+    assert by_exit_code[0].data["tool_input"]["command"] == "printf grok-zero-exit"
+    assert by_exit_code[7].data["tool_input"]["command"] == "sh -c 'exit 7'"

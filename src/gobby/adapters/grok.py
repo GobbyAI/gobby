@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from gobby.adapters.acp_hook_adapter import ACPHookAdapter
 from gobby.adapters.capabilities import GROK_EVENT_MAP, GROK_HOOK_ALIASES
 from gobby.hooks.events import HookEventType, SessionSource
@@ -32,6 +34,15 @@ class GrokAdapter(ACPHookAdapter):
         "ls": "Ls",
         "web_fetch": "Fetch",
     }
+
+    def _normalize_event_data(self, input_data: dict[str, Any]) -> dict[str, Any]:
+        """Normalize Grok's camel-case tool payload fields."""
+        data = dict(input_data)
+        if "toolInput" in data and "tool_input" not in data:
+            data["tool_input"] = data["toolInput"]
+        if "toolResult" in data and "tool_output" not in data:
+            data["tool_output"] = data["toolResult"]
+        return super()._normalize_event_data(data)
 
 
 __all__ = ["GrokAdapter"]
