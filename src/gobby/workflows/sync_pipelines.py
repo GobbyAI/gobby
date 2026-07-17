@@ -83,7 +83,7 @@ def _build_pipeline_update_fields(
         logger.debug(
             "Migrating bundled pipeline to installed source",
             extra={
-                "name": existing.name,
+                "pipeline_name": existing.name,
                 "from_source": existing.source,
                 "yaml_enabled": enabled,
                 "existing_enabled": existing.enabled,
@@ -96,7 +96,7 @@ def _build_pipeline_update_fields(
         logger.debug(
             "Restoring soft-deleted bundled pipeline; re-applying yaml enabled flag",
             extra={
-                "name": existing.name,
+                "pipeline_name": existing.name,
                 "yaml_enabled": enabled,
                 "existing_enabled": existing.enabled,
             },
@@ -194,7 +194,7 @@ def sync_bundled_pipelines(db: HubDatabase) -> dict[str, Any]:
                     logger.debug(
                         "Skipping bundled pipeline due to workflow_type conflict",
                         extra={
-                            "name": existing.name,
+                            "pipeline_name": existing.name,
                             "id": existing.id,
                             "existing_workflow_type": existing.workflow_type,
                             "yaml_workflow_type": workflow_type,

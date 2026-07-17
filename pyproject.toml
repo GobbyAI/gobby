@@ -229,6 +229,12 @@ select = [
     "C4",     # flake8-comprehensions
     "UP",     # pyupgrade
     "TID252", # ban relative imports from parent packages (from .. import)
+    "G001",   # logging string format
+    "G002",   # logging percent format
+    "G003",   # logging string concatenation
+    "G004",   # logging f-string
+    "G010",   # deprecated logger.warn
+    "G101",   # reserved LogRecord keys in extra
 ]
 ignore = [
     "E501",  # line too long (handled by formatter)

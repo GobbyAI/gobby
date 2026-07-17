@@ -85,7 +85,7 @@ class UnmodeledObservationStore:
                     "session_id": observation.session_id,
                     "source": observation.source,
                     "kind": observation.kind,
-                    "name": observation.name,
+                    "observation_name": observation.name,
                     "sample_keys": sample_keys(observation.sample),
                 },
             )

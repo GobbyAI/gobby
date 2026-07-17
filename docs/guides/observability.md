@@ -90,6 +90,14 @@ directory grows too quickly between resource-monitor samples. Truncating
 See [Logging And Telemetry](configuration.md#logging-and-telemetry) for all
 `logging.*` fields and Windows path configuration.
 
+### Contributor Logging Convention
+
+Ruff enforces `G001`, `G002`, `G003`, `G004`, `G010`, and `G101`. Pass dynamic
+values as lazy logging arguments, such as `logger.info("Processed %s", item)`,
+instead of formatting the message before the logger receives it. Keys passed in
+`extra` must avoid reserved `LogRecord` attributes such as `name`; prefer a
+domain-specific key such as `pipeline_name`. `G201` remains outside this policy.
+
 ## Collect Logs With OpenTelemetry
 
 The tested [`otelcol-contrib` reference configuration](../examples/otel-collector/README.md)
