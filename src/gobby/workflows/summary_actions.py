@@ -10,7 +10,7 @@ import asyncio
 import logging
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import aiofiles
 
@@ -466,7 +466,7 @@ async def _apply_window_rename(
         )
         return False
     if applied:
-        logger.info(
+        logger.debug(
             "Renamed tmux window for %s pane=%s socket=%s title=%r",
             ref,
             pane,
@@ -687,7 +687,7 @@ async def generate_summary(
             extra={"session_id": session_id, "error": prompt_error},
         )
         return {"error": f"Invalid summary prompt template: {prompt_error}"}
-    assert isinstance(template, str)
+    template = cast(str, template)
 
     # 1. Process Transcript
     try:

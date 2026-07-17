@@ -261,6 +261,41 @@ async def test_check_due_jobs_dispatches(
 
 
 @pytest.mark.asyncio
+async def test_check_due_jobs_dispatch_log_is_debug(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+    config: CronConfig,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Due Job",
+        schedule_type="cron",
+        action_type="shell",
+        action_config={"command": "echo"},
+        cron_expr="0 * * * *",
+    )
+    past = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    cron_storage.update_job(job.id, next_run_at=past)
+
+    with caplog.at_level("DEBUG", logger="gobby.scheduler.scheduler"):
+        await scheduler._check_due_jobs()
+    await wait_for_async_condition(
+        lambda: mock_executor.execute.await_count >= 1,
+        description="cron execution dispatch",
+    )
+
+    dispatch_records = [
+        record
+        for record in caplog.records
+        if record.getMessage().startswith("Dispatching cron job")
+    ]
+    assert len(dispatch_records) == 1
+    assert dispatch_records[0].levelname == "DEBUG"
+
+
+@pytest.mark.asyncio
 async def test_concurrent_schedulers_claim_due_job_once(
     cron_storage: CronJobStorage,
     mock_executor: CronExecutor,

@@ -291,7 +291,12 @@ class CronScheduler:
                         job.name,
                     )
                     continue
-                logger.info(f"Dispatching cron job {job.id} ({job.name}), run {run.id}")
+                logger.debug(
+                    "Dispatching cron job %s (%s), run %s",
+                    job.id,
+                    job.name,
+                    run.id,
+                )
 
                 # Track background task to prevent GC and await on stop
                 task = asyncio.create_task(

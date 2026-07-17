@@ -64,6 +64,26 @@ class TestPrepareTerminalSpawnMetadata:
             workflow_name="plan-execute",
         )
 
+    def test_agent_run_creation_log_is_debug(self, caplog: pytest.LogCaptureFixture) -> None:
+        sm = _make_session_manager()
+
+        with caplog.at_level("DEBUG", logger="agents.spawn.prepare_terminal_spawn"):
+            prepare_terminal_spawn(
+                session_manager=sm,
+                parent_session_id="parent-1",
+                project_id="proj-1",
+                machine_id="machine-1",
+                workflow_name="plan-execute",
+            )
+
+        spawn_records = [
+            record
+            for record in caplog.records
+            if record.getMessage().startswith("Creating agent_run")
+        ]
+        assert len(spawn_records) == 1
+        assert spawn_records[0].levelname == "DEBUG"
+
     def test_persists_none_workflow(self) -> None:
         """prepare_terminal_spawn passes workflow_name=None when not provided."""
         sm = _make_session_manager()

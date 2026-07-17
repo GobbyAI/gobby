@@ -422,6 +422,32 @@ class TestRenameTmuxWindow:
         assert manager.rename_calls == [("%42", "#99 My Title")]
 
     @pytest.mark.asyncio
+    async def test_successful_window_rename_log_is_debug(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from gobby.workflows.summary_actions import _rename_tmux_window
+
+        _RecordingTmuxManager.instances = []
+        session = MagicMock()
+        session.terminal_context = {"tmux_pane": "%42"}
+        session.agent_depth = 0
+        session.ref = "#99"
+
+        with (
+            caplog.at_level(logging.DEBUG, logger="gobby.workflows.summary_actions"),
+            patch("gobby.sessions.tmux_context.TmuxSessionManager", _RecordingTmuxManager),
+        ):
+            await _rename_tmux_window(session, "My Title")
+
+        rename_records = [
+            record
+            for record in caplog.records
+            if record.getMessage().startswith("Renamed tmux window")
+        ]
+        assert len(rename_records) == 1
+        assert rename_records[0].levelno == logging.DEBUG
+
+    @pytest.mark.asyncio
     async def test_empty_title_falls_back_to_source_not_cwd_basename(self) -> None:
         """Empty titles never use the cwd basename (the old ``#N gobby`` bug).
 

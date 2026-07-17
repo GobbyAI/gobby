@@ -181,7 +181,11 @@ def prepare_terminal_spawn(
     from gobby.storage.agents import LocalAgentRunManager
 
     _pts_logger = _logging.getLogger("agents.spawn.prepare_terminal_spawn")
-    _pts_logger.info(f"Creating agent_run {agent_run_id} for child_session {child_session.id}")
+    _pts_logger.debug(
+        "Creating agent_run %s for child_session %s",
+        agent_run_id,
+        child_session.id,
+    )
 
     agent_run_mgr = LocalAgentRunManager(session_manager._storage.db)
     agent_run_mgr.create(
