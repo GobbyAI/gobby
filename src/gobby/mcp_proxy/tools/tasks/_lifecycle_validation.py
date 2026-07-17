@@ -11,8 +11,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools._task_query_pagination import collect_task_query_pages
+from gobby.mcp_proxy.tools.tasks._escalation_coordinator import coordinate_task_escalation
 from gobby.mcp_proxy.tools.tasks._helpers import SKIP_REASONS
-from gobby.storage.tasks import Task
+from gobby.storage.tasks import Task, TaskStaleStateError
 from gobby.storage.tasks._validation_backoff import TaskValidationBackoffStore
 from gobby.tasks._validation_feedback import (
     feedback_admits_required_validation_failure,
@@ -22,7 +23,7 @@ from gobby.tasks._validation_feedback import (
 from gobby.tasks._validation_feedback import (
     matched_successful_validation_pattern_unchecked as _matched_successful_validation_pattern_unchecked,
 )
-from gobby.tasks.state_semantics import is_task_closed
+from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
 from gobby.tasks.validation_history import ValidationHistoryManager
 from gobby.utils.datetime import utc_now
 
@@ -55,6 +56,9 @@ class ValidationResult:
     error_type: str | None = None
     message: str | None = None
     extra: dict[str, Any] | None = None
+    validation_status: str | None = None
+    validation_feedback: str | None = None
+    reset_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -428,11 +432,6 @@ async def validate_leaf_task_with_llm(
     if is_documentation_only:
         logger.info(f"Skipping LLM validation for task {task.id}: doc-only changes")
         feedback = "Auto-validated: documentation-only changes"
-        ctx.task_manager.update_task(
-            resolved_id,
-            validation_status="valid",
-            validation_feedback=feedback,
-        )
         _record_validation_iteration(
             task,
             ctx,
@@ -441,7 +440,12 @@ async def validate_leaf_task_with_llm(
             context_type="documentation_diff",
             validator_type="automatic",
         )
-        return ValidationResult(can_close=True)
+        return ValidationResult(
+            can_close=True,
+            validation_status="valid",
+            validation_feedback=feedback,
+            reset_reason="documentation_auto_validation",
+        )
 
     # Skip the LLM call entirely while an infrastructure-failure backoff is active,
     # so a generation outage does not re-run validation every heartbeat.
@@ -598,12 +602,6 @@ async def validate_leaf_task_with_llm(
         )
         validation_status = "valid"
 
-    # Store validation result regardless of pass/fail
-    ctx.task_manager.update_task(
-        resolved_id,
-        validation_status=validation_status,
-        validation_feedback=original_feedback,
-    )
     _record_validation_iteration(
         task,
         ctx,
@@ -613,9 +611,49 @@ async def validate_leaf_task_with_llm(
     )
 
     if validation_status != "valid":
+        threshold = (
+            validation_config.close_validation_escalation_threshold
+            if validation_config is not None
+            else 5
+        )
+        escalation_reason = (
+            f"close validation remained {validation_status} after reaching the "
+            f"{threshold}-attempt threshold"
+        )
+        try:
+            fail_count, escalated_now = ctx.task_manager.increment_validation_failure(
+                resolved_id,
+                expected_updated_at=task.updated_at,
+                threshold=threshold,
+                validation_status=validation_status,
+                validation_feedback=original_feedback,
+                escalation_reason=escalation_reason,
+            )
+        except TaskStaleStateError as exc:
+            return ValidationResult(
+                can_close=False,
+                error_type="stale_task_state",
+                message=str(exc),
+                extra={"validation_status": validation_status, "stale_state": True},
+            )
+
         blocking_reasons = list(result.blocking_reasons)
         message = original_feedback or "Validation did not pass"
-        extra: dict[str, Any] = {"validation_status": validation_status}
+        extra: dict[str, Any] = {
+            "validation_status": validation_status,
+            "validation_fail_count": fail_count,
+        }
+        if escalated_now:
+            from gobby.utils.session_context import get_current_session_id
+
+            escalated = ctx.task_manager.get_task(resolved_id)
+            event_id = coordinate_task_escalation(
+                ctx,
+                escalated,
+                prior_owner_session_id=get_claimed_session_id(task),
+                session_id=get_current_session_id(),
+            )
+            extra.update({"escalated": True, "escalation_event_id": event_id})
         if blocking_reasons:
             extra["blocking_reasons"] = blocking_reasons
             message = f"{message}\nBlocking reasons: {'; '.join(blocking_reasons)}"
@@ -628,7 +666,12 @@ async def validate_leaf_task_with_llm(
             extra=extra,
         )
 
-    return ValidationResult(can_close=True)
+    return ValidationResult(
+        can_close=True,
+        validation_status="valid",
+        validation_feedback=original_feedback,
+        reset_reason="llm_valid",
+    )
 
 
 def determine_close_outcome(

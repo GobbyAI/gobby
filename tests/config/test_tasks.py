@@ -290,6 +290,7 @@ class TestTaskValidationConfigDefaults:
         assert config.max_iterations == 10
         assert config.max_consecutive_errors == 3
         assert config.recurring_issue_threshold == 3
+        assert config.close_validation_escalation_threshold == 5
         assert config.issue_similarity_threshold == 0.8
         assert config.run_build_first is True
         assert config.build_command is None
@@ -341,6 +342,14 @@ class TestTaskValidationConfigValidation:
 
         with pytest.raises(ValidationError) as exc_info:
             TaskValidationConfig(max_iterations=-1)
+        assert "positive" in str(exc_info.value).lower()
+
+    @pytest.mark.parametrize("value", [0, -1])
+    def test_close_validation_escalation_threshold_must_be_positive(self, value: int) -> None:
+        from gobby.config.tasks import TaskValidationConfig
+
+        with pytest.raises(ValidationError) as exc_info:
+            TaskValidationConfig(close_validation_escalation_threshold=value)
         assert "positive" in str(exc_info.value).lower()
 
     def test_max_consecutive_errors_must_be_positive(self) -> None:

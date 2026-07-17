@@ -8,6 +8,7 @@ from typing import Any
 from gobby.plans.bootstrap_ledger import bootstrap_ledger_path_for_task, verify_bootstrap_ledger
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.session_resolution import is_session_uuid
+from gobby.storage.tasks._models import TaskStaleStateError
 from gobby.utils.datetime import utc_now
 
 
@@ -37,6 +38,10 @@ def _close_task_in_txn(
     force: bool = False,
     cascade_descendants: bool = False,
     validation_override_reason: str | None = None,
+    expected_updated_at: datetime | None = None,
+    reset_validation_fail_count: bool = False,
+    validation_status: str | None = None,
+    validation_feedback: str | None = None,
 ) -> None:
     """Close a task inside the caller's already-open transaction."""
 
@@ -70,7 +75,11 @@ def _close_task_in_txn(
         completed_by_session_id=persisted_session_id,
         commit_sha=commit_sha,
     )
-    conn.execute(
+    # No is_escalated predicate here: every escalation bumps updated_at, so the
+    # freshness guard already rejects closes racing a concurrent escalation.
+    # A close whose caller read the escalated row (fresh updated_at, or no
+    # expected_updated_at) is a deliberate resolution and clears escalation.
+    cursor = conn.execute(
         """
         UPDATE tasks
            SET closed_at = %s,
@@ -82,8 +91,13 @@ def _close_task_in_txn(
                escalation_reason = NULL,
                is_escalated = FALSE,
                claimed_by_session_id = NULL,
+               validation_fail_count = CASE WHEN %s THEN 0 ELSE validation_fail_count END,
+               validation_status = COALESCE(%s, validation_status),
+               validation_feedback = COALESCE(%s, validation_feedback),
                updated_at = %s
          WHERE id = %s
+           AND closed_at IS NULL
+           AND (%s::timestamptz IS NULL OR updated_at = %s)
         """,
         (
             now,
@@ -91,10 +105,17 @@ def _close_task_in_txn(
             persisted_session_id,
             commit_sha,
             validation_override_reason,
+            reset_validation_fail_count,
+            validation_status,
+            validation_feedback,
             now,
             task_id,
+            expected_updated_at,
+            expected_updated_at,
         ),
     )
+    if cursor.rowcount == 0:
+        raise TaskStaleStateError(task_id)
     if cascade_descendants:
         _cascade_close_descendants(conn, task_id, now, persisted_session_id, commit_sha)
 

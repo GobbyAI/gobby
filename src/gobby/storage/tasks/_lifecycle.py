@@ -9,6 +9,7 @@ This module provides operations for managing task lifecycle:
 """
 
 import logging
+from datetime import datetime
 from pathlib import Path
 
 from gobby.storage.hub.protocol import HubDatabase
@@ -30,6 +31,10 @@ def close_task(
     closed_in_session_id: str | None = None,
     closed_commit_sha: str | None = None,
     validation_override_reason: str | None = None,
+    expected_updated_at: datetime | None = None,
+    reset_validation_fail_count: bool = False,
+    validation_status: str | None = None,
+    validation_feedback: str | None = None,
 ) -> None:
     """Close a task.
 
@@ -67,6 +72,10 @@ def close_task(
         closed_in_session_id=closed_in_session_id,
         closed_commit_sha=closed_commit_sha,
         validation_override_reason=validation_override_reason,
+        expected_updated_at=expected_updated_at,
+        reset_validation_fail_count=reset_validation_fail_count,
+        validation_status=validation_status,
+        validation_feedback=validation_feedback,
     )
     try:
         wake_dispatcher_for_task_change(db, task_id)

@@ -26,6 +26,9 @@ from gobby.storage.tasks._transitions import (
     escalate_task as _escalate_task,
 )
 from gobby.storage.tasks._transitions import (
+    increment_validation_failure as _increment_validation_failure,
+)
+from gobby.storage.tasks._transitions import (
     reconcile_task_state as _reconcile_task_state,
 )
 from gobby.storage.tasks._transitions import (
@@ -136,6 +139,10 @@ class TaskTransitionsMixin:
         closed_in_session_id: str | None = None,
         closed_commit_sha: str | None = None,
         validation_override_reason: str | None = None,
+        expected_updated_at: datetime | None = None,
+        reset_validation_fail_count: bool = False,
+        validation_status: str | None = None,
+        validation_feedback: str | None = None,
     ) -> Task:
         """Close a task."""
         _close_task(
@@ -146,6 +153,10 @@ class TaskTransitionsMixin:
             closed_in_session_id=closed_in_session_id,
             closed_commit_sha=closed_commit_sha,
             validation_override_reason=validation_override_reason,
+            expected_updated_at=expected_updated_at,
+            reset_validation_fail_count=reset_validation_fail_count,
+            validation_status=validation_status,
+            validation_feedback=validation_feedback,
         )
         self._notify_listeners()
         return self.get_task(task_id)
@@ -237,6 +248,29 @@ class TaskTransitionsMixin:
         )
         self._notify_listeners()
         return task
+
+    def increment_validation_failure(
+        self,
+        task_id: str,
+        *,
+        expected_updated_at: datetime,
+        threshold: int,
+        validation_status: str,
+        validation_feedback: str | None,
+        escalation_reason: str,
+    ) -> tuple[int, bool]:
+        """Record a guarded validation failure and escalate atomically when due."""
+        result = _increment_validation_failure(
+            self.db,
+            task_id,
+            expected_updated_at=expected_updated_at,
+            threshold=threshold,
+            validation_status=validation_status,
+            validation_feedback=validation_feedback,
+            escalation_reason=escalation_reason,
+        )
+        self._notify_listeners()
+        return result
 
     def submit_for_review(
         self,

@@ -130,6 +130,7 @@ def mock_task_manager() -> MagicMock:
     _backoff_conn.execute.return_value.rowcount = 0
     mgr.db.transaction.return_value.__enter__.return_value = _backoff_conn
     mgr.db.transaction.return_value.__exit__.return_value = False
+    mgr.increment_validation_failure.return_value = (1, False)
     mgr.stage_states = MagicMock()
     mgr.stage_states.get.return_value = _make_stage_state()
     return mgr
@@ -647,6 +648,23 @@ class TestCloseTask:
         assert validation_kwargs["validation_criteria"] is None
         mock_task_manager.close_task.assert_not_called()
 
+    async def test_no_diff_close_resets_validation_failure_count(
+        self, mock_task_manager, mock_sync_manager
+    ) -> None:
+        task = _make_task(commits=None)
+        mock_task_manager.get_task.return_value = task
+        mock_task_manager.list_tasks.return_value = []
+        mock_task_manager.close_task.return_value = task
+        registry = _create_registry(mock_task_manager, mock_sync_manager)
+
+        result = await registry.call(
+            "close_task",
+            {"task_id": task.id, "changes_summary": "No repository diff was required"},
+        )
+
+        assert result == {"success": True}
+        assert mock_task_manager.close_task.call_args.kwargs["reset_validation_fail_count"] is True
+
     async def test_close_task_valid_llm_result_closes_when_feedback_satisfies_criteria(
         self, mock_task_manager, mock_sync_manager
     ) -> None:
@@ -677,12 +695,14 @@ class TestCloseTask:
         validation_kwargs = task_validator.validate_task.await_args.kwargs
         assert validation_kwargs["task_id"] == task.id
         assert "Implemented and verified" in validation_kwargs["changes_summary"]
-        mock_task_manager.update_task.assert_called_once_with(
-            task.id,
-            validation_status="valid",
-            validation_feedback="All criteria satisfied. Strict mypy and focused tests are clean.",
-        )
+        mock_task_manager.update_task.assert_not_called()
         mock_task_manager.close_task.assert_called_once()
+        close_kwargs = mock_task_manager.close_task.call_args.kwargs
+        assert close_kwargs["reset_validation_fail_count"] is True
+        assert close_kwargs["validation_status"] == "valid"
+        assert close_kwargs["validation_feedback"] == (
+            "All criteria satisfied. Strict mypy and focused tests are clean."
+        )
 
     @pytest.mark.asyncio
     async def test_close_task_invalid_llm_status_closes_when_feedback_satisfies_criteria(
@@ -717,13 +737,10 @@ class TestCloseTask:
         validation_kwargs = task_validator.validate_task.await_args.kwargs
         assert validation_kwargs["task_id"] == task.id
         assert "Implemented and verified" in validation_kwargs["changes_summary"]
-        mock_task_manager.update_task.assert_called_once_with(
-            task.id,
-            validation_status="valid",
-            validation_feedback=(
-                "Verified all three validation criteria are satisfied: tests pass and lint passes."
-            ),
-        )
+        mock_task_manager.update_task.assert_not_called()
+        close_kwargs = mock_task_manager.close_task.call_args.kwargs
+        assert close_kwargs["reset_validation_fail_count"] is True
+        assert close_kwargs["validation_status"] == "valid"
         mock_task_manager.close_task.assert_called_once()
 
     @pytest.mark.asyncio
@@ -756,11 +773,8 @@ class TestCloseTask:
         assert result["error"] == "validation_failed"
         assert result["validation_status"] == "invalid"
         assert "mypy criterion" in result["message"]
-        mock_task_manager.update_task.assert_called_once_with(
-            task.id,
-            validation_status="invalid",
-            validation_feedback=feedback,
-        )
+        mock_task_manager.update_task.assert_not_called()
+        mock_task_manager.increment_validation_failure.assert_called_once()
         mock_task_manager.close_task.assert_not_called()
 
     @pytest.mark.parametrize("status", ["invalid", "pending"])
@@ -792,11 +806,8 @@ class TestCloseTask:
         assert result["success"] is False
         assert result["error"] == "validation_failed"
         assert result["validation_status"] == status
-        mock_task_manager.update_task.assert_called_once_with(
-            task.id,
-            validation_status=status,
-            validation_feedback=f"{status} feedback",
-        )
+        mock_task_manager.update_task.assert_not_called()
+        mock_task_manager.increment_validation_failure.assert_called_once()
         mock_task_manager.close_task.assert_not_called()
 
 
@@ -1133,7 +1144,10 @@ class TestEscalateTask:
         session_id = "session-abc"
         task = _make_task(id=task_id, status="in_progress", claimed_by_session_id=session_id)
         mock_task_manager.get_task.return_value = task
-        mock_task_manager.escalate_task.return_value = task
+        mock_task_manager.escalate_task.return_value = _make_task(
+            id=task_id,
+            status="escalated",
+        )
 
         with (
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVM,

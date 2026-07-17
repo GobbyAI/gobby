@@ -62,6 +62,7 @@ async def test_infra_failure_records_backoff_and_skips_while_active(
     assert first.can_close is False
     assert first.error_type == "validation_infrastructure_unavailable"
     assert validator.calls == 1
+    assert manager.get_task(task.id).validation_fail_count == 0
     store = TaskValidationBackoffStore(temp_db)
     state = store.get(task.id)
     assert state is not None and state.consecutive_failures == 1
@@ -108,7 +109,11 @@ async def test_real_verdict_after_window_clears_backoff(
 
     refreshed = manager.get_task(task.id)
     assert refreshed is not None
-    assert refreshed.validation_status == "valid"
+    # The valid verdict is persisted with the guarded close transition, which
+    # this helper-level test intentionally does not execute.
+    assert refreshed.validation_status == "error"
+    assert final.validation_status == "valid"
+    assert final.reset_reason == "llm_valid"
     history = ValidationHistoryManager(temp_db).get_iteration_history(task.id)
     assert [(item.iteration, item.status) for item in history] == [
         (1, "error"),

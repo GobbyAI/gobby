@@ -19,6 +19,7 @@ def notify_parent_on_task_state_change(
     task_id: str,
     new_state: str,
     task_ref: str | None = None,
+    event_id: str | None = None,
 ) -> None:
     """Fire-and-forget: broadcast task progress to parent session via WebSocket.
 
@@ -28,8 +29,8 @@ def notify_parent_on_task_state_change(
     try:
         schedule_background_task(
             _notification_tasks,
-            f"{task_id}:{new_state}",
-            lambda: _notify(db, task_id, new_state, task_ref),
+            f"{task_id}:{new_state}:{event_id or ''}",
+            lambda: _notify(db, task_id, new_state, task_ref, event_id),
             name=f"gobby-parent-notification-{task_id}-{new_state}",
             logger=logger,
             description="Parent notification task",
@@ -43,6 +44,7 @@ async def _notify(
     task_id: str,
     new_state: str,
     task_ref: str | None,
+    event_id: str | None,
 ) -> None:
     try:
         row = db.fetchone(
@@ -59,6 +61,7 @@ async def _notify(
 
         app_ctx = get_app_context()
         if app_ctx and app_ctx.websocket_server:
+            event_fields = {"event_id": event_id} if event_id is not None else {}
             await app_ctx.websocket_server.broadcast_task_event(
                 event="task_progress",
                 task_id=task_id,
@@ -66,6 +69,7 @@ async def _notify(
                 ref=task_ref or task_id,
                 parent_session_id=row["parent_session_id"],
                 run_id=row["id"],
+                **event_fields,
             )
     except Exception:
         logger.debug("Failed to notify parent on task status change", exc_info=True)

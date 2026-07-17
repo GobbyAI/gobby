@@ -27,6 +27,15 @@ def _diff_result(
     }
 
 
+def _prepared_diff(*, commits: list[str], manifest_count: int) -> MagicMock:
+    prepared = MagicMock()
+    prepared.canonical_commits = tuple(commits)
+    prepared.first_commits_page = {"items": []}
+    prepared.manifest_items = ()
+    prepared.manifest_count = manifest_count
+    return prepared
+
+
 _TEST_TIMESTAMP = datetime(2026, 1, 1, tzinfo=UTC)
 _TEST_TIMESTAMP_TEXT = _TEST_TIMESTAMP.isoformat()
 _StageState = Literal["ready", "in_progress", "needs_review", "review_approved", "done"]
@@ -178,6 +187,10 @@ async def test_close_task_uses_commit_diff_when_commits_linked(
         patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
         patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
         patch("gobby.tasks.commits.collect_task_diff_text") as mock_diff,
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.prepare_validation_diff",
+            return_value=_prepared_diff(commits=["abc123", "def456"], manifest_count=3),
+        ),
         patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
         patch("gobby.utils.git.run_git_command", return_value="abc123"),
         patch(
@@ -203,9 +216,9 @@ async def test_close_task_uses_commit_diff_when_commits_linked(
             "close_task", {"task_id": "t1", "changes_summary": "test changes"}
         )
 
-        mock_diff.assert_called_once()
         validator_call = mock_task_validator.validate_task.call_args
-        changes_summary = validator_call.kwargs["changes_summary"]
+        changes_summary, _ = validator_call.kwargs["static_evidence_loader"]()
+        mock_diff.assert_called_once()
         assert "Commit-based diff (2 commits, 3 manifest entries):" in changes_summary
         assert "diff content from commits" in changes_summary
         assert "Agent Changes Summary (supplemental):\ntest changes" in changes_summary
@@ -263,6 +276,10 @@ async def test_close_task_includes_latest_thirty_verification_evidence(
         patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
         patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
         patch("gobby.tasks.commits.collect_task_diff_text") as mock_diff,
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.prepare_validation_diff",
+            return_value=_prepared_diff(commits=["abc123"], manifest_count=1),
+        ),
         patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
         patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as mock_sm_cls,
         patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
@@ -295,18 +312,18 @@ async def test_close_task_includes_latest_thirty_verification_evidence(
 
     assert result == {"success": True}
     validator_call = mock_task_validator.validate_task.call_args
-    changes_summary = validator_call.kwargs["changes_summary"]
-    assert "Successful verification evidence:" in changes_summary
-    assert "command: uv run pytest validation_suite_001.py" not in changes_summary
-    assert "command: uv run pytest validation_suite_002.py" not in changes_summary
+    verification_evidence = validator_call.kwargs["verification_evidence"]
+    assert "Successful verification evidence:" in verification_evidence
+    assert "command: uv run pytest validation_suite_001.py" not in verification_evidence
+    assert "command: uv run pytest validation_suite_002.py" not in verification_evidence
     for index in range(3, CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT + 2):
-        assert f"- command: uv run pytest validation_suite_{index:03d}.py" in changes_summary
-    assert "matcher_id: python-tests" in changes_summary
-    assert "matcher_label: Python tests" in changes_summary
-    assert "- summary: Verified touched source line counts are below 1000" in changes_summary
-    assert "supports: source line-count gate for #15763" in changes_summary
-    assert "scope: src/gobby/mcp_proxy/tools/tasks" in changes_summary
-    assert "task_id: #15763" in changes_summary
+        assert f"- command: uv run pytest validation_suite_{index:03d}.py" in verification_evidence
+    assert "matcher_id: python-tests" in verification_evidence
+    assert "matcher_label: Python tests" in verification_evidence
+    assert "- summary: Verified touched source line counts are below 1000" in verification_evidence
+    assert "supports: source line-count gate for #15763" in verification_evidence
+    assert "scope: src/gobby/mcp_proxy/tools/tasks" in verification_evidence
+    assert "task_id: #15763" in verification_evidence
 
 
 @pytest.mark.asyncio
@@ -363,6 +380,10 @@ async def test_close_task_preserves_oversized_test_definitions_with_focused_evid
         patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
         patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
         patch("gobby.tasks.commits.collect_task_diff_text") as mock_diff,
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.prepare_validation_diff",
+            return_value=_prepared_diff(commits=["abc123"], manifest_count=2),
+        ),
         patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
         patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as mock_sm_cls,
         patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
@@ -400,14 +421,16 @@ async def test_close_task_preserves_oversized_test_definitions_with_focused_evid
         result = await registry.call(
             "close_task", {"task_id": "t1", "changes_summary": "test changes"}
         )
+        validator_call = mock_task_validator.validate_task.call_args
+        changes_summary, _ = validator_call.kwargs["static_evidence_loader"]()
+        verification_evidence = validator_call.kwargs["verification_evidence"]
 
     assert result == {"success": True}
-    changes_summary = mock_task_validator.validate_task.call_args.kwargs["changes_summary"]
     for name in test_names:
         assert name in changes_summary
     assert "hunk truncated for tests/test_acceptance.py" in changes_summary
-    assert f"- command: {focused_command}" in changes_summary
-    assert "matcher_label: Python tests" in changes_summary
+    assert f"- command: {focused_command}" in verification_evidence
+    assert "matcher_label: Python tests" in verification_evidence
 
 
 @pytest.mark.integration
@@ -458,6 +481,10 @@ async def test_close_task_autolinks_claim_window_before_validation(
         patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
         patch("gobby.tasks.commits.auto_link_commits") as mock_autolink,
         patch("gobby.tasks.commits.collect_task_diff_text") as mock_diff,
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.prepare_validation_diff",
+            return_value=_prepared_diff(commits=["a1", "a2", "a3"], manifest_count=3),
+        ),
         patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
     ):
         mock_pm.return_value.get.return_value = MagicMock(repo_path=repo_path)
@@ -516,11 +543,11 @@ async def test_close_task_autolinks_claim_window_before_validation(
                 "changes_summary": "test changes",
             },
         )
+        validator_call = mock_task_validator.validate_task.call_args
+        changes_summary, _ = validator_call.kwargs["static_evidence_loader"]()
 
     assert result == {"success": True}
     mock_autolink.assert_called_once()
-    validator_call = mock_task_validator.validate_task.call_args
-    changes_summary = validator_call.kwargs["changes_summary"]
     assert "Commit-based diff (3 commits, 3 manifest entries):" in changes_summary
     assert "task A1" in changes_summary
     assert "task A2" in changes_summary
@@ -597,6 +624,7 @@ async def test_close_task_skip_validation_with_evidence_stores_override(
         mock_task_manager.close_task.call_args.kwargs["validation_override_reason"]
         == "Validator unavailable; exact diff reviewed."
     )
+    assert mock_task_manager.close_task.call_args.kwargs["reset_validation_fail_count"] is True
 
 
 @pytest.mark.integration
@@ -758,6 +786,10 @@ async def test_close_task_commit_diff_excludes_uncommitted_changes(
         patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
         patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
         patch("gobby.tasks.commits.collect_task_diff_text") as mock_diff,
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.prepare_validation_diff",
+            return_value=_prepared_diff(commits=["abc123"], manifest_count=5),
+        ),
         patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
         patch("gobby.utils.git.run_git_command", return_value="abc123"),
     ):
@@ -781,7 +813,8 @@ async def test_close_task_commit_diff_excludes_uncommitted_changes(
         )
 
         assert result == {"success": True}
-        changes_summary = mock_task_validator.validate_task.call_args.kwargs["changes_summary"]
+        validator_call = mock_task_validator.validate_task.call_args
+        changes_summary, _ = validator_call.kwargs["static_evidence_loader"]()
         assert "Commit-based diff (1 commits, 5 manifest entries):" in changes_summary
         mock_diff.assert_called_once_with(
             task_id="t1",
@@ -824,6 +857,10 @@ async def test_close_task_with_commits_does_not_fallback_to_smart_context(
         patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
         patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
         patch("gobby.tasks.commits.collect_task_diff_text") as mock_diff,
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.prepare_validation_diff",
+            return_value=_prepared_diff(commits=["abc123"], manifest_count=0),
+        ),
         patch("gobby.tasks.validation.get_validation_context_smart") as mock_smart_context,
         patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
         patch("gobby.utils.git.run_git_command", return_value="abc123"),
@@ -846,6 +883,8 @@ async def test_close_task_with_commits_does_not_fallback_to_smart_context(
 
         await registry.call("close_task", {"task_id": "t1", "changes_summary": "test changes"})
 
+        validator_call = mock_task_validator.validate_task.call_args
+        validator_call.kwargs["static_evidence_loader"]()
         mock_diff.assert_called_once_with(
             task_id="t1",
             task_manager=mock_task_manager,

@@ -14,6 +14,7 @@ from gobby.mcp_proxy.tools.task_repo_paths import (
     resolve_task_repo_path,
 )
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._escalation_coordinator import coordinate_task_escalation
 from gobby.mcp_proxy.tools.tasks._helpers import SKIP_REASONS
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
     determine_close_outcome,
@@ -28,7 +29,7 @@ from gobby.mcp_proxy.tools.tasks._verification_evidence_context import (
     format_verification_evidence_context,
 )
 from gobby.plans.bootstrap_ledger import BootstrapLedgerMismatchError
-from gobby.storage.tasks import TaskNotFoundError
+from gobby.storage.tasks import TaskNotFoundError, TaskStaleStateError
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.tasks.validation_tool_loop import is_doc_only_manifest, prepare_validation_diff
 from gobby.workflows.condition_helpers import completion_evidence_ready
@@ -279,6 +280,14 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
 
         # Auto-skip validation for certain close reasons
         should_skip = skip_validation or reason.lower() in SKIP_REASONS
+        validation_status: str | None = None
+        validation_feedback: str | None = None
+        validation_reset_reason = (
+            "validation_skip_approval"
+            if not skip_leaf_checks
+            and (should_skip or (not target_task_had_edits and not task.commits))
+            else None
+        )
 
         # Enforce commits if the target task had edits.
         # Only skip for explicit skip_validation, NOT for close reasons like out_of_repo
@@ -391,6 +400,9 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                     if llm_result.extra:
                         response.update(llm_result.extra)
                     return response
+                validation_status = llm_result.validation_status
+                validation_feedback = llm_result.validation_feedback
+                validation_reset_reason = llm_result.reset_reason
 
         # Determine close outcome
         route_to_escalation, store_override = determine_close_outcome(
@@ -432,26 +444,16 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 if not override_justification
                 else f"Validation override requested: {override_justification}"
             )
-            ctx.task_manager.escalate_task(
+            escalated = ctx.task_manager.escalate_task(
                 resolved_id,
                 reason=escalation_reason,
                 validation_override_reason=(override_justification if store_override else None),
             )
-
-            # Auto-link session if provided
-            if resolved_session_id:
-                try:
-                    ctx.session_task_manager.link_task(
-                        resolved_session_id, resolved_id, "escalated"
-                    )
-                except Exception as e:
-                    logger.debug(f"Best-effort session linking failed: {e}")
-
-            notify_parent_on_task_state_change(
-                ctx.task_manager.db,
-                resolved_id,
-                "escalated",
-                task_ref=f"#{task.seq_num}" if task.seq_num else None,
+            coordinate_task_escalation(
+                ctx,
+                escalated,
+                prior_owner_session_id=get_claimed_session_id(task),
+                session_id=resolved_session_id,
             )
 
             return {
@@ -460,7 +462,10 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 "task_id": resolved_id,
             }
 
-        # All checks passed - close the task with session and commit tracking
+        # Named validation-failure reset branches:
+        # (a) LLM valid verdict; (b) documentation auto-validation pass;
+        # (c) approved validation skip or no-diff close; and
+        # (d) manual de-escalation/reopen in storage.tasks._transitions.reopen_task.
         try:
             ctx.task_manager.close_task(
                 resolved_id,
@@ -468,9 +473,20 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 closed_in_session_id=resolved_session_id,
                 closed_commit_sha=current_commit_sha,
                 validation_override_reason=override_justification if store_override else None,
+                expected_updated_at=task.updated_at,
+                reset_validation_fail_count=validation_reset_reason is not None,
+                validation_status=validation_status,
+                validation_feedback=validation_feedback,
             )
         except BootstrapLedgerMismatchError as exc:
             return exc.to_response()
+        except TaskStaleStateError as exc:
+            return {
+                "success": False,
+                "error": "stale_task_state",
+                "message": str(exc),
+                "stale_state": True,
+            }
 
         if is_epic and reason.lower() in {"completed", "obsolete"}:
             from gobby.hooks.event_handlers._plan import on_epic_terminal
