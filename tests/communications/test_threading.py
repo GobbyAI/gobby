@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -9,6 +10,8 @@ import pytest
 from gobby.communications.manager import CommunicationsManager
 from gobby.communications.models import ChannelConfig, CommsIdentity, CommsMessage
 from gobby.config.communications import ChannelDefaults, CommunicationsConfig
+
+TEST_TIMESTAMP = datetime(2024, 1, 1, tzinfo=UTC)
 
 
 def _config() -> CommunicationsConfig:
@@ -28,8 +31,8 @@ def _channel(
         name=name,
         enabled=True,
         config_json={},
-        created_at="2024-01-01T00:00:00",
-        updated_at="2024-01-01T00:00:00",
+        created_at=TEST_TIMESTAMP,
+        updated_at=TEST_TIMESTAMP,
     )
 
 
@@ -68,7 +71,7 @@ async def _make_manager(store: MagicMock) -> CommunicationsManager:
 
 
 @pytest.mark.asyncio
-async def test_inbound_populates_thread_map():
+async def test_inbound_populates_thread_map() -> None:
     """Inbound message with session_id and platform_thread_id populates thread map."""
     channel = _channel()
     store = _store([channel])
@@ -78,8 +81,8 @@ async def test_inbound_populates_thread_map():
         channel_id="chan-1",
         external_user_id="ext-user-1",
         session_id="session-123",
-        created_at="",
-        updated_at="",
+        created_at=TEST_TIMESTAMP,
+        updated_at=TEST_TIMESTAMP,
     )
     store.get_identity_by_external.return_value = identity
 
@@ -91,7 +94,7 @@ async def test_inbound_populates_thread_map():
         direction="inbound",
         content="Hello",
         platform_thread_id="thread-abc",
-        created_at="",
+        created_at=TEST_TIMESTAMP,
         identity_id="ext-user-1",
     )
 
@@ -101,7 +104,7 @@ async def test_inbound_populates_thread_map():
 
 
 @pytest.mark.asyncio
-async def test_inbound_without_thread_id_does_not_populate():
+async def test_inbound_without_thread_id_does_not_populate() -> None:
     """Inbound message without platform_thread_id does not populate thread map."""
     channel = _channel()
     store = _store([channel])
@@ -111,8 +114,8 @@ async def test_inbound_without_thread_id_does_not_populate():
         channel_id="chan-1",
         external_user_id="ext-user-1",
         session_id="session-123",
-        created_at="",
-        updated_at="",
+        created_at=TEST_TIMESTAMP,
+        updated_at=TEST_TIMESTAMP,
     )
     store.get_identity_by_external.return_value = identity
 
@@ -124,7 +127,7 @@ async def test_inbound_without_thread_id_does_not_populate():
         direction="inbound",
         content="Hello",
         platform_thread_id=None,
-        created_at="",
+        created_at=TEST_TIMESTAMP,
         identity_id="ext-user-1",
     )
 
@@ -134,7 +137,7 @@ async def test_inbound_without_thread_id_does_not_populate():
 
 
 @pytest.mark.asyncio
-async def test_inbound_without_session_does_not_populate():
+async def test_inbound_without_session_does_not_populate() -> None:
     """Inbound message without session_id does not populate thread map."""
     channel = _channel()
     store = _store([channel])
@@ -149,7 +152,7 @@ async def test_inbound_without_session_does_not_populate():
         direction="inbound",
         content="Hello",
         platform_thread_id="thread-abc",
-        created_at="",
+        created_at=TEST_TIMESTAMP,
     )
 
     await manager.handle_inbound_messages("test-channel", [msg])
@@ -161,7 +164,7 @@ async def test_inbound_without_session_does_not_populate():
 
 
 @pytest.mark.asyncio
-async def test_thread_map_updates_on_new_thread():
+async def test_thread_map_updates_on_new_thread() -> None:
     """Thread map is overwritten when a newer thread arrives for same session+channel."""
     channel = _channel()
     store = _store([channel])
@@ -171,8 +174,8 @@ async def test_thread_map_updates_on_new_thread():
         channel_id="chan-1",
         external_user_id="ext-user-1",
         session_id="session-123",
-        created_at="",
-        updated_at="",
+        created_at=TEST_TIMESTAMP,
+        updated_at=TEST_TIMESTAMP,
     )
     store.get_identity_by_external.return_value = identity
 
@@ -184,7 +187,7 @@ async def test_thread_map_updates_on_new_thread():
         direction="inbound",
         content="First",
         platform_thread_id="thread-old",
-        created_at="",
+        created_at=TEST_TIMESTAMP,
         identity_id="ext-user-1",
     )
     msg2 = CommsMessage(
@@ -193,7 +196,7 @@ async def test_thread_map_updates_on_new_thread():
         direction="inbound",
         content="Second",
         platform_thread_id="thread-new",
-        created_at="",
+        created_at=TEST_TIMESTAMP,
         identity_id="ext-user-1",
     )
 
@@ -206,7 +209,7 @@ async def test_thread_map_updates_on_new_thread():
 
 
 @pytest.mark.asyncio
-async def test_send_message_includes_thread_from_map():
+async def test_send_message_includes_thread_from_map() -> None:
     """send_message includes platform_thread_id from thread map when session matches."""
     channel = _channel()
     store = _store([channel])
@@ -220,7 +223,7 @@ async def test_send_message_includes_thread_from_map():
 
 
 @pytest.mark.asyncio
-async def test_send_message_no_thread_without_session():
+async def test_send_message_no_thread_without_session() -> None:
     """send_message does not set thread_id when no session_id is provided."""
     channel = _channel()
     store = _store([channel])
@@ -234,7 +237,7 @@ async def test_send_message_no_thread_without_session():
 
 
 @pytest.mark.asyncio
-async def test_send_message_no_thread_for_unknown_session():
+async def test_send_message_no_thread_for_unknown_session() -> None:
     """send_message does not set thread_id when session has no thread mapping."""
     channel = _channel()
     store = _store([channel])
@@ -249,7 +252,7 @@ async def test_send_message_no_thread_for_unknown_session():
 
 
 @pytest.mark.asyncio
-async def test_thread_map_isolated_per_channel():
+async def test_thread_map_isolated_per_channel() -> None:
     """Thread map entries are scoped to channel:session, not just session."""
     ch1 = _channel(name="slack", channel_id="chan-slack")
     ch2 = _channel(name="discord", channel_id="chan-discord")
@@ -278,7 +281,7 @@ async def test_thread_map_isolated_per_channel():
 
 
 @pytest.mark.asyncio
-async def test_slack_adapter_sends_with_thread_ts():
+async def test_slack_adapter_sends_with_thread_ts() -> None:
     """Slack adapter sends messages with thread_ts from CommsMessage.platform_thread_id."""
     from gobby.communications.adapters.slack import SlackAdapter
 
@@ -297,7 +300,7 @@ async def test_slack_adapter_sends_with_thread_ts():
         direction="outbound",
         content="Thread reply",
         platform_thread_id="1234567890.000001",
-        created_at="2024-01-01",
+        created_at=TEST_TIMESTAMP,
         metadata_json={"platform_destination": "C123"},
     )
 
@@ -314,7 +317,7 @@ async def test_slack_adapter_sends_with_thread_ts():
 
 
 @pytest.mark.asyncio
-async def test_discord_adapter_thread_extraction():
+async def test_discord_adapter_thread_extraction() -> None:
     """Discord adapter extracts thread_id from webhook metadata."""
     from gobby.communications.adapters.discord import DiscordAdapter
 

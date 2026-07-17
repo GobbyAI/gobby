@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 import pytest
 
@@ -15,7 +16,7 @@ from gobby.communications.models import (
 )
 
 
-def test_channel_capabilities_from_row():
+def test_channel_capabilities_from_row() -> None:
     row = {
         "threading": 1,
         "reactions": 0,
@@ -38,7 +39,7 @@ def test_channel_capabilities_from_row():
     }
 
 
-def test_channel_config_from_row():
+def test_channel_config_from_row() -> None:
     row = {
         "id": "slack-1",
         "channel_type": "slack",
@@ -56,11 +57,12 @@ def test_channel_config_from_row():
     assert config.enabled is True
     assert config.config_json == {"token": "xoxb-123"}
     assert config.webhook_secret == "secret-123"
-    assert config.created_at == "2026-03-21T00:00:00Z"
-    assert config.updated_at == "2026-03-21T00:00:00Z"
+    expected_timestamp = datetime(2026, 3, 21, tzinfo=UTC)
+    assert config.created_at == expected_timestamp
+    assert config.updated_at == expected_timestamp
 
 
-def test_comms_message_from_row():
+def test_comms_message_from_row() -> None:
     row = {
         "id": "msg-1",
         "channel_id": "slack-1",
@@ -89,10 +91,10 @@ def test_comms_message_from_row():
     assert msg.status == "received"
     assert msg.error is None
     assert msg.metadata_json == {"foo": "bar"}
-    assert msg.created_at == "2026-03-21T12:00:00Z"
+    assert msg.created_at == datetime(2026, 3, 21, 12, tzinfo=UTC)
 
 
-def test_comms_identity_from_row():
+def test_comms_identity_from_row() -> None:
     row = {
         "id": "ident-1",
         "channel_id": "slack-1",
@@ -114,7 +116,7 @@ def test_comms_identity_from_row():
     assert ident.metadata_json == {"team_id": "T456"}
 
 
-def test_comms_routing_rule_from_row():
+def test_comms_routing_rule_from_row() -> None:
     row = {
         "id": "rule-1",
         "name": "Slack to Session",
@@ -140,7 +142,7 @@ def test_comms_routing_rule_from_row():
     assert rule.config_json == {"auto_reply": True}
 
 
-def test_models_with_missing_fields_from_row():
+def test_models_with_missing_fields_from_row() -> None:
     # Only required fields provided in the row
     row = {
         "id": "rule-min",
