@@ -5,7 +5,7 @@ Provides tools for linking git commits to tasks:
 - link_commit: Link a git commit to a task
 - unlink_commit: Unlink a git commit from a task
 - auto_link_commits: Auto-detect and link commits mentioning task IDs
-- get_task_diff: Get combined diff for all commits linked to a task
+- get_task_diff: Page a task's commit and working-tree diff
 
 Sync tools (sync_tasks, sync_import, sync_export, get_sync_status) have been
 removed from MCP — they are CLI-only operations.
@@ -14,7 +14,7 @@ Extracted from tasks.py using Strangler Fig pattern for code decomposition.
 """
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.task_repo_paths import (
@@ -23,6 +23,16 @@ from gobby.mcp_proxy.tools.task_repo_paths import (
     resolve_task_repo_path,
 )
 from gobby.storage.tasks import TaskNotFoundError
+from gobby.tasks.diff_paging import (
+    DEFAULT_GIT_TIMEOUT_SECONDS,
+    MAX_COMMITS_LIMIT,
+    MAX_CURSOR_OFFSET,
+    MAX_LIMIT_BYTES,
+    MAX_MANIFEST_LIMIT,
+    MIN_LIMIT_BYTES,
+    DiffPage,
+    DiffPagingError,
+)
 from gobby.utils.project_context import get_project_context
 
 if TYPE_CHECKING:
@@ -44,7 +54,8 @@ def create_commit_registry(
     task_manager: "LocalTaskManager | None" = None,
     project_manager: "LocalProjectManager | None" = None,
     auto_link_commits_fn: Callable[..., Any] | None = None,
-    get_task_diff_fn: Callable[..., Any] | None = None,
+    get_task_diff_page_fn: Callable[..., DiffPage] | None = None,
+    git_timeout_seconds: float = DEFAULT_GIT_TIMEOUT_SECONDS,
     session_manager: Any | None = None,
 ) -> InternalToolRegistry:
     """
@@ -55,7 +66,8 @@ def create_commit_registry(
         task_manager: LocalTaskManager instance (required for task ID resolution)
         project_manager: LocalProjectManager instance (for repo_path lookup)
         auto_link_commits_fn: Function for auto-linking commits (injectable for testing)
-        get_task_diff_fn: Function for getting task diff (injectable for testing)
+        get_task_diff_page_fn: Function for paging task diffs (injectable for testing)
+        git_timeout_seconds: Server-owned deadline for each git subprocess
         session_manager: Session manager (unused, kept for interface compat)
 
     Returns:
@@ -292,8 +304,18 @@ def create_commit_registry(
         task_id: str,
         include_uncommitted: bool = False,
         project_path: str | None = None,
+        commit: str | None = None,
+        path_selector: str | None = None,
+        offset_bytes: int = 0,
+        limit_bytes: int = MAX_LIMIT_BYTES,
+        commits_offset: int = 0,
+        commits_limit: int = MAX_COMMITS_LIMIT,
+        manifest_offset: int = 0,
+        manifest_limit: int = MAX_MANIFEST_LIMIT,
+        snapshot_hash: str | None = None,
+        view_hash: str | None = None,
     ) -> dict[str, Any]:
-        """Get the combined diff for all commits linked to a task."""
+        """Get one lossless page of a task diff."""
         # Resolve task reference
         try:
             resolved_task_id = resolve_task_id_for_mcp(task_manager, task_id)
@@ -305,27 +327,41 @@ def create_commit_registry(
             return task_and_repo_path
         _, repo_path = task_and_repo_path
 
-        if get_task_diff_fn is None:
-            return {"error": "get_task_diff_fn not configured"}
+        if get_task_diff_page_fn is None:
+            return {
+                "success": False,
+                "error_code": "not_configured",
+                "error": "diff pager not configured",
+            }
 
-        result = get_task_diff_fn(
-            task_id=resolved_task_id,
-            task_manager=task_manager,
-            include_uncommitted=include_uncommitted,
-            cwd=repo_path,
-        )
-
-        return {
-            "diff": result.diff,
-            "commits": result.commits,
-            "has_uncommitted_changes": result.has_uncommitted_changes,
-            "file_count": result.file_count,
-        }
+        try:
+            return cast(
+                dict[str, Any],
+                get_task_diff_page_fn(
+                    task_id=resolved_task_id,
+                    task_manager=task_manager,
+                    include_uncommitted=include_uncommitted,
+                    cwd=repo_path,
+                    commit=commit,
+                    path_selector=path_selector,
+                    offset_bytes=offset_bytes,
+                    limit_bytes=limit_bytes,
+                    commits_offset=commits_offset,
+                    commits_limit=commits_limit,
+                    manifest_offset=manifest_offset,
+                    manifest_limit=manifest_limit,
+                    snapshot_hash=snapshot_hash,
+                    view_hash=view_hash,
+                    git_timeout_seconds=git_timeout_seconds,
+                ),
+            )
+        except DiffPagingError as exc:
+            return exc.as_dict()
 
     registry.register(
         name="get_task_diff",
-        description="Get the combined diff for all commits linked to a task. "
-        "Optionally include uncommitted changes.",
+        description="Get one byte-oriented page of linked task changes. Follow byte_end and "
+        "both cursor_end values; pass snapshot_hash and view_hash on every later page.",
         input_schema={
             "type": "object",
             "properties": {
@@ -344,6 +380,62 @@ def create_commit_registry(
                         "Repository path that contains the linked commits. Optional; defaults "
                         "to the task project repository."
                     ),
+                    "default": None,
+                },
+                "commit": {
+                    "type": "string",
+                    "description": "Optional linked commit SHA selecting one commit view",
+                    "default": None,
+                },
+                "path_selector": {
+                    "type": "string",
+                    "description": "Opaque selector returned by a manifest item",
+                    "default": None,
+                },
+                "offset_bytes": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": MAX_CURSOR_OFFSET,
+                    "default": 0,
+                },
+                "limit_bytes": {
+                    "type": "integer",
+                    "minimum": MIN_LIMIT_BYTES,
+                    "maximum": MAX_LIMIT_BYTES,
+                    "default": MAX_LIMIT_BYTES,
+                },
+                "commits_offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": MAX_CURSOR_OFFSET,
+                    "default": 0,
+                },
+                "commits_limit": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": MAX_COMMITS_LIMIT,
+                    "default": MAX_COMMITS_LIMIT,
+                },
+                "manifest_offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": MAX_CURSOR_OFFSET,
+                    "default": 0,
+                },
+                "manifest_limit": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": MAX_MANIFEST_LIMIT,
+                    "default": MAX_MANIFEST_LIMIT,
+                },
+                "snapshot_hash": {
+                    "type": "string",
+                    "description": "Snapshot token from the first page",
+                    "default": None,
+                },
+                "view_hash": {
+                    "type": "string",
+                    "description": "View token from the first page",
                     "default": None,
                 },
             },

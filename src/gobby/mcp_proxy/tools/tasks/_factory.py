@@ -96,7 +96,7 @@ def create_task_registry(
 
     # Merge commit linking tools (sync tools removed — CLI only)
     from gobby.tasks.commits import auto_link_commits as auto_link_commits_fn
-    from gobby.tasks.commits import get_task_diff
+    from gobby.tasks.diff_paging import get_task_diff_page
 
     registry.merge_from(
         create_commit_registry(
@@ -104,7 +104,7 @@ def create_task_registry(
             task_manager=task_manager,
             project_manager=ctx.project_manager,
             auto_link_commits_fn=auto_link_commits_fn,
-            get_task_diff_fn=get_task_diff,
+            get_task_diff_page_fn=get_task_diff_page,
             session_manager=ctx.session_manager,
         )
     )

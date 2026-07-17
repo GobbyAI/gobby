@@ -566,167 +566,6 @@ class TestAutoLinkCommits:
             assert result["linked_tasks"] == []
 
 
-class TestGetTaskDiff:
-    """Tests for get_task_diff MCP tool."""
-
-    def test_get_task_diff_basic(self, mock_sync_registry) -> None:
-        """Test get_task_diff basic call."""
-        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
-
-        task_manager = MagicMock()
-        mock_task = MagicMock()
-        mock_task.project_id = "project-1"
-        mock_task.parent_task_id = None
-        task_manager.get_task.return_value = mock_task
-
-        project_manager = MagicMock()
-        project_manager.get.return_value = None
-
-        mock_diff_result = MagicMock()
-        mock_diff_result.diff = "diff content"
-        mock_diff_result.commits = ["abc123"]
-        mock_diff_result.has_uncommitted_changes = False
-        mock_diff_result.file_count = 3
-
-        mock_get_task_diff = MagicMock(return_value=mock_diff_result)
-
-        registry = create_commit_registry(
-            task_manager=task_manager,
-            sync_manager=MagicMock(),
-            project_manager=project_manager,
-            get_task_diff_fn=mock_get_task_diff,
-        )
-
-        get_diff = registry.get_tool("get_task_diff")
-        result = get_diff(task_id="task-1")
-
-        assert result["diff"] == "diff content"
-        assert result["commits"] == ["abc123"]
-        assert result["has_uncommitted_changes"] is False
-        assert result["file_count"] == 3
-
-    def test_get_task_diff_task_not_found(self, mock_sync_registry) -> None:
-        """Test get_task_diff when task not found."""
-        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
-
-        task_manager = MagicMock()
-        task_manager.get_task.return_value = None
-
-        registry = create_commit_registry(
-            task_manager=task_manager,
-            sync_manager=MagicMock(),
-        )
-
-        get_diff = registry.get_tool("get_task_diff")
-        result = get_diff(task_id="nonexistent")
-
-        assert "error" in result
-        assert "not found" in result["error"]
-
-    def test_get_task_diff_include_uncommitted(self, mock_sync_registry) -> None:
-        """Test get_task_diff with include_uncommitted=True."""
-        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
-
-        task_manager = MagicMock()
-        mock_task = MagicMock()
-        mock_task.project_id = "project-1"
-        task_manager.get_task.return_value = mock_task
-
-        project_manager = MagicMock()
-        project_manager.get.return_value = None
-
-        mock_diff_result = MagicMock()
-        mock_diff_result.diff = "diff with uncommitted"
-        mock_diff_result.commits = []
-        mock_diff_result.has_uncommitted_changes = True
-        mock_diff_result.file_count = 5
-
-        mock_get_task_diff = MagicMock(return_value=mock_diff_result)
-
-        registry = create_commit_registry(
-            task_manager=task_manager,
-            sync_manager=MagicMock(),
-            project_manager=project_manager,
-            get_task_diff_fn=mock_get_task_diff,
-        )
-
-        get_diff = registry.get_tool("get_task_diff")
-        result = get_diff(task_id="task-1", include_uncommitted=True)
-
-        assert result["has_uncommitted_changes"] is True
-        call_kwargs = mock_get_task_diff.call_args.kwargs
-        assert call_kwargs["include_uncommitted"] is True
-
-    def test_get_task_diff_uses_registered_project_path_override(
-        self, mock_sync_registry, tmp_path: Path
-    ) -> None:
-        """Explicit diff repos must be registered for the task project."""
-        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
-
-        repo_path = tmp_path / "external" / "repo"
-        repo_path.mkdir(parents=True)
-        task_manager = MagicMock()
-        mock_task = MagicMock()
-        mock_task.project_id = "project-1"
-        task_manager.get_task.return_value = mock_task
-        project_manager = MagicMock()
-        project_manager.get.return_value = MagicMock(repo_path=str(repo_path))
-
-        mock_diff_result = MagicMock()
-        mock_diff_result.diff = "external diff"
-        mock_diff_result.commits = ["abc123"]
-        mock_diff_result.has_uncommitted_changes = False
-        mock_diff_result.file_count = 1
-
-        mock_get_task_diff = MagicMock(return_value=mock_diff_result)
-
-        registry = create_commit_registry(
-            task_manager=task_manager,
-            sync_manager=MagicMock(),
-            project_manager=project_manager,
-            get_task_diff_fn=mock_get_task_diff,
-        )
-
-        get_diff = registry.get_tool("get_task_diff")
-        result = get_diff(task_id="task-1", project_path=str(repo_path))
-
-        assert result["diff"] == "external diff"
-        assert mock_get_task_diff.call_args.kwargs["cwd"] == str(repo_path)
-
-    def test_get_task_diff_rejects_unknown_project_path_before_git(
-        self, mock_sync_registry, tmp_path: Path
-    ) -> None:
-        """Unknown explicit repo paths are rejected before diff Git work."""
-        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
-
-        repo_path = tmp_path / "repo"
-        outside = tmp_path / "outside"
-        repo_path.mkdir()
-        outside.mkdir()
-        task_manager = MagicMock()
-        mock_task = MagicMock()
-        mock_task.project_id = "project-1"
-        mock_task.parent_task_id = None
-        task_manager.get_task.return_value = mock_task
-        project_manager = MagicMock()
-        project_manager.get.return_value = MagicMock(repo_path=str(repo_path))
-        mock_get_task_diff = MagicMock()
-
-        registry = create_commit_registry(
-            task_manager=task_manager,
-            sync_manager=MagicMock(),
-            project_manager=project_manager,
-            get_task_diff_fn=mock_get_task_diff,
-        )
-
-        get_diff = registry.get_tool("get_task_diff")
-        result = get_diff(task_id="task-1", project_path=str(outside))
-
-        assert "error" in result
-        assert "outside the task project repo" in result["error"]
-        mock_get_task_diff.assert_not_called()
-
-
 class TestGitIntegrationEdgeCases:
     """Tests for git integration edge cases."""
 
@@ -808,40 +647,6 @@ class TestGitIntegrationEdgeCases:
         assert result["skipped"][0]["reason"] == "already linked"
         assert result["skipped_refs"] == {"#999": ["def456"]}
 
-    def test_get_task_diff_no_commits(self, mock_sync_registry) -> None:
-        """Test get_task_diff when task has no linked commits."""
-        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
-
-        task_manager = MagicMock()
-        mock_task = MagicMock()
-        mock_task.project_id = "project-1"
-        task_manager.get_task.return_value = mock_task
-
-        project_manager = MagicMock()
-        project_manager.get.return_value = None
-
-        mock_diff_result = MagicMock()
-        mock_diff_result.diff = ""
-        mock_diff_result.commits = []
-        mock_diff_result.has_uncommitted_changes = False
-        mock_diff_result.file_count = 0
-
-        mock_get_task_diff = MagicMock(return_value=mock_diff_result)
-
-        registry = create_commit_registry(
-            task_manager=task_manager,
-            sync_manager=MagicMock(),
-            project_manager=project_manager,
-            get_task_diff_fn=mock_get_task_diff,
-        )
-
-        get_diff = registry.get_tool("get_task_diff")
-        result = get_diff(task_id="task-1")
-
-        assert result["diff"] == ""
-        assert result["commits"] == []
-        assert result["file_count"] == 0
-
 
 @pytest.fixture
 def mock_sync_registry():
@@ -888,17 +693,17 @@ def test_task_sync_git_helper_calls_follow_repo_path_resolution() -> None:
         auto_link_called = True
         raise AssertionError("auto_link_commits_fn should not run after repo path rejection")
 
-    def get_task_diff_fn(**kwargs: object) -> object:
+    def get_task_diff_page_fn(**kwargs: object) -> object:
         nonlocal get_task_diff_called
         get_task_diff_called = True
-        raise AssertionError("get_task_diff_fn should not run after repo path rejection")
+        raise AssertionError("get_task_diff_page_fn should not run after repo path rejection")
 
     registry = create_commit_registry(
         task_manager=task_manager,
         sync_manager=object(),
         project_manager=object(),
         auto_link_commits_fn=auto_link_commits_fn,
-        get_task_diff_fn=get_task_diff_fn,
+        get_task_diff_page_fn=get_task_diff_page_fn,
     )
 
     with patch(

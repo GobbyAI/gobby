@@ -372,42 +372,15 @@ async def test_unlink_commit_tool(mock_task_manager, mock_sync_manager):
 
 
 @pytest.mark.asyncio
-async def test_get_task_diff_tool(mock_task_manager, mock_sync_manager):
-    """Test get_task_diff tool execution."""
-    from gobby.tasks.commits import TaskDiffResult
-
-    mock_task = MagicMock()
-    mock_task.id = "t1"
-    mock_task.commits = ["abc123"]
-    mock_task_manager.get_task.return_value = mock_task
-
-    # Patch before creating registry since functions are captured at creation time
-    with patch("gobby.tasks.commits.get_task_diff") as mock_diff:
-        mock_diff.return_value = TaskDiffResult(
-            diff="diff content",
-            commits=["abc123"],
-            has_uncommitted_changes=False,
-            file_count=2,
-        )
-
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
-        result = await registry.call(
-            "get_task_diff",
-            {"task_id": "t1", "include_uncommitted": False},
-        )
-
-        assert result["diff"] == "diff content"
-        assert result["commits"] == ["abc123"]
-        assert result["file_count"] == 2
-
-
-@pytest.mark.asyncio
 async def test_auto_link_commits_tool(mock_task_manager, mock_sync_manager):
     """Test auto_link_commits tool execution."""
     from gobby.tasks.commits import AutoLinkResult
 
     # Patch before creating registry since functions are captured at creation time
-    with patch("gobby.tasks.commits.auto_link_commits") as mock_auto_link:
+    with (
+        patch("gobby.tasks.commits.auto_link_commits") as mock_auto_link,
+        patch("gobby.mcp_proxy.tools.task_sync.resolve_project_repo_path", return_value=None),
+    ):
         mock_auto_link.return_value = AutoLinkResult(
             linked_tasks={"t1": ["abc123", "def456"]},
             total_linked=2,
@@ -437,32 +410,3 @@ async def test_link_commit_invalid_task(mock_task_manager, mock_sync_manager):
     )
 
     assert "error" in result
-
-
-@pytest.mark.asyncio
-async def test_get_task_diff_no_commits(mock_task_manager, mock_sync_manager):
-    """Test get_task_diff when task has no commits."""
-    registry = create_task_registry(mock_task_manager, mock_sync_manager)
-
-    mock_task = MagicMock()
-    mock_task.id = "t1"
-    mock_task.commits = []
-    mock_task_manager.get_task.return_value = mock_task
-
-    with patch("gobby.tasks.commits.get_task_diff") as mock_diff:
-        from gobby.tasks.commits import TaskDiffResult
-
-        mock_diff.return_value = TaskDiffResult(
-            diff="",
-            commits=[],
-            has_uncommitted_changes=False,
-            file_count=0,
-        )
-
-        result = await registry.call(
-            "get_task_diff",
-            {"task_id": "t1"},
-        )
-
-        assert result["diff"] == ""
-        assert result["commits"] == []

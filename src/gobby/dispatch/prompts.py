@@ -205,6 +205,8 @@ def _qa_reviewer(task: object, context: Mapping[str, object]) -> str:
         "claim_task unless the active step prompt explicitly says the current "
         "step is CLAIM. Load the required QA skills before review, then use "
         "get_task, get_task_diff, and exactly one review verdict tool. Do not "
+        "treat the first diff page as complete: follow byte_end and both "
+        "cursor_end values with the returned snapshot_hash and view_hash. Do not "
         "call get_workflow_status. Do not run full pytest, Cargo, Vitest, or "
         "Jest suites; run only focused validation relevant to the task diff. "
         "For Rust, use `cargo test -p <package>` or "

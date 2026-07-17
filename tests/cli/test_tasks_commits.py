@@ -316,112 +316,78 @@ class TestCommitAuto:
 # =============================================================================
 
 
+def _diff_page(*, commits: int, manifest: int) -> dict[str, object]:
+    return {
+        "commits": {"total": commits},
+        "manifest": {"total": manifest},
+    }
+
+
 class TestTaskDiff:
     """Tests for 'gobby tasks diff' command."""
 
     def test_diff_success(self, runner, mock_task_manager) -> None:
-        """Test getting diff for a task."""
-        from gobby.tasks.commits import TaskDiffResult
-
-        mock_task = MagicMock()
-        mock_task.id = "gt-abc123"
-        mock_task.commits = ["abc123"]
+        mock_task = MagicMock(id="gt-abc123", commits=["abc123"])
         mock_task_manager.get_task.return_value = mock_task
 
-        with patch("gobby.cli.tasks.commits.get_task_manager", return_value=mock_task_manager):
-            with patch("gobby.cli.tasks.commits.get_task_diff") as mock_diff:
-                mock_diff.return_value = TaskDiffResult(
-                    diff="diff --git a/file.py b/file.py\n+new line",
-                    commits=["abc123"],
-                    has_uncommitted_changes=False,
-                    file_count=1,
-                )
+        with (
+            patch("gobby.cli.tasks.commits.get_task_manager", return_value=mock_task_manager),
+            patch("gobby.cli.tasks.commits.collect_task_diff_text") as mock_diff,
+        ):
+            mock_diff.return_value = (
+                "diff --git a/file.py b/file.py\n+new line",
+                _diff_page(commits=1, manifest=1),
+            )
+            result = runner.invoke(tasks, ["diff", "gt-abc123"])
 
-                result = runner.invoke(tasks, ["diff", "gt-abc123"])
-
-                assert result.exit_code == 0
-                assert "diff --git" in result.output or "+new line" in result.output
+        assert result.exit_code == 0
+        assert "diff --git" in result.output or "+new line" in result.output
 
     def test_diff_with_uncommitted(self, runner, mock_task_manager) -> None:
-        """Test getting diff with uncommitted changes."""
-        from gobby.tasks.commits import TaskDiffResult
-
-        mock_task = MagicMock()
-        mock_task.id = "gt-abc123"
-        mock_task.commits = ["abc123"]
+        mock_task = MagicMock(id="gt-abc123", commits=["abc123"])
         mock_task_manager.get_task.return_value = mock_task
 
-        with patch("gobby.cli.tasks.commits.get_task_manager", return_value=mock_task_manager):
-            with patch("gobby.cli.tasks.commits.get_task_diff") as mock_diff:
-                mock_diff.return_value = TaskDiffResult(
-                    diff="diff content",
-                    commits=["abc123"],
-                    has_uncommitted_changes=True,
-                    file_count=2,
-                )
+        with (
+            patch("gobby.cli.tasks.commits.get_task_manager", return_value=mock_task_manager),
+            patch("gobby.cli.tasks.commits.collect_task_diff_text") as mock_diff,
+        ):
+            mock_diff.return_value = ("diff content", _diff_page(commits=1, manifest=1))
+            result = runner.invoke(tasks, ["diff", "gt-abc123", "--uncommitted"])
 
-                result = runner.invoke(tasks, ["diff", "gt-abc123", "--uncommitted"])
-
-                assert result.exit_code == 0
-                call_kwargs = mock_diff.call_args.kwargs
-                assert call_kwargs.get("include_uncommitted") is True
+        assert result.exit_code == 0
+        assert mock_diff.call_args.kwargs["include_uncommitted"] is True
 
     def test_diff_task_not_found(self, runner, mock_task_manager) -> None:
-        """Test error when task not found."""
         mock_task_manager.get_task.return_value = None
-
         with patch("gobby.cli.tasks.commits.get_task_manager", return_value=mock_task_manager):
             result = runner.invoke(tasks, ["diff", "gt-nonexistent"])
-
-            assert result.exit_code != 0
+        assert result.exit_code != 0
 
     def test_diff_no_commits(self, runner, mock_task_manager) -> None:
-        """Test diff when task has no commits."""
-        from gobby.tasks.commits import TaskDiffResult
-
-        mock_task = MagicMock()
-        mock_task.id = "gt-abc123"
-        mock_task.commits = []
+        mock_task = MagicMock(id="gt-abc123", commits=[])
         mock_task_manager.get_task.return_value = mock_task
 
-        with patch("gobby.cli.tasks.commits.get_task_manager", return_value=mock_task_manager):
-            with patch("gobby.cli.tasks.commits.get_task_diff") as mock_diff:
-                mock_diff.return_value = TaskDiffResult(
-                    diff="",
-                    commits=[],
-                    has_uncommitted_changes=False,
-                    file_count=0,
-                )
+        with (
+            patch("gobby.cli.tasks.commits.get_task_manager", return_value=mock_task_manager),
+            patch("gobby.cli.tasks.commits.collect_task_diff_text") as mock_diff,
+        ):
+            mock_diff.return_value = ("", _diff_page(commits=0, manifest=0))
+            result = runner.invoke(tasks, ["diff", "gt-abc123"])
 
-                result = runner.invoke(tasks, ["diff", "gt-abc123"])
-
-                assert result.exit_code == 0
-                assert (
-                    "no" in result.output.lower()
-                    or "empty" in result.output.lower()
-                    or result.output.strip() == ""
-                )
+        assert result.exit_code == 0
+        assert "no commits" in result.output.lower()
 
     def test_diff_stats_only(self, runner, mock_task_manager) -> None:
-        """Test showing diff stats only."""
-        from gobby.tasks.commits import TaskDiffResult
-
-        mock_task = MagicMock()
-        mock_task.id = "gt-abc123"
-        mock_task.commits = ["abc123"]
+        mock_task = MagicMock(id="gt-abc123", commits=["abc123"])
         mock_task_manager.get_task.return_value = mock_task
 
-        with patch("gobby.cli.tasks.commits.get_task_manager", return_value=mock_task_manager):
-            with patch("gobby.cli.tasks.commits.get_task_diff") as mock_diff:
-                mock_diff.return_value = TaskDiffResult(
-                    diff="diff content",
-                    commits=["abc123", "def456"],
-                    has_uncommitted_changes=False,
-                    file_count=5,
-                )
+        with (
+            patch("gobby.cli.tasks.commits.get_task_manager", return_value=mock_task_manager),
+            patch("gobby.cli.tasks.commits.collect_task_diff_text") as mock_diff,
+        ):
+            mock_diff.return_value = ("diff content", _diff_page(commits=2, manifest=5))
+            result = runner.invoke(tasks, ["diff", "gt-abc123", "--stats"])
 
-                result = runner.invoke(tasks, ["diff", "gt-abc123", "--stats"])
-
-                assert result.exit_code == 0
-                # Should show stats like commits count, file count
-                assert "2" in result.output or "5" in result.output
+        assert result.exit_code == 0
+        assert "Commits: 2" in result.output
+        assert "Manifest entries: 5" in result.output

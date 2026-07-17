@@ -16,6 +16,17 @@ from gobby.tasks.validation import TaskValidator, ValidationResult
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.verification_evidence import VERIFICATION_EVIDENCE_VARIABLE
 
+
+def _diff_result(
+    *, diff: str, commits: list[str], file_count: int, has_uncommitted_changes: bool = False
+) -> tuple[str, dict[str, dict[str, int]]]:
+    del has_uncommitted_changes
+    return diff, {
+        "commits": {"total": len(commits)},
+        "manifest": {"total": file_count},
+    }
+
+
 _TEST_TIMESTAMP = datetime(2026, 1, 1, tzinfo=UTC)
 _TEST_TIMESTAMP_TEXT = _TEST_TIMESTAMP.isoformat()
 _StageState = Literal["ready", "in_progress", "needs_review", "review_approved", "done"]
@@ -163,12 +174,10 @@ async def test_close_task_uses_commit_diff_when_commits_linked(
     mock_task_validator.validate_task.return_value = ValidationResult(status="valid", feedback="OK")
     mock_task_manager.close_task.return_value = task
 
-    from gobby.tasks.commits import TaskDiffResult
-
     with (
         patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
         patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
-        patch("gobby.tasks.commits.get_task_diff") as mock_diff,
+        patch("gobby.tasks.commits.collect_task_diff_text") as mock_diff,
         patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
         patch("gobby.utils.git.run_git_command", return_value="abc123"),
         patch(
@@ -176,7 +185,7 @@ async def test_close_task_uses_commit_diff_when_commits_linked(
             side_effect=lambda sha, cwd=None: sha,
         ),
     ):
-        mock_diff.return_value = TaskDiffResult(
+        mock_diff.return_value = _diff_result(
             diff="diff content from commits",
             commits=["abc123", "def456"],
             has_uncommitted_changes=False,
@@ -197,7 +206,7 @@ async def test_close_task_uses_commit_diff_when_commits_linked(
         mock_diff.assert_called_once()
         validator_call = mock_task_validator.validate_task.call_args
         changes_summary = validator_call.kwargs["changes_summary"]
-        assert "Commit-based diff (2 commits, 3 files):" in changes_summary
+        assert "Commit-based diff (2 commits, 3 manifest entries):" in changes_summary
         assert "diff content from commits" in changes_summary
         assert "Agent Changes Summary (supplemental):\ntest changes" in changes_summary
         assert result.get("validated", True) is True
@@ -250,18 +259,16 @@ async def test_close_task_includes_latest_thirty_verification_evidence(
         }
     )
 
-    from gobby.tasks.commits import TaskDiffResult
-
     with (
         patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
         patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
-        patch("gobby.tasks.commits.get_task_diff") as mock_diff,
+        patch("gobby.tasks.commits.collect_task_diff_text") as mock_diff,
         patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
         patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as mock_sm_cls,
         patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
         patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
     ):
-        mock_diff.return_value = TaskDiffResult(
+        mock_diff.return_value = _diff_result(
             diff="diff content from commits",
             commits=["abc123"],
             has_uncommitted_changes=False,
@@ -352,18 +359,16 @@ async def test_close_task_preserves_oversized_test_definitions_with_focused_evid
     )
     focused_command = "GOBBY_TEST_PROTECT=1 uv run pytest tests/test_acceptance.py -k acceptance -q"
 
-    from gobby.tasks.commits import TaskDiffResult
-
     with (
         patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
         patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
-        patch("gobby.tasks.commits.get_task_diff") as mock_diff,
+        patch("gobby.tasks.commits.collect_task_diff_text") as mock_diff,
         patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
         patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as mock_sm_cls,
         patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
         patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
     ):
-        mock_diff.return_value = TaskDiffResult(
+        mock_diff.return_value = _diff_result(
             diff=oversized_diff,
             commits=["abc123"],
             has_uncommitted_changes=False,
@@ -445,8 +450,6 @@ async def test_close_task_autolinks_claim_window_before_validation(
         assert task.commits is not None
         task.commits.insert(1, "a2")
 
-    from gobby.tasks.commits import TaskDiffResult
-
     with (
         patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
         patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
@@ -454,7 +457,7 @@ async def test_close_task_autolinks_claim_window_before_validation(
         patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager") as mock_stm_cls,
         patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
         patch("gobby.tasks.commits.auto_link_commits") as mock_autolink,
-        patch("gobby.tasks.commits.get_task_diff") as mock_diff,
+        patch("gobby.tasks.commits.collect_task_diff_text") as mock_diff,
         patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
     ):
         mock_pm.return_value.get.return_value = MagicMock(repo_path=repo_path)
@@ -481,12 +484,12 @@ async def test_close_task_autolinks_claim_window_before_validation(
             task_manager: MagicMock,
             include_uncommitted: bool,
             cwd: str,
-        ) -> TaskDiffResult:
+        ) -> tuple[str, dict[str, dict[str, int]]]:
             assert task.commits is not None
             assert task.commits == ["a1", "a2", "a3"]
             assert include_uncommitted is False
             assert cwd == repo_path
-            return TaskDiffResult(
+            return _diff_result(
                 diff=(
                     "diff --git a/a1.py b/a1.py\n+task A1\n"
                     "diff --git a/a2.py b/a2.py\n+task A2\n"
@@ -518,7 +521,7 @@ async def test_close_task_autolinks_claim_window_before_validation(
     mock_autolink.assert_called_once()
     validator_call = mock_task_validator.validate_task.call_args
     changes_summary = validator_call.kwargs["changes_summary"]
-    assert "Commit-based diff (3 commits, 3 files):" in changes_summary
+    assert "Commit-based diff (3 commits, 3 manifest entries):" in changes_summary
     assert "task A1" in changes_summary
     assert "task A2" in changes_summary
     assert "task A3" in changes_summary
@@ -751,16 +754,14 @@ async def test_close_task_commit_diff_excludes_uncommitted_changes(
     mock_task_validator.validate_task.return_value = ValidationResult(status="valid", feedback="OK")
     mock_task_manager.close_task.return_value = task
 
-    from gobby.tasks.commits import TaskDiffResult
-
     with (
         patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
         patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
-        patch("gobby.tasks.commits.get_task_diff") as mock_diff,
+        patch("gobby.tasks.commits.collect_task_diff_text") as mock_diff,
         patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
         patch("gobby.utils.git.run_git_command", return_value="abc123"),
     ):
-        mock_diff.return_value = TaskDiffResult(
+        mock_diff.return_value = _diff_result(
             diff="diff content plus uncommitted",
             commits=["abc123"],
             has_uncommitted_changes=True,
@@ -781,7 +782,7 @@ async def test_close_task_commit_diff_excludes_uncommitted_changes(
 
         assert result == {"success": True}
         changes_summary = mock_task_validator.validate_task.call_args.kwargs["changes_summary"]
-        assert "Commit-based diff (1 commits, 5 files):" in changes_summary
+        assert "Commit-based diff (1 commits, 5 manifest entries):" in changes_summary
         mock_diff.assert_called_once_with(
             task_id="t1",
             task_manager=mock_task_manager,
@@ -819,18 +820,16 @@ async def test_close_task_with_commits_does_not_fallback_to_smart_context(
     mock_task_validator.validate_task.return_value = ValidationResult(status="valid", feedback="OK")
     mock_task_manager.close_task.return_value = task
 
-    from gobby.tasks.commits import TaskDiffResult
-
     with (
         patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
         patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
-        patch("gobby.tasks.commits.get_task_diff") as mock_diff,
+        patch("gobby.tasks.commits.collect_task_diff_text") as mock_diff,
         patch("gobby.tasks.validation.get_validation_context_smart") as mock_smart_context,
         patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
         patch("gobby.utils.git.run_git_command", return_value="abc123"),
     ):
         # Empty diff from commits
-        mock_diff.return_value = TaskDiffResult(
+        mock_diff.return_value = _diff_result(
             diff="",
             commits=["abc123"],
             has_uncommitted_changes=False,

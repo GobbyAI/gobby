@@ -296,8 +296,8 @@ def gather_validation_context(
     """
     from gobby.tasks.commits import (
         changed_files_from_diff,
+        collect_task_diff_text,
         extract_mentioned_files,
-        get_task_diff,
     )
     from gobby.tasks.validation import (
         VALIDATION_FILE_CONTEXT_BUDGET_CHARS,
@@ -321,15 +321,13 @@ def gather_validation_context(
     # is only supplemental prose.
     if task.commits:
         try:
-            diff_result = get_task_diff(
+            raw_diff, first_page = collect_task_diff_text(
                 task_id=task.id,
                 task_manager=task_manager,
                 include_uncommitted=False,
                 cwd=repo_path,
-                max_chars=None,
             )
-            if diff_result.diff:
-                raw_diff = diff_result.diff
+            if raw_diff:
                 changed_files = changed_files_from_diff(raw_diff)
                 file_context_text = _read_referenced_file_context(
                     mentioned_files=mentioned_files,
@@ -356,15 +354,15 @@ def gather_validation_context(
                     len(file_context_text or ""),
                 )
                 validation_context = (
-                    f"Commit-based diff ({len(diff_result.commits)} commits, "
-                    f"{diff_result.file_count} files):\n\n{evidence.text}"
+                    f"Commit-based diff ({first_page['commits']['total']} commits, "
+                    f"{first_page['manifest']['total']} manifest entries):\n\n{evidence.text}"
                 )
             else:
                 logger.warning(
-                    f"get_task_diff returned empty for task {task.id} with commits {task.commits}"
+                    f"diff pager returned empty for task {task.id} with commits {task.commits}"
                 )
         except Exception as e:
-            logger.warning(f"get_task_diff failed for task {task.id}: {e}")
+            logger.warning(f"diff pager failed for task {task.id}: {e}")
 
     if validation_context:
         if changes_summary and not changes_summary_included:

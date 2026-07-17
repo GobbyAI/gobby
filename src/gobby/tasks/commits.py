@@ -11,56 +11,21 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.storage.tasks import TaskNotFoundError
+from gobby.tasks.diff_paging import (
+    MAX_COMMITS_LIMIT,
+    MAX_LIMIT_BYTES,
+    MAX_MANIFEST_LIMIT,
+    DiffPage,
+    DiffPagingError,
+    decode_content,
+    get_task_diff_page,
+)
 from gobby.utils.git import run_git_command
 
 if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
 
 logger = logging.getLogger(__name__)
-
-TASK_DIFF_MAX_CHARS = 30_000
-_TASK_DIFF_TRUNCATION_MARKER = "\n\n... [task diff truncated] ..."
-
-
-@dataclass
-class TaskDiffResult:
-    """Result of computing a task's diff.
-
-    Attributes:
-        diff: Combined diff content from all linked commits
-        commits: List of commit SHAs included in the diff
-        has_uncommitted_changes: Whether uncommitted changes were included
-        file_count: Number of files modified in the diff
-    """
-
-    diff: str
-    commits: list[str] = field(default_factory=list)
-    has_uncommitted_changes: bool = False
-    file_count: int = 0
-
-
-def _diff_commits_for_task(task: Any) -> list[str]:
-    linked_commits = list(task.commits or [])
-    if linked_commits:
-        return _dedupe_commits(linked_commits)
-
-    closed_commit_sha = getattr(task, "closed_commit_sha", None)
-    if isinstance(closed_commit_sha, str) and closed_commit_sha.strip():
-        return [closed_commit_sha.strip()]
-
-    return []
-
-
-def _dedupe_commits(commits: list[str]) -> list[str]:
-    """Return unique commit SHAs in their stored chronological order."""
-    unique_commits: list[str] = []
-    seen: set[str] = set()
-    for commit in commits:
-        if commit in seen:
-            continue
-        seen.add(commit)
-        unique_commits.append(commit)
-    return unique_commits
 
 
 def _strip_diff_path_prefix(path: str) -> str:
@@ -69,94 +34,44 @@ def _strip_diff_path_prefix(path: str) -> str:
     return path
 
 
-def _count_unique_diff_paths(diff: str) -> int:
-    paths: set[str] = set()
-    for line in diff.splitlines():
-        if not line.startswith("diff --git "):
-            continue
-        try:
-            parts = shlex.split(line.removeprefix("diff --git "))
-        except ValueError:
-            continue
-        if len(parts) < 2:
-            continue
-        old_path = _strip_diff_path_prefix(parts[0])
-        new_path = _strip_diff_path_prefix(parts[1])
-        paths.add(new_path if new_path != "/dev/null" else old_path)
-    return len(paths)
-
-
-def get_task_diff(
+def collect_task_diff_text(
     task_id: str,
     task_manager: "LocalTaskManager",
+    *,
     include_uncommitted: bool = False,
     cwd: str | Path | None = None,
-    max_chars: int | None = TASK_DIFF_MAX_CHARS,
-) -> TaskDiffResult:
-    """Get the combined diff for all commits linked to a task.
-
-    Args:
-        task_id: The task ID to get diff for.
-        task_manager: LocalTaskManager instance to fetch task data.
-        include_uncommitted: If True, include uncommitted changes in diff.
-        cwd: Working directory for git commands. Defaults to current directory.
-        max_chars: Maximum returned diff length. Set to None when the caller
-            performs its own file-aware bounding and needs every file header.
-
-    Returns:
-        TaskDiffResult with combined diff and metadata.
-
-    Raises:
-        ValueError: If task not found.
-    """
-    # Get the task (raises ValueError if not found)
-    task = task_manager.get_task(task_id)
-
-    # Handle no commits
-    commits = _diff_commits_for_task(task)
-    if not commits and not include_uncommitted:
-        return TaskDiffResult(diff="", commits=[], has_uncommitted_changes=False)
-
-    working_dir = Path(cwd) if cwd else Path.cwd()
-    diff_parts = []
-    has_uncommitted = False
-
-    # Get diff for each linked commit
-    if commits:
-        for commit in commits:
-            result = run_git_command(
-                ["git", "show", "--format=", commit],
-                cwd=working_dir,
-            )
-            if result:
-                diff_parts.append(result)
-
-    # Include uncommitted changes if requested
-    if include_uncommitted:
-        uncommitted = run_git_command(
-            ["git", "diff", "HEAD"],
-            cwd=working_dir,
+) -> tuple[str, DiffPage]:
+    """Collect every lossless page for transitional string consumers."""
+    offset = 0
+    snapshot_hash: str | None = None
+    view_hash: str | None = None
+    chunks: list[bytes] = []
+    first_page: DiffPage | None = None
+    while True:
+        page = get_task_diff_page(
+            task_id,
+            task_manager,
+            include_uncommitted=include_uncommitted,
+            cwd=cwd,
+            offset_bytes=offset,
+            limit_bytes=MAX_LIMIT_BYTES,
+            commits_limit=MAX_COMMITS_LIMIT if first_page is None else 0,
+            manifest_limit=MAX_MANIFEST_LIMIT if first_page is None else 0,
+            snapshot_hash=snapshot_hash,
+            view_hash=view_hash,
         )
-        if uncommitted:
-            diff_parts.append(uncommitted)
-            has_uncommitted = True
-
-    # Combine all diff parts and count files before bounding the returned payload.
-    combined_diff = "\n".join(diff_parts)
-    file_count = _count_unique_diff_paths(combined_diff)
-    if max_chars is not None:
-        combined_diff = _safe_truncate(
-            combined_diff,
-            max_chars,
-            _TASK_DIFF_TRUNCATION_MARKER,
-        )
-
-    return TaskDiffResult(
-        diff=combined_diff,
-        commits=commits,
-        has_uncommitted_changes=has_uncommitted,
-        file_count=file_count,
-    )
+        if first_page is None:
+            first_page = page
+        chunks.append(decode_content(page["content"]))
+        if page["complete"]:
+            break
+        if page["byte_end"] <= offset:
+            raise DiffPagingError("paging_stalled", "diff paging made no byte progress")
+        offset = page["byte_end"]
+        snapshot_hash = page["snapshot_hash"]
+        view_hash = page["view_hash"]
+    assert first_page is not None
+    return b"".join(chunks).decode("utf-8", errors="replace"), first_page
 
 
 # Doc file extensions that don't need LLM validation
@@ -253,18 +168,6 @@ def _priority_key(path: str, priority_files: list[str] | None) -> tuple[int, str
         if "/" not in cleaned and Path(normalized).name == cleaned:
             return (0, path)
     return (1, path)
-
-
-def _safe_truncate(text: str, max_chars: int, marker: str) -> str:
-    if len(text) <= max_chars:
-        return text
-    if max_chars <= len(marker):
-        return marker if len(marker) <= max_chars else ""
-    cutoff = max_chars - len(marker)
-    newline_cutoff = text.rfind("\n", 0, cutoff)
-    if newline_cutoff > 0:
-        cutoff = newline_cutoff
-    return text[:cutoff].rstrip() + marker
 
 
 def _limit_hunk_lines(file_diff: str, max_hunk_lines: int) -> str:
