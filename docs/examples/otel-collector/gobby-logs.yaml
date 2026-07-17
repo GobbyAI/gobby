@@ -1,0 +1,182 @@
+# Gobby log collection reference for otelcol-contrib 0.156.0.
+# Required environment variables:
+#   GOBBY_LOG_DIR
+#   GOBBY_OTEL_STORAGE_DIR
+#   GOBBY_OTLP_ENDPOINT
+
+extensions:
+  file_storage:
+    directory: "${env:GOBBY_OTEL_STORAGE_DIR}"
+    create_directory: true
+    fsync: true
+
+receivers:
+  file_log/daemon:
+    include: ["${env:GOBBY_LOG_DIR}/daemon.log"]
+    start_at: end
+    storage: file_storage
+    on_truncate: read_whole_file
+    include_file_name: true
+    include_file_path: true
+    attributes:
+      gobby.log.surface: daemon
+    multiline:
+      line_start_pattern: '^(?:\{|\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} - )'
+    operators:
+      - type: json_parser
+        if: 'body matches "^[[:space:]]*[{]"'
+        parse_to: body
+        on_error: send_quiet
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 0s
+
+  file_log/errors:
+    include: ["${env:GOBBY_LOG_DIR}/errors.log"]
+    start_at: end
+    storage: file_storage
+    on_truncate: read_whole_file
+    include_file_name: true
+    include_file_path: true
+    attributes:
+      gobby.log.surface: errors
+    multiline:
+      line_start_pattern: '^(?:\{|\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} - )'
+    operators:
+      - type: json_parser
+        if: 'body matches "^[[:space:]]*[{]"'
+        parse_to: body
+        on_error: send_quiet
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 0s
+
+  file_log/hooks:
+    include: ["${env:GOBBY_LOG_DIR}/hooks.log"]
+    start_at: end
+    storage: file_storage
+    on_truncate: read_whole_file
+    include_file_name: true
+    include_file_path: true
+    attributes:
+      gobby.log.surface: hooks
+    multiline:
+      line_start_pattern: '^(?:\{|\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} - )'
+    operators:
+      - type: json_parser
+        if: 'body matches "^[[:space:]]*[{]"'
+        parse_to: body
+        on_error: send_quiet
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 0s
+
+  file_log/mcp:
+    include: ["${env:GOBBY_LOG_DIR}/mcp.log"]
+    start_at: end
+    storage: file_storage
+    on_truncate: read_whole_file
+    include_file_name: true
+    include_file_path: true
+    attributes:
+      gobby.log.surface: mcp
+    multiline:
+      line_start_pattern: '^(?:\{|\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} - )'
+    operators:
+      - type: json_parser
+        if: 'body matches "^[[:space:]]*[{]"'
+        parse_to: body
+        on_error: send_quiet
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 0s
+
+  file_log/automation:
+    include: ["${env:GOBBY_LOG_DIR}/automation.log"]
+    start_at: end
+    storage: file_storage
+    on_truncate: read_whole_file
+    include_file_name: true
+    include_file_path: true
+    attributes:
+      gobby.log.surface: automation
+    multiline:
+      line_start_pattern: '^(?:\{|\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} - )'
+    operators:
+      - type: json_parser
+        if: 'body matches "^[[:space:]]*[{]"'
+        parse_to: body
+        on_error: send_quiet
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 0s
+
+  file_log/runtime:
+    include: ["${env:GOBBY_LOG_DIR}/runtime.log"]
+    start_at: end
+    storage: file_storage
+    on_truncate: read_whole_file
+    include_file_name: true
+    include_file_path: true
+    attributes:
+      gobby.log.surface: runtime
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 0s
+
+  file_log/ui:
+    include: ["${env:GOBBY_LOG_DIR}/ui.log"]
+    start_at: end
+    storage: file_storage
+    on_truncate: read_whole_file
+    include_file_name: true
+    include_file_path: true
+    attributes:
+      gobby.log.surface: ui
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 0s
+
+  file_log/parser:
+    include: ["${env:GOBBY_LOG_DIR}/*-parser-error.log"]
+    start_at: end
+    storage: file_storage
+    on_truncate: read_whole_file
+    include_file_name: true
+    include_file_path: true
+    attributes:
+      gobby.log.surface: parser
+    multiline:
+      line_start_pattern: '^\[\d{4}-\d{2}-\d{2}T'
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 0s
+
+processors:
+  batch:
+
+exporters:
+  otlp_http/generic:
+    endpoint: "${env:GOBBY_OTLP_ENDPOINT}"
+    sending_queue:
+      enabled: true
+      storage: file_storage
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 0s
+
+service:
+  extensions: [file_storage]
+  pipelines:
+    logs/gobby:
+      receivers:
+        - file_log/daemon
+        - file_log/errors
+        - file_log/runtime
+        - file_log/hooks
+        - file_log/mcp
+        - file_log/automation
+        - file_log/ui
+        - file_log/parser
+      processors: [batch]
+      exporters: [otlp_http/generic]
