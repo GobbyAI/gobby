@@ -6,6 +6,8 @@ Only external I/O (HookManager daemon calls) is mocked.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -167,7 +169,7 @@ class TestTranslateToHookEvent:
         }
         event = adapter.translate_to_hook_event(native)
         assert event.event_type == HookEventType.AFTER_TOOL
-        assert event.metadata == {}
+        assert event.metadata == {"is_failure": False}
         # tool_result should be normalized to tool_output
         assert event.data["tool_output"] == "command output"
 
@@ -323,8 +325,8 @@ class TestTranslateToHookEvent:
 class TestBashFailureDetection:
     """Test that Bash failures are detected via tool_result content."""
 
-    def test_post_tool_use_bash_failure_sets_is_failure(self) -> None:
-        """post-tool-use with Bash failure content → metadata.is_failure is True."""
+    def test_post_tool_use_bash_failure_text_keeps_success_hook_contract(self) -> None:
+        """PostToolUse remains the definitive success event contract."""
         adapter = ClaudeCodeAdapter()
         native = {
             "hook_type": "post-tool-use",
@@ -336,7 +338,7 @@ class TestBashFailureDetection:
         }
         event = adapter.translate_to_hook_event(native)
         assert event.event_type == HookEventType.AFTER_TOOL
-        assert event.metadata.get("is_failure") is True
+        assert event.metadata["is_failure"] is False
         assert event.data.get("is_error") is True
 
     def test_post_tool_use_bash_success_no_failure(self) -> None:
@@ -351,7 +353,7 @@ class TestBashFailureDetection:
             },
         }
         event = adapter.translate_to_hook_event(native)
-        assert event.metadata == {}
+        assert event.metadata == {"is_failure": False}
 
     def test_post_tool_use_non_bash_unaffected(self) -> None:
         """post-tool-use with non-Bash tool → no is_failure even with exit code text."""
@@ -365,7 +367,22 @@ class TestBashFailureDetection:
             },
         }
         event = adapter.translate_to_hook_event(native)
-        assert event.metadata == {}
+        assert event.metadata == {"is_failure": False}
+
+    def test_live_session_8944_post_tool_use_sets_definitive_success(self) -> None:
+        fixture_path = (
+            Path(__file__).parents[1]
+            / "fixtures"
+            / "provider_contracts"
+            / "claude"
+            / "session-8944-post-tool-use.json"
+        )
+        native = json.loads(fixture_path.read_text())
+
+        event = ClaudeCodeAdapter().translate_to_hook_event(native)
+
+        assert event.metadata["is_failure"] is False
+        assert event.data["tool_output"]["stdout"].endswith("110 passed in 1.56s")
 
 
 class TestNormalizeEventData:

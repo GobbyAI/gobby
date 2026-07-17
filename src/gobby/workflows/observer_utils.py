@@ -87,7 +87,7 @@ def _shell_tool_succeeded(event: HookEvent) -> bool | None:
             normalized_status = status.strip().lower()
             if normalized_status in {"error", "failed", "failure"}:
                 success_signals.append(False)
-            elif normalized_status in {"complete", "completed", "ok", "succeeded", "success"}:
+            elif normalized_status in {"ok", "succeeded", "success"}:
                 success_signals.append(True)
 
     if False in success_signals:

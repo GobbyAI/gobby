@@ -1517,10 +1517,32 @@ class TestDetectBashCommit:
     def test_command_fallback_when_output_lacks_pattern(self, variables) -> None:
         """Fallback detects git commit from command when output is truncated."""
         event = _make_bash_event_dict(
-            {"output": "1 file changed, 2 insertions(+)"},
+            {"output": "1 file changed, 2 insertions(+)", "exitCode": 0},
             command="git commit -m 'Fix bug'",
         )
         detect_bash_commit(event, variables, SESSION_ID)
+        assert variables["task_has_commits"] is True
+
+    def test_command_fallback_requires_definitive_success(self, variables) -> None:
+        event = _make_bash_event(
+            "1 file changed, 2 insertions(+)",
+            command="git commit -m 'Fix bug'",
+            is_error=None,
+        )
+
+        detect_bash_commit(event, variables, SESSION_ID)
+
+        assert "task_has_commits" not in variables
+
+    def test_strict_commit_output_matches_with_unknown_outcome(self, variables) -> None:
+        event = _make_bash_event(
+            "[main abc1234] Fix bug\n 1 file changed",
+            command="git commit -m 'Fix bug'",
+            is_error=None,
+        )
+
+        detect_bash_commit(event, variables, SESSION_ID)
+
         assert variables["task_has_commits"] is True
 
     def test_command_fallback_nothing_to_commit(self, variables) -> None:
@@ -1657,6 +1679,25 @@ class TestDetectVerificationEvidence:
         assert variables["verification_evidence"][-1]["evidence_type"] == "validation_command"
         assert variables["verification_evidence"][-1]["success"] is False
 
+    def test_failed_then_successful_validation_recovers_readiness(self, variables) -> None:
+        failed = _make_bash_event(
+            "formatting required",
+            command="uv run ruff format --check src/gobby/workflows/observer_utils.py",
+            is_error=True,
+        )
+        succeeded = _make_bash_event(
+            "All checks passed!",
+            command="uv run ruff check src/gobby/workflows/observer_utils.py",
+        )
+
+        detect_verification_evidence(failed, variables, SESSION_ID)
+        assert variables["verification_evidence_recorded"] is False
+
+        detect_verification_evidence(succeeded, variables, SESSION_ID)
+
+        assert variables["verification_evidence_recorded"] is True
+        assert variables["verification_evidence"][-1]["success"] is True
+
     def test_codex_completed_validation_records_success_without_unknown_log(
         self,
         variables,
@@ -1716,7 +1757,10 @@ class TestDetectVerificationEvidence:
         assert evidence["success"] is False
         assert evidence["exit_code"] == 1
 
-    @pytest.mark.parametrize("outcome", [{"status": "declined"}, {}])
+    @pytest.mark.parametrize(
+        "outcome",
+        [{"status": "complete"}, {"status": "completed"}, {"status": "declined"}, {}],
+    )
     def test_codex_unknown_validation_outcome_preserves_readiness(
         self,
         variables,
@@ -1738,7 +1782,7 @@ class TestDetectVerificationEvidence:
         )
         assert event is not None
 
-        with caplog.at_level(logging.INFO, logger="gobby.workflows.observers"):
+        with caplog.at_level(logging.DEBUG, logger="gobby.workflows.observers"):
             detect_verification_evidence(event, variables, SESSION_ID)
 
         assert variables["verification_evidence_recorded"] is True
@@ -1766,6 +1810,34 @@ class TestDetectVerificationEvidence:
         assert "verification_evidence_recorded" not in variables
         assert variables["verification_evidence"][-1]["success"] is None
 
+    def test_environment_prefixed_validation_records_success(self, variables) -> None:
+        command = "GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_hooks.py -v"
+        event = _make_bash_event("passed", command=command)
+
+        detect_verification_evidence(event, variables, SESSION_ID)
+
+        assert variables["verification_evidence_recorded"] is True
+        assert variables["verification_evidence"][-1]["success"] is True
+
+    def test_pure_and_aggregate_success_records_readiness(self, variables) -> None:
+        command = "uv run pytest tests/workflows/test_hooks.py && uv run ruff check src/gobby"
+        event = _make_bash_event("passed", command=command)
+
+        detect_verification_evidence(event, variables, SESSION_ID)
+
+        assert variables["verification_evidence_recorded"] is True
+        assert variables["verification_evidence"][-1]["success"] is True
+
+    def test_pure_and_aggregate_failure_preserves_readiness(self, variables) -> None:
+        variables["verification_evidence_recorded"] = True
+        command = "uv run pytest tests/workflows/test_hooks.py && uv run ruff check src/gobby"
+        event = _make_bash_event("failed", command=command, is_error=True)
+
+        detect_verification_evidence(event, variables, SESSION_ID)
+
+        assert variables["verification_evidence_recorded"] is True
+        assert variables["verification_evidence"][-1]["success"] is None
+
     @pytest.mark.parametrize(
         "command",
         [
@@ -1786,9 +1858,9 @@ class TestDetectVerificationEvidence:
 
         detect_verification_evidence(event, variables, SESSION_ID)
 
-        assert variables["verification_evidence_recorded"] is False
+        assert variables["verification_evidence_recorded"] is True
         evidence = variables["verification_evidence"][-1]
-        assert evidence["success"] is False
+        assert evidence["success"] is None
         if "nonexistent" in command:
             assert evidence["evidence_requires_confirmation"] is True
         else:
@@ -1908,6 +1980,8 @@ class TestShellToolSucceeded:
             ({"exit_code": 2}, False),
             ({"success": True}, True),
             ({"status": "failed"}, False),
+            ({"status": "complete"}, None),
+            ({"status": "completed"}, None),
             ({"output": "failed but outcome is not structured"}, None),
         ],
     )

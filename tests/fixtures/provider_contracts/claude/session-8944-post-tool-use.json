@@ -1,0 +1,23 @@
+{
+  "_fixture_source": {
+    "session_ref": "#8944",
+    "external_id": "ab4024f4-6e01-4f64-a7d0-3ec3c01c7852",
+    "tool_use_id": "toolu_01WRLH44F8z3QpBzB1CfkiAM"
+  },
+  "hook_type": "PostToolUse",
+  "input_data": {
+    "session_id": "ab4024f4-6e01-4f64-a7d0-3ec3c01c7852",
+    "cwd": "/Users/josh/Projects/gobby",
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "GOBBY_TEST_PROTECT=1 uv run pytest tests/sessions/test_summary_validity.py tests/workflows/test_summary_actions.py tests/mcp_proxy/tools/sessions/test_capture_baseline.py -q"
+    },
+    "tool_response": {
+      "stdout": "============================= 110 passed in 1.56s",
+      "stderr": "",
+      "interrupted": false,
+      "isImage": false,
+      "noOutputExpected": false
+    }
+  }
+}

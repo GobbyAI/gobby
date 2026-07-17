@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.config.validation_detection import (
+    ValidationCommandMatch,
     classify_validation_command,
     resolve_validation_detection_config,
 )
@@ -27,6 +28,24 @@ if TYPE_CHECKING:
     from gobby.hooks.events import HookEvent
 
 logger = logging.getLogger("gobby.workflows.observers")
+
+
+def _validation_segment_outcome(
+    match: ValidationCommandMatch,
+    aggregate_outcome: bool | None,
+) -> bool | None:
+    """Resolve aggregate shell status to the matched validation segment."""
+    if match.evidence_requires_confirmation:
+        return None
+    if not match.is_compound:
+        return aggregate_outcome
+    if (
+        aggregate_outcome is True
+        and match.shell_operators
+        and all(operator == "&&" for operator in match.shell_operators)
+    ):
+        return True
+    return None
 
 
 def detect_verification_evidence(
@@ -52,9 +71,7 @@ def detect_verification_evidence(
     if match is None:
         return
 
-    success = _shell_tool_succeeded(event)
-    if success is True and (match.is_compound or match.evidence_requires_confirmation):
-        success = False
+    success = _validation_segment_outcome(match, _shell_tool_succeeded(event))
     evidence = {
         "evidence_type": VERIFICATION_EVIDENCE_TYPE_VALIDATION_COMMAND,
         "command": command,
@@ -99,7 +116,7 @@ def detect_verification_evidence(
         )
         return
 
-    logger.info(
+    logger.debug(
         "Session %s: verification readiness unchanged after validation command with unknown outcome",
         session_id,
     )

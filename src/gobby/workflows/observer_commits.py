@@ -131,7 +131,8 @@ def detect_bash_commit(event: HookEvent, variables: dict[str, Any], session_id: 
         return
 
     command = _extract_shell_command(event)
-    if not _is_git_commit_command(command) or _shell_tool_succeeded(event) is False:
+    outcome = _shell_tool_succeeded(event)
+    if not _is_git_commit_command(command) or outcome is False:
         return
 
     raw_output = event.data.get("tool_output")
@@ -150,7 +151,7 @@ def detect_bash_commit(event: HookEvent, variables: dict[str, Any], session_id: 
         logger.debug("Session %s: task_has_commits=true (Bash git commit output)", session_id)
         return
 
-    if _looks_like_commit_success(output):
+    if outcome is True and _looks_like_commit_success(output):
         variables["task_has_commits"] = True
         logger.debug(
             "Session %s: task_has_commits=true (Bash git commit command fallback)",

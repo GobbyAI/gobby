@@ -202,14 +202,15 @@ class ClaudeCodeAdapter(BaseAdapter):
         # so that is_error detection (Phase 3) runs before we build metadata
         normalized_data = self._normalize_event_data(input_data)
 
-        # Check for failure: explicit hook type OR inferred from tool output.
-        # Compare against the resolved native name so a PascalCase
-        # ``PostToolUseFailure`` token is recognized too.
+        # Claude's hook name is the definitive tool outcome signal. Preserve
+        # both values because successful PostToolUse payloads commonly contain
+        # only stdout/stderr dictionaries without an exit code.
         native_hook_name = contract.native_name if contract is not None else hook_type
-        is_failure = native_hook_name == "post-tool-use-failure" or normalized_data.get(
-            "is_error", False
-        )
-        metadata = {"is_failure": is_failure} if is_failure else {}
+        metadata: dict[str, Any] = {}
+        if native_hook_name == "post-tool-use":
+            metadata["is_failure"] = False
+        elif native_hook_name == "post-tool-use-failure":
+            metadata["is_failure"] = True
         self._copy_platform_session_metadata(native_event, metadata)
 
         return HookEvent(
