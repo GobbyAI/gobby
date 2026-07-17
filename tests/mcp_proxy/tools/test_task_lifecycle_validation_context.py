@@ -18,25 +18,22 @@ def test_gather_validation_context_prefers_linked_commit_diff_over_prose_summary
         validation_criteria="Diff is present",
         description=None,
     )
-    diff_result = SimpleNamespace(
-        diff=(
-            "diff --git a/a.py b/a.py\n"
-            "index abc..def 100644\n"
-            "--- a/a.py\n"
-            "+++ b/a.py\n"
-            "@@ -1 +1 @@\n"
-            "-old\n"
-            "+change\n"
-        ),
-        commits=["abc123"],
-        file_count=1,
+    raw_diff = (
+        "diff --git a/a.py b/a.py\n"
+        "index abc..def 100644\n"
+        "--- a/a.py\n"
+        "+++ b/a.py\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+change\n"
     )
+    first_page = {"commits": {"total": 1}, "manifest": {"total": 1}}
     long_summary = "prose only\n" + ("x" * 50000)
 
     with patch(
-        "gobby.tasks.commits.get_task_diff",
-        return_value=diff_result,
-    ) as get_task_diff:
+        "gobby.tasks.commits.collect_task_diff_text",
+        return_value=(raw_diff, first_page),
+    ) as collect_task_diff_text:
         context = gather_validation_context(
             task=task,
             changes_summary=long_summary,
@@ -44,14 +41,13 @@ def test_gather_validation_context_prefers_linked_commit_diff_over_prose_summary
             task_manager=MagicMock(),
         )
 
-    get_task_diff.assert_called_once_with(
+    collect_task_diff_text.assert_called_once_with(
         task_id="task-1",
         task_manager=ANY,
         include_uncommitted=False,
         cwd="/repo",
-        max_chars=None,
     )
-    assert context.raw_diff == diff_result.diff
+    assert context.raw_diff == raw_diff
     assert context.validation_context is not None
     assert "Commit-based diff" in context.validation_context
     assert "Changed File Manifest (authoritative):" in context.validation_context
@@ -78,14 +74,14 @@ def test_gather_validation_context_reads_mentioned_files_outside_linked_diff(tmp
         validation_criteria="Also verify docs/configuration-audit.md.",
         description=None,
     )
-    diff_result = SimpleNamespace(
-        diff="diff --git a/src/section.tsx b/src/section.tsx\n+change",
-        commits=["abc123"],
-        file_count=1,
-    )
+    raw_diff = "diff --git a/src/section.tsx b/src/section.tsx\n+change"
+    first_page = {"commits": {"total": 1}, "manifest": {"total": 1}}
 
     with (
-        patch("gobby.tasks.commits.get_task_diff", return_value=diff_result),
+        patch(
+            "gobby.tasks.commits.collect_task_diff_text",
+            return_value=(raw_diff, first_page),
+        ),
         patch("gobby.tasks.validation.get_validation_context_smart") as smart_context,
     ):
         context = gather_validation_context(
@@ -96,7 +92,7 @@ def test_gather_validation_context_reads_mentioned_files_outside_linked_diff(tmp
         )
 
     smart_context.assert_not_called()
-    assert context.raw_diff == diff_result.diff
+    assert context.raw_diff == raw_diff
     assert context.validation_context is not None
     assert "Commit-based diff" in context.validation_context
     assert context.file_context_text is not None

@@ -35,7 +35,7 @@ from gobby.plans.evidence import (
 )
 from gobby.plans.parser import PlanParseError
 from gobby.storage.tasks import LocalTaskManager, TaskNotFoundError
-from gobby.tasks.commits import get_task_diff
+from gobby.tasks.commits import collect_task_diff_text
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +197,8 @@ class _CliEvidenceContext:
 
     def get_task_diff(self, task_ref: str) -> str:
         task_id = self._resolve_task_id(task_ref)
-        return get_task_diff(task_id, self.task_manager, cwd=self.repo_root).diff
+        diff, _ = collect_task_diff_text(task_id, self.task_manager, cwd=self.repo_root)
+        return diff
 
     def get_artifacts(self, task_ref: str) -> dict[str, Any] | None:
         task_id = self._resolve_task_id(task_ref)

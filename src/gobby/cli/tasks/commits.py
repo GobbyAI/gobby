@@ -7,7 +7,7 @@ from pathlib import Path
 import click
 
 from gobby.cli.tasks._utils import get_task_manager, resolve_task_id
-from gobby.tasks.commits import auto_link_commits, get_task_diff
+from gobby.tasks.commits import auto_link_commits, collect_task_diff_text
 from gobby.utils.project_context import get_project_context
 
 
@@ -168,7 +168,7 @@ def diff_cmd(task_id: str, uncommitted: bool, stats: bool) -> None:
     ctx = get_project_context(cwd=Path.cwd())
     cwd = ctx.get("project_path") if ctx else None
 
-    result = get_task_diff(
+    diff, first_page = collect_task_diff_text(
         task_id=task.id,
         task_manager=manager,
         include_uncommitted=uncommitted,
@@ -177,17 +177,17 @@ def diff_cmd(task_id: str, uncommitted: bool, stats: bool) -> None:
 
     if stats:
         click.echo(f"Task: {task.id}")
-        click.echo(f"Commits: {len(result.commits)}")
-        click.echo(f"Files modified: {result.file_count}")
-        click.echo(f"Has uncommitted changes: {result.has_uncommitted_changes}")
+        click.echo(f"Commits: {first_page['commits']['total']}")
+        click.echo(f"Manifest entries: {first_page['manifest']['total']}")
+        click.echo(f"Included uncommitted changes: {uncommitted}")
         return
 
-    if not result.diff:
-        if not result.commits:
+    if not diff:
+        if not first_page["commits"]["total"]:
             click.echo(f"No commits linked to task {task.id}")
         else:
             click.echo("No changes in diff (empty diff)")
         return
 
     # Output the diff
-    click.echo(result.diff)
+    click.echo(diff)
