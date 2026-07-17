@@ -1,54 +1,81 @@
-from unittest.mock import MagicMock, patch
+import logging
+from collections.abc import Callable, Iterator
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.runner_maintenance import cleanup_comms_messages_loop
+from gobby.storage.communications import LocalCommunicationsStore
+from gobby.storage.inter_session_messages import InterSessionMessageManager
 
 
 @pytest.fixture(autouse=True)
-def mock_attachment_manager() -> MagicMock:
+def mock_attachment_manager() -> Iterator[MagicMock]:
     manager = MagicMock()
-    manager.cleanup_old.return_value = 0
     with patch("gobby.communications.attachments.AttachmentManager", return_value=manager):
         yield manager
 
 
 @pytest.mark.asyncio
-async def test_cleanup_comms_messages_loop():
-    # Mock dependencies
-    db_mock = MagicMock()
-    conn_mock = MagicMock()
-    cursor_mock = MagicMock()
+async def test_cleanup_comms_messages_loop(
+    mock_attachment_manager: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    attachment_paths = ["/attachments/first.txt", "/attachments/second.txt"]
+    run_db_calls: list[tuple[Callable[..., object], tuple[object, ...], dict[str, object]]] = []
 
-    # Setup mock chain
-    db_mock.transaction.return_value.__enter__.return_value = conn_mock
-    conn_mock.execute.return_value = cursor_mock
-    cursor_mock.rowcount = 5  # Simulate 5 deleted messages
+    async def run_db(func: Callable[..., object], *args: object, **kwargs: object) -> object:
+        run_db_calls.append((func, args, kwargs))
+        owner = getattr(func, "__self__", None)
+        if isinstance(owner, LocalCommunicationsStore):
+            return 5, attachment_paths
+        if isinstance(owner, InterSessionMessageManager):
+            return 3
+        raise AssertionError(f"Unexpected cleanup boundary: {func!r}")
 
-    # Control loop execution: run once then exit
-    shutdown_requested = [False, True]
+    shutdown_checks = 0
 
-    def is_shutdown():
-        return shutdown_requested.pop(0) if shutdown_requested else True
+    def is_shutdown_requested() -> bool:
+        nonlocal shutdown_checks
+        shutdown_checks += 1
+        return shutdown_checks > 1
 
-    # Mock asyncio.sleep to not actually sleep
-    with patch("asyncio.sleep") as sleep_mock:
-        # Run the loop
+    mock_attachment_manager.delete_paths.return_value = 2
+    mock_attachment_manager.cleanup_old.return_value = 4
+    sleep = AsyncMock()
+    expected_cutoff_start = datetime.now(UTC) - timedelta(days=30)
+
+    with caplog.at_level(logging.INFO, logger="gobby.runner_maintenance"):
         await cleanup_comms_messages_loop(
-            db_mock,
-            is_shutdown,
+            object(),
+            is_shutdown_requested,
             retention_days=30,
+            run_db=run_db,
+            interval_seconds=123,
             startup_delay_seconds=0,
+            sleep=sleep,
         )
 
-        # Verify sleep was called with 24 hours
-        sleep_mock.assert_called_once_with(24 * 60 * 60)
+    expected_cutoff_end = datetime.now(UTC) - timedelta(days=30)
+    assert len(run_db_calls) == 2
+    comms_call, mailbox_call = run_db_calls
+    assert isinstance(getattr(comms_call[0], "__self__", None), LocalCommunicationsStore)
+    assert isinstance(getattr(mailbox_call[0], "__self__", None), InterSessionMessageManager)
+    comms_cutoff = comms_call[1][0]
+    mailbox_cutoff = mailbox_call[1][0]
+    assert isinstance(comms_cutoff, datetime)
+    assert mailbox_cutoff is comms_cutoff
+    assert expected_cutoff_start <= comms_cutoff <= expected_cutoff_end
+    assert comms_call[2] == mailbox_call[2] == {"limit": 500}
 
-        # Verify DB execute was called with correct SQL
-        assert conn_mock.execute.call_count == 2
-        comms_call, mailbox_call = conn_mock.execute.call_args_list
-        assert "DELETE FROM comms_messages" in comms_call.args[0]
-        assert "WHERE created_at < %s" in comms_call.args[0]
-        assert "DELETE FROM inter_session_messages" in mailbox_call.args[0]
-
-        # Verify attachment cleanup was called
+    mock_attachment_manager.delete_paths.assert_called_once_with(attachment_paths)
+    mock_attachment_manager.cleanup_old.assert_called_once_with(days=30, limit=500)
+    assert caplog.messages == [
+        "Comms message cleanup: removed 5 old messages",
+        "Comms attachment cleanup: removed 2 files for retained messages",
+        "Mailbox message cleanup: removed 3 old delivered messages",
+        "Comms attachment cleanup: removed 4 old local files",
+    ]
+    sleep.assert_awaited_once_with(123)
+    assert shutdown_checks == 2
