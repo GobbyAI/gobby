@@ -50,12 +50,12 @@ async def _run_db(
 
 def _discover_wiki_cron_project_scopes(
     database: Any,
-) -> tuple[list[tuple[str, list[str] | None]], list[tuple[str, str]]]:
+) -> tuple[list[tuple[str, list[str] | None]], list[str]]:
     from gobby.storage.projects import LocalProjectManager
 
     project_manager = LocalProjectManager(database)
     scopes: list[tuple[str, list[str] | None]] = []
-    errors: list[tuple[str, str]] = []
+    stale_project_ids: list[str] = []
     offset = 0
     while True:
         projects = project_manager.list_page(
@@ -67,22 +67,14 @@ def _discover_wiki_cron_project_scopes(
         for project in projects:
             if project_manager.is_protected(project):
                 continue
-            if not project.repo_path:
-                errors.append((project.id, "skipped: project has no repo path"))
-                continue
-            if not Path(project.repo_path).exists():
-                errors.append(
-                    (
-                        project.id,
-                        f"skipped: project repo path does not exist: {project.repo_path}",
-                    )
-                )
+            if not project.repo_path or not Path(project.repo_path).is_dir():
+                stale_project_ids.append(project.id)
                 continue
             scopes.append((project.id, None))
         offset += len(projects)
         if len(projects) < _PROJECT_ENUMERATION_PAGE_SIZE:
             break
-    return scopes, errors
+    return scopes, stale_project_ids
 
 
 def _schedule_provider_model_refresh(
@@ -449,21 +441,32 @@ async def _register_wiki_cron_handlers(
         return
     try:
         from gobby.wiki.scheduled_jobs import (
+            WIKI_JOB_NAME_PREFIX,
             register_wiki_cron_jobs_for_projects,
         )
 
-        project_scopes, project_errors = await _run_db(
+        project_scopes, stale_project_ids = await _run_db(
             runner,
             _discover_wiki_cron_project_scopes,
             runner.database,
         )
-        if not project_scopes and not project_errors:
+        if not project_scopes and not stale_project_ids:
             if tracker:
                 tracker.error("Wiki cron handlers", "skipped: no registered projects")
             return
-        if tracker:
-            for project_id, error in project_errors:
-                tracker.error(f"Wiki cron handlers ({project_id})", error)
+
+        for stale_project_id in stale_project_ids:
+            deleted = await _run_db(
+                runner,
+                cron_storage.delete_system_jobs_by_project_and_name_prefix,
+                stale_project_id,
+                WIKI_JOB_NAME_PREFIX,
+            )
+            logger.info(
+                "Deleted %s stale wiki cron job(s) for project %s",
+                deleted,
+                stale_project_id,
+            )
 
         registered = await register_wiki_cron_jobs_for_projects(
             cron_storage=cron_storage,
@@ -478,9 +481,7 @@ async def _register_wiki_cron_handlers(
             ),
         )
         logger.debug("Wiki cron handlers registered: %s", registered)
-        if not project_scopes and registered == 0 and tracker:
-            tracker.error("Wiki cron handlers", "skipped: no wiki-capable projects")
-        elif tracker:
+        if tracker:
             tracker.complete("Wiki cron handlers")
     except Exception as e:
         logger.error("Failed to register wiki cron handlers: %s", e, exc_info=True)

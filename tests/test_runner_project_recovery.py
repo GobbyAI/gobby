@@ -14,6 +14,7 @@ from gobby.runner_lifecycle_subsystems import (
     _start_cron_scheduler,
 )
 from gobby.storage.cron import CronJobStorage
+from gobby.storage.cron_models import CronJob
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.workflows.pipeline_state import ExecutionStatus
@@ -35,6 +36,29 @@ def _create_projects(temp_db: object, tmp_path: Path) -> list[object]:
         repo_path.mkdir()
         projects.append(project_manager.create(name=name, repo_path=str(repo_path)))
     return projects
+
+
+def _create_wiki_job(
+    cron_storage: CronJobStorage,
+    *,
+    project_id: str,
+    enabled: bool,
+) -> CronJob:
+    scope = f"project:{project_id}"
+    return cron_storage.create_job(
+        project_id=project_id,
+        name=f"gobby:wiki-refresh:{scope}",
+        schedule_type="interval",
+        action_type="handler",
+        action_config={
+            "handler": f"wiki:refresh:{scope}",
+            "scope": scope,
+            "command": "refresh",
+        },
+        interval_seconds=3600,
+        enabled=enabled,
+        is_system=True,
+    )
 
 
 @pytest.mark.asyncio
@@ -139,6 +163,116 @@ async def test_wiki_cron_registers_each_project_outside_startup_project(
         "_ensure_wiki_cron_job",
         "list_system_jobs_by_name_prefix",
     } <= offloaded_operations
+
+
+@pytest.mark.asyncio
+async def test_wiki_cron_purges_stale_projects_and_restores_fresh_jobs(
+    temp_db: object,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    project_manager = LocalProjectManager(temp_db)
+    live_root = tmp_path / "live"
+    live_root.mkdir()
+    live = project_manager.create(name="live", repo_path=str(live_root))
+    empty = project_manager.create(name="empty", repo_path="")
+    missing_root = tmp_path / "missing"
+    missing = project_manager.create(name="missing", repo_path=str(missing_root))
+    cron_storage = CronJobStorage(temp_db)
+    live_job = _create_wiki_job(cron_storage, project_id=live.id, enabled=False)
+    empty_job = _create_wiki_job(cron_storage, project_id=empty.id, enabled=False)
+    missing_job = _create_wiki_job(cron_storage, project_id=missing.id, enabled=False)
+    cron_storage.create_run(empty_job.id)
+    cron_storage.create_run(missing_job.id)
+    operator_owned = cron_storage.create_job(
+        project_id=missing.id,
+        name=f"operator:wiki:project:{missing.id}",
+        schedule_type="interval",
+        action_type="handler",
+        action_config={"handler": "operator.wiki"},
+        interval_seconds=3600,
+        is_system=False,
+    )
+    unrelated_system = cron_storage.create_job(
+        project_id=missing.id,
+        name=f"gobby:unrelated:project:{missing.id}",
+        schedule_type="interval",
+        action_type="handler",
+        action_config={"handler": "unrelated.system"},
+        interval_seconds=3600,
+        is_system=True,
+    )
+    executor = RecordingCronExecutor()
+    db_run = AsyncMock(side_effect=lambda operation, *args, **kwargs: operation(*args, **kwargs))
+    runner = SimpleNamespace(
+        database=temp_db,
+        cron_storage=cron_storage,
+        cron_scheduler=SimpleNamespace(executor=executor),
+        db_executor=SimpleNamespace(run=db_run),
+    )
+    tracker = StartupTracker()
+
+    with caplog.at_level("INFO", logger="gobby.runner_lifecycle"):
+        await _register_wiki_cron_handlers(runner, tracker)
+
+    stored_live_job = cron_storage.get_job(live_job.id)
+    assert stored_live_job is not None
+    assert stored_live_job.enabled is False
+    assert cron_storage.get_job(empty_job.id) is None
+    assert cron_storage.get_job(missing_job.id) is None
+    assert cron_storage.list_runs(empty_job.id) == []
+    assert cron_storage.list_runs(missing_job.id) == []
+    assert cron_storage.get_job(operator_owned.id) is not None
+    assert cron_storage.get_job(unrelated_system.id) is not None
+    assert len(cron_storage.list_jobs(project_id=live.id)) == 7
+    assert tracker.errors == []
+    assert "Wiki cron handlers" in tracker.steps_completed
+    assert str(empty.id) in caplog.text
+    assert str(missing.id) in caplog.text
+    assert caplog.text.count("Deleted 1 stale wiki cron job(s)") == 2
+
+    await _register_wiki_cron_handlers(runner, StartupTracker())
+    assert len(cron_storage.list_jobs(project_id=live.id)) == 7
+
+    missing_root.mkdir()
+    project_manager.update(missing.id, repo_path=str(missing_root))
+    restored_tracker = StartupTracker()
+    await _register_wiki_cron_handlers(runner, restored_tracker)
+
+    restored_wiki_jobs = [
+        job
+        for job in cron_storage.list_jobs(project_id=missing.id)
+        if job.is_system and job.name.startswith("gobby:wiki-")
+    ]
+    assert len(restored_wiki_jobs) == 7
+    assert all(job.enabled for job in restored_wiki_jobs)
+    assert restored_tracker.errors == []
+
+
+@pytest.mark.asyncio
+async def test_wiki_cron_stale_only_projects_complete_after_cleanup(
+    temp_db: object,
+) -> None:
+    stale = LocalProjectManager(temp_db).create(name="stale", repo_path=None)
+    cron_storage = CronJobStorage(temp_db)
+    stale_job = _create_wiki_job(cron_storage, project_id=stale.id, enabled=True)
+    executor = RecordingCronExecutor()
+    db_run = AsyncMock(side_effect=lambda operation, *args, **kwargs: operation(*args, **kwargs))
+    runner = SimpleNamespace(
+        database=temp_db,
+        cron_storage=cron_storage,
+        cron_scheduler=SimpleNamespace(executor=executor),
+        db_executor=SimpleNamespace(run=db_run),
+    )
+    tracker = StartupTracker()
+
+    await _register_wiki_cron_handlers(runner, tracker)
+
+    assert cron_storage.get_job(stale_job.id) is None
+    assert tracker.errors == []
+    assert "Wiki cron handlers" in tracker.steps_completed
+    offloaded_operations = [call.args[0].__name__ for call in db_run.await_args_list]
+    assert "delete_system_jobs_by_project_and_name_prefix" in offloaded_operations
 
 
 @pytest.mark.asyncio

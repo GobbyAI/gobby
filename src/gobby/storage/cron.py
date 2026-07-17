@@ -671,6 +671,43 @@ class CronJobStorage(CronRunStorageMixin):
             )
         return cursor.rowcount
 
+    def delete_system_jobs_by_project_and_name_prefix(
+        self,
+        project_id: str,
+        prefix: str,
+    ) -> int:
+        """Hard-delete one project's matching system jobs and run history."""
+        if not project_id:
+            raise ValueError("project_id must not be empty")
+        if not prefix:
+            raise ValueError("prefix must not be empty")
+        pattern = _escape_like_prefix(prefix)
+        params = (project_id, pattern)
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                DELETE FROM cron_runs
+                 WHERE cron_job_id IN (
+                    SELECT id
+                      FROM cron_jobs
+                     WHERE project_id = %s
+                       AND is_system = TRUE
+                       AND name LIKE %s ESCAPE '\\'
+                 )
+                """,
+                params,
+            )
+            cursor = conn.execute(
+                """
+                DELETE FROM cron_jobs
+                 WHERE project_id = %s
+                   AND is_system = TRUE
+                   AND name LIKE %s ESCAPE '\\'
+                """,
+                params,
+            )
+        return cursor.rowcount
+
     def toggle_job(self, job_id: str) -> CronJob | None:
         """Toggle a cron job's enabled state."""
         from dataclasses import replace

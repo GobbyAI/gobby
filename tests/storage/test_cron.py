@@ -10,6 +10,7 @@ import pytest
 from gobby.storage import cron as cron_module
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
+from gobby.storage.projects import LocalProjectManager
 
 pytestmark = pytest.mark.unit
 
@@ -35,6 +36,24 @@ def _job(storage: CronJobStorage, *, is_system: bool) -> CronJob:
     stored = storage.get_job(job.id)
     assert stored is not None
     return stored
+
+
+def _named_job(
+    storage: CronJobStorage,
+    *,
+    project_id: str,
+    name: str,
+    is_system: bool,
+) -> CronJob:
+    return storage.create_job(
+        project_id=project_id,
+        name=name,
+        schedule_type="interval",
+        action_type="handler",
+        action_config={"handler": "wiki.test"},
+        interval_seconds=60,
+        is_system=is_system,
+    )
 
 
 def test_list_jobs_filters_by_is_system(cron_storage: CronJobStorage) -> None:
@@ -433,3 +452,85 @@ def test_list_system_jobs_by_name_prefix_escapes_like_wildcards(
         cron_storage.list_system_jobs_by_name_prefix("")
 
     assert cron_storage.list_system_jobs_by_name_prefix("gobby_wiki-research:") == []
+
+
+def test_delete_system_jobs_by_project_and_name_prefix_isolates_rows(
+    cron_storage: CronJobStorage,
+    temp_db: Any,
+) -> None:
+    other_project_id = LocalProjectManager(temp_db).create(name="other-cron-project").id
+    target = _named_job(
+        cron_storage,
+        project_id=PROJECT_ID,
+        name="gobby:wiki-refresh:project:target",
+        is_system=True,
+    )
+    operator_owned = _named_job(
+        cron_storage,
+        project_id=PROJECT_ID,
+        name="gobby:wiki-health:project:target",
+        is_system=False,
+    )
+    unrelated_system = _named_job(
+        cron_storage,
+        project_id=PROJECT_ID,
+        name="gobby:pipeline-heartbeat",
+        is_system=True,
+    )
+    other_project = _named_job(
+        cron_storage,
+        project_id=other_project_id,
+        name="gobby:wiki-refresh:project:other",
+        is_system=True,
+    )
+    for job in (target, operator_owned, unrelated_system, other_project):
+        cron_storage.create_run(job.id)
+
+    deleted = cron_storage.delete_system_jobs_by_project_and_name_prefix(
+        PROJECT_ID,
+        "gobby:wiki-",
+    )
+
+    assert deleted == 1
+    assert cron_storage.get_job(target.id) is None
+    assert cron_storage.list_runs(target.id) == []
+    for job in (operator_owned, unrelated_system, other_project):
+        assert cron_storage.get_job(job.id) is not None
+        assert len(cron_storage.list_runs(job.id)) == 1
+
+
+def test_delete_system_jobs_by_project_and_name_prefix_escapes_wildcards(
+    cron_storage: CronJobStorage,
+) -> None:
+    lookalike = _named_job(
+        cron_storage,
+        project_id=PROJECT_ID,
+        name="gobbyXwiki-refresh:project:target",
+        is_system=True,
+    )
+
+    deleted = cron_storage.delete_system_jobs_by_project_and_name_prefix(
+        PROJECT_ID,
+        "gobby_wiki-",
+    )
+
+    assert deleted == 0
+    assert cron_storage.get_job(lookalike.id) is not None
+
+
+def test_delete_system_jobs_by_project_and_name_prefix_rejects_empty_arguments(
+    cron_storage: CronJobStorage,
+) -> None:
+    target = _named_job(
+        cron_storage,
+        project_id=PROJECT_ID,
+        name="gobby:wiki-refresh:project:target",
+        is_system=True,
+    )
+
+    with pytest.raises(ValueError, match="project_id"):
+        cron_storage.delete_system_jobs_by_project_and_name_prefix("", "gobby:wiki-")
+    with pytest.raises(ValueError, match="prefix"):
+        cron_storage.delete_system_jobs_by_project_and_name_prefix(PROJECT_ID, "")
+
+    assert cron_storage.get_job(target.id) is not None
