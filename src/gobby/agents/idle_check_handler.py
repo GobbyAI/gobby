@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import sqlite3
 from collections import deque
 from collections.abc import Awaitable, Callable
@@ -31,6 +32,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 WATCHDOG_ACTOR = "agent_idle_watchdog"
+_CODEX_MODEL_CAPACITY_MESSAGE = "Selected model is at capacity. Please try a different model."
+_ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+_TERMINAL_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 REASONING_WATCHDOG_CONTINUATION = (
     "Gobby watchdog interrupted a long idle reasoning turn with no workflow progress. "
     "Continue from the current task context, avoid redoing completed analysis, finish the "
@@ -58,6 +62,9 @@ class _CodexTranscriptEventSummary:
 class _CodexTranscriptSnapshot:
     response_items: tuple[_CodexTranscriptEventSummary, ...]
     lifecycle_event: _CodexTranscriptEventSummary | None
+    task_started_event: _CodexTranscriptEventSummary | None
+    capacity_error_event: _CodexTranscriptEventSummary | None
+    latest_model_output_line_num: int | None
     last_malformed_line_num: int | None = None
 
     @property
@@ -73,13 +80,38 @@ class _CodexTranscriptSnapshot:
             return False
         return self.last_malformed_line_num is None
 
+    @property
+    def has_conclusive_capacity_error(self) -> bool:
+        started = self.task_started_event
+        error = self.capacity_error_event
+        completed = self.lifecycle_event
+        if started is None or error is None or completed is None:
+            return False
+        if completed.payload_type != "task_complete":
+            return False
+        if not started.line_num < error.line_num < completed.line_num:
+            return False
+        return self.last_malformed_line_num is None
+
     def to_log_dict(self) -> dict[str, object]:
         return {
             "response_items": [item.to_log_dict() for item in self.response_items],
             "lifecycle_event": (
                 self.lifecycle_event.to_log_dict() if self.lifecycle_event is not None else None
             ),
+            "capacity_error_event": (
+                self.capacity_error_event.to_log_dict()
+                if self.capacity_error_event is not None
+                else None
+            ),
         }
+
+
+@dataclass(slots=True)
+class _CodexCapacityRecoveryState:
+    transcript_path: str
+    last_error_line_num: int | None = None
+    successful_reprompts: int = 0
 
 
 class IdleCheckHandler:
@@ -107,6 +139,7 @@ class IdleCheckHandler:
         self._task_manager = task_manager
         self._run_db_callback = run_db
         self._prompt_detector = PromptDetector()
+        self._codex_capacity_recovery: dict[str, _CodexCapacityRecoveryState] = {}
 
     async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db_callback is None:
@@ -131,9 +164,16 @@ class IdleCheckHandler:
     async def check_idle_agents(self) -> int:
         """Check for idle agents and reprompt or fail them."""
         if not self._tmux_config.idle_check_enabled:
+            self._codex_capacity_recovery.clear()
             return 0
 
         runs = await self._run_db(self._get_active_terminal_runs)
+        active_run_ids = {run.id for run in runs}
+        self._codex_capacity_recovery = {
+            run_id: state
+            for run_id, state in self._codex_capacity_recovery.items()
+            if run_id in active_run_ids
+        }
 
         handled = 0
         for run in runs:
@@ -202,6 +242,7 @@ class IdleCheckHandler:
         idle_timeout_seconds = self._idle_timeout_seconds_for_run(run)
 
         session_stale = False
+        session_recent = False
         session_id = run.child_session_id
         session_manager = self._get_session_manager()
         session: Any | None = None
@@ -214,8 +255,7 @@ class IdleCheckHandler:
                     if last_update is not None:
                         elapsed = (datetime.now(UTC) - last_update).total_seconds()
                         if elapsed < idle_timeout_seconds:
-                            self._idle_detector.reset_idle(run.id)
-                            return 0
+                            session_recent = True
                         else:
                             session_stale = True
                 except (ValueError, TypeError):
@@ -226,12 +266,17 @@ class IdleCheckHandler:
             if activity_at is not None:
                 elapsed = (datetime.now(UTC) - activity_at).total_seconds()
                 if elapsed < idle_timeout_seconds:
-                    self._idle_detector.reset_idle(run.id)
-                    return 0
+                    session_recent = True
+
+        is_codex = session is not None and getattr(session, "source", None) == "codex"
+        if session_recent and not is_codex:
+            self._idle_detector.reset_idle(run.id)
+            return 0
 
         pane_output = await self._tmux.capture_pane(tmux_name, lines=15)
         if pane_output is None:
             return 0
+        capacity_candidate = is_codex and self._pane_has_codex_capacity_message(pane_output)
 
         queued_message_prompt_visible = False
         if pane_output is not None:
@@ -246,9 +291,13 @@ class IdleCheckHandler:
                 return 1
 
             # Active output is liveness even when the session row looks stale.
-            if status == "active":
-                if not session_stale or self._idle_detector.should_fail(
-                    run.id, self._tmux_config.max_reprompt_attempts
+            if status == "active" and not capacity_candidate:
+                if (
+                    session_recent
+                    or not session_stale
+                    or self._idle_detector.should_fail(
+                        run.id, self._tmux_config.max_reprompt_attempts
+                    )
                 ):
                     self._idle_detector.reset_idle(run.id)
                     return 0
@@ -260,6 +309,39 @@ class IdleCheckHandler:
                 )
                 self._idle_detector.reset_idle(run.id)
                 return 0
+
+        transcript_snapshot: _CodexTranscriptSnapshot | None = None
+        transcript_path = getattr(session, "transcript_path", None) if is_codex else None
+        if (
+            is_codex
+            and isinstance(transcript_path, str)
+            and transcript_path
+            and (session_stale or capacity_candidate)
+        ):
+            try:
+                transcript_snapshot = await self._read_codex_transcript_snapshot(transcript_path)
+            except OSError:
+                logger.warning(
+                    "Failed to read Codex transcript for idle recovery on run %s",
+                    run.id,
+                )
+
+        if (
+            capacity_candidate
+            and transcript_snapshot is not None
+            and transcript_snapshot.has_conclusive_capacity_error
+        ):
+            return await self._recover_codex_capacity_error(
+                run,
+                tmux_name=tmux_name,
+                session_id=session_id,
+                transcript_path=cast(str, transcript_path),
+                snapshot=transcript_snapshot,
+            )
+
+        if session_recent:
+            self._idle_detector.reset_idle(run.id)
+            return 0
 
         if self._idle_detector.should_fail(run.id, self._tmux_config.max_reprompt_attempts):
             if queued_message_prompt_visible:
@@ -278,20 +360,6 @@ class IdleCheckHandler:
             )
             await self._fail_idle_agent(run, reason="idle after max reprompt attempts")
             return 1
-
-        transcript_snapshot: _CodexTranscriptSnapshot | None = None
-        if session_stale and session is not None and getattr(session, "source", None) == "codex":
-            transcript_path = getattr(session, "transcript_path", None)
-            if isinstance(transcript_path, str) and transcript_path:
-                try:
-                    transcript_snapshot = await self._read_codex_transcript_snapshot(
-                        transcript_path
-                    )
-                except OSError:
-                    logger.warning(
-                        "Failed to read Codex transcript for completed-turn recovery on run %s",
-                        run.id,
-                    )
 
         completed_turn_recovery_due: bool | None = None
         if transcript_snapshot is not None:
@@ -341,6 +409,86 @@ class IdleCheckHandler:
             return int(await self._send_idle_reprompt(run, tmux_name=tmux_name))
 
         return 0
+
+    @staticmethod
+    def _pane_has_codex_capacity_message(pane_output: str) -> bool:
+        visible = _ANSI_ESCAPE_RE.sub("", pane_output)
+        visible = _TERMINAL_CONTROL_RE.sub("", visible)
+        normalized = " ".join(visible.split())
+        return _CODEX_MODEL_CAPACITY_MESSAGE in normalized
+
+    async def _recover_codex_capacity_error(
+        self,
+        run: AgentRun,
+        *,
+        tmux_name: str,
+        session_id: str | None,
+        transcript_path: str,
+        snapshot: _CodexTranscriptSnapshot,
+    ) -> int:
+        error_event = snapshot.capacity_error_event
+        if error_event is None:
+            return 0
+
+        state = self._codex_capacity_recovery.get(run.id)
+        if state is None or state.transcript_path != transcript_path:
+            state = _CodexCapacityRecoveryState(transcript_path=transcript_path)
+            self._codex_capacity_recovery[run.id] = state
+
+        if state.last_error_line_num == error_event.line_num:
+            return 0
+
+        latest_model_output = snapshot.latest_model_output_line_num
+        if (
+            state.last_error_line_num is not None
+            and latest_model_output is not None
+            and latest_model_output > state.last_error_line_num
+        ):
+            state.successful_reprompts = 0
+
+        max_attempts = self._tmux_config.max_reprompt_attempts
+        if state.successful_reprompts >= max_attempts:
+            state.last_error_line_num = error_event.line_num
+            logger.info(
+                "Codex agent %s remained at capacity after %s reprompts — failing",
+                run.id,
+                max_attempts,
+            )
+            await self._log_codex_transcript_snapshot(
+                run,
+                reason="failing after max Codex capacity reprompts",
+                snapshot=snapshot,
+            )
+            await self._fail_idle_agent(
+                run,
+                reason="Codex model capacity after max reprompt attempts",
+            )
+            return 1
+
+        attempt = state.successful_reprompts + 1
+        logger.info(
+            "Reprompting Codex agent %s after model capacity error (%s/%s)",
+            run.id,
+            attempt,
+            max_attempts,
+        )
+        await self._log_codex_transcript_snapshot(
+            run,
+            reason="recovering Codex model capacity error",
+            snapshot=snapshot,
+        )
+        if not await self._send_idle_reprompt(run, tmux_name=tmux_name):
+            return 0
+
+        state.last_error_line_num = error_event.line_num
+        state.successful_reprompts = attempt
+        await self._record_watchdog_task_event(
+            run,
+            action="capacity_reprompt",
+            session_id=session_id,
+            detail=f"codex_error_info=server_overloaded;attempt={attempt}/{max_attempts}",
+        )
+        return 1
 
     async def _send_idle_reprompt(self, run: AgentRun, *, tmux_name: str) -> bool:
         reprompt_message = await self._idle_reprompt_message(run)
@@ -592,6 +740,9 @@ class IdleCheckHandler:
         def _read() -> _CodexTranscriptSnapshot:
             items: deque[_CodexTranscriptEventSummary] = deque(maxlen=limit)
             lifecycle_event: _CodexTranscriptEventSummary | None = None
+            task_started_event: _CodexTranscriptEventSummary | None = None
+            capacity_error_event: _CodexTranscriptEventSummary | None = None
+            latest_model_output_line_num: int | None = None
             last_malformed_line_num: int | None = None
             with open(transcript_path, encoding="utf-8") as handle:
                 for line_num, raw_line in enumerate(handle, start=1):
@@ -629,11 +780,27 @@ class IdleCheckHandler:
                     )
                     if event_type == "response_item":
                         items.append(summary)
-                    elif payload_type in {"task_started", "task_complete"}:
-                        lifecycle_event = summary
+                        if payload_type != "message" or payload.get("role") != "user":
+                            latest_model_output_line_num = line_num
+                    else:
+                        if payload_type in {"agent_message", "agent_reasoning"}:
+                            latest_model_output_line_num = line_num
+                        if payload_type == "task_started":
+                            task_started_event = summary
+                        if payload_type in {"task_started", "task_complete"}:
+                            lifecycle_event = summary
+                        if (
+                            payload_type == "error"
+                            and payload.get("message") == _CODEX_MODEL_CAPACITY_MESSAGE
+                            and payload.get("codex_error_info") == "server_overloaded"
+                        ):
+                            capacity_error_event = summary
             return _CodexTranscriptSnapshot(
                 response_items=tuple(items),
                 lifecycle_event=lifecycle_event,
+                task_started_event=task_started_event,
+                capacity_error_event=capacity_error_event,
+                latest_model_output_line_num=latest_model_output_line_num,
                 last_malformed_line_num=last_malformed_line_num,
             )
 

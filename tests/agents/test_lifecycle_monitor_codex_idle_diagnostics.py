@@ -18,6 +18,8 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
+_CAPACITY_MESSAGE = "Selected model is at capacity. Please try a different model."
+_CAPACITY_PANE = "\x1b[31mSelected model is at\ncapacity. Please try a different model.\x1b[0m\n›\n"
 
 
 @pytest.fixture
@@ -159,6 +161,80 @@ def _write_codex_lifecycle_transcript(
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _append_codex_capacity_turn(
+    path: Path,
+    *,
+    message: str = _CAPACITY_MESSAGE,
+    error_info: str = "server_overloaded",
+    model_output_payload_type: str | None = None,
+    lifecycle_suffix: tuple[str, ...] = (),
+    malformed_tail: bool = False,
+) -> None:
+    timestamp = datetime.now(UTC).isoformat()
+    lines = [
+        json.dumps(
+            {
+                "timestamp": timestamp,
+                "type": "event_msg",
+                "payload": {"type": "task_started"},
+            }
+        ),
+        json.dumps(
+            {
+                "timestamp": timestamp,
+                "type": "response_item",
+                "payload": {"type": "message", "role": "user", "content": "continue"},
+            }
+        ),
+    ]
+    if model_output_payload_type is not None:
+        lines.append(
+            json.dumps(
+                {
+                    "timestamp": timestamp,
+                    "type": "response_item",
+                    "payload": {"type": model_output_payload_type},
+                }
+            )
+        )
+    lines.extend(
+        [
+            json.dumps(
+                {
+                    "timestamp": timestamp,
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "error",
+                        "message": message,
+                        "codex_error_info": error_info,
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "timestamp": timestamp,
+                    "type": "event_msg",
+                    "payload": {"type": "task_complete"},
+                }
+            ),
+        ]
+    )
+    lines.extend(
+        json.dumps(
+            {
+                "timestamp": timestamp,
+                "type": "event_msg",
+                "payload": {"type": lifecycle_event},
+            }
+        )
+        for lifecycle_event in lifecycle_suffix
+    )
+    if malformed_tail:
+        lines.append('{"timestamp":"unterminated"')
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")
+
+
 def _make_idle_monitor_run(
     *,
     temp_db: HubDatabase,
@@ -242,6 +318,54 @@ async def test_read_codex_transcript_snapshot_tracks_latest_lifecycle_event(
     assert snapshot.lifecycle_event.payload_type == "task_started"
     assert snapshot.has_conclusive_task_complete is False
     assert "prompt-and-tool-secret" not in json.dumps(snapshot.to_log_dict())
+
+
+@pytest.mark.asyncio
+async def test_read_codex_transcript_snapshot_confirms_redacted_capacity_error(
+    tmp_path: Path,
+) -> None:
+    transcript_path = tmp_path / "codex-capacity.jsonl"
+    _append_codex_capacity_turn(transcript_path)
+
+    snapshot = await IdleCheckHandler._read_codex_transcript_snapshot(str(transcript_path))
+
+    assert snapshot.has_conclusive_capacity_error is True
+    assert snapshot.capacity_error_event is not None
+    assert snapshot.capacity_error_event.payload_type == "error"
+    assert snapshot.latest_model_output_line_num is None
+    assert _CAPACITY_MESSAGE not in json.dumps(snapshot.to_log_dict())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("message", "error_info", "lifecycle_suffix", "malformed_tail"),
+    [
+        ("A different provider error", "server_overloaded", (), False),
+        (_CAPACITY_MESSAGE, "other_error", (), False),
+        (_CAPACITY_MESSAGE, "server_overloaded", ("task_started", "task_complete"), False),
+        (_CAPACITY_MESSAGE, "server_overloaded", (), True),
+    ],
+    ids=["wrong-message", "wrong-error-info", "prior-turn", "malformed-tail"],
+)
+async def test_read_codex_transcript_snapshot_rejects_inconclusive_capacity_error(
+    tmp_path: Path,
+    message: str,
+    error_info: str,
+    lifecycle_suffix: tuple[str, ...],
+    malformed_tail: bool,
+) -> None:
+    transcript_path = tmp_path / "codex-inconclusive-capacity.jsonl"
+    _append_codex_capacity_turn(
+        transcript_path,
+        message=message,
+        error_info=error_info,
+        lifecycle_suffix=lifecycle_suffix,
+        malformed_tail=malformed_tail,
+    )
+
+    snapshot = await IdleCheckHandler._read_codex_transcript_snapshot(str(transcript_path))
+
+    assert snapshot.has_conclusive_capacity_error is False
 
 
 @pytest.mark.asyncio
@@ -340,6 +464,250 @@ async def test_fresh_task_complete_waits_for_base_timeout_before_any_recovery(
     assert handled == 0
     mock_send.assert_not_awaited()
     assert monitor._idle_detector.get_state(run.id).reprompt_count == 0
+
+
+@pytest.mark.asyncio
+async def test_fresh_capacity_error_immediately_sends_workflow_aware_reprompt(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict,
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+) -> None:
+    transcript_path = tmp_path / "codex-fresh-capacity.jsonl"
+    _append_codex_capacity_turn(transcript_path)
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1020",
+        transcript_path=transcript_path,
+        session_age_seconds=1,
+    )
+
+    with (
+        patch.object(
+            monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value=_CAPACITY_PANE
+        ),
+        patch.object(
+            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
+        ) as mock_send,
+        patch.object(
+            monitor._idle_check_handler,
+            "_idle_reprompt_message",
+            new_callable=AsyncMock,
+            return_value="workflow-aware continuation",
+        ),
+        patch.object(
+            monitor._idle_check_handler,
+            "_record_watchdog_task_event",
+            new_callable=AsyncMock,
+        ) as mock_audit,
+    ):
+        handled = await monitor.check_idle_agents()
+
+    assert handled == 1
+    assert monitor._idle_detector.get_state(run.id).reprompt_count == 1
+    state = monitor._idle_check_handler._codex_capacity_recovery[run.id]
+    assert state.successful_reprompts == 1
+    mock_send.assert_has_awaits(
+        [
+            call(run.tmux_session_name, "Escape", literal=False),
+            call(run.tmux_session_name, "workflow-aware continuation"),
+            call(run.tmux_session_name, "Enter", literal=False),
+        ]
+    )
+    mock_audit.assert_awaited_once_with(
+        run,
+        action="capacity_reprompt",
+        session_id=run.child_session_id,
+        detail="codex_error_info=server_overloaded;attempt=1/2",
+    )
+
+
+@pytest.mark.asyncio
+async def test_capacity_pane_text_requires_structured_transcript_confirmation(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict,
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+) -> None:
+    transcript_path = tmp_path / "codex-capacity-pane-only.jsonl"
+    _write_codex_lifecycle_transcript(transcript_path, age_seconds=1)
+    monitor, _run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1021",
+        transcript_path=transcript_path,
+        session_age_seconds=1,
+    )
+
+    with (
+        patch.object(
+            monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value=_CAPACITY_PANE
+        ),
+        patch.object(
+            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
+        ) as mock_send,
+    ):
+        handled = await monitor.check_idle_agents()
+
+    assert handled == 0
+    mock_send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_capacity_reprompt_retries_failed_send_and_deduplicates_success(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict,
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+) -> None:
+    transcript_path = tmp_path / "codex-capacity-dedupe.jsonl"
+    _append_codex_capacity_turn(transcript_path)
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1022",
+        transcript_path=transcript_path,
+        session_age_seconds=1,
+    )
+
+    with (
+        patch.object(
+            monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value=_CAPACITY_PANE
+        ),
+        patch.object(
+            monitor._tmux,
+            "send_keys",
+            new_callable=AsyncMock,
+            side_effect=[True, False, True, True, True],
+        ) as mock_send,
+        patch.object(
+            monitor._idle_check_handler,
+            "_idle_reprompt_message",
+            new_callable=AsyncMock,
+            return_value="continue",
+        ),
+        patch.object(
+            monitor._idle_check_handler,
+            "_record_watchdog_task_event",
+            new_callable=AsyncMock,
+        ) as mock_audit,
+    ):
+        first = await monitor.check_idle_agents()
+        second = await monitor.check_idle_agents()
+        duplicate = await monitor.check_idle_agents()
+
+    assert (first, second, duplicate) == (0, 1, 0)
+    assert mock_send.await_count == 5
+    mock_audit.assert_awaited_once()
+    state = monitor._idle_check_handler._codex_capacity_recovery[run.id]
+    assert state.successful_reprompts == 1
+
+
+@pytest.mark.asyncio
+async def test_capacity_reprompts_are_bounded_across_user_only_retry_turns(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict,
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+) -> None:
+    transcript_path = tmp_path / "codex-capacity-bounded.jsonl"
+    _append_codex_capacity_turn(transcript_path)
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1023",
+        transcript_path=transcript_path,
+        session_age_seconds=1,
+    )
+
+    with (
+        patch.object(
+            monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value=_CAPACITY_PANE
+        ),
+        patch.object(
+            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
+        ) as mock_send,
+        patch.object(monitor._tmux, "kill_session", new_callable=AsyncMock, return_value=True),
+        patch.object(
+            monitor._idle_check_handler,
+            "_record_watchdog_task_event",
+            new_callable=AsyncMock,
+        ) as mock_audit,
+    ):
+        first = await monitor.check_idle_agents()
+        _append_codex_capacity_turn(transcript_path)
+        second = await monitor.check_idle_agents()
+        _append_codex_capacity_turn(transcript_path)
+        exhausted = await monitor.check_idle_agents()
+
+    assert (first, second, exhausted) == (1, 1, 1)
+    assert mock_send.await_count == 6
+    assert mock_audit.await_count == 2
+    updated_run = agent_run_manager.get(run.id)
+    assert updated_run is not None
+    assert updated_run.status == "error"
+
+
+@pytest.mark.asyncio
+async def test_capacity_retry_budget_resets_after_model_output(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict,
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+) -> None:
+    transcript_path = tmp_path / "codex-capacity-progress.jsonl"
+    _append_codex_capacity_turn(transcript_path)
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1024",
+        transcript_path=transcript_path,
+        session_age_seconds=1,
+    )
+
+    with (
+        patch.object(
+            monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value=_CAPACITY_PANE
+        ),
+        patch.object(
+            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
+        ) as mock_send,
+        patch.object(
+            monitor._tmux, "kill_session", new_callable=AsyncMock, return_value=True
+        ) as mock_kill,
+        patch.object(
+            monitor._idle_check_handler,
+            "_record_watchdog_task_event",
+            new_callable=AsyncMock,
+        ),
+    ):
+        await monitor.check_idle_agents()
+        _append_codex_capacity_turn(transcript_path)
+        await monitor.check_idle_agents()
+        _append_codex_capacity_turn(transcript_path, model_output_payload_type="reasoning")
+        recovered = await monitor.check_idle_agents()
+
+    assert recovered == 1
+    assert mock_send.await_count == 9
+    mock_kill.assert_not_awaited()
+    state = monitor._idle_check_handler._codex_capacity_recovery[run.id]
+    assert state.successful_reprompts == 1
 
 
 @pytest.mark.asyncio
@@ -476,7 +844,7 @@ async def test_completed_turn_recovery_preserves_unsubmitted_input(
 
 
 @pytest.mark.asyncio
-async def test_completed_turn_recovery_skips_recent_codex_session_activity(
+async def test_recent_codex_session_activity_only_checks_capacity_pane(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict,
@@ -496,13 +864,18 @@ async def test_completed_turn_recovery_skips_recent_codex_session_activity(
     )
 
     with (
-        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock) as mock_capture,
+        patch.object(
+            monitor._tmux,
+            "capture_pane",
+            new_callable=AsyncMock,
+            return_value="active output\n",
+        ) as mock_capture,
         patch.object(monitor._tmux, "send_keys", new_callable=AsyncMock) as mock_send,
     ):
         handled = await monitor.check_idle_agents()
 
     assert handled == 0
-    mock_capture.assert_not_awaited()
+    mock_capture.assert_awaited_once_with(_run.tmux_session_name, lines=15)
     mock_send.assert_not_awaited()
 
 

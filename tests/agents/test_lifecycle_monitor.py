@@ -1766,14 +1766,14 @@ class TestCheckIdleAgents:
         )
 
     @pytest.mark.asyncio
-    async def test_xhigh_session_within_scaled_timeout_skips_pane_check(
+    async def test_xhigh_session_within_scaled_timeout_only_probes_capacity(
         self,
         agent_run_manager: LocalAgentRunManager,
         session_manager: SessionManager,
         sample_session: dict,
         temp_db: HubDatabase,
     ) -> None:
-        """xhigh runs should stay active within the extended idle window."""
+        """xhigh runs should only probe for capacity errors inside the extended window."""
         import time
         from datetime import UTC, datetime, timedelta
 
@@ -1825,7 +1825,7 @@ class TestCheckIdleAgents:
             handled = await mon.check_idle_agents()
 
         assert handled == 0
-        mock_capture.assert_not_called()
+        mock_capture.assert_awaited_once_with("gobby-xhigh-scaled-active", lines=15)
         mock_send.assert_not_called()
         mock_kill.assert_not_called()
         updated = agent_run_manager.get(run.id)
