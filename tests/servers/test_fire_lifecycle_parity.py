@@ -601,7 +601,7 @@ class TestFireLifecycleRequireUvRule:
     """_fire_lifecycle should use real synced rules for shell command policy."""
 
     @pytest.mark.asyncio
-    async def test_real_synced_require_uv_blocks_shell_alias_without_modified_input(
+    async def test_real_synced_require_uv_blocks_package_management_without_rewrite(
         self, host: ChatMixinHost, rules_db: HubDatabase
     ) -> None:
         """Web chat normalizes exec_command to Bash and returns a plain block."""
@@ -614,14 +614,18 @@ class TestFireLifecycleRequireUvRule:
         result = await host._fire_lifecycle(
             "conv-1",
             HookEventType.BEFORE_TOOL,
-            {"tool_name": "exec_command", "tool_input": {"command": "python script.py"}},
+            {
+                "tool_name": "exec_command",
+                "tool_input": {"command": "python3.13 -m pip install requests"},
+            },
         )
 
         assert result is not None
         assert result["decision"] == "block"
         assert result["reason"] == (
             "Rule enforced by Gobby: [require-uv]\n"
-            "Bare python/pip is not permitted in this repo. Use uv instead."
+            "Python package management must use uv. "
+            "Use uv pip or uv run python -m pip."
         )
         assert "modified_input" not in result
         assert "auto_approve" not in result

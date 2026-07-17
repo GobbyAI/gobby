@@ -3655,7 +3655,10 @@ class TestVerboseOnceBlockReason:
                 effects=[
                     RuleEffect(
                         type="block",
-                        reason="Bare python/pip is not permitted in this repo. Use uv instead.",
+                        reason=(
+                            "Python package management must use uv. "
+                            "Use uv pip or uv run python -m pip."
+                        ),
                     )
                 ],
             ),
@@ -3678,7 +3681,7 @@ class TestVerboseOnceBlockReason:
         assert "gcode outline" in (first.reason or "")
         assert self._TERSE_HINT not in (first.reason or "")
         assert second.decision == "block"
-        assert "Use uv instead" in (second.reason or "")
+        assert "Python package management must use uv" in (second.reason or "")
         assert self._TERSE_HINT not in (second.reason or "")
         shown_rules = {entry.split(":", 1)[0] for entry in variables["_block_reasons_shown"]}
         assert shown_rules == {"require-code-index-skill", "require-uv"}

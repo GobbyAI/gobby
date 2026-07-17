@@ -417,7 +417,7 @@
     "workflows/rules/tool-hygiene/block-claude-memory-read.yaml": "5caee7c5ce1eae9fdf9091a410b65675f17cb70a57e757ec16eb721388401ce6",
     "workflows/rules/tool-hygiene/block-claude-memory-search.yaml": "7d847768b191460eea34486f7b70f7d0e319b725996b7a8b69935fee814d3e6f",
     "workflows/rules/tool-hygiene/block-claude-memory-write.yaml": "56288e18623e6be0fef8a4ad61917e2347f25a0c6f60d6bbd50f36363cd92dc0",
-    "workflows/rules/tool-hygiene/require-uv.yaml": "a5fd9f784e7c426e8f5ce60c02f280eb4505a5cca2cc06c97bdd4dc093a11bc5",
+    "workflows/rules/tool-hygiene/require-uv.yaml": "ddaa7a998f3c89f9e4bc752421583785a602014cf83b240e521adae40c0cc62c",
     "workflows/rules/tool-hygiene/track-pending-memory-review.yaml": "68defe82700cd0767e877fc8a134cb59166e2299142638a7c9bc0ff956f06579",
     "workflows/rules/worker-safety/no-agent-spawn-for-merge.yaml": "3c8477a91af15df56ac4be029db90f063b4d486fc04d2e7e8a6f914c002c850c",
     "workflows/rules/worker-safety/no-bash-sleep.yaml": "cd9bb6420692efbb5c0a72c2345897b6029f705a9c9f8c44ded29d7d2b660b11",

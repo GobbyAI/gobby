@@ -2,7 +2,7 @@ tags: [tool-hygiene, enforcement, python, gobby, default]
 
 rules:
   require-uv:
-    description: "Block bare python/pip; require uv"
+    description: "Require uv for Python package management"
     event: before_tool
     enabled: true
     priority: 50
@@ -10,5 +10,5 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "(^|(?<=[;&|]))\\s*(?:sudo\\s+)?(?:pip3?\\b|python(?:3(?:\\.\\d+)?)?\\b)"
-        reason: "Bare python/pip is not permitted in this repo. Use uv instead."
+        command_pattern: "(^|(?<=[;&|]))\\s*(?:sudo\\s+)?(?:pip3?\\b|python(?:\\d+(?:\\.\\d+)?)?\\s+-m\\s+pip\\b)"
+        reason: "Python package management must use uv. Use uv pip or uv run python -m pip."

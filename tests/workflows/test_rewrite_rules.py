@@ -363,8 +363,11 @@ class TestShlexQuoteFilter:
         assert result == "''"
 
 
-REQUIRE_UV_COMMAND_PATTERN = r"(^|(?<=[;&|]))\s*(?:sudo\s+)?(?:pip3?\b|python(?:3(?:\.\d+)?)?\b)"
-REQUIRE_UV_REASON = "Bare python/pip is not permitted in this repo. Use uv instead."
+REQUIRE_UV_COMMAND_PATTERN = (
+    r"(^|(?<=[;&|]))\s*(?:sudo\s+)?"
+    r"(?:pip3?\b|python(?:\d+(?:\.\d+)?)?\s+-m\s+pip\b)"
+)
+REQUIRE_UV_REASON = "Python package management must use uv. Use uv pip or uv run python -m pip."
 
 
 def _insert_require_uv_block_rule(manager: LocalWorkflowDefinitionManager) -> None:
@@ -390,7 +393,7 @@ class TestRequireUvBlockRule:
     """Tests for the require-uv block rule pattern."""
 
     @pytest.mark.asyncio
-    async def test_blocks_bare_python(
+    async def test_allows_bare_python(
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         _insert_require_uv_block_rule(manager)
@@ -407,13 +410,13 @@ class TestRequireUvBlockRule:
             event, session_id=SESSION_ID, variables={"require_uv": True}
         )
 
-        assert response.decision == "block"
-        assert response.reason == f"Rule enforced by Gobby: [require-uv]\n{REQUIRE_UV_REASON}"
+        assert response.decision == "allow"
+        assert response.reason is None
         assert response.modified_input is None
         assert response.auto_approve is False
 
     @pytest.mark.asyncio
-    async def test_blocks_shell_alias_via_normalized_bash(
+    async def test_allows_bare_python_via_normalized_exec_command(
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         _insert_require_uv_block_rule(manager)
@@ -430,13 +433,20 @@ class TestRequireUvBlockRule:
             event, session_id=SESSION_ID, variables={"require_uv": True}
         )
 
-        assert response.decision == "block"
-        assert response.reason == f"Rule enforced by Gobby: [require-uv]\n{REQUIRE_UV_REASON}"
+        assert response.decision == "allow"
         assert response.modified_input is None
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "uv run python script.py",
+            "uv pip install requests",
+            "uv run python -m pip install requests",
+        ],
+    )
     async def test_passthrough_uv_command(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, command: str
     ) -> None:
         """Commands already using uv should not block or rewrite."""
         _insert_require_uv_block_rule(manager)
@@ -444,7 +454,7 @@ class TestRequireUvBlockRule:
         event = _make_event(
             data={
                 "tool_name": "Bash",
-                "tool_input": {"command": "uv run python script.py"},
+                "tool_input": {"command": command},
             }
         )
 
@@ -477,6 +487,51 @@ class TestRequireUvBlockRule:
 
         assert response.decision == "block"
         assert response.reason == f"Rule enforced by Gobby: [require-uv]\n{REQUIRE_UV_REASON}"
+        assert response.modified_input is None
+
+    @pytest.mark.asyncio
+    async def test_normalized_exec_command_blocks_python_module_pip(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _insert_require_uv_block_rule(manager)
+
+        event = _make_event(
+            data={
+                "tool_name": "exec_command",
+                "tool_input": {"command": "python3.13 -m pip install foo"},
+            }
+        )
+
+        engine = RuleEngine(db)
+        response = await engine.evaluate(
+            event, session_id=SESSION_ID, variables={"require_uv": True}
+        )
+
+        assert response.decision == "block"
+        assert response.reason == f"Rule enforced by Gobby: [require-uv]\n{REQUIRE_UV_REASON}"
+        assert response.modified_input is None
+        assert response.auto_approve is False
+
+    @pytest.mark.asyncio
+    async def test_require_uv_false_bypasses_package_management_block(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _insert_require_uv_block_rule(manager)
+
+        event = _make_event(
+            data={
+                "tool_name": "Bash",
+                "tool_input": {"command": "pip install foo"},
+            }
+        )
+
+        engine = RuleEngine(db)
+        response = await engine.evaluate(
+            event, session_id=SESSION_ID, variables={"require_uv": False}
+        )
+
+        assert response.decision == "allow"
+        assert response.reason is None
         assert response.modified_input is None
 
     @pytest.mark.asyncio

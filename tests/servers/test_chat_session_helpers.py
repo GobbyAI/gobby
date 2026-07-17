@@ -131,7 +131,8 @@ class TestHookResponseConverters:
                 "decision": "block",
                 "reason": (
                     "Rule enforced by Gobby: [require-uv]\n"
-                    "Bare python/pip is not permitted in this repo. Use uv instead."
+                    "Python package management must use uv. "
+                    "Use uv pip or uv run python -m pip."
                 ),
                 "modified_input": {"command": "uv run python script.py"},
                 "auto_approve": True,

@@ -107,12 +107,15 @@ class TestToolHygieneSync:
         assert deleted.deleted_at is not None
 
 
-REQUIRE_UV_REASON = "Bare python/pip is not permitted in this repo. Use uv instead."
-REQUIRE_UV_COMMAND_PATTERN = r"(^|(?<=[;&|]))\s*(?:sudo\s+)?(?:pip3?\b|python(?:3(?:\.\d+)?)?\b)"
+REQUIRE_UV_REASON = "Python package management must use uv. Use uv pip or uv run python -m pip."
+REQUIRE_UV_COMMAND_PATTERN = (
+    r"(^|(?<=[;&|]))\s*(?:sudo\s+)?"
+    r"(?:pip3?\b|python(?:\d+(?:\.\d+)?)?\s+-m\s+pip\b)"
+)
 
 
 class TestRequireUvRule:
-    """Verify require-uv blocks naked python/pip commands."""
+    """Verify require-uv guards Python package management commands."""
 
     def test_uses_single_block_effect(self, db, manager) -> None:
         """require-uv should only block matching Bash commands."""
@@ -123,7 +126,7 @@ class TestRequireUvRule:
 
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "before_tool"
-        assert row.description == "Block bare python/pip; require uv"
+        assert row.description == "Require uv for Python package management"
         assert len(body.resolved_effects) == 1
 
         effect = body.resolved_effects[0]
@@ -154,14 +157,24 @@ class TestRequireUvRule:
         assert "require_uv" in body.when
 
     @pytest.mark.asyncio
-    async def test_bundled_rule_skips_already_compliant_uv_python(self, db, manager) -> None:
-        """Compliant uv commands should not block."""
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "python script.py",
+            'python -c "print(1)"',
+            "python -m http.server",
+            'uv run python -c "print(1)"',
+            "uv pip install requests",
+            "uv run python -m pip install requests",
+        ],
+    )
+    async def test_bundled_rule_allows_non_package_and_uv_managed_commands(
+        self, db, manager, command: str
+    ) -> None:
+        """Ordinary Python and uv-managed package commands should pass."""
         _sync_bundled(db)
 
-        event = _make_bash_event(
-            "uv run python -c \"print('hello')\"",
-            source=SessionSource.CODEX,
-        )
+        event = _make_bash_event(command, source=SessionSource.CODEX)
         engine = RuleEngine(db)
 
         response = await engine.evaluate(
@@ -172,13 +185,22 @@ class TestRequireUvRule:
         assert response.modified_input is None
 
     @pytest.mark.asyncio
-    async def test_bundled_rule_blocks_bare_python_without_modified_input(
-        self, db, manager
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "pip install requests",
+            "pip3 install requests",
+            "python -m pip install requests",
+            "python3.13 -m pip install requests",
+        ],
+    )
+    async def test_bundled_rule_blocks_unmanaged_package_commands_without_rewrite(
+        self, db, manager, command: str
     ) -> None:
-        """Bare python should block directly."""
+        """Unmanaged package commands should block without a rewrite payload."""
         _sync_bundled(db)
 
-        event = _make_bash_event("python script.py", source=SessionSource.CODEX)
+        event = _make_bash_event(command, source=SessionSource.CODEX)
         engine = RuleEngine(db)
 
         response = await engine.evaluate(
@@ -335,34 +357,42 @@ class TestRequireUvShouldBlock:
     top level of event.data. These tests verify the extraction works.
     """
 
-    def test_blocks_naked_python(self, db) -> None:
+    @pytest.mark.parametrize(
+        "command",
+        ["python script.py", 'python -c "print(1)"', "python3 -m http.server"],
+    )
+    def test_allows_bare_python(self, db, command: str) -> None:
         engine = RuleEngine(db)
-        event = _make_bash_event("python script.py")
-        assert engine._should_block(_require_uv_effect(), event) is True
-
-    def test_blocks_naked_pip(self, db) -> None:
-        engine = RuleEngine(db)
-        event = _make_bash_event("pip install requests")
-        assert engine._should_block(_require_uv_effect(), event) is True
-
-    def test_blocks_python3_inline(self, db) -> None:
-        engine = RuleEngine(db)
-        event = _make_bash_event("python3 -c \"print('hi')\"")
-        assert engine._should_block(_require_uv_effect(), event) is True
-
-    def test_allows_uv_run_python(self, db) -> None:
-        engine = RuleEngine(db)
-        event = _make_bash_event("uv run python -c \"print('hello')\"")
+        event = _make_bash_event(command)
         assert engine._should_block(_require_uv_effect(), event) is False
 
-    def test_allows_uv_run_pytest(self, db) -> None:
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "pip install requests",
+            "pip3 install requests",
+            "python -m pip install requests",
+            "python3 -m pip install requests",
+            "python3.13 -m pip install requests",
+        ],
+    )
+    def test_blocks_unmanaged_package_commands(self, db, command: str) -> None:
         engine = RuleEngine(db)
-        event = _make_bash_event("uv run pytest tests/ -v")
-        assert engine._should_block(_require_uv_effect(), event) is False
+        event = _make_bash_event(command)
+        assert engine._should_block(_require_uv_effect(), event) is True
 
-    def test_allows_uv_pip_install(self, db) -> None:
+    @pytest.mark.parametrize(
+        "command",
+        [
+            'uv run python -c "print(1)"',
+            "uv run pytest tests/ -v",
+            "uv pip install requests",
+            "uv run python -m pip install requests",
+        ],
+    )
+    def test_allows_uv_managed_commands(self, db, command: str) -> None:
         engine = RuleEngine(db)
-        event = _make_bash_event("uv pip install requests")
+        event = _make_bash_event(command)
         assert engine._should_block(_require_uv_effect(), event) is False
 
     def test_allows_non_python_command(self, db) -> None:
@@ -370,14 +400,22 @@ class TestRequireUvShouldBlock:
         event = _make_bash_event("ls -la")
         assert engine._should_block(_require_uv_effect(), event) is False
 
-    def test_blocks_python_after_chain(self, db) -> None:
+    def test_allows_python_after_chain(self, db) -> None:
         engine = RuleEngine(db)
         event = _make_bash_event("cd /tmp && python test.py")
-        assert engine._should_block(_require_uv_effect(), event) is True
+        assert engine._should_block(_require_uv_effect(), event) is False
 
-    def test_blocks_pip_after_chain(self, db) -> None:
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cd /tmp && pip install x",
+            "echo ready; pip3 install x",
+            "printf archive | python3.13 -m pip install x",
+        ],
+    )
+    def test_blocks_package_management_after_separator(self, db, command: str) -> None:
         engine = RuleEngine(db)
-        event = _make_bash_event("cd /tmp && pip install x")
+        event = _make_bash_event(command)
         assert engine._should_block(_require_uv_effect(), event) is True
 
     def test_allows_uv_run_python_after_chain(self, db) -> None:
@@ -385,7 +423,7 @@ class TestRequireUvShouldBlock:
         event = _make_bash_event("cd /tmp && uv run python test.py")
         assert engine._should_block(_require_uv_effect(), event) is False
 
-    def test_blocks_when_command_at_top_level(self, db) -> None:
+    def test_blocks_package_command_at_top_level(self, db) -> None:
         """Legacy path: command at top level of event.data still works."""
         engine = RuleEngine(db)
         event = HookEvent(
@@ -393,11 +431,16 @@ class TestRequireUvShouldBlock:
             session_id=SESSION_ID,
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
-            data={"tool_name": "Bash", "command": "python script.py"},
+            data={"tool_name": "Bash", "command": "python -m pip install x"},
         )
         assert engine._should_block(_require_uv_effect(), event) is True
 
-    def test_blocks_shell_aliases_with_bash_rule(self, db) -> None:
+    def test_allows_bare_python_through_normalized_exec_command(self, db) -> None:
         engine = RuleEngine(db)
         event = _make_shell_alias_event("exec_command", "python script.py")
+        assert engine._should_block(_require_uv_effect(), event) is False
+
+    def test_blocks_package_management_through_normalized_exec_command(self, db) -> None:
+        engine = RuleEngine(db)
+        event = _make_shell_alias_event("exec_command", "python3.13 -m pip install x")
         assert engine._should_block(_require_uv_effect(), event) is True
