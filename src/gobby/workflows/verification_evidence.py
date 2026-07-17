@@ -51,6 +51,7 @@ class VerificationEvidence(BaseModel):
     evidence_requires_confirmation: bool | None = Field(default=None, strict=True)
     tool_name: str | None = Field(default=None, strict=True)
     exit_code: int | None = Field(default=None, strict=True)
+    outcome_provenance: str | None = Field(default=None, strict=True)
 
     @field_validator("evidence_type")
     @classmethod

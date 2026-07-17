@@ -145,6 +145,7 @@ async def test_completion_readiness_blocks_without_evidence(
     assert response.decision == "block"
     reason = response.reason or ""
     assert "require-completion-readiness-evidence" in reason
+    assert "no verification evidence for this task" in reason
     assert "Run project-appropriate verification commands for the changed work" in reason
     assert "Recognized successful verification commands are recorded automatically" in reason
     assert "same verification category succeeds" in reason
@@ -229,7 +230,36 @@ async def test_completion_readiness_blocks_failed_validation_evidence(
     )
 
     assert response.decision == "block"
-    assert "require-completion-readiness-evidence" in (response.reason or "")
+    reason = response.reason or ""
+    assert "require-completion-readiness-evidence" in reason
+    assert "failed verification evidence" in reason
+
+
+@pytest.mark.asyncio
+async def test_completion_readiness_reports_unknown_provider_outcome(
+    db: HubDatabase,
+) -> None:
+    _sync_bundled(db)
+
+    response = await RuleEngine(db).evaluate(
+        _lifecycle_event(),
+        session_id=SESSION_ID,
+        variables=_ready_variables(
+            verification_evidence=[
+                {
+                    "evidence_type": "validation_command",
+                    "command": "uv run pytest tests/workflows/test_hooks.py",
+                    "success": None,
+                }
+            ],
+            verification_evidence_recorded=False,
+        ),
+    )
+
+    reason = response.reason or ""
+    assert response.decision == "block"
+    assert "unknown outcome" in reason
+    assert "did not attach" not in reason
 
 
 @pytest.mark.asyncio

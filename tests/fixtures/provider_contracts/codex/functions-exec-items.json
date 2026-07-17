@@ -1,0 +1,82 @@
+{
+  "provider": "codex",
+  "capture_type": "app_server_dynamic_tool_contract",
+  "capture_status": "reproduced_from_live_rollout_and_schema",
+  "captured_at": "2026-07-17",
+  "codex_version": "0.144.5",
+  "capture_notes": "Sanitized dynamicToolCall shapes from the live rollout, combined with the generated app-server schema. Nested output values are deterministic contract probes.",
+  "events": [
+    {
+      "case": "direct_success",
+      "item": {
+        "id": "<ITEM_ID_SUCCESS>",
+        "type": "dynamicToolCall",
+        "namespace": "functions",
+        "tool": "exec",
+        "arguments": "const r = await tools.exec_command({cmd:\"GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/test_tool_outcomes.py -q\"}); text(r);",
+        "contentItems": [
+          {
+            "type": "inputText",
+            "text": "{\"exit_code\":0,\"output\":\"tests passed\"}"
+          }
+        ],
+        "status": "completed",
+        "success": null
+      }
+    },
+    {
+      "case": "yielded",
+      "item": {
+        "id": "<ITEM_ID_YIELDED>",
+        "type": "dynamicToolCall",
+        "namespace": "functions",
+        "tool": "exec",
+        "arguments": "const r = await tools.exec_command({cmd:\"GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/test_tool_outcomes.py -q\"}); text(r.output);",
+        "contentItems": [
+          {
+            "type": "inputText",
+            "text": "Script running with cell ID cell-7"
+          }
+        ],
+        "status": "completed",
+        "success": null
+      }
+    },
+    {
+      "case": "yielded_final_failure",
+      "item": {
+        "id": "<ITEM_ID_WAIT>",
+        "type": "dynamicToolCall",
+        "namespace": "functions",
+        "tool": "wait",
+        "arguments": "{\"cell_id\":\"cell-7\",\"yield_time_ms\":30000}",
+        "contentItems": [
+          {
+            "type": "inputText",
+            "text": "{\"exit_code\":7,\"output\":\"tests failed\"}"
+          }
+        ],
+        "status": "completed",
+        "success": null
+      }
+    },
+    {
+      "case": "outcome_free",
+      "item": {
+        "id": "<ITEM_ID_UNKNOWN>",
+        "type": "dynamicToolCall",
+        "namespace": "functions",
+        "tool": "exec",
+        "arguments": "const r = await tools.exec_command({cmd:\"GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/test_tool_outcomes.py -q\"}); text(r.output);",
+        "contentItems": [
+          {
+            "type": "inputText",
+            "text": "A human-written summary without structured outcome fields"
+          }
+        ],
+        "status": "completed",
+        "success": null
+      }
+    }
+  ]
+}

@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import asdict, is_dataclass
 from typing import TYPE_CHECKING, Any
 
+from gobby.hooks.tool_outcomes import ToolOutcome, normalize_tool_outcome
+
 if TYPE_CHECKING:
     from gobby.hooks.events import HookEvent
 
@@ -57,41 +59,20 @@ def _extract_shell_command(event: HookEvent) -> str:
     return command if isinstance(command, str) else ""
 
 
+def _shell_tool_outcome(event: HookEvent) -> ToolOutcome:
+    """Return the canonical machine-derived outcome for a shell event."""
+    if not event.data:
+        return normalize_tool_outcome({})
+
+    is_failure = event.metadata.get("is_failure")
+    explicit_success = not is_failure if isinstance(is_failure, bool) else None
+    return normalize_tool_outcome(
+        event.data,
+        explicit_success=explicit_success,
+        provenance="hook_event.metadata.is_failure" if explicit_success is not None else None,
+    )
+
+
 def _shell_tool_succeeded(event: HookEvent) -> bool | None:
     """Return a confirmed shell outcome, or ``None`` when no signal exists."""
-    if not event.data:
-        return None
-
-    success_signals: list[bool] = []
-    is_error = event.data.get("is_error")
-    if "is_error" in event.data and isinstance(is_error, bool):
-        success_signals.append(not is_error)
-    is_failure = event.metadata.get("is_failure")
-    if "is_failure" in event.metadata and isinstance(is_failure, bool):
-        success_signals.append(not is_failure)
-
-    output = event.data.get("tool_output")
-    if isinstance(output, dict):
-        for key in ("exitCode", "exit_code", "returncode"):
-            value = output.get(key)
-            if isinstance(value, int) and not isinstance(value, bool):
-                success_signals.append(value == 0)
-                break
-
-        output_success = output.get("success")
-        if isinstance(output_success, bool):
-            success_signals.append(output_success)
-
-        status = output.get("status")
-        if isinstance(status, str):
-            normalized_status = status.strip().lower()
-            if normalized_status in {"error", "failed", "failure"}:
-                success_signals.append(False)
-            elif normalized_status in {"ok", "succeeded", "success"}:
-                success_signals.append(True)
-
-    if False in success_signals:
-        return False
-    if True in success_signals:
-        return True
-    return None
+    return _shell_tool_outcome(event).succeeded

@@ -1097,7 +1097,7 @@ class TestCodexBackend:
 
         assert len(tool_results) == 1
         assert tool_results[0].tool_call_id == "item-mcp-1"
-        assert tool_results[0].success is True
+        assert tool_results[0].success is False
         assert tool_results[0].result == {"id": "#42", "title": "Fix chat"}
         assert isinstance(events[-1], DoneEvent)
         assert events[-1].tool_calls_count == 1
@@ -1602,6 +1602,7 @@ class TestCodexBackend:
                 "tool_name": "mcp__gobby-tasks__close_task",
                 "tool_input": {"task_id": "#42"},
                 "tool_response": {"success": True},
+                "is_error": False,
                 "mcp_server": "gobby-tasks",
                 "mcp_tool": "close_task",
             }
@@ -1703,6 +1704,7 @@ class TestCodexBackend:
                 "tool_name": "mcp__gobby-tasks__close_task",
                 "tool_input": {"task_id": "#42", "changes_summary": "done"},
                 "tool_response": {"success": True, "task_id": "#42"},
+                "is_error": False,
                 "mcp_server": "gobby-tasks",
                 "mcp_tool": "close_task",
             }

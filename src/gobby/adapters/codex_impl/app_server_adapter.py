@@ -20,6 +20,9 @@ from gobby.adapters.codex_impl.item_normalization import (
     TOOL_ITEM_TYPES as _SHARED_TOOL_ITEM_TYPES,
 )
 from gobby.adapters.codex_impl.item_normalization import (
+    DynamicExecCorrelator,
+)
+from gobby.adapters.codex_impl.item_normalization import (
     build_tool_event_data as _shared_build_tool_event_data,
 )
 from gobby.adapters.codex_impl.item_normalization import (
@@ -161,6 +164,7 @@ class CodexAdapter(BaseAdapter):
         self._codex_client: CodexAppServerClient | None = None
         self._attached = False
         self._machine_id: str | None = None
+        self._dynamic_exec_correlator = DynamicExecCorrelator()
 
     async def _dispatch_hook_event(self, event: HookEvent) -> HookResponse:
         """Dispatch through sync or async hook managers."""
@@ -276,7 +280,8 @@ class CodexAdapter(BaseAdapter):
 
     def _build_completed_tool_data(self, item: dict[str, Any]) -> dict[str, Any]:
         """Normalize a completed Codex tool item into hook event data."""
-        return _shared_build_tool_event_data(item, tool_name_map=self.TOOL_MAP)
+        data = _shared_build_tool_event_data(item, tool_name_map=self.TOOL_MAP)
+        return self._dynamic_exec_correlator.correlate(data)
 
     @staticmethod
     def is_codex_available() -> bool:

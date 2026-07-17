@@ -8,19 +8,23 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from gobby.hooks.normalization import normalize_tool_fields
 
 logger = logging.getLogger(__name__)
 
-TOOL_ITEM_TYPES: frozenset[str] = frozenset({"commandExecution", "fileChange", "mcpToolCall"})
+TOOL_ITEM_TYPES: frozenset[str] = frozenset(
+    {"commandExecution", "dynamicToolCall", "fileChange", "mcpToolCall"}
+)
 
 TOOLISH_FIELDS: frozenset[str] = frozenset(
     {
         "type",
         "itemType",
         "name",
+        "tool",
         "toolName",
         "tool_name",
         "arguments",
@@ -28,6 +32,7 @@ TOOLISH_FIELDS: frozenset[str] = frozenset(
         "tool_input",
         "input",
         "output",
+        "contentItems",
         "result",
         "toolResult",
         "callId",
@@ -37,10 +42,119 @@ TOOLISH_FIELDS: frozenset[str] = frozenset(
     }
 )
 
+_FUNCTIONS_EXEC_NAMES = frozenset({"exec", "functions.exec"})
+_EXEC_COMMAND_CALL_RE = re.compile(r"\btools\.exec_command\s*\(")
+_EXEC_COMMAND_LITERAL_RE = re.compile(
+    r'(?:^|[{,])\s*cmd\s*:\s*("(?:\\.|[^"\\])*")',
+    re.DOTALL,
+)
+_YIELDED_CELL_RE = re.compile(r"^Script running with cell ID ([A-Za-z0-9._:-]+)\s*$")
+
 
 def compose_mcp_tool_name(server: str, tool: str) -> str:
     """Return canonical MCP tool-name form used across adapters."""
     return f"mcp__{server}__{tool}"
+
+
+def _dynamic_tool_name(item_data: dict[str, Any]) -> str:
+    tool = item_data.get("tool") or item_data.get("name") or item_data.get("toolName")
+    if not isinstance(tool, str) or not tool:
+        return ""
+    namespace = item_data.get("namespace")
+    if isinstance(namespace, str) and namespace and "." not in tool:
+        return f"{namespace}.{tool}"
+    return tool
+
+
+def extract_functions_exec_command(arguments: Any) -> str | None:
+    """Extract one literal nested ``exec_command`` command, failing closed."""
+    if isinstance(arguments, dict):
+        command = arguments.get("cmd")
+        return command if isinstance(command, str) and command else None
+    if not isinstance(arguments, str):
+        return None
+    if len(_EXEC_COMMAND_CALL_RE.findall(arguments)) != 1:
+        return None
+    matches = _EXEC_COMMAND_LITERAL_RE.findall(arguments)
+    if len(matches) != 1:
+        return None
+    try:
+        command = json.loads(matches[0])
+    except (TypeError, ValueError):
+        return None
+    return command if isinstance(command, str) and command else None
+
+
+def _iter_content_text(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for block in value:
+        if not isinstance(block, dict):
+            continue
+        text = block.get("text")
+        if isinstance(text, str):
+            result.append(text)
+    return result
+
+
+def extract_yielded_cell_id(data: dict[str, Any]) -> str | None:
+    """Read the functions wrapper's correlation token without inferring outcome."""
+    output = data.get("tool_output")
+    content = output.get("content") if isinstance(output, dict) else None
+    for text in _iter_content_text(content):
+        match = _YIELDED_CELL_RE.fullmatch(text.strip())
+        if match:
+            return match.group(1)
+    return None
+
+
+def extract_wait_cell_id(data: dict[str, Any]) -> str | None:
+    tool_input = data.get("tool_input")
+    if not isinstance(tool_input, dict):
+        return None
+    cell_id = tool_input.get("cell_id")
+    if isinstance(cell_id, str) and cell_id:
+        return cell_id
+    if isinstance(cell_id, int) and not isinstance(cell_id, bool):
+        return str(cell_id)
+    return None
+
+
+class DynamicExecCorrelator:
+    """Correlate yielded ``functions.exec`` calls with their final wait item."""
+
+    def __init__(self, max_pending: int = 64) -> None:
+        self._max_pending = max_pending
+        self._pending: dict[str, dict[str, Any]] = {}
+
+    def correlate(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Attach the original shell command to a correlated final wait result."""
+        original_tool = data.get("_original_tool_name") or data.get("tool_name")
+        yielded_cell_id = extract_yielded_cell_id(data)
+
+        if original_tool in _FUNCTIONS_EXEC_NAMES and yielded_cell_id is not None:
+            tool_input = data.get("tool_input")
+            if isinstance(tool_input, dict) and isinstance(tool_input.get("command"), str):
+                if len(self._pending) >= self._max_pending:
+                    self._pending.pop(next(iter(self._pending)))
+                self._pending[yielded_cell_id] = dict(tool_input)
+            return data
+
+        if original_tool not in {"wait", "functions.wait"}:
+            return data
+
+        cell_id = extract_wait_cell_id(data)
+        if cell_id is None or yielded_cell_id is not None:
+            return data
+        pending_input = self._pending.pop(cell_id, None)
+        if pending_input is None:
+            return data
+
+        data["_original_tool_name"] = str(original_tool)
+        data["tool_name"] = "Bash"
+        data["tool_input"] = pending_input
+        return data
 
 
 def extract_completed_item_payload(params: dict[str, Any]) -> dict[str, Any]:
@@ -80,6 +194,8 @@ def build_tool_event_data(
 
     item_id = item_data.get("id") or item_data.get("itemId") or ""
     raw_tool_name = item_data.get("tool_name") or item_data.get("toolName") or item_data.get("name")
+    if not raw_tool_name and item_type == "dynamicToolCall":
+        raw_tool_name = _dynamic_tool_name(item_data)
     if not raw_tool_name and item_type == "mcpToolCall":
         server = item_data.get("server") or item_data.get("serverName")
         mcp_tool = item_data.get("tool") or item_data.get("toolName") or item_data.get("name")
@@ -106,6 +222,19 @@ def build_tool_event_data(
             "exitCode": item_data.get("exitCode"),
             "status": item_data.get("status"),
         }
+    elif item_type == "dynamicToolCall":
+        dynamic_name = _dynamic_tool_name(item_data)
+        item_data["tool_response"] = {
+            "content": item_data.get("contentItems"),
+            "success": item_data.get("success"),
+            "status": item_data.get("status"),
+        }
+        if dynamic_name in _FUNCTIONS_EXEC_NAMES:
+            command = extract_functions_exec_command(item_data.get("arguments"))
+            if command is not None:
+                item_data["_original_tool_name"] = dynamic_name
+                item_data["tool_name"] = "Bash"
+                item_data["tool_input"] = {"command": command}
 
     if "tool_response" not in item_data and "tool_result" not in item_data:
         if "output" in item_data:

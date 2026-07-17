@@ -24,7 +24,7 @@ rules:
           - "gobby-tasks-ops:close_linked_github_issue"
           - "gobby-merge:merge_apply"
         reason: |
-          Completion readiness requires fresh successful verification evidence.
+          {{ completion_evidence_diagnostic(variables, tool_input.get('task_id')) }}
 
           Run project-appropriate verification commands for the changed work, such as tests, linters, formatting checks, type checks, builds, or other project-defined checks.
           Recognized successful verification commands are recorded automatically.

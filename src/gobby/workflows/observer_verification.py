@@ -15,7 +15,7 @@ from gobby.hooks.normalization import _SHELL_TOOLS
 from gobby.workflows.observer_utils import (
     _extract_shell_command,
     _json_safe,
-    _shell_tool_succeeded,
+    _shell_tool_outcome,
 )
 from gobby.workflows.verification_evidence import (
     VERIFICATION_EVIDENCE_RECORDED_VARIABLE,
@@ -71,7 +71,8 @@ def detect_verification_evidence(
     if match is None:
         return
 
-    success = _validation_segment_outcome(match, _shell_tool_succeeded(event))
+    outcome = _shell_tool_outcome(event)
+    success = _validation_segment_outcome(match, outcome.succeeded)
     evidence = {
         "evidence_type": VERIFICATION_EVIDENCE_TYPE_VALIDATION_COMMAND,
         "command": command,
@@ -92,9 +93,10 @@ def detect_verification_evidence(
         "tool_name": tool_name,
         "success": success,
     }
-    exit_code = _extract_exit_code(event)
-    if exit_code is not None:
-        evidence["exit_code"] = exit_code
+    if outcome.exit_code is not None:
+        evidence["exit_code"] = outcome.exit_code
+    if outcome.provenance is not None:
+        evidence["outcome_provenance"] = outcome.provenance
     existing = variables.get(VERIFICATION_EVIDENCE_VARIABLE, [])
     variables[VERIFICATION_EVIDENCE_VARIABLE] = append_verification_evidence(
         existing, _json_safe(evidence), session_id=session_id
@@ -120,16 +122,3 @@ def detect_verification_evidence(
         "Session %s: verification readiness unchanged after validation command with unknown outcome",
         session_id,
     )
-
-
-def _extract_exit_code(event: HookEvent) -> int | None:
-    if not event.data:
-        return None
-    output = event.data.get("tool_output")
-    if not isinstance(output, dict):
-        return None
-    for key in ("exitCode", "exit_code", "returncode"):
-        value = output.get(key)
-        if isinstance(value, int) and not isinstance(value, bool):
-            return value
-    return None

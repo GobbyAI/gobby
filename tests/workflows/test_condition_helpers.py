@@ -10,6 +10,7 @@ import pytest
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.condition_helpers import (
     _normalize_task_id,
+    completion_evidence_diagnostic,
     completion_evidence_ready,
     first_tdd_code_path,
     first_tdd_test_path,
@@ -78,6 +79,42 @@ class TestIsGobbyBuildCommand:
 class TestCompletionEvidenceReady:
     def test_false_without_evidence(self) -> None:
         assert completion_evidence_ready({}) is False
+
+    @pytest.mark.parametrize(
+        ("evidence", "expected"),
+        [
+            ([], "no verification evidence"),
+            (
+                [
+                    {
+                        "evidence_type": "validation_command",
+                        "command": "uv run pytest tests/workflows/test_hooks.py",
+                        "success": None,
+                    }
+                ],
+                "unknown outcome",
+            ),
+            (
+                [
+                    {
+                        "evidence_type": "validation_command",
+                        "command": "uv run pytest tests/workflows/test_hooks.py",
+                        "success": False,
+                    }
+                ],
+                "failed verification evidence",
+            ),
+        ],
+    )
+    def test_diagnostic_distinguishes_not_ready_states(
+        self,
+        evidence: list[dict[str, object]],
+        expected: str,
+    ) -> None:
+        reason = completion_evidence_diagnostic({"verification_evidence": evidence})
+
+        assert expected in reason
+        assert "did not attach" not in reason
 
     def test_successful_validation_evidence_is_ready(self) -> None:
         assert (

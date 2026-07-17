@@ -11,7 +11,6 @@ import pytest
 from gobby.workflows.safe_evaluator import (
     ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS,
     ASSISTANT_RESPONSE_SCAN_LIMIT,
-    MAX_PAYLOAD_DEPTH,
     LazyBool,
     SafeExpressionEvaluator,
     build_condition_helpers,
@@ -317,21 +316,24 @@ class TestToolCallSucceeded:
         return _build_evaluator(ctx)
 
     def test_returns_true_for_successful_tool_call(self) -> None:
-        ev = self._eval({"tool_output": {"success": True, "result": {"id": "ok"}}})
+        ev = self._eval({"tool_outcome": {"status": "succeeded"}})
 
         assert ev.evaluate("tool_call_succeeded()") is True
 
+    @pytest.mark.parametrize("status", ["failed", "unknown"])
+    def test_returns_false_without_successful_outcome(self, status: str) -> None:
+        ev = self._eval({"tool_outcome": {"status": status}})
+
+        assert ev.evaluate("tool_call_succeeded()") is False
+
     @pytest.mark.parametrize("data", [{}, {"tool_output": None}])
-    def test_rejects_missing_tool_output_without_explicit_success(
-        self, data: dict[str, Any]
-    ) -> None:
+    def test_rejects_missing_outcome(self, data: dict[str, Any]) -> None:
         ev = self._eval(data)
 
         assert ev.evaluate("tool_call_succeeded()") is False
 
-    @pytest.mark.parametrize("data", [{"success": True}, {"success": True, "tool_output": None}])
-    def test_accepts_missing_tool_output_with_top_level_success(self, data: dict[str, Any]) -> None:
-        ev = self._eval(data)
+    def test_accepts_structured_success_alias(self) -> None:
+        ev = self._eval({"tool_output": {"success": True, "result": {"id": "ok"}}})
 
         assert ev.evaluate("tool_call_succeeded()") is True
 
@@ -340,28 +342,23 @@ class TestToolCallSucceeded:
 
         assert ev.evaluate("tool_call_succeeded()") is False
 
-    def test_rejects_top_level_error(self) -> None:
+    def test_ignores_human_readable_error_text(self) -> None:
         ev = self._eval({"error": "tool failed", "tool_output": {"success": True}})
 
-        assert ev.evaluate("tool_call_succeeded()") is False
+        assert ev.evaluate("tool_call_succeeded()") is True
 
     def test_rejects_failure_metadata(self) -> None:
         ev = self._eval({"tool_output": {"success": True}}, metadata={"is_failure": True})
 
         assert ev.evaluate("tool_call_succeeded()") is False
 
-    def test_rejects_object_failure_metadata(self) -> None:
-        ev = self._eval(
-            {"tool_output": {"success": True}},
-            metadata=SimpleNamespace(is_failure=True),
-        )
-
-        assert ev.evaluate("tool_call_succeeded()") is False
-
     def test_handles_dict_event_shape(self) -> None:
         ctx: dict[str, Any] = {
             "variables": {},
-            "event": {"data": {"tool_output": {"success": True}}, "metadata": {}},
+            "event": {
+                "data": {"tool_outcome": {"status": "succeeded"}},
+                "metadata": {},
+            },
         }
         ev = _build_evaluator(ctx)
 
@@ -384,8 +381,8 @@ class TestToolCallSucceeded:
             is False
         )
 
-    def test_rejects_nested_mcp_error_result(self) -> None:
-        ev = self._eval({"tool_output": {"success": True, "result": {"error": "nested"}}})
+    def test_rejects_nested_structured_error_result(self) -> None:
+        ev = self._eval({"tool_output": {"success": True, "result": {"isError": True}}})
 
         assert ev.evaluate("tool_call_succeeded()") is False
 
@@ -396,25 +393,15 @@ class TestToolCallSucceeded:
 
         assert ev.evaluate("tool_call_succeeded()") is False
 
-    def test_rejects_nested_error_before_payload_depth_limit(self) -> None:
-        payload: dict[str, Any] = {"error": "nested"}
-        for _ in range(MAX_PAYLOAD_DEPTH - 1):
-            payload = {"result": payload}
-        ev = self._eval({"tool_output": payload})
+    def test_rejects_nested_nonzero_exit_code(self) -> None:
+        ev = self._eval({"tool_output": {"result": {"exitCode": 2}}})
 
         assert ev.evaluate("tool_call_succeeded()") is False
 
-    def test_payload_depth_limit_fails_open(self, caplog: pytest.LogCaptureFixture) -> None:
-        payload: dict[str, Any] = {"error": "too deep"}
-        for _ in range(MAX_PAYLOAD_DEPTH):
-            payload = {"result": payload}
-        ev = self._eval({"tool_output": payload})
+    def test_generic_completed_status_is_unknown(self) -> None:
+        ev = self._eval({"tool_output": {"status": "completed"}})
 
-        with caplog.at_level("WARNING", logger="gobby.workflows.safe_evaluator"):
-            assert ev.evaluate("tool_call_succeeded()") is True
-
-        assert f"MAX_PAYLOAD_DEPTH={MAX_PAYLOAD_DEPTH}" in caplog.text
-        assert "too deep" in caplog.text
+        assert ev.evaluate("tool_call_succeeded()") is False
 
 
 # --- mcp_result_has tests ---

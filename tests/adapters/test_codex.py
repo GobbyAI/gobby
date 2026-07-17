@@ -3566,6 +3566,8 @@ class TestCodexClientApprovalResponseRouting:
 
         reader_task = asyncio.create_task(client._read_loop())
         await asyncio.wait_for(reader_task, timeout=2.0)
+        if client._incoming_request_tasks:
+            await asyncio.gather(*client._incoming_request_tasks)
 
         response = json.loads(written_lines[0].strip())
         assert response["id"] == 55
@@ -3806,6 +3808,8 @@ class TestCodexClientApprovalResponseRouting:
 
         reader_task = asyncio.create_task(client._read_loop())
         await asyncio.wait_for(reader_task, timeout=2.0)
+        if client._incoming_request_tasks:
+            await asyncio.gather(*client._incoming_request_tasks)
 
         response = json.loads(written_lines[0].strip())
         assert response["id"] == 99999

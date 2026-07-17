@@ -8,11 +8,9 @@ from __future__ import annotations
 
 import ast
 import io
-import json
 import logging
 import operator
 import re
-import reprlib
 import tokenize
 from collections.abc import Callable, Iterator
 from typing import Any
@@ -28,7 +26,6 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 ASSISTANT_RESPONSE_SCAN_LIMIT = 8000
-MAX_PAYLOAD_DEPTH = 50
 ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS = (
     r"\bnot\b\s+[^.!?\n,;:]{1,80}?,\s*\bnot\b\s+[^.!?\n,;:]{1,80}?,\s*\bbut\b\s+[^.!?\n]{1,120}",
     r"\bnot\b\s+[^.!?\n,;:]{1,120}?,\s*\bbut\b\s+[^.!?\n]{1,120}",
@@ -54,7 +51,6 @@ _NESTED_TEXT_KEYS = (
     "response",
     "output",
 )
-_FAILURE_STATUSES = frozenset({"error", "failed", "failure"})
 
 
 class LazyBool:
@@ -471,54 +467,6 @@ def _event_field(event: Any, field: str, default: Any) -> Any:
         return default
 
 
-def _payload_snippet(payload: Any, *, max_chars: int = 200) -> str:
-    text = " ".join(reprlib.repr(payload).split())
-    if len(text) <= max_chars:
-        return text
-    return f"{text[:max_chars]}…"
-
-
-def _tool_payload_failed(payload: Any, max_depth: int = MAX_PAYLOAD_DEPTH) -> bool:
-    """Return True when a normalized tool payload carries failure metadata."""
-    if max_depth <= 0:
-        logger.warning(
-            "Tool payload failure scan reached MAX_PAYLOAD_DEPTH=%s; failing open. payload=%s",
-            MAX_PAYLOAD_DEPTH,
-            _payload_snippet(payload),
-        )
-        return False
-
-    if isinstance(payload, str):
-        try:
-            decoded = json.loads(payload)
-        except json.JSONDecodeError:
-            return False
-        return _tool_payload_failed(decoded, max_depth - 1)
-
-    if isinstance(payload, list | tuple):
-        return any(_tool_payload_failed(item, max_depth - 1) for item in payload)
-
-    if not isinstance(payload, dict):
-        return False
-
-    if payload.get("is_error") is True:
-        return True
-    if payload.get("success") is False:
-        return True
-    if payload.get("error"):
-        return True
-
-    status = payload.get("status")
-    if isinstance(status, str) and status.lower() in _FAILURE_STATUSES:
-        return True
-
-    result = payload.get("result")
-    if isinstance(result, dict | list | tuple | str):
-        return _tool_payload_failed(result, max_depth - 1)
-
-    return False
-
-
 def build_condition_helpers(
     task_manager: Any = None,
     stop_registry: Any = None,
@@ -540,6 +488,7 @@ def build_condition_helpers(
         Dict of function_name -> callable, ready to pass as allowed_funcs.
     """
     from .condition_helpers import (
+        completion_evidence_diagnostic,
         completion_evidence_ready,
         first_tdd_code_path,
         first_tdd_test_path,
@@ -564,6 +513,7 @@ def build_condition_helpers(
         "any": any,
         "all": all,
         "normalize_path": lambda p: p.replace("\\", "/"),
+        "completion_evidence_diagnostic": completion_evidence_diagnostic,
         "completion_evidence_ready": completion_evidence_ready,
         "first_tdd_code_path": first_tdd_code_path,
         "first_tdd_test_path": first_tdd_test_path,
@@ -661,31 +611,22 @@ def build_condition_helpers(
 
     def _tool_call_succeeded() -> bool:
         """Check whether the current normalized after-tool event succeeded."""
+        from gobby.hooks.tool_outcomes import normalize_tool_outcome
+
         event = ctx.get("event")
         data = _event_field(event, "data", None)
         if not isinstance(data, dict):
             return False
 
         metadata = _event_field(event, "metadata", {})
-        is_failure = (
-            metadata.get("is_failure", False)
-            if isinstance(metadata, dict)
-            else getattr(metadata, "is_failure", False)
+        is_failure = metadata.get("is_failure") if isinstance(metadata, dict) else None
+        explicit_success = not is_failure if isinstance(is_failure, bool) else None
+        outcome = normalize_tool_outcome(
+            data,
+            explicit_success=explicit_success,
+            provenance="hook_event.metadata.is_failure" if explicit_success is not None else None,
         )
-        if is_failure:
-            return False
-
-        top_level = {
-            key: data.get(key) for key in ("is_error", "success", "error", "status") if key in data
-        }
-        if _tool_payload_failed(top_level):
-            return False
-
-        tool_output = data.get("tool_output")
-        if tool_output is None:
-            return data.get("success") is True
-
-        return not _tool_payload_failed(tool_output)
+        return outcome.succeeded is True
 
     def _skill_loaded(name: str) -> bool:
         """Check the canonical skill ledger."""

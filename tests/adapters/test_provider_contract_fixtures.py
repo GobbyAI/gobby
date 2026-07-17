@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
 from gobby.adapters.grok import GrokAdapter
 from gobby.hooks.events import HookEventType, SessionSource
 from gobby.servers.websocket.chat.backends.droid_stream import parse_droid_stream_line
@@ -141,3 +142,24 @@ def test_droid_live_shell_outcomes_expose_structured_error_state() -> None:
     assert by_success[True].data["result"].startswith("droid-zero-stream")
     assert by_success[False].data["error"].startswith("Error: Command failed (exit code: 7)")
     assert payload["terminal_hook_observation"]["nonzero_post_tool_use_emitted"] is False
+
+
+def test_codex_functions_exec_contract_correlates_yielded_final_outcome() -> None:
+    payload = json.loads(
+        (PROVIDER_CONTRACT_ROOT / "codex" / "functions-exec-items.json").read_text()
+    )
+    by_case = {record["case"]: record["item"] for record in payload["events"]}
+    adapter = CodexAdapter()
+
+    succeeded = adapter._build_completed_tool_data(by_case["direct_success"])
+    yielded = adapter._build_completed_tool_data(by_case["yielded"])
+    failed = adapter._build_completed_tool_data(by_case["yielded_final_failure"])
+    unknown = adapter._build_completed_tool_data(by_case["outcome_free"])
+
+    assert succeeded["tool_outcome"]["status"] == "succeeded"
+    assert yielded["tool_outcome"]["status"] == "unknown"
+    assert failed["tool_name"] == "Bash"
+    assert failed["tool_input"] == yielded["tool_input"]
+    assert failed["tool_outcome"]["status"] == "failed"
+    assert failed["tool_outcome"]["exit_code"] == 7
+    assert unknown["tool_outcome"]["status"] == "unknown"

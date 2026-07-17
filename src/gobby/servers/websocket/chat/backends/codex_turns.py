@@ -10,7 +10,7 @@ from typing import Any, Protocol
 from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
 from gobby.adapters.codex_impl.client import CodexAppServerClient
 from gobby.adapters.codex_impl.item_normalization import (
-    build_post_tool_lifecycle_payload,
+    DynamicExecCorrelator,
     build_pre_tool_lifecycle_payload,
 )
 from gobby.llm.claude_models import (
@@ -69,6 +69,8 @@ class CodexTurnSession(Protocol):
         tool_name: str,
         tool_input: dict[str, Any],
         tool_response: Any,
+        *,
+        is_error: bool | None = None,
     ) -> dict[str, Any] | None: ...
 
     def _resolve_context_window(self) -> int | None: ...
@@ -118,6 +120,7 @@ async def stream_codex_turn(
     completed_tool_call_ids: set[str] = set()
     latest_transcript_usage: dict[str, int | None] | None = None
     latest_transcript_context_window: int | None = None
+    dynamic_exec_correlator = DynamicExecCorrelator()
     transcript_offset = await session._get_transcript_offset()
     session._reset_before_tool_state()
 
@@ -248,24 +251,22 @@ async def stream_codex_turn(
                 continue
 
             if method == "item/completed":
-                tool_event_data = codex_tool_event_data(params)
+                tool_event_data = codex_tool_event_data(
+                    params,
+                    dynamic_exec_correlator=dynamic_exec_correlator,
+                )
                 if tool_event_data is not None:
                     tool_call_id = str(tool_event_data["tool_call_id"])
                     if tool_call_id in completed_tool_call_ids:
                         continue
                     completed_tool_call_ids.add(tool_call_id)
 
-                    post_tool_payload = build_post_tool_lifecycle_payload(
-                        params,
-                        tool_name_map=CodexAdapter.TOOL_MAP,
+                    await session._apply_post_tool_lifecycle(
+                        str(tool_event_data["tool_name"]),
+                        tool_event_data["arguments"],
+                        tool_event_data["lifecycle_response"],
+                        is_error=tool_event_data["is_error"],
                     )
-                    if post_tool_payload is not None:
-                        tool_name, tool_input, tool_response = post_tool_payload
-                        await session._apply_post_tool_lifecycle(
-                            tool_name,
-                            tool_input,
-                            tool_response,
-                        )
 
                     if tool_call_id not in started_tool_call_ids:
                         start_event = _start_tool_event(tool_event_data)

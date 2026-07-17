@@ -11,6 +11,7 @@ import logging
 import re
 import textwrap
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -579,22 +580,24 @@ def _target_task_refs(variables: Mapping[str, Any], task_ref: Any) -> set[str]:
     return refs
 
 
-def completion_evidence_ready(
+@dataclass(frozen=True, slots=True)
+class _CompletionEvidenceState:
+    ready: bool
+    evidence_seen: bool
+    unknown_outcome_seen: bool
+    failed_outcome_seen: bool
+
+
+def _completion_evidence_items(
     variables: Mapping[str, Any] | None,
     task_ref: Any = None,
-) -> bool:
-    """Return whether evidence is sufficient for the requested task's completion.
-
-    Task-scoped evidence takes precedence over the shared session stream. When
-    no evidence names the target task, legacy unscoped evidence remains the
-    conservative fallback.
-    """
+) -> list[Any]:
     if not isinstance(variables, Mapping):
-        return False
+        return []
 
     evidence_items = variables.get(VERIFICATION_EVIDENCE_VARIABLE)
     if not isinstance(evidence_items, list):
-        return False
+        return []
 
     target_refs = _target_task_refs(variables, task_ref)
     if target_refs:
@@ -610,8 +613,19 @@ def completion_evidence_ready(
             elif not evidence_refs:
                 unscoped_evidence.append(item)
         evidence_items = matching_evidence or unscoped_evidence
+    return evidence_items
+
+
+def _completion_evidence_state(
+    variables: Mapping[str, Any] | None,
+    task_ref: Any = None,
+) -> _CompletionEvidenceState:
+    evidence_items = _completion_evidence_items(variables, task_ref)
 
     successful_evidence_seen = False
+    evidence_seen = False
+    unknown_outcome_seen = False
+    failed_outcome_seen = False
     failed_validation_categories: set[str] = set()
     uncategorized_validation_failed = False
 
@@ -621,8 +635,13 @@ def completion_evidence_ready(
         evidence_type = item.get("evidence_type")
         if not isinstance(evidence_type, str):
             continue
+        evidence_seen = True
 
         success = item.get("success")
+        if success is None:
+            unknown_outcome_seen = True
+        elif success is False:
+            failed_outcome_seen = True
         if evidence_type == VERIFICATION_EVIDENCE_TYPE_VALIDATION_COMMAND:
             categories = _validation_evidence_categories(item)
             if success is True:
@@ -644,7 +663,43 @@ def completion_evidence_ready(
     failed_validation_unresolved = bool(
         failed_validation_categories or uncategorized_validation_failed
     )
-    return successful_evidence_seen and not failed_validation_unresolved
+    return _CompletionEvidenceState(
+        ready=successful_evidence_seen and not failed_validation_unresolved,
+        evidence_seen=evidence_seen,
+        unknown_outcome_seen=unknown_outcome_seen,
+        failed_outcome_seen=failed_outcome_seen,
+    )
+
+
+def completion_evidence_ready(
+    variables: Mapping[str, Any] | None,
+    task_ref: Any = None,
+) -> bool:
+    """Return whether evidence is sufficient for the requested task's completion.
+
+    Task-scoped evidence takes precedence over the shared session stream. When
+    no evidence names the target task, unscoped evidence remains the conservative
+    fallback.
+    """
+    return _completion_evidence_state(variables, task_ref).ready
+
+
+def completion_evidence_diagnostic(
+    variables: Mapping[str, Any] | None,
+    task_ref: Any = None,
+) -> str:
+    """Explain why completion verification evidence is not ready."""
+    state = _completion_evidence_state(variables, task_ref)
+    if state.failed_outcome_seen:
+        return "Completion readiness is blocked by failed verification evidence."
+    if state.unknown_outcome_seen:
+        return (
+            "Completion readiness has verification evidence with an unknown outcome; "
+            "the provider did not expose a definitive machine result."
+        )
+    if not state.evidence_seen:
+        return "Completion readiness has no verification evidence for this task."
+    return "Completion readiness has no successful verification evidence for this task."
 
 
 def _strip_env_assignments(tokens: list[str]) -> list[str]:

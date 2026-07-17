@@ -1420,7 +1420,7 @@ class TestFdDuplicationTokens:
 
 
 class TestToolErrorDetection:
-    """Tests for Phase 3: shell tool error detection from output text."""
+    """Tests for Phase 3: structured tool outcome normalization."""
 
     def test_run_shell_command_is_canonicalized_to_bash(self) -> None:
         data = {"tool_name": "run_shell_command", "tool_result": "Exit code: 0"}
@@ -1432,32 +1432,35 @@ class TestToolErrorDetection:
         normalize_tool_fields(data)
         assert data["tool_name"] == "Bash"
 
-    def test_bash_nonzero_exit_code_sets_is_error(self) -> None:
-        """Bash tool_result with non-zero exit code → is_error = True."""
+    def test_bash_nonzero_exit_code_text_remains_unknown(self) -> None:
+        """Agent-readable output is not a machine outcome signal."""
         data = {
             "tool_name": "Bash",
             "tool_result": "command not found\nExit code: 1",
         }
         normalize_tool_fields(data)
-        assert data["is_error"] is True
+        assert "is_error" not in data
+        assert data["tool_outcome"]["status"] == "unknown"
 
     def test_bash_exit_code_127(self) -> None:
-        """Exit code 127 (command not found) detected."""
+        """An exit-code phrase in display text is not parsed."""
         data = {
             "tool_name": "Bash",
             "tool_result": "bash: foo: command not found\nExit code: 127",
         }
         normalize_tool_fields(data)
-        assert data["is_error"] is True
+        assert "is_error" not in data
+        assert data["tool_outcome"]["status"] == "unknown"
 
     def test_bash_exit_code_detection_is_case_insensitive_and_bounded(self) -> None:
-        """Exit code pattern matches bounded case variants only."""
+        """Case and number shape do not make display text authoritative."""
         data = {
             "tool_name": "Bash",
             "tool_result": "failed\nEXIT-CODE 2",
         }
         normalize_tool_fields(data)
-        assert data["is_error"] is True
+        assert "is_error" not in data
+        assert data["tool_outcome"]["status"] == "unknown"
 
         ignored = {
             "tool_name": "Bash",
@@ -1465,6 +1468,7 @@ class TestToolErrorDetection:
         }
         normalize_tool_fields(ignored)
         assert "is_error" not in ignored
+        assert ignored["tool_outcome"]["status"] == "unknown"
 
     def test_bash_zero_exit_code_no_is_error(self) -> None:
         """Bash tool_result with zero exit code → is_error not set."""
@@ -1474,6 +1478,7 @@ class TestToolErrorDetection:
         }
         normalize_tool_fields(data)
         assert "is_error" not in data
+        assert data["tool_outcome"]["status"] == "unknown"
 
     def test_bash_no_exit_code_in_output(self) -> None:
         """Bash output without exit code pattern → is_error not set."""
@@ -1483,6 +1488,7 @@ class TestToolErrorDetection:
         }
         normalize_tool_fields(data)
         assert "is_error" not in data
+        assert data["tool_outcome"]["status"] == "unknown"
 
     def test_non_bash_tool_unaffected(self) -> None:
         """Non-shell tools should not get is_error from output text."""
@@ -1492,6 +1498,7 @@ class TestToolErrorDetection:
         }
         normalize_tool_fields(data)
         assert "is_error" not in data
+        assert data["tool_outcome"]["status"] == "unknown"
 
     def test_pre_existing_is_error_not_overridden(self) -> None:
         """If is_error is already set (e.g. by adapter), don't override."""
@@ -1502,6 +1509,7 @@ class TestToolErrorDetection:
         }
         normalize_tool_fields(data)
         assert data["is_error"] is True
+        assert data["tool_outcome"]["status"] == "failed"
 
     def test_pre_existing_is_error_false_not_overridden(self) -> None:
         """If is_error is explicitly False, don't override with detection."""
@@ -1512,60 +1520,71 @@ class TestToolErrorDetection:
         }
         normalize_tool_fields(data)
         assert data["is_error"] is False
+        assert data["tool_outcome"]["status"] == "succeeded"
 
     def test_lowercase_bash_tool_name(self) -> None:
-        """Lowercase 'bash' tool name should also be detected."""
+        """Lowercase shell aliases do not enable display-text inference."""
         data = {
             "tool_name": "bash",
             "tool_result": "error\nExit code: 2",
         }
         normalize_tool_fields(data)
-        assert data["is_error"] is True
+        assert "is_error" not in data
+        assert data["tool_outcome"]["status"] == "unknown"
 
     def test_shell_tool_name(self) -> None:
-        """'shell' tool name should also be detected."""
+        """Shell aliases do not enable display-text inference."""
         data = {
             "tool_name": "shell",
             "tool_result": "Exit code: 1",
         }
         normalize_tool_fields(data)
-        assert data["is_error"] is True
+        assert "is_error" not in data
+        assert data["tool_outcome"]["status"] == "unknown"
 
     def test_run_command_tool_name(self) -> None:
-        """'run_command' native tool name should also be detected."""
+        """Native shell names do not enable display-text inference."""
         data = {
             "tool_name": "run_command",
             "tool_result": "exit code: 1",
         }
         normalize_tool_fields(data)
-        assert data["is_error"] is True
+        assert "is_error" not in data
+        assert data["tool_outcome"]["status"] == "unknown"
 
     def test_exec_command_tool_name(self) -> None:
-        """'exec_command' tool name should also be detected."""
+        """Exec aliases do not enable display-text inference."""
         data = {
             "tool_name": "exec_command",
             "tool_result": "exit code: 1",
         }
         normalize_tool_fields(data)
-        assert data["is_error"] is True
+        assert "is_error" not in data
+        assert data["tool_outcome"]["status"] == "unknown"
 
     def test_tool_output_used_when_tool_result_absent(self) -> None:
-        """Phase 2 normalizes tool_result → tool_output; Phase 3 checks tool_output."""
+        """Direct display output is not parsed for an exit-code phrase."""
         data = {
             "tool_name": "Bash",
             "tool_output": "failed\nexit code: 1",
         }
         normalize_tool_fields(data)
-        assert data["is_error"] is True
+        assert "is_error" not in data
+        assert data["tool_outcome"]["status"] == "unknown"
 
     def test_non_string_tool_result_ignored(self) -> None:
-        """Dict tool_result (e.g. MCP JSON) should not be parsed for exit codes."""
+        """A structured exit code is authoritative."""
         data = {
             "tool_name": "Bash",
             "tool_result": {"exit_code": 1, "output": "fail"},
         }
         normalize_tool_fields(data)
-        assert "is_error" not in data
+        assert data["is_error"] is True
+        assert data["tool_outcome"] == {
+            "status": "failed",
+            "exit_code": 1,
+            "provenance": "tool_output.exit_code",
+        }
 
 
 class TestEndToEndRuleMatch:

@@ -339,7 +339,8 @@ class TestBashFailureDetection:
         event = adapter.translate_to_hook_event(native)
         assert event.event_type == HookEventType.AFTER_TOOL
         assert event.metadata["is_failure"] is False
-        assert event.data.get("is_error") is True
+        assert "is_error" not in event.data
+        assert event.data["tool_outcome"]["status"] == "succeeded"
 
     def test_post_tool_use_bash_success_no_failure(self) -> None:
         """post-tool-use with Bash success → no is_failure metadata."""

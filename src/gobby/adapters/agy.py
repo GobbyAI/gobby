@@ -8,7 +8,7 @@ from typing import Any
 from gobby.adapters.acp_hook_adapter import ACPHookAdapter
 from gobby.adapters.agy_contract import AGY_EVENT_MAP, AGY_HOOK_ALIASES, get_agy_contract
 from gobby.adapters.base import normalize_adapter_response_reason
-from gobby.hooks.events import HookResponse, SessionSource
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,18 @@ class AgyAdapter(ACPHookAdapter):
     @property
     def source(self) -> SessionSource:
         return SessionSource.AGY
+
+    def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent:
+        """Keep AGY tool outcomes unknown until its live result contract is proven."""
+        event = super().translate_to_hook_event(native_event)
+        if event.event_type is HookEventType.AFTER_TOOL:
+            event.data.pop("is_error", None)
+            event.data["tool_outcome"] = {
+                "status": "unknown",
+                "provenance": "agy.provider_contract_unproven",
+            }
+            event.data["_tool_outcome_locked"] = True
+        return event
 
     def translate_from_hook_response(
         self,

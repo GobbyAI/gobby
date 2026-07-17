@@ -8,10 +8,12 @@ from typing import Any
 
 from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
 from gobby.adapters.codex_impl.item_normalization import (
+    DynamicExecCorrelator,
     build_tool_event_data,
     extract_completed_item_payload,
     looks_like_tool_item,
 )
+from gobby.hooks.tool_outcomes import tool_outcome_from_data
 from gobby.llm.sdk_utils import parse_server_name
 from gobby.sessions.transcripts.base import ParsedMessage, ParsedToolEvent
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
@@ -214,7 +216,11 @@ def codex_tool_event_data_from_record(
     return None
 
 
-def codex_tool_event_data(params: dict[str, Any]) -> dict[str, Any] | None:
+def codex_tool_event_data(
+    params: dict[str, Any],
+    *,
+    dynamic_exec_correlator: DynamicExecCorrelator | None = None,
+) -> dict[str, Any] | None:
     item = extract_completed_item_payload(params)
     if not item or not looks_like_tool_item(item):
         return None
@@ -224,6 +230,8 @@ def codex_tool_event_data(params: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
     data = build_tool_event_data(item, tool_name_map=CodexAdapter.TOOL_MAP)
+    if dynamic_exec_correlator is not None:
+        data = dynamic_exec_correlator.correlate(data)
     tool_name = data.get("tool_name")
     if not isinstance(tool_name, str) or not tool_name:
         return None
@@ -234,11 +242,8 @@ def codex_tool_event_data(params: dict[str, Any]) -> dict[str, Any] | None:
 
     raw_response = data.get("tool_response")
     result = data.get("tool_output", raw_response)
-    response_is_error = bool(
-        data.get("is_error")
-        or (isinstance(raw_response, dict) and raw_response.get("isError"))
-        or data.get("error")
-    )
+    outcome = tool_outcome_from_data(data)
+    response_is_error = outcome.succeeded is False
     error = data.get("error")
     if response_is_error and error is None:
         error = result
@@ -248,7 +253,10 @@ def codex_tool_event_data(params: dict[str, Any]) -> dict[str, Any] | None:
         "tool_name": tool_name,
         "server_name": str(data.get("mcp_server") or parse_server_name(tool_name)),
         "arguments": arguments,
-        "success": not response_is_error,
+        "success": outcome.succeeded is True,
+        "is_error": None if outcome.succeeded is None else response_is_error,
+        "tool_outcome": outcome.to_dict(),
+        "lifecycle_response": raw_response if raw_response is not None else result,
         "result": None if response_is_error else result,
         "error": str(error) if error is not None else None,
     }

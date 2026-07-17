@@ -219,6 +219,14 @@ class ClaudeCodeAdapter(BaseAdapter):
             metadata["is_failure"] = False
         elif hook_event_name == "PostToolUseFailure":
             metadata["is_failure"] = True
+        if "is_failure" in metadata:
+            from gobby.hooks.normalization import normalize_tool_outcome
+
+            normalize_tool_outcome(
+                normalized_data,
+                explicit_success=not metadata["is_failure"],
+                provenance=f"{self.source.value}.hook:{hook_event_name}",
+            )
         self._copy_platform_session_metadata(native_event, metadata)
 
         return HookEvent(

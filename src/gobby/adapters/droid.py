@@ -99,8 +99,18 @@ class DroidAdapter(BaseAdapter):
         metadata: dict[str, Any] = {}
         if hook_type == "PostToolUse":
             metadata["is_failure"] = is_failure if isinstance(is_failure, bool) else False
+        elif hook_type == "PostToolUseFailure":
+            metadata["is_failure"] = True
         elif is_failure is True:
             metadata["is_failure"] = True
+        if "is_failure" in metadata:
+            from gobby.hooks.normalization import normalize_tool_outcome
+
+            normalize_tool_outcome(
+                normalized_data,
+                explicit_success=not metadata["is_failure"],
+                provenance=f"droid.hook:{hook_type}",
+            )
         self._copy_platform_session_metadata(native_event, metadata)
 
         return HookEvent(

@@ -1,7 +1,6 @@
 """Top-level tool-field normalization orchestration."""
 
 import json as _json
-import re as _re
 from typing import Any
 
 from gobby.hooks._normalization_canonical import _set_canonical_tool_metadata
@@ -10,11 +9,8 @@ from gobby.hooks._normalization_paths import (
     _normalize_apply_patch_input,
     _normalize_file_change_input,
 )
-from gobby.hooks._normalization_shell import canonicalize_shell_tool_name, is_shell_tool
-
-# Pattern to detect non-zero exit codes in tool output text.
-# Matches bounded forms such as "Exit code: 1", "exit code 127", and "EXIT-CODE 2".
-_EXIT_CODE_RE = _re.compile(r"\bexit[ _-]?code\b[:\s]+([0-9]{1,3})\b", _re.IGNORECASE)
+from gobby.hooks._normalization_shell import canonicalize_shell_tool_name
+from gobby.hooks.tool_outcomes import normalize_tool_outcome
 
 
 def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
@@ -28,8 +24,8 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
     2. **MCP enrichment** - delegates to :func:`normalize_mcp_fields` for
        ``mcp__`` prefix parsing, ``call_tool`` inner extraction, and
        ``tool_result``/``tool_response`` -> ``tool_output``.
-    3. **Error detection** - infers ``is_error`` from tool output content
-       for shell tools (Bash) when the adapter didn't set it explicitly.
+    3. **Outcome normalization** - reduces structured provider signals to the
+       canonical succeeded/failed/unknown tool outcome.
 
     This is the primary entry point.  All adapters should call this instead
     of ``normalize_mcp_fields()`` directly.
@@ -106,35 +102,27 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
     # Phase 2.5: infer canonical read/search/write semantics
     _set_canonical_tool_metadata(data)
 
-    # Phase 3: infer is_error from tool output for shell tools
-    _detect_tool_error(data)
+    # Phase 3: normalize machine-readable outcomes only for tool-shaped data.
+    # Adapters also use this helper for session and turn events, where adding an
+    # unknown tool outcome would pollute otherwise untouched event payloads.
+    if any(
+        field in data
+        for field in (
+            "tool_name",
+            "toolName",
+            "function_name",
+            "tool_output",
+            "tool_result",
+            "tool_response",
+        )
+    ):
+        _detect_tool_error(data)
 
     return data
 
 
 def _detect_tool_error(data: dict[str, Any]) -> None:
-    """Infer ``is_error`` from tool output for shell tools (Phase 3).
-
-    Some adapters set ``is_error`` explicitly via
-    ``exit_code`` or ``resultType``.  Claude Code and some ACP CLIs do not - they
-    only provide the tool output text.  For shell tools (Bash), we parse the
-    output for non-zero exit code patterns and set ``is_error = True``.
-
-    Skips if ``is_error`` is already set to avoid overriding adapter-specific
-    detection.
-    """
-    if "is_error" in data:
-        return
-
-    tool_name = data.get("tool_name", "")
-    if not is_shell_tool(tool_name):
-        return
-
-    # Check tool_output (normalized) or fall back to tool_result (raw)
-    output = data.get("tool_output") or data.get("tool_result") or ""
-    if not isinstance(output, str):
-        return
-
-    match = _EXIT_CODE_RE.search(output)
-    if match and int(match.group(1)) != 0:
-        data["is_error"] = True
+    """Normalize structured outcomes and retain the legacy error alias."""
+    outcome = normalize_tool_outcome(data)
+    if outcome.succeeded is False:
+        data.setdefault("is_error", True)
