@@ -138,7 +138,13 @@ Avoid touching the user's real home directory, daemon state, cache, credentials,
 
 ## Validation Commands
 
-Use repo wrappers first. Common focused commands:
+Use repo wrappers first. Apply formatter fixes with:
+
+```bash
+uv run ruff format <files>
+```
+
+Collect non-mutating completion evidence with:
 
 ```bash
 uv run ruff format --check <files>
