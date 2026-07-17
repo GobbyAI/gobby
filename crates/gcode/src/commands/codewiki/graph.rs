@@ -197,6 +197,7 @@ pub(crate) fn codewiki_call_edges_query(
         format!(
             "MATCH (source:CodeSymbol {{project: $project}})-[:CALLS]->(target:CodeSymbol {{project: $project}}) \
              RETURN source.id AS source, target.id AS target \
+             ORDER BY source, target \
              LIMIT {edge_limit}"
         ),
         HashMap::from([(
@@ -214,6 +215,7 @@ pub(crate) fn codewiki_import_edges_query(
         format!(
             "MATCH (source:CodeFile {{project: $project}})-[:IMPORTS]->(target:CodeModule {{project: $project}}) \
              RETURN source.path AS source, target.name AS target \
+             ORDER BY source, target \
              LIMIT {edge_limit}"
         ),
         HashMap::from([(

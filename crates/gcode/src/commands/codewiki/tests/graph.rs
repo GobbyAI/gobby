@@ -218,12 +218,19 @@ fn import_targets_match_exact_path_or_module_components() {
 }
 
 #[test]
-fn graph_queries_use_requested_edge_limit() {
+fn graph_queries_order_edges_before_requested_limit() {
     let (call_query, _) = codewiki_call_edges_query("project-1", 17);
     let (import_query, _) = codewiki_import_edges_query("project-1", 17);
 
-    assert!(call_query.contains("LIMIT 17"));
-    assert!(import_query.contains("LIMIT 17"));
+    for query in [call_query, import_query] {
+        let order = query
+            .find("ORDER BY source, target")
+            .expect("graph query orders its edge sample");
+        let limit = query
+            .find("LIMIT 17")
+            .expect("graph query uses the requested edge limit");
+        assert!(order < limit, "edge ordering must precede the limit");
+    }
 }
 
 #[test]
