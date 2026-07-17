@@ -1,7 +1,11 @@
 use clap::CommandFactory;
 use gobby_core::ai_context::AiContext;
 use gobby_core::config::{AiRouting, EnvOnlySource};
+use gobby_wiki::ScopeSelection;
 
+use crate::cli_runtime::log_level;
+
+use super::mapping::command_from_cli;
 use super::*;
 
 #[test]
