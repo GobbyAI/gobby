@@ -460,6 +460,57 @@ def test_deleted_manifest_path_returns_typed_path_absent(repo: Path) -> None:
     assert error.value.code == "path_absent_at_commit"
 
 
+def test_rename_manifest_addresses_both_paths(repo: Path) -> None:
+    (repo / "old-name.txt").write_text("line one\nline two\nline three\n")
+    _commit(repo, "add")
+    _git(repo, "mv", "old-name.txt", "new-name.txt")
+    rename_commit = _commit(repo, "rename")
+    manager = _manager(rename_commit)
+
+    manifest = get_task_diff_page("task-id", manager, cwd=repo, limit_bytes=4)
+    old_item = _find_manifest_item(manifest, b"old-name.txt")
+    new_item = _find_manifest_item(manifest, b"new-name.txt")
+    assert old_item["status"].startswith("R")
+    assert old_item["role"] == "old"
+    assert new_item["role"] == "new"
+
+    for item, marker in ((old_item, b"-line one"), (new_item, b"+line one")):
+        page = get_task_diff_page(
+            "task-id",
+            manager,
+            cwd=repo,
+            commit=rename_commit,
+            path_selector=item["path_selector"],
+            limit_bytes=MAX_LIMIT_BYTES,
+        )
+        assert page["complete"]
+        assert marker in decode_content(page["content"])
+
+
+def test_unlinked_and_malformed_commits_rejected(repo: Path) -> None:
+    (repo / "file.txt").write_text("content\n")
+    linked = _commit(repo, "linked")
+    (repo / "file.txt").write_text("more content\n")
+    unlinked = _commit(repo, "unlinked")
+    manager = _manager(linked)
+
+    with pytest.raises(DiffPagingError) as error:
+        get_task_diff_page("task-id", manager, cwd=repo, commit=unlinked)
+    assert error.value.code == "commit_not_linked"
+
+    with pytest.raises(DiffPagingError) as error:
+        get_task_diff_page("task-id", manager, cwd=repo, commit="not a sha")
+    assert error.value.code == "invalid_commit"
+
+    with pytest.raises(DiffPagingError) as error:
+        get_task_diff_page("task-id", manager, cwd=repo, commit="deadbeef" * 5)
+    assert error.value.code == "invalid_commit"
+
+    with pytest.raises(DiffPagingError) as error:
+        get_task_diff_page("task-id", _manager("not a sha"), cwd=repo)
+    assert error.value.code == "invalid_commit"
+
+
 @pytest.mark.parametrize("limit", [MIN_LIMIT_BYTES - 1, -1, MAX_LIMIT_BYTES + 1])
 def test_core_rejects_invalid_byte_limits_before_git(limit: int) -> None:
     manager = _TaskManager(_Task())
