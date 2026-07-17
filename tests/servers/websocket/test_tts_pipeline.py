@@ -127,6 +127,32 @@ class TestTTSPipeline:
 
         await pipeline.cancel()
 
+    @pytest.mark.asyncio
+    async def test_inline_wrapper_tags_never_reach_synthesis(self) -> None:
+        """<proposed_plan> tags are protocol markup, not speech (#18343).
+
+        The closing tag lands alone in the flush buffer here: the period ends
+        the sentence, so feed_text emits the body and flush() must strip the
+        leftover tag instead of speaking it.
+        """
+        ws = DummyWebSocket()
+        pipeline = TTSPipeline(
+            tts=OrderedTTS({}),
+            conversation_id="conv-1234",
+            clients={ws: {"conversation_id": "conv-1234"}},
+        )
+
+        pipeline.feed_text("<proposed_plan>The plan is simple. ")
+        pipeline.feed_text("</proposed_plan>")
+        await pipeline.flush()
+
+        binary_frames = [
+            call.args[0] for call in ws.send.await_args_list if isinstance(call.args[0], bytes)
+        ]
+        assert binary_frames == [b"The plan is simple."]
+
+        await pipeline.cancel()
+
 
 class DummyAttachedPipeline:
     def __init__(self, *, fail_feed: bool = False, fail_flush: bool = False) -> None:

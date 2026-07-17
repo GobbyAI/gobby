@@ -230,7 +230,7 @@ async def start_turn(
         thread_id: Thread ID to add turn to
         prompt: User's input text
         images: Optional list of image paths or URLs
-        context_prefix: Optional context to prepend to instructions field.
+        context_prefix: Optional context delivered as a leading text input item.
                        Used for injecting session metadata and workflow context.
         effort: Optional reasoning effort override for this and subsequent turns.
         **config_overrides: Optional config overrides (cwd, model, etc.)
@@ -238,7 +238,14 @@ async def start_turn(
     Returns:
         CodexTurn object (initial state, updates via notifications)
     """
-    inputs: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+    inputs: list[dict[str, Any]] = []
+    if context_prefix:
+        # The app-server silently drops a per-turn `instructions` param
+        # (verified live: the model never saw injected context sent that way),
+        # so context must ride in the turn input itself — same delivery the
+        # Droid and ACP backends use by prepending to the prompt.
+        inputs.append({"type": "text", "text": context_prefix})
+    inputs.append({"type": "text", "text": prompt})
 
     if images:
         for img in images:
@@ -252,9 +259,6 @@ async def start_turn(
         "input": inputs,
     }
     client._pending_turn_prompts_by_thread[thread_id] = prompt
-
-    if context_prefix:
-        params["instructions"] = context_prefix
 
     # App-server v2 uses `effort` for per-turn reasoning overrides.
     if effort:

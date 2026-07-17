@@ -3974,22 +3974,23 @@ class TestCodexAdapterApprovalAttach:
 # Phase 2: Context Injection Tests
 #
 # Tests for injecting session metadata and workflow context into Codex turns.
-# Codex uses turn-start injection: context is prepended to the `instructions`
-# field when starting a turn, unlike additionalContext-based adapters which use per-hook
-# additionalContext.
+# Codex uses turn-start injection: context rides as a leading text input item
+# in the turn/start JSON-RPC request. The app-server silently drops a per-turn
+# `instructions` param, so it must never be used for context delivery (#18343).
 # =============================================================================
 
 
 class TestCodexClientContextPrefixParameter:
     """Tests for context_prefix parameter in start_turn().
 
-    The client should accept a context_prefix string and prepend it to
-    the instructions field in the turn/start JSON-RPC request.
+    The client should accept a context_prefix string and deliver it as a
+    leading text input item in the turn/start JSON-RPC request. The
+    `instructions` param is dead: the app-server ignores it.
     """
 
     @pytest.mark.asyncio
     async def test_start_turn_without_context_prefix(self) -> None:
-        """start_turn without context_prefix sends no instructions field."""
+        """start_turn without context_prefix sends only the prompt input."""
         client = CodexAppServerClient()
 
         mock_result = {"turn": {"id": "turn-1", "status": "inProgress", "items": []}}
@@ -4000,12 +4001,12 @@ class TestCodexClientContextPrefixParameter:
             await client.start_turn("thr-1", "Help me refactor")
 
             params = mock_send.call_args[0][1]
-            # No instructions field when no context_prefix
+            assert params["input"] == [{"type": "text", "text": "Help me refactor"}]
             assert "instructions" not in params
 
     @pytest.mark.asyncio
     async def test_start_turn_with_context_prefix(self) -> None:
-        """start_turn with context_prefix adds instructions field."""
+        """start_turn with context_prefix prepends a text input item."""
         client = CodexAppServerClient()
 
         mock_result = {"turn": {"id": "turn-2", "status": "inProgress", "items": []}}
@@ -4020,12 +4021,16 @@ class TestCodexClientContextPrefixParameter:
             )
 
             params = mock_send.call_args[0][1]
-            assert "instructions" in params
-            assert "Gobby Session ID: #42" in params["instructions"]
+            assert params["input"] == [
+                {"type": "text", "text": "Gobby Session ID: #42"},
+                {"type": "text", "text": "Help me refactor"},
+            ]
+            # The app-server drops this param; context must never ride there.
+            assert "instructions" not in params
 
     @pytest.mark.asyncio
-    async def test_start_turn_context_prefix_none_omits_instructions(self) -> None:
-        """start_turn with context_prefix=None sends no instructions field."""
+    async def test_start_turn_context_prefix_none_sends_only_prompt(self) -> None:
+        """start_turn with context_prefix=None sends only the prompt input."""
         client = CodexAppServerClient()
 
         mock_result = {"turn": {"id": "turn-3", "status": "inProgress", "items": []}}
@@ -4040,11 +4045,11 @@ class TestCodexClientContextPrefixParameter:
             )
 
             params = mock_send.call_args[0][1]
-            assert "instructions" not in params
+            assert params["input"] == [{"type": "text", "text": "Help me refactor"}]
 
     @pytest.mark.asyncio
-    async def test_start_turn_context_prefix_empty_string_omits_instructions(self) -> None:
-        """start_turn with empty context_prefix sends no instructions field."""
+    async def test_start_turn_context_prefix_empty_string_sends_only_prompt(self) -> None:
+        """start_turn with empty context_prefix sends only the prompt input."""
         client = CodexAppServerClient()
 
         mock_result = {"turn": {"id": "turn-4", "status": "inProgress", "items": []}}
@@ -4059,7 +4064,7 @@ class TestCodexClientContextPrefixParameter:
             )
 
             params = mock_send.call_args[0][1]
-            assert "instructions" not in params
+            assert params["input"] == [{"type": "text", "text": "Help me refactor"}]
 
 
 class TestCodexAdapterContextStringBuilding:

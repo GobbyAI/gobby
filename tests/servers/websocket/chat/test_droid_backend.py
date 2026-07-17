@@ -536,17 +536,18 @@ async def test_plan_mode_cancels_unapproved_tool_and_broadcasts_plan() -> None:
     # fires and the plan card never surfaces in the web UI. With the fix the turn
     # completes and the plan broadcasts, matching Codex/ACP.
     plan_text = "Plan: add multiply helper"
+    tagged_plan = f"<proposed_plan>{plan_text}</proposed_plan>"
     process = _FakeProcess(
         [_session_init_line()]
         + [
-            _turn_response_lines(plan_text)[0],
+            _turn_response_lines(tagged_plan)[0],
             _permission_request_line(
                 request_id="permission-1",
                 tool_id="tool-1",
                 tool_name="Execute",
                 tool_input={"command": "grep -rn multiply src"},
             ),
-            *_turn_response_lines(plan_text)[1:],
+            *_turn_response_lines(tagged_plan)[1:],
         ]
     )
     backend = DroidWebChatBackend()

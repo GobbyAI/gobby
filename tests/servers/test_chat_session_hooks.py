@@ -184,6 +184,78 @@ class TestChatSessionHooks:
         assert session._plan_broadcast_sent is True
 
     @pytest.mark.asyncio
+    async def test_post_tool_read_of_plan_file_does_not_broadcast(
+        self, session: ChatSession
+    ) -> None:
+        """Consulting an existing plan file with Read must not pop the approval prompt."""
+        mock_cb = AsyncMock(return_value={})
+        session._on_post_tool = mock_cb
+        plan_cb = AsyncMock()
+        session._on_plan_ready = plan_cb
+
+        hooks = session._build_sdk_hooks()
+        hook_fn = hooks["PostToolUse"][0].hooks[0]
+
+        with patch.object(session, "_read_plan_file", return_value="old plan") as read_mock:
+            await hook_fn(
+                {
+                    "tool_name": "Read",
+                    "tool_input": {"file_path": ".gobby/plans/completed/old.md"},
+                    "tool_response": "old plan",
+                },
+                "use_3",
+                HookContext(signal=None),
+            )
+
+        read_mock.assert_not_called()
+        plan_cb.assert_not_awaited()
+        assert session._plan_broadcast_sent is False
+        mock_cb.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_post_tool_write_broadcasts_written_file_not_stale_plan(
+        self, session: ChatSession, tmp_path
+    ) -> None:
+        """The broadcast must contain exactly the written file's content, even
+        when a more recently modified plan file exists in another plan dir
+        (the stale-plan fallback hole, #18343)."""
+        import os
+        import time
+
+        session.project_path = str(tmp_path)
+        plans_dir = tmp_path / ".gobby" / "plans"
+        plans_dir.mkdir(parents=True)
+        (plans_dir / "feature-plan.md").write_text("plan A content", encoding="utf-8")
+
+        stale_dir = tmp_path / ".claude" / "plans"
+        stale_dir.mkdir(parents=True)
+        stale = stale_dir / "stale-plan.md"
+        stale.write_text("stale plan B", encoding="utf-8")
+        future = time.time() + 60
+        os.utime(stale, (future, future))
+
+        mock_cb = AsyncMock(return_value={})
+        session._on_post_tool = mock_cb
+        plan_cb = AsyncMock()
+        session._on_plan_ready = plan_cb
+
+        hooks = session._build_sdk_hooks()
+        hook_fn = hooks["PostToolUse"][0].hooks[0]
+
+        await hook_fn(
+            {
+                "tool_name": "Write",
+                "tool_input": {"file_path": ".gobby/plans/feature-plan.md"},
+                "tool_response": "done",
+            },
+            "use_4",
+            HookContext(signal=None),
+        )
+
+        plan_cb.assert_awaited_once()
+        assert plan_cb.await_args.args[0] == "plan A content"
+
+    @pytest.mark.asyncio
     async def test_build_stop_hook(self, session: ChatSession) -> None:
         mock_cb = AsyncMock(return_value={})
         session._on_stop = mock_cb

@@ -75,9 +75,15 @@ async def test_request_changes_then_revised_plan_rebroadcasts_with_feedback() ->
 
     session._on_plan_ready = _on_plan_ready
 
-    # Turn 1: original plan presented + broadcast.
+    # Turn 1: original plan presented + broadcast (tags stripped).
     session._backend = _RecordingBackend(
-        [StreamEvent(event_type="content_delta", data={"content": "Plan A"})], prompts
+        [
+            StreamEvent(
+                event_type="content_delta",
+                data={"content": "<proposed_plan>Plan A</proposed_plan>"},
+            )
+        ],
+        prompts,
     )
     [e async for e in session.send_message("draft a plan")]
     assert broadcasts == [("Plan A", {"plan": "Plan A"})]
@@ -102,13 +108,21 @@ async def test_request_changes_then_revised_plan_rebroadcasts_with_feedback() ->
 
     # Turn 2: the feedback is injected and the revised plan re-broadcasts.
     session._backend = _RecordingBackend(
-        [StreamEvent(event_type="content_delta", data={"content": "Plan B (revised)"})],
+        [
+            StreamEvent(
+                event_type="content_delta",
+                data={"content": "<proposed_plan>Plan B (revised)</proposed_plan>"},
+            )
+        ],
         prompts,
     )
     [e async for e in session.send_message("Add error handling to step 2")]
 
-    # Feedback reached the revised turn's prompt via _pop_plan_mode_context.
-    assert any("Add error handling to step 2" in p for p in prompts[1:])
+    # Feedback reached the revised turn's prompt via _pop_plan_mode_context,
+    # along with the reminder to re-wrap the revised prose plan in tags.
+    feedback_prompts = [p for p in prompts[1:] if "Add error handling to step 2" in p]
+    assert feedback_prompts
+    assert any("wrapped in <proposed_plan> tags again" in p for p in feedback_prompts)
     # Revised plan re-broadcast as a distinct revision; pending state re-armed.
     assert broadcasts == [
         ("Plan A", {"plan": "Plan A"}),
@@ -120,11 +134,11 @@ async def test_request_changes_then_revised_plan_rebroadcasts_with_feedback() ->
 
 
 @pytest.mark.asyncio
-async def test_longer_plan_supersedes_short_preamble_within_cycle() -> None:
-    # The shared guard fix (#15693): an early conversational preamble turn must
-    # not pin the plan against a fuller plan emitted in a LATER turn of the same
-    # cycle (no reject in between). Exercised on the ACP path because the guard
-    # lives in the shared ManagedWebChatPermissionsMixin, not per-backend.
+async def test_unmarked_preamble_never_pins_and_tagged_plan_broadcasts() -> None:
+    # #15693 originally guarded against a short preamble outranking the fuller
+    # plan via length comparison. With the marker gate (#18343) the untagged
+    # preamble never pins anything at all; the tagged plan in a later turn of
+    # the same cycle broadcasts as the first and only pin.
     prompts: list[str] = []
     broadcasts: list[tuple[str | None, dict[str, Any]]] = []
 
@@ -139,18 +153,24 @@ async def test_longer_plan_supersedes_short_preamble_within_cycle() -> None:
 
     session._on_plan_ready = _on_plan_ready
 
-    # Turn 1: a short preamble pins (but must not stick for the whole cycle).
+    # Turn 1: an untagged conversational preamble — no pin, no broadcast.
     session._backend = _RecordingBackend(
         [StreamEvent(event_type="content_delta", data={"content": "Now I have a plan."})],
         prompts,
     )
     [e async for e in session.send_message("draft a plan")]
-    assert broadcasts[-1][0] == "Now I have a plan."
+    assert broadcasts == []
+    assert session.has_pending_plan is False
 
-    # Turn 2 (same cycle, no reject): the fuller plan supersedes the preamble.
+    # Turn 2 (same cycle): the tagged plan broadcasts.
     real_plan = "## Plan\n\n1. Step one\n2. Step two\n3. Step three"
     session._backend = _RecordingBackend(
-        [StreamEvent(event_type="content_delta", data={"content": real_plan})],
+        [
+            StreamEvent(
+                event_type="content_delta",
+                data={"content": f"<proposed_plan>{real_plan}</proposed_plan>"},
+            )
+        ],
         prompts,
     )
     [e async for e in session.send_message("continue")]

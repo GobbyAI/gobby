@@ -1,10 +1,12 @@
 """ACP plan-capture broadcast (1b, #15615).
 
-ACP CLIs (Codex/Droid/Gemini/Grok/Qwen) present a plan as a normal assistant
-turn (no ExitPlanMode tool). The shared ``ACPManagedChatSession.send_message``
-hook must, when a substantive turn finishes in plan mode, broadcast a single
+ACP CLIs (Grok/Qwen) present a plan as a normal assistant turn (no
+ExitPlanMode tool). The shared ``ACPManagedChatSession.send_message`` hook
+must, when a plan-mode turn finishes with a ``<proposed_plan>``-tagged prose
+plan (or a structured ``plan_update``), broadcast a single
 ``plan_pending_approval`` (same payload shape as the SDK path) and flip
 ``has_pending_plan`` to True so the shared frontend surfaces render.
+Untagged prose is an answer, never a plan (#18343).
 """
 
 from __future__ import annotations
@@ -75,8 +77,10 @@ async def test_plan_turn_broadcasts_pending_plan() -> None:
     session, broadcasts = _make_session(
         "plan",
         [
-            StreamEvent(event_type="content_delta", data={"content": "## Plan\n\n"}),
-            StreamEvent(event_type="content_delta", data={"content": "1. Do the thing"}),
+            StreamEvent(event_type="content_delta", data={"content": "<proposed_plan>## Plan\n\n"}),
+            StreamEvent(
+                event_type="content_delta", data={"content": "1. Do the thing</proposed_plan>"}
+            ),
         ],
     )
 
@@ -84,10 +88,31 @@ async def test_plan_turn_broadcasts_pending_plan() -> None:
 
     assert len(broadcasts) == 1
     content, input_data = broadcasts[0]
+    # Broadcast content is tag-stripped.
     assert content == "## Plan\n\n1. Do the thing"
     assert input_data == {"plan": "## Plan\n\n1. Do the thing"}
     assert session.has_pending_plan is True
     assert any(isinstance(e, DoneEvent) for e in events)
+
+
+@pytest.mark.asyncio
+async def test_plan_mode_answer_without_tags_does_not_broadcast() -> None:
+    # The original bug (#18343): an ordinary Q&A answer in plan mode was
+    # broadcast as a plan.
+    session, broadcasts = _make_session(
+        "plan",
+        [
+            StreamEvent(
+                event_type="content_delta",
+                data={"content": "MCP stands for Model Context Protocol."},
+            ),
+        ],
+    )
+
+    [e async for e in session.send_message("what does MCP stand for?")]
+
+    assert broadcasts == []
+    assert session.has_pending_plan is False
 
 
 @pytest.mark.asyncio
@@ -118,7 +143,12 @@ async def test_plan_mode_turn_without_content_does_not_broadcast() -> None:
 async def test_clear_pending_plan_prompt_resets_for_revise_cycle() -> None:
     session, broadcasts = _make_session(
         "plan",
-        [StreamEvent(event_type="content_delta", data={"content": "the plan"})],
+        [
+            StreamEvent(
+                event_type="content_delta",
+                data={"content": "<proposed_plan>the plan</proposed_plan>"},
+            )
+        ],
     )
 
     [e async for e in session.send_message("draft a plan")]
@@ -131,7 +161,12 @@ async def test_clear_pending_plan_prompt_resets_for_revise_cycle() -> None:
     assert session.has_pending_plan is False
 
     session._backend = _FakeBackend(
-        [StreamEvent(event_type="content_delta", data={"content": "the revised plan"})]
+        [
+            StreamEvent(
+                event_type="content_delta",
+                data={"content": "<proposed_plan>the revised plan</proposed_plan>"},
+            )
+        ]
     )
     [e async for e in session.send_message("revise it")]
     assert session.has_pending_plan is True
@@ -151,8 +186,10 @@ async def test_thinking_chunks_excluded_from_broadcast_plan() -> None:
                 event_type="thinking_delta",
                 data={"content": "Let me reason about the repo layout first."},
             ),
-            StreamEvent(event_type="content_delta", data={"content": "## Plan\n\n"}),
-            StreamEvent(event_type="content_delta", data={"content": "1. Do the thing"}),
+            StreamEvent(event_type="content_delta", data={"content": "<proposed_plan>## Plan\n\n"}),
+            StreamEvent(
+                event_type="content_delta", data={"content": "1. Do the thing</proposed_plan>"}
+            ),
         ],
     )
 
@@ -191,6 +228,36 @@ async def test_protocol_plan_update_broadcasts_structured_plan() -> None:
     assert input_data == {"plan": content}
     assert session.has_pending_plan is True
     assert any(isinstance(e, DoneEvent) for e in events)
+
+
+@pytest.mark.asyncio
+async def test_protocol_plan_update_stray_wrapper_is_stripped() -> None:
+    # A model that leaks <proposed_plan> tags into a structured plan_update
+    # entry must not get tags into broadcast or stored plan state.
+    session, broadcasts = _make_session(
+        "plan",
+        [
+            StreamEvent(
+                event_type="plan_update",
+                data={
+                    "entries": [
+                        {
+                            "content": "<proposed_plan>Inspect ACP updates</proposed_plan>",
+                            "status": "pending",
+                        },
+                    ],
+                },
+            )
+        ],
+    )
+
+    [e async for e in session.send_message("draft a plan")]
+
+    assert len(broadcasts) == 1
+    content, _ = broadcasts[0]
+    assert content == "Inspect ACP updates"
+    assert "<proposed_plan>" not in (session._pending_plan_content or "")
+    assert session.has_pending_plan is True
 
 
 @pytest.mark.asyncio

@@ -501,12 +501,19 @@ class ChatSessionPermissionsMixin:
         if allowed_prompts is not None:
             self._pending_plan_allowed_prompts = allowed_prompts
 
-    def _read_plan_file(self) -> str | None:
+    def _read_plan_file(self, path: str | None = None) -> str | None:
         """Read the plan file written during plan mode, if any.
 
-        If _plan_file_path was tracked (from a Write/Edit to a plan path),
-        read that file directly. Otherwise, fall back to finding the most
-        recently modified .md file in .gobby/plans/ or .claude/plans/.
+        With an explicit ``path`` (the file a Write/Edit just touched), read
+        exactly that file and return None if it cannot be read — no fallback
+        to tracked state or directory scanning, which could surface a stale
+        plan from another session.
+
+        Without ``path``: if _plan_file_path was tracked (from a Write/Edit
+        to a plan path), read that file directly. Otherwise, fall back to
+        finding the most recently modified .md file in .gobby/plans/ or
+        .claude/plans/. This mode exists only for the ExitPlanMode gate,
+        where no tool input carries the path.
 
         Relative paths are resolved against ``project_path`` (the CLI
         subprocess CWD) rather than the daemon's CWD, which may differ.
@@ -523,11 +530,21 @@ class ChatSessionPermissionsMixin:
                 return project_root / p
             return p
 
+        if path is not None:
+            try:
+                resolved = _resolve(Path(path))
+                content = resolved.read_text(encoding="utf-8")
+            except OSError as e:
+                logger.warning(f"Failed to read plan file {path}: {e}")
+                return None
+            self._last_plan_content = content
+            return content
+
         if self._plan_file_path:
             try:
-                path = _resolve(Path(self._plan_file_path))
-                if path.exists():
-                    content = path.read_text(encoding="utf-8")
+                tracked = _resolve(Path(self._plan_file_path))
+                if tracked.exists():
+                    content = tracked.read_text(encoding="utf-8")
                     self._last_plan_content = content
                     return content
             except Exception as e:

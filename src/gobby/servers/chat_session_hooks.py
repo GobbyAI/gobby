@@ -195,9 +195,11 @@ class ChatSessionHooksMixin:
                 tool_name = inp.get("tool_name", "")
                 tool_input = inp.get("tool_input", {})
 
-                # Detect plan file writes/reads in plan mode and broadcast to frontend.
+                # Detect plan file writes in plan mode and broadcast to frontend.
+                # Read is deliberately excluded: consulting an existing plan file
+                # must not trigger the approval prompt.
                 if (
-                    tool_name in ("Write", "Edit", "Read")
+                    tool_name in ("Write", "Edit")
                     and self.chat_mode == "plan"
                     and not self._plan_approved
                     and isinstance(tool_input, dict)
@@ -205,7 +207,7 @@ class ChatSessionHooksMixin:
                     file_path = tool_input.get("file_path", "")
                     if isinstance(file_path, str) and _PLAN_FILE_PATTERN.match(file_path):
                         session = cast(Any, self)
-                        plan_content = session._read_plan_file()
+                        plan_content = session._read_plan_file(file_path)
                         session._reset_plan_broadcast_if_revised(plan_content)
                         if plan_content and self._on_plan_ready and not self._plan_broadcast_sent:
                             session._remember_plan_artifact(
@@ -216,8 +218,7 @@ class ChatSessionHooksMixin:
                             await self._on_plan_ready(plan_content, tool_input, tool_use_id)
                             self._plan_broadcast_sent = True
                             logger.info(
-                                "Plan file %s, broadcast plan_pending_approval for %s",
-                                "read" if tool_name == "Read" else "written",
+                                "Plan file written, broadcast plan_pending_approval for %s",
                                 self.conversation_id[:8],
                             )
 

@@ -1,6 +1,6 @@
 """Codex + Droid plan-capture broadcast parity (#15629).
 
-The ACP path (Gemini/Grok/Qwen) already surfaces a plan presented as a normal
+The ACP path (Grok/Qwen) already surfaces a plan presented as a normal
 assistant turn — ``test_acp_plan_broadcast.py`` covers it. Codex (app-server
 JSON-RPC) and Droid (stream-jsonrpc) share the same
 ``ManagedWebChatPermissionsMixin`` plan pipeline, but their session
@@ -34,6 +34,7 @@ from gobby.servers.websocket.chat.backends.droid import (
     DroidManagedChatSession,
     DroidWebChatBackend,
 )
+from gobby.servers.websocket.chat.permissions import extract_marked_plan
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -214,8 +215,8 @@ async def test_codex_plan_turn_broadcasts_pending_plan() -> None:
     session, broadcasts = _make_codex_session(
         "plan",
         [
-            TextChunk(content="## Plan\n\n"),
-            TextChunk(content="1. Do the thing"),
+            TextChunk(content="<proposed_plan>## Plan\n\n"),
+            TextChunk(content="1. Do the thing</proposed_plan>"),
             DoneEvent(tool_calls_count=0),
         ],
     )
@@ -224,10 +225,81 @@ async def test_codex_plan_turn_broadcasts_pending_plan() -> None:
 
     assert len(broadcasts) == 1
     content, input_data = broadcasts[0]
+    # Broadcast content is tag-stripped.
     assert content == "## Plan\n\n1. Do the thing"
     assert input_data == {"plan": "## Plan\n\n1. Do the thing"}
     assert session.has_pending_plan is True
     assert any(isinstance(e, DoneEvent) for e in events)
+
+
+async def test_codex_plan_mode_answer_without_tags_does_not_broadcast() -> None:
+    # The original bug (#18343): an ordinary Q&A answer in plan mode was
+    # broadcast as a plan. Untagged prose is never a plan.
+    session, broadcasts = _make_codex_session(
+        "plan",
+        [
+            TextChunk(content="MCP stands for Model Context Protocol."),
+            DoneEvent(tool_calls_count=0),
+        ],
+    )
+
+    [e async for e in session.send_message("what does MCP stand for?")]
+
+    assert broadcasts == []
+    assert session.has_pending_plan is False
+
+
+async def test_codex_open_tag_without_close_broadcasts_remainder() -> None:
+    # Lenient close: a truncated turn that never emitted </proposed_plan>
+    # still surfaces the plan body after the open tag.
+    session, broadcasts = _make_codex_session(
+        "plan",
+        [
+            TextChunk(content="<proposed_plan>## Plan\n\n1. Do the thing"),
+            DoneEvent(tool_calls_count=0),
+        ],
+    )
+
+    [e async for e in session.send_message("draft a plan")]
+
+    assert len(broadcasts) == 1
+    assert broadcasts[0][0] == "## Plan\n\n1. Do the thing"
+
+
+async def test_codex_tag_split_across_chunks_broadcasts() -> None:
+    # Tags arrive split across streamed chunks; the gate sees the accumulated
+    # turn text, so the reassembled tags still gate and strip correctly.
+    session, broadcasts = _make_codex_session(
+        "plan",
+        [
+            TextChunk(content="<propo"),
+            TextChunk(content="sed_plan>the plan</propo"),
+            TextChunk(content="sed_plan>"),
+            DoneEvent(tool_calls_count=0),
+        ],
+    )
+
+    [e async for e in session.send_message("draft a plan")]
+
+    assert len(broadcasts) == 1
+    assert broadcasts[0][0] == "the plan"
+
+
+async def test_codex_empty_marked_plan_does_not_broadcast() -> None:
+    # A marker with an empty body pins and broadcasts nothing — and must not
+    # leak the raw tags into stored plan state.
+    session, broadcasts = _make_codex_session(
+        "plan",
+        [
+            TextChunk(content="<proposed_plan></proposed_plan>"),
+            DoneEvent(tool_calls_count=0),
+        ],
+    )
+
+    [e async for e in session.send_message("draft a plan")]
+
+    assert broadcasts == []
+    assert session.has_pending_plan is False
 
 
 async def test_codex_non_plan_turn_does_not_broadcast() -> None:
@@ -255,7 +327,10 @@ async def test_codex_plan_mode_turn_without_content_does_not_broadcast() -> None
 async def test_codex_plan_prompt_clears_and_rebroadcasts_on_revise() -> None:
     session, broadcasts = _make_codex_session(
         "plan",
-        [TextChunk(content="the plan"), DoneEvent(tool_calls_count=0)],
+        [
+            TextChunk(content="<proposed_plan>the plan</proposed_plan>"),
+            DoneEvent(tool_calls_count=0),
+        ],
     )
 
     [e async for e in session.send_message("draft a plan")]
@@ -268,7 +343,10 @@ async def test_codex_plan_prompt_clears_and_rebroadcasts_on_revise() -> None:
     assert session.has_pending_plan is False
 
     session._backend = _FakeCodexBackend(
-        [TextChunk(content="the revised plan"), DoneEvent(tool_calls_count=0)]
+        [
+            TextChunk(content="<proposed_plan>the revised plan</proposed_plan>"),
+            DoneEvent(tool_calls_count=0),
+        ]
     )
     [e async for e in session.send_message("revise it")]
     assert session.has_pending_plan is True
@@ -286,7 +364,7 @@ async def test_droid_plan_turn_broadcasts_pending_plan() -> None:
     # must broadcast before it.
     session, broadcasts = _make_droid_session(
         "plan",
-        [_droid_text("## Plan\n\n"), _droid_text("1. Do the thing")],
+        [_droid_text("<proposed_plan>## Plan\n\n"), _droid_text("1. Do the thing</proposed_plan>")],
     )
 
     events = [e async for e in session.send_message("draft a plan")]
@@ -304,7 +382,7 @@ async def test_droid_plan_broadcasts_on_in_stream_result_done() -> None:
     # broadcast must still fire (and only once).
     session, broadcasts = _make_droid_session(
         "plan",
-        [_droid_text("the plan"), _droid_result()],
+        [_droid_text("<proposed_plan>the plan</proposed_plan>"), _droid_result()],
     )
 
     events = [e async for e in session.send_message("draft a plan")]
@@ -313,6 +391,19 @@ async def test_droid_plan_broadcasts_on_in_stream_result_done() -> None:
     assert broadcasts[0][0] == "the plan"
     assert session.has_pending_plan is True
     assert sum(isinstance(e, DoneEvent) for e in events) == 1
+
+
+async def test_droid_plan_mode_answer_without_tags_does_not_broadcast() -> None:
+    # Untagged prose in plan mode is an answer, not a plan (#18343).
+    session, broadcasts = _make_droid_session(
+        "plan",
+        [_droid_text("MCP stands for Model Context Protocol."), _droid_result()],
+    )
+
+    [e async for e in session.send_message("what does MCP stand for?")]
+
+    assert broadcasts == []
+    assert session.has_pending_plan is False
 
 
 async def test_droid_non_plan_turn_does_not_broadcast() -> None:
@@ -339,7 +430,8 @@ async def test_droid_plan_mode_turn_without_content_does_not_broadcast() -> None
 async def test_droid_structured_plan_supersedes_prose_preamble() -> None:
     # The real failure (#15693): Droid streams a short conversational preamble,
     # then delivers the actual spec via the ExitSpecMode tool argument. The
-    # structured plan must win over the preamble, not the other way around.
+    # untagged preamble no longer pins anything (#18343); the structured plan
+    # broadcasts without needing tags.
     real_plan = "## Plan\n\n1. Step one\n2. Step two\n3. Step three"
     session, broadcasts, backend = _make_droid_permission_session(
         "plan",
@@ -359,9 +451,30 @@ async def test_droid_structured_plan_supersedes_prose_preamble() -> None:
     assert response["result"] == {"selectedOption": "proceed_once"}
 
 
+async def test_droid_structured_plan_with_stray_wrapper_is_stripped() -> None:
+    # A model may wrap the structured tool argument in <proposed_plan> tags
+    # anyway; they are stripped so tags never reach stored plan state.
+    real_plan = "## Plan\n\n1. Step one"
+    session, broadcasts, backend = _make_droid_permission_session(
+        "plan",
+        [],
+        "ExitSpecMode",
+        {"plan": f"<proposed_plan>{real_plan}</proposed_plan>"},
+    )
+
+    [e async for e in session.send_message("draft a plan")]
+
+    assert len(broadcasts) == 1
+    assert broadcasts[0][0] == real_plan
+    assert session._pending_plan_content == real_plan
+    assert "<proposed_plan>" not in (session._last_plan_content or "")
+    response = json.loads(backend.response_writes[0].decode("utf-8"))
+    assert response["id"] == "permission-exit-spec"
+
+
 async def test_droid_structured_plan_not_clobbered_by_later_prose() -> None:
-    # Once a structured plan is pinned, later (even longer) prose chatter must
-    # not displace it.
+    # Once a structured plan is pinned, later prose — even tagged prose that
+    # passes the marker gate — must not displace it.
     real_plan = "## Plan\n\n1. Step one"
     session, broadcasts, backend = _make_droid_permission_session(
         "plan", [], "ExitSpecMode", {"plan": real_plan}
@@ -372,7 +485,12 @@ async def test_droid_structured_plan_not_clobbered_by_later_prose() -> None:
     assert broadcasts[-1][0] == real_plan
 
     session._backend = _FakeDroidBackend(
-        [_droid_text("Let me know if you'd like me to change anything at all here.")]
+        [
+            _droid_text(
+                "<proposed_plan>Let me know if you'd like me to change anything "
+                "at all here.</proposed_plan>"
+            )
+        ]
     )
     [e async for e in session.send_message("anything else?")]
 
@@ -382,18 +500,20 @@ async def test_droid_structured_plan_not_clobbered_by_later_prose() -> None:
     assert session._pending_plan_structured is True
 
 
-async def test_droid_longer_prose_supersedes_shorter_preamble_across_turns() -> None:
-    # Prose-only path (no ExitSpecMode): an early preamble turn must not pin the
-    # plan against a fuller plan emitted in a later turn of the same cycle.
+async def test_droid_longer_prose_supersedes_shorter_prose_across_turns() -> None:
+    # Prose-only path (no ExitSpecMode): a short tagged plan pinned in an early
+    # turn is superseded by a fuller tagged plan in a later turn of the cycle.
     session, broadcasts = _make_droid_session(
         "plan",
-        [_droid_text("Now I have enough context to propose a plan.")],
+        [_droid_text("<proposed_plan>## Plan\n\n1. Step one</proposed_plan>")],
     )
     [e async for e in session.send_message("draft a plan")]
     assert len(broadcasts) == 1
 
     real_plan = "## Plan\n\n1. Step one\n2. Step two\n3. Step three\n4. Step four"
-    session._backend = _FakeDroidBackend([_droid_text(real_plan)])
+    session._backend = _FakeDroidBackend(
+        [_droid_text(f"<proposed_plan>{real_plan}</proposed_plan>")]
+    )
     [e async for e in session.send_message("continue")]
 
     assert len(broadcasts) == 2
@@ -498,7 +618,7 @@ async def test_codex_thinking_excluded_from_plan() -> None:
         "plan",
         [
             ThinkingEvent(content="internal reasoning the user should not see"),
-            TextChunk(content="## Plan\n\n1. Do it"),
+            TextChunk(content="<proposed_plan>## Plan\n\n1. Do it</proposed_plan>"),
             DoneEvent(tool_calls_count=0),
         ],
     )
@@ -520,7 +640,7 @@ async def test_droid_thinking_excluded_from_plan() -> None:
                 event_type="content_delta",
                 data={"kind": "thinking", "content": "weighing options"},
             ),
-            _droid_text("## Plan\n\n1. Do it"),
+            _droid_text("<proposed_plan>## Plan\n\n1. Do it</proposed_plan>"),
         ],
     )
 
@@ -540,9 +660,9 @@ async def test_droid_intermediate_result_does_not_truncate_plan() -> None:
     session, broadcasts = _make_droid_session(
         "plan",
         [
-            _droid_text("I'll research the codebase first. "),
+            _droid_text("<proposed_plan>I'll research the codebase first. "),
             _droid_result(),  # intermediate result -- must not truncate or end the turn
-            _droid_text("## Plan\n\n1. Add add(a, b)"),
+            _droid_text("## Plan\n\n1. Add add(a, b)</proposed_plan>"),
             _droid_result(),  # terminal result
         ],
     )
@@ -563,7 +683,10 @@ async def test_droid_execution_narration_after_command_excluded_from_plan() -> N
     session, broadcasts = _make_droid_session(
         "plan",
         [
-            _droid_text("## Plan: Check status\n\nRun `git status` and report."),
+            _droid_text(
+                "<proposed_plan>## Plan: Check status\n\n"
+                "Run `git status` and report.</proposed_plan>"
+            ),
             _droid_tool_use("Bash"),
             _droid_tool_result(result="M file.py"),
             _droid_text("## Uncommitted Changes\n\n| file.py | Modified |"),
@@ -584,13 +707,15 @@ async def test_droid_tool_boundary_inserts_paragraph_break_before_heading() -> N
     # A plan-management tool (TodoWrite) runs between the conversational preamble
     # and the plan heading. The broadcast separates them with a blank line so the
     # heading renders as markdown instead of gluing to the preamble (#15724).
+    # The wrapper spans the tool boundary so the inserted paragraph break is
+    # inside the marked body and observable in the broadcast.
     session, broadcasts = _make_droid_session(
         "plan",
         [
-            _droid_text("I'll create a plan."),
+            _droid_text("<proposed_plan>I'll create a plan."),
             _droid_tool_use("TodoWrite"),
             _droid_tool_result(),
-            _droid_text("## Plan: Do the thing\n\n1. Step one"),
+            _droid_text("## Plan: Do the thing\n\n1. Step one</proposed_plan>"),
             _droid_result(),
         ],
     )
@@ -613,7 +738,7 @@ async def test_droid_research_command_before_plan_does_not_close_capture() -> No
             _droid_text("Let me check the layout."),
             _droid_tool_use("Bash"),
             _droid_tool_result(result="src/\ntests/"),
-            _droid_text("## Plan: Add module\n\n1. Create src/x.py"),
+            _droid_text("<proposed_plan>## Plan: Add module\n\n1. Create src/x.py</proposed_plan>"),
             _droid_result(),
         ],
     )
@@ -624,3 +749,33 @@ async def test_droid_research_command_before_plan_does_not_close_capture() -> No
     plan = broadcasts[0][0] or ""
     assert "## Plan: Add module" in plan
     assert "Create src/x.py" in plan
+
+
+# --------------------------------------------------------------------------- #
+# extract_marked_plan unit tests (the prose-plan broadcast gate, #18343)
+# --------------------------------------------------------------------------- #
+
+
+async def test_extract_marked_plan_no_marker_returns_none() -> None:
+    assert extract_marked_plan("MCP stands for Model Context Protocol.") is None
+
+
+async def test_extract_marked_plan_empty_body_returns_empty_string() -> None:
+    # "" (marker present, empty body) is distinct from None (no marker):
+    # collapsing them would let raw tags fall through to stored plan state
+    # on the structured path.
+    assert extract_marked_plan("<proposed_plan></proposed_plan>") == ""
+    assert extract_marked_plan("<proposed_plan>   \n </proposed_plan>") == ""
+
+
+async def test_extract_marked_plan_strips_surrounding_text() -> None:
+    text = "Here it is:\n<proposed_plan>## Plan\n1. Do it</proposed_plan>\nThoughts?"
+    assert extract_marked_plan(text) == "## Plan\n1. Do it"
+
+
+async def test_extract_marked_plan_case_insensitive() -> None:
+    assert extract_marked_plan("<Proposed_Plan>the plan</PROPOSED_PLAN>") == "the plan"
+
+
+async def test_extract_marked_plan_missing_close_takes_remainder() -> None:
+    assert extract_marked_plan("<proposed_plan>## Plan\n1. Do it") == "## Plan\n1. Do it"

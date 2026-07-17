@@ -293,8 +293,14 @@ class ChatLifecycleMixin:
                 result["modified_input"] = response.modified_input
                 result["auto_approve"] = response.auto_approve
 
-            # Session context enrichment (parity with CLI adapter)
-            if session and getattr(session, "seq_num", None):
+            # Session context enrichment (parity with CLI adapter). Never on
+            # STOP/SUBAGENT_STOP: any non-empty Stop additionalContext re-engages
+            # the SDK agent, so unconditional enrichment loops the turn.
+            if (
+                session
+                and getattr(session, "seq_num", None)
+                and event_type not in (HookEventType.STOP, HookEventType.SUBAGENT_STOP)
+            ):
                 session_ref = f"#{session.seq_num}"
                 ctx = result.get("context")
                 if event_type == HookEventType.PRE_COMPACT:

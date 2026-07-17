@@ -139,4 +139,45 @@ describe('protocolContent', () => {
     expect(splitProtocolContent(content, 'ordinary')).toEqual([{ type: 'text', content }])
     expect(hasProtocolToolContent(content)).toBe(false)
   })
+
+  describe('inline wrapper tags and the streaming tail guard (#18343)', () => {
+    it('strips complete <proposed_plan> tags while keeping the body visible', () => {
+      const content = 'Intro.\n<proposed_plan>## Plan\n1. Do it</proposed_plan>\nOutro.'
+      const segments = splitProtocolContent(content, 'msg-plan')
+      const visibleText = segments
+        .map((segment) => (segment.type === 'text' ? segment.content : ''))
+        .join('\n')
+
+      expect(visibleText).toContain('## Plan')
+      expect(visibleText).toContain('1. Do it')
+      expect(visibleText).not.toContain('<proposed_plan>')
+      expect(visibleText).not.toContain('</proposed_plan>')
+    })
+
+    it('suppresses a trailing incomplete open-tag prefix while streaming', () => {
+      // A tag split across stream chunks ("<proposed_" arrived, "plan>" has
+      // not) must not flash as literal text mid-stream.
+      const segments = splitProtocolContent('The plan follows. <proposed_', 'msg-tail', true)
+
+      expect(segments).toEqual([{ type: 'text', content: 'The plan follows. ' }])
+    })
+
+    it('suppresses a trailing incomplete close-tag prefix while streaming', () => {
+      const segments = splitProtocolContent('body text</proposed_pla', 'msg-tail-close', true)
+
+      expect(segments).toEqual([{ type: 'text', content: 'body text' }])
+    })
+
+    it('keeps a trailing tag-like literal once the message is complete', () => {
+      const content = 'Escaping example ends with <proposed_'
+      expect(splitProtocolContent(content, 'msg-done', false)).toEqual([
+        { type: 'text', content },
+      ])
+    })
+
+    it('leaves a non-tag trailing angle fragment visible while streaming', () => {
+      const content = 'compare a <b'
+      expect(splitProtocolContent(content, 'msg-lt', true)).toEqual([{ type: 'text', content }])
+    })
+  })
 })

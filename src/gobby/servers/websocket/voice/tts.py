@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 
+from gobby.sessions.transcript_protocol import _sanitize_visible_protocol_text
 from gobby.utils.json_helpers import json_dumps
 from gobby.voice.text_normalizer import normalize_tts_text
 
@@ -15,6 +16,11 @@ if TYPE_CHECKING:
     from gobby.voice.tts import TTSProvider
 
 logger = logging.getLogger("gobby.servers.websocket.voice")
+
+
+def _strip_protocol_tags(text: str) -> str:
+    """Strip inline wrapper protocol tags (e.g. <proposed_plan>) from speech text."""
+    return _sanitize_visible_protocol_text(text).strip()
 
 
 def _client_matches_conversation(meta: dict[str, Any] | None, conversation_id: str) -> bool:
@@ -81,10 +87,17 @@ class TTSPipeline:
         )
 
     def feed_text(self, chunk: str) -> None:
-        """Feed a text chunk from the LLM stream and enqueue complete sentences."""
+        """Feed a text chunk from the LLM stream and enqueue complete sentences.
+
+        Inline wrapper protocol tags (e.g. <proposed_plan>) are stripped so
+        they are never spoken; sentences that are empty after stripping are
+        dropped.
+        """
         sentences = self.sentence_buffer.feed(chunk)
         for sentence in sentences:
-            self._queue.put_nowait(sentence)
+            sentence = _strip_protocol_tags(sentence)
+            if sentence:
+                self._queue.put_nowait(sentence)
 
     async def flush(self) -> None:
         """Flush remaining buffer at end of stream in FIFO order.
@@ -97,7 +110,11 @@ class TTSPipeline:
             return
         self._flush_called = True
         for remaining in self.sentence_buffer.flush():
-            await self._queue.put(remaining)
+            # A closing wrapper tag can sit alone in the flush buffer after
+            # punctuation already emitted the body sentence — strip it too.
+            remaining = _strip_protocol_tags(remaining)
+            if remaining:
+                await self._queue.put(remaining)
         await self._queue.join()
         # Send sentinel so the worker task exits cleanly instead of
         # hanging forever on _queue.get() after all work is done.

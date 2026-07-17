@@ -290,12 +290,18 @@ async def handle_set_mode(mixin: SessionControlMixin, websocket: Any, data: dict
                 "Chat mode unchanged ('%s') for conversation %s", mode, conversation_id[:8]
             )
             return
+        # Capture plan-gate state BEFORE set_chat_mode: it clears
+        # _pending_plan_content on any plan-mode transition, so checking
+        # afterwards would strand a parked plan-decision event (e.g. Droid
+        # ExitSpecMode) until its timeout.
+        had_pending_plan = bool(getattr(session, "has_pending_plan", False))
+        had_blocking_decision = bool(getattr(session, "has_blocking_plan_decision", False))
         session.set_chat_mode(mode)
         # Sync SDK permission mode so the agent gets a structured mode signal
         await session.sync_sdk_permission_mode()
-        # If user toggles away from plan while ExitPlanMode is blocking,
-        # cancel the pending approval to unblock the streaming loop.
-        if mode != "plan" and session.has_pending_plan:
+        # If user toggles away from plan while a plan decision is blocking,
+        # release it as request-changes to unblock the streaming loop.
+        if mode != "plan" and (had_pending_plan or had_blocking_decision):
             session.provide_plan_decision(None, "request_changes")
         # Sync mode_level to session variables
         db_sid = getattr(session, "db_session_id", None)

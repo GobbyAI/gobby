@@ -200,7 +200,7 @@ export function ChatMainColumn({
             onPaletteSelect={onPaletteSelect}
             mode={chat.mode}
             onModeChange={handleInputModeChange}
-            modeDisabled={isAutonomousSession || chat.planPendingApproval}
+            modeDisabled={isAutonomousSession}
             modeOptions={isAutonomousSession ? AUTONOMOUS_CHAT_MODES : undefined}
             currentBranch={effectiveBranch}
             worktreePath={chat.worktreePath}

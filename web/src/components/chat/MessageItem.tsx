@@ -144,7 +144,7 @@ function ProtocolAwareText({
   onRespondToQuestion?: (toolCallId: string, answers: Record<string, string>) => boolean | void
   onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => boolean | void
 }) {
-  const segments = splitProtocolContent(content, id)
+  const segments = splitProtocolContent(content, id, isStreaming)
   const textSegmentIndexes = segments
     .map((segment, index) => (segment.type === 'text' ? index : -1))
     .filter((index) => index >= 0)

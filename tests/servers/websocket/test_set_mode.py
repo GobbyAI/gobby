@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.servers.websocket.chat.backends.droid import DroidManagedChatSession
 from gobby.servers.websocket.session_control import SessionControlMixin
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
@@ -140,6 +142,80 @@ class TestSetModeIdempotency:
             {"chat_mode": "plan", "mode_level": 0},
         )
         assert server._pending_modes == {}
+
+
+class TestSetModeReleasesParkedPlanDecision:
+    """Switching away from plan mode must release a parked structured plan
+    decision (Droid ExitSpecMode) as request_changes instead of stranding it
+    until the 600s timeout (#18343). set_chat_mode clears pending plan state,
+    so the handler must capture it BEFORE switching."""
+
+    def _make_droid_session(self) -> DroidManagedChatSession:
+        session = DroidManagedChatSession(conversation_id="conv-droid", _backend=MagicMock())
+        session.chat_mode = "plan"
+        return session
+
+    async def test_pinned_plan_and_parked_decision_released_on_switch(self) -> None:
+        server = ConcreteSessionControl()
+        session = self._make_droid_session()
+        session._pending_plan_content = "## Spec\n1. do it"
+        session._pending_plan_structured = True
+        server._chat_sessions["conv-droid"] = session
+
+        decision_task = asyncio.create_task(session._wait_for_plan_decision())
+        while session._pending_plan_event is None:
+            await asyncio.sleep(0)
+
+        await server._handle_set_mode(
+            _make_ws(), {"conversation_id": "conv-droid", "mode": "normal"}
+        )
+
+        decision = await asyncio.wait_for(decision_task, timeout=1.0)
+        assert decision == "request_changes"
+        assert session.chat_mode == "normal"
+        assert session.has_pending_plan is False
+
+    async def test_parked_decision_without_pinned_content_still_released(self) -> None:
+        # The blocking-decision event can be parked even when no plan content
+        # is pinned; the capture must consider both.
+        server = ConcreteSessionControl()
+        session = self._make_droid_session()
+        assert session.has_pending_plan is False
+        server._chat_sessions["conv-droid"] = session
+
+        decision_task = asyncio.create_task(session._wait_for_plan_decision())
+        while session._pending_plan_event is None:
+            await asyncio.sleep(0)
+
+        await server._handle_set_mode(
+            _make_ws(), {"conversation_id": "conv-droid", "mode": "normal"}
+        )
+
+        decision = await asyncio.wait_for(decision_task, timeout=1.0)
+        assert decision == "request_changes"
+        assert session.chat_mode == "normal"
+
+    async def test_switch_into_plan_mode_does_not_release(self) -> None:
+        server = ConcreteSessionControl()
+        session = self._make_droid_session()
+        session.chat_mode = "normal"
+        session.provide_plan_decision = MagicMock()
+        server._chat_sessions["conv-droid"] = session
+
+        with (
+            patch("gobby.workflows.state_manager.SessionVariableManager"),
+            patch(
+                "gobby.servers.websocket.handlers.session_config.run_db",
+                new_callable=AsyncMock,
+                side_effect=_run_sync,
+            ),
+        ):
+            await server._handle_set_mode(
+                _make_ws(), {"conversation_id": "conv-droid", "mode": "plan"}
+            )
+
+        session.provide_plan_decision.assert_not_called()
+        assert session.chat_mode == "plan"
 
 
 class TestSetModeAttachedSession:

@@ -67,6 +67,55 @@ class TestReadPlanFileResolution:
         assert content is None
 
 
+class TestReadPlanFileExplicitPath:
+    """Explicit-path mode is strict: read exactly that file, no fallback (#18343)."""
+
+    def test_explicit_relative_path_resolved_against_project_path(self, tmp_path: Path) -> None:
+        plan_dir = tmp_path / ".gobby" / "plans"
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "plan.md").write_text("# Written Plan", encoding="utf-8")
+
+        session = ChatSession(conversation_id="test-explicit-rel", project_path=str(tmp_path))
+        content = session._read_plan_file(".gobby/plans/plan.md")
+        assert content == "# Written Plan"
+
+    def test_explicit_absolute_path(self, tmp_path: Path) -> None:
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text("# Absolute Written Plan", encoding="utf-8")
+
+        session = ChatSession(conversation_id="test-explicit-abs")
+        content = session._read_plan_file(str(plan_file))
+        assert content == "# Absolute Written Plan"
+
+    def test_explicit_missing_path_returns_none_with_zero_fallback(self, tmp_path: Path) -> None:
+        """An unreadable explicit path returns None: no tracked-path fallback,
+        no cached-content fallback, no directory scan."""
+        # Seed every fallback source with content that must NOT surface.
+        plan_dir = tmp_path / ".gobby" / "plans"
+        plan_dir.mkdir(parents=True)
+        tracked = plan_dir / "tracked.md"
+        tracked.write_text("tracked fallback plan", encoding="utf-8")
+
+        session = ChatSession(conversation_id="test-explicit-miss", project_path=str(tmp_path))
+        session._plan_file_path = str(tracked)
+        session._last_plan_content = "cached fallback plan"
+
+        content = session._read_plan_file(".gobby/plans/does-not-exist.md")
+        assert content is None
+        # And the cached content was not clobbered by the failed read.
+        assert session._last_plan_content == "cached fallback plan"
+
+    def test_explicit_path_updates_last_plan_content(self, tmp_path: Path) -> None:
+        plan_file = tmp_path / ".gobby" / "plans" / "plan.md"
+        plan_file.parent.mkdir(parents=True)
+        plan_file.write_text("# Fresh Plan", encoding="utf-8")
+
+        session = ChatSession(conversation_id="test-explicit-cache", project_path=str(tmp_path))
+        session._last_plan_content = "stale"
+        assert session._read_plan_file(".gobby/plans/plan.md") == "# Fresh Plan"
+        assert session._last_plan_content == "# Fresh Plan"
+
+
 class TestSetChatModePersistCallback:
     """set_chat_mode should fire _on_mode_persist callback."""
 

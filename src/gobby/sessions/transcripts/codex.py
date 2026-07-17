@@ -28,10 +28,6 @@ from collections.abc import Iterable, Iterator, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
-from gobby.sessions.transcript_protocol import (
-    _is_protocol_only_text,
-    _looks_like_system_bootstrap_text,
-)
 from gobby.sessions.transcripts.base import (
     BaseTranscriptParser,
     ParsedMessage,
@@ -51,6 +47,15 @@ _ROLE_MAP = {
 
 
 def _is_instruction_dump(content: str) -> bool:
+    # Local import: transcript_protocol -> transcript_render_models ->
+    # transcripts.base initializes this package, so a top-level import here
+    # completes an import cycle that breaks any entry through
+    # transcript_protocol itself.
+    from gobby.sessions.transcript_protocol import (
+        _is_protocol_only_text,
+        _looks_like_system_bootstrap_text,
+    )
+
     stripped = content.strip()
     return (
         stripped.casefold().startswith("<user_instructions>")

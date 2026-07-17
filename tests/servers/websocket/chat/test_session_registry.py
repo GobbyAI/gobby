@@ -463,8 +463,14 @@ class TestWebChatLifecycle:
         sync_bundled_rules(temp_db, get_bundled_rules_path())
 
         # session_variables.session_id targets the native-uuid sessions.id
-        # column, so the DB-backed session id must be a valid UUID string.
+        # column, so the DB-backed session id must be a valid UUID string and
+        # the row must exist to satisfy the FK.
         db_session_id = "dddddddd-dddd-4ddd-8ddd-ddddddddddd1"
+        temp_db.execute(
+            "INSERT INTO sessions (id, external_id, machine_id, source, project_id) "
+            "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+            (db_session_id, db_session_id, "machine-registry", "test", sample_project["id"]),
+        )
 
         task_manager = LocalTaskManager(temp_db)
         closed_task = task_manager.create_task(

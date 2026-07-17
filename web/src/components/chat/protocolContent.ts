@@ -323,10 +323,37 @@ function appendVisibleProtocolContent(
   return ordinal
 }
 
+/**
+ * While streaming, an inline wrapper tag split across chunks (e.g. `<proposed_`
+ * then `plan>`) would flash as literal text until the closing `>` arrives.
+ * Suppress a trailing incomplete prefix of such a tag; once the message
+ * completes, a genuine trailing `<...` literal stays visible.
+ */
+function trimIncompleteInlineWrapperTail(content: string): string {
+  const tail = content.lastIndexOf('<')
+  if (tail === -1) {
+    return content
+  }
+  const fragment = content.slice(tail).toLowerCase()
+  if (fragment.includes('>')) {
+    return content
+  }
+  for (const tag of INLINE_WRAPPER_PROTOCOL_TAGS) {
+    if (`<${tag}>`.startsWith(fragment) || `</${tag}>`.startsWith(fragment)) {
+      return content.slice(0, tail)
+    }
+  }
+  return content
+}
+
 export function splitProtocolContent(
   content: string,
   idPrefix: string,
+  isStreaming = false,
 ): ProtocolContentSegment[] {
+  if (isStreaming) {
+    content = trimIncompleteInlineWrapperTail(content)
+  }
   if (!shouldParseProtocolContent(content)) {
     return content ? [{ type: 'text', content }] : []
   }

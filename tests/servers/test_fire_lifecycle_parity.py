@@ -69,6 +69,21 @@ def rules_db(hub_db: HubDatabase) -> HubDatabase:
 SESSION_ID = "cccccccc-cccc-4ccc-8ccc-ccccccccccc1"
 
 
+def _seed_session_row(db: HubDatabase, session_id: str = SESSION_ID) -> None:
+    """Insert the project + session rows session_variables' FK requires."""
+    project_id = "dddddddd-dddd-4ddd-8ddd-ddddddddddd1"
+    db.execute(
+        "INSERT INTO projects (id, name, created_at) VALUES (%s, %s, NOW()) "
+        "ON CONFLICT (id) DO NOTHING",
+        (project_id, "parity-test-project"),
+    )
+    db.execute(
+        "INSERT INTO sessions (id, external_id, machine_id, source, project_id) "
+        "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+        (session_id, session_id, "machine-parity", "test", project_id),
+    )
+
+
 def _make_session(db_session_id: str = SESSION_ID, seq_num: int = 42) -> MagicMock:
     session = MagicMock()
     session.db_session_id = db_session_id
@@ -95,6 +110,76 @@ def _make_workflow_handler_with_response(**kwargs: Any) -> MagicMock:
     response = HookResponse(**kwargs)
     handler.evaluate.return_value = response
     return handler
+
+
+# ---------------------------------------------------------------------------
+# STOP/SUBAGENT_STOP enrichment exclusion (#18343)
+# ---------------------------------------------------------------------------
+
+
+class TestFireLifecycleStopEnrichment:
+    """Session-ID enrichment must never touch STOP/SUBAGENT_STOP responses.
+
+    Any non-empty Stop additionalContext re-engages the SDK agent, so the
+    unconditional ``Gobby Session ID`` prefix turned every web-chat stop into
+    a re-engagement loop (nine stop attempts on session #8891).
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("event_type", [HookEventType.STOP, HookEventType.SUBAGENT_STOP])
+    async def test_stop_without_context_gets_no_enrichment(
+        self, host: ChatMixinHost, event_type: HookEventType
+    ) -> None:
+        host._chat_sessions["conv-1"] = _make_session()
+        host.workflow_handler = _make_workflow_handler()
+
+        result = await host._fire_lifecycle("conv-1", event_type, {"stop_hook_active": False})
+
+        assert result is not None
+        assert result["decision"] == "allow"
+        assert result["context"] is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("event_type", [HookEventType.STOP, HookEventType.SUBAGENT_STOP])
+    async def test_stop_rule_context_preserved_without_session_prefix(
+        self, host: ChatMixinHost, event_type: HookEventType
+    ) -> None:
+        # Deliberate rule-injected STOP context (e.g. notify-task-tree-complete)
+        # must survive verbatim — that re-engagement is intentional.
+        host._chat_sessions["conv-1"] = _make_session()
+        host.workflow_handler = _make_workflow_handler(
+            context="Task tree complete: review the results."
+        )
+
+        result = await host._fire_lifecycle("conv-1", event_type, {"stop_hook_active": False})
+
+        assert result is not None
+        assert result["context"] == "Task tree complete: review the results."
+        assert "Gobby Session ID" not in result["context"]
+
+    @pytest.mark.asyncio
+    async def test_before_agent_still_enriched(self, host: ChatMixinHost) -> None:
+        host._chat_sessions["conv-1"] = _make_session(seq_num=42)
+        host.workflow_handler = _make_workflow_handler()
+
+        result = await host._fire_lifecycle(
+            "conv-1", HookEventType.BEFORE_AGENT, {"prompt": "hello"}
+        )
+
+        assert result is not None
+        assert result["context"] == "Gobby Session ID: #42"
+
+    @pytest.mark.asyncio
+    async def test_before_agent_enrichment_prefixes_rule_context(self, host: ChatMixinHost) -> None:
+        host._chat_sessions["conv-1"] = _make_session(seq_num=42)
+        host.workflow_handler = _make_workflow_handler(context="rule context")
+
+        result = await host._fire_lifecycle(
+            "conv-1", HookEventType.BEFORE_AGENT, {"prompt": "hello"}
+        )
+
+        assert result is not None
+        assert result["context"] == "Gobby Session ID: #42\n\nrule context"
 
 
 # ---------------------------------------------------------------------------
@@ -606,6 +691,7 @@ class TestFireLifecycleRequireUvRule:
     ) -> None:
         """Web chat normalizes exec_command to Bash and returns a plain block."""
         sync_bundled_rules(rules_db, get_bundled_rules_path())
+        _seed_session_row(rules_db)
         SessionVariableManager(rules_db).merge_variables(SESSION_ID, {"require_uv": True})
 
         host._chat_sessions["conv-1"] = _make_session()

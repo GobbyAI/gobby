@@ -189,9 +189,7 @@ class TestBackgroundDedupTask:
         assert len(manager._background_tasks) == 0
 
     @pytest.mark.asyncio
-    async def test_dedup_failure_doesnt_fail_caller(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    async def test_dedup_failure_doesnt_fail_caller(self, caplog: pytest.LogCaptureFixture) -> None:
         """Dedup failure is logged but doesn't affect the create_memory return."""
         manager = _make_manager(has_llm=True, has_vector_store=True, has_embed_fn=True)
 

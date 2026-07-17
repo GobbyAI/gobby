@@ -402,11 +402,19 @@ export default function App() {
   // Restore persisted mode only when we have an active durable web-chat session.
   // Drafts are seeded by handleStartNewChat; observed sessions sync mode through
   // useChat's authoritative session metadata and mode_changed events.
+  // Restore at most once per conversation switch: this effect also re-runs on
+  // session-catalog refreshes, and re-pushing the catalog's (possibly stale)
+  // chat_mode would clobber a server-driven mode change — e.g. plan approval
+  // flips the session to Act, then a catalog refresh reverted it to Plan.
+  const restoredModeKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (sessionCatalog.isLoading) return;
     if (!dbSessionId) return;
     const session = webChatSessions.find((s) => s.id === dbSessionId);
     if (!session) return;
+    const restoreKey = `${conversationSwitchKey}:${dbSessionId}`;
+    if (restoredModeKeyRef.current === restoreKey) return;
+    restoredModeKeyRef.current = restoreKey;
     const restoredMode =
       (session?.chat_mode ? normalizeChatMode(session.chat_mode) : null) ||
       normalizeChatMode(settings.defaultChatMode);

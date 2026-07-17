@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import uuid4
@@ -31,6 +32,30 @@ logger = logging.getLogger(__name__)
 # mirroring the native ExitPlanMode gate (servers/chat_session_permissions.py).
 # On timeout the decision defaults to reject so the CLI stays in plan mode.
 MANAGED_PLAN_DECISION_TIMEOUT_SECONDS = 600.0
+
+# Case-insensitive to match the inline-wrapper protocol regexes
+# (sessions/transcript_protocol.py), which strip these tags from display.
+_PROPOSED_PLAN_OPEN_RE = re.compile(r"<proposed_plan>", re.IGNORECASE)
+_PROPOSED_PLAN_CLOSE_RE = re.compile(r"</proposed_plan>", re.IGNORECASE)
+
+
+def extract_marked_plan(text: str) -> str | None:
+    """Extract the body of a ``<proposed_plan>`` wrapper from ``text``.
+
+    Returns ``None`` only when the opening marker is absent — the text is an
+    answer or status turn, not a plan. When the marker is present, returns the
+    stripped body, which may be ``""`` for an empty wrapper; callers must not
+    conflate that with "no marker" or raw tags could leak into stored plan
+    state. A missing close tag is tolerated: the remainder is the body.
+    """
+    open_match = _PROPOSED_PLAN_OPEN_RE.search(text)
+    if open_match is None:
+        return None
+    body = text[open_match.end() :]
+    close_match = _PROPOSED_PLAN_CLOSE_RE.search(body)
+    if close_match is not None:
+        body = body[: close_match.start()]
+    return body.strip()
 
 
 class ManagedWebChatPermissionsMixin:
@@ -246,6 +271,20 @@ class ManagedWebChatPermissionsMixin:
         text = plan_text.strip()
         if not text:
             return
+        extracted = extract_marked_plan(text)
+        if structured:
+            # Structured tool arguments are authoritative plans without tags;
+            # strip a stray wrapper so tags never reach stored plan state.
+            if extracted is not None:
+                text = extracted
+        else:
+            if extracted is None:
+                # Answer/question turn — prose is a plan only when the agent
+                # wrapped it in <proposed_plan> tags.
+                return
+            text = extracted
+        if not text:
+            return
         if not self._should_supersede_pending_plan(text, structured=structured):
             return
         self._pending_plan_content = text
@@ -273,19 +312,31 @@ class ManagedWebChatPermissionsMixin:
             "ALLOWED: Read, Glob, Grep, gcode via Bash for code navigation (gcode outline/search/symbol), read-only Bash (ls, cat, grep, git status/log/diff, find)",
             "BLOCKED: Edit, Write, NotebookEdit, write/destructive Bash/exec_command",
             "",
-            "Present a structured plan with:",
+            "Answer questions normally. Only produce a plan when the user asks you to plan, design, or build something.",
+            "",
+            "When you do present a plan, structure it with:",
             "1. Summary of changes needed",
             "2. Files to modify and what changes to make",
             "3. Implementation order",
             "4. Verification steps",
             "",
-            "When your plan is complete, present it to the user.",
+            "When you present a plan as message text, the message MUST use this exact format:",
+            "<proposed_plan>",
+            "...the full plan...",
+            "</proposed_plan>",
+            "Without the <proposed_plan> wrapper the plan cannot reach the user's approval UI and is lost. Never wrap answers or status text in these tags.",
+            "A plan delivered through a structured plan tool (ExitSpecMode, plan_update) is submitted as plain content — no tags.",
             "The user will approve or request changes via the chat UI.",
         ]
 
         if self._plan_feedback:
             parts.append("")
             parts.append(f"USER FEEDBACK on previous plan:\n{self._plan_feedback}")
+            parts.append(
+                "Address the feedback and present the revised plan. Prose plans go "
+                "wrapped in <proposed_plan> tags again; structured plan tools "
+                "(ExitSpecMode, plan_update) submit plain content."
+            )
             self._plan_feedback = None
 
         parts.append("</plan-mode>")
