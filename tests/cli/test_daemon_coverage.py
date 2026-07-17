@@ -216,7 +216,7 @@ class TestStatusCommand:
     ) -> None:
         mock_home.return_value = tmp_path
         config = MagicMock()
-        config.logging.client = str(tmp_path / "gobby.log")
+        config.logging.dir = str(tmp_path)
         result = runner.invoke(status, [], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 0
         assert "Not running" in result.output
@@ -237,7 +237,7 @@ class TestStatusCommand:
         mock_home.return_value = tmp_path
         (tmp_path / "gobby.pid").write_text("not-a-number")
         config = MagicMock()
-        config.logging.client = str(tmp_path / "gobby.log")
+        config.logging.dir = str(tmp_path)
         result = runner.invoke(status, [], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 0
         assert "Not running" in result.output
@@ -274,7 +274,7 @@ class TestStatusCommand:
         mock_process.return_value.create_time.return_value = 0.0
 
         config = MagicMock()
-        config.logging.client = str(tmp_path / "gobby.log")
+        config.logging.dir = str(tmp_path)
         config.daemon_port = 60888
         config.websocket.port = 60889
         config.ui.enabled = False
@@ -300,7 +300,7 @@ class TestStatusCommand:
         mock_home.return_value = tmp_path
         (tmp_path / "gobby.pid").write_text("99999")
         config = MagicMock()
-        config.logging.client = str(tmp_path / "gobby.log")
+        config.logging.dir = str(tmp_path)
         result = runner.invoke(status, [], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 0
         assert "Stale" in result.output

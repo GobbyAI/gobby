@@ -14,6 +14,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from gobby.config.logging import LoggingSettings
 from gobby.hooks.runtime_compat import GhookRuntimeDiagnostic, GhookRuntimeState
 from gobby.runner_lifecycle_periodic import start_periodic_tasks
 from gobby.runner_maintenance_resources import resource_monitor_loop, run_resource_check
@@ -146,6 +147,7 @@ def test_start_periodic_tasks_registers_resource_monitor() -> None:
     from gobby.config.bin_freshness import BinFreshnessConfig
 
     telemetry = SimpleNamespace(trace_retention_days=7)
+    logging_config = LoggingSettings(dir="/tmp/gobby-resource-monitor-test")
     runner: Any = SimpleNamespace(
         metrics_manager=object(),
         metrics_event_store=object(),
@@ -157,6 +159,7 @@ def test_start_periodic_tasks_registers_resource_monitor() -> None:
         _shutdown_requested=False,
         config=SimpleNamespace(
             telemetry=telemetry,
+            logging=logging_config,
             bin_freshness=BinFreshnessConfig(enabled=False),
             chat=None,
         ),
@@ -182,7 +185,7 @@ def test_start_periodic_tasks_registers_resource_monitor() -> None:
         start_periodic_tasks(runner, tracker=None, resource_monitor_loop=resource_monitor_loop)
 
     assert runner._resource_monitor_task is not None
-    assert monitor_args[0][0] is telemetry
+    assert monitor_args[0][0] is logging_config
     set_stderr_capture_over_limit = monitor_args[0][2]
     set_stderr_capture_over_limit(True)
     assert runner.degraded_services == {"stderr_capture_over_limit"}
@@ -194,11 +197,10 @@ def test_stderr_limit_degradation_is_visible_in_health_endpoint_and_recovers(
     tmp_path: Path,
 ) -> None:
     stderr_log = tmp_path / "gobby-stderr.log"
-    telemetry = SimpleNamespace(
-        log_file=str(tmp_path / "gobby.log"),
-        log_file_stderr=str(stderr_log),
-        logs_growth_warn_mb_per_interval=100,
-        stderr_log_max_mb=1,
+    logging_config = LoggingSettings(
+        dir=str(tmp_path),
+        growth_warn_mb_per_interval=100,
+        runtime_max_size_mb=1,
     )
     runner = SimpleNamespace(degraded_services=set())
     server = MagicMock()
@@ -223,7 +225,7 @@ def test_stderr_limit_degradation_is_visible_in_health_endpoint_and_recovers(
 
         asyncio.run(
             resource_monitor_loop(
-                telemetry,
+                logging_config,
                 is_shutdown_requested,
                 set_stderr_capture_over_limit,
                 interval_seconds=0,

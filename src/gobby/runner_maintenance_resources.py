@@ -3,7 +3,7 @@
 psutil ``io_counters()`` is not implemented on macOS, so disk churn is observed
 by sampling per-file sizes in the logs directory each interval — that sampling
 is the design, not a fallback. The loop reports when the OS-level stderr capture
-file (``log_file_stderr``) exceeds its configured cap.
+file exceeds its configured cap.
 """
 
 from __future__ import annotations
@@ -12,7 +12,13 @@ import asyncio
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+
+from gobby.config.logging import (
+    STDERR_LOG_FILENAME,
+    LoggingSettings,
+    resolved_log_path,
+    resolved_logs_dir,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +116,7 @@ def run_resource_check(
 
 
 async def resource_monitor_loop(
-    telemetry_config: Any,
+    logging_config: LoggingSettings,
     is_shutdown_requested: Callable[[], bool],
     set_stderr_capture_over_limit: Callable[[bool], None],
     interval_seconds: float = DEFAULT_RESOURCE_MONITOR_INTERVAL_SECONDS,
@@ -121,21 +127,10 @@ async def resource_monitor_loop(
     of file-backed memory in ~8h) and reports when the fd-level stderr capture
     file exceeds its configured cap.
     """
-    log_file = Path(
-        str(getattr(telemetry_config, "log_file", "~/.gobby/logs/gobby.log"))
-    ).expanduser()
-    stderr_log = Path(
-        str(getattr(telemetry_config, "log_file_stderr", "~/.gobby/logs/gobby-stderr.log"))
-    ).expanduser()
-    growth_warn_mb = int(
-        getattr(
-            telemetry_config,
-            "logs_growth_warn_mb_per_interval",
-            DEFAULT_LOGS_GROWTH_WARN_MB_PER_INTERVAL,
-        )
-    )
-    stderr_max_mb = int(getattr(telemetry_config, "stderr_log_max_mb", DEFAULT_STDERR_LOG_MAX_MB))
-    logs_dir = log_file.parent
+    stderr_log = resolved_log_path(logging_config, STDERR_LOG_FILENAME)
+    growth_warn_mb = logging_config.growth_warn_mb_per_interval
+    stderr_max_mb = logging_config.runtime_max_size_mb
+    logs_dir = resolved_logs_dir(logging_config)
     previous: dict[str, int] | None = None
 
     while not is_shutdown_requested():

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
+from gobby.config.logging import UI_LOG_FILENAME, resolved_log_path
 from gobby.config.persistence import is_falkordb_enabled
 from gobby.runner_lifecycle_agents import (
     _reconcile_agent_runs_after_restart,
@@ -755,7 +756,7 @@ def _maybe_start_ui_dev_server(runner: GobbyRunner) -> None:
 
     web_dir = ui_resolution.source_web_dir
     if web_dir:
-        ui_log = Path(runner.config.telemetry.log_file).expanduser().parent / "ui.log"
+        ui_log = resolved_log_path(runner.config.logging, UI_LOG_FILENAME)
         ui_host = runner.config.ui.host
         if runner.config.bind_host != "localhost" and ui_host == "localhost":
             ui_host = runner.config.bind_host

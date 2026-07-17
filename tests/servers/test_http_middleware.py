@@ -337,7 +337,7 @@ class TestLifespan:
     def test_lifespan_initializes_hook_manager(self, session_storage: SessionManager) -> None:
         """Test that lifespan initializes HookManager."""
         mock_config = MagicMock()
-        mock_config.logging.hook_manager = "/tmp/hooks.log"
+        mock_config.logging.dir = "/tmp"
         mock_config.logging.max_size_mb = 10
         mock_config.logging.backup_count = 3
         mock_config.workflow.timeout = 30

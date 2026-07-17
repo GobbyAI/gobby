@@ -104,15 +104,13 @@ Total rows: 377 (22 manual frontend/route rows plus 355 generated backend schema
 | websocket.ping_interval | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
 | websocket.ping_timeout | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
 | telemetry.service_name | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | observability |  |
-| telemetry.log_level | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField select | live | keep | observability |  |
-| telemetry.log_format | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField select | live | keep | observability |  |
-| telemetry.log_file | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | observability |  |
-| telemetry.log_file_error | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | observability |  |
-| telemetry.log_file_hook_manager | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | observability |  |
-| telemetry.log_file_mcp_server | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | observability |  |
-| telemetry.log_file_mcp_client | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | observability |  |
-| telemetry.max_size_mb | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | observability |  |
-| telemetry.backup_count | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | observability |  |
+| logging.level | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField select | live | keep | observability |  |
+| logging.format | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField select | live | keep | observability |  |
+| logging.dir | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | observability |  |
+| logging.max_size_mb | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | observability |  |
+| logging.backup_count | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | observability |  |
+| logging.runtime_max_size_mb | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | observability |  |
+| logging.growth_warn_mb_per_interval | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | observability |  |
 | telemetry.traces_enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | observability |  |
 | telemetry.traces_to_console | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | observability |  |
 | telemetry.trace_sample_rate | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | observability |  |

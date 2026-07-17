@@ -17,9 +17,18 @@ from opentelemetry import trace
 from opentelemetry.sdk._logs import LoggingHandler
 from opentelemetry.trace import format_trace_id
 
+from gobby.config.logging import (
+    ERROR_LOG_FILENAME,
+    HOOK_MANAGER_LOG_FILENAME,
+    MAIN_LOG_FILENAME,
+    MCP_CLIENT_LOG_FILENAME,
+    MCP_SERVER_LOG_FILENAME,
+    resolved_log_path,
+)
 from gobby.telemetry.providers import get_logger_provider
 
 if TYPE_CHECKING:
+    from gobby.config.logging import LoggingSettings
     from gobby.telemetry.config import TelemetrySettings
 
 
@@ -137,25 +146,25 @@ class JsonOTelFormatter(logging.Formatter):
         return json.dumps(log_data, default=str)
 
 
-def setup_file_logging(config: TelemetrySettings, verbose: bool = False) -> None:
+def setup_file_logging(config: LoggingSettings, verbose: bool = False) -> None:
     """
     Configure rotating file logging without creating OpenTelemetry providers.
 
     Replaces legacy file logging and setup_mcp_logging.
 
     Args:
-        config: TelemetrySettings instance.
+        config: LoggingSettings instance.
         verbose: If True, set level to DEBUG regardless of config.
     """
     # 1. Determine log level
     if verbose:
         level = logging.DEBUG
     else:
-        level = getattr(logging, config.log_level.upper(), logging.INFO)
+        level = getattr(logging, config.level.upper(), logging.INFO)
 
     # 2. Configure formatters
     formatter: logging.Formatter
-    if config.log_format == "json":
+    if config.format == "json":
         formatter = JsonOTelFormatter(datefmt="%Y-%m-%dT%H:%M:%S")
     else:
         log_format = "%(asctime)s - %(levelname)-8s - %(short_name)s.%(funcName)s - %(message)s"
@@ -167,11 +176,11 @@ def setup_file_logging(config: TelemetrySettings, verbose: bool = False) -> None
 
     # Mapping of log names to config paths
     log_paths = {
-        "gobby": config.log_file,
-        "gobby-error": config.log_file_error,
-        "hook-manager": config.log_file_hook_manager,
-        "mcp-server": config.log_file_mcp_server,
-        "mcp-client": config.log_file_mcp_client,
+        "gobby": resolved_log_path(config, MAIN_LOG_FILENAME),
+        "gobby-error": resolved_log_path(config, ERROR_LOG_FILENAME),
+        "hook-manager": resolved_log_path(config, HOOK_MANAGER_LOG_FILENAME),
+        "mcp-server": resolved_log_path(config, MCP_SERVER_LOG_FILENAME),
+        "mcp-client": resolved_log_path(config, MCP_CLIENT_LOG_FILENAME),
     }
 
     # Map logger names to their corresponding files
@@ -183,8 +192,8 @@ def setup_file_logging(config: TelemetrySettings, verbose: bool = False) -> None
     }
 
     # Helper to create handler
-    def create_handler(path_str: str, log_level: int) -> RotatingFileHandler:
-        p = Path(path_str).expanduser()
+    def create_handler(path: Path, log_level: int) -> RotatingFileHandler:
+        p = path.expanduser()
         p.parent.mkdir(parents=True, exist_ok=True)
         h = RotatingFileHandler(
             str(p),
@@ -210,8 +219,8 @@ def setup_file_logging(config: TelemetrySettings, verbose: bool = False) -> None
         root_logger.removeHandler(h)
 
     # Main and Error logs on root gobby logger
-    root_logger.addHandler(create_handler(config.log_file, level))
-    root_logger.addHandler(create_handler(config.log_file_error, logging.ERROR))
+    root_logger.addHandler(create_handler(log_paths["gobby"], level))
+    root_logger.addHandler(create_handler(log_paths["gobby-error"], logging.ERROR))
 
     # Other loggers
     for logger_name, log_keys in logger_mapping.items():
@@ -229,11 +238,17 @@ def setup_file_logging(config: TelemetrySettings, verbose: bool = False) -> None
             logger.addHandler(create_handler(log_paths[key], level))
 
 
-def setup_otel_logging(config: TelemetrySettings, verbose: bool = False) -> None:
+def setup_otel_logging(
+    telemetry_config: TelemetrySettings,
+    logging_config: LoggingSettings,
+    verbose: bool = False,
+) -> None:
     """Configure rotating file logging with the OpenTelemetry bridge."""
-    setup_file_logging(config, verbose=verbose)
+    setup_file_logging(logging_config, verbose=verbose)
 
-    level = logging.DEBUG if verbose else getattr(logging, config.log_level.upper(), logging.INFO)
-    logger_provider = get_logger_provider(config)
+    level = (
+        logging.DEBUG if verbose else getattr(logging, logging_config.level.upper(), logging.INFO)
+    )
+    logger_provider = get_logger_provider(telemetry_config)
     otel_handler = LoggingHandler(level=level, logger_provider=logger_provider)
     logging.getLogger("gobby").addHandler(otel_handler)

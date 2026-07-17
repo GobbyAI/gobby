@@ -2243,7 +2243,7 @@ class TestDaemonConfigComposition:
         """Test config survives YAML export and reimport."""
         config = DaemonConfig(
             daemon_port=9000,
-            telemetry=TelemetrySettings(log_level="debug"),
+            logging={"level": "debug"},
             memory=MemoryConfig(crossref_threshold=0.8),
         )
 
@@ -2254,13 +2254,13 @@ class TestDaemonConfigComposition:
         # Verify YAML content is valid and preserves values
         raw = yaml.safe_load(config_file.read_text())
         assert raw["daemon_port"] == 9000
-        assert raw["telemetry"]["log_level"] == "debug"
+        assert raw["logging"]["level"] == "debug"
         assert raw["memory"]["crossref_threshold"] == 0.8
 
         # Verify it can be loaded back into DaemonConfig
         loaded = DaemonConfig(**raw)
         assert loaded.daemon_port == 9000
-        assert loaded.telemetry.log_level == "debug"
+        assert loaded.logging.level == "debug"
         assert loaded.memory.crossref_threshold == 0.8
 
 

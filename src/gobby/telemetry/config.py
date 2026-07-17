@@ -2,7 +2,7 @@
 Telemetry configuration module.
 
 Contains Pydantic models for:
-- TelemetrySettings: Unified OTel and logging configuration.
+- TelemetrySettings: OpenTelemetry tracing and metrics configuration.
 - ExporterSettings: OTLP and Prometheus exporter settings.
 """
 
@@ -50,70 +50,11 @@ class ExporterSettings(BaseModel):
 
 
 class TelemetrySettings(BaseModel):
-    """Unified telemetry and logging configuration."""
+    """OpenTelemetry tracing and metrics configuration."""
 
     service_name: str = Field(
         default="gobby-daemon",
         description="Service name for OpenTelemetry resource",
-    )
-
-    # Logging settings (preserving legacy fields)
-    log_level: Literal["debug", "info", "warning", "error"] = Field(
-        default="info",
-        description="Log level",
-    )
-    log_format: Literal["text", "json"] = Field(
-        default="text",
-        description="Log format (text or json)",
-    )
-
-    # Log file paths (preserved from legacy settings)
-    log_file: str = Field(
-        default="~/.gobby/logs/gobby.log",
-        description="Daemon main log file path",
-    )
-    log_file_error: str = Field(
-        default="~/.gobby/logs/gobby-error.log",
-        description="Daemon error log file path (rotating-handler-exclusive)",
-    )
-    log_file_stderr: str = Field(
-        default="~/.gobby/logs/gobby-stderr.log",
-        description=(
-            "OS-level daemon stderr capture path (subprocess stderr and service-manager "
-            "StandardErrorPath). Separate from log_file_error so the fd-level redirect "
-            "cannot break the rotating error handler (#18196)."
-        ),
-    )
-    log_file_hook_manager: str = Field(
-        default="~/.gobby/logs/hook-manager.log",
-        description="Claude Code hook manager log file path",
-    )
-    log_file_mcp_server: str = Field(
-        default="~/.gobby/logs/mcp-server.log",
-        description="MCP server log file path",
-    )
-    log_file_mcp_client: str = Field(
-        default="~/.gobby/logs/mcp-client.log",
-        description="MCP client connection log file path",
-    )
-    max_size_mb: int = Field(
-        default=10,
-        description="Maximum log file size in MB",
-    )
-    backup_count: int = Field(
-        default=5,
-        description="Number of backup log files to keep",
-    )
-    stderr_log_max_mb: int = Field(
-        default=50,
-        description="Truncate the stderr capture file when it exceeds this size in MB",
-    )
-    logs_growth_warn_mb_per_interval: int = Field(
-        default=100,
-        description=(
-            "Resource monitor warns when the logs directory grows by more than "
-            "this many MB within one monitor interval"
-        ),
     )
 
     # Tracing settings
@@ -152,16 +93,6 @@ class TelemetrySettings(BaseModel):
         default_factory=LLMTracingConfig,
         description="LLM call auto-instrumentation via OpenLLMetry",
     )
-
-    @field_validator(
-        "max_size_mb", "backup_count", "stderr_log_max_mb", "logs_growth_warn_mb_per_interval"
-    )
-    @classmethod
-    def validate_positive(cls, v: int) -> int:
-        """Validate value is positive."""
-        if v <= 0:
-            raise ValueError("Value must be positive")
-        return v
 
     @field_validator("trace_sample_rate")
     @classmethod

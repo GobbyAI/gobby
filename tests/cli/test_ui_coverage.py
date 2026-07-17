@@ -126,7 +126,7 @@ class TestUiStart:
         config.ui.mode = "dev"
         config.ui.host = "localhost"
         config.ui.port = 60889
-        config.telemetry.log_file = "~/.gobby/logs/gobby.log"
+        config.logging.dir = "~/.gobby/logs"
         result = runner.invoke(ui, ["start"], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 0
         assert "1234" in result.output
@@ -150,7 +150,7 @@ class TestUiStart:
         config.ui.web_dir = str(web_dir)
         config.ui.host = "localhost"
         config.ui.port = 60889
-        config.telemetry.log_file = str(tmp_path / "logs" / "gobby.log")
+        config.logging.dir = str(tmp_path / "logs")
 
         result = runner.invoke(ui, ["start"], obj={"config": config}, catch_exceptions=False)
 
@@ -188,7 +188,7 @@ class TestUiStart:
         config.ui.mode = "dev"
         config.ui.host = "localhost"
         config.ui.port = 60889
-        config.telemetry.log_file = "~/.gobby/logs/gobby.log"
+        config.logging.dir = "~/.gobby/logs"
         result = runner.invoke(ui, ["start"], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code != 0
         assert "Failed to start UI server" in result.output
@@ -247,7 +247,7 @@ class TestUiRestart:
         config.ui.mode = "dev"
         config.ui.host = "localhost"
         config.ui.port = 60889
-        config.telemetry.log_file = "~/.gobby/logs/gobby.log"
+        config.logging.dir = "~/.gobby/logs"
         result = runner.invoke(ui, ["restart"], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 0
         assert "UI dev server started" in result.output

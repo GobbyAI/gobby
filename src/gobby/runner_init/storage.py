@@ -67,7 +67,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     runner.config = load_config(runner._config_file, resolve_database_url=True)
     runner.verbose = verbose
 
-    setup_file_logging(runner.config.telemetry, verbose=verbose)
+    setup_file_logging(runner.config.logging, verbose=verbose)
 
     runner.machine_id = get_machine_id()
 
@@ -145,7 +145,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         config_store=runner.config_store,
         resolve_database_url=True,
     )
-    init_telemetry(runner.config.telemetry, verbose=verbose)
+    init_telemetry(runner.config.telemetry, runner.config.logging, verbose=verbose)
 
     from gobby.storage.model_costs import ModelCostStore
 

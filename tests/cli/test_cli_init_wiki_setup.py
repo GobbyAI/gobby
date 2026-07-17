@@ -21,7 +21,7 @@ def runner() -> CliRunner:
 @pytest.fixture
 def mock_config() -> MagicMock:
     config = MagicMock()
-    config.logging.client = "/tmp/logs/client.log"
+    config.logging.dir = "/tmp/logs"
     return config
 
 

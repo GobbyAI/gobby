@@ -209,7 +209,7 @@ class TestStatusCommand:
     ) -> None:
         """Test status when no PID file exists."""
         mock_config = MagicMock()
-        mock_config.logging.client = str(temp_dir / "logs" / "client.log")
+        mock_config.logging.dir = str(temp_dir / "logs")
         mock_load_config.return_value = mock_config
 
         # Mock get_gobby_home to return temp_dir (which has no gobby.pid)

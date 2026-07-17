@@ -56,6 +56,7 @@ from gobby.config.features import (
     ToolSummarizerConfig,
 )
 from gobby.config.indexing import IndexingConfig
+from gobby.config.logging import LoggingSettings, common_log_parent
 from gobby.config.persistence import (
     DatabasesConfig,
     EmbeddingsConfig,
@@ -111,6 +112,42 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+
+_TEST_LOG_PATH_ENV_VARS = (
+    "GOBBY_LOGGING_CLIENT",
+    "GOBBY_LOGGING_CLIENT_ERROR",
+    "GOBBY_LOGGING_CLIENT_STDERR",
+    "GOBBY_LOGGING_MCP_SERVER",
+    "GOBBY_LOGGING_MCP_CLIENT",
+    "GOBBY_LOGGING_HOOK_MANAGER",
+)
+
+
+def _apply_test_logging_overrides(config_dict: dict[str, Any]) -> None:
+    """Apply test-safe logging directory overrides."""
+    configured_dir = os.environ.get("GOBBY_LOGGING_DIR")
+    legacy_paths = {
+        name: value
+        for name in _TEST_LOG_PATH_ENV_VARS
+        if (value := os.environ.get(name)) is not None
+    }
+    legacy_dir = common_log_parent(legacy_paths) if legacy_paths else None
+
+    if configured_dir is not None and legacy_dir is not None:
+        resolved_configured_dir = Path(configured_dir).expanduser()
+        if resolved_configured_dir != legacy_dir:
+            details = ", ".join(
+                [f"GOBBY_LOGGING_DIR={configured_dir!r}"]
+                + [f"{name}={value!r}" for name, value in legacy_paths.items()]
+            )
+            raise ValueError(f"Conflicting test log directories: {details}")
+
+    resolved_dir = configured_dir if configured_dir is not None else legacy_dir
+    if resolved_dir is not None:
+        logging_config = config_dict.setdefault("logging", {})
+        if not isinstance(logging_config, dict):
+            raise ValueError("logging config must be a mapping")
+        logging_config["dir"] = str(resolved_dir)
 
 
 class DaemonConfig(BaseModel):
@@ -214,7 +251,11 @@ class DaemonConfig(BaseModel):
     )
     telemetry: TelemetrySettings = Field(
         default_factory=TelemetrySettings,
-        description="Unified telemetry and logging configuration",
+        description="OpenTelemetry tracing and metrics configuration",
+    )
+    logging: LoggingSettings = Field(
+        default_factory=LoggingSettings,
+        description="Application and runtime logging configuration",
     )
     session_summary: SessionSummaryConfig = Field(
         default_factory=SessionSummaryConfig,
@@ -601,20 +642,7 @@ def load_config(
     # SAFETY SWITCH: Protect production resources during tests
     # If GOBBY_TEST_PROTECT is set, force safe paths from environment
     if os.environ.get("GOBBY_TEST_PROTECT") == "1":
-        # Override telemetry logging paths
-        telemetry_config = config_dict.setdefault("telemetry", {})
-        if safe_client := os.environ.get("GOBBY_LOGGING_CLIENT"):
-            telemetry_config["log_file"] = safe_client
-        if safe_error := os.environ.get("GOBBY_LOGGING_CLIENT_ERROR"):
-            telemetry_config["log_file_error"] = safe_error
-        if safe_stderr := os.environ.get("GOBBY_LOGGING_CLIENT_STDERR"):
-            telemetry_config["log_file_stderr"] = safe_stderr
-        if safe_mcp_server := os.environ.get("GOBBY_LOGGING_MCP_SERVER"):
-            telemetry_config["log_file_mcp_server"] = safe_mcp_server
-        if safe_mcp_client := os.environ.get("GOBBY_LOGGING_MCP_CLIENT"):
-            telemetry_config["log_file_mcp_client"] = safe_mcp_client
-        if safe_hook := os.environ.get("GOBBY_LOGGING_HOOK_MANAGER"):
-            telemetry_config["log_file_hook_manager"] = safe_hook
+        _apply_test_logging_overrides(config_dict)
     # Migrate legacy config keys (renamed/removed fields still in DB)
     config_dict = _migrate_legacy_config(config_dict)
 

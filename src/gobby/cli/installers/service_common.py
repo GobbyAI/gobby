@@ -14,6 +14,11 @@ from typing import Any
 
 from jinja2 import Environment, FileSystemLoader
 
+from gobby.config.logging import (
+    MAIN_LOG_FILENAME,
+    STDERR_LOG_FILENAME,
+    resolved_log_path,
+)
 from gobby.paths import get_gobby_home
 
 # Template directory
@@ -114,8 +119,8 @@ def _resolve_install_context(*, verbose: bool = False) -> dict[str, str | bool]:
 
     exe = Path(sys.executable).resolve()
     home_dir = str(Path.home())
-    log_file = str(Path(config.telemetry.log_file).expanduser())
-    stderr_log_file = str(Path(config.telemetry.log_file_stderr).expanduser())
+    log_file = str(resolved_log_path(config.logging, MAIN_LOG_FILENAME))
+    stderr_log_file = str(resolved_log_path(config.logging, STDERR_LOG_FILENAME))
 
     gobby_home = str(get_gobby_home())
 

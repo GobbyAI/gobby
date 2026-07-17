@@ -18,6 +18,7 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli import cli
+from gobby.config.logging import STDERR_LOG_FILENAME, resolved_log_path
 
 pytestmark = pytest.mark.unit
 
@@ -326,7 +327,7 @@ class TestStartCommand:
             mock_init_storage.assert_called_once()
             popen_stderr = mock_popen.call_args.kwargs["stderr"]
             assert popen_stderr.name == str(
-                Path(mock_daemon_config.telemetry.log_file_stderr).expanduser()
+                resolved_log_path(mock_daemon_config.logging, STDERR_LOG_FILENAME)
             )
             mock_popen.assert_called_once()
 

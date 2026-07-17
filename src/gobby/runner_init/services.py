@@ -13,6 +13,7 @@ from gobby.ai import (
 )
 from gobby.ai.embeddings import EmbeddingService
 from gobby.config.embedding_keys import EMBEDDING_API_KEY_SECRET_NAME
+from gobby.config.logging import MCP_CLIENT_LOG_FILENAME, resolved_log_path
 from gobby.config.persistence import EmbeddingsConfig, is_falkordb_enabled
 from gobby.llm import create_llm_service
 from gobby.mcp_proxy.manager import MCPClientManager
@@ -222,11 +223,7 @@ def _init_mcp_stack(runner: GobbyRunner) -> None:
     runner.mcp_proxy = MCPClientManager(
         mcp_db_manager=runner.mcp_db_manager,
         metrics_manager=runner.metrics_manager,
-        stdio_errlog_path=getattr(
-            getattr(runner.config, "telemetry", None),
-            "log_file_mcp_client",
-            None,
-        ),
+        stdio_errlog_path=str(resolved_log_path(runner.config.logging, MCP_CLIENT_LOG_FILENAME)),
     )
 
 

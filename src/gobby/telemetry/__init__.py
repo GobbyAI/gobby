@@ -60,15 +60,21 @@ if TYPE_CHECKING:
     from opentelemetry.metrics import Meter
     from opentelemetry.trace import Tracer
 
+    from gobby.config.logging import LoggingSettings
     from gobby.telemetry.config import TelemetrySettings
 
 
-def init_telemetry(config: TelemetrySettings, verbose: bool = False) -> None:
+def init_telemetry(
+    config: TelemetrySettings,
+    logging_config: LoggingSettings,
+    verbose: bool = False,
+) -> None:
     """
     Initialize telemetry system with given settings.
 
     Args:
         config: TelemetrySettings instance.
+        logging_config: LoggingSettings instance.
         verbose: Verbose logging flag.
     """
     # 0. LLM instrumentors (must run before LLM client instantiation)
@@ -95,7 +101,7 @@ def init_telemetry(config: TelemetrySettings, verbose: bool = False) -> None:
     metrics.set_meter_provider(meter_provider)
 
     # 3. Logging bridge and rotating files
-    setup_otel_logging(config, verbose=verbose)
+    setup_otel_logging(config, logging_config, verbose=verbose)
 
 
 def get_tracer(name: str, version: str | None = None) -> Tracer:

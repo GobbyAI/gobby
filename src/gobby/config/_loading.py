@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from gobby.config.embedding_keys import is_removed_embedding_config_store_key
+from gobby.config.logging import common_log_parent
 from gobby.config.voice_secrets import mask_voice_audio_api_keys
 from gobby.config.wiki_migration import migrate_legacy_wiki_roots
 from gobby.storage.secret_names import SECRET_REF_PATTERN
@@ -42,19 +43,32 @@ _CODE_INDEX_SYMBOL_SUMMARY_KEY_MIGRATIONS = {
     "code_index.summary_max_concurrency": "code_index.symbol_summary.max_concurrency",
 }
 
-# Mapping from old logging.* field names to new telemetry.* field names
-_LOGGING_TO_TELEMETRY_FIELDS: dict[str, str] = {
-    "level": "log_level",
-    "format": "log_format",
-    "client": "log_file",
-    "client_error": "log_file_error",
-    "hook_manager": "log_file_hook_manager",
-    "mcp_server": "log_file_mcp_server",
-    "mcp_client": "log_file_mcp_client",
-    # These kept the same name
+# Mapping from removed telemetry fields to dedicated logging fields.
+_TELEMETRY_TO_LOGGING_FIELDS: dict[str, str] = {
+    "log_level": "level",
+    "log_format": "format",
     "max_size_mb": "max_size_mb",
     "backup_count": "backup_count",
+    "stderr_log_max_mb": "runtime_max_size_mb",
+    "logs_growth_warn_mb_per_interval": "growth_warn_mb_per_interval",
 }
+
+_TELEMETRY_LOG_PATH_FIELDS = (
+    "log_file",
+    "log_file_error",
+    "log_file_stderr",
+    "log_file_hook_manager",
+    "log_file_mcp_server",
+    "log_file_mcp_client",
+)
+_LEGACY_LOGGING_PATH_FIELDS = (
+    "client",
+    "client_error",
+    "client_stderr",
+    "hook_manager",
+    "mcp_server",
+    "mcp_client",
+)
 
 _BOOTSTRAP_PRE_DATABASE_KEYS = (
     "hub_backend",
@@ -296,7 +310,8 @@ def _migrate_legacy_config(config_dict: dict[str, Any]) -> dict[str, Any]:
     """Migrate legacy config keys that were renamed or removed.
 
     Handles:
-    - logging.* -> telemetry.* (field name remapping)
+    - telemetry logging fields -> dedicated logging settings
+    - legacy logging path fields -> logging.dir
     - Removal of _meta, title_synthesis, rules, ui_settings
     - wiki.roots entries ending in gobby-wiki -> sibling wiki vault
     """
@@ -304,14 +319,30 @@ def _migrate_legacy_config(config_dict: dict[str, Any]) -> dict[str, Any]:
     for key in _LEGACY_KEYS_TO_DROP:
         config_dict.pop(key, None)
 
-    # Migrate logging -> telemetry
-    if "logging" in config_dict:
-        old_logging = config_dict.pop("logging")
-        if isinstance(old_logging, dict):
-            telemetry = config_dict.setdefault("telemetry", {})
-            for old_field, new_field in _LOGGING_TO_TELEMETRY_FIELDS.items():
-                if old_field in old_logging and new_field not in telemetry:
-                    telemetry[new_field] = old_logging[old_field]
+    logging_config = config_dict.setdefault("logging", {})
+    if not isinstance(logging_config, dict):
+        raise ValueError("logging config must be a mapping")
+    telemetry = config_dict.setdefault("telemetry", {})
+    if not isinstance(telemetry, dict):
+        raise ValueError("telemetry config must be a mapping")
+
+    for old_field, new_field in _TELEMETRY_TO_LOGGING_FIELDS.items():
+        value = telemetry.pop(old_field, None)
+        if value is not None and new_field not in logging_config:
+            logging_config[new_field] = value
+
+    legacy_paths: dict[str, str] = {}
+    for field in _TELEMETRY_LOG_PATH_FIELDS:
+        value = telemetry.pop(field, None)
+        if value is not None:
+            legacy_paths[f"telemetry.{field}"] = str(value)
+    for field in _LEGACY_LOGGING_PATH_FIELDS:
+        value = logging_config.pop(field, None)
+        if value is not None:
+            legacy_paths[f"logging.{field}"] = str(value)
+
+    if "dir" not in logging_config and legacy_paths:
+        logging_config["dir"] = str(common_log_parent(legacy_paths))
 
     for key in ("gobby_tasks", "gobby-tasks"):
         gobby_tasks = config_dict.get(key)

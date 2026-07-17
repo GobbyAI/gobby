@@ -85,10 +85,10 @@ class TestGetConfig:
     def test_get_config_nested_value(self, config_registry) -> None:
         """Test get_config returns nested config values."""
         tool = config_registry.get_tool("get_config")
-        result = tool(key="telemetry.log_level")
+        result = tool(key="logging.level")
 
         assert result["success"] is True
-        assert result["key"] == "telemetry.log_level"
+        assert result["key"] == "logging.level"
 
     def test_get_config_uses_gobby_tasks_alias(self, config_registry) -> None:
         tool = config_registry.get_tool("get_config")
@@ -134,12 +134,12 @@ class TestGetConfigSection:
     def test_get_config_section_returns_nested_dict(self, config_registry) -> None:
         """Test get_config_section returns filtered nested dict."""
         tool = config_registry.get_tool("get_config_section")
-        result = tool(prefix="telemetry")
+        result = tool(prefix="logging")
 
         assert result["success"] is True
-        assert result["prefix"] == "telemetry"
+        assert result["prefix"] == "logging"
         assert isinstance(result["section"], dict)
-        assert "log_level" in result["section"]
+        assert "level" in result["section"]
 
     def test_get_config_section_missing_prefix(self, config_registry) -> None:
         """Test get_config_section returns error for nonexistent prefix."""
@@ -152,11 +152,11 @@ class TestGetConfigSection:
     def test_get_config_section_returns_subsection(self, config_registry) -> None:
         """Test get_config_section works with deeper prefixes."""
         tool = config_registry.get_tool("get_config_section")
-        result = tool(prefix="telemetry")
+        result = tool(prefix="logging")
 
         assert result["success"] is True
         section = result["section"]
-        assert "log_level" in section
+        assert "dir" in section
 
     def test_get_config_section_masks_auto_detected_secret_keys(
         self,
@@ -241,11 +241,11 @@ class TestSetConfig:
     ) -> None:
         """Test set_config works with nested dotted keys."""
         tool = config_registry.get_tool("set_config")
-        result = tool(key="telemetry.log_level", value="debug")
+        result = tool(key="logging.level", value="debug")
 
         assert result["success"] is True
-        assert config_store.get("telemetry.log_level") == "debug"
-        assert config_state["config"].telemetry.log_level == "debug"
+        assert config_store.get("logging.level") == "debug"
+        assert config_state["config"].logging.level == "debug"
 
     def test_set_config_accepts_structured_profile_default_candidates(
         self, config_registry, config_store: ConfigStore, config_state: dict[str, DaemonConfig]
@@ -358,7 +358,7 @@ class TestListConfigKeys:
     def test_list_config_keys_after_set(self, config_registry, config_store: ConfigStore) -> None:
         """Test list_config_keys returns keys after setting values."""
         config_store.set("daemon_port", 60887)
-        config_store.set("telemetry.log_level", "debug")
+        config_store.set("logging.level", "debug")
 
         tool = config_registry.get_tool("list_config_keys")
         result = tool()
@@ -366,22 +366,22 @@ class TestListConfigKeys:
         assert result["success"] is True
         assert result["count"] == 2
         assert "daemon_port" in result["keys"]
-        assert "telemetry.log_level" in result["keys"]
+        assert "logging.level" in result["keys"]
 
     def test_list_config_keys_with_prefix(
         self, config_registry: InternalToolRegistry, config_store: ConfigStore
     ) -> None:
         """Test list_config_keys filters by prefix."""
-        config_store.set("telemetry.log_level", "debug")
-        config_store.set("telemetry.log_format", "json")
+        config_store.set("logging.level", "debug")
+        config_store.set("logging.format", "json")
         config_store.set("daemon_port", 60887)
 
         tool = config_registry.get_tool("list_config_keys")
-        result = tool(prefix="telemetry")
+        result = tool(prefix="logging")
 
         assert result["success"] is True
         assert result["count"] == 2
-        assert all(k.startswith("telemetry") for k in result["keys"])
+        assert all(k.startswith("logging") for k in result["keys"])
 
     def test_list_config_keys_uses_canonical_embedding_prefix(
         self, config_registry: InternalToolRegistry, config_store: ConfigStore
@@ -445,14 +445,14 @@ class TestEnsureDefaults:
     ) -> None:
         """Test ensure_defaults inserts Pydantic defaults for missing keys."""
         tool = config_registry.get_tool("ensure_defaults")
-        result = tool(section="telemetry")
+        result = tool(section="logging")
 
         assert result["success"] is True
         assert result["inserted"] > 0
-        assert "telemetry.log_level" in result["keys_inserted"]
+        assert "logging.level" in result["keys_inserted"]
 
         # Verify persisted in DB
-        db_value = config_store.get("telemetry.log_level")
+        db_value = config_store.get("logging.level")
         assert db_value == "info"
 
     def test_ensure_defaults_does_not_overwrite_existing(
@@ -460,19 +460,19 @@ class TestEnsureDefaults:
     ) -> None:
         """Test ensure_defaults skips keys that already exist in DB."""
         # Pre-set a custom value
-        config_store.set("telemetry.log_level", "debug")
+        config_store.set("logging.level", "debug")
 
         tool = config_registry.get_tool("ensure_defaults")
         result = tool(section="telemetry")
 
         assert result["success"] is True
         # Should not have overwritten the existing key
-        db_value = config_store.get("telemetry.log_level")
+        db_value = config_store.get("logging.level")
         assert db_value == "debug"
 
         # The pre-set key should not be in keys_inserted
         if result["inserted"] > 0:
-            assert "telemetry.log_level" not in result["keys_inserted"]
+            assert "logging.level" not in result["keys_inserted"]
 
     def test_ensure_defaults_all_present(self, config_registry, config_store: ConfigStore) -> None:
         """Test ensure_defaults reports when all keys are already present."""
@@ -563,7 +563,7 @@ class TestIsSecretKeyName:
         assert is_secret_key_name("daemon_port") is False
 
     def test_non_secret_with_key_in_name(self) -> None:
-        assert is_secret_key_name("telemetry.log_level") is False
+        assert is_secret_key_name("logging.level") is False
 
 
 # ===========================================================================

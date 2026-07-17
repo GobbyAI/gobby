@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
 
+from gobby.config.logging import HOOK_MANAGER_LOG_FILENAME, resolved_log_path
+
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
@@ -85,11 +87,12 @@ def create_lifespan(
                 logger.warning(f"Failed to create CodewikiRefreshTrigger: {e}")
 
         if server.services.config:
-            hook_manager_kwargs["log_file"] = server.services.config.telemetry.log_file_hook_manager
-            hook_manager_kwargs["log_max_bytes"] = (
-                server.services.config.telemetry.max_size_mb * 1024 * 1024
+            logging_config = server.services.config.logging
+            hook_manager_kwargs["log_file"] = str(
+                resolved_log_path(logging_config, HOOK_MANAGER_LOG_FILENAME)
             )
-            hook_manager_kwargs["log_backup_count"] = server.services.config.telemetry.backup_count
+            hook_manager_kwargs["log_max_bytes"] = logging_config.max_size_mb * 1024 * 1024
+            hook_manager_kwargs["log_backup_count"] = logging_config.backup_count
 
         if not getattr(app.state, "hook_manager", None):
             app.state.hook_manager = hook_manager_factory_getter()(**hook_manager_kwargs)

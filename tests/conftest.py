@@ -342,25 +342,14 @@ def mock_llm_service() -> MagicMock:
 def mock_daemon_config() -> "MagicMock":
     """Create a mock daemon configuration for CLI tests.
 
-    Provides daemon_port, websocket.port, telemetry log paths,
+    Provides daemon_port, websocket.port, logging directory,
     and disables the UI.
     """
     config = MagicMock()
     config.daemon_port = 60887
     config.websocket.port = 60888
     temp_root = Path(tempfile.gettempdir())
-    config.telemetry.log_file = os.environ.get(
-        "GOBBY_LOGGING_CLIENT",
-        str(temp_root / "gobby_test_client.log"),
-    )
-    config.telemetry.log_file_error = os.environ.get(
-        "GOBBY_LOGGING_CLIENT_ERROR",
-        str(temp_root / "gobby_test_client_error.log"),
-    )
-    config.telemetry.log_file_stderr = os.environ.get(
-        "GOBBY_LOGGING_CLIENT_STDERR",
-        str(temp_root / "gobby_test_client_stderr.log"),
-    )
+    config.logging.dir = os.environ.get("GOBBY_LOGGING_DIR", str(temp_root))
     config.ui.enabled = False
     config.databases.falkordb.password = None
     return config
@@ -405,6 +394,7 @@ def protect_production_resources(
         "GOBBY_TEST_PROTECT": "1",  # Enable safety switch in app.py and cli/utils.py
         "GOBBY_HOME": str(safe_gobby_home_dir),
         "GOBBY_CONFIG_FILE": str(safe_config_file),  # Redirect config reads/writes
+        "GOBBY_LOGGING_DIR": str(safe_logs_dir),
         "GOBBY_LOGGING_CLIENT": str(safe_log_client),
         "GOBBY_LOGGING_CLIENT_ERROR": str(safe_log_error),
         "GOBBY_LOGGING_CLIENT_STDERR": str(safe_log_stderr),
@@ -444,12 +434,7 @@ def protect_production_resources(
             config = DaemonConfig(
                 database_url="postgresql://test-safe-postgres.invalid/test-safe-postgres",
                 postgres_install_mode="docker",
-                telemetry={
-                    "log_file": str(safe_log_client),
-                    "log_file_error": str(safe_log_error),
-                    "log_file_mcp_server": str(safe_log_mcp_server),
-                    "log_file_mcp_client": str(safe_log_mcp_client),
-                },
+                logging={"dir": str(safe_logs_dir)},
             )
             # Apply overrides if present (logic from real load_config)
             if "cli_overrides" in kwargs and kwargs["cli_overrides"]:

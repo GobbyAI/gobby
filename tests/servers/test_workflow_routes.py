@@ -45,6 +45,7 @@ def http_server(temp_db: HubDatabase) -> HTTPServer:
     mock_config = MagicMock()
     mock_config.logging.max_size_mb = 10
     mock_config.logging.backup_count = 3
+    mock_config.logging.dir = "/tmp"
     mock_config.memory.backend = "null"
     mock_config.workflow.timeout = 30
     mock_config.workflow.enabled = True

@@ -93,11 +93,12 @@ class TestGobbyRunnerInit:
             runner = GobbyRunner()
 
             mocks_by_attribute["setup_file_logging"].assert_called_once_with(
-                bootstrap_config.telemetry,
+                bootstrap_config.logging,
                 verbose=False,
             )
             mocks_by_attribute["init_telemetry"].assert_called_once_with(
                 runtime_config.telemetry,
+                runtime_config.logging,
                 verbose=False,
             )
             assert runner.config is runtime_config

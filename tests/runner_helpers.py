@@ -3,6 +3,8 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+from gobby.config.logging import LoggingSettings
+
 RUNNER_INIT_SESSION_MANAGER_PATCH = "gobby.runner_init.storage.SessionManager"
 
 
@@ -29,6 +31,7 @@ def apply_safe_runner_config_defaults(config: MagicMock) -> MagicMock:
 
     config.telemetry = getattr(config, "telemetry", MagicMock())
     config.telemetry.traces_enabled = False
+    config.logging = LoggingSettings(dir=f"/tmp/gobby-test-logs-{uuid4().hex}")
 
     config.session_lifecycle = getattr(config, "session_lifecycle", MagicMock())
     config.message_tracking = getattr(config, "message_tracking", None)

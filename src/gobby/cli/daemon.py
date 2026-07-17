@@ -18,6 +18,13 @@ import httpx
 import psutil
 
 from gobby.agents.spawners.auth_env import has_auth_env
+from gobby.config.logging import (
+    MAIN_LOG_FILENAME,
+    STDERR_LOG_FILENAME,
+    UI_LOG_FILENAME,
+    resolved_log_path,
+    resolved_logs_dir,
+)
 from gobby.runner_pid_file import probe_daemon_lock
 from gobby.utils.status import fetch_rich_status, format_startup_summary, format_status_message
 
@@ -372,8 +379,8 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
 
     gobby_dir = get_gobby_home()
     pid_file = gobby_dir / "gobby.pid"
-    log_file = Path(config.telemetry.log_file).expanduser()
-    stderr_log_file = Path(config.telemetry.log_file_stderr).expanduser()
+    log_file = resolved_log_path(config.logging, MAIN_LOG_FILENAME)
+    stderr_log_file = resolved_log_path(config.logging, STDERR_LOG_FILENAME)
 
     gobby_dir.mkdir(parents=True, exist_ok=True)
     log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -495,7 +502,7 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
                 if ui_resolution.effective == "dev":
                     web_dir = ui_resolution.source_web_dir
                     if web_dir:
-                        ui_log = Path(config.telemetry.log_file).expanduser().parent / "ui.log"
+                        ui_log = resolved_log_path(config.logging, UI_LOG_FILENAME)
                         ui_pid = spawn_ui_server(
                             config.ui.host,
                             config.ui.port,
@@ -638,7 +645,7 @@ def status(ctx: click.Context) -> None:
     """Show Gobby daemon operational health dashboard."""
     config = ctx.obj["config"]
     pid_file = get_gobby_home() / "gobby.pid"
-    log_dir = Path(config.telemetry.log_file).expanduser().parent
+    log_dir = resolved_logs_dir(config.logging)
 
     # Read PID from file, falling back to launchctl service detection
     pid: int | None = None

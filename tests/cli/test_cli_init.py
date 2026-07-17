@@ -23,7 +23,7 @@ def runner() -> CliRunner:
 def mock_config() -> MagicMock:
     """Create a mock configuration."""
     config = MagicMock()
-    config.logging.client = "/tmp/logs/client.log"
+    config.logging.dir = "/tmp/logs"
     return config
 
 

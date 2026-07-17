@@ -309,7 +309,7 @@ def start_periodic_tasks(
 
     runner._resource_monitor_task = asyncio.create_task(
         loops["resource_monitor_loop"](
-            getattr(runner.config, "telemetry", None),
+            runner.config.logging,
             lambda: runner._shutdown_requested,
             set_stderr_capture_over_limit,
         ),
