@@ -117,4 +117,24 @@ fn core_commands_parse_scope_flags() {
     assert!(quiet.status.success());
     assert_eq!(String::from_utf8_lossy(&quiet.stderr), "");
     assert!(String::from_utf8_lossy(&quiet.stdout).contains("\"status\": \"shell-ready\""));
+
+    let short_quiet = gwiki(&["status", "--topic", "rust", "-q"]);
+    assert!(short_quiet.status.success());
+    assert_eq!(String::from_utf8_lossy(&short_quiet.stderr), "");
+
+    let verbose = gwiki(&["-v", "status", "--topic", "rust"]);
+    assert!(verbose.status.success());
+    assert!(
+        String::from_utf8_lossy(&verbose.stderr).contains("verbose diagnostics enabled"),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&verbose.stderr)
+    );
+
+    let conflict = gwiki(&["--quiet", "--verbose", "status", "--topic", "rust"]);
+    assert!(!conflict.status.success());
+    assert!(
+        String::from_utf8_lossy(&conflict.stderr).contains("cannot be used with"),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&conflict.stderr)
+    );
 }

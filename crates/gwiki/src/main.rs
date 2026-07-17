@@ -59,8 +59,12 @@ struct Cli {
     format: output::Format,
 
     /// Suppress status messages.
-    #[arg(long, global = true)]
+    #[arg(short = 'q', long, global = true, conflicts_with = "verbose")]
     quiet: bool,
+
+    /// Enable verbose diagnostic messages.
+    #[arg(short = 'v', long, global = true, conflicts_with = "quiet")]
+    verbose: bool,
 
     #[command(subcommand)]
     command: CliCommand,
@@ -610,8 +614,8 @@ enum CompileKind {
 /// Minimal stderr logger so crate-wide `log::warn!` diagnostics are visible.
 ///
 /// `RUST_LOG` is parsed as a plain level (`error|warn|info|debug|trace`);
-/// unset keeps logging off so default invocations stay quiet, and `--quiet`
-/// forces it off regardless.
+/// unset keeps logging off unless `--verbose` enables debug diagnostics, and
+/// `--quiet` forces it off regardless.
 struct StderrLogger;
 
 static STDERR_LOGGER: StderrLogger = StderrLogger;
@@ -630,19 +634,25 @@ impl log::Log for StderrLogger {
     fn flush(&self) {}
 }
 
-fn log_level(quiet: bool, rust_log: Option<&str>) -> log::LevelFilter {
+fn log_level(quiet: bool, verbose: bool, rust_log: Option<&str>) -> log::LevelFilter {
     if quiet {
         return log::LevelFilter::Off;
     }
-    rust_log
+    let configured = rust_log
         .and_then(|value| value.trim().parse().ok())
-        .unwrap_or(log::LevelFilter::Off)
+        .unwrap_or(log::LevelFilter::Off);
+    if verbose {
+        configured.max(log::LevelFilter::Debug)
+    } else {
+        configured
+    }
 }
 
-fn init_logger(quiet: bool) {
+fn init_logger(quiet: bool, verbose: bool) {
     let rust_log = std::env::var("RUST_LOG").ok();
     let _ = log::set_logger(&STDERR_LOGGER);
-    log::set_max_level(log_level(quiet, rust_log.as_deref()));
+    log::set_max_level(log_level(quiet, verbose, rust_log.as_deref()));
+    log::debug!("verbose diagnostics enabled");
 }
 
 /// Restore the default `SIGPIPE` disposition so a closed stdout (e.g. piping to
@@ -669,9 +679,10 @@ fn main() -> ExitCode {
         scope,
         format,
         quiet,
+        verbose,
         command,
     } = Cli::parse_from(normalize_project_flag_args(std::env::args_os()));
-    init_logger(quiet);
+    init_logger(quiet, verbose);
 
     if matches!(&command, CliCommand::Contract) {
         let mut stdout = std::io::stdout().lock();

@@ -714,9 +714,41 @@ fn recap_cli_flags_map_to_command_options() {
 
 #[test]
 fn log_level_honors_rust_log_and_quiet() {
-    assert_eq!(log_level(false, None), log::LevelFilter::Off);
-    assert_eq!(log_level(false, Some("warn")), log::LevelFilter::Warn);
-    assert_eq!(log_level(false, Some(" DEBUG ")), log::LevelFilter::Debug);
-    assert_eq!(log_level(false, Some("not-a-level")), log::LevelFilter::Off);
-    assert_eq!(log_level(true, Some("trace")), log::LevelFilter::Off);
+    assert_eq!(log_level(false, false, None), log::LevelFilter::Off);
+    assert_eq!(log_level(false, true, None), log::LevelFilter::Debug);
+    assert_eq!(
+        log_level(false, true, Some("warn")),
+        log::LevelFilter::Debug
+    );
+    assert_eq!(
+        log_level(false, true, Some("trace")),
+        log::LevelFilter::Trace
+    );
+    assert_eq!(
+        log_level(false, false, Some(" DEBUG ")),
+        log::LevelFilter::Debug
+    );
+    assert_eq!(
+        log_level(false, false, Some("not-a-level")),
+        log::LevelFilter::Off
+    );
+    assert_eq!(log_level(true, true, Some("trace")), log::LevelFilter::Off);
+}
+
+#[test]
+fn quiet_and_verbose_flags_parse_and_conflict() {
+    use clap::Parser;
+
+    let quiet = Cli::try_parse_from(["gwiki", "-q", "status"]).expect("parse short quiet");
+    assert!(quiet.quiet);
+    assert!(!quiet.verbose);
+
+    let verbose =
+        Cli::try_parse_from(["gwiki", "status", "--verbose"]).expect("parse global verbose");
+    assert!(!verbose.quiet);
+    assert!(verbose.verbose);
+
+    let error = Cli::try_parse_from(["gwiki", "--quiet", "--verbose", "status"])
+        .expect_err("quiet and verbose must conflict");
+    assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
 }
