@@ -76,7 +76,7 @@ class TmuxMixin:
         for streaming_id in bridge_ids:
             await reader.stop_reader(streaming_id)
             await self._tmux_bridge.detach(streaming_id)
-            logger.debug(f"Cleaned up tmux bridge {streaming_id} for disconnected client")
+            logger.debug("Cleaned up tmux bridge %s for disconnected client", streaming_id)
 
     def _get_tmux_manager(self, socket: str) -> TmuxSessionManager:
         """Get the session manager for a given socket."""
@@ -284,7 +284,7 @@ class TmuxMixin:
                         }
                     )
             except Exception as e:
-                logger.warning(f"Failed to list {socket_name} tmux sessions: {e}")
+                logger.warning("Failed to list %s tmux sessions: %s", socket_name, e)
 
         response: dict[str, Any] = {
             "type": "tmux_sessions_list",
@@ -343,7 +343,7 @@ class TmuxMixin:
                 # Force redraw clients attached to this session
                 await mgr.refresh_client(session_name)
             except Exception as e:
-                logger.debug(f"Failed to configure/refresh tmux session: {e}")
+                logger.debug("Failed to configure/refresh tmux session: %s", e)
 
             # NOW start PTY reader — tmux state is clean
             reader = get_pty_reader_manager()
@@ -373,7 +373,7 @@ class TmuxMixin:
             await websocket.send(json_dumps(response))
 
         except Exception as e:
-            logger.error(f"Failed to attach tmux session '{session_name}': {e}")
+            logger.error("Failed to attach tmux session '%s': %s", session_name, e)
             await self._send_error(websocket, f"Attach failed: {e}", request_id=request_id)
 
     async def _handle_tmux_detach(self, websocket: Any, data: dict[str, Any]) -> None:
@@ -444,7 +444,7 @@ class TmuxMixin:
             await websocket.send(json_dumps(response))
 
         except Exception as e:
-            logger.error(f"Failed to create tmux session: {e}")
+            logger.error("Failed to create tmux session: %s", e)
             await self._send_error(websocket, f"Create failed: {e}", request_id=request_id)
 
     async def _handle_tmux_kill_session(self, websocket: Any, data: dict[str, Any]) -> None:
@@ -516,7 +516,7 @@ class TmuxMixin:
             await websocket.send(json_dumps(response))
 
         except Exception as e:
-            logger.error(f"Failed to kill tmux session '{session_name}': {e}")
+            logger.error("Failed to kill tmux session '%s': %s", session_name, e)
             await self._send_error(websocket, f"Kill failed: {e}", request_id=request_id)
 
     async def _handle_tmux_resize(self, websocket: Any, data: dict[str, Any]) -> None:
@@ -543,7 +543,7 @@ class TmuxMixin:
                 socket = "gobby" if bridge.socket_name == "gobby" else "default"
                 await self._get_tmux_manager(socket).refresh_client(bridge.session_name)
             except Exception as e:
-                logger.debug(f"Post-resize refresh-client failed: {e}")
+                logger.debug("Post-resize refresh-client failed: %s", e)
 
     async def _handle_tmux_refresh_client(self, websocket: Any, data: dict[str, Any]) -> None:
         """Force tmux to redraw the clients attached to a session."""
@@ -556,7 +556,7 @@ class TmuxMixin:
         try:
             await self._get_tmux_manager(socket).refresh_client(session_name)
         except Exception as e:
-            logger.debug(f"Failed to refresh tmux session: {e}")
+            logger.debug("Failed to refresh tmux session: %s", e)
 
     # ------------------------------------------------------------------
     # Broadcast helpers
@@ -591,4 +591,4 @@ class TmuxMixin:
             except ConnectionClosed:
                 pass
             except Exception as e:
-                logger.warning(f"Tmux event broadcast failed: {e}")
+                logger.warning("Tmux event broadcast failed: %s", e)

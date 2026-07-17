@@ -127,18 +127,19 @@ async def ensure_daemon_running(
                 return
             if attempt < DAEMON_HEALTH_ATTEMPTS - 1:
                 effective_deps.logger.warning(
-                    "Daemon health check failed "
-                    f"(attempt {attempt + 1}/{DAEMON_HEALTH_ATTEMPTS}), "
-                    f"retrying in {DAEMON_HEALTH_RETRY_DELAY_SECONDS:.1f}s...",
+                    "Daemon health check failed (attempt %s/%s), retrying in %.1fs...",
+                    attempt + 1,
+                    DAEMON_HEALTH_ATTEMPTS,
+                    DAEMON_HEALTH_RETRY_DELAY_SECONDS,
                 )
                 await asyncio.sleep(DAEMON_HEALTH_RETRY_DELAY_SECONDS)
 
         pid = effective_deps.get_daemon_pid()
         effective_deps.logger.error(
-            "Daemon is running but did not become healthy "
-            f"(pid={pid}, port={port}) after {DAEMON_HEALTH_ATTEMPTS} attempts. "
-            "Refusing to restart it from a stdio MCP client because that can interrupt "
-            "active dispatch agents.",
+            "Daemon is running but did not become healthy (pid=%s, port=%s) after %s attempts. Refusing to restart it from a stdio MCP client because that can interrupt active dispatch agents.",
+            pid,
+            port,
+            DAEMON_HEALTH_ATTEMPTS,
         )
         return
 
@@ -152,8 +153,10 @@ async def ensure_daemon_running(
     result = await effective_deps.start_daemon_process(port, ws_port)
     if not result.get("success"):
         effective_deps.logger.error(
-            "Failed to start daemon: "
-            f"{result.get('error', 'unknown error')} (port={port}, ws_port={ws_port})",
+            "Failed to start daemon: %s (port=%s, ws_port=%s)",
+            result.get("error", "unknown error"),
+            port,
+            ws_port,
         )
         return
 
@@ -170,9 +173,12 @@ async def ensure_daemon_running(
 
     pid = effective_deps.get_daemon_pid()
     effective_deps.logger.error(
-        "Daemon failed to become healthy after "
-        f"{DAEMON_HEALTH_ATTEMPTS} attempts "
-        f"(pid={pid}, port={port}, ws_port={ws_port}, last_health={last_health_response})",
+        "Daemon failed to become healthy after %s attempts (pid=%s, port=%s, ws_port=%s, last_health=%s)",
+        DAEMON_HEALTH_ATTEMPTS,
+        pid,
+        port,
+        ws_port,
+        last_health_response,
     )
     return
 

@@ -415,7 +415,7 @@ async def _execute_tool(
             )
         else:
             error_message = str(e)
-        logger.warning(f"Tool call failed: {server_name}/{tool_name}: {error_message}")
+        logger.warning("Tool call failed: %s/%s: %s", server_name, tool_name, error_message)
 
         response: dict[str, Any] = {
             "success": False,
@@ -432,7 +432,7 @@ async def _execute_tool(
                 if schema_result.get("success"):
                     input_schema = schema_result.get("tool", {}).get("inputSchema", {})
             except Exception as schema_error:
-                logger.debug(f"Could not fetch schema for error enrichment: {schema_error}")
+                logger.debug("Could not fetch schema for error enrichment: %s", schema_error)
             response = await asyncio.to_thread(
                 build_invalid_arguments_response,
                 service,
@@ -464,7 +464,7 @@ async def _execute_tool(
                 else:
                     response["fallback_suggestions"] = []
             except Exception as fallback_error:
-                logger.debug(f"Fallback resolver failed: {fallback_error}")
+                logger.debug("Fallback resolver failed: %s", fallback_error)
                 response["fallback_suggestions"] = []
         else:
             response["fallback_suggestions"] = []
@@ -540,14 +540,14 @@ async def call_tool_by_name(
     server_name = service.find_tool_server(tool_name)
 
     if server_name is None:
-        logger.warning(f"Tool '{tool_name}' not found on any server")
+        logger.warning("Tool '%s' not found on any server", tool_name)
         return {
             "success": False,
             "error": f"Tool '{tool_name}' not found on any available server",
             "tool_name": tool_name,
         }
 
-    logger.debug(f"Routing tool '{tool_name}' to server '{server_name}'")
+    logger.debug("Routing tool '%s' to server '%s'", tool_name, server_name)
     return await service.call_tool(server_name, tool_name, arguments, session_id)
 
 

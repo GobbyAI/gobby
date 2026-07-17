@@ -125,7 +125,7 @@ async def handle_attach_to_session(
     try:
         session = await run_db(mixin, session_manager.get, session_id)
     except Exception as e:
-        logger.warning(f"Failed to look up session {session_id}: {e}")
+        logger.warning("Failed to look up session %s: %s", session_id, e)
         session = None
 
     if not session:
@@ -213,8 +213,10 @@ async def handle_attach_to_session(
         )
     )
     logger.info(
-        f"Client attached to session {session_id} ({session_meta['ref']}): "
-        f"{total_count} messages loaded"
+        "Client attached to session %s (%s): %s messages loaded",
+        session_id,
+        session_meta["ref"],
+        total_count,
     )
 
 
@@ -261,7 +263,7 @@ async def handle_send_to_cli_session(
     try:
         session = await run_db(mixin, session_manager.get, session_id)
     except Exception as e:
-        logger.warning(f"Failed to look up session {session_id}: {e}")
+        logger.warning("Failed to look up session %s: %s", session_id, e)
         session = None
 
     if not session:
@@ -314,7 +316,7 @@ async def handle_send_to_cli_session(
             inter_msg_manager = InterSessionMessageManager(session_manager.db)
             mixin.inter_session_msg_manager = inter_msg_manager
         except Exception as e:
-            logger.warning(f"Failed to create InterSessionMessageManager: {e}")
+            logger.warning("Failed to create InterSessionMessageManager: %s", e)
 
     web_session_id = (mixin.clients.get(websocket) or {}).get("attached_session_id", "web-ui")
     try:
@@ -346,7 +348,7 @@ async def handle_send_to_cli_session(
             )
             msg_id = msg.id
         except Exception as e:
-            logger.warning(f"Failed to persist inter-session message: {e}")
+            logger.warning("Failed to persist inter-session message: %s", e)
 
     # Try tmux delivery for idle sessions
     delivered_via_tmux = False
@@ -368,9 +370,9 @@ async def handle_send_to_cli_session(
                             session_id,
                         )
                     except Exception as e:
-                        logger.warning(f"Failed to mark message {msg_id} as delivered: {e}")
+                        logger.warning("Failed to mark message %s as delivered: %s", msg_id, e)
         except Exception as e:
-            logger.warning(f"tmux send_keys failed for {tmux_pane}: {e}")
+            logger.warning("tmux send_keys failed for %s: %s", tmux_pane, e)
 
     # Respond to the client
     await websocket.send(
@@ -386,8 +388,9 @@ async def handle_send_to_cli_session(
         )
     )
     logger.info(
-        f"Message sent to CLI session {session_id[:8]}: "
-        f"delivered={'tmux' if delivered_via_tmux else 'queued for hook piggyback'}"
+        "Message sent to CLI session %s: delivered=%s",
+        session_id[:8],
+        "tmux" if delivered_via_tmux else "queued for hook piggyback",
     )
 
 
@@ -429,4 +432,4 @@ async def handle_detach_from_session(
             }
         )
     )
-    logger.info(f"Client detached from session {session_id}")
+    logger.info("Client detached from session %s", session_id)

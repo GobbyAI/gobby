@@ -81,7 +81,7 @@ def _mount_ws_proxy(app: FastAPI, server: "HTTPServer") -> None:
     async def ws_proxy_root(websocket: WebSocket) -> None:
         await ws_proxy(websocket, "")
 
-    logger.debug(f"WebSocket proxy mounted at /ws -> localhost:{ws_port}")
+    logger.debug("WebSocket proxy mounted at /ws -> localhost:%s", ws_port)
 
 
 async def _proxy_websocket(
@@ -165,7 +165,7 @@ async def _proxy_websocket(
                 if exc is not None:
                     raise exc
     except Exception as e:
-        logger.debug(f"WebSocket proxy error: {e}")
+        logger.debug("WebSocket proxy error: %s", e)
         if accepted:
             try:
                 await websocket.close(code=1011)
@@ -194,7 +194,7 @@ def _mount_vite_hmr_proxy(app: FastAPI, server: "HTTPServer") -> None:
             target += f"?{query}"
         await _proxy_websocket(websocket, target)
 
-    logger.debug(f"Vite HMR proxy mounted at /__vite_hmr -> localhost:{ui_port}")
+    logger.debug("Vite HMR proxy mounted at /__vite_hmr -> localhost:%s", ui_port)
 
 
 def _requested_websocket_subprotocols(headers: Headers) -> list[Subprotocol]:
@@ -276,7 +276,7 @@ def _mount_vite_dev_ui(app: FastAPI, server: "HTTPServer") -> None:
         methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
         include_in_schema=False,
     )
-    logger.info(f"Dev UI proxy mounted at / -> localhost:{ui_port}")
+    logger.info("Dev UI proxy mounted at / -> localhost:%s", ui_port)
 
 
 def _mount_production_ui(app: FastAPI, server: "_ProductionUIServer") -> None:
@@ -293,12 +293,12 @@ def _mount_production_ui(app: FastAPI, server: "_ProductionUIServer") -> None:
 
     dist_dir = web_dir / "dist"
     if not dist_dir.exists():
-        logger.warning(f"UI dist directory not found at {dist_dir}. Run 'gobby ui build' first.")
+        logger.warning("UI dist directory not found at %s. Run 'gobby ui build' first.", dist_dir)
         return
 
     index_html = dist_dir / "index.html"
     if not index_html.exists():
-        logger.warning(f"index.html not found in {dist_dir}")
+        logger.warning("index.html not found in %s", dist_dir)
         return
 
     assets_dir = dist_dir / "assets"
@@ -321,4 +321,4 @@ def _mount_production_ui(app: FastAPI, server: "_ProductionUIServer") -> None:
             return FileResponse(str(static_file))
         return FileResponse(str(index_html))
 
-    logger.info(f"Production UI mounted from {dist_dir}")
+    logger.info("Production UI mounted from %s", dist_dir)

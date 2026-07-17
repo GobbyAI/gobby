@@ -210,7 +210,7 @@ def create_memory_registry(
                         memory_manager.db, session_id, project_id
                     )
                 except Exception as e:
-                    logger.warning(f"Could not resolve session_id '{session_id}': {e}")
+                    logger.warning("Could not resolve session_id '%s': %s", session_id, e)
 
             redirected_task_title = _speculative_memory_task_title(content)
             if redirected_task_title:
@@ -266,7 +266,10 @@ def create_memory_registry(
                 similar_existing = similar_existing[:3]
             except Exception as e:
                 logger.debug(
-                    f"Similarity search failed during memory creation (project_id={project_id}, memory_id={memory.id}): {e}",
+                    "Similarity search failed during memory creation (project_id=%s, memory_id=%s): %s",
+                    project_id,
+                    memory.id,
+                    e,
                     exc_info=True,
                 )
 
@@ -753,7 +756,7 @@ def create_memory_registry(
                     created = await memory_manager.rebuild_crossrefs_for_memory(memory)
                     total_created += created
                 except Exception as e:
-                    logger.warning(f"Crossref failed for {memory.id}: {e}")
+                    logger.warning("Crossref failed for %s: %s", memory.id, e)
                 if i % 10 == 9:
                     await asyncio.sleep(0)
             return {

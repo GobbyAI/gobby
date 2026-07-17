@@ -178,7 +178,7 @@ class VoiceMixin(VoiceWarmupMixin):
         pipeline = self._active_tts_pipelines.pop(conversation_id, None)
         if pipeline:
             await pipeline.cancel()
-            logger.debug(f"TTS cancelled for {conversation_id[:8]}")
+            logger.debug("TTS cancelled for %s", conversation_id[:8])
 
         await _broadcast_tts_status(self.clients, conversation_id, "idle")
 
@@ -202,7 +202,7 @@ class VoiceMixin(VoiceWarmupMixin):
         }
         """
         conversation_id = data.get("conversation_id", "")
-        logger.debug(f"TTS stop requested for {conversation_id[:8]}")
+        logger.debug("TTS stop requested for %s", conversation_id[:8])
         await self._cancel_tts(conversation_id)
 
     async def _handle_voice_audio(self, websocket: Any, data: dict[str, Any]) -> None:
@@ -234,8 +234,10 @@ class VoiceMixin(VoiceWarmupMixin):
         )
 
         logger.info(
-            f"Voice audio received: {len(audio_data_b64)} chars b64, "
-            f"mime={mime_type}, conv={conversation_id[:8]}..."
+            "Voice audio received: %s chars b64, mime=%s, conv=%s...",
+            len(audio_data_b64),
+            mime_type,
+            conversation_id[:8],
         )
 
         # Stop any active TTS when user starts speaking
@@ -298,7 +300,7 @@ class VoiceMixin(VoiceWarmupMixin):
 
             if not text.strip():
                 logger.info(
-                    f"Voice transcription empty for {conversation_id[:8]}... ({duration_ms}ms)"
+                    "Voice transcription empty for %s... (%sms)", conversation_id[:8], duration_ms
                 )
                 await websocket.send(
                     json_dumps(_voice_status_payload(conversation_id, request_id, "empty"))
@@ -441,7 +443,9 @@ class VoiceMixin(VoiceWarmupMixin):
             )
         )
 
-        logger.debug(f"Voice mode {'enabled' if enabled else 'disabled'} for {conversation_id[:8]}")
+        logger.debug(
+            "Voice mode %s for %s", "enabled" if enabled else "disabled", conversation_id[:8]
+        )
 
     async def _handle_voice_prepare(self, websocket: Any, data: dict[str, Any]) -> None:
         """Handle voice_prepare: trigger lazy model warmup on mic-button click.

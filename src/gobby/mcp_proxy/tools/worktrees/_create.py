@@ -101,10 +101,12 @@ def create_create_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 if has_unpushed:
                     resolved_use_local = True
                     logger.info(
-                        f"Auto-detected {unpushed_count} unpushed commit(s) on '{base_branch}', using local branch ref",
+                        "Auto-detected %s unpushed commit(s) on '%s', using local branch ref",
+                        unpushed_count,
+                        base_branch,
                     )
             except Exception as e:
-                logger.warning(f"Auto-detect unpushed commits failed: {e}")
+                logger.warning("Auto-detect unpushed commits failed: %s", e)
         if resolved_use_local is None:
             resolved_use_local = False
 
@@ -138,7 +140,7 @@ def create_create_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     )
                 except Exception as cleanup_err:
                     logger.warning(
-                        f"Failed to clean up worktree after task resolution failure: {cleanup_err}"
+                        "Failed to clean up worktree after task resolution failure: %s", cleanup_err
                     )
                 return {"success": False, "error": f"Invalid task reference: {e}"}
 
@@ -162,7 +164,7 @@ def create_create_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 )
             except Exception as cleanup_err:
                 logger.warning(
-                    f"Failed to clean up orphaned worktree {worktree_path}: {cleanup_err}"
+                    "Failed to clean up orphaned worktree %s: %s", worktree_path, cleanup_err
                 )
             return {"success": False, "error": f"Failed to record worktree in database: {db_err}"}
 
@@ -172,7 +174,7 @@ def create_create_registry(ctx: RegistryContext) -> InternalToolRegistry:
             copy_project_json_to_worktree(resolved_git_mgr.repo_path, worktree.worktree_path)
             hooks_installed = install_provider_hooks(provider, worktree.worktree_path)
         except Exception as post_err:
-            logger.warning(f"Post-creation setup failed for worktree {worktree.id}: {post_err}")
+            logger.warning("Post-creation setup failed for worktree %s: %s", worktree.id, post_err)
 
         event = None
         try:

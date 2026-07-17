@@ -73,7 +73,7 @@ def build_persona_changes(
     if agent_body.workflows and agent_body.workflows.variables:
         for key, value in agent_body.workflows.variables.items():
             if key.startswith("_"):
-                logger.warning(f"Skipping reserved variable {key!r} from agent definition")
+                logger.warning("Skipping reserved variable %r from agent definition", key)
                 continue
             changes[key] = value
 
@@ -85,7 +85,7 @@ def build_persona_changes(
                 if var_row.name not in changes:
                     changes[var_row.name] = var_body.get("value")
             except json.JSONDecodeError:
-                logger.debug(f"Failed to parse variable definition for {var_row.name}")
+                logger.debug("Failed to parse variable definition for %s", var_row.name)
 
     if agent_body.blocked_tools:
         changes["_agent_blocked_tools"] = agent_body.blocked_tools
@@ -275,7 +275,7 @@ async def apply_persona_impl(
                     extra_vars["assigned_task_id"] = task_ref
                     extra_vars["session_task"] = task_ref
         except Exception as e:
-            logger.warning(f"Failed to resolve task_id {task_id}: {e}")
+            logger.warning("Failed to resolve task_id %s: %s", task_id, e)
 
     changes, active_skills = build_session_persona_changes(agent_body, db)
     changes.update(extra_vars)

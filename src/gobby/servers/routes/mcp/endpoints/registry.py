@@ -76,7 +76,7 @@ async def embed_mcp_tools(
                     "response_time_ms": response_time_ms,
                 }
             except Exception as e:
-                logger.error(f"Embedding generation failed: {e}")
+                logger.error("Embedding generation failed: %s", e)
                 return {
                     "success": False,
                     "error": str(e),
@@ -90,7 +90,7 @@ async def embed_mcp_tools(
         }
 
     except Exception as e:
-        logger.error(f"Embed tools error: {e}", exc_info=True)
+        logger.error("Embed tools error: %s", e, exc_info=True)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
 
@@ -151,7 +151,7 @@ async def get_mcp_status(
         }
 
     except Exception as e:
-        logger.error(f"Get MCP status error: {e}", exc_info=True)
+        logger.error("Get MCP status error: %s", e, exc_info=True)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
 
@@ -276,7 +276,7 @@ async def refresh_mcp_tools(
                             tools,
                         )
                     except Exception as e:
-                        logger.warning(f"Failed to connect to {server_name}: {e}")
+                        logger.warning("Failed to connect to %s: %s", server_name, e)
                         stats["by_server"][server_name] = {"error": str(e)}
                         continue
 
@@ -366,7 +366,7 @@ async def refresh_mcp_tools(
                             )
                             server_stats["embeddings"] += 1
                         except Exception as e:
-                            logger.warning(f"Failed to embed {server_name}/{tool_name}: {e}")
+                            logger.warning("Failed to embed %s/%s: %s", server_name, tool_name, e)
 
                 stats["by_server"][server_name] = server_stats
                 stats["servers_processed"] += 1
@@ -377,7 +377,7 @@ async def refresh_mcp_tools(
                 stats["embeddings_generated"] += server_stats["embeddings"]
 
             except Exception as e:
-                logger.error(f"Error processing server {server_name}: {e}")
+                logger.error("Error processing server %s: %s", server_name, e)
                 stats["by_server"][server_name] = {"error": str(e)}
 
         response_time_ms = (time.perf_counter() - start_time) * 1000
@@ -389,7 +389,7 @@ async def refresh_mcp_tools(
         }
 
     except Exception as e:
-        logger.error(f"Refresh tools error: {e}", exc_info=True)
+        logger.error("Refresh tools error: %s", e, exc_info=True)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
 

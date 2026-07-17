@@ -233,7 +233,9 @@ class SemanticToolSearch:
             description: Tool description (stored in payload for search results)
         """
         if not self._vector_store:
-            logger.warning(f"No VectorStore configured - cannot store embedding for tool {tool_id}")
+            logger.warning(
+                "No VectorStore configured - cannot store embedding for tool %s", tool_id
+            )
             return
         vector_store = self._vector_store
 
@@ -461,7 +463,7 @@ class SemanticToolSearch:
                         stats["failed"] += 1
                         error_msg = f"{registry.name}/{tool_name}: {e}"
                         stats["errors"].append(error_msg)
-                        logger.error(f"Failed to embed tool {error_msg}")
+                        logger.error("Failed to embed tool %s", error_msg)
 
                 stats["by_server"][registry.name] = server_stats
 
@@ -492,7 +494,7 @@ class SemanticToolSearch:
                     stats["failed"] += 1
                     error_msg = f"{server.name}/{tool.name}: {e}"
                     stats["errors"].append(error_msg)
-                    logger.error(f"Failed to embed tool {error_msg}")
+                    logger.error("Failed to embed tool %s", error_msg)
 
             stats["by_server"][server.name] = server_stats
 
@@ -523,7 +525,7 @@ class SemanticToolSearch:
         """
         if not self._vector_store:
             logger.warning(
-                f"No VectorStore configured - tool search unavailable for query {query!r}"
+                "No VectorStore configured - tool search unavailable for query %r", query
             )
             return []
         vector_store = self._vector_store

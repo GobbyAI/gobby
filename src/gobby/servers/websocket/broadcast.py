@@ -163,7 +163,7 @@ class BroadcastMixin:
 
         if sent_count > 0 or failed_count > 0:
             logger.debug(
-                f"Broadcast {message.get('type')}: {sent_count} sent, {failed_count} failed"
+                "Broadcast %s: %s sent, %s failed", message.get("type"), sent_count, failed_count
             )
 
     async def broadcast_session_event(

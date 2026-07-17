@@ -112,7 +112,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 except Exception as sv_err:
                     active_names = None
                     logger.warning(
-                        f"Failed to resolve session variables for {session_id}: {sv_err}"
+                        "Failed to resolve session variables for %s: %s", session_id, sv_err
                     )
 
             # Build filters
@@ -189,5 +189,5 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 "results": result_list,
             }
         except Exception as e:
-            logger.error(f"search_skills failed for query={query!r}: {e}", exc_info=True)
+            logger.error("search_skills failed for query=%r: %s", query, e, exc_info=True)
             return {"success": False, "error": str(e)}

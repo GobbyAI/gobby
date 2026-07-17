@@ -199,7 +199,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             try:
                 daemon_status = server._daemon.status()
             except Exception as e:
-                logger.warning(f"Failed to get daemon status: {e}")
+                logger.warning("Failed to get daemon status: %s", e)
 
         # Get process metrics
         try:
@@ -216,7 +216,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                 "num_threads": process.num_threads(),
             }
         except Exception as e:
-            logger.warning(f"Failed to get process metrics: {e}")
+            logger.warning("Failed to get process metrics: %s", e)
             process_metrics = None
 
         # Get background task status
@@ -257,7 +257,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                         "tool_count": len(config.tools) if config.tools else 0,
                     }
             except Exception as e:
-                logger.warning(f"Failed to get MCP health: {e}")
+                logger.warning("Failed to get MCP health: %s", e)
 
         # Count internal tools from gobby-* registries and add them to mcp_health
         internal_tools_count = 0
@@ -295,7 +295,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                 session_stats["paused"] = status_counts.get("paused", 0)
                 session_stats["handoff_ready"] = status_counts.get("handoff_ready", 0)
             except Exception as e:
-                logger.warning(f"Failed to get session stats: {e}")
+                logger.warning("Failed to get session stats: %s", e)
 
         # Get task statistics using efficient count queries
         task_stats: dict[str, Any] = {
@@ -333,7 +333,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
 
                 task_stats = await server.run_db(_collect_task_stats)
             except Exception as e:
-                logger.warning(f"Failed to get task stats: {e}")
+                logger.warning("Failed to get task stats: %s", e)
 
         # Get memory statistics
         memory_stats: dict[str, Any] = {"count": 0, "by_type": {}, "recent_count": 0}
@@ -344,7 +344,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                 memory_stats["by_type"] = stats.get("by_type", {})
                 memory_stats["recent_count"] = stats.get("recent_count", 0)
             except Exception as e:
-                logger.warning(f"Failed to get memory stats: {e}")
+                logger.warning("Failed to get memory stats: %s", e)
 
             # Qdrant vector store status
             try:
@@ -415,7 +415,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
 
             pipeline_stats = await server.run_db(_collect_pipeline_stats)
         except Exception as e:
-            logger.warning(f"Failed to get pipeline stats: {e}")
+            logger.warning("Failed to get pipeline stats: %s", e)
 
         # Get skills statistics
         skills_stats: dict[str, Any] = {"total": 0}
@@ -423,7 +423,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             try:
                 skills_stats["total"] = await server.run_db(server.skill_manager.count_skills)
             except Exception as e:
-                logger.warning(f"Failed to get skills stats: {e}")
+                logger.warning("Failed to get skills stats: %s", e)
 
         # Compute total cached tools across downstream servers
         downstream_tools_count = 0
@@ -491,7 +491,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             try:
                 provider_model_status = provider_model_catalog.status_snapshot()
             except Exception as e:
-                logger.warning(f"Failed to get provider model catalog status: {e}")
+                logger.warning("Failed to get provider model catalog status: %s", e)
 
         database_status: dict[str, Any] = {}
         db_size_bytes: int | None = None
@@ -526,7 +526,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             try:
                 system_services["automation_loop"] = automation_loop.status_snapshot()
             except Exception as e:
-                logger.warning(f"Failed to get automation loop status: {e}")
+                logger.warning("Failed to get automation loop status: %s", e)
 
         payload: dict[str, Any] = {
             "status": (
@@ -594,5 +594,5 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             return PlainTextResponse(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
         except Exception as e:
-            logger.error(f"Failed to export metrics: {e}", exc_info=True)
+            logger.error("Failed to export metrics: %s", e, exc_info=True)
             raise

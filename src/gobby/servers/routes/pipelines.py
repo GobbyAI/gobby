@@ -312,7 +312,7 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
                     project_id=project_id,
                 )
             except Exception as e:
-                logger.error(f"Failed to start detached pipeline run: {e}", exc_info=True)
+                logger.error("Failed to start detached pipeline run: %s", e, exc_info=True)
                 raise HTTPException(status_code=500, detail="Internal server error") from e
             return JSONResponse(
                 status_code=202,
@@ -352,7 +352,7 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
             )
 
         except Exception as e:
-            logger.error(f"Pipeline execution failed: {e}", exc_info=True)
+            logger.error("Pipeline execution failed: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/{execution_id}")

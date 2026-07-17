@@ -69,7 +69,7 @@ async def _get_commit_count(db: "HubDatabase", session: Any) -> int:
             if row and row["repo_path"]:
                 cwd = row["repo_path"]
         except Exception as e:
-            logger.debug(f"Failed to resolve repo_path for session {session.id}: {e}")
+            logger.debug("Failed to resolve repo_path for session %s: %s", session.id, e)
 
     if not cwd:
         return 0
@@ -148,7 +148,7 @@ async def _compute_resumability(
             )
             active_agent_session_ids = {r["parent_session_id"] for r in rows}
         except Exception as e:
-            logger.debug(f"Failed to fetch active agent session ids: {e}")
+            logger.debug("Failed to fetch active agent session ids: %s", e)
 
         try:
             rows = await server.run_db(
@@ -158,7 +158,7 @@ async def _compute_resumability(
             )
             active_pipeline_session_ids = {r["session_id"] for r in rows}
         except Exception as e:
-            logger.debug(f"Failed to fetch active pipeline session ids: {e}")
+            logger.debug("Failed to fetch active pipeline session ids: %s", e)
 
     # Active web chat session IDs
     ws_server = server.services.websocket_server
@@ -268,7 +268,7 @@ def register_core_routes(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Error creating web chat session: {e}", exc_info=True)
+            logger.error("Error creating web chat session: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/register")
@@ -332,7 +332,7 @@ def register_core_routes(
             raise HTTPException(status_code=400, detail=str(e)) from e
 
         except Exception as e:
-            logger.error(f"Error registering session: {e}", exc_info=True)
+            logger.error("Error registering session: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/usage")
@@ -673,7 +673,7 @@ def register_core_routes(
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error listing sessions: {e}", exc_info=True)
+            logger.error("Error listing sessions: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     # Remaining routes (bulk-move, get, find_current, find_parent,

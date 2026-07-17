@@ -187,7 +187,9 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         try:
             ctx.session_task_manager.link_task(resolved_session_id, task.id, "created")
         except Exception as e:
-            logger.warning(f"Failed to link task {task.id} to session {resolved_session_id}: {e}")
+            logger.warning(
+                "Failed to link task %s to session %s: %s", task.id, resolved_session_id, e
+            )
 
         # Auto-claim if requested.
         claim_skipped_cross_project = False
@@ -199,8 +201,10 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 claim_session = None
             if claim_session and project_id != claim_session.project_id:
                 logger.info(
-                    f"Skipping auto-claim for task {task.id}: "
-                    f"task project {project_id} != session project {claim_session.project_id}"
+                    "Skipping auto-claim for task %s: task project %s != session project %s",
+                    task.id,
+                    project_id,
+                    claim_session.project_id,
                 )
                 claim = False
                 claim_skipped_cross_project = True
@@ -208,14 +212,14 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         if claim:
             updated_task = ctx.task_manager.claim_task(task.id, resolved_session_id)
             if updated_task is None:
-                logger.warning(f"Failed to auto-claim task {task.id}: update_task returned None")
+                logger.warning("Failed to auto-claim task %s: update_task returned None", task.id)
             else:
                 task = updated_task
                 # Link task to session with "claimed" action (best-effort)
                 try:
                     ctx.session_task_manager.link_task(resolved_session_id, task.id, "claimed")
                 except Exception as e:
-                    logger.warning(f"Failed to link claimed task {task.id}: {e}")
+                    logger.warning("Failed to link claimed task %s: %s", task.id, e)
                     pass
 
             # Set session variables for Claude Code (CC doesn't include tool results in PostToolUse)
@@ -230,7 +234,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 merge_dict.update(build_claimed_task_skill_state(current_vars, ctx.task_manager))
                 ctx.session_var_manager.merge_variables(resolved_session_id, merge_dict)
             except Exception as e:
-                logger.debug(f"Best-effort session variable update failed: {e}")
+                logger.debug("Best-effort session variable update failed: %s", e)
 
         # Handle 'blocks' argument if provided (syntactic sugar)
         # Collect errors consistently with depends_on handling below
@@ -520,7 +524,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     resolved_parent = resolve_task_id_for_mcp(ctx.task_manager, parent_task_id)
                     kwargs["parent_task_id"] = resolved_parent
                 except (TaskNotFoundError, ValueError) as e:
-                    logger.warning(f"Invalid parent_task_id '{parent_task_id}': {e}")
+                    logger.warning("Invalid parent_task_id '%s': %s", parent_task_id, e)
                     return {"error": f"Invalid parent_task_id '{parent_task_id}': {e}"}
             else:
                 kwargs["parent_task_id"] = None

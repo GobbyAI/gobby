@@ -162,7 +162,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
                 await ws.broadcast_skill_event(event, skill_id, **kwargs)
             except Exception as e:
                 logger.warning(
-                    f"Failed to broadcast skill event '{event}' for skill {skill_id}: {e}"
+                    "Failed to broadcast skill event '%s' for skill %s: %s", event, skill_id, e
                 )
 
     async def _resolve_project_import_path(source: str, project_id: str | None) -> str:
@@ -210,7 +210,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             )
             return {"skills": [s.to_dict() for s in skills]}
         except Exception as e:
-            logger.error(f"Failed to list skills: {e}")
+            logger.error("Failed to list skills: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("", status_code=201)
@@ -237,7 +237,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=409, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Failed to create skill: {e}")
+            logger.error("Failed to create skill: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.get("/search")
@@ -259,7 +259,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
                 "count": len(results),
             }
         except Exception as e:
-            logger.error(f"Failed to search skills: {e}")
+            logger.error("Failed to search skills: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.get("/stats")
@@ -304,7 +304,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
                 "by_source_type": by_source_type,
             }
         except Exception as e:
-            logger.error(f"Failed to get skill stats: {e}")
+            logger.error("Failed to get skill stats: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("/restore-defaults")
@@ -317,7 +317,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             await _broadcast_skill("skills_bulk_changed", "bulk")
             return result
         except Exception as e:
-            logger.error(f"Failed to restore defaults: {e}")
+            logger.error("Failed to restore defaults: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("/import")
@@ -382,7 +382,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
                     )
                     imported.append(skill.to_dict())
                 except ValueError as e:
-                    logger.warning(f"Skipping duplicate skill '{ps.name}': {e}")
+                    logger.warning("Skipping duplicate skill '%s': %s", ps.name, e)
 
             if imported:
                 await _broadcast_skill("skills_bulk_changed", "bulk")
@@ -394,7 +394,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Failed to import skill: {e}")
+            logger.error("Failed to import skill: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/scan")
@@ -414,7 +414,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
                 detail="clawcare not installed. Install with: uv add clawcare",
             ) from None
         except Exception as e:
-            logger.error(f"Failed to scan skill: {e}")
+            logger.error("Failed to scan skill: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.get("/hubs")
@@ -457,7 +457,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
                 hubs.append(entry)
             return {"hubs": hubs}
         except Exception as e:
-            logger.error(f"Failed to list hubs: {e}")
+            logger.error("Failed to list hubs: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.get("/hubs/search")
@@ -484,7 +484,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             }
             return response
         except Exception as e:
-            logger.error(f"Failed to search hubs: {e}")
+            logger.error("Failed to search hubs: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("/hubs/install")
@@ -538,7 +538,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=409, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Failed to install from hub: {e}")
+            logger.error("Failed to install from hub: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.get("/{skill_id}")
@@ -550,7 +550,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Failed to get skill {skill_id}: {e}")
+            logger.error("Failed to get skill %s: %s", skill_id, e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.put("/{skill_id}")
@@ -576,7 +576,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Failed to update skill {skill_id}: {e}")
+            logger.error("Failed to update skill %s: %s", skill_id, e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.delete("/{skill_id}")
@@ -591,7 +591,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Failed to delete skill {skill_id}: {e}")
+            logger.error("Failed to delete skill %s: %s", skill_id, e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("/{skill_id}/move-to-project")
@@ -611,7 +611,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Failed to move skill {skill_id} to project: {e}")
+            logger.error("Failed to move skill %s to project: %s", skill_id, e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("/{skill_id}/move-to-installed")
@@ -628,7 +628,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Failed to move skill {skill_id} to installed: {e}")
+            logger.error("Failed to move skill %s to installed: %s", skill_id, e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("/{skill_id}/restore")
@@ -641,7 +641,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Failed to restore skill {skill_id}: {e}")
+            logger.error("Failed to restore skill %s: %s", skill_id, e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.get("/{skill_id}/export")
@@ -680,7 +680,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Failed to export skill {skill_id}: {e}")
+            logger.error("Failed to export skill %s: %s", skill_id, e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     return router

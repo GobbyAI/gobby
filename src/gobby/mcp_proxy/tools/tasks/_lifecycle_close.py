@@ -513,7 +513,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             try:
                 ctx.session_task_manager.link_task(resolved_session_id, resolved_id, "closed")
             except Exception as e:
-                logger.debug(f"Best-effort session close linking failed: {e}")
+                logger.debug("Best-effort session close linking failed: %s", e)
 
         # Remove closed task from claimed_tasks dict. This is done here because
         # Claude Code's post-tool-use hook does not include the tool result, so
@@ -530,11 +530,13 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 ctx.session_var_manager.merge_variables(edit_session_id, merge_dict)
                 claim_state_merged = True
                 logger.debug(
-                    f"Removed task {resolved_id} from claimed_tasks for session {edit_session_id}",
+                    "Removed task %s from claimed_tasks for session %s",
+                    resolved_id,
+                    edit_session_id,
                 )
             except Exception as e:
                 logger.warning(
-                    f"Failed to update claimed_tasks for session {edit_session_id}: {e}",
+                    "Failed to update claimed_tasks for session %s: %s", edit_session_id, e
                 )
 
         # Reset had_edits after the last task-scoped edit set is accounted for.
@@ -547,7 +549,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             try:
                 ctx.session_manager.clear_had_edits(edit_session_id)
             except Exception as e:
-                logger.debug(f"Best-effort had_edits reset failed: {e}")
+                logger.debug("Best-effort had_edits reset failed: %s", e)
 
         return {"success": True}
 

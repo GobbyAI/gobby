@@ -226,7 +226,7 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
             }
 
         except Exception as e:
-            logger.error(f"Error initiating shutdown: {e}", exc_info=True)
+            logger.error("Error initiating shutdown: %s", e, exc_info=True)
             response.status_code = 500
             return {
                 "status": "error",
@@ -290,7 +290,7 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
             if not shutdown_initiated and restart_lock.locked():
                 restart_lock.release()
 
-            logger.error(f"Error initiating restart: {e}", exc_info=True)
+            logger.error("Error initiating restart: %s", e, exc_info=True)
             return {
                 "status": "error",
                 "message": "Restart failed to initiate",
@@ -343,7 +343,7 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
                     "message": "reload_cache tool not found",
                 }
             except Exception as e:
-                logger.error(f"Failed to execute reload_cache: {e}")
+                logger.error("Failed to execute reload_cache: %s", e)
                 response.status_code = 500
                 return {
                     "status": "error",
@@ -360,7 +360,7 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
             }
 
         except Exception as e:
-            logger.error(f"Error reloading workflows: {e}", exc_info=True)
+            logger.error("Error reloading workflows: %s", e, exc_info=True)
             response.status_code = 500
             return {
                 "status": "error",

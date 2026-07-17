@@ -129,7 +129,7 @@ class RecommendationService:
                 "total_results": len(results),
             }
         except Exception as e:
-            logger.error(f"Semantic search failed: {e}")
+            logger.error("Semantic search failed: %s", e)
             return {"success": False, "error": str(e), "task": task_description}
 
     async def _recommend_hybrid(
@@ -189,7 +189,7 @@ class RecommendationService:
                 "semantic_candidates": len(candidates),
             }
         except Exception as e:
-            logger.warning(f"Hybrid LLM re-ranking failed, using semantic results: {e}")
+            logger.warning("Hybrid LLM re-ranking failed, using semantic results: %s", e)
             # Fall back to semantic results
             semantic_result["search_mode"] = "hybrid_fallback"
             return semantic_result
@@ -223,7 +223,7 @@ class RecommendationService:
                 recommendations = data.get("recommendations", [])
             except (json.JSONDecodeError, KeyError, IndexError) as e:
                 recommendations = []
-                logger.warning(f"Failed to parse LLM recommendation response: {e}")
+                logger.warning("Failed to parse LLM recommendation response: %s", e)
 
             return {
                 "success": True,
@@ -234,5 +234,5 @@ class RecommendationService:
                 "available_servers": available_servers,
             }
         except Exception as e:
-            logger.error(f"Error generating recommendations: {e}")
+            logger.error("Error generating recommendations: %s", e)
             return {"success": False, "error": str(e), "task": task_description}

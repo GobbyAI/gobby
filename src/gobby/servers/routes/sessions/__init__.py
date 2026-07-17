@@ -62,7 +62,10 @@ def create_sessions_router(server: "HTTPServer") -> APIRouter:
                 await ws.broadcast_session_event(event, session_id, **kwargs)
             except Exception as e:
                 logger.warning(
-                    f"Failed to broadcast session event '{event}' for session {session_id}: {e}"
+                    "Failed to broadcast session event '%s' for session %s: %s",
+                    event,
+                    session_id,
+                    e,
                 )
 
     register_core_routes(router, server, _get_session_manager, _broadcast_session)

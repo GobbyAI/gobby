@@ -149,7 +149,7 @@ class InternalToolRegistry:
             brief=brief,
             output_schema=output_schema,
         )
-        logger.debug(f"Registered internal tool '{name}' on '{self.name}'")
+        logger.debug("Registered internal tool '%s' on '%s'", name, self.name)
 
     def tool(
         self,
@@ -406,7 +406,7 @@ class InternalToolRegistry:
         """Merge all tools from another registry into this one."""
         for name in other._tools:
             if name in self._tools:
-                logger.debug(f"Tool {name!r} overwritten during merge from {other.name!r}")
+                logger.debug("Tool %r overwritten during merge from %r", name, other.name)
         self._tools.update(other._tools)
 
     def __contains__(self, tool_name: object) -> bool:
@@ -439,7 +439,7 @@ class InternalRegistryManager:
             registry: The registry to add
         """
         self._registries[registry.name] = registry
-        logger.info(f"Added internal registry '{registry.name}' with {len(registry)} tools")
+        logger.info("Added internal registry '%s' with %s tools", registry.name, len(registry))
 
     def is_internal(self, server_name: str | None) -> bool:
         """

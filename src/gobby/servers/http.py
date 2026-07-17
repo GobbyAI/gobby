@@ -103,7 +103,7 @@ class HTTPServer:
                     services.config,
                 )
             except Exception as e:
-                logger.error(f"Failed to initialize tool chat service: {e}")
+                logger.error("Failed to initialize tool chat service: %s", e)
 
         # Create MCP server instance
         self._mcp_server: Any | None = None
@@ -230,7 +230,7 @@ class HTTPServer:
             run_db=services.run_db,
         )
         registry_count = len(self._internal_manager)
-        logger.debug(f"Internal registries initialized: {registry_count} registries")
+        logger.debug("Internal registries initialized: %s registries", registry_count)
 
         # Initialize tool summarizer config
         if services.config:
@@ -581,7 +581,7 @@ class HTTPServer:
                     await self.services.mcp_manager.disconnect_all()
                     logger.debug("MCP servers disconnected")
                 except Exception as e:
-                    logger.warning(f"Error disconnecting MCP servers: {e}")
+                    logger.warning("Error disconnecting MCP servers: %s", e)
 
             duration_seconds = time.perf_counter() - start_time
             inc_counter("shutdown_succeeded_total")
@@ -604,7 +604,8 @@ class HTTPServer:
             inc_counter("shutdown_failed_total")
 
             logger.error(
-                f"Shutdown processing failed: {e}",
+                "Shutdown processing failed: %s",
+                e,
                 exc_info=True,
                 extra={"duration_seconds": duration_seconds},
             )

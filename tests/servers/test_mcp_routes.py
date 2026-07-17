@@ -3953,7 +3953,7 @@ class TestHooksEndpoints:
         matching_logs = [
             call
             for call in mock_logger.debug.call_args_list
-            if call.args and call.args[0] == "Hook executed: session-start"
+            if call.args[:2] == ("Hook executed: %s", "session-start")
         ]
         assert len(matching_logs) == 1
         assert matching_logs[0].kwargs["extra"]["request_shape"] == "envelope"

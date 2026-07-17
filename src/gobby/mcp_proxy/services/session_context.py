@@ -33,7 +33,7 @@ def resolve_hook_manager(service: Any) -> "HookManager | None":
     try:
         return cast("HookManager | None", service._hook_manager_resolver())
     except Exception as exc:
-        logger.debug(f"Failed to resolve HookManager for tool enforcement: {exc}")
+        logger.debug("Failed to resolve HookManager for tool enforcement: %s", exc)
         return None
 
 

@@ -233,7 +233,7 @@ class MCPServerImporter:
             return await self._parse_and_add_config(result_text)
 
         except Exception as e:
-            logger.error(f"Failed to import from GitHub: {e}")
+            logger.error("Failed to import from GitHub: %s", e)
             return {
                 "success": False,
                 "error": str(e),
@@ -293,7 +293,7 @@ class MCPServerImporter:
             return await self._parse_and_add_config(result_text)
 
         except Exception as e:
-            logger.error(f"Failed to import from query: {e}")
+            logger.error("Failed to import from query: %s", e)
             return {
                 "success": False,
                 "error": str(e),
@@ -627,7 +627,7 @@ class MCPServerImporter:
                 }
 
         except Exception as e:
-            logger.error(f"Failed to add server '{name}': {e}")
+            logger.error("Failed to add server '%s': %s", name, e)
             return {
                 "success": False,
                 "name": name,

@@ -185,8 +185,9 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                     return {"success": False, "error": "No skills found in source"}
                 if len(parsed_skill) > 1:
                     logger.warning(
-                        f"Multiple skills found ({len(parsed_skill)}), using first: "
-                        f"{parsed_skill[0].name}"
+                        "Multiple skills found (%s), using first: %s",
+                        len(parsed_skill),
+                        parsed_skill[0].name,
                     )
                 parsed_skill = parsed_skill[0]
 
@@ -224,7 +225,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                         ),
                     }
                 logger.warning(
-                    f"clawcare not installed, skipping security scan for {parsed_skill.name}",
+                    "clawcare not installed, skipping security scan for %s", parsed_skill.name
                 )
 
             # Determine project ID for the skill

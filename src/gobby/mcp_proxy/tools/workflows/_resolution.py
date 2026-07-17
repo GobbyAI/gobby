@@ -56,23 +56,23 @@ def resolve_session_task_value(
 
     # Need session to get project_id
     if not session_id:
-        logger.warning(f"Cannot resolve task reference '{value}': no session_id provided")
+        logger.warning("Cannot resolve task reference '%s': no session_id provided", value)
         return value
 
     # Get project_id from session
     session = session_manager.get(session_id)
     if not session or not session.project_id:
-        logger.warning(f"Cannot resolve task reference '{value}': session has no project_id")
+        logger.warning("Cannot resolve task reference '%s': session has no project_id", value)
         return value
 
     # Resolve the reference
     try:
         resolved = resolve_task_reference(db, value, session.project_id)
-        logger.debug(f"Resolved session_task '{value}' to UUID '{resolved}'")
+        logger.debug("Resolved session_task '%s' to UUID '%s'", value, resolved)
         return resolved
     except TaskNotFoundError as e:
-        logger.warning(f"Could not resolve task reference '{value}': {e}")
+        logger.warning("Could not resolve task reference '%s': %s", value, e)
         return value
     except Exception as e:
-        logger.warning(f"Unexpected error resolving task reference '{value}': {e}")
+        logger.warning("Unexpected error resolving task reference '%s': %s", value, e)
         return value

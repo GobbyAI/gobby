@@ -91,7 +91,8 @@ def register_exception_handlers(app: FastAPI) -> None:
             )
 
         logger.error(
-            f"Unhandled exception in HTTP server: {exc}",
+            "Unhandled exception in HTTP server: %s",
+            exc,
             exc_info=True,
             extra={
                 "path": request.url.path,

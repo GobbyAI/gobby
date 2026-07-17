@@ -172,10 +172,10 @@ def install_provider_hooks(
             else installer(worktree_path_obj)
         )
         if result["success"]:
-            logger.info(f"Installed {provider} hooks in worktree: {worktree_path}")
+            logger.info("Installed %s hooks in worktree: %s", provider, worktree_path)
             return True
         else:
-            logger.warning(f"Failed to install {provider} hooks: {result.get('error')}")
+            logger.warning("Failed to install %s hooks: %s", provider, result.get("error"))
     except Exception as e:
-        logger.warning(f"Failed to install {provider} hooks in worktree: {e}")
+        logger.warning("Failed to install %s hooks in worktree: %s", provider, e)
     return False

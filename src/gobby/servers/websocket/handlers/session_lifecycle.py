@@ -96,7 +96,7 @@ async def handle_clear_chat(
                     mixin, session_manager.update, session.db_session_id, status="completed"
                 )
             except Exception as e:
-                logger.warning(f"Failed to update session status on clear: {e}", exc_info=True)
+                logger.warning("Failed to update session status on clear: %s", e, exc_info=True)
 
     # Delete persisted chat messages
     session_manager = getattr(mixin, "session_manager", None)
@@ -107,7 +107,7 @@ async def handle_clear_chat(
             await _delete_chat_attachments(mixin, session_manager.db, conversation_id)
             await run_db(mixin, chat_messages.delete_messages, session_manager.db, conversation_id)
         except Exception as e:
-            logger.warning(f"Failed to delete chat messages on clear: {e}")
+            logger.warning("Failed to delete chat messages on clear: %s", e)
 
     # Fire SESSION_END before teardown
     await mixin._fire_session_end(conversation_id)
@@ -129,7 +129,7 @@ async def handle_clear_chat(
 
     # Notify frontend
     await websocket.send(json_dumps({"type": "chat_cleared", "conversation_id": conversation_id}))
-    logger.info(f"Chat cleared for conversation {conversation_id[:8]}")
+    logger.info("Chat cleared for conversation %s", conversation_id[:8])
 
 
 async def handle_delete_chat(
@@ -180,11 +180,11 @@ async def handle_delete_chat(
             if session_manager:
                 await run_db(mixin, session_manager.update, db_session_id, status="expired")
         except Exception as e:
-            logger.warning(f"Failed to soft-delete session from DB: {e}")
+            logger.warning("Failed to soft-delete session from DB: %s", e)
 
     # Notify frontend
     await websocket.send(json_dumps({"type": "chat_deleted", "conversation_id": conversation_id}))
-    logger.info(f"Chat deleted for conversation {conversation_id[:8]}")
+    logger.info("Chat deleted for conversation %s", conversation_id[:8])
 
 
 async def cleanup_idle_sessions(mixin: SessionControlMixin) -> None:
@@ -232,9 +232,9 @@ async def cleanup_idle_sessions(mixin: SessionControlMixin) -> None:
                     mixin._session_create_locks.pop(conv_id, None)
                 await session.stop()
                 cleaned_count += 1
-                logger.debug(f"Cleaned up idle chat session {conv_id}")
+                logger.debug("Cleaned up idle chat session %s", conv_id)
             if cleaned_count:
-                logger.info(f"Cleaned up {cleaned_count} idle chat session(s)")
+                logger.info("Cleaned up %s idle chat session(s)", cleaned_count)
                 # Unload voice models if no sessions remain
                 if hasattr(mixin, "_check_voice_idle"):
                     await mixin._check_voice_idle()

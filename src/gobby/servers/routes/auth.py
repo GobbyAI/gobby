@@ -117,7 +117,7 @@ def create_auth_router(server: "HTTPServer") -> APIRouter:
 
         if not await server.run_db(server.auth_service.verify_password, req.username, req.password):
             login_rate_limiter.record_failure(client_id)
-            logger.warning(f"Failed login attempt for user: {req.username}")
+            logger.warning("Failed login attempt for user: %s", req.username)
             return JSONResponse(
                 status_code=401,
                 content={"ok": False, "error": "Invalid username or password"},
@@ -144,7 +144,7 @@ def create_auth_router(server: "HTTPServer") -> APIRouter:
             cookie_kwargs["max_age"] = 30 * 24 * 60 * 60  # 30 days in seconds
 
         response.set_cookie(**cookie_kwargs)
-        logger.info(f"User '{req.username}' logged in (remember_me={req.remember_me})")
+        logger.info("User '%s' logged in (remember_me=%s)", req.username, req.remember_me)
         return response
 
     @router.post("/logout")

@@ -202,8 +202,11 @@ class WebSocketServer(
         }
 
         logger.debug(
-            f"Client {user_id} ({client_id}) connected from {websocket.remote_address}. "
-            f"Total clients: {len(self.clients)}"
+            "Client %s (%s) connected from %s. Total clients: %s",
+            user_id,
+            client_id,
+            websocket.remote_address,
+            len(self.clients),
         )
 
         try:
@@ -233,17 +236,17 @@ class WebSocketServer(
                 except json.JSONDecodeError:
                     await self._send_error(websocket, "Invalid JSON format")
                 except Exception:
-                    logger.exception(f"Message handling error for client {client_id}")
+                    logger.exception("Message handling error for client %s", client_id)
                     await self._send_error(websocket, "Internal server error")
 
         except ConnectionClosedError as e:
-            logger.debug(f"Client {client_id} connection closed abnormally: {e}")
+            logger.debug("Client %s connection closed abnormally: %s", client_id, e)
 
         except ConnectionClosed:
-            logger.debug(f"Client {client_id} disconnected normally")
+            logger.debug("Client %s disconnected normally", client_id)
 
         except Exception:
-            logger.exception(f"Unexpected error for client {client_id}")
+            logger.exception("Unexpected error for client %s", client_id)
 
         finally:
             # Clean up tmux bridges owned by this client
@@ -253,7 +256,9 @@ class WebSocketServer(
             attached_session_id = metadata.get("attached_session_id") if metadata else None
             if isinstance(attached_session_id, str):
                 await self._cleanup_attached_tts(attached_session_id)
-            logger.debug(f"Client {client_id} cleaned up. Remaining clients: {len(self.clients)}")
+            logger.debug(
+                "Client %s cleaned up. Remaining clients: %s", client_id, len(self.clients)
+            )
 
     async def _handle_message(self, websocket: Any, message: str) -> None:
         """
@@ -318,7 +323,7 @@ class WebSocketServer(
         if handler:
             await handler(websocket, data)
         else:
-            logger.warning(f"Unknown message type: {msg_type}")
+            logger.warning("Unknown message type: %s", msg_type)
             await self._send_error(websocket, f"Unknown message type: {msg_type}")
 
     async def start(self) -> None:
@@ -347,7 +352,7 @@ class WebSocketServer(
         # Start idle session cleanup background task
         self._cleanup_task = asyncio.create_task(self._cleanup_idle_sessions())
 
-        logger.debug(f"WebSocket server started on ws://{self.config.host}:{self.config.port}")
+        logger.debug("WebSocket server started on ws://%s:%s", self.config.host, self.config.port)
 
     async def stop(self) -> None:
         """
@@ -398,7 +403,7 @@ class WebSocketServer(
             except TimeoutError:
                 logger.warning("Client connection close timed out")
             except Exception as e:
-                logger.warning(f"Error closing client connection: {e}")
+                logger.warning("Error closing client connection: %s", e)
 
         self._server = None
         logger.debug("WebSocket server stopped")

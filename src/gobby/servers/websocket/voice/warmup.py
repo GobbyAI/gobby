@@ -345,7 +345,7 @@ class VoiceWarmupMixin:
             self._stt_warmup_error = ""
             self._stt_warmup_failures = 0
             self._stt_warmup_next_retry_at = 0.0
-            logger.info(f"Whisper STT warmup complete in {time.perf_counter() - started_at:.2f}s")
+            logger.info("Whisper STT warmup complete in %.2fs", time.perf_counter() - started_at)
         except Exception as exc:
             self._stt_warmup_status = _WARMUP_ERROR
             self._stt_warmup_error = str(exc)
@@ -378,7 +378,7 @@ class VoiceWarmupMixin:
             self._tts_warmup_error = ""
             self._tts_warmup_failures = 0
             self._tts_warmup_next_retry_at = 0.0
-            logger.info(f"TTS warmup complete in {time.perf_counter() - started_at:.2f}s")
+            logger.info("TTS warmup complete in %.2fs", time.perf_counter() - started_at)
         except Exception as exc:
             self._tts_warmup_status = _WARMUP_ERROR
             self._tts_warmup_error = str(exc)
@@ -447,7 +447,7 @@ class VoiceWarmupMixin:
         # scratch in processes that never loaded a model — the native-crash
         # surface from incident #18196.
         gc.collect()
-        logger.info(f"Voice models unloaded ({', '.join(unloaded)}) — memory reclaimed")
+        logger.info("Voice models unloaded (%s) — memory reclaimed", ", ".join(unloaded))
 
     async def _check_voice_idle(self) -> None:
         """Unload voice models if no web chat sessions remain."""

@@ -80,17 +80,17 @@ async def add_mcp_server(
                 )
                 await mcp_manager.set_server_description(name, description)
             except Exception as e:
-                logger.warning(f"Failed to generate server description: {e}")
+                logger.warning("Failed to generate server description: %s", e)
                 description = None
 
         if description is not None:
             result["description"] = description
 
-        logger.debug(f"Added MCP server: {name} ({transport})")
+        logger.debug("Added MCP server: %s (%s)", name, transport)
         return result
 
     except Exception as e:
-        logger.error(f"Failed to add MCP server '{name}': {e}")
+        logger.error("Failed to add MCP server '%s': %s", name, e)
         return {
             "success": False,
             "name": name,
@@ -118,11 +118,11 @@ async def remove_mcp_server(
     try:
         result = await mcp_manager.remove_server(name, project_id=project_id)
         if result.get("success"):
-            logger.debug(f"Removed MCP server: {name} (project {project_id})")
+            logger.debug("Removed MCP server: %s (project %s)", name, project_id)
         return result
 
     except Exception as e:
-        logger.error(f"Failed to remove MCP server '{name}': {e}")
+        logger.error("Failed to remove MCP server '%s': %s", name, e)
         return {
             "success": False,
             "name": name,

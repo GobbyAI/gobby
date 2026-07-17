@@ -72,7 +72,7 @@ def _load_chat_system_prompt(db: Any = None) -> str:
         template = loader.load("chat/system")
         return template.content
     except Exception as e:
-        logger.warning(f"Failed to load chat/system prompt, using fallback: {e}")
+        logger.warning("Failed to load chat/system prompt, using fallback: %s", e)
         return _FALLBACK_SYSTEM_PROMPT
 
 

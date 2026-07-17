@@ -294,7 +294,7 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
         self._connected = True
         self._active_reasoning_effort = resolved_effort
         self.last_activity = datetime.now(UTC)
-        logger.debug(f"ChatSession {self.conversation_id} started")
+        logger.debug("ChatSession %s started", self.conversation_id)
 
     async def stop(self) -> None:
         """Disconnect the ClaudeSDKClient and clean up."""
@@ -308,19 +308,23 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
                 # that called start() (e.g. idle cleanup or shutdown).
                 if "cancel scope" in str(e):
                     logger.debug(
-                        f"ChatSession {self.conversation_id} cross-task disconnect (expected): {e}"
+                        "ChatSession %s cross-task disconnect (expected): %s",
+                        self.conversation_id,
+                        e,
                     )
                 else:
                     logger.debug(
-                        f"ChatSession {self.conversation_id} disconnect error (expected): {e}"
+                        "ChatSession %s disconnect error (expected): %s", self.conversation_id, e
                     )
             except Exception as e:
-                logger.debug(f"ChatSession {self.conversation_id} disconnect error (expected): {e}")
+                logger.debug(
+                    "ChatSession %s disconnect error (expected): %s", self.conversation_id, e
+                )
             finally:
                 self._client = None
                 self._connected = False
                 self._active_reasoning_effort = None
-                logger.debug(f"ChatSession {self.conversation_id} stopped")
+                logger.debug("ChatSession %s stopped", self.conversation_id)
 
     @property
     def model(self) -> str | None:
@@ -386,9 +390,11 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
         sdk_mode = self._to_sdk_permission_mode(self.chat_mode)
         try:
             await self._client.set_permission_mode(sdk_mode)
-            logger.debug(f"SDK permission mode synced to '{sdk_mode}' for {self.conversation_id}")
+            logger.debug(
+                "SDK permission mode synced to '%s' for %s", sdk_mode, self.conversation_id
+            )
         except Exception as e:
-            logger.warning(f"Failed to sync SDK permission mode: {e}")
+            logger.warning("Failed to sync SDK permission mode: %s", e)
 
     @property
     def is_connected(self) -> bool:

@@ -334,7 +334,7 @@ class ChatSessionPermissionsMixin:
             await asyncio.wait_for(pending_event.wait(), timeout=600.0)
         except TimeoutError:
             self._pending_answers[tool_use_id] = {"error": "Timed out waiting for user response"}
-            logger.warning(f"AskUserQuestion timed out for session {self.conversation_id}")
+            logger.warning("AskUserQuestion timed out for session %s", self.conversation_id)
 
         result = PermissionResultAllow(
             updated_input={
@@ -453,7 +453,7 @@ class ChatSessionPermissionsMixin:
             try:
                 self._on_mode_persist(mode)
             except Exception as e:
-                logger.warning(f"Failed to persist chat_mode={mode}: {e}")
+                logger.warning("Failed to persist chat_mode=%s: %s", mode, e)
 
     def _reset_plan_broadcast_if_revised(self, content: str | None) -> None:
         """Allow a changed plan body to broadcast again in the current plan cycle."""
@@ -550,7 +550,7 @@ class ChatSessionPermissionsMixin:
                 resolved = _resolve(Path(path))
                 content = resolved.read_text(encoding="utf-8")
             except OSError as e:
-                logger.warning(f"Failed to read plan file {path}: {e}")
+                logger.warning("Failed to read plan file %s: %s", path, e)
                 return None
             self._last_plan_content = content
             return content
@@ -563,7 +563,7 @@ class ChatSessionPermissionsMixin:
                     self._last_plan_content = content
                     return content
             except Exception as e:
-                logger.warning(f"Failed to read plan file {self._plan_file_path}: {e}")
+                logger.warning("Failed to read plan file %s: %s", self._plan_file_path, e)
 
         if self._last_plan_content:
             return self._last_plan_content
@@ -585,13 +585,13 @@ class ChatSessionPermissionsMixin:
 
             if candidates:
                 newest = max(candidates, key=lambda p: p.stat().st_mtime)
-                logger.info(f"Plan file path not tracked; using most recent: {newest}")
+                logger.info("Plan file path not tracked; using most recent: %s", newest)
                 self._plan_file_path = str(newest)
                 content = newest.read_text(encoding="utf-8")
                 self._last_plan_content = content
                 return content
         except Exception as e:
-            logger.warning(f"Failed to find fallback plan file: {e}")
+            logger.warning("Failed to find fallback plan file: %s", e)
 
         return None
 

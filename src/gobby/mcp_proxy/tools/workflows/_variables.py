@@ -129,7 +129,10 @@ def set_variable(
             value = resolve_session_task_value(value, resolved_session_id, session_manager, db)
         except (ValueError, KeyError) as e:
             logger.warning(
-                f"Failed to resolve session_task value '{value}' for session {resolved_session_id}: {e}"
+                "Failed to resolve session_task value '%s' for session %s: %s",
+                value,
+                resolved_session_id,
+                e,
             )
             return {
                 "success": False,
@@ -299,7 +302,7 @@ def save_variable_template(
             definition=definition,
             output_dir=output_dir,
         )
-        logger.info(f"Saved variable template '{name}' to {path}")
+        logger.info("Saved variable template '%s' to %s", name, path)
         return {"success": True, "path": str(path)}
     except Exception as e:
         return {"success": False, "error": f"Failed to write variable template: {e}"}
@@ -429,7 +432,7 @@ def create_variable(
         source="installed",
         tags=["user"],
     )
-    logger.info(f"Created variable '{name}' (id={row.id})")
+    logger.info("Created variable '%s' (id=%s)", name, row.id)
 
     # Auto-export to YAML
     try:
@@ -437,7 +440,7 @@ def create_variable(
 
         auto_export_definition(row, project_path, make_global=make_global_template)
     except Exception as e:
-        logger.warning(f"Failed to auto-export variable '{name}': {e}")
+        logger.warning("Failed to auto-export variable '%s': %s", name, e)
 
     return {"success": True, "variable": _variable_summary(row)}
 
@@ -481,7 +484,7 @@ def update_variable(
 
     fields["definition_json"] = json.dumps(body)
     updated = def_manager.update(row.id, **fields)
-    logger.info(f"Updated variable '{name}'")
+    logger.info("Updated variable '%s'", name)
 
     # Auto-export updated YAML
     try:
@@ -489,7 +492,7 @@ def update_variable(
 
         auto_export_definition(updated, project_path, make_global=make_global_template)
     except Exception as e:
-        logger.warning(f"Failed to auto-export variable '{name}': {e}")
+        logger.warning("Failed to auto-export variable '%s': %s", name, e)
 
     return {"success": True, "variable": _variable_summary(updated)}
 
@@ -543,9 +546,9 @@ def delete_variable(
             delete_global=is_user,
         )
     except Exception as e:
-        logger.warning(f"Failed to delete variable template '{name}': {e}")
+        logger.warning("Failed to delete variable template '%s': %s", name, e)
 
-    logger.info(f"Deleted variable '{name}' (id={row.id})")
+    logger.info("Deleted variable '%s' (id=%s)", name, row.id)
     return {"success": True, "deleted": {"id": row.id, "name": row.name}}
 
 

@@ -249,7 +249,7 @@ def create_workflows_registry(
                     body.setdefault("name", agent_row.name)
                     agent = AgentDefinitionBody.model_validate(body)
                 except ValueError as e:
-                    logger.warning(f"Agent definition '{name}' failed to parse: {e}")
+                    logger.warning("Agent definition '%s' failed to parse: %s", name, e)
                 else:
                     agent_result = await evaluate_agent_definition(agent, mcp_inventory)
                     return agent_result.to_dict()

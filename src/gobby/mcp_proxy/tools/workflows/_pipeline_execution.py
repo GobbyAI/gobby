@@ -47,7 +47,7 @@ async def cleanup_background_tasks() -> None:
         return
 
     tasks = list(_background_tasks)
-    logger.info(f"Cancelling {len(tasks)} background pipeline task(s)")
+    logger.info("Cancelling %s background pipeline task(s)", len(tasks))
 
     for task in tasks:
         task.cancel()
@@ -55,7 +55,7 @@ async def cleanup_background_tasks() -> None:
     results = await asyncio.gather(*tasks, return_exceptions=True)
     for task, result in zip(tasks, results, strict=True):
         if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
-            logger.warning(f"Pipeline task {task.get_name()} raised during shutdown: {result}")
+            logger.warning("Pipeline task %s raised during shutdown: %s", task.get_name(), result)
 
     _background_tasks.clear()
     _background_tasks_by_execution.clear()
@@ -131,7 +131,7 @@ def _register_background_task(execution_id: str, task: asyncio.Task[None]) -> No
         if _background_tasks_by_execution.get(execution_id) is t:
             _background_tasks_by_execution.pop(execution_id, None)
         if not t.cancelled() and t.exception():
-            logger.error(f"Pipeline background task failed: {t.exception()}")
+            logger.error("Pipeline background task failed: %s", t.exception())
 
     task.add_done_callback(_on_done)
 
@@ -158,7 +158,7 @@ async def _execute_pipeline_background(
         # Expected — pipeline paused for approval, not an error
         pass
     except Exception as e:
-        logger.error(f"Background pipeline '{pipeline_name}' failed: {e}", exc_info=True)
+        logger.error("Background pipeline '%s' failed: %s", pipeline_name, e, exc_info=True)
         # Ensure execution is marked failed even if executor.execute didn't catch it
         try:
             from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
@@ -239,7 +239,7 @@ async def cancel_pipeline(
                     status=StepStatus.CANCELLED,
                 )
     except Exception as e:
-        logger.warning(f"Failed to cancel steps for pipeline {execution_id}: {e}")
+        logger.warning("Failed to cancel steps for pipeline %s: %s", execution_id, e)
 
     # Mark the execution as cancelled before the next await so the executor
     # cannot race cancellation and write COMPLETED.
@@ -279,9 +279,11 @@ async def cancel_pipeline(
             killed_count += 1
 
         if killed_count > 0:
-            logger.info(f"Killed {killed_count} agents associated with pipeline {execution_id[:8]}")
+            logger.info(
+                "Killed %s agents associated with pipeline %s", killed_count, execution_id[:8]
+            )
     except Exception as e:
-        logger.warning(f"Failed to kill agents for pipeline {execution_id}: {e}")
+        logger.warning("Failed to kill agents for pipeline %s: %s", execution_id, e)
 
     return {
         "success": True,
@@ -459,7 +461,10 @@ async def resume_pipeline(
                 break
             if step.error and step.status in (StepStatus.COMPLETED, StepStatus.SKIPPED):
                 logger.warning(
-                    f"Step {step.step_id} has status {step.status.value} but carries error: {step.error[:200]}",
+                    "Step %s has status %s but carries error: %s",
+                    step.step_id,
+                    step.status.value,
+                    step.error[:200],
                 )
                 resume_step_id = step.step_id
                 break
@@ -657,8 +662,10 @@ async def resume_interrupted_pipelines(
             )
         except Exception as e:
             logger.warning(
-                f"Cannot load pipeline '{execution.pipeline_name}' for "
-                f"execution {execution.id} — will be interrupted: {e}"
+                "Cannot load pipeline '%s' for execution %s — will be interrupted: %s",
+                execution.pipeline_name,
+                execution.id,
+                e,
             )
             continue
 
@@ -677,7 +684,7 @@ async def resume_interrupted_pipelines(
             try:
                 inputs = json.loads(execution.inputs_json)
             except (json.JSONDecodeError, TypeError) as e:
-                logger.warning(f"Malformed inputs_json for execution {execution.id}: {e}")
+                logger.warning("Malformed inputs_json for execution %s: %s", execution.id, e)
 
         # Re-queue as background task with existing execution_id (resume path).
         # Use the execution's own project_id (NOT NULL uuid) rather than the
@@ -696,7 +703,7 @@ async def resume_interrupted_pipelines(
         )
         _register_background_task(execution.id, task)
         resumed.append(execution.id)
-        logger.info(f"Resumed pipeline '{execution.pipeline_name}' execution {execution.id}")
+        logger.info("Resumed pipeline '%s' execution %s", execution.pipeline_name, execution.id)
 
     return resumed
 

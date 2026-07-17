@@ -393,7 +393,7 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
         ) as e:
             raise _graph_http_exception(e) from e
         except Exception as e:
-            logger.exception(f"Failed to clear code graph for {scoped_project}")
+            logger.exception("Failed to clear code graph for %s", scoped_project)
             raise HTTPException(status_code=500, detail=_GRAPH_REQUEST_FAILED) from e
         if not result.get("success", False):
             raise HTTPException(status_code=400, detail=result.get("error", "Unknown error"))
@@ -419,7 +419,7 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
         ) as e:
             raise _graph_http_exception(e) from e
         except Exception as e:
-            logger.exception(f"Failed to rebuild code graph for {scoped_project}")
+            logger.exception("Failed to rebuild code graph for %s", scoped_project)
             raise HTTPException(status_code=500, detail=_GRAPH_REQUEST_FAILED) from e
         if not result.get("success", False):
             raise HTTPException(status_code=400, detail=result.get("error", "Unknown error"))

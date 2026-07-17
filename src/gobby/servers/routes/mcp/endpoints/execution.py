@@ -229,7 +229,7 @@ async def _set_context_for_request(
                 canonical_project_ref = bootstrap_session.project_id
         except Exception as e:
             logger.debug(
-                f"HTTP project bootstrap from header session {header_session_id!r} failed: {e}"
+                "HTTP project bootstrap from header session %r failed: %s", header_session_id, e
             )
 
     db = server.session_manager.db if server.session_manager else None
@@ -282,7 +282,10 @@ def _process_tool_proxy_result(
         error_code = result.get("error_code")
         if error_code:
             logger.debug(
-                f"MCP tool call failed: {server_name}.{tool_name} (error_code={error_code})",
+                "MCP tool call failed: %s.%s (error_code=%s)",
+                server_name,
+                tool_name,
+                error_code,
                 extra={
                     "server": server_name,
                     "tool": tool_name,
@@ -294,7 +297,9 @@ def _process_tool_proxy_result(
     else:
         inc_counter("mcp_tool_calls_succeeded_total")
         logger.debug(
-            f"MCP tool call successful: {server_name}.{tool_name}",
+            "MCP tool call successful: %s.%s",
+            server_name,
+            tool_name,
             extra={
                 "server": server_name,
                 "tool": tool_name,
@@ -349,7 +354,9 @@ async def _call_internal_tool(
     except Exception as e:
         inc_counter("mcp_tool_calls_failed_total")
         logger.error(
-            f"Internal MCP tool call error: {server_name}.{tool_name}",
+            "Internal MCP tool call error: %s.%s",
+            server_name,
+            tool_name,
             exc_info=True,
             extra={"server": server_name, "tool": tool_name},
         )
@@ -465,7 +472,9 @@ async def list_mcp_tools(
             response_time_ms = (time.perf_counter() - start_time) * 1000
 
             logger.debug(
-                f"Listed {len(tools)} tools from {server_name}",
+                "Listed %s tools from %s",
+                len(tools),
+                server_name,
                 extra={
                     "server": server_name,
                     "tool_count": len(tools),
@@ -488,7 +497,9 @@ async def list_mcp_tools(
 
         except Exception as e:
             logger.error(
-                f"Failed to list tools from {server_name}: {e}",
+                "Failed to list tools from %s: %s",
+                server_name,
+                e,
                 exc_info=True,
                 extra={"server": server_name},
             )
@@ -503,7 +514,7 @@ async def list_mcp_tools(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"MCP list tools error: {server_name}", exc_info=True)
+        logger.error("MCP list tools error: %s", server_name, exc_info=True)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
     finally:
@@ -605,7 +616,10 @@ async def get_tool_schema(
             except Exception as e:
                 # Connection, timeout, or internal errors
                 logger.error(
-                    f"Failed to get tool schema {server_name}/{tool_name}: {e}",
+                    "Failed to get tool schema %s/%s: %s",
+                    server_name,
+                    tool_name,
+                    e,
                     exc_info=True,
                 )
                 response_time_ms = (time.perf_counter() - start_time) * 1000
@@ -621,7 +635,7 @@ async def get_tool_schema(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Get tool schema error: {e}", exc_info=True)
+        logger.error("Get tool schema error: %s", e, exc_info=True)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
 
@@ -726,7 +740,9 @@ async def call_mcp_tool(
             except Exception as e:
                 inc_counter("mcp_tool_calls_failed_total")
                 logger.error(
-                    f"MCP tool call error: {server_name}.{tool_name}",
+                    "MCP tool call error: %s.%s",
+                    server_name,
+                    tool_name,
                     exc_info=True,
                     extra={"server": server_name, "tool": tool_name},
                 )
@@ -827,7 +843,9 @@ async def mcp_proxy(
                 response_time_ms = (time.perf_counter() - start_time) * 1000
 
                 logger.debug(
-                    f"MCP tool call successful: {server_name}.{tool_name}",
+                    "MCP tool call successful: %s.%s",
+                    server_name,
+                    tool_name,
                     extra={
                         "server": server_name,
                         "tool": tool_name,
@@ -846,7 +864,9 @@ async def mcp_proxy(
             except ValueError as e:
                 inc_counter("mcp_tool_calls_failed_total")
                 logger.warning(
-                    f"MCP tool not found: {server_name}.{tool_name}",
+                    "MCP tool not found: %s.%s",
+                    server_name,
+                    tool_name,
                     extra={"server": server_name, "tool": tool_name, "error": str(e)},
                 )
                 raise HTTPException(
@@ -855,7 +875,9 @@ async def mcp_proxy(
             except Exception as e:
                 inc_counter("mcp_tool_calls_failed_total")
                 logger.error(
-                    f"MCP tool call error: {server_name}.{tool_name}",
+                    "MCP tool call error: %s.%s",
+                    server_name,
+                    tool_name,
                     exc_info=True,
                     extra={"server": server_name, "tool": tool_name},
                 )
@@ -868,7 +890,7 @@ async def mcp_proxy(
         raise
     except Exception as e:
         inc_counter("mcp_tool_calls_failed_total")
-        logger.error(f"MCP proxy error: {server_name}.{tool_name}", exc_info=True)
+        logger.error("MCP proxy error: %s.%s", server_name, tool_name, exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error") from e
 
 

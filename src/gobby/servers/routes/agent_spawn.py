@@ -195,7 +195,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
         try:
             task = task_manager.get_task(req.task_id)
         except Exception as e:
-            logger.debug(f"Failed to get task {req.task_id}: {e}")
+            logger.debug("Failed to get task %s: %s", req.task_id, e)
             task = None
         if not task:
             return AgentSpawnResponse(success=False, error=f"Task '{req.task_id}' not found")
@@ -272,7 +272,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                         req.task_id,
                     )
             except Exception as e:
-                logger.warning(f"Failed to update task ownership: {e}")
+                logger.warning("Failed to update task ownership: %s", e)
 
             # Broadcast task update
             if task_updated:
@@ -371,7 +371,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                 child_sid = result.get("child_session_id", "")
                 task_manager.claim_task(req.task_id, session_id=child_sid)
             except Exception as e:
-                logger.warning(f"Failed to update task after spawn: {e}")
+                logger.warning("Failed to update task after spawn: %s", e)
 
             _broadcast_task_update(server, req.task_id)
 
@@ -400,7 +400,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
 
                 _asyncio.ensure_future(ws.broadcast({"type": "task_updated", "task_id": task_id}))
             except Exception as e:
-                logger.debug(f"Failed to broadcast task update: {e}")
+                logger.debug("Failed to broadcast task update: %s", e)
 
     # -----------------------------------------------------------------------
     # POST /api/agents/spawn
@@ -424,7 +424,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error spawning agent: {e}", exc_info=True)
+            logger.error("Error spawning agent: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     # -----------------------------------------------------------------------
@@ -450,7 +450,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                 try:
                     return await _do_spawn(req, project_id)
                 except Exception as e:
-                    logger.error(f"Batch spawn error for task {req.task_id}: {e}")
+                    logger.error("Batch spawn error for task %s: %s", req.task_id, e)
                     return AgentSpawnResponse(success=False, error=str(e))
 
         results = await asyncio.gather(*[_limited_spawn(s) for s in request.spawns])
@@ -478,7 +478,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             # Merge with built-in defaults for any missing categories
             return {"status": "success", "defaults": saved, "built_in": _BUILT_IN_DEFAULTS}
         except Exception as e:
-            logger.error(f"Error fetching launch defaults: {e}", exc_info=True)
+            logger.error("Error fetching launch defaults: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     # -----------------------------------------------------------------------
@@ -501,7 +501,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             store.set(key, existing, source="web_ui")
             return {"status": "success", "category": request.category}
         except Exception as e:
-            logger.error(f"Error saving launch defaults: {e}", exc_info=True)
+            logger.error("Error saving launch defaults: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     # -----------------------------------------------------------------------
@@ -563,7 +563,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error generating prompt preview: {e}", exc_info=True)
+            logger.error("Error generating prompt preview: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     return router

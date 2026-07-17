@@ -53,7 +53,7 @@ def register_analytics_routes(
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Update session summary error: {e}", exc_info=True)
+            logger.error("Update session summary error: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/{session_id}/generate-summary")
@@ -115,7 +115,7 @@ def register_analytics_routes(
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Generate summary error: {e}", exc_info=True)
+            logger.error("Generate summary error: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/{session_id}/stop")
@@ -150,7 +150,7 @@ def register_analytics_routes(
             try:
                 body = await request.json()
             except Exception as e:
-                logger.debug(f"Empty body in stop_session request (expected): {e}")
+                logger.debug("Empty body in stop_session request (expected): %s", e)
 
             reason = body.get("reason", "External stop request")
             source = body.get("source", "http_api")
@@ -162,7 +162,7 @@ def register_analytics_routes(
                 source=source,
             )
 
-            logger.info(f"Stop signal sent to session {session_id}: {reason}")
+            logger.info("Stop signal sent to session %s: %s", session_id, reason)
 
             await broadcast_session("session_stop_signaled", session_id)
 
@@ -177,7 +177,7 @@ def register_analytics_routes(
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error sending stop signal: {e}", exc_info=True)
+            logger.error("Error sending stop signal: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/{session_id}/stop")
@@ -226,7 +226,7 @@ def register_analytics_routes(
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error checking stop signal: {e}", exc_info=True)
+            logger.error("Error checking stop signal: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.delete("/{session_id}/stop")
@@ -268,5 +268,5 @@ def register_analytics_routes(
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error clearing stop signal: {e}", exc_info=True)
+            logger.error("Error clearing stop signal: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e

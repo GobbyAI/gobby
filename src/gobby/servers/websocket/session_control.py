@@ -183,7 +183,7 @@ class SessionControlMixin:
                     )
                     await websocket.send(msg)
             except Exception:
-                logger.debug(f"Failed to rebroadcast interactions for {conv_id}", exc_info=True)
+                logger.debug("Failed to rebroadcast interactions for %s", conv_id, exc_info=True)
 
     # -- Session configuration handlers --------------------------------------
 

@@ -70,7 +70,7 @@ class ToolMetricsManager:
                 success=success,
             )
         except Exception as e:
-            logger.error(f"Failed to record call to hub database: {e}")
+            logger.error("Failed to record call to hub database: %s", e)
 
         # 2. Event log (per-event with session_id)
         try:
@@ -84,7 +84,7 @@ class ToolMetricsManager:
                 latency_ms=latency_ms,
             )
         except Exception as e:
-            logger.warning(f"Failed to record event: {e}")
+            logger.warning("Failed to record event: %s", e)
 
         # 3. OTel Observability
         attributes = {

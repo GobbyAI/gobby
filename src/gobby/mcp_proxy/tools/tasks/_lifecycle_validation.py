@@ -364,10 +364,10 @@ def gather_validation_context(
                 )
             else:
                 logger.warning(
-                    f"diff pager returned empty for task {task.id} with commits {task.commits}"
+                    "diff pager returned empty for task %s with commits %s", task.id, task.commits
                 )
         except Exception as e:
-            logger.warning(f"diff pager failed for task {task.id}: {e}")
+            logger.warning("diff pager failed for task %s: %s", task.id, e)
 
     if validation_context:
         if changes_summary and not changes_summary_included:
@@ -430,7 +430,7 @@ async def validate_leaf_task_with_llm(
     """
     # Auto-skip LLM validation for doc-only changes
     if is_documentation_only:
-        logger.info(f"Skipping LLM validation for task {task.id}: doc-only changes")
+        logger.info("Skipping LLM validation for task %s: doc-only changes", task.id)
         feedback = "Auto-validated: documentation-only changes"
         _record_validation_iteration(
             task,

@@ -118,7 +118,7 @@ class HTTPTransportConnection(BaseTransportConnection):
                     # Wait until disconnect is requested
                     await self._disconnect_event.wait()
 
-                    logger.debug(f"Disconnect requested for {self.config.name}")
+                    logger.debug("Disconnect requested for %s", self.config.name)
 
         except Exception as e:
             error_msg = str(e) if str(e) else f"{type(e).__name__}: Connection closed or timed out"
@@ -155,9 +155,9 @@ class HTTPTransportConnection(BaseTransportConnection):
                     try:
                         await self._owner_task
                     except asyncio.CancelledError:
-                        logger.debug(f"Owner task cancelled for {self.config.name}")
+                        logger.debug("Owner task cancelled for %s", self.config.name)
                     except Exception as e:
-                        logger.warning(f"Owner task cleanup failed for {self.config.name}: {e}")
+                        logger.warning("Owner task cleanup failed for %s: %s", self.config.name, e)
                 else:
                     self._owner_task.cancel()
                     try:
@@ -166,11 +166,11 @@ class HTTPTransportConnection(BaseTransportConnection):
                             timeout=self._OWNER_TASK_SHUTDOWN_TIMEOUT,
                         )
                     except asyncio.CancelledError:
-                        logger.debug(f"Owner task cancelled for {self.config.name}")
+                        logger.debug("Owner task cancelled for %s", self.config.name)
                     except TimeoutError:
-                        logger.warning(f"Owner task cleanup timed out for {self.config.name}")
+                        logger.warning("Owner task cleanup timed out for %s", self.config.name)
                     except Exception as e:
-                        logger.warning(f"Owner task cleanup failed for {self.config.name}: {e}")
+                        logger.warning("Owner task cleanup failed for %s: %s", self.config.name, e)
             self._owner_task = None
         self._disconnect_event = None
         self._session_ready = None

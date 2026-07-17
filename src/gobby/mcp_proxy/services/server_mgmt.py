@@ -87,7 +87,7 @@ class ServerManagementService:
                 raise
             except Exception as e:
                 if self._mcp_manager.has_server(name):
-                    logger.warning(f"Added server {name} but connection failed: {e}")
+                    logger.warning("Added server %s but connection failed: %s", name, e)
                     return {
                         "success": True,
                         "message": f"Server added but connection failed: {str(e)}",
@@ -108,7 +108,7 @@ class ServerManagementService:
         except ValueError:
             raise
         except Exception as e:
-            logger.exception(f"Unexpected error adding server {name}")
+            logger.exception("Unexpected error adding server %s", name)
             return {"success": False, "error": str(e)}
 
     async def remove_server(self, name: str) -> dict[str, Any]:
@@ -120,7 +120,7 @@ class ServerManagementService:
             await self._mcp_manager.remove_server(name)
             return {"success": True, "message": f"Server {name} removed"}
         except Exception as e:
-            logger.error(f"Failed to remove server {name}: {e}")
+            logger.error("Failed to remove server %s: %s", name, e)
             return {"success": False, "error": str(e)}
 
     async def import_server(

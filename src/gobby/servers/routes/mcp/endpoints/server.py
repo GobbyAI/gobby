@@ -207,7 +207,7 @@ async def list_mcp_servers(
         }
 
     except Exception as e:
-        logger.error(f"List MCP servers error: {e}", exc_info=True)
+        logger.error("List MCP servers error: %s", e, exc_info=True)
         return {"success": False, "error": str(e)}
 
 
@@ -272,7 +272,7 @@ async def add_mcp_server(
             try:
                 await ws.broadcast_mcp_event("server_added", name)
             except Exception as e:
-                logger.debug(f"Failed to broadcast mcp event server_added: {e}")
+                logger.debug("Failed to broadcast mcp event server_added: %s", e)
 
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {
@@ -287,7 +287,7 @@ async def add_mcp_server(
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
     except Exception as e:
-        logger.error(f"Add MCP server error: {e}", exc_info=True)
+        logger.error("Add MCP server error: %s", e, exc_info=True)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
 
@@ -341,7 +341,7 @@ async def update_mcp_server(
             try:
                 await ws.broadcast_mcp_event("server_updated", name)
             except Exception as e:
-                logger.debug(f"Failed to broadcast mcp event server_updated: {e}")
+                logger.debug("Failed to broadcast mcp event server_updated: %s", e)
 
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {
@@ -356,7 +356,7 @@ async def update_mcp_server(
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
     except Exception as e:
-        logger.error(f"Update MCP server error: {e}", exc_info=True)
+        logger.error("Update MCP server error: %s", e, exc_info=True)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
 
@@ -450,7 +450,7 @@ async def import_mcp_server(
             try:
                 await ws.broadcast_mcp_event("server_imported", "bulk")
             except Exception as e:
-                logger.debug(f"Failed to broadcast mcp event server_imported: {e}")
+                logger.debug("Failed to broadcast mcp event server_imported: %s", e)
 
         response_time_ms = (time.perf_counter() - start_time) * 1000
         if isinstance(result, dict):
@@ -461,7 +461,7 @@ async def import_mcp_server(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Import MCP server error: {e}", exc_info=True)
+        logger.error("Import MCP server error: %s", e, exc_info=True)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
 
@@ -498,7 +498,7 @@ async def remove_mcp_server(
             try:
                 await ws.broadcast_mcp_event("server_removed", name)
             except Exception as e:
-                logger.debug(f"Failed to broadcast mcp event server_removed: {e}")
+                logger.debug("Failed to broadcast mcp event server_removed: %s", e)
 
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {
@@ -511,7 +511,7 @@ async def remove_mcp_server(
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
     except Exception as e:
-        logger.error(f"Remove MCP server error: {e}", exc_info=True)
+        logger.error("Remove MCP server error: %s", e, exc_info=True)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
 
@@ -564,7 +564,7 @@ async def set_mcp_server_enabled(
             try:
                 await ws.broadcast_mcp_event("server_updated", name)
             except Exception as e:
-                logger.debug(f"Failed to broadcast mcp event server_updated: {e}")
+                logger.debug("Failed to broadcast mcp event server_updated: %s", e)
 
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {

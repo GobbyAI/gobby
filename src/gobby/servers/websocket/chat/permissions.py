@@ -144,7 +144,7 @@ class ManagedWebChatPermissionsMixin:
             try:
                 self._on_mode_persist(mode)
             except (OSError, ValueError) as e:
-                logger.warning(f"Failed to persist chat_mode={mode}: {e}")
+                logger.warning("Failed to persist chat_mode=%s: %s", mode, e)
 
     def approve_plan(self) -> None:
         self._plan_approved = True

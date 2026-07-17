@@ -447,5 +447,5 @@ class MetricsEventStore:
 
         deleted = int(row["deleted_count"]) if row is not None else 0
         if deleted:
-            logger.info(f"Archived {deleted} metrics events older than {retention_days} days")
+            logger.info("Archived %s metrics events older than %s days", deleted, retention_days)
         return deleted

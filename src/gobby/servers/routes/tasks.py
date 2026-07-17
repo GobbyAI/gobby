@@ -156,7 +156,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         try:
             await _broadcast_task_or_raise(event, task_dict)
         except Exception as e:
-            logger.debug(f"Failed to broadcast task event {event}: {e}")
+            logger.debug("Failed to broadcast task event %s: %s", event, e)
 
     def _resolve_session_ref(session_ref: str, project_id: str | None) -> str:
         """Resolve session references to canonical UUIDs before storage writes."""
@@ -234,7 +234,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 )
                 sessions_by_id = {row["id"]: row for row in rows}
             except Exception as exc:  # pragma: no cover - defensive
-                logger.debug(f"Failed to batch-resolve owner sessions: {exc}")
+                logger.debug("Failed to batch-resolve owner sessions: %s", exc)
 
         for item in task_dicts:
             owner_id = owners_by_task.get(item["id"])
@@ -402,7 +402,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Failed to create task: {e}", exc_info=True)
+            logger.error("Failed to create task: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/{task_id}")
@@ -472,7 +472,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Failed to update task {task_id}: {e}", exc_info=True)
+            logger.error("Failed to update task %s: %s", task_id, e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.delete("/{task_id}")
@@ -499,7 +499,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         except (ValueError, TaskNotFoundError) as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Failed to delete task {task_id}: {e}", exc_info=True)
+            logger.error("Failed to delete task %s: %s", task_id, e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     register_task_comment_routes(

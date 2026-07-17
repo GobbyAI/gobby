@@ -328,7 +328,7 @@ async def list_all_mcp_tools(
         }
 
     except Exception as e:
-        logger.error(f"List MCP tools error: {e}", exc_info=True)
+        logger.error("List MCP tools error: %s", e, exc_info=True)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
 
@@ -419,7 +419,7 @@ async def recommend_mcp_tools(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Recommend tools error: {e}", exc_info=True)
+        logger.error("Recommend tools error: %s", e, exc_info=True)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
 
@@ -492,7 +492,8 @@ async def search_mcp_tools(
                 has_existing = await semantic_search.has_embeddings(project_id)
                 if not has_existing and server._mcp_db_manager:
                     logger.info(
-                        f"No embeddings for project {project_id}, triggering background generation..."
+                        "No embeddings for project %s, triggering background generation...",
+                        project_id,
                     )
 
                     # Wrapper to log exceptions from background embedding generation
@@ -505,7 +506,9 @@ async def search_mcp_tools(
                             )
                         except Exception as e:
                             logger.error(
-                                f"Background embedding generation failed for project {proj_id}: {e}",
+                                "Background embedding generation failed for project %s: %s",
+                                proj_id,
+                                e,
                                 exc_info=True,
                             )
 
@@ -541,7 +544,7 @@ async def search_mcp_tools(
                     "response_time_ms": response_time_ms,
                 }
             except Exception as e:
-                logger.error(f"Semantic search failed: {e}")
+                logger.error("Semantic search failed: %s", e)
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 return {
                     "success": False,
@@ -561,7 +564,7 @@ async def search_mcp_tools(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Search tools error: {e}", exc_info=True)
+        logger.error("Search tools error: %s", e, exc_info=True)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
 

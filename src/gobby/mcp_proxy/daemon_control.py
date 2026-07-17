@@ -200,7 +200,7 @@ async def stop_daemon_process(
         try:
             write_shutdown_source(shutdown_source, intent=shutdown_intent)
         except Exception as e:
-            logger.warning(f"Failed to write shutdown source: {e}")
+            logger.warning("Failed to write shutdown source: %s", e)
         os.kill(pid, signal.SIGTERM)
 
         # Poll for termination

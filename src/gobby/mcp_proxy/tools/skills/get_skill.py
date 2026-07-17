@@ -138,7 +138,9 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                     )
                     ctx.session_manager.record_skills_used(resolved_session_id, [skill.name])
                 except Exception as e:
-                    logger.debug(f"Best-effort skill tracking failed for session {session_id}: {e}")
+                    logger.debug(
+                        "Best-effort skill tracking failed for session %s: %s", session_id, e
+                    )
 
             content = skill.content
             if effective_level is not None:
@@ -153,11 +155,13 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                         )
                     except Exception as e:
                         logger.debug(
-                            f"Best-effort level variable set failed for session {session_id}: {e}"
+                            "Best-effort level variable set failed for session %s: %s",
+                            session_id,
+                            e,
                         )
                 else:
                     logger.debug(
-                        f"No session resolved; skipping {skill.name} level variable persistence"
+                        "No session resolved; skipping %s level variable persistence", skill.name
                     )
 
             # Build response
@@ -184,7 +188,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 if skill_files:
                     skill_data["files"] = [f.to_dict() for f in skill_files]
             except Exception as e:
-                logger.debug(f"Failed to get files for skill {skill.name}: {e}")
+                logger.debug("Failed to get files for skill %s: %s", skill.name, e)
 
             return {
                 "success": True,

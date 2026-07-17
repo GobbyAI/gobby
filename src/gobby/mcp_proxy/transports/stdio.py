@@ -190,7 +190,7 @@ class StdioTransportConnection(BaseTransportConnection):
 
             self._state = ConnectionState.CONNECTED
             self._consecutive_failures = 0
-            logger.debug(f"Connected to stdio MCP server: {self.config.name}")
+            logger.debug("Connected to stdio MCP server: %s", self.config.name)
 
             return self._session
 
@@ -232,16 +232,16 @@ class StdioTransportConnection(BaseTransportConnection):
             try:
                 await asyncio.wait_for(session_ctx.__aexit__(None, None, None), timeout=2.0)
             except TimeoutError:
-                logger.warning(f"Session close timed out for {self.config.name}")
+                logger.warning("Session close timed out for %s", self.config.name)
             except asyncio.CancelledError as exc:
-                logger.warning(f"Session close cancelled for {self.config.name}")
+                logger.warning("Session close cancelled for %s", self.config.name)
                 cancelled_error = exc
             except RuntimeError as e:
                 # Expected when exiting cancel scope from different task
                 if "cancel scope" not in str(e):
-                    logger.warning(f"Error closing session for {self.config.name}: {e}")
+                    logger.warning("Error closing session for %s: %s", self.config.name, e)
             except Exception as e:
-                logger.warning(f"Error closing session for {self.config.name}: {e}")
+                logger.warning("Error closing session for %s: %s", self.config.name, e)
             self._session_context = None
             self._session = None
 
@@ -250,16 +250,16 @@ class StdioTransportConnection(BaseTransportConnection):
             try:
                 await asyncio.wait_for(transport_ctx.__aexit__(None, None, None), timeout=2.0)
             except TimeoutError:
-                logger.warning(f"Transport close timed out for {self.config.name}")
+                logger.warning("Transport close timed out for %s", self.config.name)
             except asyncio.CancelledError as exc:
-                logger.warning(f"Transport close cancelled for {self.config.name}")
+                logger.warning("Transport close cancelled for %s", self.config.name)
                 cancelled_error = cancelled_error or exc
             except RuntimeError as e:
                 # Expected when exiting cancel scope from different task
                 if "cancel scope" not in str(e):
-                    logger.warning(f"Error closing transport for {self.config.name}: {e}")
+                    logger.warning("Error closing transport for %s: %s", self.config.name, e)
             except Exception as e:
-                logger.warning(f"Error closing transport for {self.config.name}: {e}")
+                logger.warning("Error closing transport for %s: %s", self.config.name, e)
             self._transport_context = None
 
         self._close_stdio_errlog(errlog_handle)

@@ -146,11 +146,11 @@ class ToolFallbackResolver:
                     "Semantic fallback search unavailable while VectorStore recovers", e
                 )
             else:
-                logger.error(f"Semantic search failed in fallback resolver: {e}")
+                logger.error("Semantic search failed in fallback resolver: %s", e)
             return []
 
         if not search_results:
-            logger.debug(f"No semantic matches found for '{failed_tool_name}'")
+            logger.debug("No semantic matches found for '%s'", failed_tool_name)
             return []
 
         # Filter out the failed tool if requested
@@ -184,7 +184,7 @@ class ToolFallbackResolver:
         # Sort by combined score (descending)
         suggestions.sort(key=lambda s: s.score, reverse=True)
 
-        logger.debug(f"Found {len(suggestions)} fallback suggestions for '{failed_tool_name}'")
+        logger.debug("Found %s fallback suggestions for '%s'", len(suggestions), failed_tool_name)
         return suggestions
 
     def _log_vector_store_failure(self, message: str, error: BaseException) -> None:
@@ -246,7 +246,7 @@ class ToolFallbackResolver:
                 project_id=project_id,
             )
         except Exception as e:
-            logger.debug(f"Failed to get success rate for {server_name}/{tool_name}: {e}")
+            logger.debug("Failed to get success rate for %s/%s: %s", server_name, tool_name, e)
             return None
 
     def _compute_score(self, similarity: float, success_rate: float | None) -> float:

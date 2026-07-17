@@ -97,7 +97,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             try:
                 await ws.broadcast_workflow_event(event, definition_id, **kwargs)
             except Exception as e:
-                logger.debug(f"Failed to broadcast workflow event {event}: {e}")
+                logger.debug("Failed to broadcast workflow event %s: %s", event, e)
 
     @router.get("/templates")
     async def list_templates() -> dict[str, Any]:
@@ -154,7 +154,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Error exporting workflow definition: {e}", exc_info=True)
+            logger.error("Error exporting workflow definition: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/{definition_id}")
@@ -167,7 +167,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Error getting workflow definition: {e}", exc_info=True)
+            logger.error("Error getting workflow definition: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/import")
@@ -183,7 +183,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         except (ValueError, yaml.YAMLError) as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Error importing workflow definition: {e}", exc_info=True)
+            logger.error("Error importing workflow definition: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/{definition_id}/duplicate")
@@ -197,7 +197,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Error duplicating workflow definition: {e}", exc_info=True)
+            logger.error("Error duplicating workflow definition: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("")
@@ -251,7 +251,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
                 detail=f"Workflow definition '{request.name}' already exists",
             ) from e
         except Exception as e:
-            logger.error(f"Error creating workflow definition: {e}", exc_info=True)
+            logger.error("Error creating workflow definition: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.put("/{definition_id}/toggle")
@@ -265,7 +265,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Error toggling workflow definition: {e}", exc_info=True)
+            logger.error("Error toggling workflow definition: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.put("/{definition_id}")
@@ -284,7 +284,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error updating workflow definition: {e}", exc_info=True)
+            logger.error("Error updating workflow definition: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.delete("/{definition_id}")
@@ -300,7 +300,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error deleting workflow definition: {e}", exc_info=True)
+            logger.error("Error deleting workflow definition: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/{definition_id}/restore-from-template")
@@ -332,7 +332,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Error restoring from template: {e}", exc_info=True)
+            logger.error("Error restoring from template: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/{definition_id}/move-to-project")
@@ -348,7 +348,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             status = 400 if "template" in msg else 404
             raise HTTPException(status_code=status, detail=msg) from e
         except Exception as e:
-            logger.error(f"Error moving definition to project: {e}", exc_info=True)
+            logger.error("Error moving definition to project: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/{definition_id}/move-to-global")
@@ -364,7 +364,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             status = 400 if "template" in msg else 404
             raise HTTPException(status_code=status, detail=msg) from e
         except Exception as e:
-            logger.error(f"Error moving definition to global: {e}", exc_info=True)
+            logger.error("Error moving definition to global: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/{definition_id}/restore")
@@ -378,7 +378,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Error restoring workflow definition: {e}", exc_info=True)
+            logger.error("Error restoring workflow definition: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     # --- Session Variables (top-level shortcuts) ---
@@ -421,7 +421,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
                 instance_manager=instance_manager,
             )
         except Exception as e:
-            logger.error(f"Error setting variable: {e}", exc_info=True)
+            logger.error("Error setting variable: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/variables/get")
@@ -446,7 +446,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
                 instance_manager=instance_manager,
             )
         except Exception as e:
-            logger.error(f"Error getting variable: {e}", exc_info=True)
+            logger.error("Error getting variable: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     return router

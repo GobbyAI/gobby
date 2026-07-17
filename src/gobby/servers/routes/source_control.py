@@ -106,7 +106,7 @@ def _resolve_project(server: HTTPServer, project_id: str | None) -> tuple[str | 
                 if p.name not in _HIDDEN and p.repo_path:
                     return p.repo_path, p.github_repo
     except (ValueError, OSError, HTTPException) as e:
-        logger.debug(f"Failed to resolve project {project_id}: {e}")
+        logger.debug("Failed to resolve project %s: %s", project_id, e)
     return None, None
 
 
@@ -173,7 +173,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
                         [line for line in r2.stdout.strip().split("\n") if line.strip()]
                     )
             except (OSError, ValueError) as e:
-                logger.warning(f"Failed to count branches: {e}")
+                logger.warning("Failed to count branches: %s", e)
 
         worktree_count = 0
         clone_count = 0
@@ -306,7 +306,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
                     )
 
         except (subprocess.SubprocessError, OSError) as e:
-            logger.warning(f"Failed to list branches: {e}")
+            logger.warning("Failed to list branches: %s", e)
             return {"branches": branches, "current_branch": current_branch}
 
         result = {"branches": branches, "current_branch": current_branch}
@@ -390,7 +390,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
                 if commits:
                     return {"commits": commits}
             except Exception as e:
-                logger.debug(f"GitHubMCPHelper list_commits failed, falling back: {e}")
+                logger.debug("GitHubMCPHelper list_commits failed, falling back: %s", e)
 
         # Fallback: git log
         commits = []
@@ -421,7 +421,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
                             }
                         )
         except Exception as e:
-            logger.warning(f"Failed to list commits for {branch_name}: {e}")
+            logger.warning("Failed to list commits for %s: %s", branch_name, e)
 
         return {"commits": commits}
 
@@ -804,7 +804,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
                 )
                 git_deleted = result.success
                 if not result.success:
-                    logger.warning(f"Git worktree deletion failed: {result.message}")
+                    logger.warning("Git worktree deletion failed: %s", result.message)
                     git_error = result.message
             except Exception as exc:
                 git_deleted = False

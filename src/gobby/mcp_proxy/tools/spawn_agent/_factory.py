@@ -402,7 +402,7 @@ def create_spawn_agent_registry(
                 if isinstance(wf_def, PipelineDefinition):
                     initial_variables["_assigned_pipeline"] = effective_workflow
             else:
-                logger.warning(f"Workflow {effective_workflow!r} not found for agent spawn")
+                logger.warning("Workflow %r not found for agent spawn", effective_workflow)
 
         # Fallback agent: if this agent's provider has failed on this task,
         # walk the fallback chain to find a viable agent definition.
@@ -431,8 +431,9 @@ def create_spawn_agent_registry(
                         if not candidate_name or candidate_name in visited:
                             if candidate_name in visited:
                                 logger.warning(
-                                    f"Cycle detected in fallback chain: "
-                                    f"{candidate_name!r} already visited {visited}"
+                                    "Cycle detected in fallback chain: %r already visited %s",
+                                    candidate_name,
+                                    visited,
                                 )
                             break
                         visited.add(candidate_name)
@@ -447,13 +448,16 @@ def create_spawn_agent_registry(
 
                     if fallback_body:
                         logger.info(
-                            f"Provider {agent_provider} failed for task {task_id}, "
-                            f"falling back from {agent_body.name} to {fallback_body.name}"
+                            "Provider %s failed for task %s, falling back from %s to %s",
+                            agent_provider,
+                            task_id,
+                            agent_body.name,
+                            fallback_body.name,
                         )
                         agent_body = fallback_body
                         agent = agent_body.name
             except Exception as e:
-                logger.debug(f"Fallback agent check failed: {e}")
+                logger.debug("Fallback agent check failed: %s", e)
 
         # Delegate to spawn_agent_impl
         result = await spawn_agent_impl(
@@ -654,7 +658,7 @@ def create_spawn_agent_registry(
                     out["error"] = result["error"]
                 return out
             except Exception as e:
-                logger.error(f"Failed to spawn agent for {task_ref}: {e}")
+                logger.error("Failed to spawn agent for %s: %s", task_ref, e)
                 return {
                     "task_ref": task_ref,
                     "run_id": "",

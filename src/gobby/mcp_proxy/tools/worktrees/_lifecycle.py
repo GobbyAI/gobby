@@ -157,7 +157,7 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     resolved_git_mgr = mgr
             except (ValueError, OSError) as e:
                 logger.debug(
-                    f"Failed to resolve project context for project_path={project_path}: {e}"
+                    "Failed to resolve project context for project_path=%s: %s", project_path, e
                 )
 
         worktree_exists = Path(worktree.worktree_path).exists()
@@ -212,7 +212,7 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     }
         elif not worktree_exists:
             logger.info(
-                f"Worktree path {worktree.worktree_path} doesn't exist, cleaning up DB record only"
+                "Worktree path %s doesn't exist, cleaning up DB record only", worktree.worktree_path
             )
 
         deleted = ctx.worktree_storage.delete(worktree_id)

@@ -43,7 +43,7 @@ def _has_delegated_agent_run(
             (child_session_id, task_id, current_owner),
         )
     except Exception as e:
-        logger.debug(f"Delegated claim lookup failed: {e}")
+        logger.debug("Delegated claim lookup failed: %s", e)
         return False
 
     try:
@@ -179,7 +179,7 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         try:
             ctx.session_task_manager.link_task(resolved_session_id, resolved_id, "claimed")
         except Exception as e:
-            logger.debug(f"Best-effort session claim linking failed: {e}")
+            logger.debug("Best-effort session claim linking failed: %s", e)
 
         # Set claimed_tasks session variable (enables Edit/Write hooks)
         # This mirrors create_task behavior in _crud.py
@@ -193,7 +193,7 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             merge_dict.update(build_claimed_task_skill_state(current_vars, ctx.task_manager))
             ctx.session_var_manager.merge_variables(resolved_session_id, merge_dict)
         except Exception as e:
-            logger.debug(f"Best-effort session variable setting failed: {e}")
+            logger.debug("Best-effort session variable setting failed: %s", e)
 
         return {"success": True, "task_id": resolved_id}
 

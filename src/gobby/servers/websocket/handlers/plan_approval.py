@@ -419,7 +419,7 @@ async def handle_plan_approval_response(
         return
 
     if session is None or conversation_id_raw is None:
-        logger.warning(f"plan_approval_response for unknown conversation: {conversation_id_raw}")
+        logger.warning("plan_approval_response for unknown conversation: %s", conversation_id_raw)
         return
     conversation_id: str = conversation_id_raw
 
@@ -530,7 +530,8 @@ async def handle_plan_approval_response(
             if not plan_auto_switch:
                 session.provide_plan_decision(None, "request_changes")
             logger.info(
-                f"Plan changes requested (plan-exit tool denied) for conversation {conversation_id[:8]}",
+                "Plan changes requested (plan-exit tool denied) for conversation %s",
+                conversation_id[:8],
             )
         else:
             await _send_mode_changed(
@@ -539,7 +540,7 @@ async def handle_plan_approval_response(
                 mode="plan",
                 reason="plan_changes_requested",
             )
-            logger.info(f"Plan changes requested for conversation {conversation_id[:8]}")
+            logger.info("Plan changes requested for conversation %s", conversation_id[:8])
 
 
 async def handle_recovered_plan_approval(
@@ -561,12 +562,10 @@ async def handle_recovered_plan_approval(
     try:
         db_session = await run_db(mixin, session_manager.get, conversation_id)
     except Exception as e:
-        logger.debug(f"Failed to load recovered web-chat session {conversation_id}: {e}")
+        logger.debug("Failed to load recovered web-chat session %s: %s", conversation_id, e)
 
     if not db_session:
-        logger.warning(
-            f"Recovered plan approval: no DB session for {conversation_id[:8]}",
-        )
+        logger.warning("Recovered plan approval: no DB session for %s", conversation_id[:8])
         return
 
     if decision == "approve":
@@ -616,4 +615,4 @@ async def handle_recovered_plan_approval(
             mode="plan",
             reason="plan_changes_requested",
         )
-        logger.info(f"Recovered plan changes requested for conversation {conversation_id[:8]}")
+        logger.info("Recovered plan changes requested for conversation %s", conversation_id[:8])

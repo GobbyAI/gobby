@@ -110,7 +110,7 @@ class HandlerMixin:
                     try:
                         result = await registry.call(tool_name, args)
                     except ValueError as e:
-                        logger.debug(f"Registry miss for {tool_name}, falling back to MCP: {e}")
+                        logger.debug("Registry miss for %s, falling back to MCP: %s", tool_name, e)
                         result = await self.mcp_manager.call_tool(mcp_name, tool_name, args)
                 else:
                     result = await self.mcp_manager.call_tool(mcp_name, tool_name, args)
@@ -133,7 +133,7 @@ class HandlerMixin:
             await self._send_error(websocket, str(e), request_id=request_id)
 
         except Exception as e:
-            logger.exception(f"Tool call error: {mcp_name}.{tool_name}")
+            logger.exception("Tool call error: %s.%s", mcp_name, tool_name)
             await self._send_error(websocket, f"Tool call failed: {str(e)}", request_id=request_id)
 
     async def _handle_ping(self, websocket: Any, data: dict[str, Any]) -> None:
@@ -172,7 +172,7 @@ class HandlerMixin:
             websocket.subscriptions = set()
 
         websocket.subscriptions.update(events)
-        logger.debug(f"Client {websocket.user_id} subscribed to: {events}")
+        logger.debug("Client %s subscribed to: %s", websocket.user_id, events)
 
         await websocket.send(
             json_dumps(
@@ -205,7 +205,7 @@ class HandlerMixin:
             for event in events:
                 current_subscriptions.discard(event)
 
-        logger.debug(f"Client {websocket.user_id} unsubscribed from: {events}")
+        logger.debug("Client %s unsubscribed from: %s", websocket.user_id, events)
 
         await websocket.send(
             json_dumps(
@@ -278,9 +278,9 @@ class HandlerMixin:
                 source="websocket",
             )
 
-            logger.info(f"Stop requested for session {session_id} via WebSocket")
+            logger.info("Stop requested for session %s via WebSocket", session_id)
         except Exception as e:
-            logger.error(f"Error handling stop request: {e}")
+            logger.error("Error handling stop request: %s", e)
             await self._send_error(websocket, f"Failed to signal stop: {str(e)}")
 
     async def _handle_terminal_input(self, websocket: Any, data: dict[str, Any]) -> None:
@@ -304,14 +304,18 @@ class HandlerMixin:
         if not run_id or input_data is None:
             # Don't send error for every keystroke if malformed, just log debug
             logger.debug(
-                f"Invalid terminal_input: run_id={run_id}, data_len={len(str(input_data)) if input_data else 0}"
+                "Invalid terminal_input: run_id=%s, data_len=%s",
+                run_id,
+                len(str(input_data)) if input_data else 0,
             )
             return
 
         if not isinstance(input_data, str):
             # input_data must be a string to encode; log and skip non-strings
             logger.debug(
-                f"Invalid terminal_input type: run_id={run_id}, data_type={type(input_data).__name__}"
+                "Invalid terminal_input type: run_id=%s, data_type=%s",
+                run_id,
+                type(input_data).__name__,
             )
             return
 
@@ -323,7 +327,7 @@ class HandlerMixin:
                     encoded_data = input_data.encode("utf-8")
                     await asyncio.to_thread(os.write, bridge_fd, encoded_data)
                 except OSError as e:
-                    logger.warning(f"Failed to write to tmux bridge {run_id}: {e}")
+                    logger.warning("Failed to write to tmux bridge %s: %s", run_id, e)
                 return
 
         # Look up agent run from DB to get tmux_session_name
@@ -333,7 +337,7 @@ class HandlerMixin:
             getattr(self, "session_manager", None), "db", None
         )
         if not db:
-            logger.warning(f"No database available to look up agent {run_id}")
+            logger.warning("No database available to look up agent %s", run_id)
             return
 
         run = LocalAgentRunManager(db).get(run_id)
@@ -350,7 +354,7 @@ class HandlerMixin:
                 mgr = get_tmux_session_manager()
                 await mgr.send_keys(run.tmux_session_name, input_data)
             except (OSError, RuntimeError) as e:
-                logger.warning(f"Failed to send keys to tmux agent {run_id}: {e}")
+                logger.warning("Failed to send keys to tmux agent %s: %s", run_id, e)
             return
 
-        logger.warning(f"Agent {run_id} has no tmux_session_name - cannot route input")
+        logger.warning("Agent %s has no tmux_session_name - cannot route input", run_id)

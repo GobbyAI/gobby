@@ -65,5 +65,5 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 "skip_reason": result.skip_reason,
             }
         except Exception as e:
-            logger.warning(f"Failed to update skill: {e}", exc_info=True)
+            logger.warning("Failed to update skill: %s", e, exc_info=True)
             return {"success": False, "error": str(e)}

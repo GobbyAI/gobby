@@ -265,7 +265,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
             )
             return {"memories": [m.to_dict() for m in memories], "total_memories": total}
         except Exception as e:
-            logger.error(f"Failed to list memories: {e}")
+            logger.error("Failed to list memories: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("", status_code=201)
@@ -284,7 +284,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Failed to create memory: {e}")
+            logger.error("Failed to create memory: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.get("/search")
@@ -309,7 +309,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Failed to search memories: {e}")
+            logger.error("Failed to search memories: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.get("/stats")
@@ -320,7 +320,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
         try:
             return server.memory_manager.get_stats(project_id=project_id)
         except Exception as e:
-            logger.error(f"Failed to get memory stats: {e}")
+            logger.error("Failed to get memory stats: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.get("/graph/entities")
@@ -341,7 +341,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Failed to get entity graph: {e}")
+            logger.error("Failed to get entity graph: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.get("/graph/entities/{entity_key}/neighbors")
@@ -362,7 +362,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Failed to get entity neighbors: {e}")
+            logger.error("Failed to get entity neighbors: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.get("/graph/counts")
@@ -381,7 +381,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Failed to get knowledge graph counts: {e}")
+            logger.error("Failed to get knowledge graph counts: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.get("/graph")
@@ -408,7 +408,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
                 "crossrefs": [c.to_dict() for c in crossrefs],
             }
         except Exception as e:
-            logger.error(f"Failed to get memory graph: {e}")
+            logger.error("Failed to get memory graph: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("/crossrefs/rebuild")
@@ -424,13 +424,13 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
                     created = await server.memory_manager.rebuild_crossrefs_for_memory(memory)
                     total_created += created
                 except Exception as e:
-                    logger.warning(f"Crossref failed for {memory.id}: {e}")
+                    logger.warning("Crossref failed for %s: %s", memory.id, e)
             return {
                 "memories_processed": len(memories),
                 "crossrefs_created": total_created,
             }
         except Exception as e:
-            logger.error(f"Failed to rebuild crossrefs: {e}")
+            logger.error("Failed to rebuild crossrefs: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("/graph/clear")
@@ -446,7 +446,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Failed to clear knowledge graph: {e}")
+            logger.error("Failed to clear knowledge graph: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("/graph/rebuild", response_model=None)
@@ -482,7 +482,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Failed to rebuild knowledge graph: {e}")
+            logger.error("Failed to rebuild knowledge graph: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.get("/graph/rebuild/status")
@@ -506,7 +506,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
                 dict[str, Any], await server.memory_manager.reconcile_stores(dry_run=dry_run)
             )
         except Exception as e:
-            logger.error(f"Failed to reconcile memory stores: {e}")
+            logger.error("Failed to reconcile memory stores: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("/embeddings/reindex")
@@ -520,7 +520,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
             result = await server.memory_manager.reindex_embeddings(project_id=project_id)
             return cast(dict[str, Any], result)
         except Exception as e:
-            logger.error(f"Failed to reindex embeddings: {e}")
+            logger.error("Failed to reindex embeddings: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("/invalidate")
@@ -538,16 +538,16 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
                 project_id=project_id
             )
         except Exception as e:
-            logger.error(f"Failed to clear memory indices: {e}")
+            logger.error("Failed to clear memory indices: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
         # Fire off rebuild as a background task
         async def _background_rebuild() -> None:
             try:
                 result = await server.memory_manager.rebuild_indices(project_id=project_id)
-                logger.info(f"Background rebuild complete: {result}")
+                logger.info("Background rebuild complete: %s", result)
             except Exception as e:
-                logger.error(f"Background rebuild failed: {e}", exc_info=True)
+                logger.error("Background rebuild failed: %s", e, exc_info=True)
 
         task = asyncio.create_task(_background_rebuild())
         server._background_tasks.add(task)
@@ -565,7 +565,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
         try:
             memory = server.memory_manager.get_memory(memory_id, project_id=project_id)
         except Exception as e:
-            logger.error(f"Failed to get memory {memory_id}: {e}")
+            logger.error("Failed to get memory %s: %s", memory_id, e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
         if memory is None:
@@ -586,7 +586,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Failed to update memory {memory_id}: {e}")
+            logger.error("Failed to update memory %s: %s", memory_id, e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("/{memory_id}/restore")
@@ -637,7 +637,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
         try:
             result = await server.memory_manager.delete_memory(memory_id)
         except Exception as e:
-            logger.error(f"Failed to delete memory {memory_id}: {e}")
+            logger.error("Failed to delete memory %s: %s", memory_id, e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
         if not result:

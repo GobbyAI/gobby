@@ -150,7 +150,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error listing cron jobs: {e}", exc_info=True)
+            logger.error("Error listing cron jobs: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/jobs")
@@ -178,7 +178,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Error creating cron job: {e}", exc_info=True)
+            logger.error("Error creating cron job: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/jobs/{job_id}")
@@ -193,7 +193,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error getting cron job: {e}", exc_info=True)
+            logger.error("Error getting cron job: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.patch("/jobs/{job_id}")
@@ -230,7 +230,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
         except SystemRowProtected as e:
             raise HTTPException(status_code=403, detail="System cron job is protected") from e
         except Exception as e:
-            logger.error(f"Error updating cron job: {e}", exc_info=True)
+            logger.error("Error updating cron job: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.delete("/jobs/{job_id}")
@@ -247,7 +247,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
         except SystemRowProtected as e:
             raise HTTPException(status_code=403, detail="System cron job is protected") from e
         except Exception as e:
-            logger.error(f"Error deleting cron job: {e}", exc_info=True)
+            logger.error("Error deleting cron job: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/jobs/{job_id}/toggle")
@@ -264,7 +264,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
         except SystemRowProtected as e:
             raise HTTPException(status_code=403, detail="System cron job is protected") from e
         except Exception as e:
-            logger.error(f"Error toggling cron job: {e}", exc_info=True)
+            logger.error("Error toggling cron job: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/jobs/{job_id}/run", response_model=None)
@@ -304,7 +304,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error running cron job: {e}", exc_info=True)
+            logger.error("Error running cron job: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/jobs/{job_id}/runs")
@@ -324,7 +324,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error listing cron runs: {e}", exc_info=True)
+            logger.error("Error listing cron runs: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/runs/{run_id}")
@@ -339,7 +339,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error getting cron run: {e}", exc_info=True)
+            logger.error("Error getting cron run: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     return router

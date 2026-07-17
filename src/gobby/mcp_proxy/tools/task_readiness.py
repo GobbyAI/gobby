@@ -231,7 +231,7 @@ def _resolve_ready_tasks(
         try:
             resolved_session_id = session_manager.resolve_session_reference(session_id, project_id)
         except (ValueError, KeyError, LookupError) as e:
-            logger.warning(f"Could not resolve session_id '{session_id}': {e}")
+            logger.warning("Could not resolve session_id '%s': %s", session_id, e)
             resolved_session_id = session_id
 
         session_vars = session_var_manager.get_variables(resolved_session_id)
@@ -705,7 +705,7 @@ def create_readiness_registry(
                 task_brief, db=task_manager.db, project_id=project_id
             )
         except Exception as e:
-            logger.debug(f"Skill recommendation failed: {e}")
+            logger.debug("Skill recommendation failed: %s", e)
 
         return {
             "suggestion": best_task.to_brief(),

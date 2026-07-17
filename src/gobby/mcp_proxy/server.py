@@ -475,7 +475,7 @@ class GobbyDaemonTools:
                 "total_results": len(results),
             }
         except Exception as e:
-            logger.error(f"Semantic search failed: {e}")
+            logger.error("Semantic search failed: %s", e)
             return {"success": False, "error": str(e), "query": query}
 
     # --- Session Variables ---

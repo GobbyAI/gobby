@@ -320,7 +320,7 @@ async def spawn_agent_impl(
         try:
             effective_base_branch = git_manager.get_current_branch()
         except Exception as e:
-            logger.debug(f"Failed to auto-detect current branch: {e}", exc_info=True)
+            logger.debug("Failed to auto-detect current branch: %s", e, exc_info=True)
             effective_base_branch = None
     effective_base_branch = effective_base_branch or "main"
 
@@ -371,7 +371,7 @@ async def spawn_agent_impl(
                     task_additional_skills = _normalize_string_list(resolved_task.additional_skills)
                 claimed_session_id = get_claimed_session_id(resolved_task)
         except Exception as e:
-            logger.warning(f"Failed to resolve task_id {task_id}: {e}")
+            logger.warning("Failed to resolve task_id %s: %s", task_id, e)
 
     if resolved_task_id and resolved_task is not None and not is_task_actionable(resolved_task):
         return non_actionable_task_spawn_response(
@@ -476,11 +476,11 @@ async def spawn_agent_impl(
         try:
             isolation_ctx = await handler.prepare_environment(spawn_config)
         except Exception as e:
-            logger.error(f"Failed to prepare environment: {e}", exc_info=True)
+            logger.error("Failed to prepare environment: %s", e, exc_info=True)
             try:
                 await handler.cleanup_environment(spawn_config)
             except Exception as cleanup_err:
-                logger.warning(f"Cleanup after prepare failure also failed: {cleanup_err}")
+                logger.warning("Cleanup after prepare failure also failed: %s", cleanup_err)
             return {"success": False, "error": f"Failed to prepare environment: {e}"}
 
     if effective_isolation in {"worktree", "clone"}:
@@ -801,7 +801,7 @@ async def spawn_agent_impl(
                 },
             )
         except Exception as e:
-            logger.debug(f"Failed to fire agent_started event for {run_id}: {e}")
+            logger.debug("Failed to fire agent_started event for %s: %s", run_id, e)
 
         # 12a. Auto-claim task if task_id was provided.
         if resolved_task_id and task_manager:
@@ -829,10 +829,13 @@ async def spawn_agent_impl(
                         get_claimed_session_id(claimed_task) == spawn_result.child_session_id
                     )
                     logger.info(
-                        f"Auto-claimed task {(f'#{task_seq_num}' if task_seq_num else resolved_task_id)} for agent {run_id} (session {spawn_result.child_session_id})",
+                        "Auto-claimed task %s for agent %s (session %s)",
+                        (f"#{task_seq_num}" if task_seq_num else resolved_task_id),
+                        run_id,
+                        spawn_result.child_session_id,
                     )
             except Exception as e:
-                logger.warning(f"Failed to auto-claim task {resolved_task_id}: {e}")
+                logger.warning("Failed to auto-claim task %s: %s", resolved_task_id, e)
 
         # 12b. Create WorkflowInstance for agent step workflow (post-spawn).
         # Must happen AFTER execute_spawn creates the child session record,
@@ -871,10 +874,14 @@ async def spawn_agent_impl(
                 )
 
                 logger.info(
-                    f"Created step workflow instance {step_wf_name} for session {spawn_result.child_session_id} (agent={agent_body.name}, step={agent_body.steps[0].name})",
+                    "Created step workflow instance %s for session %s (agent=%s, step=%s)",
+                    step_wf_name,
+                    spawn_result.child_session_id,
+                    agent_body.name,
+                    agent_body.steps[0].name,
                 )
             except Exception as e:
-                logger.error(f"Failed to create step workflow instance: {e}", exc_info=True)
+                logger.error("Failed to create step workflow instance: %s", e, exc_info=True)
 
         # Post-spawn health check: verify tmux session is still alive.
         if spawn_result.terminal_type == "tmux" and tmux_session_name:

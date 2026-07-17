@@ -68,7 +68,7 @@ class CircuitBreaker:
             logger.warning("Circuit breaker reopened after half-open failure")
         elif self.failure_count >= self.failure_threshold:
             self.state = CircuitState.OPEN
-            logger.warning(f"Circuit breaker opened after {self.failure_count} failures")
+            logger.warning("Circuit breaker opened after %s failures", self.failure_count)
 
     def can_execute(self) -> bool:
         """Check if request can proceed."""
@@ -197,7 +197,7 @@ class LazyServerConnector:
                 circuit_breaker=CircuitBreaker(**self._circuit_breaker_config)
             )
             self._connection_locks[server_name] = asyncio.Lock()
-            logger.debug(f"Registered server '{server_name}' for lazy connection")
+            logger.debug("Registered server '%s' for lazy connection", server_name)
 
     def unregister_server(self, server_name: str) -> None:
         """
@@ -259,7 +259,7 @@ class LazyServerConnector:
         state = self._states.get(server_name)
         if state:
             state.record_connection_success()
-            logger.info(f"Server '{server_name}' connected")
+            logger.info("Server '%s' connected", server_name)
 
     def mark_failed(self, server_name: str, error: str) -> None:
         """
@@ -272,7 +272,7 @@ class LazyServerConnector:
         state = self._states.get(server_name)
         if state:
             state.record_connection_failure(error)
-            logger.warning(f"Server '{server_name}' connection failed: {error}")
+            logger.warning("Server '%s' connection failed: %s", server_name, error)
 
     def get_connection_lock(self, server_name: str) -> asyncio.Lock:
         """

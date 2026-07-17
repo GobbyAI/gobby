@@ -206,7 +206,7 @@ def add_messaging_tools(
                             (content, now, row["id"]),
                         )
                 except Exception as e:
-                    logger.warning(f"Failed to write to agent_runs.result: {e}")
+                    logger.warning("Failed to write to agent_runs.result: %s", e)
 
             # Broadcast agent_message event
             failed_ws_broadcasts: list[dict[str, Any]] = []
@@ -242,7 +242,7 @@ def add_messaging_tools(
             return payload
 
         except Exception as e:
-            logger.error(f"send_message failed: {e}")
+            logger.error("send_message failed: %s", e)
             return {"success": False, "error": str(e)}
 
     # ── deliver_pending_messages ───────────────────────────────────
@@ -299,7 +299,7 @@ def add_messaging_tools(
             }
 
         except Exception as e:
-            logger.error(f"deliver_pending_messages failed: {e}")
+            logger.error("deliver_pending_messages failed: %s", e)
             return {"success": False, "error": str(e)}
 
     # ── get_inter_session_messages ────────────────────────────────
@@ -346,5 +346,5 @@ def add_messaging_tools(
             }
 
         except Exception as e:
-            logger.error(f"get_inter_session_messages failed: {e}")
+            logger.error("get_inter_session_messages failed: %s", e)
             return {"success": False, "error": str(e)}

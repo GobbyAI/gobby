@@ -75,7 +75,7 @@ def create_core_affected_files_registry(ctx: "RegistryContext") -> InternalToolR
 
         if not commit_shas:
             logger.warning(
-                f"No linked commits found for task {resolved_id} in update_observed_files"
+                "No linked commits found for task %s in update_observed_files", resolved_id
             )
             if require_commits:
                 return {
@@ -118,7 +118,7 @@ def create_core_affected_files_registry(ctx: "RegistryContext") -> InternalToolR
                     all_files.update(result.stdout.strip().split("\n"))
                     commits_processed += 1
             except (subprocess.TimeoutExpired, FileNotFoundError):
-                logger.warning(f"Failed to get diff-tree for commit {sha}")
+                logger.warning("Failed to get diff-tree for commit %s", sha)
 
         if all_files:
             af_manager.set_files(resolved_id, sorted(all_files), "observed")

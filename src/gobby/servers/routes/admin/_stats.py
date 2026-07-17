@@ -153,7 +153,7 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             )
             task_stats["closed_24h"] = closed_24h_rows[0]["cnt"] if closed_24h_rows else 0
         except Exception as e:
-            logger.warning(f"Failed to get time-filtered task stats: {e}")
+            logger.warning("Failed to get time-filtered task stats: %s", e)
             raise
 
         # --- Sessions ---
@@ -196,7 +196,7 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
                 by_source[src][st] = row["cnt"]
             session_stats["by_source"] = by_source
         except Exception as e:
-            logger.warning(f"Failed to get time-filtered session stats: {e}")
+            logger.warning("Failed to get time-filtered session stats: %s", e)
             raise
 
         # --- Memory ---
@@ -227,7 +227,7 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             )
             memory_stats["recent_count"] = recent_rows[0]["cnt"] if recent_rows else 0
         except Exception as e:
-            logger.warning(f"Failed to get time-filtered memory stats: {e}")
+            logger.warning("Failed to get time-filtered memory stats: %s", e)
             raise
 
         # --- Metrics Events ---
@@ -320,7 +320,7 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
                 ],
             }
         except Exception as e:
-            logger.warning(f"Failed to get metrics event stats: {e}")
+            logger.warning("Failed to get metrics event stats: %s", e)
             raise
 
         return {

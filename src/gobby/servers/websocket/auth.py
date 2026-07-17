@@ -50,7 +50,8 @@ class AuthMixin:
 
         if not auth_header:
             logger.warning(
-                f"Connection rejected: Missing Authorization header from {websocket.remote_address}"
+                "Connection rejected: Missing Authorization header from %s",
+                websocket.remote_address,
             )
             return Response(
                 401,
@@ -61,7 +62,8 @@ class AuthMixin:
 
         if not auth_header.startswith("Bearer "):
             logger.warning(
-                f"Connection rejected: Invalid Authorization format from {websocket.remote_address}"
+                "Connection rejected: Invalid Authorization format from %s",
+                websocket.remote_address,
             )
             return Response(
                 401,
@@ -77,7 +79,7 @@ class AuthMixin:
 
             if not user_id:
                 logger.warning(
-                    f"Connection rejected: Invalid token from {websocket.remote_address}"
+                    "Connection rejected: Invalid token from %s", websocket.remote_address
                 )
                 return Response(
                     403,
@@ -91,7 +93,7 @@ class AuthMixin:
             return None
 
         except Exception as e:
-            logger.error(f"Authentication error from {websocket.remote_address}: {e}")
+            logger.error("Authentication error from %s: %s", websocket.remote_address, e)
             return Response(
                 500,
                 "Internal Server Error",

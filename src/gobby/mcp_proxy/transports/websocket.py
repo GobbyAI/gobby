@@ -158,7 +158,7 @@ class WebSocketTransportConnection(BaseTransportConnection):
 
             self._state = ConnectionState.CONNECTED
             self._consecutive_failures = 0
-            logger.debug(f"Connected to WebSocket MCP server: {self.config.name}")
+            logger.debug("Connected to WebSocket MCP server: %s", self.config.name)
 
             return self._session
 
@@ -171,7 +171,9 @@ class WebSocketTransportConnection(BaseTransportConnection):
         except Exception as e:
             # Handle exceptions with empty str() (EndOfStream, ClosedResourceError)
             error_msg = str(e) if str(e) else f"{type(e).__name__}: Connection closed or timed out"
-            logger.error(f"Failed to connect to WebSocket server '{self.config.name}': {error_msg}")
+            logger.error(
+                "Failed to connect to WebSocket server '%s': %s", self.config.name, error_msg
+            )
 
             await self._cleanup_connect_attempt(
                 session_entered=session_entered,
@@ -193,13 +195,13 @@ class WebSocketTransportConnection(BaseTransportConnection):
                     self._session_context.__aexit__(None, None, None), timeout=2.0
                 )
             except TimeoutError:
-                logger.warning(f"Session close timed out for {self.config.name}")
+                logger.warning("Session close timed out for %s", self.config.name)
             except RuntimeError as e:
                 # Expected when exiting cancel scope from different task
                 if "cancel scope" not in str(e):
-                    logger.warning(f"Error closing session for {self.config.name}: {e}")
+                    logger.warning("Error closing session for %s: %s", self.config.name, e)
             except Exception as e:
-                logger.warning(f"Error closing session for {self.config.name}: {e}")
+                logger.warning("Error closing session for %s: %s", self.config.name, e)
             self._session_context = None
             self._session = None
 
@@ -209,13 +211,13 @@ class WebSocketTransportConnection(BaseTransportConnection):
                     self._transport_context.__aexit__(None, None, None), timeout=2.0
                 )
             except TimeoutError:
-                logger.warning(f"Transport close timed out for {self.config.name}")
+                logger.warning("Transport close timed out for %s", self.config.name)
             except RuntimeError as e:
                 # Expected when exiting cancel scope from different task
                 if "cancel scope" not in str(e):
-                    logger.warning(f"Error closing transport for {self.config.name}: {e}")
+                    logger.warning("Error closing transport for %s: %s", self.config.name, e)
             except Exception as e:
-                logger.warning(f"Error closing transport for {self.config.name}: {e}")
+                logger.warning("Error closing transport for %s: %s", self.config.name, e)
             self._transport_context = None
 
         self._state = ConnectionState.DISCONNECTED

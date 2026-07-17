@@ -23,11 +23,11 @@ class ChatInteractionResponsesMixin:
 
         session = self._chat_sessions.get(conversation_id) if conversation_id else None
         if session is None:
-            logger.warning(f"ask_user_response for unknown conversation: {conversation_id}")
+            logger.warning("ask_user_response for unknown conversation: %s", conversation_id)
             return
 
         if not isinstance(tool_call_id, str) or not session.provide_answer(tool_call_id, answers):
-            logger.warning(f"ask_user_response but no pending question for {conversation_id}")
+            logger.warning("ask_user_response but no pending question for %s", conversation_id)
             return
 
     async def _handle_tool_approval_response(self, websocket: Any, data: dict[str, Any]) -> None:
@@ -40,7 +40,7 @@ class ChatInteractionResponsesMixin:
 
         session = self._chat_sessions.get(conversation_id) if conversation_id else None
         if session is None:
-            logger.warning(f"tool_approval_response for unknown conversation: {conversation_id}")
+            logger.warning("tool_approval_response for unknown conversation: %s", conversation_id)
             return
 
         if isinstance(tool_call_id, str) and session.provide_approval(tool_call_id, decision):
@@ -62,7 +62,7 @@ class ChatInteractionResponsesMixin:
                     resolved = False
                 if resolved:
                     return
-            logger.warning(f"tool_approval_response but no pending approval for {conversation_id}")
+            logger.warning("tool_approval_response but no pending approval for %s", conversation_id)
             return
 
         logger.warning("tool_approval_response did not match a pending approval: %s", tool_call_id)
@@ -78,5 +78,6 @@ class ChatInteractionResponsesMixin:
                 client_info["project_id"] = getattr(session, "project_id", None)
             session.last_activity = datetime.now(UTC)
             logger.debug(
-                f"Heartbeat received for conversation {conversation_id[:8] if conversation_id else '?'}"
+                "Heartbeat received for conversation %s",
+                conversation_id[:8] if conversation_id else "?",
             )

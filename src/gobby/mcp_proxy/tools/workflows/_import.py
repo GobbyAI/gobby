@@ -179,9 +179,9 @@ def reload_cache(
                 result[f"{content_type}_synced"] = synced
                 total_synced += synced
                 if synced > 0:
-                    logger.info(f"Re-synced {synced} bundled {content_type} to DB")
+                    logger.info("Re-synced %s bundled %s to DB", synced, content_type)
             except Exception as e:
-                logger.warning(f"Failed to re-sync bundled {content_type}: {e}")
+                logger.warning("Failed to re-sync bundled %s: %s", content_type, e)
                 result[f"{content_type}_sync_error"] = str(e)
 
         if total_synced > 0:

@@ -782,7 +782,8 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 inc_counter("hooks_succeeded_total")
 
                 logger.debug(
-                    f"Hook executed: {hook_type}",
+                    "Hook executed: %s",
+                    hook_type,
                     extra=_hook_log_extra(
                         hook_type,
                         request_metadata,
@@ -798,12 +799,14 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 inc_counter("hooks_failed_total")
                 if _is_codex_root_context_miss(source, payload, e):
                     logger.debug(
-                        f"Skipping Codex hook without project context: {hook_type}",
+                        "Skipping Codex hook without project context: %s",
+                        hook_type,
                         extra=_hook_log_extra(hook_type, request_metadata, error=str(e)),
                     )
                 else:
                     logger.warning(
-                        f"Invalid hook request: {hook_type}",
+                        "Invalid hook request: %s",
+                        hook_type,
                         extra=_hook_log_extra(hook_type, request_metadata, error=str(e)),
                     )
                 return mark_processed_and_return(
@@ -869,7 +872,8 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 # This prevents confusing "hook failed" warnings in Claude Code
                 inc_counter("hooks_failed_total")
                 logger.error(
-                    f"Hook execution failed: {hook_type}",
+                    "Hook execution failed: %s",
+                    hook_type,
                     exc_info=True,
                     extra=_hook_log_extra(hook_type, request_metadata),
                 )

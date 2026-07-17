@@ -266,7 +266,7 @@ def setup_internal_registries(
 
                 clone_git_manager = CloneGitManager(git_manager.repo_path)
             except (TypeError, OSError, RuntimeError) as e:
-                logger.debug(f"CloneGitManager not available for spawn_agent: {e}")
+                logger.debug("CloneGitManager not available for spawn_agent: %s", e)
 
         agents_registry = create_agents_registry(
             runner=agent_runner,
@@ -333,7 +333,7 @@ def setup_internal_registries(
 
                 clone_git_manager = CloneGitManager(git_manager.repo_path)
             except Exception as e:
-                logger.warning(f"Failed to create CloneGitManager: {e}")
+                logger.warning("Failed to create CloneGitManager: %s", e)
 
         clones_registry = create_clones_registry(
             clone_storage=clone_storage,
@@ -456,7 +456,7 @@ def setup_internal_registries(
             manager.add_registry(cron_registry)
             logger.debug("Cron registry initialized")
         except (ImportError, RuntimeError, OSError) as e:
-            logger.debug(f"Cron registry not initialized: {e}")
+            logger.debug("Cron registry not initialized: %s", e)
 
     if communications_manager is not None:
         try:
@@ -466,9 +466,9 @@ def setup_internal_registries(
             manager.add_registry(communications_registry)
             logger.debug("Communications registry initialized")
         except (ImportError, RuntimeError, OSError) as e:
-            logger.debug(f"Communications registry not initialized: {e}")
+            logger.debug("Communications registry not initialized: %s", e)
 
-    logger.info(f"Internal registries initialized: {len(manager)} registries")
+    logger.info("Internal registries initialized: %s registries", len(manager))
     return manager
 
 

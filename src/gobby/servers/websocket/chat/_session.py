@@ -143,7 +143,7 @@ async def _resolve_git_branch(project_path: str | None) -> tuple[str | None, str
                 branch = f"detached:{short_sha}"
         return branch, project_path
     except Exception as e:
-        logger.debug(f"Failed to resolve git branch: {e}")
+        logger.debug("Failed to resolve git branch: %s", e)
         return None, None
 
 
@@ -227,7 +227,7 @@ class ChatSessionMixin:
                 try:
                     await asyncio.wait_for(session.interrupt(), timeout=0.5)
                 except Exception as e:
-                    logger.debug(f"Interrupt failed: {e}")
+                    logger.debug("Interrupt failed: %s", e)
 
         if active_task and not active_task.done():
             active_task.cancel()
@@ -311,7 +311,7 @@ class ChatSessionMixin:
                         existing_db_session = candidate
                         existing_terminal_resume = True
             except Exception as e:
-                logger.debug(f"Failed to resolve existing chat session {session_key}: {e}")
+                logger.debug("Failed to resolve existing chat session %s: %s", session_key, e)
 
         # Resolve any queued persona selection early so session bootstrap can
         # prepare persona-facing prompt context without treating the definition
@@ -379,7 +379,9 @@ class ChatSessionMixin:
                             exc_info=True,
                         )
             except Exception as e:
-                logger.warning(f"Failed to resolve agent '{agent_name}' for session bootstrap: {e}")
+                logger.warning(
+                    "Failed to resolve agent '%s' for session bootstrap: %s", agent_name, e
+                )
 
         # Provider precedence: queued UI override > existing DB session source
         # > explicit message provider > default.
@@ -624,8 +626,10 @@ class ChatSessionMixin:
                         logger.debug("Malformed approved_tools_json, ignoring")
 
             logger.info(
-                f"Hydrated web-chat session {existing_db_session.id} "
-                f"(source={existing_db_session.source}, project={effective_pid})"
+                "Hydrated web-chat session %s (source=%s, project=%s)",
+                existing_db_session.id,
+                existing_db_session.source,
+                effective_pid,
             )
         elif session_manager:
             try:
@@ -656,9 +660,10 @@ class ChatSessionMixin:
                 ):
                     session.resume_session_id = resume_identity
                     logger.info(
-                        f"Auto-resume enabled for returning session {db_session.id} "
-                        f"(output_tokens={db_session.usage_output_tokens}, "
-                        f"sdk_id={resume_identity[:8]})"
+                        "Auto-resume enabled for returning session %s (output_tokens=%s, sdk_id=%s)",
+                        db_session.id,
+                        db_session.usage_output_tokens,
+                        resume_identity[:8],
                     )
 
                 # Restore persisted state from DB (safe for both new and returning
@@ -676,11 +681,13 @@ class ChatSessionMixin:
                     except (ValueError, TypeError):
                         logger.debug("Malformed approved_tools_json, ignoring")
                 logger.info(
-                    f"Registered web-chat session {db_session.id} "
-                    f"(key={session_key[:8]}, project={effective_pid})"
+                    "Registered web-chat session %s (key=%s, project=%s)",
+                    db_session.id,
+                    session_key[:8],
+                    effective_pid,
                 )
             except Exception as e:
-                logger.warning(f"Failed to register web-chat session in DB: {e}")
+                logger.warning("Failed to register web-chat session in DB: %s", e)
 
         # Override with pending mode (highest priority — user toggled before session existed)
         pending_modes = getattr(self, "_pending_modes", {})
@@ -726,7 +733,7 @@ class ChatSessionMixin:
                 if project and project.repo_path:
                     session.project_path = project.repo_path
             except Exception as e:
-                logger.warning(f"Failed to look up project repo_path: {e}")
+                logger.warning("Failed to look up project repo_path: %s", e)
 
         # Override project_path with pending worktree path (from set_worktree)
         pending_wt = getattr(self, "_pending_worktree_paths", {})
@@ -765,14 +772,14 @@ class ChatSessionMixin:
                     if context_parts:
                         session.system_prompt_override = "\n\n".join(context_parts)
             except Exception as e:
-                logger.warning(f"Failed to build agent system prompt for '{agent_name}': {e}")
+                logger.warning("Failed to build agent system prompt for '%s': %s", agent_name, e)
 
         try:
             await session.start(model=model)
         except Exception:
             if session.resume_session_id:
                 logger.warning(
-                    f"SDK resume failed for {session.resume_session_id[:8]}, starting fresh"
+                    "SDK resume failed for %s, starting fresh", session.resume_session_id[:8]
                 )
                 session.resume_session_id = None
                 await session.start(model=model)
@@ -880,7 +887,7 @@ class ChatSessionMixin:
                 return
             exc = task.exception()
             if exc:
-                logger.warning(f"SESSION_START lifecycle hook failed: {exc}")
+                logger.warning("SESSION_START lifecycle hook failed: %s", exc)
 
         t = asyncio.create_task(
             self._fire_lifecycle(session_key, HookEventType.SESSION_START, start_data)
@@ -925,4 +932,4 @@ class ChatSessionMixin:
             data = {"reason": reason.value} if reason is not None else {}
             await self._fire_lifecycle(conversation_id, HookEventType.SESSION_END, data)
         except Exception:
-            logger.debug(f"SESSION_END fire failed for {conversation_id[:8]}", exc_info=True)
+            logger.debug("SESSION_END fire failed for %s", conversation_id[:8], exc_info=True)

@@ -102,7 +102,7 @@ def auto_export_definition(
 
     output_dir = dirs.get(row.workflow_type)
     if not output_dir:
-        logger.debug(f"Unknown workflow_type for export: {row.workflow_type}")
+        logger.debug("Unknown workflow_type for export: %s", row.workflow_type)
         return None
 
     definition = json.loads(row.definition_json)

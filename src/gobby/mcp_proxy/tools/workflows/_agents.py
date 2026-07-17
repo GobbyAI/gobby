@@ -176,7 +176,7 @@ def create_agent_definition(
         source="installed",
         tags=["user"],
     )
-    logger.info(f"Created agent definition '{name}' (id={row.id})")
+    logger.info("Created agent definition '%s' (id=%s)", name, row.id)
 
     # Auto-export to YAML for persistence
     try:
@@ -184,7 +184,7 @@ def create_agent_definition(
 
         auto_export_definition(row, project_path, make_global=make_global_template)
     except Exception as e:
-        logger.warning(f"Failed to auto-export agent '{name}': {e}")
+        logger.warning("Failed to auto-export agent '%s': %s", name, e)
 
     return {"success": True, "agent": _agent_detail(row)}
 
@@ -210,7 +210,7 @@ def toggle_agent_definition(
         return {"success": False, "error": f"Agent definition '{name}' not found"}
 
     updated = def_manager.update(row.id, enabled=enabled)
-    logger.info(f"Toggled agent definition '{name}' enabled={enabled}")
+    logger.info("Toggled agent definition '%s' enabled=%s", name, enabled)
 
     return {"success": True, "agent": _agent_detail(updated)}
 
@@ -259,9 +259,9 @@ def delete_agent_definition(
         is_user = bool(row.tags and "user" in row.tags)
         auto_delete_definition(name, "agent", project_path, delete_global=is_user)
     except Exception as e:
-        logger.warning(f"Failed to delete agent template '{name}': {e}")
+        logger.warning("Failed to delete agent template '%s': %s", name, e)
 
-    logger.info(f"Deleted agent definition '{name}' (id={row.id})")
+    logger.info("Deleted agent definition '%s' (id=%s)", name, row.id)
     return {"success": True, "deleted": {"id": row.id, "name": row.name}}
 
 
@@ -307,14 +307,14 @@ def update_agent_rules(
     body["workflows"] = workflows
 
     updated = def_manager.update(row.id, definition_json=json.dumps(body))
-    logger.info(f"Updated rules for agent '{name}': {rules}")
+    logger.info("Updated rules for agent '%s': %s", name, rules)
 
     try:
         from gobby.mcp_proxy.tools.workflows._auto_export import auto_export_definition
 
         auto_export_definition(updated, project_path, make_global=make_global_template)
     except Exception as e:
-        logger.warning(f"Failed to auto-export agent '{name}': {e}")
+        logger.warning("Failed to auto-export agent '%s': %s", name, e)
 
     return {"success": True, "rules": rules}
 
@@ -360,14 +360,14 @@ def update_agent_variables(
     body["workflows"] = workflows
 
     updated = def_manager.update(row.id, definition_json=json.dumps(body))
-    logger.info(f"Updated variables for agent '{name}': {list(variables.keys())}")
+    logger.info("Updated variables for agent '%s': %s", name, list(variables.keys()))
 
     try:
         from gobby.mcp_proxy.tools.workflows._auto_export import auto_export_definition
 
         auto_export_definition(updated, project_path, make_global=make_global_template)
     except Exception as e:
-        logger.warning(f"Failed to auto-export agent '{name}': {e}")
+        logger.warning("Failed to auto-export agent '%s': %s", name, e)
 
     return {"success": True, "variables": variables}
 
@@ -407,13 +407,13 @@ def update_agent_steps(
         return {"success": False, "error": f"Validation failed: {e}"}
 
     updated = def_manager.update(row.id, definition_json=json.dumps(body))
-    logger.info(f"Updated steps for agent '{name}': {len(steps or [])} steps")
+    logger.info("Updated steps for agent '%s': %s steps", name, len(steps or []))
 
     try:
         from gobby.mcp_proxy.tools.workflows._auto_export import auto_export_definition
 
         auto_export_definition(updated, project_path, make_global=make_global_template)
     except Exception as e:
-        logger.warning(f"Failed to auto-export agent '{name}': {e}")
+        logger.warning("Failed to auto-export agent '%s': %s", name, e)
 
     return {"success": True, "steps": steps, "step_count": len(steps or [])}

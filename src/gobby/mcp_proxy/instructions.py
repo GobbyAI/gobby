@@ -82,5 +82,5 @@ def build_gobby_instructions() -> str:
                     return parts[2].strip()
             return raw.strip()
         except OSError:
-            logger.warning(f"Failed to read prompt file {prompt_file}, using fallback")
+            logger.warning("Failed to read prompt file %s, using fallback", prompt_file)
     return _FALLBACK_INSTRUCTIONS

@@ -317,7 +317,7 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
             result["content"] = content
             result["truncated"] = truncated
         except OSError as e:
-            logger.error(f"Failed to read file: {e} (project_id={project_id})")
+            logger.error("Failed to read file: %s (project_id=%s)", e, project_id)
             raise HTTPException(500, f"Failed to read file: {e}") from e
 
         return result

@@ -325,13 +325,13 @@ async def handle_set_mode(mixin: SessionControlMixin, websocket: Any, data: dict
                     {"chat_mode": mode, "mode_level": compute_mode_level(mode)},
                 )
             except Exception as e:
-                logger.warning(f"Failed to sync mode_level on mode change: {e}")
-        logger.info(f"Chat mode set to '{mode}' for conversation {conversation_id[:8]}")
+                logger.warning("Failed to sync mode_level on mode change: %s", e)
+        logger.info("Chat mode set to '%s' for conversation %s", mode, conversation_id[:8])
     elif conversation_id:
         # Store mode for when session is created
         mixin._pending_modes[conversation_id] = mode
         _mark_pending_config(mixin, conversation_id)
-        logger.debug(f"Chat mode '{mode}' queued for future conversation {conversation_id[:8]}")
+        logger.debug("Chat mode '%s' queued for future conversation %s", mode, conversation_id[:8])
 
 
 async def handle_set_project(
@@ -382,7 +382,7 @@ async def handle_set_project(
                         project_id=new_project_id,
                     )
                 except Exception as e:
-                    logger.warning(f"Failed to update session on project switch: {e}")
+                    logger.warning("Failed to update session on project switch: %s", e)
         await session.stop()
         registry = getattr(mixin, "web_chat_session_registry", None)
         if registry is not None:
@@ -405,8 +405,10 @@ async def handle_set_project(
         )
     )
     logger.info(
-        f"Project switched for conversation {conversation_id[:8]}: "
-        f"{old_project_id} -> {new_project_id}"
+        "Project switched for conversation %s: %s -> %s",
+        conversation_id[:8],
+        old_project_id,
+        new_project_id,
     )
 
 
@@ -448,7 +450,7 @@ async def handle_set_worktree(
                 if wt:
                     worktree_path = wt.worktree_path
             except Exception as e:
-                logger.warning(f"Failed to resolve worktree {worktree_id}: {e}")
+                logger.warning("Failed to resolve worktree %s: %s", worktree_id, e)
 
     if not worktree_path:
         await mixin._send_error(websocket, "set_worktree requires worktree_path or worktree_id")
@@ -473,7 +475,7 @@ async def handle_set_worktree(
                         status="paused",
                     )
                 except Exception as e:
-                    logger.warning(f"Failed to update session on worktree switch: {e}")
+                    logger.warning("Failed to update session on worktree switch: %s", e)
         await session.stop()
         registry = getattr(mixin, "web_chat_session_registry", None)
         if registry is not None:
@@ -499,8 +501,10 @@ async def handle_set_worktree(
         )
     )
     logger.info(
-        f"Worktree switched for conversation {conversation_id[:8]}: "
-        f"branch={new_branch}, path={worktree_path}"
+        "Worktree switched for conversation %s: branch=%s, path=%s",
+        conversation_id[:8],
+        new_branch,
+        worktree_path,
     )
 
 
@@ -592,7 +596,7 @@ async def handle_set_agent(
                         status="paused",
                     )
                 except Exception as e:
-                    logger.warning(f"Failed to update session on agent switch: {e}")
+                    logger.warning("Failed to update session on agent switch: %s", e)
         await session.stop()
         registry = getattr(mixin, "web_chat_session_registry", None)
         if registry is not None:
@@ -613,7 +617,7 @@ async def handle_set_agent(
             }
         )
     )
-    logger.info(f"Agent switched for conversation {conversation_id[:8]}: {agent_name}")
+    logger.info("Agent switched for conversation %s: %s", conversation_id[:8], agent_name)
 
 
 async def handle_set_provider(
@@ -655,7 +659,7 @@ async def handle_set_provider(
                         status="paused",
                     )
                 except Exception as e:
-                    logger.warning(f"Failed to update session on provider switch: {e}")
+                    logger.warning("Failed to update session on provider switch: %s", e)
         await session.stop()
         registry = getattr(mixin, "web_chat_session_registry", None)
         if registry is not None:
@@ -677,6 +681,8 @@ async def handle_set_provider(
         )
     )
     logger.info(
-        f"Provider switched for conversation {conversation_id[:8]}: "
-        f"{old_provider or '(new)'} -> {provider}"
+        "Provider switched for conversation %s: %s -> %s",
+        conversation_id[:8],
+        old_provider or "(new)",
+        provider,
     )

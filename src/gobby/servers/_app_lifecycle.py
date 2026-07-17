@@ -30,7 +30,7 @@ def create_lifespan(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         """Handle application startup and shutdown with combined lifespans."""
-        logger.debug(f"Starting Gobby HTTP server on port {server.port}")
+        logger.debug("Starting Gobby HTTP server on port %s", server.port)
         server._running = True
         server._start_time = time.time()
 
@@ -71,7 +71,7 @@ def create_lifespan(
                     debounce_seconds=2.0,
                 )
             except Exception as e:
-                logger.warning(f"Failed to create CodeIndexTrigger: {e}")
+                logger.warning("Failed to create CodeIndexTrigger: %s", e)
 
             try:
                 from gobby.code_index.codewiki_trigger import CodewikiRefreshTrigger
@@ -82,7 +82,7 @@ def create_lifespan(
                     debounce_seconds=2.0,
                 )
             except (AttributeError, ImportError) as e:
-                logger.warning(f"Failed to create CodewikiRefreshTrigger: {e}")
+                logger.warning("Failed to create CodewikiRefreshTrigger: %s", e)
 
         if not getattr(app.state, "hook_manager", None):
             app.state.hook_manager = hook_manager_factory_getter()(**hook_manager_kwargs)
@@ -101,7 +101,7 @@ def create_lifespan(
             try:
                 await app.state.pending_interaction_manager.expire_all_pending()
             except Exception as e:
-                logger.warning(f"Failed to expire pending interactions on startup: {e}")
+                logger.warning("Failed to expire pending interactions on startup: %s", e)
             logger.debug("PendingInteractionManager initialized")
 
         ws_server = server.services.websocket_server or server.websocket_server
@@ -240,7 +240,7 @@ def create_lifespan(
                 await runtime_manager.start(background=True)
                 logger.debug("Web chat runtime manager startup scheduled")
             except Exception as e:
-                logger.warning(f"Failed to start web chat runtime manager: {e}")
+                logger.warning("Failed to start web chat runtime manager: %s", e)
 
         async def _sync_existing_codex_sessions() -> None:
             if not getattr(app.state, "codex_adapter", None):
@@ -250,14 +250,14 @@ def create_lifespan(
                     app.state.codex_adapter.sync_existing_sessions(),
                     timeout=_CODEX_SYNC_TIMEOUT_SECONDS,
                 )
-                logger.debug(f"Synced {synced} existing Codex sessions")
+                logger.debug("Synced %s existing Codex sessions", synced)
             except TimeoutError:
                 logger.warning(
                     "Timed out syncing existing Codex sessions after %.1fs",
                     _CODEX_SYNC_TIMEOUT_SECONDS,
                 )
             except Exception as e:
-                logger.warning(f"Failed to sync existing Codex sessions: {e}")
+                logger.warning("Failed to sync existing Codex sessions: %s", e)
 
         app.state.codex_adapter = None
         app.state.codex_sync_task = None
@@ -285,7 +285,7 @@ def create_lifespan(
                 await monitor.start()
                 logger.debug("TmuxPaneMonitor started")
             except Exception as e:
-                logger.warning(f"Failed to start TmuxPaneMonitor: {e}")
+                logger.warning("Failed to start TmuxPaneMonitor: %s", e)
 
         try:
             from gobby.sessions.liveness_monitor import SessionLivenessMonitor
@@ -303,7 +303,7 @@ def create_lifespan(
             await liveness_monitor.start()
             logger.debug("SessionLivenessMonitor started")
         except Exception as e:
-            logger.warning(f"Failed to start SessionLivenessMonitor: {e}")
+            logger.warning("Failed to start SessionLivenessMonitor: %s", e)
 
         if mcp_app is not None:
             async with mcp_app.router.lifespan_context(app):
@@ -350,14 +350,14 @@ def create_lifespan(
                     await cleanup_result
                 logger.debug("Voice resources cleaned up")
             except Exception as e:
-                logger.warning(f"Failed to clean up voice resources: {e}")
+                logger.warning("Failed to clean up voice resources: %s", e)
 
         from gobby.servers.routes.llm import stop_vision_temp_cleanup_task
 
         try:
             await stop_vision_temp_cleanup_task(app)
         except Exception as e:
-            logger.warning(f"Failed to stop vision temp cleanup task: {e}")
+            logger.warning("Failed to stop vision temp cleanup task: %s", e)
 
         if getattr(app.state, "codex_sync_task", None):
             app.state.codex_sync_task.cancel()
@@ -374,7 +374,7 @@ def create_lifespan(
                 await runtime_manager.stop()
                 logger.debug("Web chat runtime manager stopped")
             except Exception as e:
-                logger.warning(f"Failed to stop web chat runtime manager: {e}")
+                logger.warning("Failed to stop web chat runtime manager: %s", e)
 
         if hasattr(app.state, "liveness_monitor") and app.state.liveness_monitor:
             try:
@@ -382,7 +382,7 @@ def create_lifespan(
                 app.state.liveness_monitor = None
                 logger.debug("SessionLivenessMonitor stopped")
             except Exception as e:
-                logger.warning(f"Failed to stop SessionLivenessMonitor: {e}")
+                logger.warning("Failed to stop SessionLivenessMonitor: %s", e)
 
         try:
             from gobby.agents.tmux import get_tmux_pane_monitor, set_tmux_pane_monitor
@@ -393,7 +393,7 @@ def create_lifespan(
                 set_tmux_pane_monitor(None)
                 logger.debug("TmuxPaneMonitor stopped")
         except Exception as e:
-            logger.warning(f"Failed to stop TmuxPaneMonitor: {e}")
+            logger.warning("Failed to stop TmuxPaneMonitor: %s", e)
 
         if hasattr(app.state, "pending_interaction_manager"):
             try:

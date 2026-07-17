@@ -165,7 +165,7 @@ def toggle_rule(
         return {"success": False, "error": f"Rule '{name}' not found"}
 
     updated = def_manager.update(row.id, enabled=enabled)
-    logger.info(f"Toggled rule '{name}' enabled={enabled}")
+    logger.info("Toggled rule '%s' enabled=%s", name, enabled)
 
     return {"success": True, "rule": _rule_detail(updated)}
 
@@ -238,14 +238,14 @@ def update_rule(
         return {"success": False, "error": "No fields to update"}
 
     updated = def_manager.update(row.id, **fields)
-    logger.info(f"Updated rule '{name}' (fields={list(fields)})")
+    logger.info("Updated rule '%s' (fields=%s)", name, list(fields))
 
     try:
         from gobby.mcp_proxy.tools.workflows._auto_export import auto_export_definition
 
         auto_export_definition(updated, project_path, make_global=make_global_template)
     except Exception as e:
-        logger.warning(f"Failed to auto-export updated rule '{name}': {e}")
+        logger.warning("Failed to auto-export updated rule '%s': %s", name, e)
 
     return {"success": True, "rule": _rule_detail(updated)}
 
@@ -309,7 +309,7 @@ def create_rule(
         source="installed",
         tags=tags,
     )
-    logger.info(f"Created rule '{name}' (id={row.id})")
+    logger.info("Created rule '%s' (id=%s)", name, row.id)
 
     # Auto-export to YAML for persistence
     try:
@@ -317,7 +317,7 @@ def create_rule(
 
         auto_export_definition(row, project_path, make_global=make_global_template)
     except Exception as e:
-        logger.warning(f"Failed to auto-export rule '{name}': {e}")
+        logger.warning("Failed to auto-export rule '%s': %s", name, e)
 
     return {"success": True, "rule": _rule_detail(row)}
 
@@ -373,7 +373,7 @@ def delete_rule(
             delete_global=is_user,
         )
     except Exception as e:
-        logger.warning(f"Failed to delete rule template '{name}': {e}")
+        logger.warning("Failed to delete rule template '%s': %s", name, e)
 
-    logger.info(f"Deleted rule '{name}' (id={row.id})")
+    logger.info("Deleted rule '%s' (id=%s)", name, row.id)
     return {"success": True, "deleted": {"id": row.id, "name": row.name}}
