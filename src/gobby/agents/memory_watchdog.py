@@ -13,10 +13,11 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import psutil
 
+from gobby.agents.capture import capture_then_kill_async
 from gobby.agents.kill import kill_agent
 from gobby.utils.datetime import parse_stored_datetime
 
@@ -24,7 +25,7 @@ if TYPE_CHECKING:
     from gobby.agents.agent_cleanup import AgentCleanupHandler
     from gobby.agents.tmux.session_manager import TmuxSessionManager
     from gobby.config.tmux import TmuxConfig
-    from gobby.storage.agents import AgentRun, LocalAgentRunManager
+    from gobby.storage.agents import AgentRun, LocalAgentRunManager, TerminalAction
     from gobby.storage.postgres import HubDatabase
 
 logger = logging.getLogger(__name__)
@@ -162,34 +163,64 @@ class MemoryWatchdogHandler:
             return False
 
         logger.warning("Memory watchdog killing agent %s: %s", run.id, message)
-        if self._kill_agent_fn is not None:
-            result = await self._kill_agent_fn(run)
-        else:
+        tmux_name = run.tmux_session_name
+        if not tmux_name:
             result = await kill_agent(
                 run,
                 self._db,
                 signal_name="TERM",
                 timeout=5.0,
-                close_terminal=True,
+                close_terminal=False,
             )
-        if not result.get("success"):
+            if not result.get("success"):
+                logger.warning(
+                    "Memory watchdog kill failed for run %s: %s",
+                    run.id,
+                    result.get("error") or result.get("message"),
+                )
+                return False
+            await self._cleanup_handler.cleanup_agent(run, terminal_payload=message)
+            self._breach_counts.pop(run.id, None)
+            return True
+
+        async def kill_tmux() -> bool:
+            if self._kill_agent_fn is not None:
+                kill_result = await self._kill_agent_fn(run)
+                return bool(kill_result.get("success"))
+            return await self._tmux.kill_session(tmux_name, missing_ok=True)
+
+        async def terminalize(
+            _action: TerminalAction,
+            payload: str | None,
+        ) -> AgentRun | None:
+            await self._cleanup_handler.cleanup_agent(
+                run,
+                terminal_payload=payload or message,
+            )
+            return cast(
+                "AgentRun | None",
+                await self._run_db(self._agent_run_manager.get, run.id),
+            )
+
+        termination = await capture_then_kill_async(
+            storage=self._agent_run_manager,
+            run_id=run.id,
+            session_name=tmux_name,
+            action="fail",
+            reason=message,
+            session_alive=lambda: self._tmux.has_session(tmux_name),
+            capture=lambda: self._tmux.capture_full_pane(tmux_name),
+            kill=kill_tmux,
+            terminalize=terminalize,
+        )
+        if not termination.success:
             logger.warning(
-                "Memory watchdog kill failed for run %s: %s",
+                "Memory watchdog kill failed for run %s: %s (%s)",
                 run.id,
-                result.get("error") or result.get("message"),
+                termination.error,
+                termination.error_code,
             )
             return False
-        if run.tmux_session_name:
-            await self._run_db(
-                self._agent_run_manager.clear_tmux_session_name,
-                run.id,
-                run.tmux_session_name,
-            )
-        await self._cleanup_handler.cleanup_agent(
-            run,
-            terminal_payload=message,
-            is_timeout=False,
-        )
         self._breach_counts.pop(run.id, None)
         return True
 

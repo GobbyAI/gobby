@@ -14,7 +14,7 @@ import os
 import threading
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, call, patch
@@ -106,6 +106,30 @@ def monitor(
         check_interval_seconds=1.0,
         tmux_config=TmuxConfig(),
     )
+
+
+def _successful_termination_stub(
+    monitor: AgentLifecycleMonitor,
+    *,
+    on_terminate: Callable[[AgentRun], None] | None = None,
+) -> AsyncMock:
+    async def terminate(
+        run: AgentRun,
+        *,
+        action: str,
+        reason: str,
+    ) -> bool:
+        if on_terminate is not None:
+            on_terminate(run)
+        await monitor._health_monitor._cleanup_handler.cleanup_agent(
+            run,
+            terminal_payload=reason,
+            is_success=action == "complete",
+            is_timeout=action == "timeout",
+        )
+        return True
+
+    return AsyncMock(side_effect=terminate)
 
 
 def _metadata_run(run_id: str, metadata: object, task_id: str | None = None) -> AgentRun:
@@ -520,6 +544,55 @@ def _make_autonomous_run(
     return stored_run
 
 
+@pytest.mark.asyncio
+async def test_reconcile_pending_termination_captures_kills_and_terminalizes(
+    monitor: AgentLifecycleMonitor,
+    agent_run_manager: LocalAgentRunManager,
+    sample_session: dict,
+) -> None:
+    run = _make_terminal_run(
+        agent_run_manager,
+        sample_session,
+        run_id=_rid("run-reconcile-termination"),
+        tmux_session_name="gobby-reconcile-termination",
+    )
+    agent_run_manager.record_termination_intent(
+        run.id,
+        action="timeout",
+        reason="reconciled timeout",
+    )
+    alive = True
+
+    async def has_session(_name: str) -> bool:
+        return alive
+
+    async def kill_session(_name: str, *, missing_ok: bool = False) -> bool:
+        nonlocal alive
+        assert missing_ok is True
+        alive = False
+        return True
+
+    with (
+        patch.object(monitor._tmux, "has_session", side_effect=has_session),
+        patch.object(
+            monitor._tmux,
+            "capture_full_pane",
+            new_callable=AsyncMock,
+            return_value="complete pane history",
+        ),
+        patch.object(monitor._tmux, "kill_session", side_effect=kill_session),
+    ):
+        reconciled = await monitor.reconcile_pending_terminations()
+
+    assert reconciled == 1
+    updated = agent_run_manager.get(run.id)
+    assert updated is not None
+    assert updated.status == "timeout"
+    assert "complete pane history" in (updated.result or "")
+    assert updated.pending_terminal_action is None
+    assert updated.tmux_session_name is None
+
+
 class TestCheckDeadAgents:
     """Tests for check_unhealthy_agents."""
 
@@ -576,11 +649,7 @@ class TestCheckDeadAgents:
             cleaned = await monitor.check_unhealthy_agents()
 
         assert cleaned == 1
-        tmux_manager.kill_session.assert_awaited_once_with(
-            "gobby-dead-no-pid",
-            missing_ok=True,
-            timeout=5.0,
-        )
+        tmux_manager.kill_session.assert_not_awaited()
 
         updated = agent_run_manager.get(_rid("run-dead-no-pid"))
         assert updated is not None
@@ -635,10 +704,10 @@ class TestCheckDeadAgents:
                 new_callable=AsyncMock,
                 return_value=False,
             ) as mock_identity,
-            patch(
-                "gobby.agents.agent_health.kill_agent",
-                new_callable=AsyncMock,
-                return_value={"success": True},
+            patch.object(
+                monitor._health_monitor,
+                "_terminate_tmux_run",
+                new=_successful_termination_stub(monitor),
             ),
             patch("gobby.agents.agent_health.os.kill") as mock_kill,
         ):
@@ -2218,10 +2287,10 @@ class TestCheckExpiredAgents:
 
         with (
             patch.object(monitor._tmux, "has_session", new_callable=AsyncMock, return_value=True),
-            patch(
-                "gobby.agents.agent_health.kill_agent",
-                new_callable=AsyncMock,
-                return_value={"success": True},
+            patch.object(
+                monitor._health_monitor,
+                "_terminate_tmux_run",
+                new=_successful_termination_stub(monitor),
             ),
         ):
             cleaned = await monitor.check_unhealthy_agents()
@@ -2275,9 +2344,8 @@ class TestCheckExpiredAgents:
         release_observations: list[tuple[list[str], str | None]] = []
         original_release_claim = task_manager.release_task_claim
 
-        async def kill_live_agent(*args: object, **kwargs: object) -> dict[str, object]:
+        def kill_live_agent(_run: AgentRun) -> None:
             events.append("killed")
-            return {"success": True, "pid": 12345}
 
         def release_task_claim(*args: object, **kwargs: object) -> object:
             mutex = mutexes.get_mutex(task.id)
@@ -2294,10 +2362,10 @@ class TestCheckExpiredAgents:
                 new_callable=AsyncMock,
                 return_value="",
             ),
-            patch(
-                "gobby.agents.agent_health.kill_agent",
-                new_callable=AsyncMock,
-                side_effect=kill_live_agent,
+            patch.object(
+                monitor._health_monitor,
+                "_terminate_tmux_run",
+                new=_successful_termination_stub(monitor, on_terminate=kill_live_agent),
             ),
             patch.object(task_manager, "release_task_claim", side_effect=release_task_claim),
         ):
@@ -2410,10 +2478,10 @@ class TestCheckExpiredAgents:
                 new_callable=AsyncMock,
                 return_value="CANARY-OK\nQA verdict: APPROVED\n",
             ),
-            patch(
-                "gobby.agents.agent_health.kill_agent",
-                new_callable=AsyncMock,
-                return_value={"success": True},
+            patch.object(
+                monitor._health_monitor,
+                "_terminate_tmux_run",
+                new=_successful_termination_stub(monitor),
             ),
         ):
             cleaned = await monitor.check_unhealthy_agents()
@@ -2486,10 +2554,10 @@ class TestCheckExpiredAgents:
                 new_callable=AsyncMock,
                 return_value="QA verdict: PASS\n",
             ),
-            patch(
-                "gobby.agents.agent_health.kill_agent",
-                new_callable=AsyncMock,
-                return_value={"success": True},
+            patch.object(
+                monitor._health_monitor,
+                "_terminate_tmux_run",
+                new=_successful_termination_stub(monitor),
             ),
         ):
             cleaned = await monitor.check_unhealthy_agents()
@@ -2538,10 +2606,10 @@ class TestCheckExpiredAgents:
 
         with (
             patch.object(monitor._tmux, "has_session", new_callable=AsyncMock, return_value=True),
-            patch(
-                "gobby.agents.agent_health.kill_agent",
-                new_callable=AsyncMock,
-                return_value={"success": True},
+            patch.object(
+                monitor._health_monitor,
+                "_terminate_tmux_run",
+                new=_successful_termination_stub(monitor),
             ),
         ):
             cleaned = await monitor.check_unhealthy_agents()
@@ -2912,10 +2980,10 @@ class TestCheckExpiredAgents:
 
         with (
             patch.object(mon._tmux, "has_session", new_callable=AsyncMock, return_value=True),
-            patch(
-                "gobby.agents.agent_health.kill_agent",
-                new_callable=AsyncMock,
-                return_value={"success": True},
+            patch.object(
+                mon._health_monitor,
+                "_terminate_tmux_run",
+                new=_successful_termination_stub(mon),
             ),
         ):
             await mon.check_unhealthy_agents()
@@ -2962,10 +3030,10 @@ class TestCheckExpiredAgents:
 
         with (
             patch.object(mon._tmux, "has_session", new_callable=AsyncMock, return_value=True),
-            patch(
-                "gobby.agents.agent_health.kill_agent",
-                new_callable=AsyncMock,
-                return_value={"success": True},
+            patch.object(
+                mon._health_monitor,
+                "_terminate_tmux_run",
+                new=_successful_termination_stub(mon),
             ),
         ):
             await mon.check_unhealthy_agents()
@@ -3079,9 +3147,9 @@ class TestCheckProviderStallsKillsAgent:
                 return_value=True,
             ),
             patch.object(
-                monitor._tmux,
-                "kill_session",
-                new_callable=AsyncMock,
+                monitor._health_monitor,
+                "_terminate_tmux_run",
+                new=_successful_termination_stub(monitor),
             ) as mock_kill,
         ):
             # First check: sets consecutive_hits=1, returns UNKNOWN
@@ -3098,7 +3166,7 @@ class TestCheckProviderStallsKillsAgent:
             # Second check: consecutive_hits=2, confirms PROVIDER_STALL → kill
             stalled = await monitor.check_provider_stalls()
             assert stalled == 1
-            mock_kill.assert_called_once_with("gobby-stall-kill")
+            assert mock_kill.await_args.args[0].tmux_session_name == "gobby-stall-kill"
 
         updated = agent_run_manager.get(_rid("run-stall-kill"))
         assert updated is not None
@@ -3125,8 +3193,9 @@ class TestCheckProviderStallsKillsAgent:
         async def checkpoint_agent_work(checkpoint_run: AgentRun) -> None:
             events.append(("checkpoint", checkpoint_run.id))
 
-        async def kill_session(session_name: str) -> None:
-            events.append(("kill", session_name))
+        async def terminate_run(run: AgentRun, **_kwargs: object) -> bool:
+            events.append(("kill", run.tmux_session_name or ""))
+            return True
 
         with (
             patch.object(
@@ -3141,10 +3210,10 @@ class TestCheckProviderStallsKillsAgent:
                 new=checkpoint_agent_work,
             ),
             patch.object(
-                monitor._tmux,
-                "kill_session",
+                monitor._health_monitor,
+                "_terminate_tmux_run",
                 new_callable=AsyncMock,
-                side_effect=kill_session,
+                side_effect=terminate_run,
             ),
         ):
             await monitor.check_provider_stalls()
@@ -3314,14 +3383,14 @@ class TestCheckInitializationTimeout:
         monitor._session_manager = session_manager
 
         with patch.object(
-            monitor._tmux,
-            "kill_session",
-            new_callable=AsyncMock,
+            monitor._health_monitor,
+            "_terminate_tmux_run",
+            new=_successful_termination_stub(monitor),
         ) as mock_kill:
             killed = await monitor.check_initialization_timeout()
 
         assert killed == 1
-        mock_kill.assert_called_once_with("gobby-uninit")
+        assert mock_kill.await_args.args[0].tmux_session_name == "gobby-uninit"
 
         updated = agent_run_manager.get(_rid("run-uninit"))
         assert updated is not None
@@ -3485,9 +3554,10 @@ class TestCheckInitializationTimeout:
         monitor._session_manager = session_manager
 
         with patch.object(
-            monitor._tmux,
-            "kill_session",
+            monitor._health_monitor,
+            "_terminate_tmux_run",
             new_callable=AsyncMock,
+            return_value=True,
         ) as mock_kill:
             killed = await monitor.check_initialization_timeout()
 
@@ -3527,9 +3597,9 @@ class TestCheckInitializationTimeout:
         monitor._session_manager = session_manager
 
         with patch.object(
-            monitor._tmux,
-            "kill_session",
-            new_callable=AsyncMock,
+            monitor._health_monitor,
+            "_terminate_tmux_run",
+            new=_successful_termination_stub(monitor),
         ) as mock_kill:
             killed = await monitor.check_initialization_timeout()
 
@@ -3572,14 +3642,14 @@ class TestCheckInitializationTimeout:
         monitor._session_manager = session_manager
 
         with patch.object(
-            monitor._tmux,
-            "kill_session",
-            new_callable=AsyncMock,
+            monitor._health_monitor,
+            "_terminate_tmux_run",
+            new=_successful_termination_stub(monitor),
         ) as mock_kill:
             killed = await monitor.check_initialization_timeout()
 
         assert killed == 1
-        mock_kill.assert_called_once_with("gobby-naive-uninit")
+        assert mock_kill.await_args.args[0].tmux_session_name == "gobby-naive-uninit"
 
     @pytest.mark.asyncio
     async def test_error_matches_provider_pattern(

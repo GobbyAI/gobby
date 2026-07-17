@@ -18,6 +18,7 @@ from ._constants import (
 )
 from ._manager import LocalAgentRunManager
 from ._models import AgentRun
+from ._termination import TerminalAction
 
 __all__ = [
     "ACTIVE_AGENT_RUN_STATUSES",
@@ -33,5 +34,6 @@ __all__ = [
     "AgentRunStatus",
     "AgentRunTerminalReason",
     "LocalAgentRunManager",
+    "TerminalAction",
     "logger",
 ]

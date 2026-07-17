@@ -28,12 +28,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 
 # This import should fail initially (red phase) - module doesn't exist yet
-from gobby.hooks.session_coordinator import (
-    _MAX_TMUX_RESULT_CHARS,
-    _TMUX_TRUNCATION_MARKER,
-    SessionCoordinator,
-    _bound_tmux_result,
-)
+from gobby.hooks.session_coordinator import SessionCoordinator
 from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
@@ -368,36 +363,41 @@ class TestSessionLifecycleTransitions:
 class TestAgentRunCompletion:
     """Test agent run completion logic."""
 
-    def test_bound_tmux_result_preserves_short_output(self) -> None:
-        assert _bound_tmux_result("  short output\n") == "short output"
-
-    def test_bound_tmux_result_retains_newest_output(self) -> None:
-        output = "a" * _MAX_TMUX_RESULT_CHARS + "newest"
-
-        result = _bound_tmux_result(output)
-
-        assert len(result) == _MAX_TMUX_RESULT_CHARS
-        assert result.startswith(_TMUX_TRUNCATION_MARKER)
-        assert result.endswith("newest")
-
     @patch("gobby.agents.tmux.get_configured_tmux_command_prefix", side_effect=lambda: ["tmux"])
     @patch("subprocess.run")
-    def test_complete_agent_run_bounds_tmux_capture(
+    def test_complete_agent_run_captures_full_tmux_history(
         self,
         mock_run: MagicMock,
         _mock_tmux_prefix: MagicMock,
     ) -> None:
-        large_output = "old" * _MAX_TMUX_RESULT_CHARS + "newest"
-        mock_run.side_effect = [
-            SimpleNamespace(returncode=0, stdout=large_output),
-            SimpleNamespace(returncode=0, stdout=""),
-        ]
+        large_output = "old" * 20_000 + "newest"
+        killed = False
+
+        def run_tmux(command: list[str], **_kwargs: object) -> SimpleNamespace:
+            nonlocal killed
+            if "capture-pane" in command:
+                return SimpleNamespace(returncode=0, stdout=large_output)
+            if "kill-session" in command:
+                killed = True
+                return SimpleNamespace(returncode=0, stdout="")
+            return SimpleNamespace(returncode=int(killed), stdout="")
+
+        mock_run.side_effect = run_tmux
         mock_agent_run_manager = MagicMock()
         mock_agent_run_manager.db.fetchone.return_value = None
-        mock_agent_run_manager.get.return_value = MagicMock(
+        running = SimpleNamespace(
+            id="run-id",
+            result=None,
+            capture_id=None,
+            capture_revision=0,
             status="running",
             tmux_session_name="agent-run",
         )
+        persisted = SimpleNamespace(**{**vars(running), "result": large_output})
+        mock_agent_run_manager.get.return_value = running
+        mock_agent_run_manager.record_termination_intent.return_value = running
+        mock_agent_run_manager.replace_capture_slot.return_value = persisted
+        mock_agent_run_manager.complete.return_value = SimpleNamespace(status="completed")
         coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
         session = SimpleNamespace(
             id="session-id",
@@ -410,11 +410,13 @@ class TestAgentRunCompletion:
 
         coordinator.complete_agent_run(session)
 
-        result = mock_agent_run_manager.complete.call_args.kwargs["result"]
-        assert len(result) == _MAX_TMUX_RESULT_CHARS
-        assert result.endswith("newest")
-        capture_command = mock_run.call_args_list[0].args[0]
-        assert capture_command[-2:] == ["-S", "-2000"]
+        captured = mock_agent_run_manager.replace_capture_slot.call_args.kwargs["slot_content"]
+        assert large_output in captured
+        assert "newest" in captured
+        capture_command = next(
+            call.args[0] for call in mock_run.call_args_list if "capture-pane" in call.args[0]
+        )
+        assert capture_command[-2:] == ["-S", "-"]
 
     @pytest.mark.asyncio
     async def test_complete_agent_run_flushes_stats_before_refresh(self) -> None:

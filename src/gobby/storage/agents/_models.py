@@ -62,6 +62,11 @@ class AgentRun:
     timeout_seconds: float | None = None
     terminal_reason: AgentRunTerminalReason | None = None
     resume_metadata_json: dict[str, Any] | None = None
+    capture_id: str | None = None
+    capture_revision: int = 0
+    pending_terminal_action: str | None = None
+    pending_terminal_reason: str | None = None
+    termination_requested_at: datetime | None = None
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> AgentRun:
@@ -129,6 +134,19 @@ class AgentRun:
             resume_metadata_json=normalize_resume_metadata(
                 row["resume_metadata_json"] if "resume_metadata_json" in row.keys() else None
             ),
+            capture_id=row["capture_id"] if "capture_id" in row.keys() else None,
+            capture_revision=(row["capture_revision"] or 0)
+            if "capture_revision" in row.keys()
+            else 0,
+            pending_terminal_action=row["pending_terminal_action"]
+            if "pending_terminal_action" in row.keys()
+            else None,
+            pending_terminal_reason=row["pending_terminal_reason"]
+            if "pending_terminal_reason" in row.keys()
+            else None,
+            termination_requested_at=row["termination_requested_at"]
+            if "termination_requested_at" in row.keys()
+            else None,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -169,6 +187,11 @@ class AgentRun:
             "continuation_prompt": self.continuation_prompt,
             "terminal_reason": self.terminal_reason,
             "resume_metadata_json": self.resume_metadata_json,
+            "capture_id": self.capture_id,
+            "capture_revision": self.capture_revision,
+            "pending_terminal_action": self.pending_terminal_action,
+            "pending_terminal_reason": self.pending_terminal_reason,
+            "termination_requested_at": self.termination_requested_at,
         }
 
     def to_brief(self) -> dict[str, Any]:

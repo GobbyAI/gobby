@@ -1328,7 +1328,7 @@ class TestEndAgentRun:
             result = await registry._tools["end_agent_run"].func()
 
         assert result == {"success": True, "run_id": "run-123", "status": "success"}
-        assert events == [("complete", "run-123", None), ("kill", "run-123", True)]
+        assert events == [("complete", "run-123", None), ("kill", "run-123", False)]
 
     @pytest.mark.asyncio
     async def test_returns_error_when_session_has_no_agent_run(self) -> None:
@@ -1655,7 +1655,7 @@ class TestCompleteSelfTerminatedRunSignoffMessage:
         run = MagicMock()
         run.id = "run-xyz"
         run.child_session_id = "child-sess-1"
-        run.tmux_session_name = "tmux-1"
+        run.tmux_session_name = None
         runner = MagicMock()
         kill_db = MagicMock()
         completion_registry = MagicMock()
@@ -1712,7 +1712,7 @@ class TestCompleteSelfTerminatedRunSignoffMessage:
         run = MagicMock()
         run.id = "run-abc"
         run.child_session_id = "child-sess-2"
-        run.tmux_session_name = "tmux-2"
+        run.tmux_session_name = None
         runner = MagicMock()
         kill_db = MagicMock()
 
