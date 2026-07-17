@@ -150,10 +150,20 @@ def test_termination_candidates_include_intent_and_terminal_child_only(
         suffix="active-child",
     )
 
+    no_tmux_manager, no_tmux_id, no_tmux_child = _create_run(
+        temp_db,
+        session_manager,
+        sample_project,
+        suffix="no-tmux",
+        child_status="expired",
+    )
+    no_tmux_manager.clear_tmux_session_name(no_tmux_id, "gobby-no-tmux")
+
     candidate_ids = {run.id for run in manager.list_termination_candidates()}
     assert intended_id in candidate_ids
     assert terminal_child_id in candidate_ids
     assert active_child_id not in candidate_ids
+    assert no_tmux_id not in candidate_ids
 
 
 def test_terminal_transition_clears_intent_and_preserves_capture_result(

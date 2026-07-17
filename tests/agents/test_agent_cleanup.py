@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -11,6 +12,7 @@ from gobby.agents.agent_cleanup import (
     cleanup_merged_task_artifacts_after_agent_exit,
 )
 from gobby.storage.agents import AgentRun
+from tests.agents.test_capture import FakeCaptureStorage
 
 pytestmark = pytest.mark.unit
 
@@ -406,3 +408,140 @@ async def test_cleanup_agent_failure_persists_child_session_progress_stats() -> 
     }
     assert recovered == [(failed_run, "failed")]
     assert cleanup_runs == [failed_run]
+
+
+class _CaptureWrapperStorage(FakeCaptureStorage):
+    """Capture-policy storage whose complete() matches the manager signature."""
+
+    def complete(
+        self,
+        run_id: str,
+        result: str | None = None,
+        tool_calls_count: int = 0,
+        turns_used: int = 0,
+    ) -> AgentRun | None:
+        return self._terminal(run_id, "success")
+
+
+class _FakeTmux:
+    def __init__(self, *, kill_succeeds: bool = True, alive: bool = True) -> None:
+        self.alive = alive
+        self.kill_succeeds = kill_succeeds
+        self.kills: list[str] = []
+
+    async def has_session(self, name: str) -> bool:
+        return self.alive
+
+    async def capture_full_pane(self, session_name: str) -> str | None:
+        return "pane output" if self.alive else None
+
+    async def kill_session(
+        self,
+        name: str,
+        *,
+        missing_ok: bool = False,
+        timeout: float = 5.0,
+    ) -> bool:
+        self.kills.append(name)
+        if self.kill_succeeds:
+            self.alive = False
+        return self.kill_succeeds
+
+
+def _tmux_run(status: str = "running") -> AgentRun:
+    return replace(
+        _run(task_id=None, child_session_id=None, status=status),
+        tmux_session_name="wf-live",
+    )
+
+
+def _wrapper_handler(storage: _CaptureWrapperStorage) -> tuple[AgentCleanupHandler, list[AgentRun]]:
+    handler = _handler(MagicMock(), agent_run_manager=storage)
+    cleanup_runs: list[AgentRun] = []
+
+    async def post_terminal_cleanup(run: AgentRun, **kwargs: object) -> None:
+        cleanup_runs.append(run)
+
+    handler.post_terminal_cleanup = post_terminal_cleanup  # type: ignore[method-assign]
+    return handler, cleanup_runs
+
+
+async def test_terminalize_successful_run_captures_live_tmux_before_kill() -> None:
+    storage = _CaptureWrapperStorage(_tmux_run())
+    tmux = _FakeTmux()
+    handler, cleanup_runs = _wrapper_handler(storage)
+
+    with patch("gobby.agents.tmux.get_tmux_session_manager", return_value=tmux):
+        assert await handler.terminalize_successful_run(
+            "run-1",
+            notify_result={"status": "completed"},
+            message="done",
+        )
+
+    assert tmux.kills == ["wf-live"]
+    stored = storage.get("run-1")
+    assert stored is not None
+    assert stored.status == "success"
+    assert "pane output" in (stored.result or "")
+    assert storage.events.index("persist:run-1") < storage.events.index("terminal:run-1:success")
+    assert cleanup_runs and cleanup_runs[0].status == "success"
+
+
+async def test_terminalize_successful_run_kill_failure_keeps_run_nonterminal() -> None:
+    storage = _CaptureWrapperStorage(_tmux_run())
+    tmux = _FakeTmux(kill_succeeds=False)
+    handler, cleanup_runs = _wrapper_handler(storage)
+
+    with patch("gobby.agents.tmux.get_tmux_session_manager", return_value=tmux):
+        assert not await handler.terminalize_successful_run(
+            "run-1",
+            notify_result={"status": "completed"},
+            message="done",
+        )
+
+    stored = storage.get("run-1")
+    assert stored is not None
+    assert stored.status == "running"
+    assert stored.pending_terminal_action == "complete"
+    assert "pane output" in (stored.result or "")
+    assert cleanup_runs == []
+
+
+async def test_terminalize_cancelled_run_captures_live_tmux_before_kill() -> None:
+    storage = _CaptureWrapperStorage(_tmux_run())
+    tmux = _FakeTmux()
+    handler, cleanup_runs = _wrapper_handler(storage)
+
+    with patch("gobby.agents.tmux.get_tmux_session_manager", return_value=tmux):
+        assert await handler.terminalize_cancelled_run(
+            "run-1",
+            terminal_reason="user_cancelled",
+        )
+
+    assert tmux.kills == ["wf-live"]
+    stored = storage.get("run-1")
+    assert stored is not None
+    assert stored.status == "cancelled"
+    assert "pane output" in (stored.result or "")
+    assert cleanup_runs and cleanup_runs[0].status == "cancelled"
+
+
+async def test_terminalize_wrappers_skip_policy_when_session_absent() -> None:
+    storage = _CaptureWrapperStorage(_tmux_run())
+    tmux = _FakeTmux(alive=False)
+    handler, cleanup_runs = _wrapper_handler(storage)
+
+    with patch("gobby.agents.tmux.get_tmux_session_manager", return_value=tmux):
+        assert await handler.terminalize_successful_run(
+            "run-1",
+            notify_result={"status": "completed"},
+            message="done",
+        )
+
+    assert tmux.kills == []
+    assert not any(event.startswith("intent:") for event in storage.events)
+    assert not any(event.startswith("persist:") for event in storage.events)
+    stored = storage.get("run-1")
+    assert stored is not None
+    assert stored.status == "success"
+    assert cleanup_runs and cleanup_runs[0].status == "success"

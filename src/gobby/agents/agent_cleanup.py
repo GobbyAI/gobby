@@ -18,6 +18,7 @@ if TYPE_CHECKING:
         AgentRun,
         AgentRunTerminalReason,
         LocalAgentRunManager,
+        TerminalAction,
     )
     from gobby.storage.clones import LocalCloneManager
     from gobby.storage.hub.protocol import HubDatabase
@@ -312,6 +313,55 @@ class AgentCleanupHandler:
             turns_used = session_turns
         return tool_calls_count, turns_used
 
+    async def _run_capture_policy(
+        self,
+        run: AgentRun,
+        *,
+        action: TerminalAction,
+        reason: str | None,
+        terminalize: Callable[[], Awaitable[AgentRun | None]],
+    ) -> tuple[bool, AgentRun | None]:
+        """Route a live managed tmux session through capture-before-kill.
+
+        Returns (routed, terminal_run). routed=False means no live session
+        needed the policy and the caller applies its direct transition —
+        including when a policy invocation higher in the stack (reconciler,
+        watchdog) already killed the session before invoking this terminalizer.
+        """
+        session_name = run.tmux_session_name
+        if not session_name or run.status not in ("pending", "running"):
+            return False, None
+        from gobby.agents.capture import terminate_managed_tmux_async
+        from gobby.agents.tmux import get_tmux_session_manager
+
+        tmux = get_tmux_session_manager()
+        if not await tmux.has_session(session_name):
+            return False, None
+
+        async def _terminalize(
+            _action: TerminalAction,
+            _payload: str | None,
+        ) -> AgentRun | None:
+            return await terminalize()
+
+        result = await terminate_managed_tmux_async(
+            storage=self._agent_run_manager,
+            run=run,
+            tmux=tmux,
+            action=action,
+            reason=reason,
+            terminalize=_terminalize,
+        )
+        if not result.success:
+            logger.warning(
+                "Capture-policy terminalization failed for run %s: %s (%s)",
+                run.id,
+                result.error,
+                result.error_code,
+            )
+            return True, None
+        return True, result.run
+
     async def terminalize_successful_run(
         self,
         run_id: str,
@@ -338,14 +388,36 @@ class AgentCleanupHandler:
             logger.debug("Successful terminalization no-op for missing run %s", run_id)
             return False
 
-        tool_calls_count, turns_used = await self._completion_stats_for_run(current)
-        db_run = await self._run_db(
-            self._agent_run_manager.complete,
-            run_id,
-            result=completion_result,
-            tool_calls_count=tool_calls_count,
-            turns_used=turns_used,
+        transitioned_here = False
+
+        async def _complete_run() -> AgentRun | None:
+            nonlocal transitioned_here
+            tool_calls_count, turns_used = await self._completion_stats_for_run(current)
+            completed = cast(
+                "AgentRun | None",
+                await self._run_db(
+                    self._agent_run_manager.complete,
+                    run_id,
+                    result=completion_result,
+                    tool_calls_count=tool_calls_count,
+                    turns_used=turns_used,
+                ),
+            )
+            transitioned_here = completed is not None
+            return completed
+
+        routed, db_run = await self._run_capture_policy(
+            current,
+            action="complete",
+            reason=None,
+            terminalize=_complete_run,
         )
+        if routed and db_run is None:
+            return False
+        if not routed:
+            db_run = await _complete_run()
+        if db_run is not None and not transitioned_here:
+            db_run = None
         if db_run is None:
             latest = await self._run_db(self._agent_run_manager.get, run_id)
             logger.debug(
@@ -376,17 +448,44 @@ class AgentCleanupHandler:
         terminal_reason: AgentRunTerminalReason,
     ) -> bool:
         """Mark an active run cancelled, recover ownership, and notify waiters."""
-        db_run = await self._run_db(
-            self._agent_run_manager.cancel,
-            run_id,
-            terminal_reason=terminal_reason,
+        current = await self._run_db(self._agent_run_manager.get, run_id)
+        if current is None:
+            logger.debug("Cancelled terminalization no-op for missing run %s", run_id)
+            return False
+
+        transitioned_here = False
+
+        async def _cancel_run() -> AgentRun | None:
+            nonlocal transitioned_here
+            cancelled = cast(
+                "AgentRun | None",
+                await self._run_db(
+                    self._agent_run_manager.cancel,
+                    run_id,
+                    terminal_reason=terminal_reason,
+                ),
+            )
+            transitioned_here = cancelled is not None
+            return cancelled
+
+        routed, db_run = await self._run_capture_policy(
+            current,
+            action="cancel",
+            reason=terminal_reason,
+            terminalize=_cancel_run,
         )
+        if routed and db_run is None:
+            return False
+        if not routed:
+            db_run = await _cancel_run()
+        if db_run is not None and not transitioned_here:
+            db_run = None
         if db_run is None:
-            current = await self._run_db(self._agent_run_manager.get, run_id)
+            latest = await self._run_db(self._agent_run_manager.get, run_id)
             logger.debug(
                 "Cancelled terminalization no-op for run %s; current status=%s",
                 run_id,
-                current.status if current else "missing",
+                latest.status if latest else "missing",
             )
             return False
 

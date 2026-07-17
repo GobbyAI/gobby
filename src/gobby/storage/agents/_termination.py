@@ -124,14 +124,17 @@ class _AgentRunTerminationMixin:
             WHERE ar.status IN ('pending', 'running')
               AND (
                   ar.pending_terminal_action IS NOT NULL
-                  OR EXISTS (
-                      SELECT 1
-                      FROM sessions terminal_session
-                      WHERE terminal_session.status IN ('expired', 'deleted')
-                        AND (
-                            terminal_session.id = ar.child_session_id
-                            OR terminal_session.agent_run_id = ar.id
-                        )
+                  OR (
+                      ar.tmux_session_name IS NOT NULL
+                      AND EXISTS (
+                          SELECT 1
+                          FROM sessions terminal_session
+                          WHERE terminal_session.status IN ('expired', 'deleted')
+                            AND (
+                                terminal_session.id = ar.child_session_id
+                                OR terminal_session.agent_run_id = ar.id
+                            )
+                      )
                   )
               )
             """,
