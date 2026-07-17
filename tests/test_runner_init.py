@@ -725,6 +725,7 @@ class TestGobbyRunnerInitialization:
         mock_llm_service = MagicMock()
         mock_llm_service.enabled_providers = ["test"]
         mock_task_validator = MagicMock()
+        task_validator_factory = MagicMock(return_value=mock_task_validator)
 
         patches = create_base_patches(mock_config=mock_config)
         patches = [p for p in patches if "create_llm_service" not in str(p)]
@@ -738,9 +739,7 @@ class TestGobbyRunnerInitialization:
         patches.append(
             patch("gobby.runner_init.services.create_llm_service", return_value=mock_llm_service)
         )
-        patches.append(
-            patch("gobby.runner_init.services.TaskValidator", return_value=mock_task_validator)
-        )
+        patches.append(patch("gobby.runner_init.services.TaskValidator", task_validator_factory))
 
         with ExitStack() as stack:
             [stack.enter_context(p) for p in patches]
@@ -750,6 +749,10 @@ class TestGobbyRunnerInitialization:
             assert runner.task_validator == mock_task_validator
             assert runner.llm_service == mock_llm_service
             assert runner.text_generation_service == mock_text_generation
+            assert (
+                task_validator_factory.call_args.kwargs["tool_chat_service"]
+                is runner.tool_chat_service
+            )
 
     def test_init_task_validator_exception(self) -> None:
         """Test TaskValidator initialization exception is handled."""

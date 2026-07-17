@@ -30,6 +30,7 @@ from gobby.mcp_proxy.tools.tasks._verification_evidence_context import (
 from gobby.plans.bootstrap_ledger import BootstrapLedgerMismatchError
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.state_semantics import get_claimed_session_id
+from gobby.tasks.validation_tool_loop import is_doc_only_manifest, prepare_validation_diff
 from gobby.workflows.condition_helpers import completion_evidence_ready
 from gobby.workflows.verification_evidence import VERIFICATION_EVIDENCE_VARIABLE
 
@@ -327,37 +328,69 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 and ctx.task_validator
                 and (task.validation_criteria or task.category == "code")
             ):
-                # Gather validation context
-                validation_evidence = gather_validation_context(
-                    task, changes_summary, repo_path, ctx.task_manager
-                )
-                validation_context = _append_verification_evidence_context(
-                    validation_evidence.validation_context,
+                prepared_diff = None
+                if task.commits and repo_path:
+                    try:
+                        prepared_diff = prepare_validation_diff(
+                            task.id,
+                            ctx.task_manager,
+                            repo_path=repo_path,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to prepare paged validation metadata for task %s: %s",
+                            task.id,
+                            exc,
+                        )
+                verification_evidence = _append_verification_evidence_context(
+                    None,
                     ctx,
                     resolved_session_id,
                 )
 
-                if validation_context:
-                    # Run LLM validation
-                    llm_result = await validate_leaf_task_with_llm(
-                        task=task,
-                        task_validator=ctx.task_validator,
-                        validation_context=validation_context,
-                        raw_diff=validation_evidence.raw_diff,
-                        ctx=ctx,
-                        resolved_id=resolved_id,
-                        validation_config=ctx.validation_config,
-                        file_context_text=validation_evidence.file_context_text,
+                def load_static_evidence() -> tuple[str, str | None]:
+                    evidence = gather_validation_context(
+                        task, changes_summary, repo_path, ctx.task_manager
                     )
-                    if not llm_result.can_close:
-                        response = {
-                            "success": False,
-                            "error": llm_result.error_type,
-                            "message": llm_result.message,
-                        }
-                        if llm_result.extra:
-                            response.update(llm_result.extra)
-                        return response
+                    return (
+                        evidence.validation_context or changes_summary or "",
+                        evidence.file_context_text,
+                    )
+
+                llm_result = await validate_leaf_task_with_llm(
+                    task=task,
+                    task_validator=ctx.task_validator,
+                    validation_context=changes_summary or "",
+                    raw_diff=None,
+                    ctx=ctx,
+                    resolved_id=resolved_id,
+                    validation_config=ctx.validation_config,
+                    is_documentation_only=(
+                        prepared_diff is not None
+                        and is_doc_only_manifest(prepared_diff.manifest_items)
+                    ),
+                    verification_evidence=verification_evidence,
+                    repo_path=repo_path,
+                    linked_commits=(
+                        prepared_diff.canonical_commits if prepared_diff is not None else ()
+                    ),
+                    first_commits_page=(
+                        prepared_diff.first_commits_page if prepared_diff is not None else None
+                    ),
+                    manifest_count=(
+                        prepared_diff.manifest_count if prepared_diff is not None else 0
+                    ),
+                    static_evidence_loader=load_static_evidence,
+                )
+                if not llm_result.can_close:
+                    response = {
+                        "success": False,
+                        "error": llm_result.error_type,
+                        "message": llm_result.message,
+                    }
+                    if llm_result.extra:
+                        response.update(llm_result.extra)
+                    return response
 
         # Determine close outcome
         route_to_escalation, store_override = determine_close_outcome(

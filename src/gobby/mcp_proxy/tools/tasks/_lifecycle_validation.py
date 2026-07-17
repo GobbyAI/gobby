@@ -5,6 +5,7 @@ can be closed (commit checks, child completion, LLM validation).
 """
 
 import logging
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -401,6 +402,14 @@ async def validate_leaf_task_with_llm(
     resolved_id: str,
     validation_config: "TaskValidationConfig | None",
     file_context_text: str | None = None,
+    *,
+    is_documentation_only: bool = False,
+    verification_evidence: str | None = None,
+    repo_path: str | None = None,
+    linked_commits: Sequence[str] = (),
+    first_commits_page: Mapping[str, object] | None = None,
+    manifest_count: int = 0,
+    static_evidence_loader: Callable[[], tuple[str, str | None]] | None = None,
 ) -> ValidationResult:
     """Run LLM validation on a leaf task.
 
@@ -408,7 +417,6 @@ async def validate_leaf_task_with_llm(
         task: The task to validate
         task_validator: The validator instance
         validation_context: Context for validation
-        raw_diff: Raw diff for doc-only check
         ctx: Registry context
         resolved_id: Resolved task ID
         validation_config: Validation configuration
@@ -416,10 +424,8 @@ async def validate_leaf_task_with_llm(
     Returns:
         ValidationResult indicating if task can be closed
     """
-    from gobby.tasks.commits import is_doc_only_diff
-
     # Auto-skip LLM validation for doc-only changes
-    if raw_diff and is_doc_only_diff(raw_diff):
+    if is_documentation_only:
         logger.info(f"Skipping LLM validation for task {task.id}: doc-only changes")
         feedback = "Auto-validated: documentation-only changes"
         ctx.task_manager.update_task(
@@ -474,6 +480,12 @@ async def validate_leaf_task_with_llm(
         validation_criteria=task.validation_criteria,
         category=task.category,
         file_context_text=file_context_text,
+        verification_evidence=verification_evidence,
+        repo_path=repo_path,
+        linked_commits=linked_commits,
+        first_commits_page=first_commits_page,
+        manifest_count=manifest_count,
+        static_evidence_loader=static_evidence_loader,
     )
 
     # An LLM infrastructure failure (no candidate produced a usable result) is not a
@@ -491,7 +503,7 @@ async def validate_leaf_task_with_llm(
             ctx,
             status="error",
             feedback=result.feedback,
-            context_type="validation_context",
+            context_type=f"validation_{result.mode}",
         )
         retry_at = state.next_retry_at.isoformat() if state.next_retry_at else "later"
         if state.should_escalate():
@@ -597,7 +609,7 @@ async def validate_leaf_task_with_llm(
         ctx,
         status=validation_status,
         feedback=original_feedback,
-        context_type="validation_context",
+        context_type=f"validation_{result.mode}",
     )
 
     if validation_status != "valid":

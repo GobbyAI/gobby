@@ -14,10 +14,12 @@ Multi-strategy context gathering:
 import logging
 import re
 import subprocess  # nosec B404 # subprocess needed for validation commands
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from gobby.ai import CapabilityUnavailableError, ToolChatService
 from gobby.ai.text_generation import is_feature_generation_infrastructure_error
 from gobby.config.tasks import TaskValidationConfig
 from gobby.llm import LLMService
@@ -611,6 +613,10 @@ class ValidationResult:
     status: Literal["valid", "invalid", "pending", "error"]
     feedback: str | None = None
     blocking_reasons: list[str] = field(default_factory=list)
+    mode: Literal["static", "tool_loop"] = "static"
+    evidence_refs: tuple[str, ...] = ()
+    evidence_complete: bool = True
+    trace_summary: tuple[dict[str, object], ...] = ()
 
 
 def _coerce_blocking_reasons(value: Any) -> list[str]:
@@ -666,9 +672,11 @@ class TaskValidator:
         llm_service: LLMService,
         project_dir: Path | None = None,
         db: HubDatabase | None = None,
+        tool_chat_service: ToolChatService | None = None,
     ):
         self.config = config
         self.llm_service = llm_service
+        self.tool_chat_service = tool_chat_service
         self._loader = PromptLoader(db=db)
 
     async def gather_validation_context(self, file_paths: list[str]) -> str:
@@ -693,6 +701,101 @@ class TaskValidator:
         return "\n".join(context)
 
     async def validate_task(
+        self,
+        task_id: str,
+        title: str,
+        description: str | None,
+        changes_summary: str,
+        validation_criteria: str | None = None,
+        context_files: list[str] | None = None,
+        category: str | None = None,
+        *,
+        file_context_text: str | None = None,
+        verification_evidence: str | None = None,
+        repo_path: str | None = None,
+        linked_commits: Sequence[str] = (),
+        first_commits_page: Mapping[str, object] | None = None,
+        manifest_count: int = 0,
+        static_evidence_loader: Callable[[], tuple[str, str | None]] | None = None,
+    ) -> ValidationResult:
+        """Validate through the grounded tool loop when linked diff metadata is available."""
+        use_tool_loop = bool(
+            self.config.enabled
+            and self.config.tool_loop_enabled
+            and self.tool_chat_service is not None
+            and repo_path
+            and linked_commits
+            and first_commits_page is not None
+        )
+        if use_tool_loop:
+            from gobby.tasks.validation_tool_loop import validate_with_tool_loop
+
+            assert self.tool_chat_service is not None
+            assert repo_path is not None
+            assert first_commits_page is not None
+            try:
+                verdict = await validate_with_tool_loop(
+                    self.tool_chat_service,
+                    self.config,
+                    task_id=task_id,
+                    title=title,
+                    description=description,
+                    validation_criteria=validation_criteria,
+                    category=category,
+                    verification_evidence=verification_evidence,
+                    repo_path=repo_path,
+                    canonical_commits=linked_commits,
+                    first_commits_page=first_commits_page,
+                    manifest_count=manifest_count,
+                )
+            except CapabilityUnavailableError as exc:
+                logger.info(
+                    "Tool-loop validation unavailable for task %s; using static validation: %s",
+                    task_id,
+                    exc,
+                )
+            except Exception as exc:
+                if is_feature_generation_infrastructure_error(exc):
+                    return ValidationResult(
+                        status="error",
+                        feedback=f"Validation generation unavailable (infrastructure): {exc}",
+                        mode="tool_loop",
+                        evidence_complete=False,
+                    )
+                logger.exception("Tool-loop validation failed for task %s", task_id)
+                return ValidationResult(
+                    status="pending",
+                    feedback=f"Tool-loop validation failed: {exc}",
+                    mode="tool_loop",
+                    evidence_complete=False,
+                )
+            else:
+                return ValidationResult(
+                    status=verdict.status,
+                    feedback=verdict.feedback,
+                    blocking_reasons=list(verdict.blocking_reasons),
+                    mode="tool_loop",
+                    evidence_refs=verdict.evidence_refs,
+                    evidence_complete=verdict.evidence_complete,
+                    trace_summary=verdict.trace_summary,
+                )
+
+        if static_evidence_loader is not None:
+            changes_summary, file_context_text = static_evidence_loader()
+        if verification_evidence:
+            changes_summary = f"{changes_summary}\n\n{verification_evidence}"
+        return await self._validate_task_static(
+            task_id=task_id,
+            title=title,
+            description=description,
+            changes_summary=changes_summary,
+            validation_criteria=validation_criteria,
+            context_files=context_files,
+            category=category,
+            file_context_text=file_context_text,
+        )
+
+    async def _validate_task_static(
         self,
         task_id: str,
         title: str,

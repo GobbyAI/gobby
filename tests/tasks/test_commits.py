@@ -9,7 +9,6 @@ from gobby.tasks.commits import (
     AutoLinkResult,
     auto_link_commits,
     extract_task_ids_from_message,
-    is_doc_only_diff,
     summarize_diff_for_validation,
 )
 
@@ -425,81 +424,6 @@ class TestAutoLinkCommits:
             result = auto_link_commits(mock_task_manager, cwd="/tmp/repo", project_name="gobby")
 
             assert result.skipped >= 1
-
-
-class TestIsDocOnlyDiff:
-    """Tests for is_doc_only_diff function."""
-
-    def test_returns_true_for_markdown_only(self) -> None:
-        """Test that returns True for markdown-only diffs."""
-        diff = """diff --git a/README.md b/README.md
-index abc..def 100644
---- a/README.md
-+++ b/README.md
-@@ -1,1 +1,2 @@
-+new line
-"""
-        assert is_doc_only_diff(diff) is True
-
-    def test_returns_true_for_multiple_doc_files(self) -> None:
-        """Test that returns True for multiple doc files."""
-        diff = """diff --git a/README.md b/README.md
-+content
-diff --git a/CHANGELOG.md b/CHANGELOG.md
-+more content
-diff --git a/docs/guide.txt b/docs/guide.txt
-+text file
-"""
-        assert is_doc_only_diff(diff) is True
-
-    def test_returns_false_for_code_files(self) -> None:
-        """Test that returns False when code files are included."""
-        diff = """diff --git a/src/main.py b/src/main.py
-index abc..def 100644
---- a/src/main.py
-+++ b/src/main.py
-@@ -1,1 +1,2 @@
-+new code
-"""
-        assert is_doc_only_diff(diff) is False
-
-    def test_returns_false_for_mixed_files(self) -> None:
-        """Test that returns False for mixed doc and code files."""
-        diff = """diff --git a/README.md b/README.md
-+doc content
-diff --git a/src/main.py b/src/main.py
-+code content
-"""
-        assert is_doc_only_diff(diff) is False
-
-    def test_returns_false_when_doc_is_renamed_to_code(self) -> None:
-        diff = """diff --git a/notes.md b/notes.py
-similarity index 100%
-rename from notes.md
-rename to notes.py
-"""
-        assert is_doc_only_diff(diff) is False
-
-    def test_returns_true_for_quoted_doc_paths(self) -> None:
-        diff = """diff --git "a/docs/user guide.md" "b/docs/user guide.md"
-+content
-"""
-        assert is_doc_only_diff(diff) is True
-
-    def test_returns_false_for_empty_diff(self) -> None:
-        """Test that returns False for empty diff."""
-        assert is_doc_only_diff("") is False
-
-    def test_supports_multiple_doc_extensions(self) -> None:
-        """Test that various doc extensions are supported."""
-        diff = """diff --git a/doc.rst b/doc.rst
-+rst content
-diff --git a/notes.adoc b/notes.adoc
-+adoc content
-diff --git a/info.markdown b/info.markdown
-+markdown content
-"""
-        assert is_doc_only_diff(diff) is True
 
 
 class TestSummarizeDiffForValidation:

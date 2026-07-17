@@ -168,6 +168,16 @@ class TaskExpansionConfig(FeatureDefaultConfig):
 class TaskValidationConfig(FeatureDefaultConfig):
     """Configuration for task validation (checking completion against criteria)."""
 
+    tool_loop_enabled: bool = Field(
+        default=True,
+        description="Use runtime-grounded paged diff tools for linked-commit validation.",
+    )
+    tool_loop_preview_bytes: int = Field(
+        default=16_384,
+        ge=4,
+        le=30_000,
+        description="Default byte window for tool-loop diff and file reads.",
+    )
     profile: FeatureProfile = Field(
         default=FeatureProfile.MID,
         description="Capability profile for task validation.",
