@@ -136,17 +136,35 @@ def test_stage_ui_reuses_pre_staged_when_no_web(
     assert (staged_dir / "index.html").read_text() == "pre-staged"
 
 
-def test_stage_ui_runs_npm_commands_with_timeout(
+def test_stage_ui_builds_in_cleaned_isolated_copy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """UI staging should pass the configured timeout to both npm commands."""
+    """UI builds should copy sources, exclude outputs, and preserve the repository tree."""
     repo_root = tmp_path
     (repo_root / "build_backend").mkdir()
     real_module = Path(__file__).resolve().parent.parent / "build_backend" / "__init__.py"
     (repo_root / "build_backend" / "__init__.py").write_text(real_module.read_text())
     web = repo_root / "web"
-    web.mkdir()
-    (web / "package.json").write_text("{}")
+    (web / "src").mkdir(parents=True)
+    (web / "package.json").write_text('{"name": "test-ui"}')
+    (web / "package-lock.json").write_text('{"lockfileVersion": 3}')
+    (web / "vite.config.ts").write_text("export default {}")
+    (web / "src" / "main.tsx").write_text("export const main = true")
+
+    generated_directories = (
+        "node_modules",
+        "dist",
+        "dist-setup",
+        "coverage",
+        "playwright-report",
+        "test-results",
+        ".vite",
+    )
+    for directory in generated_directories:
+        generated = web / directory
+        generated.mkdir()
+        (generated / "sentinel.txt").write_text(f"repository {directory}")
+    (web / ".DS_Store").write_text("repository metadata")
 
     backend = _load_backend(repo_root)
     monkeypatch.setattr(backend.shutil, "which", lambda name: "/usr/bin/npm")
@@ -162,16 +180,40 @@ def test_stage_ui_runs_npm_commands_with_timeout(
         timeout: int,
     ) -> SimpleNamespace:
         calls.append(SubprocessCall(command, cwd, check, capture_output, text, timeout))
-        return SimpleNamespace(returncode=0)
+        assert cwd != web
+        assert not cwd.is_relative_to(repo_root)
+        assert (cwd / "package.json").read_text() == '{"name": "test-ui"}'
+        assert (cwd / "package-lock.json").exists()
+        assert (cwd / "vite.config.ts").exists()
+        assert (cwd / "src" / "main.tsx").exists()
+        for directory in generated_directories:
+            assert not (cwd / directory).exists()
+        assert not (cwd / ".DS_Store").exists()
+        if command == ["npm", "run", "build"]:
+            isolated_dist = cwd / "dist"
+            isolated_dist.mkdir()
+            (isolated_dist / "index.html").write_text("isolated build")
+            (isolated_dist / "assets").mkdir()
+            (isolated_dist / "assets" / "app.js").write_text("isolated asset")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(backend.subprocess, "run", fake_run)
 
     backend._stage_ui()
 
+    isolated_web = calls[0].cwd
     assert calls == [
-        SubprocessCall(["npm", "ci"], web, False, True, True, 600),
-        SubprocessCall(["npm", "run", "build"], web, False, True, True, 600),
+        SubprocessCall(["npm", "ci"], isolated_web, False, True, True, 600),
+        SubprocessCall(["npm", "run", "build"], isolated_web, False, True, True, 600),
     ]
+    assert not isolated_web.exists()
+    for directory in generated_directories:
+        assert (web / directory / "sentinel.txt").read_text() == f"repository {directory}"
+    assert (web / ".DS_Store").read_text() == "repository metadata"
+
+    staged = repo_root / "src" / "gobby" / "ui" / "web" / "dist"
+    assert (staged / "index.html").read_text() == "isolated build"
+    assert (staged / "assets" / "app.js").read_text() == "isolated asset"
 
 
 @pytest.mark.parametrize(
@@ -229,6 +271,7 @@ def test_stage_ui_npm_timeout_raises_contextual_runtime_error(
 
     backend = _load_backend(repo_root)
     monkeypatch.setattr(backend.shutil, "which", lambda name: "/usr/bin/npm")
+    working_directories: list[Path] = []
 
     def fake_run(
         command: list[str],
@@ -239,6 +282,7 @@ def test_stage_ui_npm_timeout_raises_contextual_runtime_error(
         text: bool,
         timeout: int,
     ) -> None:
+        working_directories.append(cwd)
         raise backend.subprocess.TimeoutExpired(cmd=command, timeout=timeout)
 
     monkeypatch.setattr(backend.subprocess, "run", fake_run)
@@ -247,9 +291,12 @@ def test_stage_ui_npm_timeout_raises_contextual_runtime_error(
         backend._stage_ui()
 
     message = str(exc_info.value)
+    isolated_web = working_directories[0]
     assert "npm ci" in message
     assert str(web) in message
+    assert str(isolated_web) in message
     assert "600" in message
+    assert not isolated_web.exists()
 
 
 @pytest.mark.parametrize(
@@ -276,6 +323,7 @@ def test_stage_ui_npm_failure_raises_output_context(
 
     backend = _load_backend(repo_root)
     monkeypatch.setattr(backend.shutil, "which", lambda name: "/usr/bin/npm")
+    working_directories: list[Path] = []
 
     def fake_run(
         command: list[str],
@@ -286,9 +334,10 @@ def test_stage_ui_npm_failure_raises_output_context(
         text: bool,
         timeout: int,
     ) -> SimpleNamespace:
+        working_directories.append(cwd)
         if command == failed_command:
             return SimpleNamespace(returncode=17, stdout="out text", stderr="err text")
-        return SimpleNamespace(returncode=0)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(backend.subprocess, "run", fake_run)
 
@@ -296,10 +345,77 @@ def test_stage_ui_npm_failure_raises_output_context(
         backend._stage_ui()
 
     message = str(exc_info.value)
+    isolated_web = working_directories[0]
     assert expected_command in message
+    assert str(web) in message
+    assert str(isolated_web) in message
     assert "return code 17" in message
     assert "stdout:\nout text" in message
     assert "stderr:\nerr text" in message
+    assert not isolated_web.exists()
+
+
+def test_build_wheel_packages_assets_from_isolated_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Wheel contents should use isolated build output without replacing web/dist."""
+    repo_root = tmp_path
+    (repo_root / "build_backend").mkdir()
+    real_module = Path(__file__).resolve().parent.parent / "build_backend" / "__init__.py"
+    (repo_root / "build_backend" / "__init__.py").write_text(real_module.read_text())
+    web = repo_root / "web"
+    repository_dist = web / "dist"
+    repository_dist.mkdir(parents=True)
+    (web / "package.json").write_text("{}")
+    (web / "package-lock.json").write_text("{}")
+    (repository_dist / "index.html").write_text("repository build")
+    wheel_dir = repo_root / "wheelhouse"
+    wheel_dir.mkdir()
+
+    backend = _load_backend(repo_root)
+    monkeypatch.setattr(backend.shutil, "which", lambda name: "/usr/bin/npm")
+    isolated_webs: list[Path] = []
+
+    def fake_run(
+        command: list[str],
+        *,
+        cwd: Path,
+        check: bool,
+        capture_output: bool,
+        text: bool,
+        timeout: int,
+    ) -> SimpleNamespace:
+        isolated_webs.append(cwd)
+        if command == ["npm", "run", "build"]:
+            isolated_dist = cwd / "dist"
+            isolated_dist.mkdir()
+            (isolated_dist / "index.html").write_text("wheel isolated build")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    def fake_build_wheel(
+        wheel_directory: str,
+        config_settings: dict[str, object] | None,
+        metadata_directory: str | None,
+    ) -> str:
+        staged_index = repo_root / "src" / "gobby" / "ui" / "web" / "dist" / "index.html"
+        wheel_path = Path(wheel_directory) / "gobby-0-py3-none-any.whl"
+        with zipfile.ZipFile(wheel_path, "w") as wheel:
+            wheel.writestr("gobby/ui/web/dist/index.html", staged_index.read_text())
+            wheel.writestr("gobby/install/bundled_content_manifest.json", "{}")
+        return wheel_path.name
+
+    monkeypatch.setattr(backend.subprocess, "run", fake_run)
+    monkeypatch.setattr(backend, "_stage_bundled_content_manifest", lambda: None)
+    monkeypatch.setattr(backend, "_orig", lambda: SimpleNamespace(build_wheel=fake_build_wheel))
+
+    wheel_name = backend.build_wheel(str(wheel_dir))
+
+    with zipfile.ZipFile(wheel_dir / wheel_name) as wheel:
+        assert wheel.read("gobby/ui/web/dist/index.html") == b"wheel isolated build"
+    assert (repository_dist / "index.html").read_text() == "repository build"
+    assert len(isolated_webs) == 2
+    assert isolated_webs[0] == isolated_webs[1]
+    assert not isolated_webs[0].exists()
 
 
 def test_build_wheel_accepts_wheel_with_ui_index(

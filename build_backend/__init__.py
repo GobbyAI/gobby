@@ -6,8 +6,8 @@ Before every wheel/sdist build:
   1. Honor ``GOBBY_SKIP_UI_BUILD=1`` to skip npm, while still requiring staged
      UI assets for wheel builds.
   2. If ``web/`` has ``package.json`` and ``npm`` is on PATH, run
-     ``npm ci && npm run build`` in ``web/`` to produce ``web/dist/``.
-  3. Copy ``web/dist/`` into ``src/gobby/ui/web/dist/`` so the
+     ``npm ci && npm run build`` in a disposable system-temp copy of ``web/``.
+  3. Copy the isolated ``dist/`` into ``src/gobby/ui/web/dist/`` so the
      ``ui/web/dist/**/*`` package-data glob picks the assets up.
   4. Generate ``src/gobby/install/bundled_content_manifest.json`` from
      raw bytes in ``src/gobby/install/shared/``.
@@ -24,6 +24,7 @@ import logging
 import os
 import shutil
 import subprocess  # nosec B404
+import tempfile
 import zipfile
 from importlib import util as importlib_util
 from pathlib import Path
@@ -65,6 +66,16 @@ _WHEEL_UI_INDEX: str = "gobby/ui/web/dist/index.html"
 _INSTALL_DEST: Path = _REPO_ROOT / "src" / "gobby" / "install"
 _MANIFEST_MODULE: Path = _INSTALL_DEST / "manifest.py"
 _WHEEL_CONTENT_MANIFEST: str = "gobby/install/bundled_content_manifest.json"
+_UI_BUILD_IGNORES: tuple[str, ...] = (
+    "node_modules",
+    "dist",
+    "dist-setup",
+    "coverage",
+    "playwright-report",
+    "test-results",
+    ".vite",
+    ".DS_Store",
+)
 
 
 def _parse_npm_build_timeout(raw_value: str | None) -> int:
@@ -96,18 +107,19 @@ def _init_npm_build_timeout_seconds() -> int:
 _NPM_BUILD_TIMEOUT_SECONDS: int = _init_npm_build_timeout_seconds()
 
 
-def _run_npm_command(command: list[str]) -> None:
+def _run_npm_command(command: list[str], working_directory: Path) -> None:
     command_text = " ".join(command)
     try:
         logger.debug(
-            "Running %s in %s with timeout=%s",
+            "Running %s for web source %s in isolated build directory %s with timeout=%s",
             command_text,
             _WEB_SRC,
+            working_directory,
             _NPM_BUILD_TIMEOUT_SECONDS,
         )
         result = subprocess.run(  # nosec B603 B607
             command,
-            cwd=_WEB_SRC,
+            cwd=working_directory,
             check=False,
             capture_output=True,
             text=True,
@@ -115,30 +127,54 @@ def _run_npm_command(command: list[str]) -> None:
         )
         if result.returncode != 0:
             logger.error(
-                "Failed %s in %s with return code %s\nstdout:\n%s\nstderr:\n%s",
+                "Failed %s for web source %s in isolated build directory %s "
+                "with return code %s\nstdout:\n%s\nstderr:\n%s",
                 command_text,
                 _WEB_SRC,
+                working_directory,
                 result.returncode,
                 result.stdout or "",
                 result.stderr or "",
             )
             raise RuntimeError(
-                f"Failed running {command_text!r} in {_WEB_SRC} "
+                f"Failed running {command_text!r} for web source {_WEB_SRC} "
+                f"in isolated build directory {working_directory} "
                 f"(return code {result.returncode})\n"
                 f"stdout:\n{result.stdout or ''}\n"
                 f"stderr:\n{result.stderr or ''}"
             )
         logger.info(
-            "Completed %s in %s with return code %s",
+            "Completed %s for web source %s in isolated build directory %s with return code %s",
             command_text,
             _WEB_SRC,
+            working_directory,
             result.returncode,
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(
-            f"Timed out running {command_text!r} in {_WEB_SRC} "
+            f"Timed out running {command_text!r} for web source {_WEB_SRC} "
+            f"in isolated build directory {working_directory} "
             f"after {_NPM_BUILD_TIMEOUT_SECONDS} seconds"
         ) from exc
+
+
+def _stage_ui_dist(dist_source: Path) -> None:
+    if not dist_source.exists():
+        if _WHEEL_DEST.exists():
+            logger.info("%s not available; reusing pre-staged %s", dist_source, _WHEEL_DEST)
+            return
+        logger.warning(
+            "%s not found and no pre-staged UI assets are available - "
+            "wheel UI asset verification will fail.",
+            dist_source,
+        )
+        return
+
+    if _WHEEL_DEST.exists():
+        shutil.rmtree(_WHEEL_DEST)
+    _WHEEL_DEST.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(dist_source, _WHEEL_DEST)
+    logger.info("Staged web UI assets at %s", _WHEEL_DEST)
 
 
 def _stage_ui() -> None:
@@ -150,24 +186,22 @@ def _stage_ui() -> None:
     have_npm = shutil.which("npm") is not None
 
     if have_source and have_npm:
-        logger.info("Building web UI in %s", _WEB_SRC)
-        _run_npm_command(["npm", "ci"])
-        _run_npm_command(["npm", "run", "build"])
-
-    if not _DIST_SRC.exists():
-        if _WHEEL_DEST.exists():
-            logger.info("web/dist not available; reusing pre-staged %s", _WHEEL_DEST)
-            return
-        logger.warning(
-            "web/dist not found and npm build not possible - wheel UI asset verification will fail."
-        )
+        with tempfile.TemporaryDirectory(prefix="gobby-ui-build-") as temp_root:
+            isolated_web = Path(temp_root) / "web"
+            logger.info(
+                "Copying web UI source %s to isolated build directory %s", _WEB_SRC, isolated_web
+            )
+            shutil.copytree(
+                _WEB_SRC,
+                isolated_web,
+                ignore=shutil.ignore_patterns(*_UI_BUILD_IGNORES),
+            )
+            _run_npm_command(["npm", "ci"], isolated_web)
+            _run_npm_command(["npm", "run", "build"], isolated_web)
+            _stage_ui_dist(isolated_web / "dist")
         return
 
-    if _WHEEL_DEST.exists():
-        shutil.rmtree(_WHEEL_DEST)
-    _WHEEL_DEST.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(_DIST_SRC, _WHEEL_DEST)
-    logger.info("Staged web UI assets at %s", _WHEEL_DEST)
+    _stage_ui_dist(_DIST_SRC)
 
 
 def _load_manifest_module() -> ModuleType:

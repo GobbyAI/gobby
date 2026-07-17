@@ -1,0 +1,16 @@
+{
+  "git.scanRepositories": [],
+  "git.autoRepositoryDetection": false,
+  "git.detectWorktrees": false,
+  "files.watcherExclude": {
+    "**/.gobby/worktrees/**": true,
+    "**/node_modules/**": true,
+    "build/**": true,
+    "web/dist/**": true,
+    "src/gobby/ui/web/dist/**": true
+  },
+  "search.exclude": {
+    "**/.gobby/worktrees/**": true
+  },
+  "git.ignoreLimitWarning": true
+}
