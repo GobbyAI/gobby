@@ -314,7 +314,7 @@ class MCPServerImporter:
         return (
             f"{base_prompt}\n\n"
             "Fetched documentation context:\n"
-            f"{self._truncate_context(fetched_context)}\n\n"
+            f"{self._truncate_context(fetched_context, context.get('github_url') or context['search_query'])}\n\n"
             "Use only the fetched documentation context above. "
             "Return the JSON object requested by the system prompt."
         )
@@ -549,11 +549,14 @@ class MCPServerImporter:
             terms.append("server")
         return " ".join(term for term in terms if term.strip())
 
-    def _truncate_context(self, text: str) -> str:
+    def _truncate_context(self, text: str, source: str) -> str:
         if len(text) <= MAX_IMPORT_CONTEXT_CHARS:
             return text
         truncated = text[:MAX_IMPORT_CONTEXT_CHARS].rstrip()
-        return f"{truncated}\n\n[truncated]"
+        return (
+            f"{truncated}\n\n"
+            f"[docs truncated: first {len(truncated)} of {len(text)} chars; source: {source}]"
+        )
 
     async def _add_server(
         self,

@@ -93,8 +93,8 @@ def test_overview_is_word_capped(tmp_path: Path) -> None:
     overview = load_wiki_overview(tmp_path)
 
     assert overview is not None
-    assert len(overview.split()) == 500
-    assert overview.endswith("word499")
+    assert len(overview.split()) == 507
+    assert overview.endswith("word499 ... (truncated; full overview in wiki _index.md)")
 
 
 def test_overview_is_sanitized_before_injection(tmp_path: Path) -> None:
