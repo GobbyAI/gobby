@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_CHAT_ATTACHMENT_RETENTION_HOURS = 24
 DEFAULT_CHAT_ATTACHMENT_GC_INTERVAL_MINUTES = 60
 DEFAULT_WORKFLOW_AUDIT_RETENTION_DAYS = 7
+_STDERR_CAPTURE_OVER_LIMIT_SERVICE = "stderr_capture_over_limit"
 
 
 def _log_periodic_task_failure(task: asyncio.Task[None]) -> None:
@@ -299,10 +300,18 @@ def start_periodic_tasks(
         ),
         name="metric-snapshot",
     )
+
+    def set_stderr_capture_over_limit(over_limit: bool) -> None:
+        if over_limit:
+            runner.degraded_services.add(_STDERR_CAPTURE_OVER_LIMIT_SERVICE)
+        else:
+            runner.degraded_services.discard(_STDERR_CAPTURE_OVER_LIMIT_SERVICE)
+
     runner._resource_monitor_task = asyncio.create_task(
         loops["resource_monitor_loop"](
             getattr(runner.config, "telemetry", None),
             lambda: runner._shutdown_requested,
+            set_stderr_capture_over_limit,
         ),
         name="resource-monitor",
     )
