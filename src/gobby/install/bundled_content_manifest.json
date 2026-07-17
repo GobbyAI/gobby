@@ -400,7 +400,7 @@
     "workflows/rules/task-enforcement/block-native-task-tools.yaml": "42b5fa4eed29dd650d6f184fa312b4223b0f3c084a73797bdbc281808e887feb",
     "workflows/rules/task-enforcement/block-needs-review-interactive.yaml": "88586e7473d6a59458489b2d131f3485be9cce111b81e719e629b1838fe882d3",
     "workflows/rules/task-enforcement/block-reopen-task.yaml": "6ecd6ee48a03ecf9bc01bb487db35a1cd91abad842fd8299d0a3f3d319179177",
-    "workflows/rules/task-enforcement/completion-readiness.yaml": "f7c06a684b0782c84ea5522bd1374e418ad80070efdcbfc0781d2ce5c0703fb0",
+    "workflows/rules/task-enforcement/completion-readiness.yaml": "4a7f38adb5c23d3712c55aa71db3db4568fe0f80600edb9357c7dfc8a67a0019",
     "workflows/rules/task-enforcement/require-claimed-task-required-skills.yaml": "1cc3b78e826f908a140246f0a2b387e0838034ca32207e1fdbb02c2dc190ee07",
     "workflows/rules/task-enforcement/require-commit-before-status.yaml": "2df11dfaf8a64bb768c499492ce312558fcee547daac7bd6b0a7afb187b290b9",
     "workflows/rules/task-enforcement/require-task-before-edit.yaml": "32acc956e641d2c9068adef53e160b2d48e9ed19b2163c7449d0aea578e278a4",
