@@ -25,9 +25,17 @@ or invalid, the tmux fields are emitted as `null`.
 
 Exit codes:
 
-- `0` — success, including non-Stop deny/block responses that are returned as JSON
+- `0` — success, including all structured Qwen allow/block responses and non-Stop Codex deny/block responses returned as JSON
 - `1` — non-critical hook failure, returned as JSON error output
 - `2` — critical hook failure or blocked critical hook, returned as stderr
+
+Qwen treats `SessionStart`, `SessionEnd`, `PreCompact`, and `Stop` as critical.
+Its structured responses always use exit `0`, including a blocking `Stop`.
+Transport or malformed-input failures use exit `2` for those critical events
+and exit `1` otherwise. Qwen `Stop` deliberately fails closed during daemon
+outages so `turn_end` gates cannot be bypassed; the Qwen session can remain
+active until the daemon recovers or hooks are disabled. Claude's Stop posture
+remains fail open.
 
 ## Planned shutdown Stop handling
 

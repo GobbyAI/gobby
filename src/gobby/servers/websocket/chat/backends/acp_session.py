@@ -296,7 +296,9 @@ class ACPManagedChatSession(
                 return None
 
             adapter = self._tool_name_adapter()
-            if adapter is not None:
+            if callable(adapter):
+                tool_name = adapter(str(tool_name))
+            elif adapter is not None:
                 tool_name = adapter.normalize_tool_name(tool_name)
 
             tool_input = event.data.get("tool_input") or event.data.get("arguments") or {}

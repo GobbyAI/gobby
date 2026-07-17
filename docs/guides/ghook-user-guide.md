@@ -106,7 +106,7 @@ ghook --version
 
 | Code | Meaning |
 |------|---------|
-| `0` | Success, including non-Stop deny/block responses returned as JSON for Codex/Qwen. |
+| `0` | Success, including all structured Qwen allow/block responses and non-Stop Codex deny/block responses returned as JSON. |
 | `1` | Non-critical hook failure returned as JSON error output. |
 | `2` | Critical hook failure or blocked critical hook returned as stderr. |
 
@@ -176,9 +176,10 @@ Most users get this configured automatically by the Gobby installer. To wire it 
 Claude Code uses lowercase-hyphenated names internally for some hooks (`session-start`, `pre-compact`, `session-end`) and PascalCase for others (`PreToolUse`, `PostToolUse`). ghook treats `--type` as an opaque string, so pass the exact identifier the daemon expects for that CLI.
 
 Lifecycle hook criticality (`session-start`, `session-end`, `pre-compact`) comes from ghook's per-CLI registry. Tool-use hooks are non-critical — the envelope still spools, but a transient daemon outage won't block your tool call.
-Codex `Stop` is the only provider Stop hook that fails closed when the daemon is
-unavailable. AGY `Stop`, Grok `stop`, Claude `Stop`, Droid `Stop`, and Qwen
-`AfterAgent` fail open after the envelope is safely spooled.
+Codex and Qwen `Stop` fail closed when the daemon is unavailable. Qwen must not
+bypass Gobby's `turn_end` gates merely because the daemon cannot evaluate them;
+the Qwen session can therefore remain active during an outage until the daemon
+recovers or hooks are disabled. Claude's existing fail-open behavior is unchanged.
 
 ### Codex, Qwen, Droid, Grok, Antigravity CLI
 
@@ -191,7 +192,7 @@ tmux pane env vars.
 |-----|----------------|
 | `claude` | `session-start`, `session-end`, `pre-compact` |
 | `codex` | `SessionStart`, `Stop` |
-| `qwen` | `SessionStart` |
+| `qwen` | `SessionStart`, `SessionEnd`, `PreCompact`, `Stop` |
 | `droid` | none |
 | `grok` | `session_start`, `session_end`, `pre_compact` |
 | `agy` | `SessionStart` |
@@ -201,6 +202,11 @@ Grok uses native snake_case hook types (e.g. `session_start`, `session_end`, `pr
 Droid uses PascalCase hook types (`SessionStart`, `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Notification`, `Stop`, `SubagentStop`, `PreCompact`, `SessionEnd`) and ghook forwards droid's stdin payload unchanged to the daemon with `source: "droid"`. Droid-specific block handling differs slightly from the other CLIs: daemon responses containing `continue:false` exit 2, while other meaningful response JSON is written to stdout with exit 0.
 
 Antigravity CLI uses PascalCase hook types (`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`) and ghook forwards them with `source: "agy"`. `SessionStart` is fail-closed; `Stop`, prompt, and tool hooks are non-critical.
+
+Qwen uses its current PascalCase terminal-hook names. Malformed input and
+transport failures exit `2` for its four critical hooks and `1` for its other
+hooks. Successful Qwen responses, including a blocking `Stop`, are serialized
+to stdout with exit `0` so Qwen can consume the structured decision and reason.
 
 Gemini CLI support has been removed. Diagnose mode reports `--cli=gemini` as unrecognized, and stale Gobby-owned Gemini hook invocations no-op with `{}` and exit 0 before enqueue or POST.
 

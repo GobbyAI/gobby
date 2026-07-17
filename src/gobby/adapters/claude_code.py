@@ -21,6 +21,7 @@ from gobby.adapters.claude_contract import (
     CLAUDE_EVENT_MAP,
     CLAUDE_HOOK_EVENT_NAME_MAP,
     ClaudeDecisionStyle,
+    ClaudeHookContract,
     get_claude_contract,
 )
 from gobby.adapters.degradation import (
@@ -162,6 +163,13 @@ class ClaudeCodeAdapter(BaseAdapter):
         """
         self._hook_manager = hook_manager
 
+    @classmethod
+    def _get_hook_contract(cls, hook_type: str | None) -> ClaudeHookContract | None:
+        return get_claude_contract(hook_type)
+
+    def _event_logger(self) -> logging.Logger:
+        return logging.getLogger(self.__class__.__module__)
+
     def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent:
         """Convert Claude Code native event to unified HookEvent.
 
@@ -192,7 +200,7 @@ class ClaudeCodeAdapter(BaseAdapter):
         # resolving via the contract keeps event routing correct instead of
         # silently dropping to NOTIFICATION. Unknown types still fall back to
         # NOTIFICATION (fail-open).
-        contract = get_claude_contract(hook_type)
+        contract = self._get_hook_contract(hook_type)
         event_type = contract.event_type if contract is not None else HookEventType.NOTIFICATION
 
         # Extract session_id (Claude calls it session_id but it's the external_id)
@@ -205,11 +213,11 @@ class ClaudeCodeAdapter(BaseAdapter):
         # Claude's hook name is the definitive tool outcome signal. Preserve
         # both values because successful PostToolUse payloads commonly contain
         # only stdout/stderr dictionaries without an exit code.
-        native_hook_name = contract.native_name if contract is not None else hook_type
         metadata: dict[str, Any] = {}
-        if native_hook_name == "post-tool-use":
+        hook_event_name = contract.hook_event_name if contract is not None else hook_type
+        if hook_event_name == "PostToolUse":
             metadata["is_failure"] = False
-        elif native_hook_name == "post-tool-use-failure":
+        elif hook_event_name == "PostToolUseFailure":
             metadata["is_failure"] = True
         self._copy_platform_session_metadata(native_event, metadata)
 
@@ -258,7 +266,7 @@ class ClaudeCodeAdapter(BaseAdapter):
         hook_type: str | None,
     ) -> str | None:
         """Build Claude ``additionalContext`` content for supported events."""
-        contract = get_claude_contract(hook_type)
+        contract = self._get_hook_contract(hook_type)
         capabilities = get_provider_capabilities(self.source)
         capability = capabilities.get_hook(hook_type)
         if (
@@ -300,7 +308,7 @@ class ClaudeCodeAdapter(BaseAdapter):
             hook_type=hook_type,
             destination_channel=ContextChannel.ADDITIONAL_CONTEXT,
             contributor_sizes=contributor_sizes,
-            event_logger=logger,
+            event_logger=self._event_logger(),
         )
 
     def translate_from_hook_response(
@@ -327,15 +335,16 @@ class ClaudeCodeAdapter(BaseAdapter):
         Returns:
             Dict in Claude Code's expected format.
         """
-        contract = get_claude_contract(hook_type)
+        contract = self._get_hook_contract(hook_type)
         capabilities = get_provider_capabilities(self.source)
         capability = capabilities.get_hook(hook_type)
+        event_logger = self._event_logger()
         record_unsupported_response_fields(
             response,
             provider=self.source,
             hook_type=hook_type,
             capability=capability,
-            event_logger=logger,
+            event_logger=event_logger,
         )
         hook_event_name = contract.hook_event_name if contract else "Unknown"
         additional_context = self._build_additional_context(response, hook_type=hook_type)
@@ -359,7 +368,7 @@ class ClaudeCodeAdapter(BaseAdapter):
             response,
             adapter_name=self.__class__.__name__,
             hook_type=hook_type,
-            logger=logger,
+            logger=event_logger,
         )
         decision_style = contract.decision_style if contract else ClaudeDecisionStyle.NONE
 
@@ -405,7 +414,7 @@ class ClaudeCodeAdapter(BaseAdapter):
                                     destination_channel=(
                                         "hookSpecificOutput.permissionDecisionReason"
                                     ),
-                                    event_logger=logger,
+                                    event_logger=event_logger,
                                 )
                             permission_reason = compacted_reason
                         hook_output["permissionDecisionReason"] = permission_reason

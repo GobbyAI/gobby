@@ -68,11 +68,14 @@ def test_qwen_block_blank_reason_uses_sentinel(
     response = HookResponse(decision="block", reason="")
 
     with caplog.at_level(logging.WARNING, logger="gobby"):
-        result = adapter.translate_from_hook_response(response, hook_type="BeforeTool")
+        result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
 
-    assert result["decision"] == "deny"
-    assert result["continue"] is False
-    assert result["reason"] == ADAPTER_EMPTY_BLOCK_REASON_SENTINEL
+    assert result["continue"] is True
+    assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert (
+        result["hookSpecificOutput"]["permissionDecisionReason"]
+        == ADAPTER_EMPTY_BLOCK_REASON_SENTINEL
+    )
     assert any(
         record.name == "gobby.adapters.qwen"
         and "QwenAdapter translated block without reason at adapter boundary" in record.message

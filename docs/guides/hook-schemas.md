@@ -21,7 +21,7 @@ must still finish by calling `gobby-agents:end_agent_run`.
 | --- | --- | --- | --- |
 | Claude Code | Settings hook names with Gobby kebab-case `ghook --type` values | `session_id` | HTTP hook command |
 | AGY CLI | PascalCase (`PreInvocation`, `PreToolUse`) | `session_id` | HTTP hook command |
-| Qwen CLI | ACP PascalCase (`SessionStart`, `BeforeTool`) | `session_id` | HTTP hook command |
+| Qwen CLI | Current PascalCase (`SessionStart`, `PreToolUse`, `Stop`) | `session_id` | HTTP hook command |
 | Codex CLI | hooks.json PascalCase (`SessionStart`, `PreToolUse`) | `session_id` | HTTP hook command |
 | Droid CLI | PascalCase (`PreToolUse`) | `session_id` | HTTP hook command |
 | Grok CLI | snake_case (`session_start`, `pre_tool_use`) | `session_id` | HTTP hook command |
@@ -76,14 +76,14 @@ invocation blocks. A planned Gobby stop or restart is a separate case: a fresh
 shutdown marker makes `ghook` return a continue response for Stop hooks so an
 intentional daemon shutdown cannot strand an agent.
 
-The deliberate terminal-hook policy is that only Codex fails closed when an
-unplanned daemon outage prevents Stop evaluation:
+The terminal-hook policy fails closed for Codex and Qwen when an unplanned
+daemon outage prevents Stop evaluation:
 
 | Source / CLI | Terminal Hook | Daemon-Down Posture |
 | --- | --- | --- |
 | `claude` | `stop` | Fail open; non-critical transport failure |
 | `agy` | `Stop` | Fail open; non-critical transport failure |
-| `qwen` | `AfterAgent` | Fail open; Qwen has no native Stop hook |
+| `qwen` | `Stop` | **Fail closed**; protects Gobby `turn_end` gates |
 | `codex` | `Stop` | **Fail closed**; critical transport failure |
 | `droid` | `Stop` | Fail open; non-critical transport failure |
 | `grok` | `stop` | Fail open; non-critical transport failure |
@@ -92,7 +92,8 @@ Non-critical transport failures use `ghook`'s exit-1 error path. Critical
 transport failures use exit 2 and do not emit a continue response. This policy
 does not make every Codex hook critical: Codex `SessionStart` and `Stop` are the
 critical set. The other transport-critical hooks are Claude `session-start`,
-`session-end`, and `pre-compact`; Qwen `SessionStart`; AGY `SessionStart`; and
+`session-end`, and `pre-compact`; Qwen `SessionStart`, `SessionEnd`,
+`PreCompact`, and `Stop`; AGY `SessionStart`; and
 Grok `session_start`, `session_end`, and `pre_compact`. Droid has no critical
 transport hooks.
 
@@ -104,11 +105,10 @@ hook whose envelope explicitly carries `critical: true` also fails closed.
 `ghook` is versioned and released from the authoritative
 [`GobbyAI/gobby`](https://github.com/GobbyAI/gobby/tree/0.5.0/crates/ghook)
 monorepo. The retired `gobby-cli` checkout and repository preserve audit history
-only. In `ghook 0.7.2`, Codex `Stop` is the only provider Stop hook marked
-critical for daemon transport failure. AGY `Stop`, Grok `stop`, Claude `Stop`,
-Droid `Stop`, and Qwen `AfterAgent` fail open when the daemon is unreachable;
-startup, session, and pre-compact criticality remains unchanged. Gemini is
-retired and is not a supported source or a `ghook` CLI.
+only. Qwen `Stop` fails closed so a daemon outage cannot bypass Gobby's
+`turn_end` gates. The Qwen session can remain active until the daemon recovers
+or hooks are disabled; Claude's existing fail-open Stop behavior is unchanged.
+Gemini is retired and is not a supported source or a `ghook` CLI.
 
 ### Runtime Schema Compatibility
 
@@ -190,21 +190,26 @@ unavailable.
 
 ### Qwen
 
-Qwen uses the ACP-style hook adapter and hook template.
+Qwen uses a dedicated Claude-shaped adapter with Qwen-specific contracts.
 
 | Native Hook | Raw Workflow Event | Semantic Event |
 | --- | --- | --- |
 | `SessionStart` | `session_start` | `session_start` |
 | `SessionEnd` | `session_end` | `session_end` |
-| `BeforeAgent` | `before_agent` | `turn_start` |
-| `AfterAgent` | `after_agent` | `turn_end` |
-| `BeforeTool` | `before_tool` | `before_tool` |
-| `AfterTool` | `after_tool` | `after_tool` |
-| `BeforeToolSelection` | `before_tool_selection` | `before_tool_selection` |
-| `BeforeModel` | `before_model` | `before_model` |
-| `AfterModel` | `after_model` | `after_model` |
-| `PreCompress` | `pre_compact` | `pre_compact` |
+| `UserPromptSubmit` | `before_agent` | `turn_start` |
+| `PreToolUse` | `before_tool` | `before_tool` |
+| `PermissionRequest` | `permission_request` | `permission_request` |
+| `PostToolUse` | `after_tool` | `after_tool` |
+| `PostToolUseFailure` | `after_tool` | `after_tool` |
+| `Stop` | `stop` | `turn_end` |
+| `StopFailure` | `stop_failure` | `stop_failure` |
+| `SubagentStart` | `subagent_start` | `subagent_start` |
+| `SubagentStop` | `subagent_stop` | `subagent_stop` |
+| `PreCompact` | `pre_compact` | `pre_compact` |
+| `PostCompact` | `post_compact` | `post_compact` |
 | `Notification` | `notification` | `notification` |
+| `TodoCreated` | `task_created` | `task_created` |
+| `TodoCompleted` | `task_completed` | `task_completed` |
 
 ### Codex
 
@@ -329,9 +334,9 @@ Claude-style names such as `Read`, `Write`, `Edit`, `Glob`, and `Grep`.
 ```json
 {
   "source": "qwen",
-  "hook_type": "BeforeTool",
+  "hook_type": "PreToolUse",
   "input_data": {
-    "hook_event_name": "BeforeTool",
+    "hook_event_name": "PreToolUse",
     "session_id": "qwen-session-123",
     "tool_name": "RunShellCommand",
     "tool_input": {
@@ -510,4 +515,4 @@ AGY and Qwen communicate block decisions in JSON; their hook commands should
 exit `0` so the CLI treats the hook response as successful rather than a hook
 process failure.
 
-_Last verified: 2026-07-12_
+_Last verified: 2026-07-17 against Qwen Code 0.19.10_

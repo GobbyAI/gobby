@@ -48,7 +48,7 @@ class HookEventType(str, Enum):
     PRE_COMPACT = "pre_compact"  # Claude/Codex: PreCompact, ACP CLIs: PreCompress
     POST_COMPACT = "post_compact"  # Claude/Codex: PostCompact
 
-    # Subagent lifecycle (Claude Code only)
+    # Subagent lifecycle
     SUBAGENT_START = "subagent_start"
     SUBAGENT_STOP = "subagent_stop"
 
@@ -202,67 +202,67 @@ EVENT_TYPE_CLI_SUPPORT: dict[HookEventType, dict[str, str | None]] = {
     },
     HookEventType.BEFORE_AGENT: {
         "claude": "UserPromptSubmit",
-        "qwen": "BeforeAgent",
+        "qwen": "UserPromptSubmit",
         "codex": "UserPromptSubmit",
     },
     HookEventType.AFTER_AGENT: {
         "claude": "Stop",
-        "qwen": "AfterAgent",
+        "qwen": "Stop",
         "codex": None,
     },
     HookEventType.STOP: {
         "claude": "Stop",
-        "qwen": None,
+        "qwen": "Stop",
         "codex": "Stop",
     },
     HookEventType.BEFORE_TOOL: {
         "claude": "PreToolUse",
-        "qwen": "BeforeTool",
+        "qwen": "PreToolUse",
         "codex": "PreToolUse",
     },
     HookEventType.AFTER_TOOL: {
         "claude": "PostToolUse",
-        "qwen": "AfterTool",
+        "qwen": "PostToolUse",
         "codex": "PostToolUse",
     },
     HookEventType.BEFORE_TOOL_SELECTION: {
         "claude": None,
-        "qwen": "BeforeToolSelection",
+        "qwen": None,
         "codex": None,
     },
     HookEventType.BEFORE_MODEL: {
         "claude": None,
-        "qwen": "BeforeModel",
+        "qwen": None,
         "codex": None,
     },
     HookEventType.AFTER_MODEL: {
         "claude": None,
-        "qwen": "AfterModel",
+        "qwen": None,
         "codex": None,
     },
     HookEventType.PRE_COMPACT: {
         "claude": "PreCompact",
-        "qwen": "PreCompress",
+        "qwen": "PreCompact",
         "codex": "PreCompact",
     },
     HookEventType.POST_COMPACT: {
         "claude": "PostCompact",
-        "qwen": None,
+        "qwen": "PostCompact",
         "codex": "PostCompact",
     },
     HookEventType.SUBAGENT_START: {
         "claude": "SubagentStart",
-        "qwen": None,
+        "qwen": "SubagentStart",
         "codex": None,
     },
     HookEventType.SUBAGENT_STOP: {
         "claude": "SubagentStop",
-        "qwen": None,
+        "qwen": "SubagentStop",
         "codex": None,
     },
     HookEventType.PERMISSION_REQUEST: {
         "claude": "PermissionRequest",
-        "qwen": None,
+        "qwen": "PermissionRequest",
         "codex": "PermissionRequest",
     },
     HookEventType.PERMISSION_DENIED: {
@@ -277,17 +277,17 @@ EVENT_TYPE_CLI_SUPPORT: dict[HookEventType, dict[str, str | None]] = {
     },
     HookEventType.STOP_FAILURE: {
         "claude": "StopFailure",
-        "qwen": None,
+        "qwen": "StopFailure",
         "codex": None,
     },
     HookEventType.TASK_CREATED: {
         "claude": "TaskCreated",
-        "qwen": None,
+        "qwen": "TodoCreated",
         "codex": None,
     },
     HookEventType.TASK_COMPLETED: {
         "claude": "TaskCompleted",
-        "qwen": None,
+        "qwen": "TodoCompleted",
         "codex": None,
     },
     HookEventType.TEAMMATE_IDLE: {

@@ -66,7 +66,7 @@ def test_capability_registry_covers_current_http_adapters() -> None:
 def test_current_context_and_decision_capabilities_are_declared() -> None:
     claude_pre_tool = get_provider_capabilities("claude").get_hook("pre-tool-use")
     codex_pre_tool = get_provider_capabilities("codex").get_hook("PreToolUse")
-    qwen_before_model = get_provider_capabilities("qwen").get_hook("BeforeModel")
+    qwen_pre_tool = get_provider_capabilities("qwen").get_hook("PreToolUse")
     grok_pre_tool = get_provider_capabilities("grok").get_hook("pre_tool_use")
     agy_pre_tool = get_provider_capabilities("agy").get_hook("PreToolUse")
     droid_pre_tool = get_provider_capabilities("droid").get_hook("PreToolUse")
@@ -79,9 +79,9 @@ def test_current_context_and_decision_capabilities_are_declared() -> None:
     assert codex_pre_tool.context_channel is ContextChannel.SYSTEM_MESSAGE
     assert codex_pre_tool.decision_style is ProviderDecisionStyle.PRE_TOOL_USE
 
-    assert qwen_before_model is not None
-    assert qwen_before_model.context_channel is ContextChannel.NONE
-    assert qwen_before_model.supports_response_field("modify_args")
+    assert qwen_pre_tool is not None
+    assert qwen_pre_tool.context_channel is ContextChannel.ADDITIONAL_CONTEXT
+    assert qwen_pre_tool.decision_style is ProviderDecisionStyle.PRE_TOOL_USE
 
     assert grok_pre_tool is not None
     assert grok_pre_tool.context_channel is ContextChannel.SYSTEM_MESSAGE
@@ -156,10 +156,10 @@ def test_unsupported_elicitation_fields_are_dropped_with_telemetry(
             elicitation_action="accept",
             elicitation_content={"answer": "yes"},
         ),
-        hook_type="BeforeTool",
+        hook_type="PreToolUse",
     )
 
-    assert result == {"decision": "allow", "continue": True}
+    assert result == {"continue": True}
     dropped_fields = {call["response_field"] for call in calls if call["kind"] == "dropped_field"}
     assert {"elicitation_action", "elicitation_content"} <= dropped_fields
 
@@ -218,13 +218,16 @@ def test_qwen_tool_block_preserves_native_recoverable_reason(
 
     result = QwenAdapter().translate_from_hook_response(
         HookResponse(decision="block", reason=reason),
-        hook_type="BeforeTool",
+        hook_type="PreToolUse",
     )
 
     assert result == {
-        "decision": "deny",
         "continue": True,
-        "reason": reason,
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        },
     }
     assert "permissionDecision" not in result
     assert "permissionDecisionReason" not in result
@@ -270,7 +273,7 @@ def test_graceful_error_uses_provider_capability_shape(
     calls = _capture_degradations(monkeypatch)
 
     qwen_result = _graceful_error_response(
-        "BeforeTool",
+        "PreToolUse",
         "database unavailable",
         source="qwen",
     )
@@ -280,7 +283,6 @@ def test_graceful_error_uses_provider_capability_shape(
         source="droid",
     )
 
-    assert qwen_result["decision"] == "allow"
     assert "database unavailable" in qwen_result["hookSpecificOutput"]["additionalContext"]
     assert "systemMessage" not in qwen_result
     assert droid_result["continue"] is True

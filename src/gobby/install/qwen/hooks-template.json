@@ -1,4 +1,5 @@
 {
+  "disableAllHooks": false,
   "hooks": {
     "SessionStart": [
       {
@@ -24,99 +25,140 @@
         ]
       }
     ],
-    "BeforeAgent": [
+    "UserPromptSubmit": [
       {
         "hooks": [
           {
-            "name": "gobby-before-agent",
+            "name": "gobby-user-prompt-submit",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=qwen --type=BeforeAgent",
+            "command": "ghook --gobby-owned --cli=qwen --type=UserPromptSubmit",
             "timeout": 30000
           }
         ]
       }
     ],
-    "AfterAgent": [
-      {
-        "hooks": [
-          {
-            "name": "gobby-after-agent",
-            "type": "command",
-            "command": "ghook --gobby-owned --cli=qwen --type=AfterAgent",
-            "timeout": 30000
-          }
-        ]
-      }
-    ],
-    "BeforeTool": [
+    "PreToolUse": [
       {
         "matcher": "*",
         "hooks": [
           {
-            "name": "gobby-before-tool",
+            "name": "gobby-pre-tool-use",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=qwen --type=BeforeTool",
+            "command": "ghook --gobby-owned --cli=qwen --type=PreToolUse",
             "timeout": 30000
           }
         ]
       }
     ],
-    "AfterTool": [
+    "PermissionRequest": [
       {
         "matcher": "*",
         "hooks": [
           {
-            "name": "gobby-after-tool",
+            "name": "gobby-permission-request",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=qwen --type=AfterTool",
+            "command": "ghook --gobby-owned --cli=qwen --type=PermissionRequest",
             "timeout": 30000
           }
         ]
       }
     ],
-    "BeforeToolSelection": [
+    "PostToolUse": [
       {
+        "matcher": "*",
         "hooks": [
           {
-            "name": "gobby-before-tool-selection",
+            "name": "gobby-post-tool-use",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=qwen --type=BeforeToolSelection",
+            "command": "ghook --gobby-owned --cli=qwen --type=PostToolUse",
             "timeout": 30000
           }
         ]
       }
     ],
-    "BeforeModel": [
+    "PostToolUseFailure": [
       {
+        "matcher": "*",
         "hooks": [
           {
-            "name": "gobby-before-model",
+            "name": "gobby-post-tool-use-failure",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=qwen --type=BeforeModel",
+            "command": "ghook --gobby-owned --cli=qwen --type=PostToolUseFailure",
             "timeout": 30000
           }
         ]
       }
     ],
-    "AfterModel": [
+    "Stop": [
       {
         "hooks": [
           {
-            "name": "gobby-after-model",
+            "name": "gobby-stop",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=qwen --type=AfterModel",
+            "command": "ghook --gobby-owned --cli=qwen --type=Stop",
             "timeout": 30000
           }
         ]
       }
     ],
-    "PreCompress": [
+    "StopFailure": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "name": "gobby-stop-failure",
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=qwen --type=StopFailure",
+            "timeout": 30000
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "name": "gobby-subagent-start",
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=qwen --type=SubagentStart",
+            "timeout": 30000
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "name": "gobby-subagent-stop",
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=qwen --type=SubagentStop",
+            "timeout": 30000
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
       {
         "hooks": [
           {
-            "name": "gobby-pre-compress",
+            "name": "gobby-pre-compact",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=qwen --type=PreCompress",
+            "command": "ghook --gobby-owned --cli=qwen --type=PreCompact",
+            "timeout": 30000
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "name": "gobby-post-compact",
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=qwen --type=PostCompact",
             "timeout": 30000
           }
         ]
@@ -129,6 +171,30 @@
             "name": "gobby-notification",
             "type": "command",
             "command": "ghook --gobby-owned --cli=qwen --type=Notification",
+            "timeout": 30000
+          }
+        ]
+      }
+    ],
+    "TodoCreated": [
+      {
+        "hooks": [
+          {
+            "name": "gobby-todo-created",
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=qwen --type=TodoCreated",
+            "timeout": 30000
+          }
+        ]
+      }
+    ],
+    "TodoCompleted": [
+      {
+        "hooks": [
+          {
+            "name": "gobby-todo-completed",
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=qwen --type=TodoCompleted",
             "timeout": 30000
           }
         ]

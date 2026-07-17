@@ -4,7 +4,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from gobby.adapters.qwen import QwenAdapter
+# Qwen now has a native terminal-hook contract; this file tests the shared ACP base.
+from gobby.adapters.acp_hook_adapter import ACPHookAdapter as QwenAdapter
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 
 pytestmark = pytest.mark.unit

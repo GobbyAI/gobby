@@ -55,6 +55,16 @@ pub(crate) fn action_from_success_response(
         return Ok(action_from_droid_success(result, serialized));
     }
 
+    // Qwen's current hook contract consumes structured allow and block JSON,
+    // including Stop. A non-zero exit would discard that response body.
+    if canonical_source == "qwen" {
+        return Ok(HookAction {
+            exit_code: 0,
+            stdout_json: is_python_truthy(&result).then_some(serialized),
+            stderr_message: None,
+        });
+    }
+
     // Claude carries a structured permissionDecision channel; emitting a
     // second stderr+exit(2) channel on top makes Claude render every
     // PreToolUse deny twice. Mirror the daemon contract: only the
@@ -367,6 +377,21 @@ mod tests {
                 exit_code: 2,
                 stdout_json: None,
                 stderr_message: Some("Task still in_progress".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn action_from_success_preserves_qwen_stop_block_json() {
+        let body = r#"{"decision":"block","reason":"finish the task"}"#;
+        let action = action_from_success_response("qwen", "Stop", body).unwrap();
+
+        assert_eq!(
+            action,
+            HookAction {
+                exit_code: 0,
+                stdout_json: Some(body.to_string()),
+                stderr_message: None,
             }
         );
     }

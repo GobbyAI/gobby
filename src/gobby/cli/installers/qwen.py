@@ -7,10 +7,15 @@ from pathlib import Path
 from shutil import copy2
 from typing import Any
 
+from gobby.adapters.qwen_contract import QWEN_HOOK_NAMES
 from gobby.agents.trust import seed_gobby_home_trust
 from gobby.cli.utils import get_install_dir
 
-from .hook_commands import merge_gobby_hook_groups, rewrite_hook_template_commands
+from .hook_commands import (
+    merge_gobby_hook_groups,
+    remove_gobby_hook_handlers,
+    rewrite_hook_template_commands,
+)
 from .mcp_config import configure_mcp_server_json, remove_mcp_server_json
 from .shared import (
     clean_project_hooks,
@@ -22,9 +27,9 @@ from .skill_install import install_router_skills_as_cli_skills
 
 logger = logging.getLogger(__name__)
 
-_HOOK_TYPES = [
-    "SessionStart",
-    "SessionEnd",
+_HOOK_TYPES = list(QWEN_HOOK_NAMES)
+
+_LEGACY_HOOK_TYPES = [
     "BeforeAgent",
     "AfterAgent",
     "BeforeTool",
@@ -33,8 +38,34 @@ _HOOK_TYPES = [
     "BeforeModel",
     "AfterModel",
     "PreCompress",
-    "Notification",
 ]
+
+
+def _remove_gobby_hooks(settings: dict[str, Any], hook_types: list[str]) -> list[str]:
+    """Remove only Gobby-owned handlers for the selected Qwen events."""
+
+    hooks = settings.get("hooks")
+    if not isinstance(hooks, dict):
+        return []
+
+    removed: list[str] = []
+    for hook_type in hook_types:
+        if hook_type not in hooks:
+            continue
+        hook_config = hooks[hook_type]
+        groups = hook_config if isinstance(hook_config, list) else [hook_config]
+        cleaned, handlers_removed = remove_gobby_hook_handlers(groups)
+        if not handlers_removed:
+            continue
+        if cleaned:
+            hooks[hook_type] = cleaned
+        else:
+            del hooks[hook_type]
+        removed.append(hook_type)
+
+    if not hooks:
+        settings.pop("hooks", None)
+    return removed
 
 
 def install_qwen(project_path: Path, mode: str = "global") -> dict[str, Any]:
@@ -108,6 +139,8 @@ def install_qwen(project_path: Path, mode: str = "global") -> dict[str, Any]:
         hooks_dir=hooks_dir,
     )
 
+    _remove_gobby_hooks(existing_settings, _LEGACY_HOOK_TYPES)
+
     if "hooks" not in existing_settings:
         existing_settings["hooks"] = {}
     for hook_type, hook_config in gobby_settings.get("hooks", {}).items():
@@ -116,8 +149,12 @@ def install_qwen(project_path: Path, mode: str = "global") -> dict[str, Any]:
         )
         hooks_installed.append(hook_type)
 
-    existing_settings.setdefault("general", {})
-    existing_settings["general"]["enableHooks"] = True
+    existing_settings["disableAllHooks"] = False
+    general = existing_settings.get("general")
+    if isinstance(general, dict):
+        general.pop("enableHooks", None)
+        if not general:
+            existing_settings.pop("general")
 
     existing_settings.setdefault("ui", {})
     existing_settings["ui"]["hideTips"] = True
@@ -178,7 +215,6 @@ def uninstall_qwen(project_path: Path, mode: str = "project") -> dict[str, Any]:
 
     qwen_path = Path.home() / ".qwen" if mode == "global" else project_path / ".qwen"
     settings_file = qwen_path / "settings.json"
-    hooks_dir = qwen_path / "hooks"
 
     if not settings_file.exists():
         result["success"] = True
@@ -199,27 +235,10 @@ def uninstall_qwen(project_path: Path, mode: str = "project") -> dict[str, Any]:
         )
         settings = {}
 
-    if "hooks" in settings:
-        for hook_type in _HOOK_TYPES:
-            if hook_type in settings["hooks"]:
-                del settings["hooks"][hook_type]
-                hooks_removed.append(hook_type)
-
-        if not settings["hooks"]:
-            del settings["hooks"]
+    hooks_removed.extend(_remove_gobby_hooks(settings, [*_HOOK_TYPES, *_LEGACY_HOOK_TYPES]))
 
     with open(settings_file, "w") as f:
         json.dump(settings, f, indent=2)
-
-    if hooks_dir.exists():
-        for hook_file in hooks_dir.iterdir():
-            if hook_file.is_file():
-                hook_file.unlink()
-                files_removed.append(f"hooks/{hook_file.name}")
-        try:
-            hooks_dir.rmdir()
-        except OSError:
-            pass
 
     global_settings = Path.home() / ".qwen" / "settings.json"
     mcp_result = remove_mcp_server_json(global_settings)

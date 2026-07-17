@@ -86,7 +86,7 @@ class ValidationConfig:
     settings_file: str  # "settings.json" or "hooks.json"
     required_hooks: tuple[str, ...]  # Required hook types
     nested: bool  # True = hooks have nested "hooks" array (Claude/Qwen)
-    check_enable_hooks: bool = False  # Qwen requires general.enableHooks=true
+    check_disable_all_hooks: bool = False  # Qwen requires top-level disableAllHooks=false
     check_version: int | None = None  # Reserved for future use
     flat_hooks: bool = False  # Droid: hooks are top-level keys (no "hooks" wrapper)
 
@@ -123,18 +123,23 @@ CLI_VALIDATION_CONFIGS: dict[str, ValidationConfig] = {
         required_hooks=(
             "SessionStart",
             "SessionEnd",
-            "BeforeAgent",
-            "AfterAgent",
-            "BeforeTool",
-            "AfterTool",
-            "BeforeToolSelection",
-            "BeforeModel",
-            "AfterModel",
-            "PreCompress",
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PermissionRequest",
+            "PostToolUse",
+            "PostToolUseFailure",
+            "Stop",
+            "StopFailure",
+            "SubagentStart",
+            "SubagentStop",
+            "PreCompact",
+            "PostCompact",
             "Notification",
+            "TodoCreated",
+            "TodoCompleted",
         ),
         nested=True,
-        check_enable_hooks=True,
+        check_disable_all_hooks=True,
     ),
     "codex": ValidationConfig(
         cli_name="Codex CLI",
@@ -226,12 +231,11 @@ def validate(config: ValidationConfig) -> int:
     print("Hooks section found")
 
     # 4. CLI-specific extra checks
-    if config.check_enable_hooks:
-        general = settings.get("general", {})
-        if not general.get("enableHooks"):
-            print(f"general.enableHooks is not set to true (required for {config.cli_name})")
+    if config.check_disable_all_hooks:
+        if settings.get("disableAllHooks") is not False:
+            print(f"disableAllHooks is not set to false (required for {config.cli_name})")
             return 1
-        print("general.enableHooks is enabled")
+        print("disableAllHooks is false")
 
     if config.check_version is not None:
         version = settings.get("version")

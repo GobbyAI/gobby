@@ -93,10 +93,10 @@ def test_codex_permission_request_mcp_validation_error_has_no_unsupported_fields
 def test_qwen_mcp_validation_error_is_plain_block_context() -> None:
     result = QwenAdapter().translate_from_hook_response(
         _mcp_validation_response(),
-        hook_type="BeforeTool",
+        hook_type="PreToolUse",
     )
 
-    assert result["decision"] == "deny"
+    assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert "updatedInput" not in result
     assert "Retry this tool call" not in str(result)
     assert "invalid_arguments" in result["hookSpecificOutput"]["additionalContext"]

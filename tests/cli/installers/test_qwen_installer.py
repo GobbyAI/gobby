@@ -50,24 +50,38 @@ class TestInstallQwen:
         user_hooks = {hook_type: f"user-{hook_type}" for hook_type in template_hooks}
         settings_file = project_path / ".qwen" / "settings.json"
         settings_file.parent.mkdir(parents=True)
+        existing_hooks = {
+            hook_type: [
+                {
+                    "custom": "preserve-group-metadata",
+                    "hooks": [
+                        {"type": "command", "command": user_command},
+                        {
+                            "type": "command",
+                            "command": "/old/ghook --gobby-owned --cli=qwen --type=stale",
+                        },
+                    ],
+                }
+            ]
+            for hook_type, user_command in user_hooks.items()
+        }
+        existing_hooks["BeforeTool"] = [
+            {
+                "hooks": [
+                    {"type": "command", "command": "user-legacy-before-tool"},
+                    {
+                        "type": "command",
+                        "command": "ghook --gobby-owned --cli=qwen --type=BeforeTool",
+                    },
+                ]
+            }
+        ]
         settings_file.write_text(
             json.dumps(
                 {
-                    "hooks": {
-                        hook_type: [
-                            {
-                                "custom": "preserve-group-metadata",
-                                "hooks": [
-                                    {"type": "command", "command": user_command},
-                                    {
-                                        "type": "command",
-                                        "command": "/old/ghook --gobby-owned --cli=qwen --type=stale",
-                                    },
-                                ],
-                            }
-                        ]
-                        for hook_type, user_command in user_hooks.items()
-                    }
+                    "hooks": existing_hooks,
+                    "general": {"enableHooks": True, "theme": "dark"},
+                    "disableAllHooks": True,
                 }
             )
         )
@@ -106,7 +120,8 @@ class TestInstallQwen:
         with open(settings_file) as f:
             settings = json.load(f)
 
-        assert settings["general"]["enableHooks"] is True
+        assert settings["disableAllHooks"] is False
+        assert settings["general"] == {"theme": "dark"}
         assert settings["ui"]["hideTips"] is True
         assert "hooks" in settings
         for hook_type, user_command in user_hooks.items():
@@ -116,6 +131,12 @@ class TestInstallQwen:
             assert user_command in commands
             assert not any("--type=stale" in command for command in commands)
             assert sum("--gobby-owned" in command for command in commands) == 1
+        legacy_commands = [
+            handler["command"]
+            for group in settings["hooks"]["BeforeTool"]
+            for handler in group["hooks"]
+        ]
+        assert legacy_commands == ["user-legacy-before-tool"]
         assert (temp_dir / ".qwen" / "projects.json").exists()
         assert (temp_dir / ".qwen" / "trustedFolders.json").exists()
 
@@ -164,8 +185,24 @@ class TestInstallQwen:
             json.dumps(
                 {
                     "hooks": {
-                        "SessionStart": {"command": "start"},
-                        "SessionEnd": {"command": "end"},
+                        "SessionStart": [
+                            {
+                                "hooks": [
+                                    {"command": "user-session-start"},
+                                    {
+                                        "command": "ghook --gobby-owned --cli=qwen --type=SessionStart"
+                                    },
+                                ]
+                            }
+                        ],
+                        "BeforeTool": [
+                            {
+                                "hooks": [
+                                    {"command": "user-before-tool"},
+                                    {"command": "ghook --gobby-owned --cli=qwen --type=BeforeTool"},
+                                ]
+                            }
+                        ],
                     },
                     "general": {"enableHooks": True},
                 }
@@ -184,20 +221,20 @@ class TestInstallQwen:
             result = uninstall_qwen(project_path)
 
         assert result["success"] is True
-        assert result["hooks_removed"] == ["SessionStart", "SessionEnd"]
+        assert result["hooks_removed"] == ["SessionStart", "BeforeTool"]
         assert result["mcp_removed"] is True
-        assert sorted(result["files_removed"]) == [
-            "hooks/session-end.sh",
-            "hooks/session-start.sh",
-        ]
+        assert result["files_removed"] == []
 
         backup_file = qwen_path / "settings.json.1234567890.backup"
         assert backup_file.exists()
-        assert not hooks_dir.exists()
+        assert hooks_dir.exists()
+        assert (hooks_dir / "session-start.sh").exists()
+        assert (hooks_dir / "session-end.sh").exists()
 
         with open(settings_file) as f:
             settings = json.load(f)
-        assert "hooks" not in settings
+        assert settings["hooks"]["SessionStart"][0]["hooks"] == [{"command": "user-session-start"}]
+        assert settings["hooks"]["BeforeTool"][0]["hooks"] == [{"command": "user-before-tool"}]
 
     def test_uninstall_qwen_global_mode_uses_home_directory(
         self, project_path: Path, temp_dir: Path
@@ -205,7 +242,23 @@ class TestInstallQwen:
         qwen_path = temp_dir / ".qwen"
         qwen_path.mkdir(parents=True)
         settings_file = qwen_path / "settings.json"
-        settings_file.write_text(json.dumps({"hooks": {"SessionStart": {"command": "start"}}}))
+        settings_file.write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "SessionStart": [
+                            {
+                                "hooks": [
+                                    {
+                                        "command": "ghook --gobby-owned --cli=qwen --type=SessionStart"
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                }
+            )
+        )
 
         with (
             patch.object(Path, "home", return_value=temp_dir),

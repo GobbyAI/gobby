@@ -7,7 +7,7 @@ from typing import Any
 import psycopg
 
 from gobby.hooks.event_handlers._base import EventHandlersBase
-from gobby.hooks.events import HookEvent, HookResponse, SessionSource
+from gobby.hooks.events import HookEvent, HookResponse
 from gobby.skills.formatting import skill_fetch_directive
 
 logger = logging.getLogger(__name__)
@@ -497,7 +497,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         return response
 
     def handle_stop(self, event: HookEvent) -> HookResponse:
-        """Handle STOP event (Claude Code only)."""
+        """Handle an agent STOP event."""
         session_id = event.metadata.get("_platform_session_id")
 
         context_parts: list[str] = []
@@ -523,24 +523,9 @@ class AgentEventHandlerMixin(EventHandlersBase):
         return response
 
     def handle_pre_compact(self, event: HookEvent) -> HookResponse:
-        """Handle PRE_COMPACT event.
-
-        Note: Qwen-compatible ACP CLIs fire PreCompress constantly
-        during normal operation, unlike Claude which fires it only when
-        approaching context limits. We skip handoff logic and workflow
-        execution for those CLIs to avoid excessive state changes and
-        workflow interruptions.
-        """
+        """Handle PRE_COMPACT event."""
         trigger = event.data.get("trigger", "auto")
         session_id = event.metadata.get("_platform_session_id")
-
-        # Skip handoff logic for Qwen - it fires PreCompress too frequently.
-        if event.source is SessionSource.QWEN:
-            self.logger.debug(
-                f"PRE_COMPACT ({trigger}): session {session_id} "
-                f"[{event.source.value.title()} - skipped]"
-            )
-            return HookResponse(decision="allow")
 
         is_handoff_trigger = trigger in {"manual", "user", "clear", "compact"}
 

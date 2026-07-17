@@ -8,6 +8,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.adapters.acp_stream import StreamEvent
+from gobby.adapters.acp_tool_names import normalize_acp_tool_name
+from gobby.llm.claude_models import ToolCallEvent
 from gobby.servers.websocket.chat.backends.base import ProviderBackendHealth
 from gobby.servers.websocket.chat.backends.codex import (
     CodexManagedChatSession,
@@ -27,6 +30,21 @@ def test_codex_backend_and_session_share_provider_id() -> None:
     session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
 
     assert session.provider == backend.provider == "codex"
+
+
+def test_qwen_acp_web_chat_uses_shared_tool_name_normalizer_directly() -> None:
+    session = QwenManagedChatSession(conversation_id="conv-qwen", _backend=MagicMock())
+
+    assert session._tool_name_adapter() is normalize_acp_tool_name
+    translated = session._translate_event(
+        StreamEvent(
+            event_type="tool_call",
+            data={"tool_name": "run_shell_command", "id": "qwen-call"},
+        )
+    )
+
+    assert isinstance(translated, ToolCallEvent)
+    assert translated.tool_name == "Bash"
 
 
 @pytest.mark.asyncio

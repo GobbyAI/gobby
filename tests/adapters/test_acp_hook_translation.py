@@ -4,7 +4,9 @@ from datetime import UTC, datetime
 
 import pytest
 
-from gobby.adapters.qwen import QwenAdapter
+# Qwen now has a native terminal-hook contract; this file tests the shared ACP base.
+from gobby.adapters.acp_hook_adapter import ACPHookAdapter as QwenAdapter
+from gobby.adapters.grok import GrokAdapter
 from gobby.hooks.events import HookEventType, HookResponse, SessionSource
 
 pytestmark = pytest.mark.unit
@@ -30,7 +32,7 @@ class TestTranslateToHookEvent:
 
         assert event.event_type == HookEventType.SESSION_START
         assert event.session_id == "qwen-sess-123"
-        assert event.source == SessionSource.QWEN
+        assert event.source == SessionSource.GROK
         assert event.cwd == "/home/user/project"
         assert event.data == native_event["input_data"]
 
@@ -612,14 +614,8 @@ class TestBlockToDenyMapping:
 
     @pytest.mark.parametrize(
         ("adapter_cls", "hook_type"),
-        [
-            (QwenAdapter, "BeforeTool"),
-            (QwenAdapter, "AfterTool"),
-            # Grok uses snake_case hook names
-            ("GrokAdapter", "pre_tool_use"),
-            ("GrokAdapter", "post_tool_use"),
-        ],
-        ids=["qwen-before-tool", "qwen-after-tool", "grok-pre-tool-use", "grok-post-tool-use"],
+        [(GrokAdapter, "pre_tool_use"), (GrokAdapter, "post_tool_use")],
+        ids=["grok-pre-tool-use", "grok-post-tool-use"],
     )
     def test_block_maps_to_deny_recoverable(
         self,
@@ -627,9 +623,7 @@ class TestBlockToDenyMapping:
         hook_type: str,
     ) -> None:
         """Block on a tool hook maps to deny with continue=True (recoverable)."""
-        from gobby.adapters.grok import GrokAdapter
-
-        adapter = GrokAdapter() if adapter_cls == "GrokAdapter" else adapter_cls()
+        adapter = adapter_cls()
         response = HookResponse(decision="block", reason="Rule enforced")
         result = adapter.translate_from_hook_response(response, hook_type=hook_type)
         assert result["decision"] == "deny"
@@ -638,13 +632,8 @@ class TestBlockToDenyMapping:
 
     @pytest.mark.parametrize(
         ("adapter_cls", "hook_type"),
-        [
-            (QwenAdapter, "SessionStart"),
-            (QwenAdapter, "AfterAgent"),
-            ("GrokAdapter", "session_start"),
-            ("GrokAdapter", "stop"),
-        ],
-        ids=["qwen-session-start", "qwen-after-agent", "grok-session-start", "grok-stop"],
+        [(GrokAdapter, "session_start"), (GrokAdapter, "stop")],
+        ids=["grok-session-start", "grok-stop"],
     )
     def test_block_maps_to_deny_hard_stop(
         self,
@@ -652,9 +641,7 @@ class TestBlockToDenyMapping:
         hook_type: str,
     ) -> None:
         """Block on a non-tool hook maps to deny with continue=False (hard stop)."""
-        from gobby.adapters.grok import GrokAdapter
-
-        adapter = GrokAdapter() if adapter_cls == "GrokAdapter" else adapter_cls()
+        adapter = adapter_cls()
         response = HookResponse(decision="block", reason="Hard stop gate")
         result = adapter.translate_from_hook_response(response, hook_type=hook_type)
         assert result["decision"] == "deny"

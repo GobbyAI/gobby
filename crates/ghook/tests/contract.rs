@@ -19,7 +19,9 @@ fn malformed_stdin_uses_cli_specific_json_error_contract() -> TestResult {
     for (cli, hook_type, expected_exit) in [
         ("claude", "session-start", 2),
         ("codex", "SessionStart", 2),
-        ("qwen", "SessionStart", 1),
+        ("qwen", "SessionStart", 2),
+        ("qwen", "Stop", 2),
+        ("qwen", "PreToolUse", 1),
         ("droid", "SessionStart", 1),
         ("grok", "session_start", 2),
         ("agy", "SessionStart", 2),
@@ -173,6 +175,10 @@ fn daemon_down_distinguishes_critical_and_noncritical_hooks() -> TestResult {
         ("grok", "session_start"),
         ("grok", "session_end"),
         ("grok", "pre_compact"),
+        ("qwen", "SessionStart"),
+        ("qwen", "SessionEnd"),
+        ("qwen", "PreCompact"),
+        ("qwen", "Stop"),
     ] {
         let critical = run_with_closed_daemon(cli, hook_type)?;
         assert_eq!(
@@ -195,7 +201,7 @@ fn daemon_down_distinguishes_critical_and_noncritical_hooks() -> TestResult {
         ("grok", "stop"),
         ("claude", "Stop"),
         ("droid", "Stop"),
-        ("qwen", "AfterAgent"),
+        ("qwen", "PreToolUse"),
     ] {
         let noncritical = run_with_closed_daemon(cli, hook_type)?;
         assert_eq!(
@@ -252,7 +258,7 @@ fn diagnose_json_reports_terminal_criticality_contract() -> TestResult {
         ("grok", "stop"),
         ("claude", "Stop"),
         ("droid", "Stop"),
-        ("qwen", "AfterAgent"),
+        ("qwen", "PreToolUse"),
     ] {
         let noncritical =
             run_diagnose_with_dirs(home.path(), gobby_home.path(), cli, hook_type, &daemon_url)?;
@@ -358,6 +364,30 @@ fn daemon_success_maps_deny_and_block_bodies() -> TestResult {
     )?;
     assert_stderr_empty(&grok_pre_tool_output, "grok pre_tool_use block")?;
     assert!(grok_pre_tool_request.contains("\"hook_type\":\"pre_tool_use\""));
+
+    for (hook_type, body) in [
+        (
+            "SessionStart",
+            r#"{"continue":true,"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"ready"}}"#,
+        ),
+        (
+            "PreToolUse",
+            r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"policy"}}"#,
+        ),
+        (
+            "Stop",
+            r#"{"continue":true,"decision":"block","reason":"keep working"}"#,
+        ),
+    ] {
+        let (qwen_url, qwen_daemon) = start_daemon(http_ok_json(body))?;
+        let qwen_output = run_temp_ghook("qwen", hook_type, &qwen_url, VALID_STDIN, &[])?;
+        let qwen_request = join_daemon(qwen_daemon)?;
+
+        assert_eq!(qwen_output.status.code(), Some(0), "qwen {hook_type}");
+        assert_json_stdout(&qwen_output, serde_json::from_str(body)?)?;
+        assert_stderr_empty(&qwen_output, &format!("qwen {hook_type}"))?;
+        assert!(qwen_request.contains(&format!("\"hook_type\":\"{hook_type}\"")));
+    }
 
     for hook_type in [
         "SessionStart",

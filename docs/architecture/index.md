@@ -90,7 +90,7 @@ gobby status
 - **AGY CLI** - Hook integration
 - **Codex CLI** - Full hook integration (+ app-server JSON-RPC)
 - **Droid** - Hook integration
-- **Qwen Code** - Hook integration (ACP)
+- **Qwen Code** - Native terminal-hook integration plus ACP web chat
 - **Grok CLI** - Hook integration (ACP)
 
 ### Session Management

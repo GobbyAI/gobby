@@ -6,17 +6,31 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.adapters.qwen import QwenAdapter
+from gobby.adapters.acp_hook_adapter import ACPHookAdapter
+from gobby.adapters.capabilities import _acp_capabilities
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
 
 pytestmark = pytest.mark.unit
 
 
+class LegacyACPTestAdapter(ACPHookAdapter):
+    """Concrete adapter for the shared legacy ACP contract."""
+
+    @property
+    def source(self) -> SessionSource:
+        return SessionSource.GROK
+
+
 @pytest.fixture
-def adapter() -> QwenAdapter:
-    """Create a QwenAdapter instance."""
-    return QwenAdapter()
+def adapter(monkeypatch: pytest.MonkeyPatch) -> LegacyACPTestAdapter:
+    """Create the concrete legacy ACP hook adapter."""
+    capabilities = _acp_capabilities(SessionSource.GROK)
+    monkeypatch.setattr(
+        "gobby.adapters.acp_hook_adapter.get_provider_capabilities",
+        lambda _source: capabilities,
+    )
+    return LegacyACPTestAdapter()
 
 
 @pytest.fixture

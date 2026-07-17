@@ -12,6 +12,7 @@ import pytest
 from gobby.adapters.acp_client import ACPClient
 from gobby.adapters.acp_commands import normalize_available_commands
 from gobby.adapters.acp_session_state import ACPSessionState
+from gobby.adapters.qwen_acp_client import QwenACPClient
 
 pytestmark = pytest.mark.unit
 
@@ -167,6 +168,38 @@ async def test_start_advertises_terminal_capability_and_gates_session_load(
     assert client.agent_capabilities == {"loadSession": False}
     assert [message["method"] for message in messages] == ["initialize", "session/new"]
     assert client.session_id == "new-session"
+
+    await client.stop()
+
+
+@pytest.mark.asyncio
+async def test_daemon_spawned_qwen_acp_disables_terminal_hooks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = _FakeProcess(
+        [
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"protocolVersion": 1, "agentCapabilities": {}},
+            }
+        ]
+    )
+    captured: dict[str, Any] = {}
+
+    async def fake_create_subprocess_exec(*args: Any, **kwargs: Any) -> _FakeProcess:
+        captured["args"] = args
+        captured["env"] = kwargs["env"]
+        return process
+
+    monkeypatch.setattr("asyncio.create_subprocess_exec", fake_create_subprocess_exec)
+    client = QwenACPClient(cli_path="/usr/bin/qwen")
+
+    await client.start(auto_session=False)
+
+    assert captured["args"] == ("/usr/bin/qwen", "--acp")
+    assert captured["env"]["GOBBY_HOOKS_DISABLED"] == "1"
+    assert captured["env"]["GOBBY_ACP_CHILD"] == "1"
 
     await client.stop()
 

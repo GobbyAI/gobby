@@ -191,7 +191,8 @@ mod tests {
             ("claude", "Stop", false),
             ("claude", "session-end", true),
             ("droid", "Stop", false),
-            ("qwen", "AfterAgent", false),
+            ("qwen", "Stop", true),
+            ("qwen", "PreToolUse", false),
         ] {
             let output = diagnose(cli, hook_type);
             assert!(output.cli_recognized, "{cli} should be recognized");

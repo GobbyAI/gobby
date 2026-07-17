@@ -29,7 +29,9 @@ impl CliConfig {
             }),
             "qwen" => Some(Self {
                 source: "qwen",
-                critical_hooks: ["SessionStart"].into_iter().collect(),
+                critical_hooks: ["SessionStart", "SessionEnd", "PreCompact", "Stop"]
+                    .into_iter()
+                    .collect(),
                 json_error_exit_code: 1,
             }),
             "codex" => Some(Self {
@@ -61,6 +63,14 @@ impl CliConfig {
     pub fn is_critical_hook(&self, hook_type: &str) -> bool {
         self.critical_hooks.contains(hook_type)
     }
+
+    pub fn malformed_input_exit_code(&self, hook_type: &str) -> u8 {
+        if self.source == "qwen" && self.is_critical_hook(hook_type) {
+            2
+        } else {
+            self.json_error_exit_code
+        }
+    }
 }
 
 #[cfg(test)]
@@ -88,13 +98,16 @@ mod tests {
     }
 
     #[test]
-    fn qwen_after_agent_is_noncritical() {
+    fn qwen_current_critical_hooks() {
         let c = CliConfig::for_cli("qwen").unwrap();
         assert_eq!(c.source, "qwen");
         assert!(c.is_critical_hook("SessionStart"));
-        assert!(!c.is_critical_hook("AfterAgent"));
-        assert!(!c.is_critical_hook("Stop"));
-        assert_eq!(c.json_error_exit_code, 1);
+        assert!(c.is_critical_hook("SessionEnd"));
+        assert!(c.is_critical_hook("PreCompact"));
+        assert!(c.is_critical_hook("Stop"));
+        assert!(!c.is_critical_hook("PreToolUse"));
+        assert_eq!(c.malformed_input_exit_code("Stop"), 2);
+        assert_eq!(c.malformed_input_exit_code("PreToolUse"), 1);
     }
 
     #[test]

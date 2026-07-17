@@ -37,6 +37,7 @@ from starlette.requests import ClientDisconnect
 
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
+from gobby.hooks.events import HookResponse
 from gobby.hooks.runtime_compat import SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION
 from gobby.mcp_proxy.lazy import CircuitBreakerOpen
 from gobby.mcp_proxy.models import MCPError
@@ -3026,12 +3027,11 @@ class TestHooksEndpoints:
 
         with (
             TestClient(server.app) as client,
-            patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as MockAdapter,
+            patch(
+                "gobby.adapters.claude_code.ClaudeCodeAdapter.handle_native",
+                return_value={"continue": True},
+            ) as mock_handle_native,
         ):
-            mock_adapter = MagicMock()
-            mock_adapter.handle_native.return_value = {"continue": True}
-            MockAdapter.return_value = mock_adapter
-
             response = client.post(
                 "/api/hooks/execute",
                 json=_hook_envelope(hook_type="session-start", source="claude"),
@@ -3039,6 +3039,7 @@ class TestHooksEndpoints:
 
         assert response.status_code == 200
         assert response.json()["continue"] is True
+        mock_handle_native.assert_called_once()
 
     def test_execute_hook_claude_envelope_source(self, session_storage: SessionManager) -> None:
         """Envelope-shaped Claude requests should normalize to the flat adapter payload."""
@@ -3133,6 +3134,113 @@ class TestHooksEndpoints:
             "source": "droid",
             "input_data": {"session_id": "droid-123", "cwd": "/tmp"},
         }
+
+    @pytest.mark.parametrize(
+        ("hook_type", "hook_response", "expected"),
+        [
+            (
+                "PreToolUse",
+                HookResponse(decision="block", reason="tool policy"),
+                {
+                    "continue": True,
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": "tool policy",
+                    },
+                },
+            ),
+            (
+                "PermissionRequest",
+                HookResponse(decision="block", reason="permission policy"),
+                {
+                    "continue": True,
+                    "hookSpecificOutput": {
+                        "hookEventName": "PermissionRequest",
+                        "decision": {
+                            "behavior": "deny",
+                            "message": "permission policy",
+                            "interrupt": True,
+                        },
+                    },
+                },
+            ),
+            (
+                "Stop",
+                HookResponse(decision="block", reason="finish the task"),
+                {"continue": True, "decision": "block", "reason": "finish the task"},
+            ),
+            (
+                "TodoCompleted",
+                HookResponse(decision="block", reason="dependency incomplete"),
+                {
+                    "continue": True,
+                    "decision": "block",
+                    "reason": "dependency incomplete",
+                },
+            ),
+        ],
+    )
+    def test_execute_hook_qwen_returns_exact_native_response_shapes(
+        self,
+        session_storage: SessionManager,
+        hook_type: str,
+        hook_response: HookResponse,
+        expected: dict[str, Any],
+    ) -> None:
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        hook_manager = _mock_hook_manager()
+        hook_manager.handle.return_value = hook_response
+        server.app.state.hook_manager = hook_manager
+
+        with TestClient(server.app) as client:
+            response = client.post(
+                "/api/hooks/execute",
+                json=_hook_envelope(
+                    hook_type=hook_type,
+                    source="qwen",
+                    input_data={
+                        "session_id": "qwen-native-shape",
+                        "phase": "validation",
+                    },
+                ),
+            )
+
+        assert response.status_code == 200
+        assert response.json() == expected
+
+    def test_execute_hook_qwen_stop_evaluation_failure_returns_structured_block(
+        self,
+        session_storage: SessionManager,
+    ) -> None:
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        hook_manager = _mock_hook_manager()
+        hook_manager.handle.side_effect = RuntimeError("rule engine unavailable")
+        server.app.state.hook_manager = hook_manager
+
+        with TestClient(server.app) as client:
+            response = client.post(
+                "/api/hooks/execute",
+                json=_hook_envelope(
+                    hook_type="Stop",
+                    source="qwen",
+                    critical=True,
+                    input_data={"session_id": "qwen-stop-failure"},
+                ),
+            )
+
+        assert response.status_code == 200
+        assert response.json()["continue"] is True
+        assert response.json()["decision"] == "block"
+        assert "blocking this critical hook for safety" in response.json()["reason"]
 
     def test_execute_hook_droid_adapter_error_is_graceful(
         self,
@@ -3416,7 +3524,7 @@ class TestHooksEndpoints:
         ("source", "hook_type", "adapter_patch"),
         [
             ("claude", "pre-tool-use", "gobby.adapters.claude_code.ClaudeCodeAdapter"),
-            ("qwen", "BeforeTool", "gobby.adapters.qwen.QwenAdapter"),
+            ("qwen", "PreToolUse", "gobby.adapters.qwen.QwenAdapter"),
             ("droid", "PreToolUse", "gobby.adapters.droid.DroidAdapter"),
         ],
     )

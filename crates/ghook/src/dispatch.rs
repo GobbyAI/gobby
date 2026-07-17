@@ -83,7 +83,7 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
         Err(e) => {
             let _ = transport::quarantine_malformed(&stdin_raw, &e.to_string(), is_critical);
             emit_empty_json();
-            return ExitCode::from(cfg.json_error_exit_code);
+            return ExitCode::from(cfg.malformed_input_exit_code(hook_type));
         }
     };
 

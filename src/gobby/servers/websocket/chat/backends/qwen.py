@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
 from gobby.adapters.acp_client import ACPClient
-from gobby.adapters.qwen import QwenAdapter
+from gobby.adapters.acp_tool_names import normalize_acp_tool_name
 from gobby.adapters.qwen_acp_client import QwenACPClient
 from gobby.servers.websocket.chat.backends.acp import ACPWebChatBackend
 from gobby.servers.websocket.chat.backends.acp_session import ACPManagedChatSession
@@ -14,7 +14,6 @@ from gobby.servers.websocket.chat.local_openai_warmup import (
     ensure_qwen_local_openai_model_ready,
 )
 
-_QWEN_TOOL_NAME_ADAPTER = QwenAdapter()
 # Qwen's ACP backend can spend extra time warming the local OpenAI-compatible model.
 _QWEN_BACKEND_START_TIMEOUT_SECONDS = 60.0
 
@@ -27,7 +26,7 @@ class QwenManagedChatSession(ACPManagedChatSession):
     chat_mode: str = field(default="plan")
 
     def _tool_name_adapter(self) -> Any:
-        return _QWEN_TOOL_NAME_ADAPTER
+        return normalize_acp_tool_name
 
 
 class QwenWebChatBackend(ACPWebChatBackend):

@@ -84,7 +84,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
         return HookResponse(decision="allow")
 
     def handle_permission_request(self, event: HookEvent) -> HookResponse:
-        """Handle PERMISSION_REQUEST event (Claude Code only)."""
+        """Handle PERMISSION_REQUEST event."""
         input_data = event.data
         session_id = event.metadata.get("_platform_session_id")
         permission_type = input_data.get("permission_type", "unknown")
@@ -183,22 +183,22 @@ class MiscEventHandlerMixin(EventHandlersBase):
         return HookResponse(decision="allow")
 
     def handle_post_compact(self, event: HookEvent) -> HookResponse:
-        """Handle POST_COMPACT event (Claude Code only)."""
+        """Handle POST_COMPACT event."""
         self._log_observe_only_event("POST_COMPACT", event)
         return HookResponse(decision="allow")
 
     def handle_stop_failure(self, event: HookEvent) -> HookResponse:
-        """Handle STOP_FAILURE event (Claude Code only)."""
+        """Handle STOP_FAILURE event."""
         self._log_observe_only_event("STOP_FAILURE", event)
         return HookResponse(decision="allow")
 
     def handle_task_created(self, event: HookEvent) -> HookResponse:
-        """Handle TASK_CREATED event (Claude Code only)."""
+        """Handle TASK_CREATED event."""
         self._log_observe_only_event("TASK_CREATED", event)
         return HookResponse(decision="allow")
 
     def handle_task_completed(self, event: HookEvent) -> HookResponse:
-        """Handle TASK_COMPLETED event (Claude Code only)."""
+        """Handle TASK_COMPLETED event."""
         self._log_observe_only_event("TASK_COMPLETED", event)
         return HookResponse(decision="allow")
 

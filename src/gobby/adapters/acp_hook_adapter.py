@@ -24,6 +24,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from gobby.adapters.acp_tool_names import ACP_TOOL_NAME_MAP, normalize_acp_tool_name
 from gobby.adapters.base import (
     ADAPTER_EMPTY_BLOCK_REASON_SENTINEL,
     BaseAdapter,
@@ -73,61 +74,7 @@ class ACPHookAdapter(BaseAdapter):
     # Tool name mapping: ACP-style tool names -> normalized names.
     # ACP providers use different tool names than Claude Code.
     # This enables workflows to use Claude Code naming conventions
-    TOOL_MAP: dict[str, str] = {
-        # Shell/Bash
-        "run_shell_command": "Bash",
-        "RunShellCommand": "Bash",
-        "ShellTool": "Bash",
-        # File read
-        "read_file": "Read",
-        "ReadFile": "Read",
-        "ReadFileTool": "Read",
-        # File write
-        "write_file": "Write",
-        "WriteFile": "Write",
-        "WriteFileTool": "Write",
-        # File edit
-        "edit_file": "Edit",
-        "EditFile": "Edit",
-        "EditFileTool": "Edit",
-        "replace": "Edit",
-        "Replace": "Edit",
-        "ReplaceTool": "Edit",
-        # Search/Glob/Grep
-        "GlobTool": "Glob",
-        "glob": "Glob",
-        "GrepTool": "Grep",
-        "grep": "Grep",
-        "grep_search": "Grep",
-        "search_file_content": "Grep",
-        "SearchText": "Grep",
-        # Directory listing
-        "list_directory": "Ls",
-        "ListDirectory": "Ls",
-        "ls": "Ls",
-        # Web access
-        "web_fetch": "Fetch",
-        "FetchTool": "Fetch",
-        # MCP tools (Gobby MCP server)
-        "call_tool": "mcp__gobby__call_tool",
-        "list_mcp_servers": "mcp__gobby__list_mcp_servers",
-        "list_tools": "mcp__gobby__list_tools",
-        "get_tool_schema": "mcp__gobby__get_tool_schema",
-        "search_tools": "mcp__gobby__search_tools",
-        "recommend_tools": "mcp__gobby__recommend_tools",
-        # MCP tools - single-underscore variants used by ACP-style providers.
-        "mcp_gobby_call_tool": "mcp__gobby__call_tool",
-        "mcp_gobby_list_mcp_servers": "mcp__gobby__list_mcp_servers",
-        "mcp_gobby_list_tools": "mcp__gobby__list_tools",
-        "mcp_gobby_get_tool_schema": "mcp__gobby__get_tool_schema",
-        "mcp_gobby_search_tools": "mcp__gobby__search_tools",
-        "mcp_gobby_recommend_tools": "mcp__gobby__recommend_tools",
-        "mcp_gobby_set_variable": "mcp__gobby__set_variable",
-        "mcp_gobby_get_variable": "mcp__gobby__get_variable",
-        # Skill and agent tools
-        "activate_skill": "Skill",
-        "delegate_to_agent": "Task",
-    }
+    TOOL_MAP: dict[str, str] = ACP_TOOL_NAME_MAP
 
     @classmethod
     def _response_hook_event_name(cls, hook_type: str | None) -> str | None:
@@ -160,7 +107,7 @@ class ACPHookAdapter(BaseAdapter):
         Returns:
             Normalized tool name (e.g., "Bash", "Read", "Write").
         """
-        return self.TOOL_MAP.get(acp_tool_name, acp_tool_name)
+        return normalize_acp_tool_name(acp_tool_name)
 
     def _normalize_event_data(self, input_data: dict[str, Any]) -> dict[str, Any]:
         """Normalize ACP event data for CLI-agnostic processing.
