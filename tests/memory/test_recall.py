@@ -20,7 +20,10 @@ from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
 
+PROJECT_ID = "44444444-4444-4444-8444-444444444444"
 SESSION_ID = "55555555-5555-4555-8555-555555555555"
+EXTERNAL_SESSION_ID = "external-memory-recall"
+MACHINE_ID = "test-machine"
 
 
 class FakeMemoryManager:
@@ -108,11 +111,11 @@ def _event(
         event_data.update(data)
     return HookEvent(
         event_type=event_type,
-        session_id="external-memory-recall",
+        session_id=EXTERNAL_SESSION_ID,
         source=source,
         timestamp=datetime.now(UTC),
         data=event_data,
-        project_id="project-1",
+        project_id=PROJECT_ID,
         metadata={"_platform_session_id": SESSION_ID, **(metadata or {})},
     )
 
@@ -128,8 +131,8 @@ def _memory(
         id=memory_id,
         memory_type="fact",
         content=content,
-        created_at="2026-01-01T00:00:00+00:00",
-        updated_at="2026-01-01T00:00:00+00:00",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2026, 1, 1, tzinfo=UTC),
         tags=tags if tags is not None else ["test"],
         similarity=similarity,
         search_via="semantic",
@@ -143,6 +146,26 @@ def _variables(**overrides: Any) -> dict[str, Any]:
     }
     variables.update(overrides)
     return variables
+
+
+@pytest.fixture
+def _persisted_recall_session(temp_db: HubDatabase) -> None:
+    temp_db.execute(
+        "INSERT INTO projects (id, name, created_at) VALUES (%s, %s, CURRENT_TIMESTAMP)",
+        (PROJECT_ID, "memory-recall-test"),
+    )
+    temp_db.execute(
+        "INSERT INTO sessions "
+        "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
+        "VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        (
+            SESSION_ID,
+            EXTERNAL_SESSION_ID,
+            MACHINE_ID,
+            SessionSource.CLAUDE.value,
+            PROJECT_ID,
+        ),
+    )
 
 
 @pytest.mark.parametrize(
@@ -248,6 +271,7 @@ def test_recall_eligibility_rejects_unmarked_protocol_prompt_bodies(prompt: str)
 )
 async def test_runner_skips_synthetic_prompts_without_search(
     temp_db: HubDatabase,
+    _persisted_recall_session: None,
     event: HookEvent,
 ) -> None:
     SessionVariableManager(temp_db).set_variable(SESSION_ID, "parent_turn_seq", 3)
@@ -268,6 +292,7 @@ async def test_runner_skips_synthetic_prompts_without_search(
 @pytest.mark.asyncio
 async def test_runner_selects_memory_with_json_feature_call_and_no_child_session(
     temp_db: HubDatabase,
+    _persisted_recall_session: None,
 ) -> None:
     SessionVariableManager(temp_db).set_variable(SESSION_ID, "parent_turn_seq", 3)
     memory_manager = FakeMemoryManager(
@@ -304,7 +329,7 @@ async def test_runner_selects_memory_with_json_feature_call_and_no_child_session
     assert memory_manager.calls == [
         {
             "query": "please use project memory to fix this regression today",
-            "project_id": "project-1",
+            "project_id": PROJECT_ID,
             "limit": 8,
             "min_score": 0.7,
             "tags_none": ["review-lesson"],
@@ -321,6 +346,7 @@ async def test_runner_selects_memory_with_json_feature_call_and_no_child_session
 @pytest.mark.asyncio
 async def test_runner_synthesizes_large_prompt_query_before_search(
     temp_db: HubDatabase,
+    _persisted_recall_session: None,
 ) -> None:
     SessionVariableManager(temp_db).set_variable(SESSION_ID, "parent_turn_seq", 3)
     long_prompt = (
@@ -364,6 +390,7 @@ async def test_runner_synthesizes_large_prompt_query_before_search(
 @pytest.mark.asyncio
 async def test_runner_shares_timeout_between_query_synthesis_and_selection(
     temp_db: HubDatabase,
+    _persisted_recall_session: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class SlowQueryLLM(FakeLLMService):
@@ -431,6 +458,7 @@ async def test_runner_shares_timeout_between_query_synthesis_and_selection(
 )
 async def test_runner_falls_back_when_large_prompt_query_synthesis_fails(
     temp_db: HubDatabase,
+    _persisted_recall_session: None,
     query_response: Any,
 ) -> None:
     SessionVariableManager(temp_db).set_variable(SESSION_ID, "parent_turn_seq", 3)
@@ -461,6 +489,7 @@ async def test_runner_falls_back_when_large_prompt_query_synthesis_fails(
 @pytest.mark.asyncio
 async def test_runner_excludes_review_lessons_from_prompt_recall(
     temp_db: HubDatabase,
+    _persisted_recall_session: None,
 ) -> None:
     SessionVariableManager(temp_db).set_variable(SESSION_ID, "parent_turn_seq", 3)
     raw_review_lesson = "# Review Lesson: Raw diagnostic should not be prompted"
@@ -490,6 +519,7 @@ async def test_runner_excludes_review_lessons_from_prompt_recall(
 @pytest.mark.asyncio
 async def test_runner_filters_low_and_nonnumeric_scores_but_keeps_keyword_hits(
     temp_db: HubDatabase,
+    _persisted_recall_session: None,
 ) -> None:
     """Keyword/RRF hits carry similarity=None and must reach the selector (#17772)."""
     SessionVariableManager(temp_db).set_variable(SESSION_ID, "parent_turn_seq", 3)
@@ -521,7 +551,10 @@ async def test_runner_filters_low_and_nonnumeric_scores_but_keeps_keyword_hits(
 
 
 @pytest.mark.asyncio
-async def test_runner_keyword_only_candidates_reach_recall(temp_db: HubDatabase) -> None:
+async def test_runner_keyword_only_candidates_reach_recall(
+    temp_db: HubDatabase,
+    _persisted_recall_session: None,
+) -> None:
     """A pure-keyword result set (semantic outage or degraded search) still delivers."""
     SessionVariableManager(temp_db).set_variable(SESSION_ID, "parent_turn_seq", 3)
     memory_manager = FakeMemoryManager(
@@ -548,6 +581,7 @@ async def test_runner_keyword_only_candidates_reach_recall(temp_db: HubDatabase)
 @pytest.mark.asyncio
 async def test_runner_logs_funnel_skip_reasons_at_info(
     temp_db: HubDatabase,
+    _persisted_recall_session: None,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Post-eligibility skip reasons must be observable at INFO level (#17772)."""
@@ -591,7 +625,10 @@ async def test_runner_logs_ineligible_prompt_skips_at_debug(
 
 
 @pytest.mark.asyncio
-async def test_runner_filters_already_injected_duplicates_before_llm(temp_db: HubDatabase) -> None:
+async def test_runner_filters_already_injected_duplicates_before_llm(
+    temp_db: HubDatabase,
+    _persisted_recall_session: None,
+) -> None:
     sv_mgr = SessionVariableManager(temp_db)
     sv_mgr.set_variable(SESSION_ID, "parent_turn_seq", 3)
     sv_mgr.set_variable(SESSION_ID, "injected_memory_ids", ["mem-1"])
@@ -612,7 +649,10 @@ async def test_runner_filters_already_injected_duplicates_before_llm(temp_db: Hu
 
 
 @pytest.mark.asyncio
-async def test_runner_skips_legacy_feature_only_service(temp_db: HubDatabase) -> None:
+async def test_runner_skips_legacy_feature_only_service(
+    temp_db: HubDatabase,
+    _persisted_recall_session: None,
+) -> None:
     SessionVariableManager(temp_db).set_variable(SESSION_ID, "parent_turn_seq", 3)
     llm = LegacyLLMService()
     runner = MemoryRecallRunner(
@@ -639,6 +679,7 @@ async def test_runner_skips_legacy_feature_only_service(temp_db: HubDatabase) ->
 )
 async def test_runner_safe_empty_candidates_and_invalid_json(
     temp_db: HubDatabase,
+    _persisted_recall_session: None,
     memory_manager: FakeMemoryManager,
     llm: FakeLLMService,
     expected_llm_calls: int,
@@ -658,7 +699,10 @@ async def test_runner_safe_empty_candidates_and_invalid_json(
 
 
 @pytest.mark.asyncio
-async def test_runner_safe_when_llm_fails(temp_db: HubDatabase) -> None:
+async def test_runner_safe_when_llm_fails(
+    temp_db: HubDatabase,
+    _persisted_recall_session: None,
+) -> None:
     SessionVariableManager(temp_db).set_variable(SESSION_ID, "parent_turn_seq", 3)
     llm = FakeLLMService()
     llm.error = RuntimeError("llm unavailable")
@@ -673,7 +717,10 @@ async def test_runner_safe_when_llm_fails(temp_db: HubDatabase) -> None:
 
 
 @pytest.mark.asyncio
-async def test_runner_drops_stale_turn_result(temp_db: HubDatabase) -> None:
+async def test_runner_drops_stale_turn_result(
+    temp_db: HubDatabase,
+    _persisted_recall_session: None,
+) -> None:
     sv_mgr = SessionVariableManager(temp_db)
     sv_mgr.set_variable(SESSION_ID, "parent_turn_seq", 4)
     runner = MemoryRecallRunner(
@@ -690,6 +737,7 @@ async def test_runner_drops_stale_turn_result(temp_db: HubDatabase) -> None:
 
 async def test_runner_deferred_mode_keeps_result_after_turn_advances(
     temp_db: HubDatabase,
+    _persisted_recall_session: None,
 ) -> None:
     sv_mgr = SessionVariableManager(temp_db)
     sv_mgr.set_variable(SESSION_ID, "parent_turn_seq", 4)
@@ -715,6 +763,7 @@ async def test_runner_deferred_mode_keeps_result_after_turn_advances(
 @pytest.mark.asyncio
 async def test_runner_records_selection_outcomes_for_non_selected(
     temp_db: HubDatabase,
+    _persisted_recall_session: None,
 ) -> None:
     """Returned-but-not-selected candidates get durable filtered rows (§5)."""
     from gobby.config.persistence import MemoryConfig
@@ -759,6 +808,7 @@ async def test_runner_records_selection_outcomes_for_non_selected(
 @pytest.mark.asyncio
 async def test_runner_records_no_outcomes_when_hub_flag_off(
     temp_db: HubDatabase,
+    _persisted_recall_session: None,
 ) -> None:
     SessionVariableManager(temp_db).set_variable(SESSION_ID, "parent_turn_seq", 3)
     memory_manager = FakeMemoryManager([_memory("mem-1"), _memory("mem-2")])
