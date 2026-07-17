@@ -24,7 +24,6 @@ class TestNormalizeMachineId:
             "unknown",
             "unknown-machine",
             "UNKNOWN",
-            "legacy-missing:00000000-0000-0000-0000-000000000000",
         ):
             assert normalize_machine_id(value) is None
 
@@ -62,7 +61,6 @@ class TestLocalMachineManager:
         manager = LocalMachineManager(temp_db)
 
         assert manager.upsert_seen("unknown-machine") is None
-        assert manager.upsert_seen("legacy-missing:00000000-0000-0000-0000-000000000000") is None
         assert manager.upsert_seen("   ") is None
 
         assert _count_machines(temp_db) == 0
@@ -73,7 +71,6 @@ class TestLocalMachineManager:
 
         assert manager.get(" machine-a ") is not None
         assert manager.get("unknown-machine") is None
-        assert manager.get("legacy-missing:00000000-0000-0000-0000-000000000000") is None
 
 
 def test_session_registration_upserts_machine(

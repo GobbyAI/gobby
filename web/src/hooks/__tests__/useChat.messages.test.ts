@@ -567,6 +567,9 @@ describe("useChat message and conversation state", () => {
       sessionCalls[sessionCalls.length - 1][1].body as string,
     );
     expect(body.provider).toBe("codex");
+    expect(body.machine_id).toEqual(expect.any(String));
+    expect(body.machine_id.trim()).toBe(body.machine_id);
+    expect(body.machine_id.length).toBeGreaterThan(0);
   });
 
   it("switchConversation syncs the selected provider from the restored web chat session", async () => {

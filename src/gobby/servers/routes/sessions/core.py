@@ -46,17 +46,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _legacy_missing_machine_id() -> str:
-    from gobby.utils.machine_id import new_legacy_missing_machine_id
-
-    machine_id = new_legacy_missing_machine_id()
-    logger.warning(
-        "Session registration missing client machine_id; using session-only %s",
-        machine_id,
-    )
-    return machine_id
-
-
 async def _get_commit_count(db: "HubDatabase", session: Any) -> int:
     """Count git commits made during a session's timeframe.
 
@@ -238,9 +227,6 @@ def register_core_routes(
 
             project_id = await server.run_db(server.resolve_project_id, body.project_id, body.cwd)
 
-            machine_id = body.machine_id.strip() if body.machine_id else None
-            if not machine_id:
-                machine_id = _legacy_missing_machine_id()
             model = body.model if isinstance(body.model, str) and body.model else None
             from gobby.llm.local_detection import is_local_agent_definition
 
@@ -258,7 +244,7 @@ def register_core_routes(
 
             session = await server.run_db(
                 server.session_manager.create_web_chat_session,
-                machine_id=machine_id,
+                machine_id=body.machine_id,
                 project_id=project_id,
                 source=provider,
                 title=body.title,
@@ -299,10 +285,6 @@ def register_core_routes(
             if server.session_manager is None:
                 raise HTTPException(status_code=503, detail="Session manager not available")
 
-            machine_id = request_data.machine_id.strip() if request_data.machine_id else None
-            if not machine_id:
-                machine_id = _legacy_missing_machine_id()
-
             # Extract git branch if project path exists but git_branch not provided
             git_branch = request_data.git_branch
             if request_data.project_path and not git_branch:
@@ -321,7 +303,7 @@ def register_core_routes(
             session = await server.run_db(
                 server.session_manager.register,
                 external_id=request_data.external_id,
-                machine_id=machine_id,
+                machine_id=request_data.machine_id,
                 source=request_data.source or "Claude Code",
                 project_id=project_id,
                 transcript_path=request_data.transcript_path,
@@ -337,7 +319,7 @@ def register_core_routes(
                 "status": "registered",
                 "external_id": request_data.external_id,
                 "id": session.id,
-                "machine_id": machine_id,
+                "machine_id": request_data.machine_id,
             }
 
         except HTTPException:

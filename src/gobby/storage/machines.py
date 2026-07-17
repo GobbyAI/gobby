@@ -9,7 +9,6 @@ from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import normalize_datetime_model, parse_stored_datetime, utc_now
-from gobby.utils.machine_id import is_legacy_missing_machine_id
 
 _PLACEHOLDER_MACHINE_IDS = {
     "none",
@@ -24,8 +23,6 @@ def normalize_machine_id(machine_id: str | None) -> str | None:
     """Return a storable machine id or None for missing/placeholder values."""
     normalized = (machine_id or "").strip()
     if not normalized:
-        return None
-    if is_legacy_missing_machine_id(normalized):
         return None
     if normalized.lower() in _PLACEHOLDER_MACHINE_IDS:
         return None

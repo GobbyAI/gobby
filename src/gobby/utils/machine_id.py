@@ -13,14 +13,9 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-LEGACY_MISSING_MACHINE_ID_PREFIX = "legacy-missing:"
-
 __all__ = [
-    "LEGACY_MISSING_MACHINE_ID_PREFIX",
     "clear_cache",
     "get_machine_id",
-    "is_legacy_missing_machine_id",
-    "new_legacy_missing_machine_id",
 ]
 
 # Thread-safe cache
@@ -63,16 +58,6 @@ def get_machine_id() -> str | None:
         raise OSError(f"Failed to retrieve or create machine ID: {e}") from e
 
     return None
-
-
-def new_legacy_missing_machine_id() -> str:
-    """Return a unique legacy session-only machine id for missing client identity."""
-    return f"{LEGACY_MISSING_MACHINE_ID_PREFIX}{uuid.uuid4()}"
-
-
-def is_legacy_missing_machine_id(machine_id: str | None) -> bool:
-    """Return True when machine_id is a per-registration missing-client sentinel."""
-    return (machine_id or "").strip().lower().startswith(LEGACY_MISSING_MACHINE_ID_PREFIX)
 
 
 def _get_or_create_machine_id() -> str:

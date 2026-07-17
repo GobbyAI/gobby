@@ -17,10 +17,8 @@ from gobby.app_context import ServiceContainer
 from gobby.servers.http import HTTPServer
 from gobby.sessions.transcript_window import WindowResult
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.machines import LocalMachineManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
-from gobby.utils.machine_id import LEGACY_MISSING_MACHINE_ID_PREFIX
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -114,6 +112,7 @@ class TestRegisterSessionEdgeCases:
                 "/api/sessions/register",
                 json={
                     "external_id": "git-branch-test",
+                    "machine_id": "test-machine",
                     "source": "claude",
                     "project_path": str(temp_dir),
                     "cwd": str(temp_dir),
@@ -141,6 +140,7 @@ class TestRegisterSessionEdgeCases:
                 "/api/sessions/register",
                 json={
                     "external_id": "no-git-branch-test",
+                    "machine_id": "test-machine",
                     "source": "claude",
                     "project_path": str(temp_dir),
                     "cwd": str(temp_dir),
@@ -166,6 +166,7 @@ class TestRegisterSessionEdgeCases:
                 "/api/sessions/register",
                 json={
                     "external_id": "explicit-branch-test",
+                    "machine_id": "test-machine",
                     "source": "claude",
                     "project_path": str(temp_dir),
                     "git_branch": "explicit/branch",
@@ -199,6 +200,7 @@ class TestRegisterSessionEdgeCases:
                 "/api/sessions/register",
                 json={
                     "external_id": "error-test",
+                    "machine_id": "test-machine",
                     "source": "claude",
                     "project_id": test_project["id"],
                 },
@@ -208,29 +210,24 @@ class TestRegisterSessionEdgeCases:
         data = response.json()
         assert "Internal server error" in data["detail"]
 
-    def test_register_missing_machine_id_uses_session_only_legacy_id(
+    @pytest.mark.parametrize("machine_id", [None, "", "   "])
+    def test_register_rejects_missing_or_blank_machine_id(
         self,
         client: TestClient,
-        session_storage: SessionManager,
         test_project: dict[str, Any],
+        machine_id: str | None,
     ) -> None:
-        """Missing client machine_id is persisted only on the session row."""
-        with patch("gobby.utils.machine_id.get_machine_id", return_value=None) as get_id:
-            response = client.post(
-                "/api/sessions/register",
-                json={
-                    "external_id": "unknown-machine-test",
-                    "source": "claude",
-                    "project_id": test_project["id"],
-                },
-            )
+        payload = {
+            "external_id": "unknown-machine-test",
+            "source": "claude",
+            "project_id": test_project["id"],
+        }
+        if machine_id is not None:
+            payload["machine_id"] = machine_id
 
-        assert response.status_code == 200
-        data = response.json()
-        machine_id = data["machine_id"]
-        assert machine_id.startswith(LEGACY_MISSING_MACHINE_ID_PREFIX)
-        assert LocalMachineManager(session_storage.db).get(machine_id) is None
-        get_id.assert_not_called()
+        response = client.post("/api/sessions/register", json=payload)
+
+        assert response.status_code == 422
 
 
 # ============================================================================
@@ -593,59 +590,21 @@ class TestFindParentSessionEdgeCases:
         assert response.status_code == 503
         assert "Session manager not available" in response.json()["detail"]
 
-    def test_find_parent_machine_id_fallback(
-        self,
-        client: TestClient,
-        session_storage: SessionManager,
-        test_project: dict[str, Any],
-    ) -> None:
-        """Missing client machine_id does not match rows using daemon identity."""
-        # Create a session with handoff_ready status
-        session = session_storage.register(
-            external_id="parent-fallback-test",
-            machine_id="test-machine-fallback",
-            source="claude",
-            project_id=test_project["id"],
-        )
-        session_storage.update_status(session.id, "handoff_ready")
-
-        with patch(
-            "gobby.utils.machine_id.get_machine_id",
-            return_value="test-machine-fallback",
-        ) as get_id:
-            response = client.post(
-                "/api/sessions/find_parent",
-                json={
-                    "source": "claude",
-                    "project_id": test_project["id"],
-                },
-            )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["session"] is None
-        get_id.assert_not_called()
-
-    def test_find_parent_machine_id_unknown_fallback(
+    @pytest.mark.parametrize("machine_id", [None, "", "   "])
+    def test_find_parent_rejects_missing_or_blank_machine_id(
         self,
         client: TestClient,
         test_project: dict[str, Any],
+        machine_id: str | None,
     ) -> None:
-        """Missing client machine_id uses a legacy sentinel without daemon fallback."""
-        with patch("gobby.utils.machine_id.get_machine_id", return_value=None) as get_id:
-            response = client.post(
-                "/api/sessions/find_parent",
-                json={
-                    "source": "claude",
-                    "project_id": test_project["id"],
-                },
-            )
+        payload = {"source": "claude", "project_id": test_project["id"]}
+        if machine_id is not None:
+            payload["machine_id"] = machine_id
 
-        # Should succeed (returning no session) but not error
-        assert response.status_code == 200
-        data = response.json()
-        assert data["session"] is None
-        get_id.assert_not_called()
+        response = client.post("/api/sessions/find_parent", json=payload)
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Required field: machine_id"
 
     def test_find_parent_internal_error(
         self,

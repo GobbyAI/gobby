@@ -23,7 +23,6 @@ from gobby.servers.routes.sessions import (
     create_sessions_router,
 )
 from gobby.sessions.transcript_window import WindowResult
-from gobby.utils.machine_id import LEGACY_MISSING_MACHINE_ID_PREFIX
 from tests._timing import wait_for_condition
 
 pytestmark = pytest.mark.unit
@@ -539,28 +538,18 @@ class TestRegisterSession:
         assert data["id"] == "sess-abc123"
         assert data["machine_id"] == "machine-1"
 
-    def test_register_without_machine_id(self, client, mock_server) -> None:
-        """Register persists a session-only legacy id when the client omits machine_id."""
-        session = _make_session()
-        mock_server.session_manager.register.return_value = session
+    @pytest.mark.parametrize("machine_id", [None, "", "   "])
+    def test_register_rejects_missing_or_blank_machine_id(
+        self, client, mock_server, machine_id: str | None
+    ) -> None:
+        payload = {"external_id": "ext-123", "source": "Claude Code"}
+        if machine_id is not None:
+            payload["machine_id"] = machine_id
 
-        with patch(
-            "gobby.utils.machine_id.get_machine_id",
-            return_value="auto-machine",
-        ) as get_machine_id:
-            response = client.post(
-                "/api/sessions/register",
-                json={
-                    "external_id": "ext-123",
-                    "source": "Claude Code",
-                },
-            )
+        response = client.post("/api/sessions/register", json=payload)
 
-        assert response.status_code == 200
-        machine_id = response.json()["machine_id"]
-        assert machine_id.startswith(LEGACY_MISSING_MACHINE_ID_PREFIX)
-        get_machine_id.assert_not_called()
-        assert mock_server.session_manager.register.call_args.kwargs["machine_id"] == machine_id
+        assert response.status_code == 422
+        mock_server.session_manager.register.assert_not_called()
 
     def test_register_no_session_manager(self, client, mock_server) -> None:
         """Returns 503 when session_manager is None."""
@@ -568,7 +557,7 @@ class TestRegisterSession:
 
         response = client.post(
             "/api/sessions/register",
-            json={"external_id": "ext-123"},
+            json={"external_id": "ext-123", "machine_id": "machine-1"},
         )
 
         assert response.status_code == 503
@@ -662,34 +651,23 @@ class TestCreateWebChatSession:
         mock_server.session_manager.update_model.assert_not_called()
         mock_server.session_manager.update_chat_mode.assert_not_called()
 
-    def test_create_web_chat_session_missing_machine_id_uses_legacy_id(
-        self, client, mock_server
+    @pytest.mark.parametrize("machine_id", [None, "", "   "])
+    def test_create_web_chat_session_rejects_missing_or_blank_machine_id(
+        self, client, mock_server, machine_id: str | None
     ) -> None:
-        session = _make_session(source="claude", model="sonnet", chat_mode="plan")
-        mock_server.session_manager.create_web_chat_session.return_value = session
-        mock_server.services = MagicMock()
-        mock_server.services.web_chat_runtime_manager = None
+        payload = {"provider": "claude", "project_id": "proj-123"}
+        if machine_id is not None:
+            payload["machine_id"] = machine_id
 
-        with patch("gobby.utils.machine_id.get_machine_id", return_value="machine-123") as get_id:
-            response = client.post(
-                "/api/sessions/web-chat",
-                json={
-                    "provider": "claude",
-                    "project_id": "proj-123",
-                },
-            )
+        response = client.post("/api/sessions/web-chat", json=payload)
 
-        assert response.status_code == 200
-        machine_id = mock_server.session_manager.create_web_chat_session.call_args.kwargs[
-            "machine_id"
-        ]
-        assert machine_id.startswith(LEGACY_MISSING_MACHINE_ID_PREFIX)
-        get_id.assert_not_called()
+        assert response.status_code == 422
+        mock_server.session_manager.create_web_chat_session.assert_not_called()
 
     def test_create_web_chat_session_rejects_invalid_provider(self, client, mock_server) -> None:
         response = client.post(
             "/api/sessions/web-chat",
-            json={"provider": "invalid-provider"},
+            json={"provider": "invalid-provider", "machine_id": "machine-1"},
         )
 
         assert response.status_code == 400
@@ -1330,32 +1308,19 @@ class TestFindParentSession:
         assert response.status_code == 200
         mock_server.resolve_project_id.assert_called_with(None, "/tmp/project")
 
-    def test_find_parent_auto_machine_id(self, client, mock_server) -> None:
-        """Uses a session-only legacy id when the client omits machine_id."""
-        session = _make_session()
-        mock_server.session_manager.find_parent.return_value = session
+    @pytest.mark.parametrize("machine_id", [None, "", "   "])
+    def test_find_parent_rejects_missing_or_blank_machine_id(
+        self, client, mock_server, machine_id: str | None
+    ) -> None:
+        payload = {"source": "Claude Code", "project_id": "proj-123"}
+        if machine_id is not None:
+            payload["machine_id"] = machine_id
 
-        with patch(
-            "gobby.utils.machine_id.get_machine_id",
-            return_value="auto-machine",
-        ) as get_machine_id:
-            response = client.post(
-                "/api/sessions/find_parent",
-                json={
-                    "source": "Claude Code",
-                    "project_id": "proj-123",
-                },
-            )
+        response = client.post("/api/sessions/find_parent", json=payload)
 
-        assert response.status_code == 200
-        machine_id = mock_server.session_manager.find_parent.call_args.kwargs["machine_id"]
-        assert machine_id.startswith(LEGACY_MISSING_MACHINE_ID_PREFIX)
-        get_machine_id.assert_not_called()
-        mock_server.session_manager.find_parent.assert_called_once_with(
-            machine_id=machine_id,
-            source="Claude Code",
-            project_id="proj-123",
-        )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Required field: machine_id"
+        mock_server.session_manager.find_parent.assert_not_called()
 
     def test_find_parent_no_session_manager(self, client, mock_server) -> None:
         """Returns 503 when session_manager is None."""
@@ -1365,6 +1330,7 @@ class TestFindParentSession:
             "/api/sessions/find_parent",
             json={
                 "source": "Claude Code",
+                "machine_id": "machine-1",
                 "project_id": "proj-123",
             },
         )

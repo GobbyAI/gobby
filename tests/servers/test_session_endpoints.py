@@ -328,7 +328,7 @@ class TestSessionEndpoints:
         client = TestClient(server.app)
         response = client.post(
             "/api/sessions/register",
-            json={"external_id": "test", "source": "claude"},
+            json={"external_id": "test", "machine_id": "test-machine", "source": "claude"},
         )
         assert response.status_code == 503
 

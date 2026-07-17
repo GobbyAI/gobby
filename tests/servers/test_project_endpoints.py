@@ -26,6 +26,7 @@ class TestProjectResolutionEndpoints:
                 "/api/sessions/register",
                 json={
                     "external_id": "test-cli-key",
+                    "machine_id": "test-machine",
                     "source": "claude",
                     "cwd": str(temp_dir),
                 },
@@ -225,6 +226,7 @@ class TestProjectResolutionEndpoints:
                 "/api/sessions/register",
                 json={
                     "external_id": "persist-test-key",
+                    "machine_id": "test-machine",
                     "source": "claude",
                     "cwd": str(temp_dir),
                     "title": "Persistence Test Session",
@@ -260,6 +262,7 @@ class TestProjectResolutionEndpoints:
                 "/api/sessions/register",
                 json={
                     "external_id": "invalid-path-test",
+                    "machine_id": "test-machine",
                     "source": "claude",
                     "cwd": "/nonexistent/path/that/does/not/exist",
                 },
