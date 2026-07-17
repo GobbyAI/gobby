@@ -262,6 +262,8 @@ def test_postgres_migration_discovery_finds_all_post_baseline_migrations() -> No
         (318, "chat_messages_sequence_unique"),
         (319, "worktree_last_activity"),
         (320, "projects_active_name_unique"),
+        (321, "session_variables_session_cascade"),
+        (322, "agent_run_capture_termination"),
     ]
 
 
