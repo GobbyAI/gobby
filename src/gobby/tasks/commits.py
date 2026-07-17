@@ -78,30 +78,6 @@ def collect_task_diff_text(
 DOC_EXTENSIONS = {".md", ".txt", ".rst", ".adoc", ".markdown"}
 
 
-def is_doc_only_diff(diff: str) -> bool:
-    """Check if a diff only affects documentation files.
-
-    Args:
-        diff: Git diff string.
-
-    Returns:
-        True if all modified files are documentation files.
-    """
-    if not diff:
-        return False
-
-    files = _parse_diff_files(diff)
-    if not files:
-        return False
-
-    for file in files:
-        ext = Path(file.path).suffix.lower()
-        if ext not in DOC_EXTENSIONS:
-            return False
-
-    return True
-
-
 @dataclass(frozen=True)
 class _DiffFile:
     path: str
