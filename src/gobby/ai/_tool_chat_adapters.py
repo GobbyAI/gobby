@@ -51,6 +51,7 @@ class OpenAICompatibleToolChatAdapter:
             request.tool_policy,
             project_path=request.project_path,
             limits=request.limits,
+            builtins=request.builtins,
         )
         model = request.model or next(iter(binding.models), None)
         if model is None:
@@ -69,7 +70,6 @@ class OpenAICompatibleToolChatAdapter:
 
         usage_total: dict[str, int] = {}
         tool_breakdown: dict[str, int] = {}
-        tool_use_count = 0
         turns = 0
         content = ""
         stop_reason = "max_turns"
@@ -91,10 +91,9 @@ class OpenAICompatibleToolChatAdapter:
             messages.append(_assistant_message(message, tool_calls))
             hit_call_cap = False
             for call in tool_calls:
-                if tool_use_count >= limits.max_tool_calls:
+                if runtime.budget_exhausted:
                     hit_call_cap = True
                     break
-                tool_use_count += 1
                 name = call.function.name
                 tool_breakdown[name] = tool_breakdown.get(name, 0) + 1
                 result_text = await _run_tool(runtime, call)
@@ -113,12 +112,16 @@ class OpenAICompatibleToolChatAdapter:
             text=content,
             provider=binding.provider,
             model=model,
-            tool_use_count=tool_use_count,
+            tool_use_count=runtime.calls_used,
             turns=turns,
             tools=tool_breakdown,
             usage=usage_total or None,
             applied_reasoning_effort=request.reasoning_effort,
             stop_reason=stop_reason,
+            trace=tuple(runtime.invocation_log),
+            calls_used=runtime.calls_used,
+            budget_exhausted=runtime.budget_exhausted,
+            trace_available=True,
         )
 
 
@@ -197,11 +200,6 @@ _DISALLOWED_TOOLS: tuple[str, ...] = (
     "Agent",
 )
 _REPO_MCP_SERVER_NAME = "repo"
-_ARGS_INPUT_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {"args": {"type": "array", "items": {"type": "string"}}},
-    "required": [],
-}
 
 # Given the selected binding, return a provider exposing ``generate_agentic``.
 ClaudeProviderFactory = Callable[[CapabilityBinding], Any]
@@ -211,13 +209,24 @@ def _mcp_tool_name(tool_name: str) -> str:
     return f"mcp__{_REPO_MCP_SERVER_NAME}__{tool_name}"
 
 
+def _tool_result_is_error(text: str) -> bool:
+    try:
+        payload = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    return isinstance(payload, dict) and payload.get("success") is False
+
+
 def _make_tool_handler(
     runtime: ToolRuntime, tool_name: str
 ) -> Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]:
     async def handler(args: dict[str, Any]) -> dict[str, Any]:
         try:
             text = await runtime.execute(tool_name, args)
-            return {"content": [{"type": "text", "text": text}]}
+            response: dict[str, Any] = {"content": [{"type": "text", "text": text}]}
+            if _tool_result_is_error(text):
+                response["is_error"] = True
+            return response
         except ToolPolicyError as exc:
             return {
                 "content": [{"type": "text", "text": f"[error: {exc}]"}],
@@ -236,16 +245,15 @@ def build_repo_mcp_server(runtime: ToolRuntime) -> tuple[Any, list[str]]:
     """
     from claude_agent_sdk import create_sdk_mcp_server, tool
 
-    descriptions = {
-        schema["function"]["name"]: schema["function"]["description"]
-        for schema in runtime.openai_schemas()
-    }
     sdk_tools = []
     allowed: list[str] = []
     for tool_name in runtime.tool_names():
-        description = descriptions.get(tool_name, tool_name)
         sdk_tools.append(
-            tool(tool_name, description, _ARGS_INPUT_SCHEMA)(_make_tool_handler(runtime, tool_name))
+            tool(
+                tool_name,
+                runtime.description_for(tool_name),
+                runtime.input_schema_for(tool_name),
+            )(_make_tool_handler(runtime, tool_name))
         )
         allowed.append(_mcp_tool_name(tool_name))
     server = create_sdk_mcp_server(name=_REPO_MCP_SERVER_NAME, version="1.0.0", tools=sdk_tools)
@@ -268,6 +276,7 @@ class ClaudeToolChatAdapter:
             request.tool_policy,
             project_path=request.project_path,
             limits=request.limits,
+            builtins=request.builtins,
         )
         server, allowed_tools = build_repo_mcp_server(runtime)
         provider = self._provider_factory(binding)
@@ -295,4 +304,8 @@ class ClaudeToolChatAdapter:
             usage=getattr(result, "usage", None),
             applied_reasoning_effort=getattr(result, "applied_reasoning_effort", None),
             stop_reason="completed",
+            trace=tuple(runtime.invocation_log),
+            calls_used=runtime.calls_used,
+            budget_exhausted=runtime.budget_exhausted,
+            trace_available=True,
         )

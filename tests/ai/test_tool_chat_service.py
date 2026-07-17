@@ -15,6 +15,7 @@ from gobby.ai import (
     build_daemon_tool_chat_service,
 )
 from gobby.ai._text_generation_helpers import _CandidateTimeoutError
+from gobby.ai._tool_chat_builtins import BuiltinToolSpec
 from gobby.ai._tool_chat_contracts import ToolChatRequest, ToolChatResult, ToolPolicy
 from gobby.ai._tool_chat_service import ToolChatService
 from gobby.config.ai import AIConfig, GenerationConfig, LocalGenerationConfig
@@ -101,6 +102,37 @@ async def test_openai_compatible_candidate_dispatches_to_openai_adapter() -> Non
     assert result.text == "narrative::openai_compatible"
     assert [b.provider for b in openai.bindings] == ["local:lm-studio"]
     assert llm.bindings == []
+
+
+@pytest.mark.asyncio
+async def test_disallowed_adapter_style_is_capability_unavailable() -> None:
+    service, _, _ = _service()
+
+    with pytest.raises(CapabilityUnavailableError, match="disallowed"):
+        await service.chat_result(
+            _request(
+                candidates=("claude/haiku",),
+                allowed_adapter_styles=(AIAdapterStyle.OPENAI_COMPATIBLE,),
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_builtins_on_spawn_style_binding_is_capability_unavailable() -> None:
+    service, _, _ = _service()
+
+    async def handler(arguments: object, context: object) -> object:
+        raise AssertionError("builtin handler must never run on a spawn-style binding")
+
+    builtin = BuiltinToolSpec(
+        name="read_page",
+        description="Read a page.",
+        input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+        handler=handler,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(CapabilityUnavailableError, match="cannot execute builtin tools"):
+        await service.chat_result(_request(candidates=("codex/gpt-5.5",), builtins=(builtin,)))
 
 
 @pytest.mark.asyncio

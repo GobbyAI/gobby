@@ -23,9 +23,22 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
+import time
 from pathlib import Path
 from typing import Any
 
+from gobby.ai._tool_chat_builtins import (
+    BuiltinExecutionContext,
+    BuiltinToolResult,
+    BuiltinToolSpec,
+    InvocationRecord,
+    new_evidence_ref,
+    serialize_builtin_tool_result,
+    success_payload_capacity,
+    tool_result_too_large,
+    validate_builtin_arguments,
+    validate_builtin_spec,
+)
 from gobby.ai._tool_chat_contracts import ToolLoopLimits, ToolPolicy
 
 logger = logging.getLogger(__name__)
@@ -190,6 +203,13 @@ def _reject_metacharacters(args: list[str]) -> None:
             )
 
 
+def _decode_utf8_view(value: bytes) -> tuple[str, int]:
+    """Decode a byte window after dropping incomplete UTF-8 boundary bytes."""
+
+    text = value.decode("utf-8", errors="ignore")
+    return text, len(text.encode("utf-8"))
+
+
 async def run_argv(
     argv: list[str],
     *,
@@ -224,12 +244,21 @@ async def run_argv(
         return f"[error: tool timed out after {timeout:g}s]"
 
     out = stdout or b""
-    truncated = len(out) > byte_cap
-    text = out[:byte_cap].decode("utf-8", errors="replace")
-    if truncated:
-        text += "\n[output truncated]"
+    shown = out[:byte_cap]
+    text, shown_bytes = _decode_utf8_view(shown)
+    if len(out) > byte_cap:
+        text += (
+            f"\n[output truncated: first {shown_bytes} of {len(out)} bytes shown "
+            f"(cap {byte_cap}). Narrow the query (gcode supports --limit/--offset) "
+            "or drill down by symbol.]"
+        )
     if proc.returncode != 0:
-        err_tail = (stderr or b"")[:2048].decode("utf-8", errors="replace").strip()
+        stderr_bytes = stderr or b""
+        err_tail, stderr_shown_bytes = _decode_utf8_view(stderr_bytes[-2048:])
+        if len(stderr_bytes) > 2048:
+            err_tail += (
+                f"\n[stderr: last {stderr_shown_bytes} of {len(stderr_bytes)} bytes (cap 2048)]"
+            )
         text = (
             f"{text}\n[exit {proc.returncode}: {err_tail}]"
             if text
@@ -251,6 +280,7 @@ class ToolRuntime:
         *,
         project_path: str,
         limits: ToolLoopLimits | None = None,
+        builtins: tuple[BuiltinToolSpec, ...] = (),
     ) -> None:
         validate_policy(policy)
         self._policy = policy
@@ -259,44 +289,82 @@ class ToolRuntime:
         self._subcommand_by_tool_name: dict[str, str] = {
             tool_name_for(policy.cli, sub): sub for sub in policy.tools
         }
+        self._builtin_by_name: dict[str, BuiltinToolSpec] = {}
+        for spec in builtins:
+            try:
+                validate_builtin_spec(spec)
+            except ValueError as exc:
+                raise ToolPolicyError(str(exc)) from exc
+            if spec.name in self._builtin_by_name:
+                raise ToolPolicyError(f"Builtin tool name {spec.name!r} is duplicated.")
+            if spec.name in self._subcommand_by_tool_name:
+                raise ToolPolicyError(f"Builtin tool name {spec.name!r} collides with a CLI tool.")
+            self._builtin_by_name[spec.name] = spec
+        self._calls_used = 0
+        self.invocation_log: list[InvocationRecord] = []
+        self._builtin_tasks: set[asyncio.Task[BuiltinToolResult]] = set()
 
     @property
     def policy(self) -> ToolPolicy:
         return self._policy
 
     def tool_names(self) -> tuple[str, ...]:
-        return tuple(self._subcommand_by_tool_name)
+        return (*self._subcommand_by_tool_name, *self._builtin_by_name)
+
+    @property
+    def calls_used(self) -> int:
+        return self._calls_used
+
+    @property
+    def budget_exhausted(self) -> bool:
+        return self._calls_used >= self._limits.max_tool_calls
+
+    def input_schema_for(self, tool_name: str) -> dict[str, Any]:
+        """Return the exact provider input schema for one exposed tool."""
+
+        builtin = self._builtin_by_name.get(tool_name)
+        if builtin is not None:
+            return builtin.input_schema
+        self.resolve(tool_name)
+        return {
+            "type": "object",
+            "properties": {
+                "args": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        f"Arguments for `{self._policy.cli} "
+                        f"{self._subcommand_by_tool_name[tool_name]}` (flags and positionals)."
+                    ),
+                }
+            },
+            "required": [],
+            "additionalProperties": False,
+        }
+
+    def description_for(self, tool_name: str) -> str:
+        """Return the provider-facing description for one exposed tool."""
+
+        builtin = self._builtin_by_name.get(tool_name)
+        if builtin is not None:
+            return builtin.description
+        subcommand = self.resolve(tool_name)
+        return _TOOL_DESCRIPTIONS.get(
+            (self._policy.cli, subcommand),
+            f"Run `{self._policy.cli} {subcommand}` (repo investigation).",
+        )
 
     def openai_schemas(self) -> list[dict[str, Any]]:
         """Render the policy's tools as OpenAI ``tools[]`` function schemas."""
-        cli = self._policy.cli
         schemas: list[dict[str, Any]] = []
-        for tool_name, subcommand in self._subcommand_by_tool_name.items():
-            description = _TOOL_DESCRIPTIONS.get(
-                (cli, subcommand),
-                f"Run `{cli} {subcommand}` (repo investigation).",
-            )
+        for tool_name in self.tool_names():
             schemas.append(
                 {
                     "type": "function",
                     "function": {
                         "name": tool_name,
-                        "description": description,
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "args": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                    "description": (
-                                        f"Arguments for `{cli} {subcommand}` "
-                                        "(flags and positionals)."
-                                    ),
-                                }
-                            },
-                            "required": [],
-                            "additionalProperties": False,
-                        },
+                        "description": self.description_for(tool_name),
+                        "parameters": self.input_schema_for(tool_name),
                     },
                 }
             )
@@ -332,8 +400,31 @@ class ToolRuntime:
         caller surfaces that back to the model as an error result and the target
         repo is left untouched). Subprocess failures are returned as text.
         """
-        subcommand = self.resolve(tool_name)
-        args = self._args_from(arguments)
+        if self.budget_exhausted:
+            result = BuiltinToolResult(
+                error_code="tool_call_budget_exhausted",
+                error="tool call budget exhausted",
+            )
+            text, fitted, _ = self._fit_result(result)
+            self._record(tool_name, arguments, text, result=fitted)
+            return text
+
+        self._calls_used += 1
+        builtin = self._builtin_by_name.get(tool_name)
+        if builtin is not None:
+            return await self._execute_builtin(builtin, arguments)
+
+        try:
+            subcommand = self.resolve(tool_name)
+            args = self._args_from(arguments)
+        except ToolPolicyError as exc:
+            self._record(
+                tool_name,
+                arguments,
+                f"[error: {exc}]",
+                result=BuiltinToolResult(error_code="tool_policy_error", error=str(exc)),
+            )
+            raise
         argv = [self._policy.cli, subcommand, *args]
         logger.debug(
             "tool_chat executing",
@@ -344,12 +435,160 @@ class ToolRuntime:
                 "arg_count": len(args),
             },
         )
-        return await run_argv(
+        text = await run_argv(
             argv,
             cwd=self._project_path,
             timeout=self._limits.tool_timeout_seconds,
             byte_cap=self._limits.per_tool_result_byte_cap,
         )
+        self._record(tool_name, arguments, text)
+        return text
+
+    async def _execute_builtin(self, spec: BuiltinToolSpec, arguments: object) -> str:
+        errors = validate_builtin_arguments(arguments, spec.input_schema)
+        if errors or not isinstance(arguments, dict):
+            result = BuiltinToolResult(
+                error_code="invalid_tool_arguments",
+                error="builtin arguments failed schema validation",
+                details={"errors": errors},
+            )
+            text, fitted, _ = self._fit_result(result)
+            self._record(spec.name, arguments, text, result=fitted)
+            return text
+
+        evidence_ref = new_evidence_ref()
+        max_payload_bytes = success_payload_capacity(
+            self._limits.per_tool_result_byte_cap,
+            evidence_ref,
+        )
+        if max_payload_bytes < 0:
+            result = tool_result_too_large()
+            text, fitted, _ = self._fit_result(result)
+            self._record(spec.name, arguments, text, result=fitted)
+            return text
+
+        timeout = self._limits.tool_timeout_seconds
+        cleanup_grace = min(5.0, timeout / 2)
+        context = BuiltinExecutionContext(
+            max_payload_bytes=max_payload_bytes,
+            evidence_ref=evidence_ref,
+            subprocess_deadline=time.monotonic() + timeout - cleanup_grace,
+        )
+        result = await self._await_builtin(spec, arguments, context, timeout=timeout)
+        result_ref = evidence_ref if result.ok else None
+        text, fitted_result, result_ref = self._fit_result(result, evidence_ref=result_ref)
+        self._record(
+            spec.name,
+            arguments,
+            text,
+            result=fitted_result,
+            evidence_ref=result_ref,
+        )
+        return text
+
+    async def _await_builtin(
+        self,
+        spec: BuiltinToolSpec,
+        arguments: dict[str, Any],
+        context: BuiltinExecutionContext,
+        *,
+        timeout: float,
+    ) -> BuiltinToolResult:
+        task = asyncio.create_task(spec.handler(arguments, context))
+        self._builtin_tasks.add(task)
+        try:
+            result = await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+        except TimeoutError:
+            await asyncio.gather(task, return_exceptions=True)
+            return BuiltinToolResult(
+                error_code="tool_timeout",
+                error=f"tool timed out after {timeout:g}s",
+            )
+        except asyncio.CancelledError:
+            if task.cancelled():
+                return BuiltinToolResult(
+                    error_code="tool_cancelled",
+                    error="builtin handler cancelled",
+                )
+            await asyncio.gather(task, return_exceptions=True)
+            raise
+        except Exception as exc:
+            return self._builtin_failure(exc)
+        finally:
+            if task.done():
+                self._builtin_tasks.discard(task)
+        if not isinstance(result, BuiltinToolResult):
+            return BuiltinToolResult(
+                error_code="invalid_tool_result",
+                error="builtin handler returned an invalid result",
+            )
+        return result
+
+    @staticmethod
+    def _builtin_failure(exc: Exception) -> BuiltinToolResult:
+        error_code = getattr(exc, "code", "builtin_execution_failed")
+        if not isinstance(error_code, str):
+            error_code = "builtin_execution_failed"
+        raw_details = getattr(exc, "details", None)
+        details = raw_details if isinstance(raw_details, dict) else None
+        return BuiltinToolResult(
+            error_code=error_code,
+            error=str(exc) or type(exc).__name__,
+            details=details,
+        )
+
+    def _fit_result(
+        self,
+        result: BuiltinToolResult,
+        *,
+        evidence_ref: str | None = None,
+    ) -> tuple[str, BuiltinToolResult, str | None]:
+        """Serialize under the byte cap, returning the result actually served."""
+        fitted = result
+        ref = evidence_ref
+        try:
+            text = serialize_builtin_tool_result(fitted, evidence_ref=ref)
+        except (TypeError, ValueError):
+            fitted = BuiltinToolResult(
+                error_code="invalid_tool_result",
+                error="builtin result is not JSON serializable",
+            )
+            ref = None
+            text = serialize_builtin_tool_result(fitted)
+        if len(text.encode("utf-8")) > self._limits.per_tool_result_byte_cap:
+            fitted = tool_result_too_large()
+            ref = None
+            text = serialize_builtin_tool_result(fitted)
+        assert len(text.encode("utf-8")) <= self._limits.per_tool_result_byte_cap
+        return text, fitted, ref
+
+    def _record(
+        self,
+        tool_name: str,
+        arguments: object,
+        text: str,
+        *,
+        result: BuiltinToolResult | None = None,
+        evidence_ref: str | None = None,
+    ) -> None:
+        record: InvocationRecord = {
+            "tool_name": tool_name,
+            "arguments": dict(arguments) if isinstance(arguments, dict) else arguments,
+            "result_size_bytes": len(text.encode("utf-8")),
+            "ok": result.ok if result is not None else True,
+            "error_code": result.error_code if result is not None else None,
+            "evidence_ref": evidence_ref,
+        }
+        if result is not None:
+            if result.selector is not None:
+                record["selector"] = result.selector
+            if result.range is not None:
+                record["range"] = result.range
+            if result.complete is not None:
+                record["complete"] = result.complete
+            if result.content_hash is not None:
+                record["content_hash"] = result.content_hash
+        self.invocation_log.append(record)
 
 
 def cli_available(cli: str) -> bool:

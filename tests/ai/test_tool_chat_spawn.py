@@ -403,6 +403,10 @@ async def test_codex_adapter_captures_narrative_and_counts_tools(
     assert result.tools == {"command_execution": 2}
     assert result.applied_reasoning_effort == "high"
     assert result.stop_reason == "completed"
+    assert result.trace == ()
+    assert result.calls_used == 0
+    assert result.budget_exhausted is False
+    assert result.trace_available is False
 
 
 @pytest.mark.asyncio

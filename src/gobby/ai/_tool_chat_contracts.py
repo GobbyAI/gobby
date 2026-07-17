@@ -17,7 +17,8 @@ from typing import TYPE_CHECKING, Protocol
 from gobby.config.feature_base import FeatureCandidateInput
 
 if TYPE_CHECKING:
-    from gobby.ai.registry import CapabilityBinding
+    from gobby.ai._tool_chat_builtins import BuiltinToolSpec, InvocationRecord
+    from gobby.ai.registry import AIAdapterStyle, CapabilityBinding
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -52,6 +53,22 @@ class ToolLoopLimits:
     per_tool_result_byte_cap: int = 16 * 1024
     tool_timeout_seconds: float = 60.0
 
+    def __post_init__(self) -> None:
+        from gobby.ai._tool_chat_builtins import minimum_typed_error_result_size
+
+        if self.tool_timeout_seconds <= 0:
+            raise ToolLoopConfigurationError("tool_timeout_seconds must be positive")
+        minimum_cap = minimum_typed_error_result_size()
+        if self.per_tool_result_byte_cap < minimum_cap:
+            raise ToolLoopConfigurationError(
+                "per_tool_result_byte_cap must be at least "
+                f"{minimum_cap} bytes to carry a typed error result"
+            )
+
+
+class ToolLoopConfigurationError(ValueError):
+    """Raised when tool-loop limits cannot satisfy the result contract."""
+
 
 @dataclass(frozen=True, kw_only=True)
 class ToolChatRequest:
@@ -76,6 +93,8 @@ class ToolChatRequest:
     max_tokens: int | None = None
     reasoning_effort: str | None = None
     limits: ToolLoopLimits = field(default_factory=ToolLoopLimits)
+    builtins: tuple[BuiltinToolSpec, ...] = ()
+    allowed_adapter_styles: tuple[AIAdapterStyle, ...] | None = None
     caller: str | None = None
     candidate_timeout_seconds: float | None = None
     cli_candidate_timeout_seconds: float | None = None
@@ -109,6 +128,10 @@ class ToolChatResult:
     usage: dict[str, int] | None = None
     applied_reasoning_effort: str | None = None
     stop_reason: str | None = None
+    trace: tuple[InvocationRecord, ...] = ()
+    calls_used: int = 0
+    budget_exhausted: bool = False
+    trace_available: bool = False
 
 
 class ToolChatAdapter(Protocol):

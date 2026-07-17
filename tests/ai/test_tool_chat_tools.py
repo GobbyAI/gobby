@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -24,7 +25,7 @@ def _readonly_gcode_policy() -> ToolPolicy:
 
 
 def test_validate_policy_accepts_readonly_gcode() -> None:
-    validate_policy(_readonly_gcode_policy())  # does not raise
+    assert validate_policy(_readonly_gcode_policy()) is None
 
 
 def test_validate_policy_rejects_unknown_cli() -> None:
@@ -43,7 +44,10 @@ def test_validate_policy_rejects_mutator_without_allow_mutation() -> None:
 
 
 def test_validate_policy_allows_mutator_when_opted_in() -> None:
-    validate_policy(ToolPolicy(cli="gwiki", tools=("search", "compile"), allow_mutation=True))
+    assert (
+        validate_policy(ToolPolicy(cli="gwiki", tools=("search", "compile"), allow_mutation=True))
+        is None
+    )
 
 
 def test_validate_policy_rejects_unlisted_tool_even_when_opted_in() -> None:
@@ -144,9 +148,61 @@ async def test_run_argv_captures_output(tmp_path: object) -> None:
 @pytest.mark.asyncio
 async def test_run_argv_caps_bytes(tmp_path: object) -> None:
     out = await run_argv(["/bin/echo", "x" * 100], cwd=str(tmp_path), timeout=5.0, byte_cap=10)
-    assert "[output truncated]" in out
+    assert (
+        "[output truncated: first 10 of 101 bytes shown (cap 10). "
+        "Narrow the query (gcode supports --limit/--offset) or drill down by symbol.]"
+    ) in out
     # 10 bytes of payload kept before the truncation marker.
     assert out.split("\n")[0] == "x" * 10
+
+
+@pytest.mark.asyncio
+async def test_run_argv_stdout_marker_reports_utf8_trimmed_bytes(tmp_path: object) -> None:
+    out = await run_argv(
+        [
+            sys.executable,
+            "-c",
+            'import sys; sys.stdout.buffer.write("é".encode() * 6)',
+        ],
+        cwd=str(tmp_path),
+        timeout=5.0,
+        byte_cap=11,
+    )
+
+    assert out.startswith("é" * 5)
+    assert "first 10 of 12 bytes shown (cap 11)" in out
+
+
+@pytest.mark.asyncio
+async def test_run_argv_stderr_marker_reports_utf8_trimmed_tail_bytes(tmp_path: object) -> None:
+    out = await run_argv(
+        [
+            sys.executable,
+            "-c",
+            'import sys; sys.stderr.buffer.write("é".encode() * 1024 + b"a"); sys.exit(2)',
+        ],
+        cwd=str(tmp_path),
+        timeout=5.0,
+        byte_cap=4096,
+    )
+
+    assert "[stderr: last 2047 of 2049 bytes (cap 2048)]" in out
+
+
+@pytest.mark.asyncio
+async def test_run_argv_preserves_under_cap_stderr_bytes(tmp_path: object) -> None:
+    out = await run_argv(
+        [
+            sys.executable,
+            "-c",
+            'import sys; sys.stderr.buffer.write(b"alpha\\nbeta"); sys.exit(2)',
+        ],
+        cwd=str(tmp_path),
+        timeout=5.0,
+        byte_cap=4096,
+    )
+
+    assert out == "[exit 2: alpha\nbeta]"
 
 
 @pytest.mark.asyncio
