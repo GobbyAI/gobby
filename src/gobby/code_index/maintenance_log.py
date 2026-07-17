@@ -12,7 +12,20 @@ from gobby.code_index.gcode_gateway import GcodeCommandResult
 
 _LOGGERS: dict[str, logging.Logger] = {}
 _FALLBACK_LOGGER = logging.getLogger(__name__)
-_MAX_STREAM_CHARS = 4000
+_MAX_LOG_FILE_BYTES = 5 * 1024 * 1024
+_RECORD_TERMINATOR = "\n"
+
+
+class MaintenanceLogRecordTooLargeError(RuntimeError):
+    """Raised when one maintenance-log record exceeds the file-size limit."""
+
+    def __init__(self, size_bytes: int, max_bytes: int) -> None:
+        self.size_bytes = size_bytes
+        self.max_bytes = max_bytes
+        super().__init__(
+            f"Maintenance log record is too large "
+            f"({size_bytes} emitted UTF-8 bytes exceeds {max_bytes} byte limit)"
+        )
 
 
 def log_gcode_maintenance_event(
@@ -26,7 +39,7 @@ def log_gcode_maintenance_event(
     status: str,
     detail: str | None = None,
 ) -> None:
-    """Write one bounded JSONL maintenance event to the rotating log."""
+    """Write one size-checked JSONL maintenance event to the rotating log."""
     payload: dict[str, Any] = {
         "event": event,
         "run_id": run_id,
@@ -40,12 +53,16 @@ def log_gcode_maintenance_event(
         "timed_out": result.timed_out,
         "timeout_seconds": result.timeout_seconds,
         "status": status,
-        "stdout": _bound_stream(result.stdout),
-        "stderr": _bound_stream(result.stderr),
+        "stdout": result.stdout,
+        "stderr": result.stderr,
     }
     if detail:
         payload["detail"] = detail
-    _logger(log_file).info(json.dumps(payload, sort_keys=True))
+    serialized = json.dumps(payload, sort_keys=True)
+    record_size = len(f"{serialized}{_RECORD_TERMINATOR}".encode())
+    if record_size > _MAX_LOG_FILE_BYTES:
+        raise MaintenanceLogRecordTooLargeError(record_size, _MAX_LOG_FILE_BYTES)
+    _logger(log_file).info(serialized)
 
 
 def _logger(log_file: str) -> logging.Logger:
@@ -59,10 +76,11 @@ def _logger(log_file: str) -> logging.Logger:
         path.parent.mkdir(parents=True, exist_ok=True)
         handler = RotatingFileHandler(
             path,
-            maxBytes=5 * 1024 * 1024,
+            maxBytes=_MAX_LOG_FILE_BYTES,
             backupCount=5,
             encoding="utf-8",
         )
+        handler.terminator = _RECORD_TERMINATOR
     except OSError as exc:
         _FALLBACK_LOGGER.warning(
             "Failed to initialize code-index maintenance log file %s: %s",
@@ -79,10 +97,3 @@ def _logger(log_file: str) -> logging.Logger:
     logger.addHandler(handler)
     _LOGGERS[expanded] = logger
     return logger
-
-
-def _bound_stream(value: str) -> str:
-    if len(value) <= _MAX_STREAM_CHARS:
-        return value
-    omitted = len(value) - _MAX_STREAM_CHARS
-    return f"{value[:_MAX_STREAM_CHARS]}...<truncated {omitted} chars>"
