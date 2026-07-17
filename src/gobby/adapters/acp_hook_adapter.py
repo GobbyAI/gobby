@@ -107,7 +107,7 @@ class ACPHookAdapter(BaseAdapter):
         Returns:
             Normalized tool name (e.g., "Bash", "Read", "Write").
         """
-        return normalize_acp_tool_name(acp_tool_name)
+        return self.TOOL_MAP.get(acp_tool_name, normalize_acp_tool_name(acp_tool_name))
 
     def _normalize_event_data(self, input_data: dict[str, Any]) -> dict[str, Any]:
         """Normalize ACP event data for CLI-agnostic processing.

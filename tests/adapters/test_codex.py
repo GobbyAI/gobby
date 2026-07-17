@@ -40,6 +40,21 @@ from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit
 
+CODEX_COMMAND_EXECUTION_FIXTURE = (
+    Path(__file__).parents[1]
+    / "fixtures"
+    / "provider_contracts"
+    / "codex"
+    / "command-execution-items.json"
+)
+
+
+def _load_live_codex_command_events() -> list[dict[str, Any]]:
+    payload = json.loads(CODEX_COMMAND_EXECUTION_FIXTURE.read_text())
+    assert payload["capture_status"] == "live_proven"
+    assert payload["codex_version"] == "0.144.5"
+    return payload["events"]
+
 
 @pytest.mark.parametrize(
     ("cli_name", "adapter", "hook_type"),
@@ -1536,6 +1551,35 @@ class TestCodexAdapterTranslateToHookEvent:
         tool_name, _, tool_response = payload
         assert tool_name == "Bash"
         assert tool_response == {"output": "1 passed", "exitCode": 0, "status": "completed"}
+
+    @pytest.mark.parametrize(
+        ("exit_code", "status", "output"),
+        [(0, "completed", "CODEX_ZERO"), (7, "failed", None)],
+    )
+    def test_live_command_execution_fixture_preserves_structured_outcome(
+        self,
+        exit_code: int,
+        status: str,
+        output: str | None,
+    ) -> None:
+        native = next(
+            event
+            for event in _load_live_codex_command_events()
+            if event["item"]["exitCode"] == exit_code
+        )
+
+        hook_event = CodexAdapter().translate_to_hook_event(
+            {"method": native["type"], "params": native}
+        )
+
+        assert hook_event is not None
+        assert hook_event.event_type == HookEventType.AFTER_TOOL
+        assert hook_event.data["tool_name"] == "Bash"
+        assert hook_event.data["tool_output"] == {
+            "output": output,
+            "exitCode": exit_code,
+            "status": status,
+        }
 
     def test_item_completed_file_change_uses_cached_cwd(self, tmp_path: Path) -> None:
         """Cached thread cwd should flow into synthetic AFTER_TOOL hook events."""

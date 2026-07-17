@@ -5,6 +5,7 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -36,6 +37,13 @@ pytestmark = pytest.mark.unit
 # with `invalid input syntax for type uuid` where tests hit the real DB.
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
 AGENT_SESSION_ID = "22222222-2222-4222-8222-222222222222"
+CODEX_COMMAND_EXECUTION_FIXTURE = (
+    Path(__file__).parents[1]
+    / "fixtures"
+    / "provider_contracts"
+    / "codex"
+    / "command-execution-items.json"
+)
 
 
 @pytest.fixture
@@ -1756,6 +1764,40 @@ class TestDetectVerificationEvidence:
         evidence = variables["verification_evidence"][-1]
         assert evidence["success"] is False
         assert evidence["exit_code"] == 1
+
+    def test_live_codex_exit_codes_drive_readiness_recovery(self, variables) -> None:
+        payload = json.loads(CODEX_COMMAND_EXECUTION_FIXTURE.read_text())
+        assert payload["capture_status"] == "live_proven"
+        native_by_exit_code = {event["item"]["exitCode"]: event for event in payload["events"]}
+
+        failed_native = native_by_exit_code[7]
+        failed_native["item"]["command"] = (
+            "GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_hooks.py -q"
+        )
+        failed = CodexAdapter().translate_to_hook_event(
+            {"method": failed_native["type"], "params": failed_native}
+        )
+        assert failed is not None
+
+        succeeded_native = native_by_exit_code[0]
+        succeeded_native["item"]["command"] = (
+            "GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_hooks.py -q "
+            "&& uv run ruff check src/gobby/workflows/observer_utils.py"
+        )
+        succeeded = CodexAdapter().translate_to_hook_event(
+            {"method": succeeded_native["type"], "params": succeeded_native}
+        )
+        assert succeeded is not None
+
+        detect_verification_evidence(failed, variables, SESSION_ID)
+        assert variables["verification_evidence_recorded"] is False
+        assert variables["verification_evidence"][-1]["success"] is False
+        assert variables["verification_evidence"][-1]["exit_code"] == 7
+
+        detect_verification_evidence(succeeded, variables, SESSION_ID)
+        assert variables["verification_evidence_recorded"] is True
+        assert variables["verification_evidence"][-1]["success"] is True
+        assert variables["verification_evidence"][-1]["exit_code"] == 0
 
     @pytest.mark.parametrize(
         "outcome",

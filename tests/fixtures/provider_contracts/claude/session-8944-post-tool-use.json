@@ -1,4 +1,6 @@
 {
+  "provider": "claude",
+  "capture_type": "live_post_tool_use",
   "_fixture_source": {
     "session_ref": "#8944",
     "external_id": "ab4024f4-6e01-4f64-a7d0-3ec3c01c7852",

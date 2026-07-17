@@ -1,0 +1,61 @@
+{
+  "provider": "codex",
+  "capture_type": "live_app_server_item_completed",
+  "capture_status": "live_proven",
+  "captured_at": "2026-07-17",
+  "codex_version": "0.144.5",
+  "schema_command": "codex app-server generate-json-schema --experimental",
+  "capture_notes": "Captured from an ephemeral read-only CodexAppServerClient thread. Thread, turn, process, item, cwd, and completion-time identifiers are sanitized.",
+  "events": [
+    {
+      "type": "item/completed",
+      "threadId": "<THREAD_ID>",
+      "turnId": "<TURN_ID>",
+      "completedAtMs": 0,
+      "cwd": "<REPO_PATH>",
+      "item": {
+        "aggregatedOutput": "CODEX_ZERO",
+        "command": "/bin/zsh -lc 'printf CODEX_ZERO'",
+        "commandActions": [
+          {
+            "command": "printf CODEX_ZERO",
+            "type": "unknown"
+          }
+        ],
+        "cwd": "<REPO_PATH>",
+        "durationMs": 0,
+        "exitCode": 0,
+        "id": "<ITEM_ID_ZERO>",
+        "processId": "<PROCESS_ID_ZERO>",
+        "source": "unifiedExecStartup",
+        "status": "completed",
+        "type": "commandExecution"
+      }
+    },
+    {
+      "type": "item/completed",
+      "threadId": "<THREAD_ID>",
+      "turnId": "<TURN_ID>",
+      "completedAtMs": 0,
+      "cwd": "<REPO_PATH>",
+      "item": {
+        "aggregatedOutput": null,
+        "command": "/bin/zsh -lc '/bin/sh -c \"exit 7\"'",
+        "commandActions": [
+          {
+            "command": "/bin/sh -c \"exit 7\"",
+            "type": "unknown"
+          }
+        ],
+        "cwd": "<REPO_PATH>",
+        "durationMs": 0,
+        "exitCode": 7,
+        "id": "<ITEM_ID_NONZERO>",
+        "processId": "<PROCESS_ID_NONZERO>",
+        "source": "unifiedExecStartup",
+        "status": "failed",
+        "type": "commandExecution"
+      }
+    }
+  ]
+}
