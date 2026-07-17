@@ -108,7 +108,11 @@ class TestHandleBeforeAgent:
         )
 
         handler.handle_before_agent(event)
-        handler._session_manager.update_session_status.assert_called_with("sess-1", "active")
+        handler._session_manager.update_session_status.assert_called_with(
+            "sess-1",
+            "active",
+            activity_confirmed=True,
+        )
         assert handler._session_manager.update_session_status.call_count >= 1
         assert handler._session_manager.update_session_status.call_args is not None
 
@@ -326,8 +330,12 @@ class TestHandleBeforeAgent:
         assert result.decision == "allow"
         assert result.context is None
         assert "## Role" not in (result.context or "")
-        handler._session_manager.update_session_status.assert_called_once_with("sess-1", "active")
-        handler._session_manager.reset_transcript_processed.assert_called_once_with("sess-1")
+        handler._session_manager.update_session_status.assert_called_once_with(
+            "sess-1",
+            "active",
+            activity_confirmed=True,
+        )
+        handler._session_manager.reset_transcript_processed.assert_not_called()
         handler._session_manager.get.assert_called_once_with("sess-1")
         mock_resolve_agent.assert_not_called()
         mock_merge.assert_any_call("sess-1", {"_agent_context_injected": True})
@@ -914,7 +922,11 @@ class TestHandleAfterAgent:
 
         result = handler.handle_after_agent(event)
         assert result.decision == "allow"
-        handler._session_manager.update_session_status.assert_called_with("sess-1", "paused")
+        handler._session_manager.update_session_status.assert_called_with(
+            "sess-1",
+            "paused",
+            activity_confirmed=True,
+        )
         handler._apply_debug_echo.assert_called_once_with(result)
 
     def test_without_session(self) -> None:
@@ -945,7 +957,11 @@ class TestHandleStop:
 
         result = handler.handle_stop(event)
         assert result.decision == "allow"
-        handler._session_manager.update_session_status.assert_called_with("sess-1", "paused")
+        handler._session_manager.update_session_status.assert_called_with(
+            "sess-1",
+            "paused",
+            activity_confirmed=True,
+        )
 
     def test_without_session(self) -> None:
         handler = _TestHandler()

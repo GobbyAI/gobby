@@ -123,8 +123,11 @@ class AgentEventHandlerMixin(EventHandlersBase):
                     "BEFORE_AGENT", session_id, "active"
                 ):
                     try:
-                        self._session_manager.update_session_status(session_id, "active")
-                        self._session_manager.reset_transcript_processed(session_id)
+                        self._session_manager.update_session_status(
+                            session_id,
+                            "active",
+                            activity_confirmed=True,
+                        )
                     except Exception as e:
                         self.logger.warning(f"Failed to update session status: {e}")
 
@@ -483,7 +486,11 @@ class AgentEventHandlerMixin(EventHandlersBase):
                     "AFTER_AGENT", session_id, "paused"
                 ):
                     try:
-                        self._session_manager.update_session_status(session_id, "paused")
+                        self._session_manager.update_session_status(
+                            session_id,
+                            "paused",
+                            activity_confirmed=True,
+                        )
                     except Exception as e:
                         self.logger.warning(f"Failed to update session status: {e}")
         else:
@@ -509,7 +516,11 @@ class AgentEventHandlerMixin(EventHandlersBase):
                     "STOP", session_id, "paused"
                 ):
                     try:
-                        self._session_manager.update_session_status(session_id, "paused")
+                        self._session_manager.update_session_status(
+                            session_id,
+                            "paused",
+                            activity_confirmed=True,
+                        )
                     except Exception as e:
                         self.logger.warning(f"Failed to update session status: {e}")
         else:

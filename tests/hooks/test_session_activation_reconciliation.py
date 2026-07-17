@@ -227,6 +227,38 @@ def test_before_agent_fast_noop_when_current(
     assert result.reason == "current"
 
 
+def test_expired_session_resumes_across_turn_start_and_end(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    handlers: EventHandlers,
+    project_id: str,
+    tmp_path: Path,
+) -> None:
+    session_id = _register_session(session_manager, project_id, tmp_path)
+    session_manager.update_status(session_id, "expired")
+    session_manager.mark_transcript_processed(session_id)
+    before_agent = _event(HookEventType.BEFORE_AGENT, session_id, tmp_path)
+    before_agent.data["prompt"] = "resume work"
+
+    handlers.handle_before_agent(before_agent)
+
+    active = session_manager.get(session_id)
+    assert active is not None
+    assert active.status == "active"
+    transcript_row = db.fetchone(
+        "SELECT transcript_processed FROM sessions WHERE id = %s",
+        (session_id,),
+    )
+    assert transcript_row is not None
+    assert transcript_row["transcript_processed"] is False
+
+    handlers.handle_after_agent(_event(HookEventType.AFTER_AGENT, session_id, tmp_path))
+
+    paused = session_manager.get(session_id)
+    assert paused is not None
+    assert paused.status == "paused"
+
+
 def test_missing_agent_type_restored_before_rules(
     db: HubDatabase,
     session_manager: SessionManager,

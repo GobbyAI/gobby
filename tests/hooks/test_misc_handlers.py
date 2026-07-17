@@ -192,7 +192,9 @@ class TestNotificationHandlerEdgeCases:
         handlers.handle_notification(event)
 
         mock_dependencies["session_manager"].update_session_status.assert_called_once_with(
-            "sess-123", "paused"
+            "sess-123",
+            "paused",
+            activity_confirmed=True,
         )
         assert mock_dependencies["session_manager"].update_session_status.call_count == 1
         assert mock_dependencies["session_manager"].update_session_status.call_args is not None

@@ -57,6 +57,36 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
             self._notify_session_change(event, session_id)
         return updated
 
+    def update_status_from_activity(
+        self: _ManagerState,
+        session_id: str,
+        status: str,
+    ) -> Session | None:
+        """Persist an active or paused status backed by confirmed session activity."""
+        if status not in {"active", "paused"}:
+            raise ValueError("Confirmed activity status must be 'active' or 'paused'")
+
+        now = utc_now()
+        with self.db.transaction():
+            cursor = self.db.execute(
+                """
+                UPDATE sessions
+                SET status = %s,
+                    transcript_processed = FALSE,
+                    updated_at = %s
+                WHERE id = %s
+                  AND status != 'deleted'
+                """,
+                (status, now, session_id),
+            )
+            if cursor.rowcount == 0:
+                return None
+
+            updated = self.get(session_id)
+            if updated is not None:
+                self._notify_session_change("session_updated", session_id)
+            return updated
+
     def activate_web_chat_session(self: _ManagerState, session_id: str) -> Session | None:
         """Activate a durable web-chat row after its runtime starts successfully.
 

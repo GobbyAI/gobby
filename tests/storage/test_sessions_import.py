@@ -160,11 +160,13 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "update_model": "(self, session_id: 'str', model: 'str') -> 'Session | None'",
     "update_parent_session_id": "(self, session_id: 'str', parent_session_id: 'str | None') "
     "-> 'Session | None'",
-    "update_session_status": "(self, session_id: 'str', status: 'str') -> 'bool'",
+    "update_session_status": "(self, session_id: 'str', status: 'str', *, "
+    "activity_confirmed: 'bool' = False) -> 'bool'",
     "update_stats": "(self, session_id: 'str', message_count: 'int | None' = None, "
     "turn_count: 'int | None' = None, tool_call_count: 'int | None' = None, "
     "last_assistant_content: 'str | None' = None) -> 'Session | None'",
     "update_status": "(self, session_id: 'str', status: 'str') -> 'Session | None'",
+    "update_status_from_activity": "(self, session_id: 'str', status: 'str') -> 'Session | None'",
     "update_summary": "(self, session_id: 'str', "
     "summary_path: 'str | None | UnsetType' = UNSET, "
     "summary_markdown: 'str | None | UnsetType' = UNSET) -> 'Session | None'",

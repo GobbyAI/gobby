@@ -365,6 +365,37 @@ class TestSessionManagerStatus:
         assert session is not None
         assert session.status == "paused"
 
+    def test_update_session_status_routes_confirmed_activity(
+        self,
+        session_mgr: SessionManager,
+        test_project: dict,
+    ) -> None:
+        session_id = session_mgr.register_session(
+            external_id="activity-status-test",
+            machine_id="machine",
+            source="claude",
+            project_id=test_project["id"],
+        )
+        session_mgr.update_status(session_id, "expired")
+        session_mgr.mark_transcript_processed(session_id)
+
+        result = session_mgr.update_session_status(
+            session_id,
+            "active",
+            activity_confirmed=True,
+        )
+
+        assert result is True
+        updated = session_mgr.get(session_id)
+        assert updated is not None
+        assert updated.status == "active"
+        row = session_mgr.db.fetchone(
+            "SELECT transcript_processed FROM sessions WHERE id = %s",
+            (session_id,),
+        )
+        assert row is not None
+        assert row["transcript_processed"] is False
+
     def test_mark_session_expired(
         self,
         session_mgr: SessionManager,
@@ -389,6 +420,13 @@ class TestSessionManagerStatus:
         """Test updating status of nonexistent session."""
         result = session_mgr.update_session_status("nonexistent", "active")
         assert result is False
+
+        confirmed_result = session_mgr.update_session_status(
+            "00000000-0000-0000-0000-000000000000",
+            "active",
+            activity_confirmed=True,
+        )
+        assert confirmed_result is False
 
 
 class TestSessionManagerHandoff:

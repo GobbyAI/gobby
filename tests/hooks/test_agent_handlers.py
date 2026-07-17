@@ -50,7 +50,9 @@ class TestBeforeAgentHandling:
         handlers.handle_before_agent(event)
 
         mock_dependencies["session_manager"].update_session_status.assert_called_once_with(
-            "sess-123", "active"
+            "sess-123",
+            "active",
+            activity_confirmed=True,
         )
         assert mock_dependencies["session_manager"].update_session_status.call_count == 1
         assert mock_dependencies["session_manager"].update_session_status.call_args is not None
@@ -85,8 +87,8 @@ class TestBeforeAgentHandling:
         assert mock_dependencies["session_manager"].update_session_status.call_count == 0
         assert not mock_dependencies["session_manager"].update_session_status.called
 
-    def test_before_agent_resets_transcript_processed(self, mock_dependencies: dict) -> None:
-        """Test BEFORE_AGENT resets transcript processed flag."""
+    def test_before_agent_uses_atomic_activity_update(self, mock_dependencies: dict) -> None:
+        """Test BEFORE_AGENT leaves transcript reset to the activity status update."""
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
             HookEventType.BEFORE_AGENT,
@@ -94,13 +96,10 @@ class TestBeforeAgentHandling:
             metadata={"_platform_session_id": "sess-123"},
         )
 
-        handlers.handle_before_agent(event)
+        response = handlers.handle_before_agent(event)
 
-        mock_dependencies["session_storage"].reset_transcript_processed.assert_called_once_with(
-            "sess-123"
-        )
-        assert mock_dependencies["session_storage"].reset_transcript_processed.call_count == 1
-        assert mock_dependencies["session_storage"].reset_transcript_processed.call_args is not None
+        assert response.decision == "allow"
+        mock_dependencies["session_storage"].reset_transcript_processed.assert_not_called()
 
     def test_before_agent_status_update_error(self, mock_dependencies: dict) -> None:
         """Test error updating session status is handled."""
@@ -148,7 +147,9 @@ class TestAfterAgentHandling:
         handlers.handle_after_agent(event)
 
         mock_dependencies["session_manager"].update_session_status.assert_called_once_with(
-            "sess-123", "paused"
+            "sess-123",
+            "paused",
+            activity_confirmed=True,
         )
         assert mock_dependencies["session_manager"].update_session_status.call_count == 1
         assert mock_dependencies["session_manager"].update_session_status.call_args is not None

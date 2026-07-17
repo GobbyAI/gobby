@@ -315,18 +315,24 @@ class SessionManager(
         self,
         session_id: str,
         status: str,
+        *,
+        activity_confirmed: bool = False,
     ) -> bool:
         """
         Update session status and return a service-friendly success flag.
 
         This wraps update_status() for hooks, routes, and other callers that
         only need True/False plus logging rather than the updated Session row.
+        Confirmed activity uses the guarded active/paused storage path.
 
         Returns:
             True if updated successfully, False otherwise
         """
         try:
-            session = self.update_status(session_id, status)
+            if activity_confirmed:
+                session = self.update_status_from_activity(session_id, status)
+            else:
+                session = self.update_status(session_id, status)
             if session:
                 self.logger.debug("Session status updated: %s -> %s", session_id, status)
                 return True

@@ -90,6 +90,7 @@ class TestSessionManagerLifecycle:
 
     @pytest.mark.parametrize("terminal_status", ["expired", "deleted"])
     @pytest.mark.parametrize("bulk", [False, True])
+    @pytest.mark.parametrize("new_status", ["active", "paused"])
     def test_status_updates_reject_transitions_out_of_terminal_states(
         self,
         session_manager: SessionManager,
@@ -97,6 +98,7 @@ class TestSessionManagerLifecycle:
         terminal_status: str,
         *,
         bulk: bool,
+        new_status: str,
     ) -> None:
         session = session_manager.register(
             external_id=f"terminal-transition-{terminal_status}-{bulk}",
@@ -108,9 +110,136 @@ class TestSessionManagerLifecycle:
 
         with pytest.raises(ValueError, match="Cannot transition terminal session status"):
             if bulk:
-                session_manager.update(session.id, status="active")
+                session_manager.update(session.id, status=new_status)
             else:
-                session_manager.update_status(session.id, "active")
+                session_manager.update_status(session.id, new_status)
+
+    @pytest.mark.parametrize("activity_status", ["active", "paused"])
+    def test_activity_status_revives_expired_session(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+        activity_status: str,
+    ) -> None:
+        session = session_manager.register(
+            external_id=f"activity-revival-{activity_status}",
+            machine_id="machine",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        session_manager.update_status(session.id, "expired")
+        session_manager.mark_transcript_processed(session.id)
+        session_manager.db.execute(
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '1 hour' WHERE id = %s",
+            (session.id,),
+        )
+        before = session_manager.get(session.id)
+        assert before is not None
+        events: list[tuple[str, str]] = []
+        session_manager.register_session_change_listener(
+            lambda event, session_id: events.append((event, session_id))
+        )
+
+        updated = session_manager.update_status_from_activity(session.id, activity_status)
+
+        assert updated is not None
+        assert updated.status == activity_status
+        assert updated.updated_at != before.updated_at
+        row = session_manager.db.fetchone(
+            "SELECT transcript_processed FROM sessions WHERE id = %s",
+            (session.id,),
+        )
+        assert row is not None
+        assert row["transcript_processed"] is False
+        assert events == [("session_updated", session.id)]
+
+    @pytest.mark.parametrize("activity_status", ["active", "paused"])
+    def test_activity_status_does_not_revive_deleted_session(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+        activity_status: str,
+    ) -> None:
+        session = session_manager.register(
+            external_id=f"deleted-activity-{activity_status}",
+            machine_id="machine",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        session_manager.update_status(session.id, "deleted")
+        events: list[tuple[str, str]] = []
+        session_manager.register_session_change_listener(
+            lambda event, session_id: events.append((event, session_id))
+        )
+
+        updated = session_manager.update_status_from_activity(session.id, activity_status)
+
+        assert updated is None
+        persisted = session_manager.get(session.id)
+        assert persisted is not None
+        assert persisted.status == "deleted"
+        assert events == []
+
+    @pytest.mark.parametrize("invalid_status", ["expired", "completed"])
+    def test_activity_status_rejects_non_activity_targets(
+        self,
+        session_manager: SessionManager,
+        invalid_status: str,
+    ) -> None:
+        with pytest.raises(ValueError, match="Confirmed activity status"):
+            session_manager.update_status_from_activity("missing-session", invalid_status)
+
+    def test_activity_status_returns_none_for_missing_session(
+        self,
+        session_manager: SessionManager,
+    ) -> None:
+        events: list[tuple[str, str]] = []
+        session_manager.register_session_change_listener(
+            lambda event, session_id: events.append((event, session_id))
+        )
+
+        assert session_manager.update_status_from_activity(str(uuid.uuid4()), "active") is None
+        assert events == []
+
+    @pytest.mark.parametrize("activity_status", ["active", "paused"])
+    def test_activity_status_idempotently_refreshes_live_session(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+        activity_status: str,
+    ) -> None:
+        session = session_manager.register(
+            external_id=f"idempotent-activity-{activity_status}",
+            machine_id="machine",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        if activity_status == "paused":
+            session_manager.update_status(session.id, "paused")
+        session_manager.mark_transcript_processed(session.id)
+        session_manager.db.execute(
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '1 hour' WHERE id = %s",
+            (session.id,),
+        )
+        before = session_manager.get(session.id)
+        assert before is not None
+        events: list[tuple[str, str]] = []
+        session_manager.register_session_change_listener(
+            lambda event, session_id: events.append((event, session_id))
+        )
+
+        updated = session_manager.update_status_from_activity(session.id, activity_status)
+
+        assert updated is not None
+        assert updated.status == activity_status
+        assert updated.updated_at != before.updated_at
+        row = session_manager.db.fetchone(
+            "SELECT transcript_processed FROM sessions WHERE id = %s",
+            (session.id,),
+        )
+        assert row is not None
+        assert row["transcript_processed"] is False
+        assert events == [("session_updated", session.id)]
 
     def test_list_sessions(
         self,

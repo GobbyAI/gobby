@@ -43,7 +43,13 @@ class HookSessionManager(Protocol):
         summary_markdown: str | None = None,
     ) -> Session | None: ...
 
-    def update_session_status(self, session_id: str, status: str) -> bool: ...
+    def update_session_status(
+        self,
+        session_id: str,
+        status: str,
+        *,
+        activity_confirmed: bool = False,
+    ) -> bool: ...
 
     def revive_expired_terminal_session(self, session_id: str) -> Session | None: ...
 

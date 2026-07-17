@@ -75,7 +75,11 @@ class MiscEventHandlerMixin(EventHandlersBase):
                     "NOTIFICATION", session_id, "paused"
                 ):
                     try:
-                        self._session_manager.update_session_status(session_id, "paused")
+                        self._session_manager.update_session_status(
+                            session_id,
+                            "paused",
+                            activity_confirmed=True,
+                        )
                     except Exception as e:
                         self.logger.warning(f"Failed to update session status: {e}")
         else:
