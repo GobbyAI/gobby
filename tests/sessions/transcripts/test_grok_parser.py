@@ -24,6 +24,47 @@ def _event(update: dict[str, object]) -> str:
     )
 
 
+@pytest.mark.parametrize(
+    "record",
+    [
+        {
+            "timestamp": 1784250114,
+            "method": "_x.ai/session/update",
+            "params": {
+                "sessionId": "grok-session",
+                "update": {
+                    "sessionUpdate": "retry_state",
+                    "type": "retrying",
+                    "attempt": 1,
+                    "max_retries": 15,
+                    "reason": "request error",
+                },
+                "_meta": {"eventId": "grok-session-132", "agentTimestampMs": 1784250114541},
+            },
+        },
+        {
+            "timestamp": 1784250127,
+            "method": "_x.ai/session/update",
+            "params": {
+                "sessionId": "grok-session",
+                "update": {
+                    "sessionUpdate": "turn_completed",
+                    "prompt_id": "prompt-1",
+                    "stop_reason": "end_turn",
+                },
+                "_meta": {"eventId": "grok-session-216", "agentTimestampMs": 1784250127054},
+            },
+        },
+    ],
+)
+def test_grok_protocol_metadata_records_are_suppressed(record: dict[str, object]) -> None:
+    parser = GrokTranscriptParser(session_id="grok-session")
+    line = json.dumps(record)
+
+    assert parser.parse_line(line, 0) is None
+    assert parser.parse_lines([line]) == []
+
+
 def test_grok_updates_jsonl_parser_renders_message_and_tool_records() -> None:
     parser = GrokTranscriptParser(session_id="grok-session")
     lines = [

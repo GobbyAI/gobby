@@ -1,4 +1,4 @@
-"""Qwen transcript parser coverage."""
+"""Qwen current-envelope transcript parser coverage."""
 
 from __future__ import annotations
 
@@ -8,9 +8,8 @@ from typing import Any
 
 import pytest
 
-from gobby.sessions.transcripts.base import ParsedMessage, TokenUsage
+from gobby.sessions.transcripts.base import BaseTranscriptParser, ParsedMessage, TokenUsage
 from gobby.sessions.transcripts.qwen import QwenTranscriptParser
-from gobby.sessions.transcripts.typed_json import TypedJsonTranscriptParser
 
 pytestmark = pytest.mark.unit
 
@@ -19,6 +18,13 @@ FIXTURE_DIR = Path(__file__).parents[2] / "fixtures" / "transcripts" / "qwen"
 
 def _load_json(path: str) -> Any:
     return json.loads((FIXTURE_DIR / path).read_text())
+
+
+def _load_records() -> list[dict[str, Any]]:
+    return [
+        json.loads(line)
+        for line in (FIXTURE_DIR / "current_envelope.jsonl").read_text().splitlines()
+    ]
 
 
 def _usage_dict(usage: TokenUsage | None) -> dict[str, int] | None:
@@ -42,69 +48,82 @@ def _normalized(message: ParsedMessage) -> dict[str, Any]:
         "tool_input": message.tool_input,
         "tool_result": message.tool_result,
         "usage": _usage_dict(message.usage),
+        "model": message.model,
         "tool_use_id": message.tool_use_id,
         "message_id": message.message_id,
         "timestamp": message.timestamp.isoformat(),
     }
 
 
-def test_qwen_parser_uses_neutral_typed_json_base() -> None:
-    assert issubclass(QwenTranscriptParser, TypedJsonTranscriptParser)
+def test_qwen_parser_exposes_only_the_current_jsonl_contract() -> None:
+    assert issubclass(QwenTranscriptParser, BaseTranscriptParser)
+    assert not hasattr(QwenTranscriptParser(), "parse_session_json")
 
 
-def test_qwen_jsonl_matches_golden_fixture() -> None:
+def test_qwen_current_jsonl_matches_golden_fixture() -> None:
     parser = QwenTranscriptParser(session_id="qwen-session")
-    lines = (FIXTURE_DIR / "jsonl_transcript.jsonl").read_text().splitlines()
 
-    actual = [_normalized(message) for message in parser.parse_lines(lines)]
-
-    assert actual == _load_json("jsonl_expected.json")
-
-
-def test_qwen_native_session_matches_golden_fixture() -> None:
-    parser = QwenTranscriptParser(session_id="qwen-session")
-    session = _load_json("session.json")
-
-    actual = [_normalized(message) for message in parser.parse_session_json(session)]
-
-    assert actual == _load_json("session_expected.json")
-
-
-def test_qwen_synthetic_tool_ids_are_stable_and_qwen_prefixed() -> None:
-    lines = [
-        json.dumps({"type": "tool_use", "tool_name": "Bash", "parameters": {"cmd": "pwd"}}),
-        json.dumps({"type": "tool_result", "output": "/tmp", "status": "success"}),
+    actual = [
+        _normalized(message)
+        for message in parser.parse_lines(
+            (FIXTURE_DIR / "current_envelope.jsonl").read_text().splitlines()
+        )
     ]
-    first = QwenTranscriptParser(session_id="session-a").parse_lines(lines)
-    second = QwenTranscriptParser(session_id="session-a").parse_lines(lines)
 
-    first_ids = [msg.tool_use_id for msg in first if msg.tool_use_id is not None]
-    second_ids = [msg.tool_use_id for msg in second if msg.tool_use_id is not None]
-
-    assert first_ids == second_ids
-    assert first_ids
-    assert all(tool_use_id.startswith("qwen-tu-") for tool_use_id in first_ids)
+    assert actual == _load_json("current_envelope_expected.json")
 
 
-def test_qwen_uses_gemini_compatible_usage_mapping() -> None:
-    parser = QwenTranscriptParser()
-    line = json.dumps(
+def test_qwen_usage_is_owned_once_by_each_assistant_envelope() -> None:
+    messages = QwenTranscriptParser().parse_lines(
+        (FIXTURE_DIR / "current_envelope.jsonl").read_text().splitlines()
+    )
+    assistant_usage = [
+        _usage_dict(message.usage) for message in messages if message.role == "assistant"
+    ]
+
+    assert assistant_usage == [
         {
-            "type": "message",
-            "role": "model",
-            "content": "Qwen response",
-            "usageMetadata": {
-                "promptTokenCount": 800,
-                "cachedContentTokenCount": 300,
-                "candidatesTokenCount": 60,
-            },
-        }
+            "input_tokens": 75,
+            "output_tokens": 25,
+            "cache_creation_tokens": 0,
+            "cache_read_tokens": 25,
+        },
+        None,
+        None,
+        None,
+    ]
+
+
+def test_qwen_known_system_metadata_is_suppressed() -> None:
+    metadata = [
+        record
+        for record in _load_records()
+        if record.get("subtype") in {"file_history_snapshot", "ui_telemetry"}
+    ]
+    parser = QwenTranscriptParser()
+
+    assert metadata
+    assert [parser.parse_line(json.dumps(record), 99) for record in metadata] == [None, None]
+
+
+def test_qwen_unknown_record_type_and_system_subtype_remain_visible() -> None:
+    messages = QwenTranscriptParser().parse_lines(
+        (FIXTURE_DIR / "current_envelope.jsonl").read_text().splitlines()
     )
 
-    msg = parser.parse_line(line, 0)
+    assert [(message.role, message.content_type) for message in messages[-2:]] == [
+        ("system", "custom_payload"),
+        ("assistant", "custom_event"),
+    ]
 
-    assert msg is not None
-    assert msg.usage is not None
-    assert msg.usage.input_tokens == 500
-    assert msg.usage.cache_read_tokens == 300
-    assert msg.usage.output_tokens == 60
+
+def test_qwen_extract_last_messages_reads_nested_parts() -> None:
+    messages = QwenTranscriptParser().extract_last_messages(_load_records(), num_pairs=1)
+
+    assert messages == [
+        {"role": "user", "content": "Explain JSON."},
+        {
+            "role": "assistant",
+            "content": "I will inspect the project.\n[Tool call: read_file]",
+        },
+    ]

@@ -10,7 +10,6 @@ import { ThinkingBlock } from './ThinkingBlock'
 import { CompactionSummaryCard } from './CompactionSummaryCard'
 import { ToolCallCards } from './ToolCallCard'
 import { RichContentBlocks } from './RichContentBlocks'
-import { UnknownBlockCard } from './UnknownBlockCard'
 import { splitProtocolContent } from './protocolContent'
 
 /** Replace [Image: ...] text descriptions with styled placeholders */
@@ -307,22 +306,14 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
                 block.type === 'resource' ||
                 block.type === 'audio' ||
                 block.type === 'diff' ||
-                block.type === 'terminal'
+                block.type === 'terminal' ||
+                block.type === 'unknown'
               ) {
                 return (
                   <RichContentBlocks
                     key={`${message.id}-b${i}`}
                     blocks={[block]}
                     idPrefix={`${message.id}-b${i}`}
-                  />
-                )
-              }
-              if (block.type === 'unknown') {
-                return (
-                  <UnknownBlockCard
-                    key={`${message.id}-b${i}`}
-                    blockType={block.block_type}
-                    raw={block.raw}
                   />
                 )
               }

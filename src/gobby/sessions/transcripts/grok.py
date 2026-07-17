@@ -51,6 +51,8 @@ class GrokTranscriptParser(BaseTranscriptParser):
         message_id = _message_id("grok", self.session_id, index, update.get("messageId"))
         usage = _extract_usage(update)
 
+        if update_type in {"retry_state", "turn_completed"}:
+            return None
         if update_type == "user_message_chunk":
             return _message(
                 index,

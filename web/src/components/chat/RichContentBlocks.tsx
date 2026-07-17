@@ -12,6 +12,13 @@ interface RichContentBlocksProps {
   idPrefix: string
 }
 
+const IGNORED_PROTOCOL_BLOCK_TYPES = new Set([
+  'file_history_snapshot',
+  'retry_state',
+  'turn_completed',
+  'ui_telemetry',
+])
+
 export function RichContentBlocks({ blocks, idPrefix }: RichContentBlocksProps) {
   return (
     <div className="space-y-2">
@@ -117,6 +124,7 @@ function RichContentBlock({ block, id }: { block: ContentBlock; id: string }) {
   }
 
   if (block.type === 'unknown') {
+    if (IGNORED_PROTOCOL_BLOCK_TYPES.has(block.block_type)) return null
     return <UnknownBlockCard blockType={block.block_type} raw={block.raw} />
   }
 

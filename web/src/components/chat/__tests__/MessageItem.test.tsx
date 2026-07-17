@@ -220,6 +220,32 @@ describe('MessageItem', () => {
     expect(screen.getByText('future_payload')).toBeTruthy()
   })
 
+  it('suppresses known protocol metadata while preserving unknown payloads', () => {
+    const blocks = [
+      { type: 'unknown', block_type: 'turn_completed', raw: { stop_reason: 'end_turn' } },
+      { type: 'unknown', block_type: 'retry_state', raw: { attempt: 1 } },
+      { type: 'unknown', block_type: 'ui_telemetry', raw: { event: 'prompt_submitted' } },
+      { type: 'unknown', block_type: 'file_history_snapshot', raw: { files: [] } },
+      { type: 'unknown', block_type: 'custom_payload', raw: { future: true } },
+    ] satisfies ContentBlock[]
+
+    render(
+      <MessageItem
+        message={makeMessage({
+          content: '',
+          contentBlocks: blocks,
+        })}
+      />,
+    )
+
+    expect(screen.queryByText('turn_completed')).toBeNull()
+    expect(screen.queryByText('retry_state')).toBeNull()
+    expect(screen.queryByText('ui_telemetry')).toBeNull()
+    expect(screen.queryByText('file_history_snapshot')).toBeNull()
+    expect(screen.getByText('custom_payload')).toBeTruthy()
+    expect(screen.getAllByText('Unknown block:')).toHaveLength(1)
+  })
+
   it('renders protocol tags inside text as collapsed tool chains', () => {
     render(
       <MessageItem

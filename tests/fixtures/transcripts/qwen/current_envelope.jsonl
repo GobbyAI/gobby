@@ -1,0 +1,7 @@
+{"type":"user","uuid":"qwen-user-1","timestamp":"2026-07-17T01:00:00Z","message":{"role":"user","parts":[{"text":"Explain JSON."}]}}
+{"type":"system","subtype":"file_history_snapshot","uuid":"qwen-system-history","timestamp":"2026-07-17T01:00:01Z","systemPayload":{"files":[]}}
+{"type":"system","subtype":"ui_telemetry","uuid":"qwen-system-telemetry","timestamp":"2026-07-17T01:00:02Z","systemPayload":{"event":"prompt_submitted"}}
+{"type":"assistant","uuid":"qwen-assistant-1","timestamp":"2026-07-17T01:00:03Z","model":"qwen3-coder","usageMetadata":{"promptTokenCount":100,"cachedContentTokenCount":25,"candidatesTokenCount":20,"thoughtsTokenCount":5},"message":{"role":"model","parts":[{"thought":true,"text":"I should inspect the project."},{"text":"I will inspect the project."},{"functionCall":{"id":"call-1","name":"read_file","args":{"path":"README.md"}}}]}}
+{"type":"tool_result","uuid":"qwen-tool-result-1","timestamp":"2026-07-17T01:00:04Z","toolCallResult":{"callId":"call-1","status":"success","resultDisplay":"# Gobby"},"message":{"role":"user","parts":[{"functionResponse":{"id":"call-1","name":"read_file","response":{"output":"# Gobby"}}}]}}
+{"type":"system","subtype":"custom_payload","uuid":"qwen-system-custom","timestamp":"2026-07-17T01:00:05Z","systemPayload":{"future":true}}
+{"type":"custom_event","uuid":"qwen-custom-event","timestamp":"2026-07-17T01:00:06Z","payload":{"future":true}}
