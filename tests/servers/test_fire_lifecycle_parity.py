@@ -94,6 +94,28 @@ def _make_session(db_session_id: str = SESSION_ID, seq_num: int = 42) -> MagicMo
     return session
 
 
+@pytest.mark.parametrize("provider", ["claude", "codex", "droid", "grok", "qwen"])
+@pytest.mark.asyncio
+async def test_managed_provider_lifecycle_includes_runtime_chat_mode(
+    host: ChatMixinHost, provider: str
+) -> None:
+    session = _make_session()
+    session.provider = provider
+    session.chat_mode = "plan"
+    host._chat_sessions["conv-1"] = session
+    host.workflow_handler = _make_workflow_handler()
+
+    await host._fire_lifecycle(
+        "conv-1",
+        HookEventType.BEFORE_AGENT,
+        {"prompt": "inspect the repository"},
+    )
+
+    event = host.workflow_handler.evaluate.call_args.args[0]
+    assert event.metadata["session_type"] == "web_chat"
+    assert event.metadata["chat_mode"] == "plan"
+
+
 def _make_workflow_handler(
     decision: Literal["allow", "deny", "ask", "block", "modify"] = "allow",
     context: str | None = None,

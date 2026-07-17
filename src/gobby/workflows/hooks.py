@@ -518,11 +518,11 @@ class WorkflowHookHandler:
         Must run BEFORE rule evaluation so conditions have current data.
         """
         from .observer_context_usage import detect_context_compact_guidance
+        from .observer_plan_mode import resolve_plan_mode
         from .observers import (
             detect_bash_commit,
             detect_commit_link,
             detect_mcp_call,
-            detect_plan_mode_from_context,
             detect_task_claim,
             detect_verification_evidence,
             reconcile_claimed_tasks,
@@ -586,15 +586,14 @@ class WorkflowHookHandler:
 
         # Plan mode detection on the semantic start-of-turn boundary
         if _is_turn_start_event(event.event_type):
-            prompt = (event.data or {}).get("prompt", "") or ""
-            if prompt:
-                run_observer(
-                    "detect_plan_mode_from_context",
-                    detect_plan_mode_from_context,
-                    prompt,
-                    variables,
-                    session_id,
-                )
+            run_observer(
+                "resolve_plan_mode",
+                resolve_plan_mode,
+                event,
+                variables,
+                session_id,
+                self._session_manager,
+            )
             run_observer(
                 "detect_context_compact_guidance",
                 detect_context_compact_guidance,

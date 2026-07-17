@@ -2,11 +2,42 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
-from typing import Any
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any, Protocol
+
+from gobby.hooks.events import HookEvent, SessionSource
 
 logger = logging.getLogger("gobby.workflows.observers")
+
+
+class _SessionValue(Protocol):
+    session_type: object
+    chat_mode: object
+    transcript_path: object
+
+
+class _SessionManager(Protocol):
+    def get(self, session_id: str) -> _SessionValue | None: ...
+
+
+_MODE_ALIASES = {
+    "plan": "plan",
+    "planning": "plan",
+    "normal": "normal",
+    "act": "normal",
+    "acceptedits": "normal",
+    "default": "normal",
+    "execute": "normal",
+    "bypass": "bypass",
+    "bypasspermissions": "bypass",
+    "auto": "bypass",
+    "fullauto": "bypass",
+    "yolo": "bypass",
+}
 
 _MODE_LEVEL_MAP = {"plan": 0, "accept_edits": 1, "normal": 1, "bypass": 2}
 
@@ -22,6 +53,184 @@ def compute_mode_level(chat_mode: str) -> int:
 def _first_marker(text: str, markers: list[str] | tuple[str, ...]) -> str | None:
     """Return the first configured marker present in text."""
     return next((marker for marker in markers if marker in text), None)
+
+
+def resolve_plan_mode(
+    event: HookEvent,
+    variables: dict[str, Any],
+    session_id: str,
+    session_manager: _SessionManager | None,
+) -> None:
+    """Resolve the current mode from the authoritative source for this surface."""
+    session = _load_session(session_manager, session_id)
+    metadata = event.metadata or {}
+    data = event.data or {}
+    session_type = metadata.get("session_type") or getattr(session, "session_type", None)
+
+    if session_type == "web_chat":
+        mode = _normalize_mode(metadata.get("chat_mode"))
+        reason = "managed web-chat runtime metadata"
+        if mode is None:
+            mode = _normalize_mode(getattr(session, "chat_mode", None))
+            reason = "persisted web-chat session"
+        if mode is not None:
+            _apply_resolved_mode(variables, session_id, mode, reason, persist_plan_mode=True)
+        return
+
+    structured_mode = _normalize_mode(metadata.get("chat_mode")) or _normalize_mode(
+        data.get("chat_mode")
+    )
+    if structured_mode is not None:
+        _apply_resolved_mode(
+            variables,
+            session_id,
+            structured_mode,
+            "structured hook mode",
+            persist_plan_mode=False,
+        )
+        return
+
+    if event.source is SessionSource.CODEX:
+        codex_mode = _latest_codex_collaboration_mode(getattr(session, "transcript_path", None))
+        if codex_mode is not None:
+            _apply_resolved_mode(
+                variables,
+                session_id,
+                codex_mode,
+                "Codex turn_context collaboration mode",
+                persist_plan_mode=False,
+            )
+            return
+
+    native_mode = _provider_native_mode(data)
+    if native_mode is not None:
+        _apply_resolved_mode(
+            variables,
+            session_id,
+            native_mode,
+            "provider-native hook state",
+            persist_plan_mode=False,
+        )
+        return
+
+    workflow_mode = _normalize_mode(variables.get("chat_mode"))
+    if workflow_mode is None and (variables.get("mode_level") == 0 or variables.get("plan_mode")):
+        workflow_mode = "plan"
+    if workflow_mode is not None:
+        _apply_resolved_mode(
+            variables,
+            session_id,
+            workflow_mode,
+            "workflow variables",
+            persist_plan_mode=True,
+        )
+
+    prompt = data.get("prompt")
+    detect_plan_mode_from_context(
+        prompt if isinstance(prompt, str) else None, variables, session_id
+    )
+
+
+def _load_session(session_manager: _SessionManager | None, session_id: str) -> _SessionValue | None:
+    if session_manager is None:
+        return None
+    try:
+        return session_manager.get(session_id)
+    except Exception:
+        logger.debug(
+            "Failed to load session %s while resolving plan mode", session_id, exc_info=True
+        )
+        return None
+
+
+def _normalize_mode(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    key = re.sub(r"[\s_-]+", "", value).lower()
+    return _MODE_ALIASES.get(key)
+
+
+def _provider_native_mode(data: dict[str, Any]) -> str | None:
+    for key in (
+        "permission_mode",
+        "permissionMode",
+        "approval_mode",
+        "approvalMode",
+        "current_mode",
+        "currentMode",
+        "mode",
+    ):
+        mode = _normalize_mode(data.get(key))
+        if mode is not None:
+            return mode
+    return None
+
+
+def _apply_resolved_mode(
+    variables: dict[str, Any],
+    session_id: str,
+    mode: str,
+    reason: str,
+    *,
+    persist_plan_mode: bool,
+) -> None:
+    level = compute_mode_level(mode)
+    if mode != "plan" or persist_plan_mode:
+        variables["chat_mode"] = mode
+    if variables.get("mode_level") != level:
+        variables["mode_level"] = level
+        logger.info("Session %s: mode_level=%s (%s)", session_id, level, reason)
+
+    is_plan = level == 0
+    if bool(variables.get("plan_mode")) != is_plan:
+        variables["plan_mode"] = is_plan
+        logger.info("Session %s: plan_mode=%s (%s)", session_id, is_plan, reason)
+    if not is_plan and variables.get("plan_skill_loaded"):
+        variables["plan_skill_loaded"] = False
+
+
+def _latest_codex_collaboration_mode(transcript_path: object) -> str | None:
+    if not isinstance(transcript_path, str) or not transcript_path:
+        return None
+    try:
+        for raw_line in _reverse_jsonl_lines(Path(transcript_path)):
+            try:
+                record = json.loads(raw_line)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            if not isinstance(record, dict) or record.get("type") != "turn_context":
+                continue
+            payload = record.get("payload")
+            collaboration_mode = (
+                payload.get("collaboration_mode") if isinstance(payload, dict) else None
+            )
+            mode = collaboration_mode.get("mode") if isinstance(collaboration_mode, dict) else None
+            normalized = _normalize_mode(mode)
+            if normalized is not None:
+                return normalized
+    except OSError:
+        logger.debug("Unable to read Codex transcript %s", transcript_path, exc_info=True)
+    return None
+
+
+def _reverse_jsonl_lines(path: Path, chunk_size: int = 64 * 1024) -> Iterator[bytes]:
+    """Yield non-empty JSONL records newest-first without loading the file."""
+    with path.open("rb") as transcript:
+        transcript.seek(0, 2)
+        position = transcript.tell()
+        pending = b""
+        while position > 0:
+            read_size = min(chunk_size, position)
+            position -= read_size
+            transcript.seek(position)
+            pending = transcript.read(read_size) + pending
+            lines = pending.split(b"\n")
+            pending = lines[0]
+            for line in reversed(lines[1:]):
+                if line.strip():
+                    yield line
+        if pending.strip():
+            yield pending
 
 
 def detect_plan_mode_from_context(
@@ -188,6 +397,15 @@ def detect_plan_mode_from_context(
             variables["plan_mode"] = False
             variables["plan_skill_loaded"] = False
             logger.info("Session %s: plan_mode=False", session_id)
+        return
+
+    if re.search(r"<plan-mode(?:\s[^>]*)?>", cleaned, re.IGNORECASE):
+        if variables.get("mode_level") != 0:
+            variables["mode_level"] = 0
+            logger.info("Session %s: mode_level=0 (detected from <plan-mode>)", session_id)
+        if not variables.get("plan_mode"):
+            variables["plan_mode"] = True
+            logger.info("Session %s: plan_mode=True", session_id)
         return
 
     if '<chat-mode status="yolo">' in cleaned:

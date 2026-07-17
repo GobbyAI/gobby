@@ -7,8 +7,11 @@ from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
 
-SOFT_CONTEXT_RATIO = 0.65
-STRONG_CONTEXT_RATIO = 0.80
+DEFAULT_SOFT_CONTEXT_RATIO = 0.40
+DEFAULT_STRONG_CONTEXT_RATIO = 0.60
+LARGE_CONTEXT_SOFT_RATIO = 0.30
+LARGE_CONTEXT_STRONG_RATIO = 0.40
+LARGE_CONTEXT_WINDOW = 1_000_000
 STRONG_NUDGE_COOLDOWN_TURNS = 2
 UNKNOWN_USAGE_TURN_FALLBACK = 10
 
@@ -65,7 +68,9 @@ def detect_context_compact_guidance(
             )
         return
 
-    if ratio >= STRONG_CONTEXT_RATIO:
+    soft_ratio, strong_ratio = _thresholds_from_session(session)
+
+    if ratio >= strong_ratio:
         if _cooldown_elapsed(variables, turn_seq, STRONG_NUDGE_COOLDOWN_TURNS):
             _set_guidance(
                 variables,
@@ -78,7 +83,7 @@ def detect_context_compact_guidance(
             )
         return
 
-    if ratio >= SOFT_CONTEXT_RATIO and not variables.get("last_compact_nudge_turn_seq"):
+    if ratio >= soft_ratio and not variables.get("last_compact_nudge_turn_seq"):
         _set_guidance(
             variables,
             turn_seq,
@@ -115,6 +120,13 @@ def _ratio_from_session(session: _SessionValue | None) -> float | None:
     if used is None or window is None or window <= 0:
         return None
     return _clamp(used / window)
+
+
+def _thresholds_from_session(session: _SessionValue | None) -> tuple[float, float]:
+    window = _int_or_none(getattr(session, "context_window", None))
+    if window is not None and window >= LARGE_CONTEXT_WINDOW:
+        return LARGE_CONTEXT_SOFT_RATIO, LARGE_CONTEXT_STRONG_RATIO
+    return DEFAULT_SOFT_CONTEXT_RATIO, DEFAULT_STRONG_CONTEXT_RATIO
 
 
 def _set_guidance(

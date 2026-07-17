@@ -427,14 +427,14 @@ class TestNudgeCompactOnContextPressure:
         assert response.context is not None
         assert guidance in response.context
 
-    def test_soft_nudge_at_sixty_five_percent(self) -> None:
+    def test_soft_nudge_at_forty_percent(self) -> None:
         variables = {"parent_turn_seq": 4, "chat_mode": "normal"}
-        session_manager = _SessionManagerWithContextRatio(0.65)
+        session_manager = _SessionManagerWithContextRatio(0.40)
 
         detect_context_compact_guidance(variables, "session-1", session_manager)
 
         assert variables["context_compact_guidance_kind"] == "soft"
-        assert "65%" in variables["context_compact_guidance_message"]
+        assert "40%" in variables["context_compact_guidance_message"]
         assert variables["last_compact_nudge_turn_seq"] == 5
 
     def test_strong_nudge_uses_two_turn_cooldown(self) -> None:

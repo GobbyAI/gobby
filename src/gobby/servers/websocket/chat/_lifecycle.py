@@ -153,6 +153,7 @@ class ChatLifecycleMixin:
         metadata: dict[str, Any] = {
             "_platform_session_id": db_session_id,
             "session_type": "web_chat",
+            "chat_mode": getattr(session, "chat_mode", None),
         }
         if project_path:
             metadata["project_path"] = project_path
