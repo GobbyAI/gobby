@@ -83,7 +83,7 @@ class HealthMonitor:
                 try:
                     self.check_now()
                 except Exception as e:
-                    self.logger.debug(f"Health check failed: {e}", exc_info=True)
+                    self.logger.debug("Health check failed: %s", e, exc_info=True)
                 finally:
                     # Schedule next check only if not shutting down
                     with self._health_check_lock:
@@ -164,7 +164,7 @@ class HealthMonitor:
                     self._cached_daemon_error = error
                 return is_ready
             except Exception as e:
-                self.logger.debug(f"Immediate health check failed: {e}")
+                self.logger.debug("Immediate health check failed: %s", e)
                 with self._health_check_lock:
                     self._cached_daemon_is_ready = False
                     self._cached_daemon_status = "not_running"

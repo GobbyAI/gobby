@@ -22,7 +22,7 @@ async def execute_mcp_step(
     """Execute an MCP tool call step."""
     mcp_config = rendered_step.mcp
 
-    logger.info(f"Executing MCP step: {mcp_config.server}:{mcp_config.tool}")
+    logger.info("Executing MCP step: %s:%s", mcp_config.server, mcp_config.tool)
 
     if not tool_proxy_getter:
         raise RuntimeError(
@@ -119,7 +119,7 @@ async def execute_exec_step(command: str, context: dict[str, Any]) -> dict[str, 
     300 s) is read from ``context["timeout_seconds"]``.
     """
     timeout_seconds: float = context.get("timeout_seconds", 300)
-    logger.info(f"Executing command: {command}")
+    logger.info("Executing command: %s", command)
 
     try:
         args = shlex.split(command)
@@ -153,7 +153,7 @@ async def execute_exec_step(command: str, context: dict[str, Any]) -> dict[str, 
             "exit_code": proc.returncode,
         }
     except (OSError, ValueError) as e:
-        logger.error(f"Command execution failed: {e}", exc_info=True)
+        logger.error("Command execution failed: %s", e, exc_info=True)
         return {
             "stdout": "",
             "stderr": str(e),
@@ -176,7 +176,7 @@ async def execute_prompt_step(
         )
         return {"response": response}
     except (OSError, RuntimeError, ValueError) as e:
-        logger.error(f"LLM prompt execution failed: {e}", exc_info=True)
+        logger.error("LLM prompt execution failed: %s", e, exc_info=True)
         return {
             "response": "",
             "error": str(e),

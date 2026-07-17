@@ -1250,8 +1250,13 @@ class TestRunCoroBlocking:
         result = manager._run_coro_blocking(failing_coro())
         assert result is None
         manager.logger.error.assert_called_once()
-        message = manager.logger.error.call_args.args[0]
-        assert "RuntimeError: fail" in message
+        log_args = manager.logger.error.call_args.args
+        assert log_args[:3] == (
+            "run_coro_blocking%s: asyncio.run failed: %s: %s",
+            "",
+            "RuntimeError",
+        )
+        assert str(log_args[3]) == "fail"
         assert manager.logger.error.call_args.kwargs["exc_info"] is True
 
     def test_run_coro_blocking_forwards_label_and_timeout(
@@ -1319,8 +1324,14 @@ class TestRunCoroBlocking:
 
             assert result is None
             logger.error.assert_called_once()
-            assert label in logger.error.call_args.args[0]
-            assert "TimeoutError" in logger.error.call_args.args[0]
+            log_args = logger.error.call_args.args
+            assert log_args[:4] == (
+                "run_coro_blocking%s: threadsafe failed after %ss: %s: %s",
+                f"[{label}]",
+                0.01,
+                "TimeoutError",
+            )
+            assert isinstance(log_args[4], TimeoutError)
             assert logger.error.call_args.kwargs["exc_info"] is True
             assert coro_cancelled.wait(timeout=1)
         finally:

@@ -163,7 +163,7 @@ class PipelineHeartbeat:
             try:
                 handled += await self._handle_stalled_execution(execution)
             except Exception:
-                logger.error(f"Heartbeat error handling execution {execution.id}", exc_info=True)
+                logger.error("Heartbeat error handling execution %s", execution.id, exc_info=True)
         return handled
 
     async def _handle_stalled_execution(self, execution: PipelineExecution) -> int:
@@ -240,7 +240,7 @@ class PipelineHeartbeat:
             )
             return 0
         logger.warning(
-            f"Heartbeat: marked execution {execution.id} as FAILED (stalled, no agents)",
+            "Heartbeat: marked execution %s as FAILED (stalled, no agents)", execution.id
         )
         return 1
 
@@ -276,7 +276,7 @@ class PipelineHeartbeat:
                 return getattr(session, "agent_depth", 0) == 0
             return False
         except Exception:
-            logger.exception(f"Failed to check session liveness for {session_id}")
+            logger.exception("Failed to check session liveness for %s", session_id)
             return True  # Err on side of caution — assume alive
 
     async def check_stale_tasks(self) -> StaleTaskCheckResult:
@@ -340,7 +340,7 @@ class PipelineHeartbeat:
                 if action is not None:
                     recovered += 1
             except Exception:
-                logger.exception(f"Heartbeat: error checking task {task.id} for staleness")
+                logger.exception("Heartbeat: error checking task %s for staleness", task.id)
         return StaleTaskCheckResult(recovered=recovered, candidates=len(candidates))
 
     async def count_running_executions(self) -> int:

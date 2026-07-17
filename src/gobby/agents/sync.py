@@ -118,7 +118,7 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
     }
 
     if not agents_path.exists():
-        logger.warning(f"Bundled agents path not found: {agents_path}")
+        logger.warning("Bundled agents path not found: %s", agents_path)
         result["errors"].append(f"Agents path not found: {agents_path}")
         return result
 
@@ -131,7 +131,7 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
             data = yaml.safe_load(raw_content)
 
             if not isinstance(data, dict):
-                logger.warning(f"Skipping non-dict YAML file: {yaml_file}")
+                logger.warning("Skipping non-dict YAML file: %s", yaml_file)
                 continue
 
             raw_name = data.get("name")
@@ -150,8 +150,9 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
             if existing is not None:
                 if existing.workflow_type != "agent":
                     logger.debug(
-                        f"Agent '{name}' conflicts with existing {existing.workflow_type} "
-                        f"definition, skipping"
+                        "Agent '%s' conflicts with existing %s definition, skipping",
+                        name,
+                        existing.workflow_type,
                     )
                     result["skipped"] += 1
                     continue
@@ -236,7 +237,7 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
                 tags=["gobby"],
             )
             _refresh_step_workflow(body, db)
-            logger.info(f"Synced bundled agent definition: {name}")
+            logger.info("Synced bundled agent definition: %s", name)
             result["synced"] += 1
 
         except Exception as e:
@@ -257,14 +258,17 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
         existing = WorkflowDefinitionRow.from_row(row)
         if existing.name not in on_disk and _is_sync_managed_bundled_agent(existing):
             manager.delete(existing.id)
-            logger.info(f"Soft-deleted orphaned bundled agent: {existing.name}")
+            logger.info("Soft-deleted orphaned bundled agent: %s", existing.name)
             result["orphaned"] += 1
 
     total = result["synced"] + result["updated"] + result["skipped"]
     logger.info(
-        f"Agent definition sync complete: {result['synced']} synced, "
-        f"{result['updated']} updated, {result['skipped']} skipped, "
-        f"{result.get('orphaned', 0)} orphaned, {total} total"
+        "Agent definition sync complete: %s synced, %s updated, %s skipped, %s orphaned, %s total",
+        result["synced"],
+        result["updated"],
+        result["skipped"],
+        result.get("orphaned", 0),
+        total,
     )
 
     return result

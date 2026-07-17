@@ -154,7 +154,7 @@ class HookSkillManager:
                     logger.debug("Discovered %s hook skills from DB for %s", len(skills), scope)
                     return skills
             except Exception as e:
-                logger.debug(f"DB skill loading failed, falling back to filesystem: {e}")
+                logger.debug("DB skill loading failed, falling back to filesystem: %s", e)
 
         # Filesystem fallback
         self._trigger_indexes.pop(scope, None)
@@ -184,7 +184,7 @@ class HookSkillManager:
     def _load_from_filesystem(self) -> list[ParsedSkill]:
         """Load skills from the filesystem (fallback path)."""
         if not self._core_skills_path.exists():
-            logger.warning(f"Core skills path not found: {self._core_skills_path}")
+            logger.warning("Core skills path not found: %s", self._core_skills_path)
             return []
 
         # Load all skills from the core directory
@@ -269,7 +269,7 @@ class HookSkillManager:
                 )
             except Exception as e:
                 logging.getLogger(__name__).debug(
-                    f"Failed to record skill_invoke event for {resolved.name}: {e}"
+                    "Failed to record skill_invoke event for %s: %s", resolved.name, e
                 )
 
         return resolved
@@ -334,7 +334,7 @@ class HookSkillManager:
                     },
                 )
             except Exception as e:
-                logging.getLogger(__name__).debug(f"Failed to record skill_search event: {e}")
+                logging.getLogger(__name__).debug("Failed to record skill_search event: %s", e)
 
         return results
 

@@ -499,7 +499,7 @@ class WorkflowHookHandler:
 
     def _handle_cancelled(self, event: HookEvent) -> HookResponse:
         """Handle CancelledError by logging and returning appropriate response."""
-        logger.warning(f"Workflow evaluation cancelled for {event.event_type}")
+        logger.warning("Workflow evaluation cancelled for %s", event.event_type)
         if event.event_type == HookEventType.STOP:
             return HookResponse(
                 decision="block",
@@ -647,8 +647,8 @@ class WorkflowHookHandler:
                     except Exception as e:
                         if event.event_type == HookEventType.STOP:
                             logger.warning(
-                                "Failed to load session variables on STOP - "
-                                f"blocking for safety: {e}",
+                                "Failed to load session variables on STOP - blocking for safety: %s",
+                                e,
                                 exc_info=True,
                             )
                             return HookResponse(
@@ -900,7 +900,7 @@ class WorkflowHookHandler:
                         cleanup=event.event_type == HookEventType.SESSION_END,
                     )
         except Exception as e:
-            logger.error(f"RuleEngine evaluation failed: {e}", exc_info=True)
+            logger.error("RuleEngine evaluation failed: %s", e, exc_info=True)
             raise
 
     async def evaluate_async(self, event: HookEvent) -> HookResponse:

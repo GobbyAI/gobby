@@ -62,14 +62,20 @@ def run_coro_blocking(
             if future is not None:
                 future.cancel()
             logger.error(
-                f"run_coro_blocking{label_suffix}: threadsafe failed after "
-                f"{timeout_seconds}s: {type(e).__name__}: {e}",
+                "run_coro_blocking%s: threadsafe failed after %ss: %s: %s",
+                label_suffix,
+                timeout_seconds,
+                type(e).__name__,
+                e,
                 exc_info=True,
             )
             return None
         except Exception as e:
             logger.error(
-                f"run_coro_blocking{label_suffix}: threadsafe failed: {type(e).__name__}: {e}",
+                "run_coro_blocking%s: threadsafe failed: %s: %s",
+                label_suffix,
+                type(e).__name__,
+                e,
                 exc_info=True,
             )
             return None
@@ -82,7 +88,10 @@ def run_coro_blocking(
             return asyncio.run(run_with_timeout())
         except Exception as e:
             logger.error(
-                f"run_coro_blocking{label_suffix}: asyncio.run failed: {type(e).__name__}: {e}",
+                "run_coro_blocking%s: asyncio.run failed: %s: %s",
+                label_suffix,
+                type(e).__name__,
+                e,
                 exc_info=True,
             )
             return None
@@ -425,7 +434,7 @@ def dispatch_mcp_calls(
         return []
 
     logger.debug(
-        f"dispatch_mcp_calls: dispatching {len(mcp_calls)} calls for {event.event_type}",
+        "dispatch_mcp_calls: dispatching %s calls for %s", len(mcp_calls), event.event_type
     )
 
     # Capture in local so mypy narrows past the None guard for closures
@@ -444,10 +453,10 @@ def dispatch_mcp_calls(
         needs_capture = inject_result or block_on_failure or block_on_success
 
         if not server or not tool:
-            logger.warning(f"dispatch_mcp_calls: missing server or tool in {call}")
+            logger.warning("dispatch_mcp_calls: missing server or tool in %s", call)
             continue
 
-        logger.debug(f"dispatch_mcp_calls: {server}/{tool} (background={background})")
+        logger.debug("dispatch_mcp_calls: %s/%s (background=%s)", server, tool, background)
 
         # Inject event context into arguments
         if "session_id" not in arguments:
@@ -528,13 +537,19 @@ def dispatch_mcp_calls(
 
                 if not mcp_call_succeeded(result):
                     logger.warning(
-                        f"dispatch_mcp_calls: {s}/{t} returned failure: "
-                        f"{result.get('error', 'unknown') if isinstance(result, dict) else 'no result'}",
+                        "dispatch_mcp_calls: %s/%s returned failure: %s",
+                        s,
+                        t,
+                        result.get("error", "unknown") if isinstance(result, dict) else "no result",
                     )
                 return result
             except Exception as exc:
                 logger.error(
-                    f"dispatch_mcp_calls: {s}/{t} failed: {type(exc).__name__}: {exc}",
+                    "dispatch_mcp_calls: %s/%s failed: %s: %s",
+                    s,
+                    t,
+                    type(exc).__name__,
+                    exc,
                     exc_info=True,
                 )
                 return {"success": False, "error": str(exc)}
@@ -585,7 +600,7 @@ def dispatch_mcp_calls(
             ) -> None:
                 if not t.cancelled() and t.exception():
                     logger.warning(
-                        f"dispatch_mcp_calls: background {s}/{tl} failed: {t.exception()}"
+                        "dispatch_mcp_calls: background %s/%s failed: %s", s, tl, t.exception()
                     )
 
             def _log_bg_future_error(
@@ -596,7 +611,9 @@ def dispatch_mcp_calls(
                 if not f.cancelled():
                     exc: BaseException | None = f.exception()
                     if exc is not None:
-                        logger.warning(f"dispatch_mcp_calls: background {s}/{tl} failed: {exc}")
+                        logger.warning(
+                            "dispatch_mcp_calls: background %s/%s failed: %s", s, tl, exc
+                        )
 
             try:
                 running_loop = asyncio.get_running_loop()
@@ -609,14 +626,14 @@ def dispatch_mcp_calls(
                         future.add_done_callback(_log_bg_future_error)
                     except Exception as e:
                         logger.warning(
-                            f"dispatch_mcp_calls: failed to schedule {server}/{tool}: {e}",
+                            "dispatch_mcp_calls: failed to schedule %s/%s: %s", server, tool, e
                         )
                 else:
                     try:
                         asyncio.run(coro)
                     except Exception as e:
                         logger.warning(
-                            f"dispatch_mcp_calls: background {server}/{tool} failed: {e}",
+                            "dispatch_mcp_calls: background %s/%s failed: %s", server, tool, e
                         )
         else:
             # Blocking dispatch -- must await completion, not fire-and-forget

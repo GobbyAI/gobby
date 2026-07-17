@@ -81,7 +81,7 @@ def setup_code_index(handler: Any, session_id: str | None, project_id: str | Non
             sv_mgr = SessionVariableManager(handler._session_manager.db)
             sv_mgr.set_variable(session_id, "code_index_available", True)
     except Exception as e:
-        handler.logger.debug(f"Could not check code index availability: {e}")
+        handler.logger.debug("Could not check code index availability: %s", e)
 
 
 def _seed_memory_recall_vars(handler: Any, session_id: str) -> None:
@@ -170,7 +170,7 @@ def _seed_wiki_overview_var(handler: Any, session_id: str, project_id: str | Non
             session_id, {"wiki_overview": overview}
         )
     except Exception as e:
-        handler.logger.debug(f"Could not seed wiki overview: {e}")
+        handler.logger.debug("Could not seed wiki overview: %s", e)
 
 
 def activate_default_agent(
@@ -199,11 +199,11 @@ def activate_default_agent(
             project_id=project_id,
         )
     except AgentResolutionError as e:
-        handler.logger.error(f"Failed to resolve default agent '{default_agent_name}': {e}")
+        handler.logger.error("Failed to resolve default agent '%s': %s", default_agent_name, e)
         return None
 
     if not agent_body:
-        handler.logger.debug(f"Default agent '{default_agent_name}' not found in DB")
+        handler.logger.debug("Default agent '%s' not found in DB", default_agent_name)
         return None
 
     _ta_queries = time.monotonic()
@@ -294,9 +294,12 @@ def activate_default_agent(
     )
     if timings["total"] >= SLOW_AGENT_ACTIVATION_THRESHOLD_MS:
         handler.logger.info(
-            "Default agent activation slow: "
-            f"component={slow_component} duration={slow_ms}ms "
-            f"total={timings['total']}ms session={session_id} agent={agent_body.name}",
+            "Default agent activation slow: component=%s duration=%sms total=%sms session=%s agent=%s",
+            slow_component,
+            slow_ms,
+            timings["total"],
+            session_id,
+            agent_body.name,
         )
     else:
         handler.logger.debug(timing_message)

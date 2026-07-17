@@ -87,7 +87,7 @@ class TmuxOutputReader:
             await proc.wait()
             return 1
         if proc.returncode != 0 and stderr:
-            logger.debug(f"tmux pipe-pane stderr: {stderr.decode(errors='replace').strip()}")
+            logger.debug("tmux pipe-pane stderr: %s", stderr.decode(errors="replace").strip())
         return proc.returncode or 0
 
     # ------------------------------------------------------------------
@@ -123,7 +123,7 @@ class TmuxOutputReader:
             try:
                 os.mkfifo(fifo_path, mode=stat.S_IRUSR | stat.S_IWUSR)
             except OSError as e:
-                logger.error(f"Failed to create FIFO {fifo_path}: {e}")
+                logger.error("Failed to create FIFO %s: %s", fifo_path, e)
                 return False
 
             # Quote path to prevent shell injection in tmux invocation
@@ -133,7 +133,7 @@ class TmuxOutputReader:
             # Note: Holding lock to ensure race-free start vs stop
             rc = await self._run("pipe-pane", "-t", session_name, f"cat >> {safe_fifo_path}")
             if rc != 0:
-                logger.error(f"tmux pipe-pane failed for session '{session_name}'")
+                logger.error("tmux pipe-pane failed for session '%s'", session_name)
                 try:
                     os.unlink(fifo_path)
                 except OSError:
@@ -152,7 +152,7 @@ class TmuxOutputReader:
             )
             self._reader_tasks[run_id] = task
 
-        logger.debug(f"Started tmux output reader for {run_id} ({session_name})")
+        logger.debug("Started tmux output reader for %s (%s)", run_id, session_name)
         return True
 
     async def stop_reader(self, run_id: str) -> bool:
@@ -190,7 +190,7 @@ class TmuxOutputReader:
                 pass
 
         if task:
-            logger.debug(f"Stopped tmux output reader for {run_id}")
+            logger.debug("Stopped tmux output reader for %s", run_id)
             return True
         return False
 
@@ -249,7 +249,7 @@ class TmuxOutputReader:
                         lambda: os.read(fd, 4096),
                     )
                 except OSError as e:
-                    logger.debug(f"FIFO read error for {run_id}: {e}")
+                    logger.debug("FIFO read error for %s: %s", run_id, e)
                     break
 
                 if not data:
@@ -264,16 +264,16 @@ class TmuxOutputReader:
                     try:
                         await self._output_callback(run_id, text)
                     except Exception as e:
-                        logger.warning(f"Output callback error for {run_id}: {e}")
+                        logger.warning("Output callback error for %s: %s", run_id, e)
 
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.error(f"Tmux reader error for {run_id}: {e}")
+            logger.error("Tmux reader error for %s: %s", run_id, e)
         finally:
             if fd is not None:
                 try:
                     os.close(fd)
                 except OSError:
                     pass
-            logger.debug(f"Tmux reader finished for {run_id}")
+            logger.debug("Tmux reader finished for %s", run_id)

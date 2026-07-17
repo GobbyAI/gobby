@@ -165,8 +165,10 @@ class TmuxPTYBridge:
             raise
 
         logger.info(
-            f"PTY bridge attached: {streaming_id} -> "
-            f"tmux session '{session_name}' (socket={cfg.socket_name or 'default'})"
+            "PTY bridge attached: %s -> tmux session '%s' (socket=%s)",
+            streaming_id,
+            session_name,
+            cfg.socket_name or "default",
         )
         return master_fd
 
@@ -192,7 +194,7 @@ class TmuxPTYBridge:
             except ProcessLookupError:
                 pass
 
-        logger.info(f"PTY bridge detached: {streaming_id}")
+        logger.info("PTY bridge detached: %s", streaming_id)
 
     async def detach_all(self) -> None:
         """Detach all active bridges."""
@@ -220,7 +222,7 @@ class TmuxPTYBridge:
                 )
                 return bridge
             except OSError as e:
-                logger.warning(f"Resize failed for {streaming_id}: {e}")
+                logger.warning("Resize failed for %s: %s", streaming_id, e)
         return None
 
     async def get_master_fd(self, streaming_id: str) -> int | None:

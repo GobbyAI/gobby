@@ -284,7 +284,7 @@ class AgentLifecycleMonitor:
             self._check_loop(),
             name="agent-lifecycle-monitor",
         )
-        logger.info(f"AgentLifecycleMonitor started (interval={self._check_interval}s)")
+        logger.info("AgentLifecycleMonitor started (interval=%ss)", self._check_interval)
 
     async def stop(self) -> None:
         """Stop the monitoring loop."""
@@ -306,7 +306,7 @@ class AgentLifecycleMonitor:
         iteration = 0
         while self._running:
             try:
-                logger.debug(f"Lifecycle check iteration {iteration}")
+                logger.debug("Lifecycle check iteration %s", iteration)
                 await self.reconcile_pending_terminations()
                 await self.check_trust_prompts()
                 await self.check_loop_prompts()
@@ -326,13 +326,13 @@ class AgentLifecycleMonitor:
                     try:
                         cleaned = await self._run_db(self._agent_run_manager.cleanup_stale_runs)
                         if cleaned:
-                            logger.info(f"Cleaned up {cleaned} stale agent runs")
+                            logger.info("Cleaned up %s stale agent runs", cleaned)
                     except Exception as e:
-                        logger.warning(f"Stale run cleanup failed: {e}")
+                        logger.warning("Stale run cleanup failed: %s", e)
 
                 iteration += 1
             except Exception as e:
-                logger.error(f"Agent lifecycle check error: {e}")
+                logger.error("Agent lifecycle check error: %s", e)
 
             try:
                 await asyncio.sleep(self._check_interval)
@@ -634,11 +634,13 @@ class AgentLifecycleMonitor:
                     )
                     if checkpoint:
                         logger.info(
-                            f"Checkpointed agent {run.id} work: {checkpoint.ref_name} "
-                            f"({checkpoint.files_changed} files)"
+                            "Checkpointed agent %s work: %s (%s files)",
+                            run.id,
+                            checkpoint.ref_name,
+                            checkpoint.files_changed,
                         )
                 except Exception as e:
-                    logger.warning(f"Failed to checkpoint agent {run.id}: {e}")
+                    logger.warning("Failed to checkpoint agent %s: %s", run.id, e)
 
     async def _resolve_agent_cwd(self, run: AgentRun) -> str | None:
         """Resolve the working directory for an agent run."""
@@ -649,7 +651,10 @@ class AgentLifecycleMonitor:
                     return cast(str, wt.worktree_path)
             except Exception:
                 logger.debug(
-                    f"Failed to resolve worktree {run.worktree_id} for run {run.id}", exc_info=True
+                    "Failed to resolve worktree %s for run %s",
+                    run.worktree_id,
+                    run.id,
+                    exc_info=True,
                 )
 
         if run.clone_id and self._clone_storage:
@@ -659,7 +664,7 @@ class AgentLifecycleMonitor:
                     return cast(str, clone.clone_path)
             except Exception:
                 logger.debug(
-                    f"Failed to resolve clone {run.clone_id} for run {run.id}", exc_info=True
+                    "Failed to resolve clone %s for run %s", run.clone_id, run.id, exc_info=True
                 )
 
         if run.child_session_id and self._session_manager:
@@ -677,7 +682,8 @@ class AgentLifecycleMonitor:
                         return str(project.repo_path)
             except Exception:
                 logger.debug(
-                    f"Failed to resolve project path for session {run.child_session_id}",
+                    "Failed to resolve project path for session %s",
+                    run.child_session_id,
                     exc_info=True,
                 )
 

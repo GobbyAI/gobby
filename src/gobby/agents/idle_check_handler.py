@@ -286,7 +286,7 @@ class IdleCheckHandler:
             )
 
             if status == "context_full":
-                logger.info(f"Agent {run.id} hit context window limit - failing")
+                logger.info("Agent %s hit context window limit - failing", run.id)
                 await self._fail_idle_agent(run, reason="context window exhausted")
                 return 1
 
@@ -351,8 +351,9 @@ class IdleCheckHandler:
                 )
                 return 0
             logger.info(
-                f"Agent {run.id} still idle after "
-                f"{self._tmux_config.max_reprompt_attempts} reprompts — failing"
+                "Agent %s still idle after %s reprompts — failing",
+                run.id,
+                self._tmux_config.max_reprompt_attempts,
             )
             await self._log_codex_transcript_snapshot(
                 run,
@@ -400,7 +401,7 @@ class IdleCheckHandler:
             ):
                 return 1
 
-            logger.info(f"Reprompting idle agent {run.id}")
+            logger.info("Reprompting idle agent %s", run.id)
             await self._log_codex_transcript_snapshot(
                 run,
                 reason="reprompting apparently idle agent",

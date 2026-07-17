@@ -115,7 +115,7 @@ class AgentHealthMonitor:
         try:
             return await self._tmux.capture_pane(run.tmux_session_name, lines=lines) or ""
         except Exception as e:
-            logger.debug(f"Failed to capture pane for agent {run.id}: {e}")
+            logger.debug("Failed to capture pane for agent %s: %s", run.id, e)
             return ""
 
     async def _bootstrap_accounting_stall_error(
@@ -194,7 +194,10 @@ class AgentHealthMonitor:
                         is_timeout = True
                         timeout_age = age
                         logger.info(
-                            f"Agent {run.id} exceeded timeout ({age:.1f}s > {run.timeout_seconds}s)"
+                            "Agent %s exceeded timeout (%.1fs > %ss)",
+                            run.id,
+                            age,
+                            run.timeout_seconds,
                         )
 
                 if reason is None and run.tmux_session_name:
@@ -209,12 +212,13 @@ class AgentHealthMonitor:
                                 unverifiable_result=True,
                             ):
                                 reason = f"PID {run.pid} no longer matches agent identity"
-                                logger.info(f"Agent {run.id} {reason} - cleaning up")
+                                logger.info("Agent %s %s - cleaning up", run.id, reason)
                     else:
                         reason = "tmux session died unexpectedly"
                         logger.info(
-                            f"Detected dead tmux session '{run.tmux_session_name}' "
-                            f"for agent {run.id}"
+                            "Detected dead tmux session '%s' for agent %s",
+                            run.tmux_session_name,
+                            run.id,
                         )
 
                 if reason is None:
@@ -268,7 +272,7 @@ class AgentHealthMonitor:
                     except ProcessLookupError:
                         pass
                     except Exception as e:
-                        logger.warning(f"Failed to kill process {run.pid}: {e}")
+                        logger.warning("Failed to kill process %s: %s", run.pid, e)
 
                 await self._cleanup_handler.cleanup_agent(
                     run,
@@ -278,10 +282,10 @@ class AgentHealthMonitor:
                 cleaned += 1
 
             except Exception as e:
-                logger.warning(f"Error checking agent {run.id}: {e}")
+                logger.warning("Error checking agent %s: %s", run.id, e)
 
         if cleaned > 0:
-            logger.info(f"Cleaned up {cleaned} unhealthy agent(s)")
+            logger.info("Cleaned up %s unhealthy agent(s)", cleaned)
 
         return cleaned
 
@@ -321,8 +325,10 @@ class AgentHealthMonitor:
                     continue
 
                 logger.warning(
-                    f"Agent {run.id} never initialized after {age:.0f}s "
-                    f"(provider={run.provider}) — killing for provider rotation"
+                    "Agent %s never initialized after %.0fs (provider=%s) — killing for provider rotation",
+                    run.id,
+                    age,
+                    run.provider,
                 )
                 error_msg = (
                     f"Provider connection timed out: agent never initialized "
@@ -353,10 +359,10 @@ class AgentHealthMonitor:
                 killed += 1
 
             except Exception as e:
-                logger.warning(f"Error checking init timeout for agent {run.id}: {e}")
+                logger.warning("Error checking init timeout for agent %s: %s", run.id, e)
 
         if killed > 0:
-            logger.info(f"Killed {killed} uninitialized agent(s) for provider rotation")
+            logger.info("Killed %s uninitialized agent(s) for provider rotation", killed)
 
         return killed
 
@@ -407,7 +413,7 @@ class AgentHealthMonitor:
                     if await self._terminate_tmux_run(run, action="fail", reason=error_msg):
                         stalled += 1
             except Exception as e:
-                logger.warning(f"Error checking provider stall for agent {run.id}: {e}")
+                logger.warning("Error checking provider stall for agent %s: %s", run.id, e)
 
         return stalled
 

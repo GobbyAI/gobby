@@ -216,8 +216,10 @@ class ChildSessionManager:
             raise RuntimeError(f"Failed to fetch child session {child_id} after creation")
 
         self.logger.info(
-            f"Created child session {updated_child.id} "
-            f"(parent={config.parent_session_id}, agent={config.agent_id})"
+            "Created child session %s (parent=%s, agent=%s)",
+            updated_child.id,
+            config.parent_session_id,
+            config.agent_id,
         )
 
         return updated_child

@@ -48,12 +48,12 @@ def update_task_from_workflow(
             return task_manager.get_task(task_id)
 
         task = task_manager.update_task(task_id, **update_kwargs)
-        logger.debug(f"Updated task {task_id} from workflow: {list(update_kwargs.keys())}")
+        logger.debug("Updated task %s from workflow: %s", task_id, list(update_kwargs.keys()))
         return task
 
     except ValueError as e:
-        logger.warning(f"Task {task_id} not found for workflow update: {e}")
+        logger.warning("Task %s not found for workflow update: %s", task_id, e)
         return None
     except Exception as e:
-        logger.error(f"Failed to update task {task_id} from workflow: {e}")
+        logger.error("Failed to update task %s from workflow: %s", task_id, e)
         return None

@@ -234,7 +234,7 @@ class SessionLookupService:
 
                 if not platform_session_id:
                     self._logger.debug(
-                        f"Session not in mapping, querying database for external_id={external_id}"
+                        "Session not in mapping, querying database for external_id=%s", external_id
                     )
                     # Lookup with full composite key
                     platform_session_id = self._session_manager.lookup_session_id(
@@ -245,7 +245,9 @@ class SessionLookupService:
                     )
                     if platform_session_id:
                         self._logger.debug(
-                            f"Found session_id {platform_session_id} for external_id {external_id}"
+                            "Found session_id %s for external_id %s",
+                            platform_session_id,
+                            external_id,
                         )
                     else:
                         recovered_session = self._session_manager.recover_session(
@@ -334,4 +336,4 @@ class SessionLookupService:
                 # Keep legacy field for backwards compatibility
                 event.metadata["_task_title"] = task.title
         except Exception as e:
-            self._logger.warning(f"Failed to resolve active task: {e}")
+            self._logger.warning("Failed to resolve active task: %s", e)

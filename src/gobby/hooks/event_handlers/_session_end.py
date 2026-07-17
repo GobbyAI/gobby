@@ -19,13 +19,13 @@ class SessionEndMixin(EventHandlersBase):
         session_id = event.metadata.get("_platform_session_id")
 
         if session_id:
-            self.logger.debug(f"SESSION_END: session {session_id}")
+            self.logger.debug("SESSION_END: session %s", session_id)
         else:
-            self.logger.warning(f"SESSION_END: session_id not found for external_id={external_id}")
+            self.logger.warning("SESSION_END: session_id not found for external_id=%s", external_id)
 
         # If not in mapping, query database
         if not session_id and external_id and self._session_manager:
-            self.logger.debug(f"external_id {external_id} not in mapping, querying database")
+            self.logger.debug("external_id %s not in mapping, querying database", external_id)
             # Resolve context for lookup
             machine_id = self._get_machine_id()
             cwd = event.data.get("cwd")
@@ -53,7 +53,7 @@ class SessionEndMixin(EventHandlersBase):
             try:
                 session = self._session_manager.get(session_id)
             except Exception as e:
-                self.logger.warning(f"Failed to fetch session {session_id}: {e}")
+                self.logger.warning("Failed to fetch session %s: %s", session_id, e)
 
         # Auto-link commits made during this session to tasks
         if session and self._task_manager and self._session_manager:
@@ -75,18 +75,19 @@ class SessionEndMixin(EventHandlersBase):
                 )
                 if link_result.total_linked > 0:
                     self.logger.info(
-                        f"Auto-linked {link_result.total_linked} commits to tasks: "
-                        f"{list(link_result.linked_tasks.keys())}"
+                        "Auto-linked %s commits to tasks: %s",
+                        link_result.total_linked,
+                        list(link_result.linked_tasks.keys()),
                     )
             except Exception as e:
-                self.logger.warning(f"Failed to auto-link session commits: {e}")
+                self.logger.warning("Failed to auto-link session commits: %s", e)
 
         # Complete agent run if this is a terminal-mode agent session
         if session and session.agent_run_id and self._session_coordinator:
             try:
                 self._session_coordinator.complete_agent_run(session)
             except Exception as e:
-                self.logger.warning(f"Failed to complete agent run: {e}")
+                self.logger.warning("Failed to complete agent run: %s", e)
 
         # Session-bound workflow instances must be cleared when the session ends
         # so agent-only step enforcement cannot leak onto later requests.
@@ -97,13 +98,15 @@ class SessionEndMixin(EventHandlersBase):
                 ).delete_instances_for_session(session_id)
                 if deleted_count > 0:
                     self.logger.info(
-                        f"SESSION_END: deleted {deleted_count} workflow instances "
-                        f"for session {session_id}"
+                        "SESSION_END: deleted %s workflow instances for session %s",
+                        deleted_count,
+                        session_id,
                     )
             except Exception as e:
                 self.logger.warning(
-                    f"SESSION_END: failed to delete workflow instances for "
-                    f"session {session_id}: {e}"
+                    "SESSION_END: failed to delete workflow instances for session %s: %s",
+                    session_id,
+                    e,
                 )
 
         # Unregister from message processor
@@ -111,7 +114,7 @@ class SessionEndMixin(EventHandlersBase):
             try:
                 self._message_processor.unregister_session(session_id)
             except Exception as e:
-                self.logger.warning(f"Failed to unregister session from message processor: {e}")
+                self.logger.warning("Failed to unregister session from message processor: %s", e)
 
         # Notify pane monitor to prevent double-fire
         if session_id:
@@ -122,7 +125,7 @@ class SessionEndMixin(EventHandlersBase):
                 if monitor:
                     monitor.mark_recently_ended(session_id)
             except Exception as e:
-                self.logger.debug(f"Failed to notify pane monitor for session {session_id}: {e}")
+                self.logger.debug("Failed to notify pane monitor for session %s: %s", session_id, e)
 
         # Release any interactive plan-adversary lock labels owned by this
         # session. The skill's terminal cleanup handles this on every clean
@@ -138,17 +141,19 @@ class SessionEndMixin(EventHandlersBase):
                     try:
                         self._task_manager.remove_label(task.id, lock_label)
                         self.logger.info(
-                            f"SESSION_END: released interactive-plan lock on task {task.id} "
-                            f"(session {session_id})"
+                            "SESSION_END: released interactive-plan lock on task %s (session %s)",
+                            task.id,
+                            session_id,
                         )
                     except Exception as inner_e:
                         self.logger.warning(
-                            f"SESSION_END: failed to remove interactive-plan lock on "
-                            f"task {task.id}: {inner_e}"
+                            "SESSION_END: failed to remove interactive-plan lock on task %s: %s",
+                            task.id,
+                            inner_e,
                         )
             except Exception as e:
                 self.logger.warning(
-                    f"SESSION_END: orphan-lock sweep failed for session {session_id}: {e}"
+                    "SESSION_END: orphan-lock sweep failed for session %s: %s", session_id, e
                 )
 
         # Mark as handoff_ready only for explicit handoff exits. Ordinary
@@ -173,6 +178,6 @@ class SessionEndMixin(EventHandlersBase):
                     end_status = "expired"
                 self._session_manager.update_status(session_id, end_status)
             except Exception as e:
-                self.logger.warning(f"Failed to update session {session_id} status on end: {e}")
+                self.logger.warning("Failed to update session %s status on end: %s", session_id, e)
 
         return HookResponse(decision="allow")

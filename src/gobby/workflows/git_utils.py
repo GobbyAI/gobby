@@ -351,11 +351,11 @@ def get_dirty_files_categorized(project_path: str | None = None) -> DirtyFiles:
         return DirtyFiles(set(), set())
     except FileNotFoundError:
         logger.warning(
-            f"get_dirty_files: git binary not found or cwd invalid (cwd={worktree_root})"
+            "get_dirty_files: git binary not found or cwd invalid (cwd=%s)", worktree_root
         )
         return DirtyFiles(set(), set())
     except Exception as e:
-        logger.error(f"get_dirty_files: Error running git status: {e}")
+        logger.error("get_dirty_files: Error running git status: %s", e)
         return DirtyFiles(set(), set())
 
 
@@ -396,5 +396,5 @@ def get_task_session_liveness(
 
         return False
     except Exception as e:
-        logger.warning(f"get_task_session_liveness: Error checking liveness for {task_id}: {e}")
+        logger.warning("get_task_session_liveness: Error checking liveness for %s: %s", task_id, e)
         return False

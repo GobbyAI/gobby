@@ -80,7 +80,7 @@ def evaluate_blocking_webhooks(
             )
             return HookResponse(decision="block", reason=resolved_reason)
     except Exception as e:
-        logger.error(f"Blocking webhook dispatch failed: {e}", exc_info=True)
+        logger.error("Blocking webhook dispatch failed: %s", e, exc_info=True)
         # Fail-open for webhook errors
     return None
 
@@ -196,7 +196,7 @@ def dispatch_webhooks_async(
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for ep, result in zip(matching_endpoints, results, strict=True):
             if isinstance(result, Exception):
-                logger.warning(f"Webhook dispatch to {ep.url} failed: {result}")
+                logger.warning("Webhook dispatch to %s failed: %s", ep.url, result)
 
     # Fire and forget
     try:
@@ -208,4 +208,4 @@ def dispatch_webhooks_async(
             try:
                 asyncio.run_coroutine_threadsafe(dispatch_all(), loop)
             except Exception as e:
-                logger.warning(f"Failed to schedule async webhook: {e}")
+                logger.warning("Failed to schedule async webhook: %s", e)

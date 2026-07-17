@@ -133,7 +133,7 @@ def is_tool_unlocked(
 
     is_unlocked = key in unlocked
     if not is_unlocked:
-        logger.debug(f"is_tool_unlocked check failed for {key}. Unlocked tools: {unlocked}")
+        logger.debug("is_tool_unlocked check failed for %s. Unlocked tools: %s", key, unlocked)
 
     return is_unlocked
 

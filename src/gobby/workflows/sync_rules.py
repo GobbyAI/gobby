@@ -123,7 +123,7 @@ def sync_bundled_rules(
         f"       OR {effects_expr} IS NOT NULL)",
     ).rowcount
     if repaired:
-        logger.info(f"Repaired {repaired} rows with incorrect workflow_type (should be 'rule')")
+        logger.info("Repaired %s rows with incorrect workflow_type (should be 'rule')", repaired)
 
     result = _new_rules_sync_result()
 

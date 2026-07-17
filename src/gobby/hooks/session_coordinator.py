@@ -287,19 +287,19 @@ class SessionCoordinator:
                     )
                     registered_count += 1
                 except Exception as e:
-                    self.logger.warning(f"Failed to re-register session {session.id}: {e}")
+                    self.logger.warning("Failed to re-register session %s: %s", session.id, e)
                     continue
 
             if registered_count > 0:
                 self.logger.info(
-                    f"Re-registered {registered_count} active/paused sessions "
-                    f"with message processor"
+                    "Re-registered %s active/paused sessions with message processor",
+                    registered_count,
                 )
 
             return registered_count
 
         except Exception as e:
-            self.logger.warning(f"Failed to re-register active/paused sessions: {e}")
+            self.logger.warning("Failed to re-register active/paused sessions: %s", e)
             return 0
 
     def start_agent_run(self, agent_run_id: str) -> bool:
@@ -323,22 +323,24 @@ class SessionCoordinator:
         try:
             agent_run = self._agent_run_manager.get(agent_run_id)
             if not agent_run:
-                self.logger.warning(f"Agent run {agent_run_id} not found")
+                self.logger.warning("Agent run %s not found", agent_run_id)
                 return False
 
             # Only start if currently pending
             if agent_run.status != "pending":
                 self.logger.debug(
-                    f"Agent run {agent_run_id} not pending (status={agent_run.status}), skipping start"
+                    "Agent run %s not pending (status=%s), skipping start",
+                    agent_run_id,
+                    agent_run.status,
                 )
                 return False
 
             self._agent_run_manager.start(agent_run_id)
-            self.logger.info(f"Started agent run {agent_run_id}")
+            self.logger.info("Started agent run %s", agent_run_id)
             return True
 
         except Exception as e:
-            self.logger.error(f"Failed to start agent run {agent_run_id}: {e}")
+            self.logger.error("Failed to start agent run %s: %s", agent_run_id, e)
             return False
 
     def _terminate_agent_run(
@@ -468,7 +470,7 @@ class SessionCoordinator:
         if not agent_run_id:
             return
 
-        self.logger.debug(f"Completing agent run {agent_run_id} for session {session.id}")
+        self.logger.debug("Completing agent run %s for session %s", agent_run_id, session.id)
 
         if not self._agent_run_manager:
             return
@@ -476,13 +478,13 @@ class SessionCoordinator:
         try:
             agent_run = self._agent_run_manager.get(agent_run_id)
             if not agent_run:
-                self.logger.warning(f"Agent run {agent_run_id} not found")
+                self.logger.warning("Agent run %s not found", agent_run_id)
                 return
 
             # Skip DB update if already completed, but still fire completion event
             if agent_run.status not in ("pending", "running"):
                 self.logger.debug(
-                    f"Agent run {agent_run_id} already in terminal state: {agent_run.status}"
+                    "Agent run %s already in terminal state: %s", agent_run_id, agent_run.status
                 )
                 self._notify_agent_completion(agent_run_id, agent_run.status)
                 self.release_session_worktrees(session.id)
@@ -510,10 +512,12 @@ class SessionCoordinator:
                     )
                     if msg_row:
                         result = msg_row["content"]
-                        self.logger.info(f"Got result from inter_session_messages for {session.id}")
+                        self.logger.info(
+                            "Got result from inter_session_messages for %s", session.id
+                        )
                 except Exception as e:
                     self.logger.debug(
-                        f"inter_session_messages fallback failed for {session.id}: {e}"
+                        "inter_session_messages fallback failed for %s: %s", session.id, e
                     )
 
             # Flush message processor to ensure session stats are up-to-date
@@ -530,7 +534,7 @@ class SessionCoordinator:
                     )
                     flush_future.result(timeout=5)
                 except Exception as e:
-                    self.logger.debug(f"Failed to flush session stats for {session_id}: {e}")
+                    self.logger.debug("Failed to flush session stats for %s: %s", session_id, e)
 
                 # Re-fetch session from DB to get updated stats
                 refreshed = self._session_manager.get(session_id) if self._session_manager else None
@@ -564,8 +568,8 @@ class SessionCoordinator:
                 if updated_run is None:
                     return
                 self.logger.warning(
-                    f"Agent run {agent_run_id} marked as failed: "
-                    f"incomplete step workflow on session end"
+                    "Agent run %s marked as failed: incomplete step workflow on session end",
+                    agent_run_id,
                 )
                 notification_status = self._agent_run_notification_status(
                     agent_run_id,
@@ -590,8 +594,8 @@ class SessionCoordinator:
                 if updated_run is None:
                     return
                 self.logger.warning(
-                    f"Agent run {agent_run_id} marked as failed: "
-                    f"no activity detected (0 tool calls, 0 turns)"
+                    "Agent run %s marked as failed: no activity detected (0 tool calls, 0 turns)",
+                    agent_run_id,
                 )
                 notification_status = self._agent_run_notification_status(
                     agent_run_id,
@@ -615,8 +619,10 @@ class SessionCoordinator:
             if updated_run is None:
                 return
             self.logger.info(
-                f"Completed agent run {agent_run_id} "
-                f"(tool_calls={tool_calls_count}, turns={turns_used})"
+                "Completed agent run %s (tool_calls=%s, turns=%s)",
+                agent_run_id,
+                tool_calls_count,
+                turns_used,
             )
 
             # Notify completion registry (fallback if kill_agent didn't fire it)
@@ -629,7 +635,7 @@ class SessionCoordinator:
             self.release_session_worktrees(session.id)
 
         except Exception as e:
-            self.logger.error(f"Failed to complete agent run {agent_run_id}: {e}")
+            self.logger.error("Failed to complete agent run %s: %s", agent_run_id, e)
 
     def _agent_run_notification_status(
         self,
@@ -727,7 +733,7 @@ class SessionCoordinator:
                     )
         except Exception as e:
             self.logger.warning(
-                f"Failed to inspect step workflow completion for session {session_id}: {e}"
+                "Failed to inspect step workflow completion for session %s: %s", session_id, e
             )
 
         return None
@@ -757,10 +763,10 @@ class SessionCoordinator:
             if self._event_loop and not self._event_loop.is_closed():
                 asyncio.run_coroutine_threadsafe(coro, self._event_loop)
             else:
-                self.logger.debug(f"No event loop available to notify completion for run {run_id}")
+                self.logger.debug("No event loop available to notify completion for run %s", run_id)
         except Exception:
             self.logger.debug(
-                f"Failed to notify completion registry for run {run_id}", exc_info=True
+                "Failed to notify completion registry for run %s", run_id, exc_info=True
             )
 
     def release_session_worktrees(self, session_id: str) -> None:
@@ -784,14 +790,18 @@ class SessionCoordinator:
                 try:
                     # Release the worktree (sets agent_session_id to NULL)
                     self._worktree_manager.release(worktree.id)
-                    self.logger.debug(f"Released worktree {worktree.id} from session {session_id}")
+                    self.logger.debug(
+                        "Released worktree %s from session %s", worktree.id, session_id
+                    )
                 except Exception as e:
-                    self.logger.warning(f"Failed to release worktree {worktree.id}: {e}")
+                    self.logger.warning("Failed to release worktree %s: %s", worktree.id, e)
 
             if worktrees:
-                self.logger.info(f"Released {len(worktrees)} worktree(s) from session {session_id}")
+                self.logger.info(
+                    "Released %s worktree(s) from session %s", len(worktrees), session_id
+                )
         except Exception as e:
-            self.logger.warning(f"Failed to list worktrees for session {session_id}: {e}")
+            self.logger.warning("Failed to list worktrees for session %s: %s", session_id, e)
 
 
 __all__ = ["SessionCoordinator"]

@@ -106,8 +106,9 @@ class CloneIsolationHandler(IsolationHandler):
                 # Stale record — directory gone, clean up and fall through to create new
 
                 logger.warning(
-                    f"Clone directory missing: {existing.clone_path} "
-                    f"(cleaning up stale record {existing.id})",
+                    "Clone directory missing: %s (cleaning up stale record %s)",
+                    existing.clone_path,
+                    existing.id,
                 )
                 await asyncio.to_thread(self._clone_storage.delete, existing.id)
 
@@ -122,7 +123,7 @@ class CloneIsolationHandler(IsolationHandler):
                 # Use parent's current branch instead
                 base_branch = current_branch
 
-                logger.info(f"Using parent's current branch '{base_branch}' for clone")
+                logger.info("Using parent's current branch '%s' for clone", base_branch)
 
             # Check for unpushed commits on the base branch
             try:
@@ -132,8 +133,9 @@ class CloneIsolationHandler(IsolationHandler):
                 if has_unpushed:
                     use_local = True
                     logger.info(
-                        f"Using local repo for clone "
-                        f"({unpushed_count} unpushed commits on '{base_branch}')"
+                        "Using local repo for clone (%s unpushed commits on '%s')",
+                        unpushed_count,
+                        base_branch,
                     )
             except (subprocess.CalledProcessError, OSError):
                 logger.warning(
@@ -224,16 +226,16 @@ class CloneIsolationHandler(IsolationHandler):
                     clone_path=clone_path,
                     force=True,
                 )
-                logger.info(f"Cleaned up partial clone: {clone_path}")
+                logger.info("Cleaned up partial clone: %s", clone_path)
             except Exception as e:
-                logger.warning(f"Failed to clean up clone {clone_path}: {e}")
+                logger.warning("Failed to clean up clone %s: %s", clone_path, e)
 
         if clone_id:
             try:
                 await asyncio.to_thread(self._clone_storage.delete, clone_id)
-                logger.info(f"Cleaned up clone storage record: {clone_id}")
+                logger.info("Cleaned up clone storage record: %s", clone_id)
             except Exception as e:
-                logger.warning(f"Failed to clean up clone record {clone_id}: {e}")
+                logger.warning("Failed to clean up clone record %s: %s", clone_id, e)
 
     def build_context_prompt(self, original_prompt: str, ctx: IsolationContext) -> str:
         """

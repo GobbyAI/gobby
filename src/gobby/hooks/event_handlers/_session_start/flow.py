@@ -85,9 +85,12 @@ def _log_session_start_timing(
     total_ms = timings.get("total", 0)
     if total_ms >= SLOW_SESSION_START_THRESHOLD_MS:
         handler.logger.info(
-            "SESSION_START slow: "
-            f"component={slow_component} duration={slow_ms}ms "
-            f"total={total_ms}ms source={session_source} session={session_id}",
+            "SESSION_START slow: component=%s duration=%sms total=%sms source=%s session=%s",
+            slow_component,
+            slow_ms,
+            total_ms,
+            session_source,
+            session_id,
         )
     else:
         handler.logger.debug(timing_message)
@@ -157,7 +160,7 @@ def _reset_agent_context_injection(handler: Any, session_id: str | None) -> None
             },
         )
     except (json.JSONDecodeError, KeyError, psycopg.Error) as e:
-        handler.logger.warning(f"Failed to reset agent context injection flag: {e}")
+        handler.logger.warning("Failed to reset agent context injection flag: %s", e)
 
 
 def _row_value(row: Any, key: str) -> Any:
@@ -384,15 +387,16 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
                     ),
                 )
         except Exception as e:
-            handler.logger.debug(f"No pre-created session found by external_id: {e}")
+            handler.logger.debug("No pre-created session found by external_id: %s", e)
 
         if gobby_session_id_from_env and not existing_session:
             try:
                 existing_session = handler._session_manager.get(gobby_session_id_from_env)
                 if existing_session:
                     handler.logger.info(
-                        f"Found pre-created session {gobby_session_id_from_env} via "
-                        f"terminal_context, updating external_id to {external_id}"
+                        "Found pre-created session %s via terminal_context, updating external_id to %s",
+                        gobby_session_id_from_env,
+                        external_id,
                     )
                     handler._session_manager.update(
                         gobby_session_id_from_env,
@@ -420,7 +424,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
                         ),
                     )
             except Exception as e:
-                handler.logger.debug(f"No pre-created session found by gobby_session_id: {e}")
+                handler.logger.debug("No pre-created session found by gobby_session_id: %s", e)
 
     project_context_session_manager = None if input_data.get("cwd") else handler._session_manager
     project_resolution = resolve_hook_project_context(
@@ -442,7 +446,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     machine_id = event.machine_id or handler._get_machine_id()
 
     handler.logger.debug(
-        f"SESSION_START: cli={cli_source}, project={project_id}, source={session_source}"
+        "SESSION_START: cli=%s, project=%s, source=%s", cli_source, project_id, session_source
     )
 
     if handler._session_manager:
@@ -477,7 +481,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
                     ),
                 )
         except Exception as e:
-            handler.logger.debug(f"No web-chat session found by external_id: {e}")
+            handler.logger.debug("No web-chat session found by external_id: %s", e)
 
     _t_parent = time.monotonic()
     workflow_name = input_data.get("workflow_name")
@@ -520,9 +524,9 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     if parent_session_id and handler._session_manager:
         try:
             handler._session_manager.mark_session_expired(parent_session_id)
-            handler.logger.debug(f"Marked parent session {parent_session_id} as expired")
+            handler.logger.debug("Marked parent session %s as expired", parent_session_id)
         except Exception as e:
-            handler.logger.warning(f"Failed to mark parent session as expired: {e}")
+            handler.logger.warning("Failed to mark parent session as expired: %s", e)
 
     _expire_stale_terminal_sessions_for_context(
         handler,
@@ -543,7 +547,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         try:
             _seed_memory_recall_vars(handler, session_id)
         except Exception as e:
-            handler.logger.warning(f"Failed to seed memory recall vars: {e}")
+            handler.logger.warning("Failed to seed memory recall vars: %s", e)
         _seed_wiki_overview_var(handler, session_id, project_id)
 
     session_obj = None
@@ -571,20 +575,20 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
                 agent_name_override=agent_override,
             )
         except Exception as e:
-            handler.logger.error(f"Failed to activate default agent: {e}", exc_info=True)
+            handler.logger.error("Failed to activate default agent: %s", e, exc_info=True)
 
     if session_id and handler._session_manager is not None:
         try:
             seed_user_profile_content(handler, session_id)
         except (KeyError, json.JSONDecodeError, psycopg.Error) as e:
-            handler.logger.warning(f"Failed to seed user profile vars: {e}")
+            handler.logger.warning("Failed to seed user profile vars: %s", e)
 
     _t_track = time.monotonic()
     if transcript_path and handler._session_coordinator:
         try:
             handler._session_coordinator.register_session(external_id)
         except Exception as e:
-            handler.logger.error(f"Failed to setup session tracking: {e}", exc_info=True)
+            handler.logger.error("Failed to setup session tracking: %s", e, exc_info=True)
 
     if session_id:
         event.metadata["_platform_session_id"] = session_id
@@ -600,7 +604,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
                 source=cli_source,
             )
         except Exception as e:
-            handler.logger.warning(f"Failed to register session with message processor: {e}")
+            handler.logger.warning("Failed to register session with message processor: %s", e)
 
     _t_handoff = time.monotonic()
     additional_context: list[str] = []
@@ -610,7 +614,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     try:
         populate_handoff_session_variables(handler, session_id, parent_session_id, session_source)
     except (KeyError, json.JSONDecodeError, psycopg.Error) as e:
-        handler.logger.warning(f"Failed to populate handoff session vars: {e}")
+        handler.logger.warning("Failed to populate handoff session vars: %s", e)
 
     if session_id and project_id and not event.task_id:
         claimed_ctx = handler._build_claimed_task_context(
@@ -632,7 +636,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
                 {"task_context": task_context_str},
             )
         except (KeyError, json.JSONDecodeError, psycopg.Error) as e:
-            handler.logger.warning(f"Failed to persist task context: {e}")
+            handler.logger.warning("Failed to persist task context: %s", e)
 
     if event.task_id:
         task_title = event.metadata.get("_task_title", "Unknown Task")
@@ -706,7 +710,7 @@ def handle_pre_created_session(
     terminal_context: dict[str, Any] | None = None,
 ) -> HookResponse:
     """Handle session start for a pre-created session."""
-    handler.logger.info(f"Found pre-created session {external_id}, updating instead of creating")
+    handler.logger.info("Found pre-created session %s, updating instead of creating", external_id)
 
     if not transcript_path:
         input_data = event.data if event else {}
@@ -754,13 +758,13 @@ def handle_pre_created_session(
         try:
             handler._session_coordinator.register_session(external_id)
         except Exception as e:
-            handler.logger.error(f"Failed to setup session tracking: {e}")
+            handler.logger.error("Failed to setup session tracking: %s", e)
 
     if session_obj.agent_run_id and handler._session_coordinator:
         try:
             handler._session_coordinator.start_agent_run(session_obj.agent_run_id)
         except Exception as e:
-            handler.logger.warning(f"Failed to start agent run: {e}")
+            handler.logger.warning("Failed to start agent run: %s", e)
     if session_obj.agent_run_id:
         _record_agent_run_native_session(handler, session_obj.agent_run_id, external_id)
 
@@ -776,7 +780,7 @@ def handle_pre_created_session(
         try:
             _seed_memory_recall_vars(handler, session_id)
         except Exception as e:
-            handler.logger.warning(f"Failed to seed memory recall vars: {e}")
+            handler.logger.warning("Failed to seed memory recall vars: %s", e)
         _seed_wiki_overview_var(handler, session_id, session_obj.project_id)
 
     input_data = event.data if event else {}
@@ -800,7 +804,8 @@ def handle_pre_created_session(
             )
         except Exception as e:
             handler.logger.error(
-                f"Failed to activate default agent for pre-created session: {e}",
+                "Failed to activate default agent for pre-created session: %s",
+                e,
                 exc_info=True,
             )
 
@@ -808,7 +813,7 @@ def handle_pre_created_session(
         try:
             seed_user_profile_content(handler, session_id)
         except (KeyError, json.JSONDecodeError, psycopg.Error) as e:
-            handler.logger.warning(f"Failed to seed user profile vars: {e}")
+            handler.logger.warning("Failed to seed user profile vars: %s", e)
 
     event.metadata["_platform_session_id"] = session_id
 
@@ -820,7 +825,7 @@ def handle_pre_created_session(
                 source=cli_source,
             )
         except Exception as e:
-            handler.logger.warning(f"Failed to register with message processor: {e}")
+            handler.logger.warning("Failed to register with message processor: %s", e)
 
     additional_context: list[str] = []
     if context_decision.mode == "full":

@@ -170,7 +170,7 @@ class HookManager:
             try:
                 self._inter_session_msg_manager = InterSessionMessageManager(self._database)
             except Exception as e:
-                self.logger.warning(f"Failed to create InterSessionMessageManager: {e}")
+                self.logger.warning("Failed to create InterSessionMessageManager: %s", e)
 
         # Response metadata enrichment service
         from gobby.hooks.event_enrichment import EventEnricher
@@ -361,7 +361,7 @@ class HookManager:
         # Get handler for this event type
         handler = self._get_event_handler(event.event_type)
         if handler is None:
-            self.logger.warning(f"No handler for event type: {event.event_type}")
+            self.logger.warning("No handler for event type: %s", event.event_type)
             return HookResponse(decision="allow")  # Fail-open for unknown events
 
         # --- Evaluate rules and execute handler ---
@@ -377,7 +377,7 @@ class HookManager:
                     response = handler(event)
                 except Exception as e:
                     self.logger.error(
-                        f"Event handler {event.event_type} failed: {e}", exc_info=True
+                        "Event handler %s failed: %s", event.event_type, e, exc_info=True
                     )
                     return HookResponse(decision="allow", reason=f"Handler error: {e}")
 
@@ -422,7 +422,7 @@ class HookManager:
             try:
                 response = handler(event)
             except Exception as e:
-                self.logger.error(f"Event handler {event.event_type} failed: {e}", exc_info=True)
+                self.logger.error("Event handler %s failed: %s", event.event_type, e, exc_info=True)
                 return HookResponse(decision="allow", reason=f"Handler error: {e}")
 
         return self._complete_response(event, response, workflow_context)
@@ -458,7 +458,7 @@ class HookManager:
             try:
                 self._enricher.enrich(event, observer_response, workflow_context=workflow_context)
             except Exception as e:
-                self.logger.error(f"Response enrichment failed: {e}", exc_info=True)
+                self.logger.error("Response enrichment failed: %s", e, exc_info=True)
 
         if preserve_original:
             observer_response.decision = original_decision
@@ -470,7 +470,7 @@ class HookManager:
         try:
             self._dispatch_webhooks_async(event, observer_response)
         except Exception as e:
-            self.logger.warning(f"Non-blocking webhook dispatch failed: {e}")
+            self.logger.warning("Non-blocking webhook dispatch failed: %s", e)
 
         return response if preserve_original else observer_response
 

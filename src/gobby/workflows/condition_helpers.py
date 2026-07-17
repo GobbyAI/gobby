@@ -792,7 +792,7 @@ def task_needs_human_review(task_manager: TaskProvider | None, task_id: TaskIdRe
     normalized = _normalize_task_id(task_id)
     task = _get_task(task_manager, normalized)
     if not task:
-        logger.warning(f"task_needs_human_review: Task '{normalized}' not found")
+        logger.warning("task_needs_human_review: Task '%s' not found", normalized)
         return False
 
     return projected_task_state(task) == "escalated"
@@ -878,7 +878,7 @@ def task_state_in(
     normalized = _normalize_task_id(task_id)
     task = _get_task(task_manager, normalized)
     if not task:
-        logger.debug(f"task_state_in: Task '{normalized}' not found")
+        logger.debug("task_state_in: Task '%s' not found", normalized)
         return False
 
     normalized_states = {state.strip().lower() for state in states if isinstance(state, str)}
@@ -943,7 +943,7 @@ def _is_tree_complete(task_manager: Any, task_id: str) -> bool:
     """Check if a single task and its subtree are complete."""
     task = _get_task(task_manager, task_id)
     if not task:
-        logger.warning(f"task_tree_complete: Task '{task_id}' not found")
+        logger.warning("task_tree_complete: Task '%s' not found", task_id)
         return False
 
     task_closed = is_task_complete(task)
@@ -965,8 +965,9 @@ def _is_tree_complete(task_manager: Any, task_id: str) -> bool:
 
     if not task_closed:
         logger.debug(
-            f"task_tree_complete: Task '{task_id}' not explicitly closed but all "
-            f"{len(subtasks)} subtask(s) complete — tree is complete"
+            "task_tree_complete: Task '%s' not explicitly closed but all %s subtask(s) complete — tree is complete",
+            task_id,
+            len(subtasks),
         )
 
     return True

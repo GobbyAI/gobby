@@ -82,7 +82,7 @@ def _load_agent_body(
         if row is not None and row.workflow_type == "agent":
             return AgentDefinitionBody.model_validate_json(row.definition_json)
     except Exception as e:
-        logger.warning(f"Failed to load agent definition '{name}': {e}")
+        logger.warning("Failed to load agent definition '%s': %s", name, e)
     return None
 
 
@@ -265,7 +265,9 @@ async def evaluate_spawn(
                     )
             except Exception:
                 logger.debug(
-                    f"Failed to check existing {eff_isolation} for branch '{computed_branch}'",
+                    "Failed to check existing %s for branch '%s'",
+                    eff_isolation,
+                    computed_branch,
                     exc_info=True,
                 )
 

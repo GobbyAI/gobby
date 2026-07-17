@@ -364,7 +364,7 @@ class WebhookExecutor:
                         MAX_RETRY_BACKOFF_SECONDS,
                     )
                     logger.debug(
-                        f"Webhook retry {attempt + 1}/{retry.max_attempts}, backoff {delay}s"
+                        "Webhook retry %s/%s, backoff %ss", attempt + 1, retry.max_attempts, delay
                     )
                     await asyncio.sleep(delay)
 
@@ -378,7 +378,9 @@ class WebhookExecutor:
                         payload=payload,
                     )
                     elapsed = time.time() - start_time
-                    logger.debug(f"Webhook {method} {url} -> {result.status_code} ({elapsed:.2f}s)")
+                    logger.debug(
+                        "Webhook %s %s -> %s (%.2fs)", method, url, result.status_code, elapsed
+                    )
 
                     if result.success:
                         return result
@@ -397,12 +399,12 @@ class WebhookExecutor:
 
                 except TimeoutError:
                     last_error = f"Timeout after {timeout}s"
-                    logger.debug(f"Webhook timeout: {url}")
+                    logger.debug("Webhook timeout: %s", url)
                     continue  # Retry on timeout
 
                 except aiohttp.ClientError as e:
                     last_error = str(e)
-                    logger.debug(f"Webhook connection error: {url} - {e}")
+                    logger.debug("Webhook connection error: %s - %s", url, e)
                     continue  # Retry on aiohttp client errors
 
         # All retries exhausted

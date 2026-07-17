@@ -73,7 +73,8 @@ class PipelineExecutorEventsMixin:
             await self.completion_registry.notify(execution_id, result, message=message)
         except Exception:
             logger.warning(
-                f"Failed to notify completion registry for {execution_id}",
+                "Failed to notify completion registry for %s",
+                execution_id,
                 exc_info=True,
             )
 
@@ -98,6 +99,7 @@ class PipelineExecutorEventsMixin:
             self.session_manager.update_status(pipeline_session_id, "deleted")
         except Exception:
             logger.warning(
-                f"Failed to close pipeline session {pipeline_session_id}",
+                "Failed to close pipeline session %s",
+                pipeline_session_id,
                 exc_info=True,
             )

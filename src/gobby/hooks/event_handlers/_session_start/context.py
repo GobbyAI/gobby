@@ -61,7 +61,7 @@ def _claim_startup_context_atomically(handler: Any, session_id: str | None) -> C
         claimed_mode = sv_mgr.claim_startup_context(session_id)
         return claimed_mode
     except Exception as e:
-        handler.logger.debug(f"Failed to claim startup context for {session_id}: {e}")
+        handler.logger.debug("Failed to claim startup context for %s: %s", session_id, e)
         return "full"
 
 
@@ -79,7 +79,7 @@ def mark_startup_context_injected(handler: Any, session_id: str | None) -> None:
         try:
             update_terminal_pickup_metadata(session_id, context_injected=True)
         except Exception as e:
-            handler.logger.debug(f"Failed to mark startup context row for {session_id}: {e}")
+            handler.logger.debug("Failed to mark startup context row for %s: %s", session_id, e)
 
 
 def _load_session_variables(handler: Any, session_id: str | None) -> dict[str, Any]:
@@ -91,7 +91,7 @@ def _load_session_variables(handler: Any, session_id: str | None) -> dict[str, A
 
         variables = SessionVariableManager(handler._session_manager.db).get_variables(session_id)
     except Exception as e:
-        handler.logger.debug(f"Failed to load session variables for {session_id}: {e}")
+        handler.logger.debug("Failed to load session variables for %s: %s", session_id, e)
         return {}
 
     return variables if isinstance(variables, dict) else {}

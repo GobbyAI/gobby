@@ -57,10 +57,10 @@ def find_parent_session(
                     candidate_limit=8,
                 )
                 if parent:
-                    handler.logger.debug(f"Found handoff_ready parent after backoff: {parent.id}")
+                    handler.logger.debug("Found handoff_ready parent after backoff: %s", parent.id)
                     break
             if not parent:
-                handler.logger.info(f"No handoff_ready parent found for /{session_source}")
+                handler.logger.info("No handoff_ready parent found for /%s", session_source)
                 input_data["source"] = "startup"
                 return None, "startup"
 
@@ -77,7 +77,7 @@ def find_parent_session(
                 return None, "startup"
 
             parent_session_id = parent.id
-            handler.logger.debug(f"Found parent session: {parent_session_id}")
+            handler.logger.debug("Found parent session: %s", parent_session_id)
 
             from gobby.workflows.state_manager import SessionVariableManager
 
@@ -89,7 +89,7 @@ def find_parent_session(
                 session_source = handoff_source
                 input_data["source"] = session_source
     except Exception as e:
-        handler.logger.warning(f"Error finding parent session: {e}")
+        handler.logger.warning("Error finding parent session: %s", e)
 
     return parent_session_id, session_source
 
@@ -250,8 +250,10 @@ def _filter_and_reassign_claimed_tasks(
                 task_obj = handler._task_manager.get_task(claimed_id)
             except Exception as e:
                 handler.logger.debug(
-                    "Best-effort task lookup failed for "
-                    f"session={session_id} task={claimed_id}: {e}"
+                    "Best-effort task lookup failed for session=%s task=%s: %s",
+                    session_id,
+                    claimed_id,
+                    e,
                 )
                 continue
 
@@ -278,8 +280,10 @@ def _filter_and_reassign_claimed_tasks(
                 )
             except Exception as e:
                 handler.logger.debug(
-                    "Best-effort task re-assignment failed for "
-                    f"session={session_id} task={claimed_id}: {e}"
+                    "Best-effort task re-assignment failed for session=%s task=%s: %s",
+                    session_id,
+                    claimed_id,
+                    e,
                 )
                 continue
 
@@ -289,7 +293,9 @@ def _filter_and_reassign_claimed_tasks(
                 handler._session_task_manager.link_task(session_id, claimed_id, "claimed")
             except Exception as e:
                 handler.logger.debug(
-                    "Best-effort session-task link failed for "
-                    f"session={session_id} task={claimed_id}: {e}"
+                    "Best-effort session-task link failed for session=%s task=%s: %s",
+                    session_id,
+                    claimed_id,
+                    e,
                 )
     return filtered_claims

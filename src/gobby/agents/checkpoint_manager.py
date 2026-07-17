@@ -46,13 +46,13 @@ class CheckpointManager:
 
         # 0. Sanitize task_id for use in git ref paths
         if not re.match(r"^[\w-]+$", task_id):
-            logger.error(f"Invalid task_id for checkpoint ref: {task_id!r}")
+            logger.error("Invalid task_id for checkpoint ref: %r", task_id)
             return None
 
         # 1. Check for uncommitted changes
         status = self._run_git(["status", "--porcelain"], cwd_str)
         if status is None or not status.strip():
-            logger.debug(f"No uncommitted changes to checkpoint in {cwd_str}")
+            logger.debug("No uncommitted changes to checkpoint in %s", cwd_str)
             return None
 
         files_changed = len(status.strip().splitlines())
@@ -60,7 +60,7 @@ class CheckpointManager:
         # 2. Snapshot the original index so divergent staged blobs survive temporary staging.
         original_index_tree = self._run_git(["write-tree"], cwd_str)
         if not original_index_tree:
-            logger.error(f"Failed to snapshot index before checkpoint in {cwd_str}")
+            logger.error("Failed to snapshot index before checkpoint in %s", cwd_str)
             return None
         original_index_tree = original_index_tree.strip()
 
@@ -68,20 +68,20 @@ class CheckpointManager:
             # 3. Stage tracked files only (needed for write-tree).
             # Uses -u to avoid capturing untracked artifacts.
             if self._run_git(["add", "-u"], cwd_str) is None:
-                logger.error(f"Failed to stage files for checkpoint in {cwd_str}")
+                logger.error("Failed to stage files for checkpoint in %s", cwd_str)
                 return None
 
             # 4. Write tree (captures staged state as a tree object)
             tree_sha = self._run_git(["write-tree"], cwd_str)
             if not tree_sha:
-                logger.error(f"Failed to write tree for checkpoint in {cwd_str}")
+                logger.error("Failed to write tree for checkpoint in %s", cwd_str)
                 return None
             tree_sha = tree_sha.strip()
 
             # 5. Get parent commit
             parent_sha = self._run_git(["rev-parse", "HEAD"], cwd_str)
             if not parent_sha:
-                logger.error(f"Failed to get HEAD for checkpoint in {cwd_str}")
+                logger.error("Failed to get HEAD for checkpoint in %s", cwd_str)
                 return None
             parent_sha = parent_sha.strip()
 
@@ -92,7 +92,7 @@ class CheckpointManager:
                 cwd_str,
             )
             if not commit_sha:
-                logger.error(f"Failed to create checkpoint commit in {cwd_str}")
+                logger.error("Failed to create checkpoint commit in %s", cwd_str)
                 return None
             commit_sha = commit_sha.strip()
 
@@ -100,7 +100,7 @@ class CheckpointManager:
             seq = self._storage.count_for_task(task_id) + 1
             ref_name = f"refs/gobby/ckpt/{task_id}/{seq}"
             if self._run_git(["update-ref", ref_name, commit_sha], cwd_str) is None:
-                logger.error(f"Failed to update ref {ref_name} in {cwd_str}")
+                logger.error("Failed to update ref %s in %s", ref_name, cwd_str)
                 return None
 
             # 7. Record in DB
@@ -119,8 +119,11 @@ class CheckpointManager:
             self._storage.create(checkpoint)
 
             logger.info(
-                f"Created checkpoint {ref_name} ({files_changed} files, "
-                f"commit {commit_sha[:8]}) for task {task_id}"
+                "Created checkpoint %s (%s files, commit %s) for task %s",
+                ref_name,
+                files_changed,
+                commit_sha[:8],
+                task_id,
             )
             return checkpoint
 
@@ -130,7 +133,7 @@ class CheckpointManager:
             try:
                 self._run_git(["read-tree", original_index_tree], cwd_str)
             except Exception as e:
-                logger.warning(f"Failed to restore index after checkpoint in {cwd_str}: {e}")
+                logger.warning("Failed to restore index after checkpoint in %s: %s", cwd_str, e)
 
     def _run_git(self, args: list[str], cwd: str, timeout: int = 30) -> str | None:
         """Run a git command synchronously. Returns stdout or None on failure."""
@@ -144,13 +147,16 @@ class CheckpointManager:
             )
             if result.returncode != 0:
                 logger.debug(
-                    f"git {' '.join(args)} failed (rc={result.returncode}): {result.stderr.strip()}"
+                    "git %s failed (rc=%s): %s",
+                    " ".join(args),
+                    result.returncode,
+                    result.stderr.strip(),
                 )
                 return None
             return result.stdout
         except subprocess.TimeoutExpired:
-            logger.warning(f"git {' '.join(args)} timed out after {timeout}s")
+            logger.warning("git %s timed out after %ss", " ".join(args), timeout)
             return None
         except OSError as e:
-            logger.warning(f"git {' '.join(args)} failed: {e}")
+            logger.warning("git %s failed: %s", " ".join(args), e)
             return None

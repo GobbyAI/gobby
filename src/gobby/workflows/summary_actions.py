@@ -297,7 +297,8 @@ async def _write_summary_file(
         return str(summary_file)
     except Exception as e:
         logger.error(
-            f"Failed to write summary file: {e}",
+            "Failed to write summary file: %s",
+            e,
             exc_info=True,
             extra={
                 "session_id": session_id,
@@ -667,7 +668,7 @@ async def generate_summary(
 
     transcript_path = getattr(current_session, "transcript_path", None)
     if not transcript_path:
-        logger.warning(f"generate_summary: No transcript path for session {session_id}")
+        logger.warning("generate_summary: No transcript path for session %s", session_id)
         return {"error": "No transcript path"}
 
     if not template:
@@ -693,7 +694,7 @@ async def generate_summary(
     try:
         transcript_file = Path(transcript_path)
         if not transcript_file.exists():
-            logger.warning(f"Transcript file not found: {transcript_path}")
+            logger.warning("Transcript file not found: %s", transcript_path)
             return {"error": "Transcript not found"}
 
         source = getattr(current_session, "source", None) or "claude"
@@ -715,7 +716,7 @@ async def generate_summary(
             format_turns_for_llm,
         )
     except Exception as e:
-        logger.error(f"Failed to process transcript: {e}")
+        logger.error("Failed to process transcript: %s", e)
         return {"error": str(e)}
 
     # 2. Gather context variables for template
@@ -824,7 +825,7 @@ async def generate_summary(
             mode=mode,
         )
 
-    logger.info(f"Generated summary for session {session_id} (mode={mode})")
+    logger.info("Generated summary for session %s (mode=%s)", session_id, mode)
     result: dict[str, Any] = {"summary_generated": True, "summary_length": len(summary_content)}
     if summary_file_path:
         result["summary_file"] = summary_file_path

@@ -170,7 +170,8 @@ class HookManagerFactory:
                 config = load_config()
             except Exception as e:
                 hook_logger.error(
-                    f"Failed to load config in HookManager, using defaults: {e}",
+                    "Failed to load config in HookManager, using defaults: %s",
+                    e,
                     exc_info=True,
                 )
 
@@ -323,13 +324,13 @@ class HookManagerFactory:
                     future = asyncio.run_coroutine_threadsafe(_do(), loop)
                     return future.result(timeout=10)
                 except Exception as e:
-                    logger.debug(f"_sync_call_tool: threadsafe failed: {e}")
+                    logger.debug("_sync_call_tool: threadsafe failed: %s", e)
                     return None
             else:
                 try:
                     return asyncio.run(_do())
                 except Exception as e:
-                    logger.debug(f"_sync_call_tool: asyncio.run failed: {e}")
+                    logger.debug("_sync_call_tool: asyncio.run failed: %s", e)
                     return None
 
         return _sync_call_tool
@@ -424,7 +425,10 @@ class HookManagerFactory:
                 }
             except Exception as exc:
                 _logger.warning(
-                    f"inline_mcp_dispatcher: {server}/{tool} failed: {exc}",
+                    "inline_mcp_dispatcher: %s/%s failed: %s",
+                    server,
+                    tool,
+                    exc,
                     exc_info=True,
                 )
                 return {"success": False, "error": str(exc)}
@@ -566,7 +570,7 @@ class HookManagerFactory:
                 pipeline_config=config.pipelines if config else None,
             )
         except Exception as e:
-            logger.debug(f"Pipeline executor not available: {e}")
+            logger.debug("Pipeline executor not available: %s", e)
 
         workflow_timeout = DEFAULT_WORKFLOW_TIMEOUT_SECONDS
         workflow_enabled = True

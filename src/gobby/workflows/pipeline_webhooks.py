@@ -55,7 +55,7 @@ class WebhookNotifier:
             message: The approval message to display
         """
         if not pipeline.webhooks or not pipeline.webhooks.on_approval_pending:
-            logger.debug(f"No on_approval_pending webhook configured for {pipeline.name}")
+            logger.debug("No on_approval_pending webhook configured for %s", pipeline.name)
             return
 
         endpoint = pipeline.webhooks.on_approval_pending
@@ -84,7 +84,7 @@ class WebhookNotifier:
             pipeline: The pipeline definition (contains webhook config)
         """
         if not pipeline.webhooks or not pipeline.webhooks.on_complete:
-            logger.debug(f"No on_complete webhook configured for {pipeline.name}")
+            logger.debug("No on_complete webhook configured for %s", pipeline.name)
             return
 
         endpoint = pipeline.webhooks.on_complete
@@ -121,7 +121,7 @@ class WebhookNotifier:
             error: The error message describing the failure
         """
         if not pipeline.webhooks or not pipeline.webhooks.on_failure:
-            logger.debug(f"No on_failure webhook configured for {pipeline.name}")
+            logger.debug("No on_failure webhook configured for %s", pipeline.name)
             return
 
         endpoint = pipeline.webhooks.on_failure
@@ -158,10 +158,12 @@ class WebhookNotifier:
                 timeout=30,
             )
             if result.success:
-                logger.debug(f"Webhook sent successfully to {url}")
+                logger.debug("Webhook sent successfully to %s", url)
             else:
                 logger.error(
-                    f"Webhook request failed: {result.status_code} - {result.body or result.error}"
+                    "Webhook request failed: %s - %s",
+                    result.status_code,
+                    result.body or result.error,
                 )
         except Exception as exc:
-            logger.error(f"Failed to send webhook to {url}: {exc}", exc_info=True)
+            logger.error("Failed to send webhook to %s: %s", url, exc, exc_info=True)

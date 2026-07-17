@@ -39,7 +39,7 @@ def _set_claimed_task_reconciliation(
         sv_mgr.set_variable(session_id, "task_claimed", task_claimed)
         sv_mgr.set_variable(session_id, "claimed_tasks", claimed_tasks)
     except Exception as e:
-        _logger.debug(f"Failed to persist claimed task reconciliation for {session_id}: {e}")
+        _logger.debug("Failed to persist claimed task reconciliation for %s: %s", session_id, e)
 
 
 def _task_state_label(task: Any) -> str:
@@ -83,7 +83,7 @@ def get_claimed_task_info(
         sv_mgr = SessionVariableManager(handler._session_manager.db)
         session_vars = sv_mgr.get_variables(session_id)
     except Exception as e:
-        _logger.debug(f"Failed to load session variables for {session_id}: {e}")
+        _logger.debug("Failed to load session variables for %s: %s", session_id, e)
         return None
 
     if not session_vars.get("task_claimed") or not session_vars.get("claimed_tasks"):
@@ -109,7 +109,7 @@ def get_claimed_task_info(
                 )
                 return db_result or None
         except Exception as e:
-            _logger.debug(f"Failed to reconcile claimed tasks from DB: {e}")
+            _logger.debug("Failed to reconcile claimed tasks from DB: %s", e)
         return None
 
     claimed_tasks: dict[str, Any] = session_vars["claimed_tasks"]
@@ -132,7 +132,7 @@ def get_claimed_task_info(
             reconciled[task_uuid] = ref
             result.append((ref, _task_state_label(task), task.title))
         except Exception as e:
-            _logger.debug(f"Failed to fetch task {task_uuid[:8]}: {e}")
+            _logger.debug("Failed to fetch task %s: %s", task_uuid[:8], e)
     if reconciled != claimed_tasks:
         _set_claimed_task_reconciliation(
             sv_mgr,

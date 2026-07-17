@@ -189,7 +189,7 @@ class TemplatingMixin:
         except SecurityError:
             raise
         except Exception as e:
-            logger.warning(f"Failed to render template: {e}")
+            logger.warning("Failed to render template: %s", e)
             return template
 
     def _has_pending_messages(self, session_id: str) -> bool:
@@ -257,7 +257,10 @@ class TemplatingMixin:
             if fail_closed is None:
                 fail_closed = effect_type == "block"
             logger.error(
-                f"Failed to evaluate condition '{condition}': {e} "
-                f"(defaulting to {'True' if fail_closed else 'False'} for {effect_type} effect)"
+                "Failed to evaluate condition '%s': %s (defaulting to %s for %s effect)",
+                condition,
+                e,
+                "True" if fail_closed else "False",
+                effect_type,
             )
             return fail_closed

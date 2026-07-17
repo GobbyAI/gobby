@@ -167,7 +167,7 @@ class EventEnricher:
             try:
                 self._inject_pending_messages(event.metadata["_platform_session_id"], response)
             except Exception as e:
-                logger.debug(f"Piggyback message injection failed: {e}")
+                logger.debug("Piggyback message injection failed: %s", e)
 
         if event.event_type == HookEventType.SESSION_END and event.metadata.get(
             "_platform_session_id"

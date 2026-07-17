@@ -235,8 +235,11 @@ class EffectsMixin:
                             else str(call_result or "no result")
                         )
                         logger.warning(
-                            f"Inline mcp_call {effect.server}/{effect.tool} failed "
-                            f"(rule {row.name}): {error}",
+                            "Inline mcp_call %s/%s failed (rule %s): %s",
+                            effect.server,
+                            effect.tool,
+                            row.name,
+                            error,
                         )
                         if effect.block_on_failure:
                             return (
@@ -245,7 +248,10 @@ class EffectsMixin:
                             )
                 except Exception as exc:
                     logger.warning(
-                        f"Inline mcp_call {effect.server}/{effect.tool} raised (rule {row.name})",
+                        "Inline mcp_call %s/%s raised (rule %s)",
+                        effect.server,
+                        effect.tool,
+                        row.name,
                         exc_info=True,
                     )
                     if effect.block_on_failure:
@@ -288,12 +294,13 @@ class EffectsMixin:
                             original_args = json.loads(original_args)
                         except (json.JSONDecodeError, TypeError) as e:
                             logger.warning(
-                                f"Malformed original_args JSON, defaulting to empty dict: {e}"
+                                "Malformed original_args JSON, defaulting to empty dict: %s", e
                             )
                             original_args = {}
                     if not isinstance(original_args, dict):
                         logger.warning(
-                            f"original_args is {type(original_args).__name__}, not dict — defaulting to empty dict"
+                            "original_args is %s, not dict — defaulting to empty dict",
+                            type(original_args).__name__,
                         )
                         original_args = {}
                     rendered_updates = {"arguments": {**original_args, **rendered_updates}}
@@ -959,7 +966,9 @@ class EffectsMixin:
                 )
                 value = evaluator.evaluate_value(value)
             except Exception as e:
-                logger.warning(f"Failed to evaluate set_variable expression '{effect.value}': {e}")
+                logger.warning(
+                    "Failed to evaluate set_variable expression '%s': %s", effect.value, e
+                )
                 return
 
         variables[effect.variable] = value

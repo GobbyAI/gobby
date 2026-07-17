@@ -294,9 +294,15 @@ class TestDispatchMcpCallsNoEventLoop:
 
         proxy.call_tool.assert_called_once()
         stub.logger.info.assert_not_called()
-        debug_messages = [call.args[0] for call in stub.logger.debug.call_args_list]
-        assert any("dispatching 1 calls" in message for message in debug_messages)
-        assert any("gobby-sessions/set_handoff_context" in message for message in debug_messages)
+        stub.logger.debug.assert_any_call(
+            "dispatch_mcp_calls: dispatching %s calls for %s", 1, event.event_type
+        )
+        stub.logger.debug.assert_any_call(
+            "dispatch_mcp_calls: %s/%s (background=%s)",
+            "gobby-sessions",
+            "set_handoff_context",
+            False,
+        )
         call_args = proxy.call_tool.call_args[0]
         assert call_args[0] == "gobby-sessions"
         assert call_args[1] == "set_handoff_context"
@@ -345,8 +351,14 @@ class TestDispatchMcpCallsNoEventLoop:
         stub.logger.error.assert_called()
         assert stub.logger.error.call_count >= 1
         assert stub.logger.error.call_args is not None
-        message = stub.logger.error.call_args.args[0]
-        assert "RuntimeError: connection refused" in message
+        log_args = stub.logger.error.call_args.args
+        assert log_args[:4] == (
+            "dispatch_mcp_calls: %s/%s failed: %s: %s",
+            "gobby-sessions",
+            "set_handoff_context",
+            "RuntimeError",
+        )
+        assert str(log_args[4]) == "connection refused"
         assert stub.logger.error.call_args.kwargs["exc_info"] is True
 
     def test_multiple_calls_all_execute(self) -> None:

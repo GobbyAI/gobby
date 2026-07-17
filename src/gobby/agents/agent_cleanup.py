@@ -112,7 +112,7 @@ class AgentCleanupHandler:
         try:
             await self._completion_registry.notify(run_id, result=result, message=message)
         except Exception as e:
-            logger.warning(f"Failed to notify completion for {run_id}: {e}")
+            logger.warning("Failed to notify completion for %s: %s", run_id, e)
 
     async def post_terminal_cleanup(
         self,
@@ -160,20 +160,20 @@ class AgentCleanupHandler:
             try:
                 session_coordinator.release_session_worktrees(session_id)
             except Exception as e:
-                logger.warning(f"Failed to release worktrees for agent {run.id}: {e}")
+                logger.warning("Failed to release worktrees for agent %s: %s", run.id, e)
 
         if self._clone_storage and run.clone_id:
             try:
                 await self._run_db(self._clone_storage.release, run.clone_id)
             except Exception as e:
-                logger.warning(f"Failed to release clone for agent {run.id}: {e}")
+                logger.warning("Failed to release clone for agent %s: %s", run.id, e)
 
         if session_manager and session_id:
             try:
                 await self._run_db(session_manager.update_status, session_id, "expired")
-                logger.debug(f"Expired session {session_id} for agent {run.id}")
+                logger.debug("Expired session %s for agent %s", session_id, run.id)
             except Exception as e:
-                logger.warning(f"Failed to expire session for agent {run.id}: {e}")
+                logger.warning("Failed to expire session for agent %s: %s", run.id, e)
 
         cleanup = await self._run_db(
             cleanup_agent_runtime_state,

@@ -272,7 +272,7 @@ class WebhookDispatcher:
 
                 # Success on 2xx status codes
                 if 200 <= response.status_code < 300:
-                    logger.debug(f"Webhook {endpoint.name} succeeded: {response.status_code}")
+                    logger.debug("Webhook %s succeeded: %s", endpoint.name, response.status_code)
                     return WebhookResult(
                         endpoint_name=endpoint.name,
                         success=True,
@@ -287,7 +287,7 @@ class WebhookDispatcher:
                 # so returning immediately also prevents repeated requests to the origin.
                 if 300 <= response.status_code < 500:
                     logger.warning(
-                        f"Webhook {endpoint.name} non-success response: {response.status_code}"
+                        "Webhook %s non-success response: %s", endpoint.name, response.status_code
                     )
                     return WebhookResult(
                         endpoint_name=endpoint.name,
@@ -303,27 +303,35 @@ class WebhookDispatcher:
                 # 5xx errors are retryable
                 last_error = f"HTTP {response.status_code}"
                 logger.warning(
-                    f"Webhook {endpoint.name} server error: {response.status_code}, "
-                    f"attempt {attempts}/{endpoint.retry_count + 1}"
+                    "Webhook %s server error: %s, attempt %s/%s",
+                    endpoint.name,
+                    response.status_code,
+                    attempts,
+                    endpoint.retry_count + 1,
                 )
 
             except httpx.TimeoutException:
                 last_error = "Request timeout"
                 logger.warning(
-                    f"Webhook {endpoint.name} timeout, "
-                    f"attempt {attempts}/{endpoint.retry_count + 1}"
+                    "Webhook %s timeout, attempt %s/%s",
+                    endpoint.name,
+                    attempts,
+                    endpoint.retry_count + 1,
                 )
 
             except httpx.ConnectError as e:
                 last_error = f"Connection error: {e}"
                 logger.warning(
-                    f"Webhook {endpoint.name} connection error: {e}, "
-                    f"attempt {attempts}/{endpoint.retry_count + 1}"
+                    "Webhook %s connection error: %s, attempt %s/%s",
+                    endpoint.name,
+                    e,
+                    attempts,
+                    endpoint.retry_count + 1,
                 )
 
             except Exception as e:
                 last_error = str(e)
-                logger.exception(f"Webhook {endpoint.name} unexpected error: {e}")
+                logger.exception("Webhook %s unexpected error: %s", endpoint.name, e)
 
             # Wait before retry with exponential backoff
             if attempts <= endpoint.retry_count:
@@ -332,7 +340,7 @@ class WebhookDispatcher:
 
         # All retries exhausted
         duration_ms = (datetime.now() - start_time).total_seconds() * 1000
-        logger.error(f"Webhook {endpoint.name} failed after {attempts} attempts: {last_error}")
+        logger.error("Webhook %s failed after %s attempts: %s", endpoint.name, attempts, last_error)
 
         return WebhookResult(
             endpoint_name=endpoint.name,
@@ -422,7 +430,7 @@ class WebhookDispatcher:
             # If a blocking webhook says "block", we might stop processing
             # But we still dispatch all blocking webhooks to collect all decisions
             if result.decision == "block":
-                logger.info(f"Blocking webhook {endpoint.name} returned decision: block")
+                logger.info("Blocking webhook %s returned decision: block", endpoint.name)
 
         # Dispatch non-blocking webhooks concurrently
         if non_blocking:

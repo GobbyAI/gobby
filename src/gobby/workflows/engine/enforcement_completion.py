@@ -370,7 +370,9 @@ class EnforcementCompletionMixin:
 
                 if not new_step_def:
                     logger.warning(
-                        f"Transition to unknown step '{new_step}' in workflow '{instance.workflow_name}'",
+                        "Transition to unknown step '%s' in workflow '%s'",
+                        new_step,
+                        instance.workflow_name,
                     )
                     continue
 
@@ -401,7 +403,11 @@ class EnforcementCompletionMixin:
                 variables["tool_block_pending"] = False
 
                 logger.info(
-                    f"Step transition: {old_step} -> {new_step} (workflow={instance.workflow_name}, session={session_id})",
+                    "Step transition: %s -> %s (workflow=%s, session=%s)",
+                    old_step,
+                    new_step,
+                    instance.workflow_name,
+                    session_id,
                 )
 
                 transition_steps.append((old_step, new_step))
@@ -439,7 +445,10 @@ class EnforcementCompletionMixin:
                     if exit_met:
                         variables["step_workflow_complete"] = True
                         logger.info(
-                            f"Exit condition met for workflow {instance.workflow_name} (session={session_id}, step={instance.current_step})",
+                            "Exit condition met for workflow %s (session=%s, step=%s)",
+                            instance.workflow_name,
+                            session_id,
+                            instance.current_step,
                         )
                         await self._complete_agent_workflow_run(
                             session_id,

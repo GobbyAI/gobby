@@ -117,7 +117,8 @@ class StepRenderer:
         for step_id, step_data in steps.items():
             if step_id in _RESERVED_CONTEXT_KEYS:
                 logger.warning(
-                    f"Step ID '{step_id}' collides with reserved context key, skipping top-level flatten",
+                    "Step ID '%s' collides with reserved context key, skipping top-level flatten",
+                    step_id,
                 )
                 continue
             render_context[step_id] = step_data
@@ -347,6 +348,6 @@ class StepRenderer:
         except ValueError as e:
             if self.strict_conditions:
                 raise ValueError(f"Condition evaluation failed for step {step.id}: {e}") from e
-            logger.warning(f"Condition evaluation failed for step {step.id}: {e}")
+            logger.warning("Condition evaluation failed for step %s: %s", step.id, e)
             # Fail-closed: broken conditions should not silently run steps
             return False

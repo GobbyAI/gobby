@@ -197,13 +197,13 @@ async def _close_terminal_window(
         if session and session.terminal_context:
             ctx = session.terminal_context
     except Exception as e:
-        logger.debug(f"Failed to get terminal context: {e}")
+        logger.debug("Failed to get terminal context: %s", e)
 
     # Validate terminal context values
     for _key in ("tmux_pane", "parent_pid"):
         _val = ctx.get(_key)
         if _val is not None and not _validate_terminal_value(_key, str(_val)):
-            logger.warning(f"Invalid {_key} format: {_val!r}, ignoring")
+            logger.warning("Invalid %s format: %r, ignoring", _key, _val)
             ctx.pop(_key, None)
 
     # Strategy 1: tmux kill-pane (primary — all agents use tmux)
@@ -228,9 +228,9 @@ async def _close_terminal_window(
                 )
                 return {"success": True, "method": "tmux_kill_pane", "pane": ctx["tmux_pane"]}
             else:
-                logger.debug(f"tmux pane {ctx['tmux_pane']} not found, skipping")
+                logger.debug("tmux pane %s not found, skipping", ctx["tmux_pane"])
         except Exception as e:
-            logger.debug(f"tmux kill-pane failed: {e}")
+            logger.debug("tmux kill-pane failed: %s", e)
 
     # Strategy 2: Windows taskkill
     if is_windows:
@@ -258,7 +258,7 @@ async def _close_terminal_window(
                 )
                 return {"success": True, "method": "taskkill_tree", "pid": parent_pid}
             except Exception as e:
-                logger.debug(f"taskkill failed: {e}")
+                logger.debug("taskkill failed: %s", e)
 
     # Strategy 3: Kill parent_pid directly (fallback)
     parent_pid = ctx.get("parent_pid")
@@ -288,7 +288,7 @@ async def _close_terminal_window(
                 _signal_process_group(pid, signal.SIGTERM)
             return {"success": True, "method": "parent_pid", "pid": pid}
         except (ProcessLookupError, OSError, ValueError) as e:
-            logger.debug(f"parent_pid kill failed: {e}")
+            logger.debug("parent_pid kill failed: %s", e)
 
     return {"success": False, "error": "No terminal close method available"}
 
@@ -405,15 +405,15 @@ async def kill_agent(
                 if ctx_pid:
                     target_pid = int(ctx_pid)
                     found_via = "terminal_context"
-                    logger.info(f"Found PID from session terminal_context: {target_pid}")
+                    logger.info("Found PID from session terminal_context: %s", target_pid)
         except Exception as e:
-            logger.debug(f"terminal_context lookup failed: {e}")
+            logger.debug("terminal_context lookup failed: %s", e)
 
         # Strategy 2: pgrep fallback
         if not target_pid:
             session_id_pattern = re.compile(r"^[a-zA-Z0-9_-]+$")
             if not session_id_pattern.match(session_id):
-                logger.warning(f"Invalid session_id format, skipping pgrep: {session_id}")
+                logger.warning("Invalid session_id format, skipping pgrep: %s", session_id)
             else:
                 try:
                     rc, stdout, _ = await _run_subprocess(
@@ -428,10 +428,13 @@ async def kill_agent(
                         if len(pids) == 1:
                             target_pid = int(pids[0])
                             found_via = "pgrep"
-                            logger.info(f"Found PID via pgrep: {target_pid}")
+                            logger.info("Found PID via pgrep: %s", target_pid)
                         else:
                             logger.warning(
-                                f"pgrep returned {len(pids)} PIDs for session {session_id}: {pids}"
+                                "pgrep returned %s PIDs for session %s: %s",
+                                len(pids),
+                                session_id,
+                                pids,
                             )
                             matched_pid = None
                             for pid_str in pids:
@@ -445,8 +448,9 @@ async def kill_agent(
                                     if is_matched:
                                         if matched_pid is not None:
                                             logger.info(
-                                                f"Multiple PID matches ({matched_pid}, "
-                                                f"{candidate_pid}) - picking highest"
+                                                "Multiple PID matches (%s, %s) - picking highest",
+                                                matched_pid,
+                                                candidate_pid,
                                             )
                                             matched_pid = max(matched_pid, candidate_pid)
                                         else:
@@ -456,13 +460,15 @@ async def kill_agent(
                             if matched_pid is not None:
                                 target_pid = matched_pid
                                 found_via = "pgrep_disambiguated"
-                                logger.info(f"Disambiguated PID: {target_pid}")
+                                logger.info("Disambiguated PID: %s", target_pid)
                             else:
                                 logger.error(
-                                    f"Could not disambiguate PIDs for session {session_id}: {pids}"
+                                    "Could not disambiguate PIDs for session %s: %s",
+                                    session_id,
+                                    pids,
                                 )
                 except Exception as e:
-                    logger.warning(f"pgrep fallback failed: {e}")
+                    logger.warning("pgrep fallback failed: %s", e)
 
     if not target_pid:
         if terminal_close_result is not None and terminal_close_result.get("already_dead"):
@@ -555,7 +561,7 @@ async def kill_agent(
                         "found_via": found_via,
                     }
                 _signal_process_group(target_pid, signal.SIGKILL)
-                logger.info(f"Escalated to SIGKILL for PID {target_pid}")
+                logger.info("Escalated to SIGKILL for PID %s", target_pid)
                 if not await _wait_for_pid_exit(target_pid, max(0.5, min(timeout, 1.0))):
                     return {
                         "success": False,

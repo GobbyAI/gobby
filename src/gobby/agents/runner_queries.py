@@ -76,7 +76,7 @@ def cancel_run(runner: AgentRunner, run_id: str) -> bool:
     if run.child_session_id:
         runner._session_manager.update_status(run.child_session_id, "cancelled")
 
-    runner.logger.info(f"Cancelled agent run {run_id}")
+    runner.logger.info("Cancelled agent run %s", run_id)
 
     return True
 
@@ -129,6 +129,6 @@ def complete_run(runner: AgentRunner, run_id: str, result: str | None = None) ->
         )
         return False
 
-    runner.logger.info(f"Completed agent run {run_id} (self-termination)")
+    runner.logger.info("Completed agent run %s (self-termination)", run_id)
 
     return True

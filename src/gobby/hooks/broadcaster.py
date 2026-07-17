@@ -230,7 +230,7 @@ class HookEventBroadcaster:
                     enum_hook_type = HookType(event.event_type.value)
                 except ValueError:
                     logger.warning(
-                        f"Skipping broadcast for unknown hook type: {event.event_type.value}"
+                        "Skipping broadcast for unknown hook type: %s", event.event_type.value
                     )
                     return
 
@@ -370,7 +370,7 @@ class HookEventBroadcaster:
             await self.broadcast_hook_event(enum_hook_type, validated_input, validated_output)
 
         except Exception as e:
-            logger.warning(f"Failed to broadcast event {event.event_type}: {e}")
+            logger.warning("Failed to broadcast event %s: %s", event.event_type, e)
 
     async def broadcast_hook_event(
         self,
@@ -443,4 +443,4 @@ class HookEventBroadcaster:
             await self.websocket_server.broadcast(payload)
 
         except Exception as e:
-            logger.exception(f"Error broadcasting hook event {event_type.value}: {e}")
+            logger.exception("Error broadcasting hook event %s: %s", event_type.value, e)

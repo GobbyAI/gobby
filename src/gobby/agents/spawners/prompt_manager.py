@@ -93,5 +93,5 @@ def create_prompt_file(prompt: str, session_id: str) -> str:
             atexit.register(cleanup_all_prompt_files)
             _atexit_registered = True
 
-    logger.debug(f"Created secure prompt file: {prompt_path}")
+    logger.debug("Created secure prompt file: %s", prompt_path)
     return str(prompt_path)

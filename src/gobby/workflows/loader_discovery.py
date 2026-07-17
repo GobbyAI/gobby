@@ -32,7 +32,7 @@ def _merge_db_workflows(
     try:
         db_rows = mgr.list_all(project_id=project_id, workflow_type="workflow")
     except Exception as e:
-        logger.warning(f"Failed to list DB workflow definitions: {e}")
+        logger.warning("Failed to list DB workflow definitions: %s", e)
         return
 
     for row in db_rows:
@@ -55,7 +55,7 @@ def _merge_db_workflows(
                 path=Path(f"db://{row.id}"),
             )
         except Exception as e:
-            logger.warning(f"Failed to parse DB workflow '{row.name}': {e}")
+            logger.warning("Failed to parse DB workflow '%s': %s", row.name, e)
 
 
 def _merge_db_pipelines(
@@ -75,7 +75,7 @@ def _merge_db_pipelines(
             enabled=True,
         )
     except Exception as e:
-        logger.warning(f"Failed to list DB pipeline definitions: {e}")
+        logger.warning("Failed to list DB pipeline definitions: %s", e)
         return
 
     for row in db_rows:
@@ -100,7 +100,7 @@ def _merge_db_pipelines(
                 path=Path(f"db://{row.id}"),
             )
         except Exception as e:
-            logger.warning(f"Failed to parse DB pipeline '{row.name}': {e}")
+            logger.warning("Failed to parse DB pipeline '%s': %s", row.name, e)
 
 
 async def discover_workflows(

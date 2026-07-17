@@ -78,7 +78,7 @@ class PTYReaderManager:
             )
             self._reader_tasks[agent.run_id] = task
 
-            logger.debug(f"Started PTY reader for agent {agent.run_id}")
+            logger.debug("Started PTY reader for agent %s", agent.run_id)
             return True
 
     async def stop_reader(self, run_id: str) -> bool:
@@ -104,7 +104,7 @@ class PTYReaderManager:
                 await asyncio.wait_for(task, timeout=1.0)
             except (asyncio.CancelledError, TimeoutError):
                 pass
-            logger.debug(f"Stopped PTY reader for agent {run_id}")
+            logger.debug("Stopped PTY reader for agent %s", run_id)
             return True
 
         return False
@@ -163,7 +163,7 @@ class PTYReaderManager:
                     )
                 except OSError as e:
                     # FD closed or error
-                    logger.debug(f"PTY read error for {run_id}: {e}")
+                    logger.debug("PTY read error for %s: %s", run_id, e)
                     break
 
                 if not data:
@@ -173,7 +173,7 @@ class PTYReaderManager:
                         try:
                             await self._output_callback(run_id, text)
                         except Exception as e:
-                            logger.warning(f"Output callback error for {run_id}: {e}")
+                            logger.warning("Output callback error for %s: %s", run_id, e)
                     break
 
                 # Decode incrementally (buffers incomplete sequences)
@@ -183,14 +183,14 @@ class PTYReaderManager:
                     try:
                         await self._output_callback(run_id, text)
                     except Exception as e:
-                        logger.warning(f"Output callback error for {run_id}: {e}")
+                        logger.warning("Output callback error for %s: %s", run_id, e)
 
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.error(f"PTY reader error for {run_id}: {e}")
+            logger.error("PTY reader error for %s: %s", run_id, e)
         finally:
-            logger.debug(f"PTY reader finished for {run_id}")
+            logger.debug("PTY reader finished for %s", run_id)
 
 
 # Global singleton

@@ -106,8 +106,9 @@ class WorktreeIsolationHandler(IsolationHandler):
             else:
                 # Stale record — directory gone, clean up and fall through to create new
                 logger.warning(
-                    f"Worktree directory missing: {existing.worktree_path} "
-                    f"(cleaning up stale record {existing.id})",
+                    "Worktree directory missing: %s (cleaning up stale record %s)",
+                    existing.worktree_path,
+                    existing.id,
                 )
                 await asyncio.to_thread(
                     worktree_reuse.cleanup_stale_worktree_registration,
@@ -127,8 +128,9 @@ class WorktreeIsolationHandler(IsolationHandler):
             use_local = True
 
             logger.info(
-                f"Using local branch '{base_branch}' for worktree "
-                f"({unpushed_count} unpushed commits)"
+                "Using local branch '%s' for worktree (%s unpushed commits)",
+                base_branch,
+                unpushed_count,
             )
 
         # Generate worktree path
@@ -224,16 +226,16 @@ class WorktreeIsolationHandler(IsolationHandler):
                     force_delete_branch=True,
                     branch_name=branch_name,
                 )
-                logger.info(f"Cleaned up partial worktree: {worktree_path}")
+                logger.info("Cleaned up partial worktree: %s", worktree_path)
             except Exception as e:
-                logger.warning(f"Failed to clean up worktree {worktree_path}: {e}")
+                logger.warning("Failed to clean up worktree %s: %s", worktree_path, e)
 
         if worktree_id:
             try:
                 await asyncio.to_thread(self._worktree_storage.delete, worktree_id)
-                logger.info(f"Cleaned up worktree storage record: {worktree_id}")
+                logger.info("Cleaned up worktree storage record: %s", worktree_id)
             except Exception as e:
-                logger.warning(f"Failed to clean up worktree record {worktree_id}: {e}")
+                logger.warning("Failed to clean up worktree record %s: %s", worktree_id, e)
 
     def build_context_prompt(self, original_prompt: str, ctx: IsolationContext) -> str:
         """

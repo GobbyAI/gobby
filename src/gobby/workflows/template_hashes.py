@@ -51,7 +51,7 @@ class TemplateHashCache:
         self._load_agents(get_bundled_agents_path())
         self._load_skills(get_bundled_skills_path())
 
-        logger.info(f"Template hash cache loaded: {len(self._hashes)} definitions")
+        logger.info("Template hash cache loaded: %s definitions", len(self._hashes))
 
     # ── Per-type loaders (replicate sync serialization) ──
 
@@ -89,7 +89,7 @@ class TemplateHashCache:
                     self._hashes[key] = compute_definition_hash(definition_json)
                     self._json_cache[key] = definition_json
             except Exception as e:
-                logger.warning(f"Failed to hash rule template {yaml_path}: {e}")
+                logger.warning("Failed to hash rule template %s: %s", yaml_path, e)
 
     def _load_pipelines(self, pipelines_dir: Path) -> None:
         """Load pipeline templates, replicating sync_pipelines.py serialization."""
@@ -108,7 +108,7 @@ class TemplateHashCache:
                 self._hashes[key] = compute_definition_hash(definition_json)
                 self._json_cache[key] = definition_json
             except Exception as e:
-                logger.warning(f"Failed to hash pipeline template {yaml_path}: {e}")
+                logger.warning("Failed to hash pipeline template %s: %s", yaml_path, e)
 
     def _load_variables(self, variables_dir: Path) -> None:
         """Load variable templates, replicating sync_variables.py serialization."""
@@ -138,7 +138,7 @@ class TemplateHashCache:
                     self._hashes[key] = compute_definition_hash(definition_json)
                     self._json_cache[key] = definition_json
             except Exception as e:
-                logger.warning(f"Failed to hash variable template {yaml_path}: {e}")
+                logger.warning("Failed to hash variable template %s: %s", yaml_path, e)
 
     def _load_agents(self, agents_dir: Path) -> None:
         """Load agent templates, replicating agents/sync.py serialization."""
@@ -160,7 +160,7 @@ class TemplateHashCache:
                 self._hashes[key] = compute_definition_hash(body_json)
                 self._json_cache[key] = body_json
             except Exception as e:
-                logger.warning(f"Failed to hash agent template {yaml_path}: {e}")
+                logger.warning("Failed to hash agent template %s: %s", yaml_path, e)
 
     def _load_skills(self, skills_dir: Path) -> None:
         """Load skill templates, replicating skills/sync.py serialization."""
@@ -173,7 +173,7 @@ class TemplateHashCache:
             loader = SkillLoader(default_source_type="filesystem")
             parsed_skills = loader.load_directory(skills_dir, validate=False)
         except Exception as e:
-            logger.warning(f"Failed to load bundled skills for hashing: {e}")
+            logger.warning("Failed to load bundled skills for hashing: %s", e)
             return
 
         for parsed in parsed_skills:
@@ -195,7 +195,7 @@ class TemplateHashCache:
                 self._hashes[key] = compute_definition_hash(definition_json)
                 self._json_cache[key] = definition_json
             except Exception as e:
-                logger.warning(f"Failed to hash skill template {parsed.name}: {e}")
+                logger.warning("Failed to hash skill template %s: %s", parsed.name, e)
 
     # ── Drift detection ──
 

@@ -93,27 +93,33 @@ async def _copy_cli_hooks(
 
     cli_dir = cli_dirs.get(provider)
     if not cli_dir:
-        logger.debug(f"No CLI hooks directory defined for provider: {provider}")
+        logger.debug("No CLI hooks directory defined for provider: %s", provider)
         return
 
     src_path = Path(source_path) / cli_dir
     dst_path = Path(target_path) / cli_dir
 
     if not src_path.exists():
-        logger.debug(f"CLI hooks directory not found in source repo: {src_path}")
+        logger.debug("CLI hooks directory not found in source repo: %s", src_path)
         return
 
     try:
         await asyncio.to_thread(shutil.copytree, src_path, dst_path, dirs_exist_ok=True)
-        logger.info(f"Copied CLI hooks from {src_path} to {dst_path}")
+        logger.info("Copied CLI hooks from %s to %s", src_path, dst_path)
     except shutil.Error:
         logger.warning(
-            f"Failed to copy CLI hooks: provider={provider}, src={src_path}, dst={dst_path}",
+            "Failed to copy CLI hooks: provider=%s, src=%s, dst=%s",
+            provider,
+            src_path,
+            dst_path,
             exc_info=True,
         )
     except OSError:
         logger.warning(
-            f"Filesystem error copying CLI hooks: provider={provider}, src={src_path}, dst={dst_path}",
+            "Filesystem error copying CLI hooks: provider=%s, src=%s, dst=%s",
+            provider,
+            src_path,
+            dst_path,
             exc_info=True,
         )
 
@@ -130,10 +136,11 @@ async def _copy_droid_hooks_for_isolation(target_path: str) -> None:
     hooks_path = Path(target_path) / ".factory" / "hooks" / "hooks.json"
     try:
         await asyncio.to_thread(_write_droid_isolation_hooks, hooks_path)
-        logger.info(f"Wrote Droid isolation hooks to {hooks_path}")
+        logger.info("Wrote Droid isolation hooks to %s", hooks_path)
     except (FileNotFoundError, json.JSONDecodeError, OSError, ValueError):
         logger.warning(
-            f"Failed to write Droid isolation hooks: target={hooks_path}",
+            "Failed to write Droid isolation hooks: target=%s",
+            hooks_path,
             exc_info=True,
         )
 
@@ -244,9 +251,9 @@ async def _patch_mcp_config_for_isolation(
     mcp_json_path = Path(isolated_path) / ".mcp.json"
     try:
         await asyncio.to_thread(mcp_json_path.write_text, json.dumps(mcp_config, indent=2) + "\n")
-        logger.info(f"Wrote MCP config to {mcp_json_path}")
+        logger.info("Wrote MCP config to %s", mcp_json_path)
     except OSError as e:
-        logger.warning(f"Failed to write .mcp.json to {isolated_path}: {e}")
+        logger.warning("Failed to write .mcp.json to %s: %s", isolated_path, e)
         return
 
     # For Claude provider, register the isolated path in ~/.claude.json
@@ -285,9 +292,9 @@ async def _patch_mcp_config_for_isolation(
                     raise
 
             await asyncio.to_thread(_patch_claude_json)
-            logger.info(f"Registered isolated path in ~/.claude.json: {isolated_path}")
+            logger.info("Registered isolated path in ~/.claude.json: %s", isolated_path)
         except Exception as e:
-            logger.warning(f"Failed to patch ~/.claude.json for {isolated_path}: {e}")
+            logger.warning("Failed to patch ~/.claude.json for %s: %s", isolated_path, e)
 
 
 def provider_mcp_config_error(isolated_path: str, provider: str) -> str | None:

@@ -47,9 +47,9 @@ class ToolEventHandlerMixin(EventHandlersBase):
         project_id = event.project_id or self._resolve_project_id(event.project_id, event.cwd)
 
         if session_id:
-            self.logger.debug(f"BEFORE_TOOL: {tool_name}, session {session_id}")
+            self.logger.debug("BEFORE_TOOL: %s, session %s", tool_name, session_id)
         else:
-            self.logger.debug(f"BEFORE_TOOL: {tool_name}")
+            self.logger.debug("BEFORE_TOOL: %s", tool_name)
 
         # Intercept Skill tool calls to resolve gobby skills
         if tool_name == "Skill" and (self._skill_manager or self._call_tool):
@@ -72,7 +72,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
                     tool_args=input_data.get("tool_input", {}),
                 )
             except Exception as e:
-                self.logger.warning(f"Failed to record autonomous tool start: {e}")
+                self.logger.warning("Failed to record autonomous tool start: %s", e)
 
         return HookResponse(decision="allow")
 
@@ -146,7 +146,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
         context = format_skill_fetch_context(name, str(tool_input.get("args", "") or ""))
 
         self.logger.info(
-            f"Resolved gobby skill '{name}' via {source} (requested: '{raw_skill_name}')",
+            "Resolved gobby skill '%s' via %s (requested: '%s')", name, source, raw_skill_name
         )
 
         return HookResponse(
@@ -164,7 +164,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
 
         status = "FAIL" if is_failure else "OK"
         if session_id:
-            self.logger.debug(f"AFTER_TOOL [{status}]: {tool_name}, session {session_id}")
+            self.logger.debug("AFTER_TOOL [%s]: %s, session %s", status, tool_name, session_id)
             self._record_autonomous_tool_progress(event, session_id, tool_name)
 
             # Track edits for session high-water mark
@@ -245,7 +245,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
                                             root_path=root_path,
                                         )
                                 except Exception as e:
-                                    self.logger.debug(f"Failed to trigger code index update: {e}")
+                                    self.logger.debug("Failed to trigger code index update: %s", e)
 
                     # Check if session has any claimed tasks before marking had_edits
                     if has_committable_edit:
@@ -258,17 +258,19 @@ class ToolEventHandlerMixin(EventHandlersBase):
                                 has_claimed_task = len(claimed_tasks) > 0
                             except Exception as e:
                                 self.logger.debug(
-                                    f"Failed to check claimed tasks for session {session_id}: {e}"
+                                    "Failed to check claimed tasks for session %s: %s",
+                                    session_id,
+                                    e,
                                 )
 
                         if has_claimed_task:
                             self._session_manager.mark_had_edits(session_id)
                 except Exception as e:
                     # Don't fail the event if tracking fails
-                    self.logger.warning(f"Failed to process file edit: {e}")
+                    self.logger.warning("Failed to process file edit: %s", e)
 
         else:
-            self.logger.debug(f"AFTER_TOOL [{status}]: {tool_name}")
+            self.logger.debug("AFTER_TOOL [%s]: %s", status, tool_name)
 
         return HookResponse(decision="allow")
 
@@ -290,7 +292,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
                 ),
             )
         except Exception as e:
-            self.logger.warning(f"Failed to record autonomous tool progress: {e}")
+            self.logger.warning("Failed to record autonomous tool progress: %s", e)
 
     def _resolve_repo_edit_paths(self, file_path: str, cwd: str | None) -> tuple[Path, str] | None:
         """Return ``(repo_root, repo_relative_path)`` for an edited file."""
@@ -373,14 +375,14 @@ class ToolEventHandlerMixin(EventHandlersBase):
                             exc_info=True,
                         )
         except Exception as e:
-            logger.warning(f"Failed to track session edited file: {e}", exc_info=True)
+            logger.warning("Failed to track session edited file: %s", e, exc_info=True)
 
     def handle_before_tool_selection(self, event: HookEvent) -> HookResponse:
         """Handle BEFORE_TOOL_SELECTION events."""
         session_id = event.metadata.get("_platform_session_id")
 
         if session_id:
-            self.logger.debug(f"BEFORE_TOOL_SELECTION: session {session_id}")
+            self.logger.debug("BEFORE_TOOL_SELECTION: session %s", session_id)
         else:
             self.logger.debug("BEFORE_TOOL_SELECTION")
 

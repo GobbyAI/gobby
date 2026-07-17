@@ -271,7 +271,15 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                 if is_turn_end:
                     variables["stop_attempts"] = variables.get("stop_attempts", 0) + 1
                     logger.debug(
-                        f"TURN_END gate diagnostics: session_id={session_id}, raw_event={raw_event_value}, auto_task_ref={variables.get('auto_task_ref')!r}, stop_attempts={variables['stop_attempts']}, task_claimed={variables.get('task_claimed')}, claimed_tasks={variables.get('claimed_tasks')}, edit_write_pending={variables.get('edit_write_pending')}, tool_block_pending={variables.get('tool_block_pending')}",
+                        "TURN_END gate diagnostics: session_id=%s, raw_event=%s, auto_task_ref=%r, stop_attempts=%s, task_claimed=%s, claimed_tasks=%s, edit_write_pending=%s, tool_block_pending=%s",
+                        session_id,
+                        raw_event_value,
+                        variables.get("auto_task_ref"),
+                        variables["stop_attempts"],
+                        variables.get("task_claimed"),
+                        variables.get("claimed_tasks"),
+                        variables.get("edit_write_pending"),
+                        variables.get("tool_block_pending"),
                     )
 
                 # 1. Load enabled rules for this event, sorted by priority
@@ -376,7 +384,8 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                     variables["force_allow_stop"] = False
                     if variables.get("task_claimed"):
                         logger.warning(
-                            f"force_allow_stop suppressed - task_claimed=True, deferring to require-task-close rule (session {session_id})",
+                            "force_allow_stop suppressed - task_claimed=True, deferring to require-task-close rule (session %s)",
+                            session_id,
                         )
                     else:
                         override_decision = "allow"
@@ -477,7 +486,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                     ordered.append((trigger_index, row, body))
                     seen_rows.add(row.id)
                 except Exception as e:
-                    logger.warning(f"Failed to parse rule {row.name}: {e}")
+                    logger.warning("Failed to parse rule %s: %s", row.name, e)
 
         ordered.sort(key=lambda item: (item[1].priority, item[0], item[1].name))
         return [(row, body) for _, row, body in ordered]

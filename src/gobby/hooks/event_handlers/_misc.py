@@ -58,7 +58,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
         """Log an observe-only Claude event without side effects."""
         session_id = event.metadata.get("_platform_session_id")
         if session_id:
-            self.logger.debug(f"{event_name}: session {session_id}")
+            self.logger.debug("%s: session %s", event_name, session_id)
         else:
             self.logger.debug(event_name)
 
@@ -69,7 +69,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
         session_id = event.metadata.get("_platform_session_id")
 
         if session_id:
-            self.logger.debug(f"NOTIFICATION ({notification_type}): session {session_id}")
+            self.logger.debug("NOTIFICATION (%s): session %s", notification_type, session_id)
             if self._session_manager:
                 if not self._skip_session_status_update_during_shutdown(
                     "NOTIFICATION", session_id, "paused"
@@ -81,9 +81,9 @@ class MiscEventHandlerMixin(EventHandlersBase):
                             activity_confirmed=True,
                         )
                     except Exception as e:
-                        self.logger.warning(f"Failed to update session status: {e}")
+                        self.logger.warning("Failed to update session status: %s", e)
         else:
-            self.logger.debug(f"NOTIFICATION ({notification_type})")
+            self.logger.debug("NOTIFICATION (%s)", notification_type)
 
         return HookResponse(decision="allow")
 
@@ -94,9 +94,9 @@ class MiscEventHandlerMixin(EventHandlersBase):
         permission_type = input_data.get("permission_type", "unknown")
 
         if session_id:
-            self.logger.debug(f"PERMISSION_REQUEST ({permission_type}): session {session_id}")
+            self.logger.debug("PERMISSION_REQUEST (%s): session %s", permission_type, session_id)
         else:
-            self.logger.debug(f"PERMISSION_REQUEST ({permission_type})")
+            self.logger.debug("PERMISSION_REQUEST (%s)", permission_type)
 
         return HookResponse(decision="allow")
 
@@ -105,7 +105,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
         session_id = event.metadata.get("_platform_session_id")
 
         if session_id:
-            self.logger.debug(f"BEFORE_MODEL: session {session_id}")
+            self.logger.debug("BEFORE_MODEL: session %s", session_id)
         else:
             self.logger.debug("BEFORE_MODEL")
 
@@ -117,7 +117,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
         input_data = event.data
 
         if session_id:
-            self.logger.debug(f"AFTER_MODEL: session {session_id}")
+            self.logger.debug("AFTER_MODEL: session %s", session_id)
 
             # Extract usage metadata from response
             # Typed-JSON payload structure:
@@ -144,8 +144,9 @@ class MiscEventHandlerMixin(EventHandlersBase):
                             model=model_name,
                         )
                         self.logger.debug(
-                            "Updated typed-JSON session usage: "
-                            f"{tokens.input_tokens} in, {tokens.output_tokens} out"
+                            "Updated typed-JSON session usage: %s in, %s out",
+                            tokens.input_tokens,
+                            tokens.output_tokens,
                         )
                         refreshed = self._session_manager.get(session_id)
                         app_ctx = get_app_context()
@@ -175,7 +176,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
                             )
                             self._schedule_session_usage_broadcast(ws_server, payload)
                     except Exception as e:
-                        self.logger.warning(f"Failed to update typed-JSON session usage: {e}")
+                        self.logger.warning("Failed to update typed-JSON session usage: %s", e)
         else:
             self.logger.debug("AFTER_MODEL")
 
@@ -244,15 +245,16 @@ class MiscEventHandlerMixin(EventHandlersBase):
             None,
         )
         if error or git_manager is None:
-            self.logger.warning(f"WORKTREE_CREATE project resolution failed: {error}")
+            self.logger.warning("WORKTREE_CREATE project resolution failed: %s", error)
             return HookResponse(decision="allow")
 
         if self._worktree_manager and project_id:
             existing = self._worktree_manager.get_by_branch(project_id, worktree_name)
             if existing and Path(existing.worktree_path).exists():
                 self.logger.info(
-                    f"WORKTREE_CREATE reusing existing worktree for '{worktree_name}': "
-                    f"{existing.worktree_path}"
+                    "WORKTREE_CREATE reusing existing worktree for '%s': %s",
+                    worktree_name,
+                    existing.worktree_path,
                 )
                 return HookResponse(worktree_path=existing.worktree_path)
             if existing:
@@ -266,7 +268,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
             has_unpushed, _ = git_manager.has_unpushed_commits(base_branch)
             use_local = has_unpushed
         except Exception as e:
-            self.logger.debug(f"WORKTREE_CREATE unpushed-commit check failed: {e}")
+            self.logger.debug("WORKTREE_CREATE unpushed-commit check failed: %s", e)
 
         worktree_path = generate_worktree_path(worktree_name, Path(git_manager.repo_path).name)
         result = git_manager.create_worktree(
@@ -277,7 +279,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
             use_local=use_local,
         )
         if not result.success:
-            self.logger.warning(f"WORKTREE_CREATE failed: {result.message}")
+            self.logger.warning("WORKTREE_CREATE failed: %s", result.message)
             return HookResponse(decision="allow")
 
         if self._worktree_manager and project_id:
@@ -289,15 +291,15 @@ class MiscEventHandlerMixin(EventHandlersBase):
                     base_branch=base_branch,
                 )
             except Exception as e:
-                self.logger.warning(f"WORKTREE_CREATE record creation failed: {e}")
+                self.logger.warning("WORKTREE_CREATE record creation failed: %s", e)
 
         try:
             copy_project_json_to_worktree(git_manager.repo_path, worktree_path)
             install_provider_hooks("claude", worktree_path)
         except Exception as e:
-            self.logger.warning(f"WORKTREE_CREATE post-setup failed: {e}")
+            self.logger.warning("WORKTREE_CREATE post-setup failed: %s", e)
 
-        self.logger.info(f"WORKTREE_CREATE created {worktree_path}")
+        self.logger.info("WORKTREE_CREATE created %s", worktree_path)
         return HookResponse(worktree_path=worktree_path)
 
     def handle_worktree_remove(self, event: HookEvent) -> HookResponse:
@@ -319,7 +321,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
             try:
                 existing = self._worktree_manager.get_by_path(worktree_path)
             except Exception as e:
-                self.logger.warning(f"WORKTREE_REMOVE record lookup failed: {e}")
+                self.logger.warning("WORKTREE_REMOVE record lookup failed: %s", e)
                 record_cleanup_succeeded = False
 
         try:
@@ -332,10 +334,10 @@ class MiscEventHandlerMixin(EventHandlersBase):
                 branch_name=getattr(existing, "branch_name", None),
             )
             if not result.success:
-                self.logger.warning(f"WORKTREE_REMOVE failed: {result.message}")
+                self.logger.warning("WORKTREE_REMOVE failed: %s", result.message)
             git_delete_succeeded = result.success
         except Exception as e:
-            self.logger.warning(f"WORKTREE_REMOVE cleanup failed: {e}")
+            self.logger.warning("WORKTREE_REMOVE cleanup failed: %s", e)
             git_delete_succeeded = False
 
         if self._worktree_manager and record_cleanup_succeeded:
@@ -343,11 +345,11 @@ class MiscEventHandlerMixin(EventHandlersBase):
                 if existing:
                     self._worktree_manager.delete(existing.id)
             except Exception as e:
-                self.logger.warning(f"WORKTREE_REMOVE record cleanup failed: {e}")
+                self.logger.warning("WORKTREE_REMOVE record cleanup failed: %s", e)
                 record_cleanup_succeeded = False
 
         if git_delete_succeeded and record_cleanup_succeeded:
-            self.logger.info(f"WORKTREE_REMOVE removed {worktree_path}")
+            self.logger.info("WORKTREE_REMOVE removed %s", worktree_path)
         return HookResponse(decision="allow")
 
     def handle_elicitation(self, event: HookEvent) -> HookResponse:

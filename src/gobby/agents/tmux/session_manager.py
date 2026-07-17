@@ -281,17 +281,17 @@ class TmuxSessionManager:
             )
         except Exception as e:
             self._health_check_timeout_failures = 0
-            logger.warning(f"tmux health check failed: {e}")
+            logger.warning("tmux health check failed: %s", e)
             return False
 
         # Attempt to kill the stale server and let it restart on next use
         try:
             await self._run("kill-server", timeout=5.0)
             self._health_check_timeout_failures = 0
-            logger.info(f"Killed stale tmux server on socket '{self._config.socket_name}'")
+            logger.info("Killed stale tmux server on socket '%s'", self._config.socket_name)
             return True
         except Exception as e:
-            logger.warning(f"Failed to kill stale tmux server: {e}")
+            logger.warning("Failed to kill stale tmux server: %s", e)
             return False
 
     async def shutdown(self) -> None:
@@ -449,7 +449,7 @@ class TmuxSessionManager:
         # Fetch pane PID
         pane_pid = await self.get_pane_pid(safe_name)
 
-        logger.info(f"Created tmux session '{safe_name}' (pane_pid={pane_pid})")
+        logger.info("Created tmux session '%s' (pane_pid=%s)", safe_name, pane_pid)
         return TmuxSessionInfo(
             name=safe_name,
             pane_pid=pane_pid,
@@ -594,7 +594,7 @@ class TmuxSessionManager:
             except (ProcessLookupError, PermissionError, OSError):
                 pass
 
-        logger.info(f"Killed tmux session '{name}' (pids: {pids})")
+        logger.info("Killed tmux session '%s' (pids: %s)", name, pids)
         return True
 
     async def _get_session_pids(self, name: str) -> list[int]:
@@ -796,7 +796,7 @@ class TmuxSessionManager:
             )
             if rc != 0:
                 logger.warning(
-                    f"Failed to send raw keys to tmux session '{session_name}': {stderr.strip()}"
+                    "Failed to send raw keys to tmux session '%s': %s", session_name, stderr.strip()
                 )
                 return False
             return True

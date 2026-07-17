@@ -83,7 +83,7 @@ class EnforcementCheckMixin:
                 definition = WorkflowDefinition(**data)
             except (json.JSONDecodeError, pydantic.ValidationError) as e:
                 logger.warning(
-                    f"Skipping malformed workflow definition '{instance.workflow_name}': {e}",
+                    "Skipping malformed workflow definition '%s': %s", instance.workflow_name, e
                 )
                 continue
             step = definition.get_step(instance.current_step)

@@ -70,7 +70,9 @@ async def dispatch_mcp_calls(
         needs_capture = inject_result or block_on_failure or block_on_success
 
         if not server or not tool:
-            logger.warning(f"dispatch_mcp_calls: skipping call with missing server or tool: {call}")
+            logger.warning(
+                "dispatch_mcp_calls: skipping call with missing server or tool: %s", call
+            )
             continue
 
         # Inject event context into arguments
@@ -93,7 +95,7 @@ async def dispatch_mcp_calls(
                     timeout=30.0,
                 )
             except TimeoutError:
-                logger.error(f"dispatch_mcp_calls: blocking call {server}/{tool} timed out")
+                logger.error("dispatch_mcp_calls: blocking call %s/%s timed out", server, tool)
                 result = None
             success = mcp_call_succeeded(result)
             dispatch_results.append(
@@ -120,7 +122,7 @@ async def dispatch_mcp_calls(
                     timeout=30.0,
                 )
             except TimeoutError:
-                logger.error(f"dispatch_mcp_calls: blocking call {server}/{tool} timed out")
+                logger.error("dispatch_mcp_calls: blocking call %s/%s timed out", server, tool)
 
     return dispatch_results
 
@@ -138,12 +140,14 @@ async def _safe_call(
         result = await call_tool_fn(server, tool, arguments)
         if not mcp_call_succeeded(result):
             logger.warning(
-                f"dispatch_mcp_calls: {server}/{tool} returned failure: "
-                f"{result.get('error', 'unknown') if isinstance(result, dict) else 'no result'}",
+                "dispatch_mcp_calls: %s/%s returned failure: %s",
+                server,
+                tool,
+                result.get("error", "unknown") if isinstance(result, dict) else "no result",
             )
         return result
     except Exception as exc:
-        logger.error(f"dispatch_mcp_calls: {server}/{tool} failed: {exc}", exc_info=True)
+        logger.error("dispatch_mcp_calls: %s/%s failed: %s", server, tool, exc, exc_info=True)
         return {"success": False, "error": str(exc)}
     finally:
         if session_token is not None:

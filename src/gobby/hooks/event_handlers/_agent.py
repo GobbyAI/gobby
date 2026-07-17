@@ -73,7 +73,7 @@ def _load_agent_prompt(
             return TemplateEngine().render(content, context)
         return content
     except Exception:
-        logger.debug(f"Failed to load agent prompt {name}, using fallback", exc_info=True)
+        logger.debug("Failed to load agent prompt %s, using fallback", name, exc_info=True)
         return fallback
 
 
@@ -91,7 +91,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         context_parts = []
 
         if session_id:
-            self.logger.debug(f"BEFORE_AGENT: session {session_id}, prompt_len={len(prompt)}")
+            self.logger.debug("BEFORE_AGENT: session %s, prompt_len=%s", session_id, len(prompt))
 
             # A new parent turn cannot inherit live subagents from the previous
             # turn. Reset both values together to recover from missed stop hooks.
@@ -105,7 +105,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
                         {"subagent_count": 0, "is_subagent": False},
                     )
                 except (psycopg.Error, KeyError, TypeError, ValueError) as e:
-                    self.logger.warning(f"Failed to reset subagent count on BEFORE_AGENT: {e}")
+                    self.logger.warning("Failed to reset subagent count on BEFORE_AGENT: %s", e)
 
             try:
                 from gobby.hooks.event_handlers._session_start.transcripts import (
@@ -129,18 +129,18 @@ class AgentEventHandlerMixin(EventHandlersBase):
                             activity_confirmed=True,
                         )
                     except Exception as e:
-                        self.logger.warning(f"Failed to update session status: {e}")
+                        self.logger.warning("Failed to update session status: %s", e)
 
             # Handle /clear command - generate boundary summaries before clear/exit
             # and set handoff_source so session-end marks the session handoff_ready.
             if prompt_lower in ("/clear", "/exit"):
-                self.logger.debug(f"Detected {prompt_lower} - generating session summaries")
+                self.logger.debug("Detected %s - generating session summaries", prompt_lower)
                 try:
                     if self._dispatch_session_summaries_fn:
                         self._dispatch_session_summaries_fn(session_id, False, None, True)
                 except Exception as e:
                     self.logger.warning(
-                        f"Failed to generate session summaries on {prompt_lower}: {e}"
+                        "Failed to generate session summaries on %s: %s", prompt_lower, e
                     )
                 # Belt-and-suspenders: set handoff_source directly in addition to
                 # the prepare-clear-handoff rule, so session-end marks handoff_ready
@@ -152,7 +152,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
                         sv_mgr = SessionVariableManager(self._session_manager.db)
                         sv_mgr.set_variable(session_id, "handoff_source", prompt_lower.lstrip("/"))
                     except Exception as e:
-                        self.logger.warning(f"Failed to set handoff_source: {e}")
+                        self.logger.warning("Failed to set handoff_source: %s", e)
 
         # Skill interception — runs before lifecycle workflows
         if self._skill_manager and stripped_prompt:
@@ -190,7 +190,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
             try:
                 self._inject_agent_instructions_if_needed(event, session_id, response)
             except Exception as e:
-                self.logger.error(f"Failed to inject agent instructions: {e}", exc_info=True)
+                self.logger.error("Failed to inject agent instructions: %s", e, exc_info=True)
 
         self._apply_debug_echo(response)
         return response
@@ -480,7 +480,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         context_parts: list[str] = []
 
         if session_id:
-            self.logger.debug(f"AFTER_AGENT: session {session_id}, cli={cli_source}")
+            self.logger.debug("AFTER_AGENT: session %s, cli=%s", session_id, cli_source)
             if self._session_manager:
                 if not self._skip_session_status_update_during_shutdown(
                     "AFTER_AGENT", session_id, "paused"
@@ -492,9 +492,9 @@ class AgentEventHandlerMixin(EventHandlersBase):
                             activity_confirmed=True,
                         )
                     except Exception as e:
-                        self.logger.warning(f"Failed to update session status: {e}")
+                        self.logger.warning("Failed to update session status: %s", e)
         else:
-            self.logger.debug(f"AFTER_AGENT: cli={cli_source}")
+            self.logger.debug("AFTER_AGENT: cli=%s", cli_source)
 
         response = HookResponse(
             decision="allow",
@@ -510,7 +510,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         context_parts: list[str] = []
 
         if session_id:
-            self.logger.debug(f"STOP: session {session_id}")
+            self.logger.debug("STOP: session %s", session_id)
             if self._session_manager:
                 if not self._skip_session_status_update_during_shutdown(
                     "STOP", session_id, "paused"
@@ -522,7 +522,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
                             activity_confirmed=True,
                         )
                     except Exception as e:
-                        self.logger.warning(f"Failed to update session status: {e}")
+                        self.logger.warning("Failed to update session status: %s", e)
         else:
             self.logger.debug("STOP")
 
@@ -541,7 +541,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         is_handoff_trigger = trigger in {"manual", "user", "clear", "compact"}
 
         if session_id:
-            self.logger.debug(f"PRE_COMPACT ({trigger}): session {session_id}")
+            self.logger.debug("PRE_COMPACT (%s): session %s", trigger, session_id)
             # Auto compaction in Codex is an in-session event, not a handoff.
             if is_handoff_trigger and self._session_manager:
                 if not self._skip_session_status_update_during_shutdown(
@@ -558,9 +558,9 @@ class AgentEventHandlerMixin(EventHandlersBase):
                         is_handoff_trigger,
                     )
             except Exception as e:
-                self.logger.warning(f"Failed to generate session summaries on compact: {e}")
+                self.logger.warning("Failed to generate session summaries on compact: %s", e)
         else:
-            self.logger.debug(f"PRE_COMPACT ({trigger})")
+            self.logger.debug("PRE_COMPACT (%s)", trigger)
 
         return HookResponse(decision="allow")
 
@@ -594,9 +594,9 @@ class AgentEventHandlerMixin(EventHandlersBase):
                     1,
                     boolean_name="is_subagent",
                 )
-                self.logger.debug(f"Set subagent_count={count} for session {session_id}")
+                self.logger.debug("Set subagent_count=%s for session %s", count, session_id)
             except (psycopg.Error, KeyError, TypeError, ValueError) as e:
-                self.logger.warning(f"Failed to increment subagent_count on SUBAGENT_START: {e}")
+                self.logger.warning("Failed to increment subagent_count on SUBAGENT_START: %s", e)
 
         return HookResponse(decision="allow")
 
@@ -605,7 +605,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         session_id = event.metadata.get("_platform_session_id")
 
         if session_id:
-            self.logger.debug(f"SUBAGENT_STOP: session {session_id}")
+            self.logger.debug("SUBAGENT_STOP: session %s", session_id)
         else:
             self.logger.debug("SUBAGENT_STOP")
 
@@ -621,8 +621,8 @@ class AgentEventHandlerMixin(EventHandlersBase):
                     -1,
                     boolean_name="is_subagent",
                 )
-                self.logger.debug(f"Set subagent_count={count} for session {session_id}")
+                self.logger.debug("Set subagent_count=%s for session %s", count, session_id)
             except (psycopg.Error, KeyError, TypeError, ValueError) as e:
-                self.logger.warning(f"Failed to decrement subagent_count on SUBAGENT_STOP: {e}")
+                self.logger.warning("Failed to decrement subagent_count on SUBAGENT_STOP: %s", e)
 
         return HookResponse(decision="allow")

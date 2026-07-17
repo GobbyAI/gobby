@@ -67,7 +67,10 @@ class PipelineExecutorStepMixin:
                 # Warn if multiple step types are set - only the first match executes
                 if len(step_types) > 1:
                     logger.warning(
-                        f"Step {step.id} has multiple types set: {step_types} - only '{step_types[0]}' will execute",
+                        "Step %s has multiple types set: %s - only '%s' will execute",
+                        step.id,
+                        step_types,
+                        step_types[0],
                     )
 
                 if step.wait:
@@ -104,7 +107,7 @@ class PipelineExecutorStepMixin:
                         self.session_manager,
                     )
                 else:
-                    logger.warning(f"Step {step.id} has no action defined")
+                    logger.warning("Step %s has no action defined", step.id)
                     return None
             except Exception as e:
                 if span.is_recording():
@@ -148,13 +151,17 @@ class PipelineExecutorStepMixin:
             timeout = float(timeout)
         except (TypeError, ValueError):
             logger.warning(
-                f"Invalid timeout value {timeout!r} for wait step '{rendered_step.id}', defaulting to 600s",
+                "Invalid timeout value %r for wait step '%s', defaulting to 600s",
+                timeout,
+                rendered_step.id,
             )
             timeout = 600.0
 
         logger.info(
-            f"Wait step '{rendered_step.id}' blocking on completion_id={completion_id} "
-            f"(timeout={timeout}s)"
+            "Wait step '%s' blocking on completion_id=%s (timeout=%ss)",
+            rendered_step.id,
+            completion_id,
+            timeout,
         )
 
         result = await self.completion_registry.wait(completion_id, timeout=timeout)
@@ -221,7 +228,7 @@ class PipelineExecutorStepMixin:
         except Exception as e:
             if pipeline is None or not pipeline.enabled:
                 raise
-            logger.error(f"Failed to resume execution after approval: {e}", exc_info=True)
+            logger.error("Failed to resume execution after approval: %s", e, exc_info=True)
             refreshed = await cast(Any, self)._run_db(
                 self.execution_manager.get_execution, execution.id
             )
@@ -267,7 +274,7 @@ class PipelineExecutorStepMixin:
             pipeline_name = pipeline_ref
             explicit_args = None
 
-        logger.info(f"Invoking nested pipeline: {pipeline_name}")
+        logger.info("Invoking nested pipeline: %s", pipeline_name)
 
         if not self.loader:
             raise RuntimeError("No loader configured for nested pipeline execution")
@@ -320,7 +327,7 @@ class PipelineExecutorStepMixin:
         except ApprovalRequired:
             raise
         except Exception as e:
-            logger.error(f"Nested pipeline execution failed: {e}", exc_info=True)
+            logger.error("Nested pipeline execution failed: %s", e, exc_info=True)
             return {
                 "pipeline": pipeline_name,
                 "error": str(e),

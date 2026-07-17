@@ -227,11 +227,12 @@ class PipelineExecutor(
                 # A detached run reaching an approval gate is parked, not
                 # broken; approval resumes it through the normal flow.
                 logger.info(
-                    f"Detached pipeline run {execution_id} is waiting for approval "
-                    f"(step {exc.step_id})"
+                    "Detached pipeline run %s is waiting for approval (step %s)",
+                    execution_id,
+                    exc.step_id,
                 )
             elif exc:
-                logger.error(f"Detached pipeline run {execution_id} failed: {exc}")
+                logger.error("Detached pipeline run %s failed: %s", execution_id, exc)
 
         task.add_done_callback(_on_done)
 
@@ -252,7 +253,7 @@ class PipelineExecutor(
             exclude_ids=set(self._detached_execution_ids)
         )
         if count > 0:
-            logger.info(f"Startup sweep marked {count} orphaned pipeline execution(s) failed")
+            logger.info("Startup sweep marked %s orphaned pipeline execution(s) failed", count)
         return count
 
     def _get_cancelled_execution(self, execution_id: str) -> PipelineExecution | None:
@@ -433,8 +434,10 @@ class PipelineExecutor(
                             "Failed to persist pipeline child session on execution",
                         )
                         logger.info(
-                            f"Created child session {child_session.id} for pipeline "
-                            f"{pipeline.name} (parent={caller_session_id})"
+                            "Created child session %s for pipeline %s (parent=%s)",
+                            child_session.id,
+                            pipeline.name,
+                            caller_session_id,
                         )
                     except Exception:
                         logger.warning(
@@ -520,7 +523,7 @@ class PipelineExecutor(
                     if step_execution:
                         # If completed, load output into context and skip
                         if step_execution.status == StepStatus.COMPLETED:
-                            logger.info(f"Skipping completed step {step.id}")
+                            logger.info("Skipping completed step %s", step.id)
                             output = None
                             if step_execution.output_json:
                                 try:
@@ -534,7 +537,7 @@ class PipelineExecutor(
                         # conditions like ``steps.X.output`` resolve to None instead
                         # of raising a KeyError / attribute error).
                         if step_execution.status == StepStatus.SKIPPED:
-                            logger.info(f"Skipping previously skipped step {step.id}")
+                            logger.info("Skipping previously skipped step %s", step.id)
                             context["steps"][step.id] = {"output": None}
                             continue
 
@@ -565,7 +568,7 @@ class PipelineExecutor(
                             step_execution_id=step_execution.id,
                             status=StepStatus.SKIPPED,
                         )
-                        logger.info(f"Skipping step {step.id}: condition not met")
+                        logger.info("Skipping step %s: condition not met", step.id)
 
                         # Emit step_skipped event
                         await self._emit_event(
@@ -748,7 +751,7 @@ class PipelineExecutor(
                     span.set_status(Status(StatusCode.ERROR, str(e)))
 
                 if execution:
-                    logger.error(f"Pipeline execution failed: {e}", exc_info=True)
+                    logger.error("Pipeline execution failed: %s", e, exc_info=True)
 
                     # Mark the currently-running step as FAILED
                     if (
@@ -764,7 +767,8 @@ class PipelineExecutor(
                             )
                         except Exception:
                             logger.error(
-                                f"Failed to mark step {current_step_execution.id} as failed",
+                                "Failed to mark step %s as failed",
+                                current_step_execution.id,
                                 exc_info=True,
                             )
 
@@ -779,7 +783,8 @@ class PipelineExecutor(
                             execution = failed
                     except Exception:
                         logger.error(
-                            f"Failed to mark execution {execution.id} as failed",
+                            "Failed to mark execution %s as failed",
+                            execution.id,
                             exc_info=True,
                         )
 

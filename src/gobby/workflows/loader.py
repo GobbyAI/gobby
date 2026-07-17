@@ -131,7 +131,7 @@ class WorkflowLoader(WorkflowLoaderSyncMixin):
             _visited = set()
 
         if name in _visited:
-            logger.error(f"Circular 'extends' detected in DB workflows: {name}")
+            logger.error("Circular 'extends' detected in DB workflows: %s", name)
             raise ValueError(f"Circular 'extends' detected in DB workflows: {name}")
 
         _visited.add(name)
@@ -157,7 +157,9 @@ class WorkflowLoader(WorkflowLoaderSyncMixin):
                 if parent_def:
                     data = self._merge_workflows(parent_def.model_dump(), data)
                 else:
-                    logger.warning(f"Parent workflow '{parent_name}' not found in DB for '{name}'")
+                    logger.warning(
+                        "Parent workflow '%s' not found in DB for '%s'", parent_name, name
+                    )
 
             if row.workflow_type == "pipeline" or data.get("type") == "pipeline":
                 # The database row is the source of truth for mutable metadata. The
@@ -168,7 +170,7 @@ class WorkflowLoader(WorkflowLoaderSyncMixin):
             else:
                 return WorkflowDefinition(**data)
         except Exception as e:
-            logger.error(f"Failed to parse DB workflow '{name}': {e}", exc_info=True)
+            logger.error("Failed to parse DB workflow '%s': %s", name, e, exc_info=True)
             raise ValueError(f"Failed to parse DB workflow '{name}': {e}") from e
 
     async def load_workflow(
@@ -201,7 +203,7 @@ class WorkflowLoader(WorkflowLoaderSyncMixin):
 
         if name in _inheritance_chain:
             cycle_path = " -> ".join(_inheritance_chain + [name])
-            logger.error(f"Circular workflow inheritance detected: {cycle_path}")
+            logger.error("Circular workflow inheritance detected: %s", cycle_path)
             raise ValueError(f"Circular workflow inheritance detected: {cycle_path}")
 
         project_id = self._db_project_scope(project_path, label="workflow")
@@ -219,7 +221,7 @@ class WorkflowLoader(WorkflowLoaderSyncMixin):
             self._cache[cache_key] = _CachedEntry(definition=db_definition, path=None, mtime=0.0)
             return db_definition
 
-        logger.debug(f"Workflow '{name}' not found in database")
+        logger.debug("Workflow '%s' not found in database", name)
         return None
 
     async def load_pipeline(
@@ -247,7 +249,7 @@ class WorkflowLoader(WorkflowLoaderSyncMixin):
 
         if name in _inheritance_chain:
             cycle_path = " -> ".join(_inheritance_chain + [name])
-            logger.error(f"Circular pipeline inheritance detected: {cycle_path}")
+            logger.error("Circular pipeline inheritance detected: %s", cycle_path)
             raise ValueError(f"Circular pipeline inheritance detected: {cycle_path}")
 
         project_id = self._db_project_scope(project_path, label="pipeline")
@@ -269,10 +271,12 @@ class WorkflowLoader(WorkflowLoaderSyncMixin):
                     definition=db_definition, path=None, mtime=0.0
                 )
                 return db_definition
-            logger.debug(f"'{name}' is not a pipeline (type={getattr(db_definition, 'type', '?')})")
+            logger.debug(
+                "'%s' is not a pipeline (type=%s)", name, getattr(db_definition, "type", "?")
+            )
             return None
 
-        logger.debug(f"Pipeline '{name}' not found in database")
+        logger.debug("Pipeline '%s' not found in database", name)
         return None
 
     def _validate_pipeline_references(self, data: dict[str, Any]) -> None:
@@ -325,13 +329,13 @@ class WorkflowLoader(WorkflowLoaderSyncMixin):
         parent_map: dict[str, dict[str, Any]] = {}
         for s in parent_steps:
             if key_field not in s:
-                logger.warning(f"Skipping parent step without '{key_field}' key")
+                logger.warning("Skipping parent step without '%s' key", key_field)
                 continue
             parent_map[s[key_field]] = dict(s)
 
         for child_step in child_steps:
             if key_field not in child_step:
-                logger.warning(f"Skipping child step without '{key_field}' key")
+                logger.warning("Skipping child step without '%s' key", key_field)
                 continue
             name = child_step[key_field]
             if name in parent_map:
@@ -395,11 +399,11 @@ class WorkflowLoader(WorkflowLoaderSyncMixin):
             self._cache[cache_key] = _CachedEntry(definition=definition, path=None, mtime=0.0)
 
             wf_type = data.get("type", "step")
-            logger.debug(f"Registered inline {wf_type} workflow '{name}'")
+            logger.debug("Registered inline %s workflow '%s'", wf_type, name)
             return definition
 
         except Exception as e:
-            logger.error(f"Failed to register inline workflow '{name}': {e}")
+            logger.error("Failed to register inline workflow '%s': %s", name, e)
             raise ValueError(f"Invalid inline workflow '{name}': {e}") from e
 
     async def validate_workflow_for_agent(
