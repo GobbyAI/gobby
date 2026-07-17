@@ -45,7 +45,10 @@ class TmuxConfig(BaseModel):
     history_limit: int = Field(
         default=10000,
         ge=100,
-        description="Scrollback buffer size for spawned sessions.",
+        description=(
+            "Scrollback buffer size for spawned sessions and maximum post-mortem "
+            "full-capture history."
+        ),
     )
     wsl_distribution: str | None = Field(
         default=None,

@@ -20,7 +20,9 @@ import time
 from typing import TYPE_CHECKING, Any
 from weakref import WeakValueDictionary
 
+from gobby.agents.capture import capture_then_kill_sync
 from gobby.hooks.session_types import HookSessionManager
+from gobby.storage.agents import TerminalAction
 
 if TYPE_CHECKING:
     from gobby.storage.agents import LocalAgentRunManager
@@ -33,18 +35,6 @@ _AUTH_PROMPT_RE = re.compile(
 )
 _NO_ACTIVITY_ERROR = "Agent completed with no activity (0 tool calls, 0 turns)"
 _INCOMPLETE_STEP_WORKFLOW_ERROR = "Agent session ended before step workflow completed"
-_TMUX_CAPTURE_HISTORY_LINES = 2000
-_MAX_TMUX_RESULT_CHARS = 64_000
-_TMUX_TRUNCATION_MARKER = "[... tmux output truncated; showing recent output ...]\n"
-
-
-def _bound_tmux_result(output: str) -> str:
-    """Return stripped tmux output capped to the newest diagnostic context."""
-    stripped = output.strip()
-    if len(stripped) <= _MAX_TMUX_RESULT_CHARS:
-        return stripped
-    retained_chars = _MAX_TMUX_RESULT_CHARS - len(_TMUX_TRUNCATION_MARKER)
-    return f"{_TMUX_TRUNCATION_MARKER}{stripped[-retained_chars:]}"
 
 
 def _format_no_activity_error(result: Any) -> str:
@@ -351,6 +341,117 @@ class SessionCoordinator:
             self.logger.error(f"Failed to start agent run {agent_run_id}: {e}")
             return False
 
+    def _terminate_agent_run(
+        self,
+        *,
+        run_id: str,
+        agent_run: Any,
+        action: TerminalAction,
+        reason: str | None,
+        result_prefix: str,
+        tool_calls_count: int,
+        turns_used: int,
+    ) -> Any | None:
+        """Persist intent and capture before killing and terminalizing a run."""
+        manager = self._agent_run_manager
+        if manager is None:
+            return None
+
+        def terminalize(_action: TerminalAction, payload: str | None) -> Any | None:
+            if _action == "complete":
+                return manager.complete(
+                    run_id=run_id,
+                    tool_calls_count=tool_calls_count,
+                    turns_used=turns_used,
+                )
+            return manager.fail(
+                run_id=run_id,
+                error=payload or reason or "Agent failed",
+                tool_calls_count=tool_calls_count,
+                turns_used=turns_used,
+            )
+
+        tmux_session_name = agent_run.tmux_session_name
+        if not isinstance(tmux_session_name, str) or not tmux_session_name:
+            if action == "complete":
+                updated = manager.complete(
+                    run_id=run_id,
+                    result=result_prefix or None,
+                    tool_calls_count=tool_calls_count,
+                    turns_used=turns_used,
+                )
+            else:
+                updated = manager.fail(
+                    run_id=run_id,
+                    error=reason or "Agent failed",
+                    result=result_prefix or None,
+                    tool_calls_count=tool_calls_count,
+                    turns_used=turns_used,
+                )
+            return updated or manager.get(run_id)
+
+        # Fixed tmux argv, exact session target, and shell execution disabled.
+        import subprocess  # nosec B404
+
+        from gobby.agents.tmux import get_configured_tmux_command_prefix
+
+        target = f"={tmux_session_name}"
+
+        def session_alive() -> bool:
+            cmd = get_configured_tmux_command_prefix()
+            cmd.extend(["has-session", "-t", target])
+            proc = subprocess.run(  # nosec B603
+                cmd,
+                capture_output=True,
+                timeout=5,
+            )
+            return proc.returncode == 0
+
+        def capture() -> str:
+            cmd = get_configured_tmux_command_prefix()
+            cmd.extend(["capture-pane", "-t", target, "-p", "-S", "-"])
+            proc = subprocess.run(  # nosec B603
+                cmd,
+                capture_output=True,
+                timeout=5,
+                text=True,
+            )
+            if proc.returncode != 0:
+                raise RuntimeError(proc.stderr.strip() or "capture-pane failed")
+            return proc.stdout
+
+        def kill() -> bool:
+            cmd = get_configured_tmux_command_prefix()
+            cmd.extend(["kill-session", "-t", target])
+            proc = subprocess.run(  # nosec B603
+                cmd,
+                capture_output=True,
+                timeout=5,
+            )
+            return proc.returncode == 0
+
+        result = capture_then_kill_sync(
+            storage=manager,
+            run_id=run_id,
+            session_name=tmux_session_name,
+            action=action,
+            reason=reason,
+            result_prefix=result_prefix or None,
+            session_alive=session_alive,
+            capture=capture,
+            kill=kill,
+            terminalize=terminalize,
+        )
+        if not result.success:
+            self.logger.warning(
+                "Deferred terminalization for agent run %s: %s (%s)",
+                run_id,
+                result.error,
+                result.error_code,
+            )
+            return None
+        return result.run
+
     def complete_agent_run(self, session: Any) -> None:
         """
         Complete an agent run when its terminal-mode session ends.
@@ -384,6 +485,7 @@ class SessionCoordinator:
                     f"Agent run {agent_run_id} already in terminal state: {agent_run.status}"
                 )
                 self._notify_agent_completion(agent_run_id, agent_run.status)
+                self.release_session_worktrees(session.id)
                 return
 
             # Use summary as result if available
@@ -413,61 +515,6 @@ class SessionCoordinator:
                     self.logger.debug(
                         f"inter_session_messages fallback failed for {session.id}: {e}"
                     )
-
-            # Fallback: capture terminal output from tmux session.
-            # remain-on-exit is set on agent sessions so the pane persists
-            # after the process exits, keeping the scrollback buffer available.
-            tmux_session_name = agent_run.tmux_session_name
-            if not result and tmux_session_name:
-                try:
-                    # Invoked only with fixed tmux argv and shell execution disabled.
-                    import subprocess  # nosec B404
-
-                    from gobby.agents.tmux import get_configured_tmux_command_prefix
-
-                    cmd = get_configured_tmux_command_prefix()
-                    cmd.extend(
-                        [
-                            "capture-pane",
-                            "-t",
-                            tmux_session_name,
-                            "-p",
-                            "-S",
-                            f"-{_TMUX_CAPTURE_HISTORY_LINES}",
-                        ]
-                    )
-
-                    # The configured tmux binary receives a fixed argument list.
-                    proc = subprocess.run(  # nosec B603
-                        cmd, capture_output=True, timeout=5, text=True
-                    )
-                    if proc.returncode == 0 and proc.stdout.strip():
-                        result = _bound_tmux_result(proc.stdout)
-                        self.logger.info(
-                            f"Captured result from tmux session '{tmux_session_name}' "
-                            f"for agent {agent_run_id} ({len(result)} chars)"
-                        )
-                except Exception as e:
-                    self.logger.debug(
-                        f"tmux capture-pane fallback failed for {tmux_session_name}: {e}"
-                    )
-
-            # Clean up the tmux session (remain-on-exit keeps it alive for capture)
-            if tmux_session_name:
-                try:
-                    # Invoked only with fixed tmux argv and shell execution disabled.
-                    import subprocess  # nosec B404
-
-                    from gobby.agents.tmux import get_configured_tmux_command_prefix
-
-                    kill_cmd = get_configured_tmux_command_prefix()
-                    kill_cmd.extend(["kill-session", "-t", tmux_session_name])
-                    # The configured tmux binary receives a fixed argument list.
-                    subprocess.run(  # nosec B603
-                        kill_cmd, capture_output=True, timeout=5
-                    )
-                except Exception as e:
-                    self.logger.debug(f"tmux kill-session failed for {tmux_session_name}: {e}")
 
             # Flush message processor to ensure session stats are up-to-date
             # before reading them. The processor runs on a 2s poll interval, so
@@ -505,12 +552,17 @@ class SessionCoordinator:
                     incomplete_workflow_error = (
                         f"{incomplete_workflow_error}\n\n{_format_no_activity_error(result)}"
                     )
-                updated_run = self._agent_run_manager.fail(
+                updated_run = self._terminate_agent_run(
                     run_id=agent_run_id,
-                    error=incomplete_workflow_error,
+                    agent_run=agent_run,
+                    action="fail",
+                    reason=incomplete_workflow_error,
+                    result_prefix=result,
                     tool_calls_count=tool_calls_count,
                     turns_used=turns_used,
                 )
+                if updated_run is None:
+                    return
                 self.logger.warning(
                     f"Agent run {agent_run_id} marked as failed: "
                     f"incomplete step workflow on session end"
@@ -521,14 +573,22 @@ class SessionCoordinator:
                     default="error",
                 )
                 self._notify_agent_completion(agent_run_id, notification_status)
+                self.release_session_worktrees(session.id)
                 return
 
             # Guard: agent exited cleanly but did nothing — treat as error
             if tool_calls_count == 0 and turns_used == 0:
-                updated_run = self._agent_run_manager.fail(
+                updated_run = self._terminate_agent_run(
                     run_id=agent_run_id,
-                    error=_format_no_activity_error(result),
+                    agent_run=agent_run,
+                    action="fail",
+                    reason=_format_no_activity_error(result),
+                    result_prefix=result,
+                    tool_calls_count=tool_calls_count,
+                    turns_used=turns_used,
                 )
+                if updated_run is None:
+                    return
                 self.logger.warning(
                     f"Agent run {agent_run_id} marked as failed: "
                     f"no activity detected (0 tool calls, 0 turns)"
@@ -539,15 +599,21 @@ class SessionCoordinator:
                     default="error",
                 )
                 self._notify_agent_completion(agent_run_id, notification_status)
+                self.release_session_worktrees(session.id)
                 return
 
             # Mark as success
-            updated_run = self._agent_run_manager.complete(
+            updated_run = self._terminate_agent_run(
                 run_id=agent_run_id,
-                result=result,
+                agent_run=agent_run,
+                action="complete",
+                reason=None,
+                result_prefix=result,
                 tool_calls_count=tool_calls_count,
                 turns_used=turns_used,
             )
+            if updated_run is None:
+                return
             self.logger.info(
                 f"Completed agent run {agent_run_id} "
                 f"(tool_calls={tool_calls_count}, turns={turns_used})"
@@ -560,17 +626,10 @@ class SessionCoordinator:
                 default="success",
             )
             self._notify_agent_completion(agent_run_id, notification_status)
+            self.release_session_worktrees(session.id)
 
         except Exception as e:
             self.logger.error(f"Failed to complete agent run {agent_run_id}: {e}")
-
-        finally:
-            # Release any worktrees associated with this session, including
-            # early exits that mark the run as failed.
-            try:
-                self.release_session_worktrees(session.id)
-            except Exception as e:
-                self.logger.warning(f"Failed to release worktrees for session {session.id}: {e}")
 
     def _agent_run_notification_status(
         self,
@@ -581,7 +640,8 @@ class SessionCoordinator:
     ) -> str:
         """Return the persisted status when another terminalizer won the race."""
         if updated_run is not None:
-            return default
+            status = getattr(updated_run, "status", None)
+            return status if isinstance(status, str) else default
         stored_run = self._agent_run_manager.get(run_id) if self._agent_run_manager else None
         if stored_run is None:
             self.logger.warning("Agent run %s disappeared after terminalization race", run_id)

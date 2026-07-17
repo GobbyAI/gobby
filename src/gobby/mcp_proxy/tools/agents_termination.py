@@ -83,15 +83,6 @@ async def _cleanup_terminal_artifacts(
         if cleanup.errors:
             result["runtime_cleanup_errors"] = list(cleanup.errors)
 
-    if not debug and tmux_session_name:
-        try:
-            from gobby.agents.tmux import get_tmux_session_manager
-
-            await get_tmux_session_manager().kill_session(tmux_session_name, missing_ok=True)
-            result["tmux_session_killed"] = True
-        except Exception as e:
-            agents.logger.debug(f"tmux session cleanup failed for {tmux_session_name}: {e}")
-
     if not debug and agent_session_id:
         if session_manager is not None:
             try:
@@ -135,35 +126,72 @@ async def _complete_self_terminated_run(
         except Exception as e:
             agents.logger.debug("Failed to read adversary_verdict for %s: %s", agent_session_id, e)
 
-    completed = await agents.complete_and_notify_agent_run(
-        runner,
-        run.id,
-        completion_registry=completion_registry,
-        notify_result=notify_result,
-        message=f"Agent {run.id} completed",
-    )
-    if not completed:
-        current = runner.get_run(run.id)
-        agents.logger.debug(
-            "Self-success terminalization no-op for run %s; current status=%s",
-            run.id,
-            current.status if current else "missing",
-        )
-        result["status"] = current.status if current else "unknown"
-        result["noop"] = True
-    else:
-        result["status"] = "success"
+    if run.tmux_session_name and not debug:
+        from gobby.agents.capture import capture_then_kill_async
+        from gobby.agents.tmux import get_tmux_session_manager
+        from gobby.storage.agents import LocalAgentRunManager, TerminalAction
 
-    kill_result = await agents._kill_agent_process(
-        run,
-        kill_db,
-        signal_name=signal,
-        close_terminal=not debug,
-    )
-    if kill_result.get("success") or kill_result.get("error_code") == KILL_ERROR_NO_TARGET_PID:
-        result.update(kill_result)
+        tmux = get_tmux_session_manager()
+        manager = LocalAgentRunManager(kill_db)
+        tmux_name = run.tmux_session_name
+
+        async def terminalize(
+            _action: TerminalAction,
+            _reason: str | None,
+        ) -> Any | None:
+            await agents.complete_and_notify_agent_run(
+                runner,
+                run.id,
+                completion_registry=completion_registry,
+                notify_result=notify_result,
+                message=f"Agent {run.id} completed",
+            )
+            return runner.get_run(run.id)
+
+        termination = await capture_then_kill_async(
+            storage=manager,
+            run_id=run.id,
+            session_name=tmux_name,
+            action="complete",
+            session_alive=lambda: tmux.has_session(tmux_name),
+            capture=lambda: tmux.capture_full_pane(tmux_name),
+            kill=lambda: tmux.kill_session(tmux_name, missing_ok=True),
+            terminalize=terminalize,
+        )
+        if not termination.success:
+            return {
+                "success": False,
+                "run_id": run.id,
+                "error": termination.error,
+                "error_code": termination.error_code,
+            }
+        result["status"] = "success"
+        result["tmux_session_killed"] = True
     else:
-        result["terminal_cleanup_error"] = kill_result.get("error") or "unknown terminal cleanup"
+        completed = await agents.complete_and_notify_agent_run(
+            runner,
+            run.id,
+            completion_registry=completion_registry,
+            notify_result=notify_result,
+            message=f"Agent {run.id} completed",
+        )
+        if not completed:
+            current = runner.get_run(run.id)
+            result["status"] = current.status if current else "unknown"
+            result["noop"] = True
+        else:
+            result["status"] = "success"
+
+        kill_result = await agents._kill_agent_process(
+            run,
+            kill_db,
+            signal_name=signal,
+            close_terminal=False,
+        )
+        if kill_result.get("success") or kill_result.get("error_code") == KILL_ERROR_NO_TARGET_PID:
+            result.update(kill_result)
+        else:
+            result["terminal_cleanup_error"] = kill_result.get("error") or "unknown cleanup"
 
     await agents._cleanup_terminal_artifacts(
         run_id=run.id,

@@ -754,6 +754,20 @@ class TmuxSessionManager:
             return ""
         return "".join(stdout.splitlines(keepends=True)[-lines:])
 
+    async def capture_full_pane(self, session_name: str) -> str | None:
+        """Capture the complete configured tmux history and visible pane."""
+        rc, stdout, _stderr = await self._run(
+            "capture-pane",
+            "-t",
+            _send_keys_target(session_name),
+            "-p",
+            "-S",
+            "-",
+        )
+        if rc != 0:
+            return None
+        return stdout
+
     async def send_keys(self, session_name: str, keys: str, *, literal: bool = True) -> bool:
         """Send keys to a tmux session.
 

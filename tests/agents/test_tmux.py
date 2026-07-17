@@ -1768,6 +1768,24 @@ class TestTmuxSessionManagerExtended:
         )
 
     @pytest.mark.asyncio
+    async def test_capture_full_pane_uses_complete_history(self) -> None:
+        mgr = TmuxSessionManager()
+        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = (0, "full history\n", "")
+
+            result = await mgr.capture_full_pane("my-session")
+
+        assert result == "full history\n"
+        mock_run.assert_awaited_once_with(
+            "capture-pane",
+            "-t",
+            "=my-session:",
+            "-p",
+            "-S",
+            "-",
+        )
+
+    @pytest.mark.asyncio
     async def test_capture_pane_preserves_pane_target(self) -> None:
         """capture_pane targets raw tmux pane IDs directly."""
         mgr = TmuxSessionManager()

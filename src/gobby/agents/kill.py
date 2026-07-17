@@ -16,7 +16,8 @@ from typing import Any
 
 import psutil
 
-from gobby.storage.agents import AgentRun
+from gobby.agents.capture import KillOutcome, terminate_managed_tmux_async
+from gobby.storage.agents import AgentRun, LocalAgentRunManager, TerminalAction
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 
@@ -292,21 +293,41 @@ async def _close_terminal_window(
     return {"success": False, "error": "No terminal close method available"}
 
 
-async def _close_tmux_session(session_name: str, *, timeout: float = 5.0) -> dict[str, Any]:
+async def _close_tmux_session(
+    run: AgentRun,
+    db: HubDatabase,
+    *,
+    terminal_action: TerminalAction,
+    terminal_reason: str | None,
+    timeout: float = 5.0,
+) -> dict[str, Any]:
     """Close a persisted Gobby tmux session and its process groups."""
+    session_name = run.tmux_session_name
+    if not session_name:
+        return {"success": False, "error": "agent run has no tmux session name"}
     try:
         from gobby.agents.tmux import get_tmux_session_manager
 
         tmux = get_tmux_session_manager()
-        already_missing = not await tmux.has_session(session_name)
-        killed = await tmux.kill_session(session_name, missing_ok=True, timeout=timeout)
+        result = await terminate_managed_tmux_async(
+            storage=LocalAgentRunManager(db),
+            run=run,
+            tmux=tmux,
+            action=terminal_action,
+            reason=terminal_reason,
+            lock_timeout=timeout,
+        )
     except Exception as e:
         logger.debug("tmux session close failed for %s: %s", session_name, e)
         return {"success": False, "error": str(e)}
 
-    if not killed:
-        return {"success": False, "error": f"failed to kill tmux session '{session_name}'"}
-    if already_missing:
+    if not result.success:
+        return {
+            "success": False,
+            "error": result.error or f"failed to kill tmux session '{session_name}'",
+            "error_code": result.error_code,
+        }
+    if result.kill_outcome == KillOutcome.ALREADY_ABSENT:
         return {
             "success": True,
             "message": f"tmux session '{session_name}' already dead",
@@ -325,6 +346,8 @@ async def kill_agent(
     signal_name: str = "TERM",
     timeout: float = 5.0,
     close_terminal: bool = False,
+    terminal_action: TerminalAction = "cancel",
+    terminal_reason: str | None = "user_cancelled",
 ) -> dict[str, Any]:
     """Kill an agent process using DB records.
 
@@ -347,7 +370,13 @@ async def kill_agent(
 
     # Try terminal-specific close
     if close_terminal and run.tmux_session_name:
-        result = await _close_tmux_session(run.tmux_session_name, timeout=timeout)
+        result = await _close_tmux_session(
+            run,
+            db,
+            terminal_action=terminal_action,
+            terminal_reason=terminal_reason,
+            timeout=timeout,
+        )
         if result.get("success"):
             terminal_close_result = result
 

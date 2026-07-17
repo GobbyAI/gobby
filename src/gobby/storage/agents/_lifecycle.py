@@ -216,7 +216,11 @@ class _AgentRunLifecycleMixin:
             SET status = 'success',
                 result = COALESCE(%s, result),
                 terminal_reason = NULL,
+                pending_terminal_action = NULL,
+                pending_terminal_reason = NULL,
+                termination_requested_at = NULL,
                 pid = NULL,
+                tmux_session_name = NULL,
                 tool_calls_count = %s,
                 turns_used = %s,
                 completed_at = %s,
@@ -237,6 +241,7 @@ class _AgentRunLifecycleMixin:
         error: str,
         tool_calls_count: int = 0,
         turns_used: int = 0,
+        result: str | None = None,
     ) -> AgentRun | None:
         """
         Mark agent run as failed.
@@ -256,8 +261,13 @@ class _AgentRunLifecycleMixin:
             UPDATE agent_runs
             SET status = 'error',
                 error = %s,
+                result = COALESCE(%s, result),
                 terminal_reason = NULL,
+                pending_terminal_action = NULL,
+                pending_terminal_reason = NULL,
+                termination_requested_at = NULL,
                 pid = NULL,
+                tmux_session_name = NULL,
                 tool_calls_count = %s,
                 turns_used = %s,
                 completed_at = %s,
@@ -265,7 +275,7 @@ class _AgentRunLifecycleMixin:
             WHERE id = %s
               AND status IN ('pending', 'running')
             """,
-            (error, tool_calls_count, turns_used, now, now, run_id),
+            (error, result, tool_calls_count, turns_used, now, now, run_id),
         )
         if not _positive_rowcount(cursor):
             return None
@@ -278,6 +288,7 @@ class _AgentRunLifecycleMixin:
         turns_used: int = 0,
         error: str = "Execution timed out",
         tool_calls_count: int = 0,
+        result: str | None = None,
     ) -> AgentRun | None:
         """Mark agent run as timed out."""
         now = utc_now()
@@ -286,8 +297,13 @@ class _AgentRunLifecycleMixin:
             UPDATE agent_runs
             SET status = 'timeout',
                 error = %s,
+                result = COALESCE(%s, result),
                 terminal_reason = NULL,
+                pending_terminal_action = NULL,
+                pending_terminal_reason = NULL,
+                termination_requested_at = NULL,
                 pid = NULL,
+                tmux_session_name = NULL,
                 tool_calls_count = %s,
                 turns_used = %s,
                 completed_at = %s,
@@ -295,7 +311,7 @@ class _AgentRunLifecycleMixin:
             WHERE id = %s
               AND status IN ('pending', 'running')
             """,
-            (error, tool_calls_count, turns_used, now, now, run_id),
+            (error, result, tool_calls_count, turns_used, now, now, run_id),
         )
         if not _positive_rowcount(cursor):
             return None
@@ -307,6 +323,7 @@ class _AgentRunLifecycleMixin:
         run_id: str,
         *,
         terminal_reason: AgentRunTerminalReason | None = None,
+        result: str | None = None,
     ) -> AgentRun | None:
         """Mark agent run as cancelled."""
         now = utc_now()
@@ -315,13 +332,18 @@ class _AgentRunLifecycleMixin:
             UPDATE agent_runs
             SET status = 'cancelled',
                 terminal_reason = %s,
+                result = COALESCE(%s, result),
+                pending_terminal_action = NULL,
+                pending_terminal_reason = NULL,
+                termination_requested_at = NULL,
                 pid = NULL,
+                tmux_session_name = NULL,
                 completed_at = %s,
                 updated_at = %s
             WHERE id = %s
               AND status IN ('pending', 'running')
             """,
-            (terminal_reason, now, now, run_id),
+            (terminal_reason, result, now, now, run_id),
         )
         if not _positive_rowcount(cursor):
             return None

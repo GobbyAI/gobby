@@ -158,7 +158,14 @@ async def test_resume_agent_run_skips_started_side_effects_when_start_transition
     fire_resume_started = MagicMock()
     killed_tmux_sessions: list[tuple[str, str | None]] = []
 
-    async def fake_kill_spawned_tmux_session(run_id: str, tmux_session_name: str | None) -> None:
+    async def fake_kill_spawned_tmux_session(
+        _storage: object,
+        run_id: str,
+        tmux_session_name: str | None,
+        *,
+        reason: str,
+    ) -> None:
+        assert reason == "agent_run_start_skipped"
         killed_tmux_sessions.append((run_id, tmux_session_name))
 
     monkeypatch.setattr(
@@ -319,6 +326,20 @@ async def test_resume_agent_run_kills_spawned_tmux_when_runtime_persistence_fail
     run_storage = MagicMock()
     run_storage.update_resume_metadata.return_value = object()
     run_storage.update_child_session.side_effect = RuntimeError("database unavailable")
+
+    def capture_run(run_id: str, **_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(
+            id=run_id,
+            status="running",
+            result=None,
+            capture_id=None,
+            capture_revision=0,
+        )
+
+    run_storage.get.side_effect = capture_run
+    run_storage.record_termination_intent.side_effect = capture_run
+    run_storage.replace_capture_slot.side_effect = capture_run
+    run_storage.fail.return_value = SimpleNamespace(status="error")
     runner = SimpleNamespace(child_session_manager=MagicMock(), run_storage=run_storage)
     spawner = MagicMock()
     spawner.spawn.return_value = SimpleNamespace(
@@ -331,8 +352,18 @@ async def test_resume_agent_run_kills_spawned_tmux_when_runtime_persistence_fail
     killed_sessions: list[tuple[str, bool]] = []
 
     class FakeTmuxSessionManager:
+        def __init__(self) -> None:
+            self.alive = True
+
+        async def has_session(self, _name: str) -> bool:
+            return self.alive
+
+        async def capture_full_pane(self, _name: str) -> str:
+            return "resume failure output"
+
         async def kill_session(self, name: str, *, missing_ok: bool = False) -> bool:
             killed_sessions.append((name, missing_ok))
+            self.alive = False
             return True
 
     monkeypatch.setattr(
@@ -361,9 +392,10 @@ async def test_resume_agent_run_kills_spawned_tmux_when_runtime_persistence_fail
     assert result.success is False
     assert result.error == "resume_runtime_persist_failed:RuntimeError"
     assert killed_sessions == [("tmux-new", True)]
-    run_storage.fail.assert_called_once_with(
-        result.run_id,
-        error="resume_runtime_persist_failed:RuntimeError",
+    run_storage.fail.assert_called_once()
+    assert run_storage.fail.call_args.args[0] == result.run_id
+    assert run_storage.fail.call_args.kwargs["error"].startswith(
+        "resume_runtime_persist_failed:RuntimeError"
     )
 
 

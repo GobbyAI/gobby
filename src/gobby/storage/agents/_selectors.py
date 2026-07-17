@@ -93,7 +93,12 @@ class _AgentRunSelectorMixin:
                 ar.clone_id,
                 ar.timeout_seconds,
                 ar.terminal_reason,
-                ar.resume_metadata_json
+                ar.resume_metadata_json,
+                ar.capture_id,
+                ar.capture_revision,
+                ar.pending_terminal_action,
+                ar.pending_terminal_reason,
+                ar.termination_requested_at
             FROM agent_runs ar
             LEFT JOIN sessions child_s ON child_s.id = ar.child_session_id
             LEFT JOIN sessions parent_s ON parent_s.id = ar.parent_session_id

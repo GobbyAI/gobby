@@ -8,11 +8,12 @@ from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import psycopg
 import pydantic
 
+from gobby.agents.capture import terminate_managed_tmux_async
 from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.servers.routes.sessions.statusline_activity import last_session_activity
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
     from gobby.agents.agent_cleanup import AgentCleanupHandler
     from gobby.agents.tmux.session_manager import TmuxSessionManager
     from gobby.config.tmux import TmuxConfig
-    from gobby.storage.agents import AgentRun, LocalAgentRunManager
+    from gobby.storage.agents import AgentRun, LocalAgentRunManager, TerminalAction
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
@@ -545,8 +546,39 @@ class IdleCheckHandler:
     async def _fail_idle_agent(self, run: AgentRun, reason: str) -> None:
         """Fail an agent that is irrecoverably idle."""
         if run.tmux_session_name:
-            await self._tmux.kill_session(run.tmux_session_name)
-            await self._clear_tmux_session_name(run)
+
+            async def terminalize(
+                _action: TerminalAction,
+                payload: str | None,
+            ) -> AgentRun | None:
+                await self._cleanup_handler.cleanup_agent(
+                    run,
+                    terminal_payload=payload or f"Agent idle: {reason}",
+                )
+                return cast(
+                    "AgentRun | None",
+                    await self._run_db(self._agent_run_manager.get, run.id),
+                )
+
+            result = await terminate_managed_tmux_async(
+                storage=self._agent_run_manager,
+                run=run,
+                tmux=self._tmux,
+                action="fail",
+                reason=f"Agent idle: {reason}",
+                terminalize=terminalize,
+            )
+            if not result.success:
+                logger.warning(
+                    "Idle-agent termination failed for run %s: %s (%s)",
+                    run.id,
+                    result.error,
+                    result.error_code,
+                )
+                return
+
+            self._idle_detector.clear_state(run.id)
+            return
 
         self._idle_detector.clear_state(run.id)
         await self._cleanup_handler.cleanup_agent(run, terminal_payload=f"Agent idle: {reason}")

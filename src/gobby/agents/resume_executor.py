@@ -13,6 +13,7 @@ from typing import Any, Protocol
 
 import psycopg
 
+from gobby.agents.capture import CaptureStorage, capture_then_kill_async
 from gobby.agents.resume_metadata import merge_resume_metadata_env
 from gobby.agents.spawn import prepare_terminal_spawn
 from gobby.agents.spawners.command_builder import build_cli_command
@@ -38,7 +39,7 @@ class _ResumePreflightError(RuntimeError):
     """Resume cannot safely acquire the resources needed to spawn."""
 
 
-class _RunStorage(Protocol):
+class _RunStorage(CaptureStorage, Protocol):
     def update_resume_metadata(self, run_id: str, metadata: dict[str, Any]) -> Any: ...
 
     def update_child_session(self, run_id: str, child_session_id: str) -> Any: ...
@@ -54,8 +55,6 @@ class _RunStorage(Protocol):
     ) -> Any: ...
 
     def start(self, run_id: str) -> AgentRun | None: ...
-
-    def fail(self, run_id: str, *, error: str) -> Any: ...
 
 
 class _ResumeRunner(Protocol):
@@ -250,12 +249,23 @@ async def resume_agent_run(
             clone_id=_metadata_str(resume_metadata, "clone_id"),
         )
     except Exception as exc:
-        await _kill_spawned_tmux_session(run_id, tmux_session_name)
         error = f"resume_runtime_persist_failed:{type(exc).__name__}"
-        _fail_run(runner, run_id, error)
+        await _kill_spawned_tmux_session(
+            runner.run_storage,
+            run_id,
+            tmux_session_name,
+            reason=error,
+        )
+        if not tmux_session_name:
+            _fail_run(runner, run_id, error)
         return ResumeAgentResult(False, run_id=run_id, error=error)
     if started_run is None:
-        await _kill_spawned_tmux_session(run_id, tmux_session_name)
+        await _kill_spawned_tmux_session(
+            runner.run_storage,
+            run_id,
+            tmux_session_name,
+            reason="agent_run_start_skipped",
+        )
         return ResumeAgentResult(False, run_id=run_id, error="agent_run_start_skipped")
     _fire_resume_started(original_run, run_id, provider, terminal_result, parent_session_id)
     return ResumeAgentResult(True, run_id=run_id, child_session_id=spawn_context.session_id)
@@ -381,13 +391,39 @@ def _worktree_manager_from_runner(runner: _ResumeRunner) -> Any | None:
     return LocalWorktreeManager(db)
 
 
-async def _kill_spawned_tmux_session(run_id: str, tmux_session_name: str | None) -> None:
+async def _kill_spawned_tmux_session(
+    storage: CaptureStorage,
+    run_id: str,
+    tmux_session_name: str | None,
+    *,
+    reason: str,
+) -> None:
     if not tmux_session_name:
         return
     try:
         from gobby.agents.tmux import get_tmux_session_manager
 
-        await get_tmux_session_manager().kill_session(str(tmux_session_name), missing_ok=True)
+        run = await asyncio.to_thread(storage.get, run_id)
+        if run is None:
+            logger.warning(
+                "Refusing raw tmux kill for missing resumed run %s",
+                run_id,
+            )
+            return
+        tmux = get_tmux_session_manager()
+        session_name = str(tmux_session_name)
+        result = await capture_then_kill_async(
+            storage=storage,
+            run_id=run.id,
+            session_name=session_name,
+            action="fail",
+            reason=reason,
+            session_alive=lambda: tmux.has_session(session_name),
+            capture=lambda: tmux.capture_full_pane(session_name),
+            kill=lambda: tmux.kill_session(session_name, missing_ok=True),
+        )
+        if not result.success:
+            raise RuntimeError(f"{result.error_code}: {result.error}")
     except Exception as exc:
         logger.warning(
             "Failed to kill tmux session after resume persistence failure",

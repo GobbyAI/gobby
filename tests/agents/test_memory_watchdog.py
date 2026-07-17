@@ -80,15 +80,31 @@ def make_handler(
     agent_run_manager = MagicMock()
     agent_run_manager.list_active.return_value = runs
     agent_run_manager.clear_tmux_session_name = MagicMock()
+    runs_by_id = {run.id: run for run in runs}
+    agent_run_manager.get.side_effect = runs_by_id.get
+    agent_run_manager.record_termination_intent.side_effect = (
+        lambda run_id, **_kwargs: runs_by_id.get(run_id)
+    )
+    agent_run_manager.replace_capture_slot.side_effect = lambda run_id, **_kwargs: runs_by_id.get(
+        run_id
+    )
 
     tmux = MagicMock()
     pane_pid_map = pane_pids if pane_pids is not None else {"gobby-test": 100}
     tmux.get_pane_pid = AsyncMock(side_effect=lambda name: pane_pid_map.get(name))
+    tmux_alive = True
+    tmux.has_session = AsyncMock(side_effect=lambda _name: tmux_alive)
+    tmux.capture_full_pane = AsyncMock(return_value="captured output")
 
     cleanup_handler = MagicMock()
     cleanup_handler.cleanup_agent = AsyncMock()
 
-    kill_agent_fn = AsyncMock(return_value={"success": True})
+    async def kill_agent(_run: AgentRun) -> dict[str, bool]:
+        nonlocal tmux_alive
+        tmux_alive = False
+        return {"success": True}
+
+    kill_agent_fn = AsyncMock(side_effect=kill_agent)
 
     def process_factory(pid: int) -> FakeProc:
         proc = trees.get(pid)
@@ -143,9 +159,8 @@ async def test_kill_after_consecutive_breaches() -> None:
 
     assert await handler.check_agent_memory() == 1
     mocks["kill_agent_fn"].assert_awaited_once()
-    mocks["agent_run_manager"].clear_tmux_session_name.assert_called_once_with(
-        "run-1", "gobby-test"
-    )
+    mocks["agent_run_manager"].record_termination_intent.assert_called_once()
+    mocks["agent_run_manager"].clear_tmux_session_name.assert_not_called()
     payload = mocks["cleanup_handler"].cleanup_agent.await_args.kwargs["terminal_payload"]
     assert "exceeded memory limit" in payload
     assert "pid=101" in payload
@@ -323,6 +338,7 @@ async def test_failed_kill_skips_cleanup() -> None:
         runs=[make_run()],
         trees={100: FakeProc(100, rss=20 * GB)},
     )
+    mocks["kill_agent_fn"].side_effect = None
     mocks["kill_agent_fn"].return_value = {"success": False, "error": "no such session"}
     await handler.check_agent_memory()
     killed = await handler.check_agent_memory()

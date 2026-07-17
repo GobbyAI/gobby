@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from gobby.agents.agent_cleanup import AgentCleanupHandler
 from gobby.agents.agent_health import AgentHealthMonitor
+from gobby.agents.capture import terminate_managed_tmux_async
 from gobby.agents.checkpoint_manager import CheckpointManager
 from gobby.agents.idle_check_handler import IdleCheckHandler
 from gobby.agents.idle_detector import IdleDetector
@@ -36,7 +37,12 @@ if TYPE_CHECKING:
     from gobby.autonomous.stuck_detector import StuckDetector
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.hooks.session_coordinator import SessionCoordinator
-    from gobby.storage.agents import AgentRun, AgentRunTerminalReason, LocalAgentRunManager
+    from gobby.storage.agents import (
+        AgentRun,
+        AgentRunTerminalReason,
+        LocalAgentRunManager,
+        TerminalAction,
+    )
     from gobby.storage.checkpoints import LocalCheckpointManager
     from gobby.storage.clones import LocalCloneManager
     from gobby.storage.hub.protocol import HubDatabase
@@ -270,6 +276,10 @@ class AgentLifecycleMonitor:
         if self._running:
             return
         self._running = True
+        try:
+            await self.reconcile_pending_terminations()
+        except Exception:
+            logger.warning("Startup termination reconciliation failed", exc_info=True)
         self._task = asyncio.create_task(
             self._check_loop(),
             name="agent-lifecycle-monitor",
@@ -297,6 +307,7 @@ class AgentLifecycleMonitor:
         while self._running:
             try:
                 logger.debug(f"Lifecycle check iteration {iteration}")
+                await self.reconcile_pending_terminations()
                 await self.check_trust_prompts()
                 await self.check_loop_prompts()
                 await self.check_approval_prompts()
@@ -380,6 +391,79 @@ class AgentLifecycleMonitor:
     async def check_provider_stalls(self) -> int:
         """Check tmux agents for provider-side stalls (rate limits, outages)."""
         return await self._health_monitor.check_provider_stalls()
+
+    async def reconcile_pending_terminations(self) -> int:
+        """Re-drive interrupted capture/kill/terminal sequences."""
+        runs = await self._run_db(self._agent_run_manager.list_termination_candidates)
+        reconciled = 0
+        for run in runs:
+            if not run.tmux_session_name:
+                logger.warning(
+                    "Cannot reconcile termination for run %s without a tmux session name",
+                    run.id,
+                )
+                continue
+
+            action_value = run.pending_terminal_action
+            if action_value in {"complete", "fail", "timeout", "cancel"}:
+                action = cast("TerminalAction", action_value)
+            elif run.tool_calls_count == 0 and run.turns_used == 0:
+                action = "fail"
+            else:
+                action = "complete"
+            reason = run.pending_terminal_reason
+            if action == "fail" and not reason:
+                reason = "Agent completed with no activity (0 tool calls, 0 turns)"
+
+            async def terminalize(
+                terminal_action: TerminalAction,
+                payload: str | None,
+                *,
+                candidate: AgentRun = run,
+            ) -> AgentRun | None:
+                if terminal_action == "complete":
+                    await self._cleanup_handler.terminalize_successful_run(
+                        candidate.id,
+                        notify_result={"status": "completed"},
+                        message=f"Agent {candidate.id} completed",
+                    )
+                elif terminal_action == "cancel":
+                    await self._cleanup_handler.terminalize_cancelled_run(
+                        candidate.id,
+                        terminal_reason=cast(
+                            "AgentRunTerminalReason",
+                            payload or "user_cancelled",
+                        ),
+                    )
+                else:
+                    await self._cleanup_handler.cleanup_agent(
+                        candidate,
+                        terminal_payload=payload or "Agent termination requested",
+                        is_timeout=terminal_action == "timeout",
+                    )
+                return cast(
+                    "AgentRun | None",
+                    await self._run_db(self._agent_run_manager.get, candidate.id),
+                )
+
+            result = await terminate_managed_tmux_async(
+                storage=self._agent_run_manager,
+                run=run,
+                tmux=self._tmux,
+                action=action,
+                reason=reason,
+                terminalize=terminalize,
+            )
+            if result.success:
+                reconciled += 1
+            else:
+                logger.warning(
+                    "Termination reconciliation failed for run %s: %s (%s)",
+                    run.id,
+                    result.error,
+                    result.error_code,
+                )
+        return reconciled
 
     async def check_autonomous_stuck_agents(self) -> int:
         """Check active autonomous sessions with the production stuck detector."""
@@ -495,18 +579,44 @@ class AgentLifecycleMonitor:
         """Checkpoint work, kill tmux, then full cleanup for a doom-looping agent."""
         await self._checkpoint_agent_work(run)
 
-        if run.tmux_session_name:
-            await self._tmux.kill_session(run.tmux_session_name)
-            await self._run_db(
-                self._agent_run_manager.clear_tmux_session_name,
-                run.id,
-                run.tmux_session_name,
-            )
-
         threshold = self._loop_tracker.threshold
+        reason = f"doom loop: dismissed loop prompt {threshold}+ times"
+
+        if run.tmux_session_name:
+
+            async def terminalize(
+                _action: TerminalAction,
+                payload: str | None,
+            ) -> AgentRun | None:
+                await self._cleanup_handler.cleanup_agent(
+                    run,
+                    terminal_payload=payload or reason,
+                )
+                return cast(
+                    "AgentRun | None",
+                    await self._run_db(self._agent_run_manager.get, run.id),
+                )
+
+            result = await terminate_managed_tmux_async(
+                storage=self._agent_run_manager,
+                run=run,
+                tmux=self._tmux,
+                action="fail",
+                reason=reason,
+                terminalize=terminalize,
+            )
+            if not result.success:
+                logger.warning(
+                    "Doom-loop termination failed for run %s: %s (%s)",
+                    run.id,
+                    result.error,
+                    result.error_code,
+                )
+            return
+
         await self._cleanup_handler.cleanup_agent(
             run,
-            terminal_payload=f"doom loop: dismissed loop prompt {threshold}+ times",
+            terminal_payload=reason,
         )
 
     async def _checkpoint_agent_work(self, run: AgentRun) -> None:

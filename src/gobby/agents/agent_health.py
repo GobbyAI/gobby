@@ -6,9 +6,10 @@ import os
 import signal
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
-from gobby.agents.kill import kill_agent, pid_matches_agent_identity
+from gobby.agents.capture import terminate_managed_tmux_async
+from gobby.agents.kill import pid_matches_agent_identity
 from gobby.agents.stall_classifier import StallStatus
 from gobby.utils.datetime import parse_stored_datetime
 
@@ -17,7 +18,7 @@ if TYPE_CHECKING:
     from gobby.agents.stall_classifier import StallClassifier
     from gobby.agents.tmux.session_manager import TmuxSessionManager
     from gobby.config.tmux import TmuxConfig
-    from gobby.storage.agents import AgentRun, LocalAgentRunManager
+    from gobby.storage.agents import AgentRun, LocalAgentRunManager, TerminalAction
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
 
@@ -60,6 +61,45 @@ class AgentHealthMonitor:
         if self._run_db_callback is None:
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self._run_db_callback(func, *args, **kwargs)
+
+    async def _terminate_tmux_run(
+        self,
+        run: AgentRun,
+        *,
+        action: TerminalAction,
+        reason: str,
+    ) -> bool:
+        async def terminalize(
+            terminal_action: TerminalAction,
+            payload: str | None,
+        ) -> AgentRun | None:
+            await self._cleanup_handler.cleanup_agent(
+                run,
+                terminal_payload=payload or reason,
+                is_success=terminal_action == "complete",
+                is_timeout=terminal_action == "timeout",
+            )
+            return cast(
+                "AgentRun | None",
+                await self._run_db(self._agent_run_manager.get, run.id),
+            )
+
+        result = await terminate_managed_tmux_async(
+            storage=self._agent_run_manager,
+            run=run,
+            tmux=self._tmux,
+            action=action,
+            reason=reason,
+            terminalize=terminalize,
+        )
+        if not result.success:
+            logger.warning(
+                "Managed tmux termination failed for run %s: %s (%s)",
+                run.id,
+                result.error,
+                result.error_code,
+            )
+        return result.success
 
     async def _clear_tmux_session_name(self, run: AgentRun) -> None:
         if run.tmux_session_name:
@@ -197,22 +237,19 @@ class AgentHealthMonitor:
                             run.id,
                         )
 
+                error_msg = reason
+                if pane_snapshot:
+                    error_msg += f"\n\n--- Last terminal output ---\n{pane_snapshot[-2000:]}"
+
                 if run.tmux_session_name:
-                    result = await kill_agent(
+                    if not await self._terminate_tmux_run(
                         run,
-                        self._db,
-                        signal_name="TERM",
-                        timeout=5.0,
-                        close_terminal=True,
-                    )
-                    if not result.get("success"):
-                        logger.warning(
-                            "Skipping cleanup for run %s after failed terminal kill: %s",
-                            run.id,
-                            result.get("error") or result.get("message"),
-                        )
+                        action="timeout" if is_timeout else "fail",
+                        reason=error_msg,
+                    ):
                         continue
-                    await self._clear_tmux_session_name(run)
+                    cleaned += 1
+                    continue
                 elif run.pid:
                     session_id = run.child_session_id or run.parent_session_id
                     if not await pid_matches_agent_identity(
@@ -232,10 +269,6 @@ class AgentHealthMonitor:
                         pass
                     except Exception as e:
                         logger.warning(f"Failed to kill process {run.pid}: {e}")
-
-                error_msg = reason
-                if pane_snapshot:
-                    error_msg += f"\n\n--- Last terminal output ---\n{pane_snapshot[-2000:]}"
 
                 await self._cleanup_handler.cleanup_agent(
                     run,
@@ -291,9 +324,14 @@ class AgentHealthMonitor:
                     f"Agent {run.id} never initialized after {age:.0f}s "
                     f"(provider={run.provider}) — killing for provider rotation"
                 )
+                error_msg = (
+                    f"Provider connection timed out: agent never initialized "
+                    f"after {age:.0f}s (provider={run.provider})"
+                )
                 if run.tmux_session_name:
-                    await self._tmux.kill_session(run.tmux_session_name)
-                    await self._clear_tmux_session_name(run)
+                    if await self._terminate_tmux_run(run, action="fail", reason=error_msg):
+                        killed += 1
+                    continue
                 elif run.pid:
                     if not await pid_matches_agent_identity(
                         run.pid,
@@ -311,10 +349,6 @@ class AgentHealthMonitor:
                     except ProcessLookupError:
                         pass
 
-                error_msg = (
-                    f"Provider connection timed out: agent never initialized "
-                    f"after {age:.0f}s (provider={run.provider})"
-                )
                 await self._cleanup_handler.cleanup_agent(run, terminal_payload=error_msg)
                 killed += 1
 
@@ -365,16 +399,13 @@ class AgentHealthMonitor:
                                 e,
                             )
 
-                    await self._tmux.kill_session(tmux_name)
-                    await self._clear_tmux_session_name(run)
-
                     error_msg = (
                         f"Provider stall: {classification.reason} "
                         f"(provider={run.provider}, "
                         f"consecutive_hits={classification.consecutive_hits})"
                     )
-                    await self._cleanup_handler.cleanup_agent(run, terminal_payload=error_msg)
-                    stalled += 1
+                    if await self._terminate_tmux_run(run, action="fail", reason=error_msg):
+                        stalled += 1
             except Exception as e:
                 logger.warning(f"Error checking provider stall for agent {run.id}: {e}")
 

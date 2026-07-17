@@ -9,12 +9,14 @@ from ._lifecycle import _AgentRunLifecycleMixin
 from ._queries import _AgentRunQueryMixin
 from ._runtime import _AgentRunRuntimeMixin
 from ._selectors import _AgentRunSelectorMixin
+from ._termination import _AgentRunTerminationMixin
 
 
 class LocalAgentRunManager(
     _AgentRunSelectorMixin,
     _AgentRunLifecycleMixin,
     _AgentRunRuntimeMixin,
+    _AgentRunTerminationMixin,
     _AgentRunQueryMixin,
     _AgentRunCleanupMixin,
 ):

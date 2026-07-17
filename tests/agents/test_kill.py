@@ -319,7 +319,13 @@ class TestKillAgent:
 
         assert res["success"] is True
         assert res["method"] == "tmux_kill_session"
-        mock_close_tmux.assert_awaited_once_with("gobby-run-123", timeout=5.0)
+        mock_close_tmux.assert_awaited_once_with(
+            agent_run,
+            mock_db,
+            terminal_action="cancel",
+            terminal_reason="user_cancelled",
+            timeout=5.0,
+        )
         mock_close_window.assert_not_called()
 
     @pytest.mark.asyncio
@@ -344,7 +350,13 @@ class TestKillAgent:
 
         assert res["success"] is True
         assert res["method"] == "tmux_kill_pane"
-        mock_close_tmux.assert_awaited_once_with("gobby-run-123", timeout=5.0)
+        mock_close_tmux.assert_awaited_once_with(
+            agent_run,
+            mock_db,
+            terminal_action="cancel",
+            terminal_reason="user_cancelled",
+            timeout=5.0,
+        )
         mock_close_window.assert_called_once()
 
     @pytest.mark.asyncio
