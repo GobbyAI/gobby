@@ -10,6 +10,7 @@ import pytest
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._notifications import (
     _notification_tasks,
+    _notify,
     notify_parent_on_task_state_change,
 )
 from gobby.mcp_proxy.tools.tasks._stage_review import (
@@ -64,6 +65,36 @@ async def test_parent_notification_is_retained_until_completion() -> None:
         await asyncio.wait_for(cleanup_finished.wait(), timeout=1)
 
     assert _notification_tasks == {}
+
+
+@pytest.mark.asyncio
+async def test_parent_notification_broadcast_includes_escalation_event_id() -> None:
+    class RecordingWebsocket:
+        def __init__(self) -> None:
+            self.events: list[dict[str, object]] = []
+
+        async def broadcast_task_event(self, **event: object) -> None:
+            self.events.append(event)
+
+    db = MagicMock()
+    db.fetchone.return_value = {"id": "run-1", "parent_session_id": "parent-1"}
+    websocket = RecordingWebsocket()
+    app_context = SimpleNamespace(websocket_server=websocket)
+
+    with patch("gobby.app_context.get_app_context", return_value=app_context):
+        await _notify(db, "task-1", "escalated", "#1", "event-1")
+
+    assert websocket.events == [
+        {
+            "event": "task_progress",
+            "task_id": "task-1",
+            "state": "escalated",
+            "ref": "#1",
+            "parent_session_id": "parent-1",
+            "run_id": "run-1",
+            "event_id": "event-1",
+        }
+    ]
 
 
 def test_signoff_relay_runs_synchronously() -> None:

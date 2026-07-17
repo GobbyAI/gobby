@@ -14,8 +14,8 @@ from gobby.mcp_proxy.tools.tasks._dispatch_mutex_release import (
     _current_agent_dispatch_mutex_run_id,
     _release_current_agent_dispatch_mutex,
 )
-from gobby.mcp_proxy.tools.tasks._lifecycle_status import (
-    _clear_prior_claim_session_variables,
+from gobby.mcp_proxy.tools.tasks._escalation_coordinator import (
+    clear_prior_claim_session_variables,
 )
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.mcp_proxy.tools.tasks._stage_review import register_review_stage_tools
@@ -111,7 +111,7 @@ def _release_prior_claim(
     if not prior_owner_session_id:
         return
     ctx.task_manager.release_task_claim(task_id)
-    _clear_prior_claim_session_variables(ctx, task_id, prior_owner_session_id, action=action)
+    clear_prior_claim_session_variables(ctx, task_id, prior_owner_session_id, action=action)
 
 
 def _delivery_campaign(delivery: TaskDeliveryStateManager, task_id: str) -> dict[str, Any]:

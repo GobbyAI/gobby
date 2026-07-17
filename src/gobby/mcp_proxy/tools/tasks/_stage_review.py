@@ -15,10 +15,10 @@ from gobby.mcp_proxy.tools.tasks._dispatch_mutex_release import (
 )
 from gobby.mcp_proxy.tools.tasks._dispatcher_tick import schedule_dispatcher_tick
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
-from gobby.mcp_proxy.tools.tasks._lifecycle_status import (
-    _clear_prior_claim_session_variables,
-    _lifecycle_value_error,
+from gobby.mcp_proxy.tools.tasks._escalation_coordinator import (
+    clear_prior_claim_session_variables,
 )
+from gobby.mcp_proxy.tools.tasks._lifecycle_status import _lifecycle_value_error
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_state_change
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.tasks import TaskNotFoundError
@@ -254,7 +254,7 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             session_id=resolved_session_id,
             run_id=dispatch_kwargs.get("dispatch_run_id"),
         )
-        _clear_prior_claim_session_variables(
+        clear_prior_claim_session_variables(
             ctx,
             resolved_id,
             prior_owner_session_id,
@@ -344,7 +344,7 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             session_id=resolved_session_id,
             run_id=dispatch_kwargs.get("dispatch_run_id"),
         )
-        _clear_prior_claim_session_variables(
+        clear_prior_claim_session_variables(
             ctx,
             resolved_id,
             prior_owner_session_id,
@@ -454,7 +454,7 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             session_id=resolved_session_id,
             run_id=dispatch_kwargs.get("dispatch_run_id"),
         )
-        _clear_prior_claim_session_variables(
+        clear_prior_claim_session_variables(
             ctx,
             resolved_id,
             prior_owner_session_id,
@@ -567,7 +567,7 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         has_suggestions = bool([s for s in (suggestions or []) if s and s.strip()])
         new_state = "ready" if has_suggestions and not converged else "needs_review"
 
-        _clear_prior_claim_session_variables(
+        clear_prior_claim_session_variables(
             ctx,
             resolved_id,
             prior_owner_session_id,

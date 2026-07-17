@@ -9,6 +9,10 @@ from typing import Any
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
+from gobby.mcp_proxy.tools.tasks._escalation_coordinator import (
+    clear_prior_claim_session_variables,
+    coordinate_task_escalation,
+)
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_state_change
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.tasks import TaskNotFoundError
@@ -35,33 +39,6 @@ def _lifecycle_value_error(message: str) -> dict[str, Any]:
     return {"error": message}
 
 
-def _clear_prior_claim_session_variables(
-    ctx: RegistryContext,
-    task_id: str,
-    prior_owner_session_id: str | None,
-    *,
-    action: str,
-) -> None:
-    """Best-effort removal of a task from the prior owner's claimed task state."""
-    if not prior_owner_session_id:
-        return
-
-    try:
-        from gobby.workflows.task_claim_state import remove_claimed_task
-
-        session_vars = ctx.session_var_manager.get_variables(prior_owner_session_id)
-        merge_dict = remove_claimed_task(session_vars, task_id)
-        ctx.session_var_manager.merge_variables(prior_owner_session_id, merge_dict)
-        logger.debug(
-            "Removed task %s from claimed_tasks for session %s on %s",
-            task_id,
-            prior_owner_session_id,
-            action,
-        )
-    except Exception as e:
-        logger.debug("Best-effort claimed_tasks cleanup on %s failed: %s", action, e)
-
-
 def register_reopen_task(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
     """Register the reopen_task tool on the given registry."""
 
@@ -86,7 +63,7 @@ def register_reopen_task(registry: InternalToolRegistry, ctx: RegistryContext) -
         try:
             ctx.task_manager.reopen_task(resolved_id, reason=reason)
 
-            _clear_prior_claim_session_variables(
+            clear_prior_claim_session_variables(
                 ctx,
                 resolved_id,
                 prior_owner_session_id,
@@ -178,35 +155,16 @@ def register_escalate_task(registry: InternalToolRegistry, ctx: RegistryContext)
             )
 
         try:
-            ctx.task_manager.escalate_task(resolved_id, reason=reason)
+            escalated = ctx.task_manager.escalate_task(resolved_id, reason=reason)
         except ValueError as e:
             return _lifecycle_value_error(str(e))
 
-        _clear_prior_claim_session_variables(
+        coordinate_task_escalation(
             ctx,
-            resolved_id,
-            prior_owner_session_id,
-            action="escalate",
+            escalated,
+            prior_owner_session_id=prior_owner_session_id,
+            session_id=session_id,
         )
-
-        notify_parent_on_task_state_change(
-            ctx.task_manager.db,
-            resolved_id,
-            "escalated",
-            task_ref=f"#{task.seq_num}" if task.seq_num else None,
-        )
-
-        # Link task to session (best-effort)
-        if session_id:
-            resolved_session_id = session_id
-            try:
-                resolved_session_id = ctx.resolve_session_id(session_id)
-            except ValueError:
-                pass
-            try:
-                ctx.session_task_manager.link_task(resolved_session_id, resolved_id, "escalated")
-            except Exception as e:
-                logger.debug(f"Best-effort escalation linking failed: {e}")
 
         return {}
 

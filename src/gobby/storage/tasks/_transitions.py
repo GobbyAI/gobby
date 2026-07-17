@@ -19,6 +19,7 @@ from gobby.storage.tasks._models import (
     TaskAlreadyClaimedError,
     TaskAlreadyEscalatedError,
     TaskClosedError,
+    TaskStaleStateError,
 )
 from gobby.storage.tasks._read import get_task
 from gobby.storage.tasks._stage_states import StageStatesManager
@@ -247,6 +248,7 @@ def reopen_task(
         closed_commit_sha=None,
         escalated_at=None,
         escalation_reason=None,
+        # Named validation reset branch (d): manual de-escalation/reopen.
         validation_fail_count=0,
         dispatch_failure_count=0,
     )
@@ -299,6 +301,72 @@ def escalate_task(
         raise RuntimeError(f"Task {task_id} escalation failed without a conflicting transition")
 
     return get_task(db, task_id)
+
+
+def increment_validation_failure(
+    db: HubDatabase,
+    task_id: str,
+    *,
+    expected_updated_at: datetime,
+    threshold: int,
+    validation_status: str,
+    validation_feedback: str | None,
+    escalation_reason: str,
+) -> tuple[int, bool]:
+    """Record one guarded invalid verdict and atomically escalate at the threshold."""
+    if threshold <= 0:
+        raise ValueError("Validation escalation threshold must be positive")
+
+    now = utc_now()
+    with db.transaction() as conn:
+        row = conn.execute(
+            """
+            UPDATE tasks
+               SET validation_fail_count = COALESCE(validation_fail_count, 0) + 1,
+                   validation_status = %s,
+                   validation_feedback = %s,
+                   claimed_by_session_id = CASE
+                       WHEN COALESCE(validation_fail_count, 0) + 1 >= %s THEN NULL
+                       ELSE claimed_by_session_id
+                   END,
+                   escalated_at = CASE
+                       WHEN COALESCE(validation_fail_count, 0) + 1 >= %s THEN %s
+                       ELSE escalated_at
+                   END,
+                   escalation_reason = CASE
+                       WHEN COALESCE(validation_fail_count, 0) + 1 >= %s THEN %s
+                       ELSE escalation_reason
+                   END,
+                   is_escalated = CASE
+                       WHEN COALESCE(validation_fail_count, 0) + 1 >= %s THEN TRUE
+                       ELSE is_escalated
+                   END,
+                   updated_at = %s
+             WHERE id = %s
+               AND closed_at IS NULL
+               AND is_escalated = FALSE
+               AND updated_at = %s
+             RETURNING validation_fail_count, is_escalated
+            """,
+            (
+                validation_status,
+                validation_feedback,
+                threshold,
+                threshold,
+                now,
+                threshold,
+                escalation_reason,
+                threshold,
+                now,
+                task_id,
+                expected_updated_at,
+            ),
+        ).fetchone()
+
+    if row is None:
+        get_task(db, task_id)
+        raise TaskStaleStateError(task_id)
+    return int(row["validation_fail_count"]), bool(row["is_escalated"])
 
 
 def de_escalate_task(
@@ -782,6 +850,10 @@ def close_task(
     closed_in_session_id: str | None = None,
     closed_commit_sha: str | None = None,
     validation_override_reason: str | None = None,
+    expected_updated_at: datetime | None = None,
+    reset_validation_fail_count: bool = False,
+    validation_status: str | None = None,
+    validation_feedback: str | None = None,
 ) -> Task:
     """Close a task and clear active ownership metadata."""
     with db.transaction() as conn:
@@ -795,6 +867,10 @@ def close_task(
             closed_in_session_id=closed_in_session_id,
             force=force,
             validation_override_reason=validation_override_reason,
+            expected_updated_at=expected_updated_at,
+            reset_validation_fail_count=reset_validation_fail_count,
+            validation_status=validation_status,
+            validation_feedback=validation_feedback,
         )
     return get_task(db, task_id)
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -18,6 +19,8 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
 from gobby.tasks.validation import ValidationResult as TaskValidationResult
 
 pytestmark = pytest.mark.unit
+
+_TASK_UPDATED_AT = datetime(2026, 1, 1, tzinfo=UTC)
 
 _VALIDATION_FEEDBACK_17821 = (
     "The manifest and diff show a concrete root-cause fix: ensure_personal_project "
@@ -69,7 +72,44 @@ class _NoBackoffDB:
 
 
 def _task_manager_mock(update_task: MagicMock) -> SimpleNamespace:
-    return SimpleNamespace(update_task=update_task, db=_NoBackoffDB())
+    return SimpleNamespace(
+        update_task=update_task,
+        increment_validation_failure=MagicMock(return_value=(1, False)),
+        db=_NoBackoffDB(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_documentation_auto_validation_returns_named_reset_branch() -> None:
+    update_task = MagicMock()
+    task = SimpleNamespace(
+        id="task-doc",
+        title="Docs",
+        description="Update docs",
+        validation_criteria="Documentation is current",
+        category="documentation",
+        updated_at=_TASK_UPDATED_AT,
+    )
+    ctx = SimpleNamespace(task_manager=_task_manager_mock(update_task))
+    validator = SimpleNamespace(validate_task=AsyncMock())
+
+    result = await validate_leaf_task_with_llm(
+        task,
+        validator,
+        "docs context",
+        None,
+        ctx,
+        task.id,
+        None,
+        is_documentation_only=True,
+    )
+
+    assert result.can_close is True
+    assert result.validation_status == "valid"
+    assert result.reset_reason == "documentation_auto_validation"
+    validator.validate_task.assert_not_awaited()
+    update_task.assert_not_called()
+    ctx.task_manager.increment_validation_failure.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -483,6 +523,7 @@ async def test_valid_llm_result_with_failure_feedback_is_overridden_to_invalid()
         description="Description",
         validation_criteria="Tests pass",
         category="code",
+        updated_at=_TASK_UPDATED_AT,
     )
     validator = SimpleNamespace(
         validate_task=AsyncMock(
@@ -505,11 +546,17 @@ async def test_valid_llm_result_with_failure_feedback_is_overridden_to_invalid()
     )
 
     assert result.can_close is False
-    assert result.extra == {"validation_status": "invalid"}
-    update_task.assert_called_once_with(
+    assert result.extra == {"validation_status": "invalid", "validation_fail_count": 1}
+    update_task.assert_not_called()
+    ctx.task_manager.increment_validation_failure.assert_called_once_with(
         "task-1",
+        expected_updated_at=_TASK_UPDATED_AT,
+        threshold=5,
         validation_status="invalid",
         validation_feedback="Required validation gate did not pass.",
+        escalation_reason=(
+            "close validation remained invalid after reaching the 5-attempt threshold"
+        ),
     )
 
 
@@ -523,6 +570,7 @@ async def test_conflicting_success_and_failure_feedback_prefers_failure() -> Non
         description="Description",
         validation_criteria="Tests pass",
         category="code",
+        updated_at=_TASK_UPDATED_AT,
     )
     feedback = (
         "Required validation gate did not pass. Verified all validation criteria are satisfied."
@@ -548,12 +596,8 @@ async def test_conflicting_success_and_failure_feedback_prefers_failure() -> Non
     )
 
     assert result.can_close is False
-    assert result.extra == {"validation_status": "invalid"}
-    update_task.assert_called_once_with(
-        "task-1",
-        validation_status="invalid",
-        validation_feedback=feedback,
-    )
+    assert result.extra == {"validation_status": "invalid", "validation_fail_count": 1}
+    update_task.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -566,6 +610,7 @@ async def test_invalid_result_with_blocking_reasons_preserves_close_metadata() -
         description="Description",
         validation_criteria="Tests pass",
         category="code",
+        updated_at=_TASK_UPDATED_AT,
     )
     blocking_reasons = ["pytest regression still fails", "lint gate failed"]
     validator = SimpleNamespace(
@@ -596,6 +641,7 @@ async def test_invalid_result_with_blocking_reasons_preserves_close_metadata() -
     )
     assert result.extra == {
         "validation_status": "invalid",
+        "validation_fail_count": 1,
         "blocking_reasons": blocking_reasons,
     }
 
@@ -610,6 +656,7 @@ async def test_valid_llm_result_with_zero_failure_feedback_remains_valid() -> No
         description="Description",
         validation_criteria="Tests pass",
         category="code",
+        updated_at=_TASK_UPDATED_AT,
     )
     validator = SimpleNamespace(
         validate_task=AsyncMock(
@@ -632,11 +679,10 @@ async def test_valid_llm_result_with_zero_failure_feedback_remains_valid() -> No
     )
 
     assert result.can_close is True
-    update_task.assert_called_once_with(
-        "task-1",
-        validation_status="valid",
-        validation_feedback="tests: 10 passed, 0 failed",
-    )
+    assert result.validation_status == "valid"
+    assert result.validation_feedback == "tests: 10 passed, 0 failed"
+    assert result.reset_reason == "llm_valid"
+    update_task.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -649,6 +695,7 @@ async def test_valid_llm_result_with_17821_feedback_remains_valid() -> None:
         description="Description",
         validation_criteria="Tests pass",
         category="code",
+        updated_at=_TASK_UPDATED_AT,
     )
     validator = SimpleNamespace(
         validate_task=AsyncMock(
@@ -672,11 +719,10 @@ async def test_valid_llm_result_with_17821_feedback_remains_valid() -> None:
     )
 
     assert result.can_close is True
-    update_task.assert_called_once_with(
-        "task-1",
-        validation_status="valid",
-        validation_feedback=_VALIDATION_FEEDBACK_17821,
-    )
+    assert result.validation_status == "valid"
+    assert result.validation_feedback == _VALIDATION_FEEDBACK_17821
+    assert result.reset_reason == "llm_valid"
+    update_task.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -689,6 +735,7 @@ async def test_invalid_llm_result_with_verified_success_feedback_is_promoted() -
         description="Description",
         validation_criteria="Tests pass",
         category="code",
+        updated_at=_TASK_UPDATED_AT,
     )
     validator = SimpleNamespace(
         validate_task=AsyncMock(
@@ -711,11 +758,10 @@ async def test_invalid_llm_result_with_verified_success_feedback_is_promoted() -
     )
 
     assert result.can_close is True
-    update_task.assert_called_once_with(
-        "task-1",
-        validation_status="valid",
-        validation_feedback="Verified all validation criteria are satisfied.",
-    )
+    assert result.validation_status == "valid"
+    assert result.validation_feedback == "Verified all validation criteria are satisfied."
+    assert result.reset_reason == "llm_valid"
+    update_task.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -728,6 +774,7 @@ async def test_invalid_llm_result_with_negated_failure_success_feedback_is_promo
         description="Description",
         validation_criteria="Tests pass",
         category="code",
+        updated_at=_TASK_UPDATED_AT,
     )
     feedback = (
         "All acceptance criteria are met. The Changed File Manifest confirms source, test, "
@@ -754,11 +801,10 @@ async def test_invalid_llm_result_with_negated_failure_success_feedback_is_promo
     )
 
     assert result.can_close is True
-    update_task.assert_called_once_with(
-        "task-1",
-        validation_status="valid",
-        validation_feedback=feedback,
-    )
+    assert result.validation_status == "valid"
+    assert result.validation_feedback == feedback
+    assert result.reset_reason == "llm_valid"
+    update_task.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -771,6 +817,7 @@ async def test_invalid_result_with_resolved_regression_success_feedback_is_promo
         description="Description",
         validation_criteria="Tests pass",
         category="code",
+        updated_at=_TASK_UPDATED_AT,
     )
     feedback = (
         "All acceptance criteria are met. The 5 previously failing tests now pass "
@@ -797,11 +844,10 @@ async def test_invalid_result_with_resolved_regression_success_feedback_is_promo
     )
 
     assert result.can_close is True
-    update_task.assert_called_once_with(
-        "task-1",
-        validation_status="valid",
-        validation_feedback=feedback,
-    )
+    assert result.validation_status == "valid"
+    assert result.validation_feedback == feedback
+    assert result.reset_reason == "llm_valid"
+    update_task.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -814,6 +860,7 @@ async def test_pending_llm_result_with_success_feedback_is_not_promoted() -> Non
         description="Description",
         validation_criteria="Tests pass",
         category="code",
+        updated_at=_TASK_UPDATED_AT,
     )
     validator = SimpleNamespace(
         validate_task=AsyncMock(
@@ -839,12 +886,5 @@ async def test_pending_llm_result_with_success_feedback_is_not_promoted() -> Non
     )
 
     assert result.can_close is False
-    assert result.extra == {"validation_status": "pending"}
-    update_task.assert_called_once_with(
-        "task-1",
-        validation_status="pending",
-        validation_feedback=(
-            "Validation failed: could not parse response. "
-            "Verified all validation criteria are satisfied."
-        ),
-    )
+    assert result.extra == {"validation_status": "pending", "validation_fail_count": 1}
+    update_task.assert_not_called()

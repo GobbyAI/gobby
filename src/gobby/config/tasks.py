@@ -229,6 +229,10 @@ class TaskValidationConfig(FeatureDefaultConfig):
         default=3,
         description="Number of times same issue can recur before escalation",
     )
+    close_validation_escalation_threshold: int = Field(
+        default=5,
+        description="Invalid or pending close verdicts before atomic task escalation.",
+    )
     issue_similarity_threshold: float = Field(
         default=0.8,
         description="Similarity threshold (0-1) for detecting recurring issues",
@@ -266,7 +270,11 @@ class TaskValidationConfig(FeatureDefaultConfig):
     )
 
     @field_validator(
-        "max_retries", "max_iterations", "max_consecutive_errors", "recurring_issue_threshold"
+        "max_retries",
+        "max_iterations",
+        "max_consecutive_errors",
+        "recurring_issue_threshold",
+        "close_validation_escalation_threshold",
     )
     @classmethod
     def validate_positive_int(cls, v: int) -> int:

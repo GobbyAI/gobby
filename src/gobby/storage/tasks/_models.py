@@ -80,6 +80,16 @@ class TaskAlreadyEscalatedError(ValueError):
         super().__init__(f"Cannot escalate task {task_id}: task is already escalated.")
 
 
+class TaskStaleStateError(ValueError):
+    """Raised when a guarded task transition loses to a concurrent verdict."""
+
+    def __init__(self, task_id: str) -> None:
+        self.task_id = task_id
+        super().__init__(
+            f"Task {task_id} changed before this transition committed; reload and retry."
+        )
+
+
 def validate_category(category: str | None) -> str | None:
     """Validate and normalize a category value.
 
