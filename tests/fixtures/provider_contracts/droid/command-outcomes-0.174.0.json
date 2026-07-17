@@ -1,0 +1,74 @@
+{
+  "provider": "droid",
+  "capture_type": "live_stream_json_command_outcomes",
+  "capture_status": "live_proven",
+  "captured_at": "2026-07-17",
+  "cli_version": "0.174.0",
+  "capture_notes": "Captured from isolated droid exec runs with GOBBY_HOOKS_DISABLED=1. Session, message, tool-call, transcript, and workspace identifiers are sanitized.",
+  "events": [
+    {
+      "type": "tool_call",
+      "id": "<TOOL_CALL_ID_ZERO>",
+      "messageId": "<MESSAGE_ID>",
+      "toolId": "Execute",
+      "toolName": "Execute",
+      "parameters": {
+        "summary": "Print droid-zero-stream marker",
+        "command": "printf droid-zero-stream",
+        "riskLevel": "low",
+        "riskLevelReason": "Read-only printf command with no side effects."
+      }
+    },
+    {
+      "type": "tool_call",
+      "id": "<TOOL_CALL_ID_NONZERO>",
+      "messageId": "<MESSAGE_ID>",
+      "toolId": "Execute",
+      "toolName": "Execute",
+      "parameters": {
+        "summary": "Run command exiting with code 7",
+        "command": "sh -c 'exit 7'",
+        "riskLevel": "low",
+        "riskLevelReason": "Runs an inline shell command that only sets a non-zero exit code; no filesystem or system state is modified."
+      }
+    },
+    {
+      "type": "tool_result",
+      "id": "<TOOL_CALL_ID_ZERO>",
+      "messageId": "<RESULT_MESSAGE_ID>",
+      "toolId": "Execute",
+      "isError": false,
+      "value": "droid-zero-stream\n\n[Process exited with code 0]"
+    },
+    {
+      "type": "tool_result",
+      "id": "<TOOL_CALL_ID_NONZERO>",
+      "messageId": "<RESULT_MESSAGE_ID>",
+      "toolId": "Execute",
+      "isError": true,
+      "error": {
+        "type": "tool_error",
+        "message": "Error: Command failed (exit code: 7)\n\n[Process exited with code 7]"
+      }
+    }
+  ],
+  "terminal_hook_observation": {
+    "successful_post_tool_use": {
+      "hook_event_name": "PostToolUse",
+      "session_id": "<SESSION_ID>",
+      "transcript_path": "<DROID_SESSION_ROOT>/session.jsonl",
+      "cwd": "<WORKSPACE>",
+      "permission_mode": "auto-medium",
+      "tool_name": "Execute",
+      "tool_input": {
+        "summary": "Print droid-zero-exit string",
+        "command": "printf droid-zero-exit",
+        "riskLevel": "low",
+        "riskLevelReason": "This printf command only writes to stdout without modifying any files."
+      },
+      "tool_response": "droid-zero-exit\n\n[Process exited with code 0]"
+    },
+    "nonzero_post_tool_use_emitted": false,
+    "post_tool_use_failure_emitted": false
+  }
+}

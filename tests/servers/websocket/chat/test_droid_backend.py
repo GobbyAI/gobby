@@ -33,6 +33,9 @@ from gobby.servers.websocket.chat.backends.droid import (
 pytestmark = pytest.mark.unit
 
 FIXTURE_DIR = Path("tests/fixtures/droid/stream_json")
+DROID_COMMAND_OUTCOMES_FIXTURE = Path(
+    "tests/fixtures/provider_contracts/droid/command-outcomes-0.174.0.json"
+)
 
 
 class _FakeStdout:
@@ -354,6 +357,37 @@ async def test_managed_session_translates_structured_tool_events() -> None:
     assert events[1].tool_call_id == "tool-1"
     assert events[1].success is True
     assert events[1].result == {"success": True}
+
+
+@pytest.mark.asyncio
+async def test_managed_session_preserves_live_droid_command_outcomes() -> None:
+    payload = json.loads(DROID_COMMAND_OUTCOMES_FIXTURE.read_text())
+    backend = DroidWebChatBackend()
+    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session._connected = True
+    session._on_post_tool = AsyncMock(return_value=None)
+
+    async def fake_send_message(_session: Any, _prompt: str):
+        for record in payload["events"]:
+            for event in parse_droid_stream_line(json.dumps(record)):
+                yield event
+
+    backend.send_message = fake_send_message
+
+    events = [event async for event in session.send_message("run validation")]
+    assert any(isinstance(event, ToolResultEvent) and event.success for event in events)
+    assert any(isinstance(event, ToolResultEvent) and not event.success for event in events)
+
+    post_tool_payloads = [call.args[0] for call in session._on_post_tool.await_args_list]
+    by_error = {
+        post_tool_payload["is_error"]: post_tool_payload for post_tool_payload in post_tool_payloads
+    }
+    assert by_error[False]["tool_name"] == "Bash"
+    assert by_error[False]["tool_input"]["command"] == "printf droid-zero-stream"
+    assert by_error[False]["tool_response"].startswith("droid-zero-stream")
+    assert by_error[True]["tool_name"] == "Bash"
+    assert by_error[True]["tool_input"]["command"] == "sh -c 'exit 7'"
+    assert by_error[True]["tool_response"].startswith("Error: Command failed (exit code: 7)")
 
 
 @pytest.mark.asyncio

@@ -236,6 +236,7 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
                             str(pending.get("tool_name", "")),
                             tool_input if isinstance(tool_input, dict) else {},
                             chat_event.result if chat_event.success else chat_event.error,
+                            is_error=not chat_event.success,
                         )
                         # A completed tool ends the current prose paragraph; a
                         # following heading must start a new line to render. If the

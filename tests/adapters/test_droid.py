@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -11,6 +13,10 @@ from gobby.adapters.droid_contract import DROID_EVENT_MAP, DROID_PASCAL_HOOK_NAM
 from gobby.hooks.events import HookEventType, HookResponse, SessionSource
 
 pytestmark = pytest.mark.unit
+
+DROID_COMMAND_OUTCOMES_FIXTURE = Path(
+    "tests/fixtures/provider_contracts/droid/command-outcomes-0.174.0.json"
+)
 
 
 class TestDroidAdapterInit:
@@ -150,6 +156,35 @@ class TestDroidTranslateToHookEvent:
         assert event.data["tool_name"] == "mcp__gobby__list_mcp_servers"
         assert event.data["mcp_server"] == "gobby"
         assert event.data["mcp_tool"] == "list_mcp_servers"
+
+    def test_live_post_tool_use_marks_execute_success_definitively(self) -> None:
+        payload = json.loads(DROID_COMMAND_OUTCOMES_FIXTURE.read_text())
+        native = {
+            "hook_type": "PostToolUse",
+            "input_data": payload["terminal_hook_observation"]["successful_post_tool_use"],
+        }
+
+        event = DroidAdapter().translate_to_hook_event(native)
+
+        assert event.data["tool_name"] == "Bash"
+        assert event.data["tool_output"].startswith("droid-zero-exit")
+        assert event.metadata["is_failure"] is False
+
+    def test_ambiguous_execute_output_does_not_infer_failure_from_text(self) -> None:
+        event = DroidAdapter().translate_to_hook_event(
+            {
+                "hook_type": "Notification",
+                "input_data": {
+                    "tool_name": "Execute",
+                    "tool_input": {"command": "sh -c 'exit 7'"},
+                    "tool_response": "Error: Command failed (exit code: 7)",
+                },
+            }
+        )
+
+        assert event.data["tool_name"] == "Bash"
+        assert "is_error" not in event.data
+        assert "is_failure" not in event.metadata
 
 
 class TestDroidTranslateFromHookResponse:

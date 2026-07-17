@@ -256,6 +256,8 @@ class ManagedChatSessionBase:
         tool_name: str,
         tool_input: dict[str, Any],
         tool_response: Any,
+        *,
+        is_error: bool | None = None,
     ) -> dict[str, Any] | None:
         """Run managed AFTER_TOOL hooks and queue any returned context."""
         if self._on_post_tool is None:
@@ -265,6 +267,8 @@ class ManagedChatSessionBase:
             "tool_input": tool_input,
             "tool_response": tool_response,
         }
+        if isinstance(is_error, bool):
+            payload["is_error"] = is_error
         normalized_payload = normalize_tool_fields(dict(payload))
         for key in ("mcp_server", "mcp_tool"):
             value = normalized_payload.get(key)

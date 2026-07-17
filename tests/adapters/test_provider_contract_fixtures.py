@@ -10,6 +10,7 @@ import pytest
 
 from gobby.adapters.grok import GrokAdapter
 from gobby.hooks.events import HookEventType, SessionSource
+from gobby.servers.websocket.chat.backends.droid_stream import parse_droid_stream_line
 
 pytestmark = pytest.mark.unit
 
@@ -120,3 +121,23 @@ def test_grok_live_shell_outcomes_normalize_exit_codes() -> None:
 
     assert by_exit_code[0].data["tool_input"]["command"] == "printf grok-zero-exit"
     assert by_exit_code[7].data["tool_input"]["command"] == "sh -c 'exit 7'"
+
+
+def test_droid_live_shell_outcomes_expose_structured_error_state() -> None:
+    payload = json.loads(
+        (PROVIDER_CONTRACT_ROOT / "droid" / "command-outcomes-0.174.0.json").read_text()
+    )
+    assert payload["capture_status"] == "live_proven"
+    assert payload["cli_version"] == "0.174.0"
+
+    parsed = [
+        event
+        for record in payload["events"]
+        for event in parse_droid_stream_line(json.dumps(record))
+        if event.data.get("kind") == "tool_result"
+    ]
+    by_success = {event.data["success"]: event for event in parsed}
+
+    assert by_success[True].data["result"].startswith("droid-zero-stream")
+    assert by_success[False].data["error"].startswith("Error: Command failed (exit code: 7)")
+    assert payload["terminal_hook_observation"]["nonzero_post_tool_use_emitted"] is False

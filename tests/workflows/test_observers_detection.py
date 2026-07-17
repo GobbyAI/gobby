@@ -48,6 +48,13 @@ CODEX_COMMAND_EXECUTION_FIXTURE = (
 GROK_CONTRACT_ROOT = Path(__file__).parents[1] / "fixtures" / "provider_contracts" / "grok"
 GROK_SHELL_OUTCOMES_FIXTURE = GROK_CONTRACT_ROOT / "shell-outcomes-0.2.67.jsonl"
 GROK_LEGACY_HOOK_FIXTURE = GROK_CONTRACT_ROOT / "hook-payloads.jsonl"
+DROID_COMMAND_OUTCOMES_FIXTURE = (
+    Path(__file__).parents[1]
+    / "fixtures"
+    / "provider_contracts"
+    / "droid"
+    / "command-outcomes-0.174.0.json"
+)
 
 
 @pytest.fixture
@@ -1833,6 +1840,46 @@ class TestDetectVerificationEvidence:
         assert variables["verification_evidence_recorded"] is True
         assert variables["verification_evidence"][-1]["success"] is True
         assert variables["verification_evidence"][-1]["exit_code"] == 0
+
+    def test_live_droid_error_flags_drive_readiness_recovery(self, variables) -> None:
+        payload = json.loads(DROID_COMMAND_OUTCOMES_FIXTURE.read_text())
+        assert payload["capture_status"] == "live_proven"
+        results = {
+            record["isError"]: record
+            for record in payload["events"]
+            if record["type"] == "tool_result"
+        }
+
+        def event_for(is_error: bool) -> HookEvent:
+            result = results[is_error]
+            tool_response = result.get("value")
+            if tool_response is None:
+                tool_response = result["error"]["message"]
+            data = {
+                "tool_name": "Bash",
+                "tool_input": {
+                    "command": "GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_hooks.py -q"
+                },
+                "tool_response": tool_response,
+                "is_error": result["isError"],
+            }
+            normalize_tool_fields(data)
+            return HookEvent(
+                event_type=HookEventType.AFTER_TOOL,
+                source=SessionSource.DROID,
+                session_id=AGENT_SESSION_ID,
+                timestamp=datetime.now(UTC),
+                data=data,
+                metadata={"_platform_session_id": SESSION_ID},
+            )
+
+        detect_verification_evidence(event_for(True), variables, SESSION_ID)
+        assert variables["verification_evidence_recorded"] is False
+        assert variables["verification_evidence"][-1]["success"] is False
+
+        detect_verification_evidence(event_for(False), variables, SESSION_ID)
+        assert variables["verification_evidence_recorded"] is True
+        assert variables["verification_evidence"][-1]["success"] is True
 
     def test_legacy_grok_ambiguous_result_requires_manual_readiness_evidence(
         self, variables

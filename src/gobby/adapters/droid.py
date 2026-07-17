@@ -95,8 +95,12 @@ class DroidAdapter(BaseAdapter):
                     "input_data_keys": sorted(input_data.keys()),
                 },
             )
-        is_failure = bool(normalized_data.get("is_error", False))
-        metadata = {"is_failure": is_failure} if is_failure else {}
+        is_failure = normalized_data.get("is_error")
+        metadata: dict[str, Any] = {}
+        if hook_type == "PostToolUse":
+            metadata["is_failure"] = is_failure if isinstance(is_failure, bool) else False
+        elif is_failure is True:
+            metadata["is_failure"] = True
         self._copy_platform_session_metadata(native_event, metadata)
 
         return HookEvent(
@@ -138,7 +142,13 @@ class DroidAdapter(BaseAdapter):
 
         from gobby.hooks.normalization import normalize_tool_fields
 
-        normalized = normalize_tool_fields(dict(input_data))
+        explicit_is_error = input_data.get("is_error")
+        normalized_input = dict(input_data)
+        if normalized_input.get("tool_name") == "Execute":
+            normalized_input["tool_name"] = "Bash"
+        normalized = normalize_tool_fields(normalized_input)
+        if not isinstance(explicit_is_error, bool):
+            normalized.pop("is_error", None)
         prompt = normalized.get("prompt")
         user_prompt = normalized.get("user_prompt")
         if not prompt and isinstance(user_prompt, str) and user_prompt:

@@ -31,6 +31,20 @@ def _token_usage_data(token_usage: Any) -> dict[str, Any]:
     }
 
 
+def _tool_result_error_text(record: dict[str, Any]) -> str | None:
+    """Extract Droid's structured tool error without stringifying missing values."""
+    error = record.get("error")
+    if isinstance(error, dict):
+        message = error.get("message")
+        if isinstance(message, str) and message:
+            return message
+    elif error is not None:
+        return str(error)
+
+    value = record.get("value")
+    return str(value) if value is not None else None
+
+
 def _events_from_content_blocks(content: Any) -> list[StreamEvent]:
     if not isinstance(content, list):
         return []
@@ -273,7 +287,7 @@ def _stream_events_from_droid_record(record: dict[str, Any]) -> list[StreamEvent
                 call_id=record.get("id") or "unknown",
                 success=not is_error,
                 result=record.get("value") if not is_error else None,
-                error=str(record.get("value")) if is_error else None,
+                error=_tool_result_error_text(record) if is_error else None,
             )
         ]
     if record_type != "message":
