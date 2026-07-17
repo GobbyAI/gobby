@@ -18,7 +18,7 @@ from gobby.storage.workflow_definitions import (
     LocalWorkflowDefinitionManager,
     WorkflowDefinitionRow,
 )
-from gobby.workflows.definitions import RuleDefinitionBody
+from gobby.workflows.definitions import RuleDefinitionBody, split_rule_definition_data
 
 logger = logging.getLogger(__name__)
 
@@ -221,17 +221,13 @@ def update_rule(
 
     if definition is not None:
         try:
-            RuleDefinitionBody.model_validate(definition)
+            local_def, embedded_metadata = split_rule_definition_data(definition)
         except ValidationError as e:
             return {"success": False, "error": f"Invalid rule definition: {e}"}
 
-        # Shallow-copy to avoid mutating the caller's dict via pop().
-        local_def = dict(definition)
-        for key in ("description", "enabled", "priority", "tags"):
-            if key not in fields and key in local_def:
-                fields[key] = local_def.pop(key)
-
-        local_def.pop("name", None)
+        for key, value in embedded_metadata.items():
+            if key != "name" and key not in fields:
+                fields[key] = value
         fields["definition_json"] = json.dumps(local_def)
 
     if not fields:

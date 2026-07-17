@@ -26,6 +26,7 @@ from gobby.workflows.definitions import (
     RuleDefinitionBody,
     RuleEffect,
     RuleTriggerEvent,
+    split_rule_definition_data,
 )
 from gobby.workflows.engine.core import RuleEngine
 
@@ -532,15 +533,13 @@ class TestInjectContextEffect:
         )
         document = yaml.safe_load(rule_path.read_text())
         rule_data = document["rules"]["inject-user-profile"]
-        priority = rule_data.pop("priority")
-        enabled = rule_data.pop("enabled")
-        rule_data.pop("description", None)
+        body_data, metadata = split_rule_definition_data(rule_data)
         _insert_rule(
             manager,
             "inject-user-profile",
-            RuleDefinitionBody.model_validate(rule_data),
-            priority=priority,
-            enabled=enabled,
+            RuleDefinitionBody.model_validate(body_data),
+            priority=metadata["priority"],
+            enabled=metadata["enabled"],
             tags=document["tags"],
         )
 

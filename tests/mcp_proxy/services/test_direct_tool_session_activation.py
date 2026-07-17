@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -26,7 +27,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import RuleDefinitionBody
+from gobby.workflows.definitions import split_rule_definition_data
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
@@ -41,13 +42,14 @@ def _load_interactive_review_block_rule(db: HubDatabase) -> None:
     )
     data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
     rule_data = data["rules"]["block-needs-review-interactive"]
-    body = RuleDefinitionBody.model_validate(rule_data)
+    body, metadata = split_rule_definition_data(rule_data)
     LocalWorkflowDefinitionManager(db).create(
         name="block-needs-review-interactive",
-        definition_json=body.model_dump_json(),
+        definition_json=json.dumps(body),
         workflow_type="rule",
-        priority=rule_data.get("priority", 32),
-        enabled=rule_data.get("enabled", True),
+        description=metadata.get("description"),
+        priority=metadata.get("priority", 32),
+        enabled=metadata.get("enabled", True),
     )
 
 

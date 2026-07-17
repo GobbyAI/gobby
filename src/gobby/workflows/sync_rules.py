@@ -18,7 +18,7 @@ from pydantic import ValidationError
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_array_contains_condition, json_text_expr
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import RuleDefinitionBody
+from gobby.workflows.definitions import split_rule_definition_data
 
 logger = logging.getLogger(__name__)
 
@@ -114,8 +114,9 @@ def sync_bundled_rules(
     event_expr = json_text_expr(db, "definition_json", "event")
     effect_expr = json_text_expr(db, "definition_json", "effect")
     effects_expr = json_text_expr(db, "definition_json", "effects")
+    # Dialect fragments use constant identifiers; query values remain parameterized.
     repaired = db.execute(
-        "UPDATE workflow_definitions "
+        "UPDATE workflow_definitions "  # nosec B608
         "SET workflow_type = 'rule', updated_at = CURRENT_TIMESTAMP "
         "WHERE workflow_type != 'rule' "
         f"  AND {event_expr} IS NOT NULL "
@@ -149,8 +150,9 @@ def sync_bundled_rules(
     result["orphaned"] = 0
     if scan_is_authoritative and rule_files and not result["errors"]:
         tag_condition, tag_params = json_array_contains_condition(db, "tags", tag)
+        # The dialect fragment uses a constant identifier and a parameterized value.
         orphan_rows = db.fetchall(
-            "SELECT id, name FROM workflow_definitions "
+            "SELECT id, name FROM workflow_definitions "  # nosec B608
             "WHERE workflow_type = 'rule' "
             f"AND {tag_condition} AND source = 'installed' AND deleted_at IS NULL",
             tag_params,
@@ -271,9 +273,10 @@ def _has_gobby_rule_name_collision(
     gobby_tag_condition, gobby_tag_params = json_array_contains_condition(
         manager.db, "tags", "gobby"
     )
+    # The dialect fragment uses a constant identifier and a parameterized value.
     return (
         manager.db.fetchone(
-            "SELECT id FROM workflow_definitions "
+            "SELECT id FROM workflow_definitions "  # nosec B608
             f"WHERE name = %s AND {gobby_tag_condition} "
             "AND deleted_at IS NULL",
             (rule_name, *gobby_tag_params),
@@ -342,15 +345,23 @@ def _sync_single_rule(
     if rule_data.get("tools"):
         body_dict["tools"] = rule_data["tools"]
 
+    definition_data = {
+        **body_dict,
+        "description": rule_data.get("description"),
+        "enabled": rule_data.get("enabled", False),
+        "priority": rule_data.get("priority", 100),
+        "tags": file_tags,
+    }
     try:
-        RuleDefinitionBody(**body_dict)
+        body_dict, metadata = split_rule_definition_data(definition_data)
     except ValidationError as ve:
         raise ValueError(f"Invalid rule definition: {ve}") from ve
 
     definition_json = resolve_sync_placeholders(json.dumps(body_dict))
-    priority = rule_data.get("priority", 100)
-    description = rule_data.get("description")
-    enabled = rule_data.get("enabled", False)
+    priority = metadata["priority"]
+    description = metadata["description"]
+    enabled = metadata["enabled"]
+    tags = metadata["tags"]
 
     # Check if rule already exists (any source, including soft-deleted)
     existing = manager.get_by_name(rule_name, include_deleted=True)
@@ -365,7 +376,7 @@ def _sync_single_rule(
                     description=description,
                     priority=priority,
                     sources=file_sources,
-                    tags=file_tags,
+                    tags=tags,
                 )
                 if update_fields:
                     manager.update(existing.id, **update_fields)
@@ -381,7 +392,7 @@ def _sync_single_rule(
                 description=description,
                 priority=priority,
                 sources=file_sources,
-                tags=file_tags,
+                tags=tags,
             )
             if update_fields:
                 manager.update(existing.id, **update_fields)
@@ -401,7 +412,7 @@ def _sync_single_rule(
         enabled=enabled,
         priority=priority,
         sources=file_sources,
-        tags=file_tags,
+        tags=tags,
         source="installed",
     )
     result["synced"] += 1

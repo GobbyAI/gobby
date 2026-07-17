@@ -408,6 +408,29 @@ class TestUpdateRule:
         assert stored_body["event"] == "stop"
         assert stored_body["group"] == "updated-group"
 
+    def test_explicit_metadata_overrides_definition_metadata(
+        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _seed_rule(def_manager, name="my-rule")
+
+        resp = client.put(
+            "/api/rules/my-rule",
+            json={
+                "description": "Explicit",
+                "priority": 9,
+                "definition": {
+                    "event": "stop",
+                    "effects": [{"type": "block", "reason": "updated"}],
+                    "description": "Embedded",
+                    "priority": 7,
+                },
+            },
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["rule"]["description"] == "Explicit"
+        assert resp.json()["rule"]["priority"] == 9
+
     def test_not_found(self, client: TestClient) -> None:
         resp = client.put("/api/rules/nonexistent", json={"priority": 5})
         assert resp.status_code == 404

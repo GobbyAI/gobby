@@ -11,7 +11,12 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
+from gobby.workflows.definitions import (
+    RuleDefinitionBody,
+    RuleEffect,
+    RuleTriggerEvent,
+    split_rule_definition_data,
+)
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from gobby.workflows.templates import TemplateEngine
@@ -92,14 +97,10 @@ def _load_bundled_rule(
         if rule_name not in rules:
             continue
         rule_data = rules[rule_name]
-        body_data = {
-            key: value
-            for key, value in rule_data.items()
-            if key not in {"description", "enabled", "priority"}
-        }
+        body_data, metadata = split_rule_definition_data(rule_data)
         body = RuleDefinitionBody.model_validate(body_data)
-        priority = rule_data.get("priority", 100)
-        enabled = rule_data.get("enabled", True)
+        priority = metadata.get("priority", 100)
+        enabled = metadata.get("enabled", True)
         return _insert_rule(manager, rule_name, body, priority=priority, enabled=enabled)
     raise AssertionError(f"Bundled rule {rule_name!r} not found under {rules_path}")
 

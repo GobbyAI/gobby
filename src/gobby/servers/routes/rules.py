@@ -11,7 +11,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from gobby.mcp_proxy.tools.workflows._rules import (
     create_rule,
@@ -21,7 +21,7 @@ from gobby.mcp_proxy.tools.workflows._rules import (
     toggle_rule,
 )
 from gobby.storage.config_store import ConfigStore
-from gobby.workflows.definitions import RuleDefinitionBody
+from gobby.workflows.definitions import split_rule_definition_data
 from gobby.workflows.loader import _is_bundled_template
 
 if TYPE_CHECKING:
@@ -322,19 +322,14 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
         # Handle full definition replacement from YAML editor
         definition = fields.pop("definition", None)
         if definition is not None:
-            # Validate the rule body
             try:
-                RuleDefinitionBody.model_validate(definition)
-            except Exception as e:
+                definition, embedded_metadata = split_rule_definition_data(definition)
+            except ValidationError as e:
                 raise HTTPException(status_code=400, detail=f"Invalid rule definition: {e}") from e
 
-            # Extract row-level metadata from definition into fields (don't override explicit values)
-            for key in ("description", "enabled", "priority", "tags"):
-                if key not in fields and key in definition:
-                    fields[key] = definition.pop(key)
-
-            # Strip non-body keys (e.g. name) from definition before serializing
-            definition.pop("name", None)
+            for key, value in embedded_metadata.items():
+                if key != "name" and key not in fields:
+                    fields[key] = value
 
             fields["definition_json"] = json.dumps(definition)
 

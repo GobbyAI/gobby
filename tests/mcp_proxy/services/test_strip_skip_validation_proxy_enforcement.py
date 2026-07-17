@@ -8,6 +8,7 @@ context.
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -21,7 +22,7 @@ from gobby.mcp_proxy.services.result_handling import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import RuleDefinitionBody
+from gobby.workflows.definitions import split_rule_definition_data
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import get_bundled_rules_path
 
@@ -37,13 +38,14 @@ def _load_strip_skip_validation_rule(db: HubDatabase) -> None:
     )
     data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
     rule_data = data["rules"]["strip-skip-validation-with-commit"]
-    body = RuleDefinitionBody.model_validate(rule_data)
+    body, metadata = split_rule_definition_data(rule_data)
     LocalWorkflowDefinitionManager(db).create(
         name="strip-skip-validation-with-commit",
-        definition_json=body.model_dump_json(),
+        definition_json=json.dumps(body),
         workflow_type="rule",
-        priority=rule_data.get("priority", 33),
-        enabled=rule_data.get("enabled", True),
+        description=metadata.get("description"),
+        priority=metadata.get("priority", 33),
+        enabled=metadata.get("enabled", True),
     )
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Literal, cast
@@ -334,6 +335,29 @@ class RuleDefinitionBody(BaseModel):
     def resolved_effects(self) -> list[RuleEffect]:
         """Return the canonical list of effects."""
         return self.effects or []
+
+
+RULE_DEFINITION_ROW_METADATA_FIELDS = (
+    "name",
+    "description",
+    "enabled",
+    "priority",
+    "tags",
+)
+
+
+def split_rule_definition_data(
+    data: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Separate and validate a stored rule body from row-level metadata."""
+    body_data = dict(data)
+    metadata: dict[str, Any] = {}
+    for field in RULE_DEFINITION_ROW_METADATA_FIELDS:
+        if field in body_data:
+            metadata[field] = body_data.pop(field)
+
+    RuleDefinitionBody.model_validate(body_data)
+    return body_data, metadata
 
 
 class VariableDefinitionBody(BaseModel):

@@ -307,6 +307,8 @@ class TestUpdateRule:
         assert result["success"] is True
         assert result["rule"]["description"] == "From body"
         assert result["rule"]["priority"] == 7
+        assert body_with_meta["description"] == "From body"
+        assert body_with_meta["priority"] == 7
 
         # Metadata should be hoisted off the body, not duplicated inside it.
         row = def_manager.get_by_name("my-rule")

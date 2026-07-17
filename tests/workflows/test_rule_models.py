@@ -347,6 +347,28 @@ class TestRuleDefinitionBody:
                 effectz=[],
             )
 
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("name", "row-name"),
+            ("description", "row description"),
+            ("enabled", True),
+            ("priority", 10),
+            ("tags", ["row-tag"]),
+        ],
+    )
+    def test_row_metadata_rejected(self, field: str, value: object) -> None:
+        from gobby.workflows.definitions import RuleDefinitionBody
+
+        with pytest.raises(ValidationError, match=field):
+            RuleDefinitionBody.model_validate(
+                {
+                    "event": "before_tool",
+                    "effects": [{"type": "block", "reason": "test"}],
+                    field: value,
+                }
+            )
+
     def test_minimal_block_rule(self) -> None:
         from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 
