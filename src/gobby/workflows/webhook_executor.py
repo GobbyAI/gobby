@@ -16,7 +16,7 @@ import socket
 import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict
 from urllib.parse import urlsplit
 
 if TYPE_CHECKING:
@@ -35,6 +35,15 @@ ALLOWED_METHODS = frozenset({"DELETE", "GET", "PATCH", "POST", "PUT"})
 HEADER_NAME_PATTERN = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
 
 
+class WebhookFailureDiagnostics(TypedDict):
+    """Structured context for a typed webhook execution failure."""
+
+    captured_bytes: int
+    total_bytes: int | None
+    url: str
+    webhook_id: NotRequired[str]
+
+
 @dataclass
 class WebhookResult:
     """Result of a webhook execution."""
@@ -44,6 +53,8 @@ class WebhookResult:
     body: str | None = None
     headers: dict[str, str] | None = None
     error: str | None = None
+    error_code: Literal["response_too_large"] | None = None
+    diagnostics: WebhookFailureDiagnostics | None = None
 
     def json_body(self) -> dict[str, Any] | None:
         """Parse body as JSON.
@@ -227,7 +238,7 @@ class WebhookExecutor:
         if headers:
             merged_headers.update(headers)
 
-        return await self.execute(
+        result = await self.execute(
             url=url,
             method=method or config.get("method", "POST"),
             headers=merged_headers,
@@ -238,6 +249,9 @@ class WebhookExecutor:
             on_success=on_success,
             on_failure=on_failure,
         )
+        if result.error_code == "response_too_large" and result.diagnostics is not None:
+            result.diagnostics["webhook_id"] = webhook_id
+        return result
 
     def _interpolate_secrets(self, headers: dict[str, str]) -> dict[str, str]:
         """Interpolate ${secrets.VAR} in header values.
@@ -369,6 +383,9 @@ class WebhookExecutor:
                     if result.success:
                         return result
 
+                    if result.error_code == "response_too_large":
+                        return result
+
                     # Check if we should retry
                     if result.status_code and result.status_code in retry.retry_on_status:
                         last_error = f"HTTP {result.status_code}"
@@ -433,10 +450,25 @@ class WebhookExecutor:
                 kwargs["data"] = payload
 
         async with session.request(**kwargs) as response:
-            body = await self._read_response_body(response)
-
             # Convert headers to dict
             response_headers = dict(response.headers)
+
+            try:
+                body = await self._read_response_body(response)
+            except _ResponseTooLargeError as exc:
+                return WebhookResult(
+                    success=False,
+                    status_code=response.status,
+                    body=None,
+                    headers=response_headers,
+                    error=str(exc),
+                    error_code="response_too_large",
+                    diagnostics={
+                        "captured_bytes": exc.captured_bytes,
+                        "total_bytes": exc.total_bytes,
+                        "url": _sanitize_url(url),
+                    },
+                )
 
             success = 200 <= response.status < 300
 
@@ -483,11 +515,44 @@ class WebhookExecutor:
         return parsed.hostname, addresses
 
     async def _read_response_body(self, response: aiohttp.ClientResponse) -> str:
-        """Read and decode at most MAX_RESPONSE_BYTES from a response."""
+        """Read a complete bounded response body or raise a typed overflow."""
         try:
             raw_body = await response.content.readexactly(MAX_RESPONSE_BYTES + 1)
         except asyncio.IncompleteReadError as exc:
             raw_body = exc.partial
 
-        raw_body = raw_body[:MAX_RESPONSE_BYTES]
+        if len(raw_body) > MAX_RESPONSE_BYTES:
+            content_encoding = response.headers.get("Content-Encoding", "identity")
+            total_bytes = None
+            if content_encoding.strip().lower() in {"", "identity"}:
+                content_length = response.headers.get("Content-Length")
+                if content_length is not None:
+                    try:
+                        total_bytes = int(content_length)
+                    except ValueError:
+                        pass
+            raise _ResponseTooLargeError(
+                captured_bytes=len(raw_body),
+                total_bytes=total_bytes,
+            )
+
         return raw_body.decode(response.get_encoding(), errors="replace")
+
+
+class _ResponseTooLargeError(Exception):
+    """Internal signal carrying representation-consistent overflow metadata."""
+
+    def __init__(self, captured_bytes: int, total_bytes: int | None) -> None:
+        super().__init__(f"Response body exceeds {MAX_RESPONSE_BYTES} bytes")
+        self.captured_bytes = captured_bytes
+        self.total_bytes = total_bytes
+
+
+def _sanitize_url(url: str) -> str:
+    """Remove URL credentials, query parameters, and fragments from diagnostics."""
+    parsed = urlsplit(url)
+    hostname = parsed.hostname or ""
+    if ":" in hostname:
+        hostname = f"[{hostname}]"
+    netloc = f"{hostname}:{parsed.port}" if parsed.port is not None else hostname
+    return parsed._replace(netloc=netloc, query="", fragment="").geturl()
