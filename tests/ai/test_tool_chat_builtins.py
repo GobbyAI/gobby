@@ -228,6 +228,28 @@ async def test_oversized_builtin_result_returns_typed_size_error() -> None:
     assert runtime.invocation_log[0]["evidence_ref"] is None
 
 
+@pytest.mark.asyncio
+async def test_unserializable_builtin_result_returns_typed_error_without_raising() -> None:
+    async def handler(
+        arguments: dict[str, Any], context: BuiltinExecutionContext
+    ) -> BuiltinToolResult:
+        return BuiltinToolResult(payload=object())
+
+    runtime = ToolRuntime(_policy(), project_path="/repo", builtins=(_spec(handler),))
+
+    result = json.loads(await runtime.execute("read_page", {"limit_bytes": 4}))
+
+    assert result == {
+        "error": "builtin result is not JSON serializable",
+        "error_code": "invalid_tool_result",
+        "success": False,
+    }
+    record = runtime.invocation_log[0]
+    assert record["ok"] is False
+    assert record["error_code"] == "invalid_tool_result"
+    assert record["evidence_ref"] is None
+
+
 def test_result_cap_rejects_one_below_minimum_and_accepts_minimum() -> None:
     minimum = minimum_typed_error_result_size()
 

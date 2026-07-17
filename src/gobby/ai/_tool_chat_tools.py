@@ -405,8 +405,8 @@ class ToolRuntime:
                 error_code="tool_call_budget_exhausted",
                 error="tool call budget exhausted",
             )
-            text = self._serialize_fitted(result)
-            self._record(tool_name, arguments, text, result=result)
+            text, fitted, _ = self._fit_result(result)
+            self._record(tool_name, arguments, text, result=fitted)
             return text
 
         self._calls_used += 1
@@ -452,8 +452,8 @@ class ToolRuntime:
                 error="builtin arguments failed schema validation",
                 details={"errors": errors},
             )
-            text = self._serialize_fitted(result)
-            self._record(spec.name, arguments, text, result=result)
+            text, fitted, _ = self._fit_result(result)
+            self._record(spec.name, arguments, text, result=fitted)
             return text
 
         evidence_ref = new_evidence_ref()
@@ -463,8 +463,8 @@ class ToolRuntime:
         )
         if max_payload_bytes < 0:
             result = tool_result_too_large()
-            text = self._serialize_fitted(result)
-            self._record(spec.name, arguments, text, result=result)
+            text, fitted, _ = self._fit_result(result)
+            self._record(spec.name, arguments, text, result=fitted)
             return text
 
         timeout = self._limits.tool_timeout_seconds
@@ -476,20 +476,7 @@ class ToolRuntime:
         )
         result = await self._await_builtin(spec, arguments, context, timeout=timeout)
         result_ref = evidence_ref if result.ok else None
-        text = self._serialize_fitted(result, evidence_ref=result_ref)
-        fitted_result = result
-        too_large = tool_result_too_large()
-        if (
-            text == serialize_builtin_tool_result(too_large)
-            and result.error_code != too_large.error_code
-        ):
-            fitted_result = too_large
-            result_ref = None
-        elif result.ok and result_ref is not None:
-            expected = serialize_builtin_tool_result(result, evidence_ref=result_ref)
-            if text != expected:
-                fitted_result = too_large
-                result_ref = None
+        text, fitted_result, result_ref = self._fit_result(result, evidence_ref=result_ref)
         self._record(
             spec.name,
             arguments,
@@ -550,25 +537,30 @@ class ToolRuntime:
             details=details,
         )
 
-    def _serialize_fitted(
+    def _fit_result(
         self,
         result: BuiltinToolResult,
         *,
         evidence_ref: str | None = None,
-    ) -> str:
+    ) -> tuple[str, BuiltinToolResult, str | None]:
+        """Serialize under the byte cap, returning the result actually served."""
+        fitted = result
+        ref = evidence_ref
         try:
-            text = serialize_builtin_tool_result(result, evidence_ref=evidence_ref)
+            text = serialize_builtin_tool_result(fitted, evidence_ref=ref)
         except (TypeError, ValueError):
-            text = serialize_builtin_tool_result(
-                BuiltinToolResult(
-                    error_code="invalid_tool_result",
-                    error="builtin result is not JSON serializable",
-                )
+            fitted = BuiltinToolResult(
+                error_code="invalid_tool_result",
+                error="builtin result is not JSON serializable",
             )
+            ref = None
+            text = serialize_builtin_tool_result(fitted)
         if len(text.encode("utf-8")) > self._limits.per_tool_result_byte_cap:
-            text = serialize_builtin_tool_result(tool_result_too_large())
+            fitted = tool_result_too_large()
+            ref = None
+            text = serialize_builtin_tool_result(fitted)
         assert len(text.encode("utf-8")) <= self._limits.per_tool_result_byte_cap
-        return text
+        return text, fitted, ref
 
     def _record(
         self,
