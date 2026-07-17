@@ -1260,6 +1260,37 @@ async def test_execute_and_update_success(
     assert updated_job.last_status == "completed"
 
 
+async def test_execute_and_update_failure_logs_selected_backoff(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+    config: CronConfig,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Failing",
+        schedule_type="cron",
+        action_type="shell",
+        action_config={"command": "false"},
+        cron_expr="0 * * * *",
+    )
+    run = cron_storage.create_run(job.id)
+    assert run is not None
+    cron_storage.update_run(run.id, status="failed", error="command failed")
+    failed_run = cron_storage.get_run(run.id)
+    assert failed_run is not None
+    mock_executor.execute = AsyncMock(return_value=failed_run)
+    caplog.set_level("WARNING", logger="gobby.scheduler.scheduler")
+
+    await scheduler._execute_and_update(job, run)
+
+    assert (
+        f"Cron job {job.id} ({job.name}) failed; applying 30s backoff after 1 consecutive failure"
+        in caplog.text
+    )
+
+
 @pytest.mark.asyncio
 async def test_execute_and_update_dispatched_resets_failure_counter(
     cron_storage: CronJobStorage,

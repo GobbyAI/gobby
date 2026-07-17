@@ -14,6 +14,7 @@ from opentelemetry import trace
 from opentelemetry.trace import format_trace_id
 
 from gobby.config.logging import (
+    AUTOMATION_LOG_FILENAME,
     DAEMON_LOG_FILENAME,
     ERRORS_LOG_FILENAME,
     HOOKS_LOG_FILENAME,
@@ -25,6 +26,7 @@ LogSurface = Literal["daemon", "hooks", "mcp", "automation"]
 
 _PARSER_ERROR_NAMESPACE = "gobby.parser_error"
 _PRIMARY_LOG_FILENAMES: dict[LogSurface, str] = {
+    "automation": AUTOMATION_LOG_FILENAME,
     "daemon": DAEMON_LOG_FILENAME,
     "hooks": HOOKS_LOG_FILENAME,
     "mcp": MCP_LOG_FILENAME,

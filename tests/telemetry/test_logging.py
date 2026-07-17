@@ -11,6 +11,7 @@ from opentelemetry.sdk.trace import TracerProvider
 
 import gobby.telemetry as telemetry
 from gobby.config.logging import (
+    AUTOMATION_LOG_FILENAME,
     DAEMON_LOG_FILENAME,
     ERRORS_LOG_FILENAME,
     HOOKS_LOG_FILENAME,
@@ -153,15 +154,20 @@ def test_setup_file_logging_routes_each_record_to_one_primary_surface(
         "gobby.hooks.events": "hook-record",
         "gobby.mcp_proxy.manager": "mcp-proxy-record",
         "gobby.servers.routes.mcp.tools": "mcp-route-record",
-        # #13912 activates automation.log; until then these retain a daemon primary.
-        "gobby.scheduler.executor": "automation-fallback-record",
+        "gobby.scheduler.executor": "scheduler-record",
+        "gobby.dispatch.worker": "dispatch-record",
+        "gobby.build.runner": "build-record",
+        "gobby.system_automation": "system-automation-record",
+        "gobby.workflows.pipeline_heartbeat": "pipeline-heartbeat-record",
     }
     for logger_name, message in messages.items():
         logging.getLogger(logger_name).info(message)
     logging.getLogger("gobby.hooks.events").warning("hook-warning")
+    logging.getLogger("gobby.scheduler.scheduler").warning("automation-warning")
     logging.getLogger("gobby.runner").info("daemon-info")
 
     paths = {
+        "automation": resolved_log_path(logging_config, AUTOMATION_LOG_FILENAME),
         "daemon": resolved_log_path(logging_config, DAEMON_LOG_FILENAME),
         "errors": resolved_log_path(logging_config, ERRORS_LOG_FILENAME),
         "hooks": resolved_log_path(logging_config, HOOKS_LOG_FILENAME),
@@ -170,16 +176,27 @@ def test_setup_file_logging_routes_each_record_to_one_primary_surface(
     contents = {surface: path.read_text() for surface, path in paths.items()}
 
     assert "daemon-record" in contents["daemon"]
-    assert "automation-fallback-record" in contents["daemon"]
     assert "hook-record" in contents["hooks"]
     assert "mcp-proxy-record" in contents["mcp"]
     assert "mcp-route-record" in contents["mcp"]
+    for message in (
+        "scheduler-record",
+        "dispatch-record",
+        "build-record",
+        "system-automation-record",
+        "pipeline-heartbeat-record",
+    ):
+        assert message in contents["automation"]
     for message in messages.values():
-        primary_writes = sum(message in contents[surface] for surface in ("daemon", "hooks", "mcp"))
+        primary_writes = sum(
+            message in contents[surface] for surface in ("automation", "daemon", "hooks", "mcp")
+        )
         assert primary_writes == 1
 
     assert "hook-warning" in contents["hooks"]
     assert "hook-warning" in contents["errors"]
+    assert "automation-warning" in contents["automation"]
+    assert "automation-warning" in contents["errors"]
     assert "daemon-info" not in contents["errors"]
     assert not resolved_log_path(logging_config, RUNTIME_LOG_FILENAME).exists()
     for retired_name in (
@@ -203,7 +220,7 @@ def test_setup_file_logging_uses_root_handlers_and_shared_formatter_family(
         for handler in root_logger.handlers
         if isinstance(handler, logging.handlers.RotatingFileHandler)
     ]
-    assert len(file_handlers) == 4
+    assert len(file_handlers) == 5
     assert {type(handler.formatter) for handler in file_handlers} == {OTelTraceFormatter}
     for name in ("gobby.hooks", "gobby.mcp", "gobby.mcp_proxy", "gobby.servers.routes.mcp"):
         child = logging.getLogger(name)

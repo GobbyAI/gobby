@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextvars import Context
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from gobby.build.claim_recovery import recover_safe_build_claims
@@ -28,6 +28,22 @@ class DispatcherTickSummary:
     skipped: int = 0
     cap_reached: bool = False
     reason: str | None = None
+
+
+def _log_dispatcher_tick_summary(
+    *,
+    project_id: str | None,
+    summary: DispatcherTickSummary,
+) -> None:
+    log_summary = logger.info if _has_operational_dispatch_event(summary) else logger.debug
+    log_summary(
+        "dispatcher_tick_summary",
+        extra={"project_id": project_id, **asdict(summary)},
+    )
+
+
+def _has_operational_dispatch_event(summary: DispatcherTickSummary) -> bool:
+    return summary.executed > 0 or summary.cap_reached or summary.reason is not None
 
 
 def schedule_dispatcher_tick_for_project(
@@ -207,6 +223,7 @@ async def kick_dispatcher_tick(
         if result.executed == 0 or result.cap_reached or result.reason:
             break
     _record_dispatcher_tick_history(db, project_id, summary)
+    _log_dispatcher_tick_summary(project_id=project_id, summary=summary)
     return summary
 
 

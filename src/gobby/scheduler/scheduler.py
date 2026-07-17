@@ -324,6 +324,7 @@ class CronScheduler:
                 if result.status == "failed":
                     # Increment failure counter (next_run_at already set before dispatch)
                     failures = job.consecutive_failures + 1
+                    backoff = self._get_backoff_seconds(failures)
                     await self._run_db(
                         self._update_job_bookkeeping,
                         job,
@@ -332,7 +333,13 @@ class CronScheduler:
                         consecutive_failures=failures,
                     )
                     logger.warning(
-                        f"Cron job {job.id} ({job.name}) failed ({failures} consecutive failures)"
+                        "Cron job %s (%s) failed; applying %ss backoff after "
+                        "%s consecutive failure%s",
+                        job.id,
+                        job.name,
+                        backoff,
+                        failures,
+                        "" if failures == 1 else "s",
                     )
                 else:
                     # Reset failure counter (next_run_at already set before dispatch)
@@ -345,9 +352,19 @@ class CronScheduler:
                     )
 
             except Exception as e:
-                logger.error(f"Unexpected error executing cron job {job.id}: {e}", exc_info=True)
                 now = datetime.now(UTC).isoformat()
                 failures = job.consecutive_failures + 1
+                backoff = self._get_backoff_seconds(failures)
+                logger.error(
+                    "Unexpected error executing cron job %s: %s; applying %ss backoff after "
+                    "%s consecutive failure%s",
+                    job.id,
+                    e,
+                    backoff,
+                    failures,
+                    "" if failures == 1 else "s",
+                    exc_info=True,
+                )
                 await self._run_db(
                     self._update_job_bookkeeping,
                     job,

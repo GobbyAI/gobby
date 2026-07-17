@@ -30,6 +30,26 @@ AUTOMATION_TICK_TIMEOUT_SECONDS = 120.0
 PROJECT_DISPATCH_TIMEOUT_SECONDS = 120.0
 
 
+def _log_project_dispatch_summary(
+    *,
+    project_id: str,
+    trigger_reason: str,
+    summary: DispatcherTickSummary,
+) -> None:
+    has_operational_event = (
+        summary.executed > 0 or summary.cap_reached or summary.reason is not None
+    )
+    log_summary = logger.info if has_operational_event else logger.debug
+    log_summary(
+        "system_automation_project_dispatch",
+        extra={
+            "project_id": project_id,
+            "trigger_reason": trigger_reason,
+            **asdict(summary),
+        },
+    )
+
+
 @dataclass(frozen=True)
 class AutomationLoopSettings:
     """Resolved automation loop settings."""
@@ -339,9 +359,10 @@ class SystemAutomationLoop:
             if result.executed == 0 or result.cap_reached or result.reason:
                 break
         self._dispatch_count += summary.executed
-        logger.debug(
-            "system_automation_project_dispatch",
-            extra={"project_id": project_id, "reason": reason, **asdict(summary)},
+        _log_project_dispatch_summary(
+            project_id=project_id,
+            trigger_reason=reason,
+            summary=summary,
         )
         return summary
 

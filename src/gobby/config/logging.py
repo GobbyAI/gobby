@@ -6,6 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+AUTOMATION_LOG_FILENAME = "automation.log"
 DAEMON_LOG_FILENAME = "daemon.log"
 ERRORS_LOG_FILENAME = "errors.log"
 RUNTIME_LOG_FILENAME = "runtime.log"

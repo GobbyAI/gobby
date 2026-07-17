@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -164,6 +165,71 @@ async def test_eligible_project_work_calls_run_heartbeat(
 
     assert calls == ["11111111-1111-4111-8111-111111110001"]
     assert summary.projects == ["11111111-1111-4111-8111-111111110001"]
+
+
+@pytest.mark.parametrize(
+    ("heartbeat_result", "expected_level"),
+    [
+        (DispatcherTickSummary(), logging.DEBUG),
+        (DispatcherTickSummary(executed=1), logging.INFO),
+        (DispatcherTickSummary(cap_reached=True, reason="cap_reached"), logging.INFO),
+        (DispatcherTickSummary(reason="dispatcher_unavailable"), logging.INFO),
+    ],
+)
+def test_project_dispatch_summary_level_tracks_operational_events(
+    heartbeat_result: DispatcherTickSummary,
+    expected_level: int,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from gobby.system_automation import _log_project_dispatch_summary
+
+    caplog.set_level(logging.DEBUG, logger="gobby.system_automation")
+
+    _log_project_dispatch_summary(
+        project_id="project-1",
+        trigger_reason="test",
+        summary=heartbeat_result,
+    )
+
+    record = next(
+        record
+        for record in caplog.records
+        if record.message == "system_automation_project_dispatch"
+    )
+    assert record.levelno == expected_level
+    assert record.project_id == "project-1"
+    assert record.trigger_reason == "test"
+    assert record.executed == heartbeat_result.executed
+    assert record.cap_reached == heartbeat_result.cap_reached
+
+
+@pytest.mark.parametrize(
+    ("heartbeat_result", "expected_level"),
+    [
+        (DispatcherTickSummary(), logging.DEBUG),
+        (DispatcherTickSummary(executed=1), logging.INFO),
+        (DispatcherTickSummary(cap_reached=True, reason="cap_reached"), logging.INFO),
+        (DispatcherTickSummary(reason="dispatcher_unavailable"), logging.INFO),
+    ],
+)
+def test_build_dispatch_summary_level_tracks_operational_events(
+    heartbeat_result: DispatcherTickSummary,
+    expected_level: int,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from gobby.build.dispatch_tick import _log_dispatcher_tick_summary
+
+    caplog.set_level(logging.DEBUG, logger="gobby.build.dispatch_tick")
+
+    _log_dispatcher_tick_summary(project_id="project-1", summary=heartbeat_result)
+
+    record = next(
+        record for record in caplog.records if record.message == "dispatcher_tick_summary"
+    )
+    assert record.levelno == expected_level
+    assert record.project_id == "project-1"
+    assert record.executed == heartbeat_result.executed
+    assert record.cap_reached == heartbeat_result.cap_reached
 
 
 @pytest.mark.asyncio
