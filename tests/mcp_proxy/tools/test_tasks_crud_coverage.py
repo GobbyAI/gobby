@@ -410,8 +410,8 @@ class TestUpdateTaskTool:
         )
 
     @pytest.mark.asyncio
-    async def test_update_task_all_fields(self, mock_task_manager, mock_sync_manager):
-        """Test update_task with all updatable fields.
+    async def test_update_task_metadata_fields(self, mock_task_manager, mock_sync_manager):
+        """Test update_task with representative metadata fields.
 
         Note: All status transitions are blocked by production code.
         Must use claim_task, close_task, reopen_task, or submit_for_review.
@@ -435,9 +435,6 @@ class TestUpdateTaskTool:
                 "parent_task_id": "550e8400-e29b-41d4-a716-446655440010",
                 "category": "automated",
                 "task_type": "epic",
-                "workflow_name": "dev-flow",
-                "verification": "Run tests",
-                "sequence_order": 5,
             },
         )
 
@@ -451,9 +448,6 @@ class TestUpdateTaskTool:
             parent_task_id="550e8400-e29b-41d4-a716-446655440010",
             category="automated",
             task_type="epic",
-            workflow_name="dev-flow",
-            verification="Run tests",
-            sequence_order=5,
         )
         assert mock_task_manager.update_task.call_count >= 1
         assert mock_task_manager.update_task.call_args is not None

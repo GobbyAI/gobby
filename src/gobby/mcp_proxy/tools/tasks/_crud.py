@@ -460,9 +460,6 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         parent_task_id: str | None = None,
         category: str | None = None,
         task_type: str | None = None,
-        workflow_name: str | None = None,
-        verification: str | None = None,
-        sequence_order: int | None = None,
         start_date: str | None = None,
         due_date: str | None = None,
         allow_automation: bool | None = None,
@@ -531,12 +528,6 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             kwargs["category"] = category
         if task_type is not None:
             kwargs["task_type"] = task_type
-        if workflow_name is not None:
-            kwargs["workflow_name"] = workflow_name
-        if verification is not None:
-            kwargs["verification"] = verification
-        if sequence_order is not None:
-            kwargs["sequence_order"] = sequence_order
         if start_date is not None:
             kwargs["start_date"] = start_date
         if due_date is not None:
@@ -608,21 +599,6 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "type": "string",
                     "description": "Task type",
                     "enum": list(TASK_TYPE_ENUM),
-                    "default": None,
-                },
-                "workflow_name": {
-                    "type": "string",
-                    "description": "Workflow name for execution context",
-                    "default": None,
-                },
-                "verification": {
-                    "type": "string",
-                    "description": "Verification steps or notes",
-                    "default": None,
-                },
-                "sequence_order": {
-                    "type": "integer",
-                    "description": "Order in a sequence of tasks",
                     "default": None,
                 },
                 "start_date": {

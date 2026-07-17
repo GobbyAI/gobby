@@ -1,6 +1,10 @@
 """Focused coverage tests for task MCP tools."""
 
+from inspect import Parameter, signature
+
 import pytest
+
+from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
 
@@ -100,7 +104,7 @@ class TestToolSchemas:
         assert schema is not None
         props = schema["inputSchema"]["properties"]
 
-        expected_props = [
+        expected_props = {
             "task_id",
             "title",
             "description",
@@ -110,19 +114,22 @@ class TestToolSchemas:
             "parent_task_id",
             "category",
             "task_type",
-            "workflow_name",
-            "verification",
-            "sequence_order",
             "start_date",
             "due_date",
+            "allow_automation",
             "isolation",
             "assigned_agent",
             "implementation_domain",
             "additional_skills",
-        ]
+        }
 
-        for prop in expected_props:
-            assert prop in props, f"Missing property: {prop}"
+        assert set(props) == expected_props
+        manager_fields = {
+            name
+            for name, parameter in signature(LocalTaskManager.update_task).parameters.items()
+            if parameter.kind not in {Parameter.VAR_POSITIONAL, Parameter.VAR_KEYWORD}
+        }
+        assert set(props) <= manager_fields
         assert set(props["isolation"]["enum"]) == {"none", "worktree", "clone"}
         assert set(props["implementation_domain"]["enum"]) == {"backend", "frontend", "fullstack"}
 
