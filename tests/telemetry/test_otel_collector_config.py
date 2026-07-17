@@ -150,7 +150,7 @@ def test_collector_readme_pins_runtime_and_documents_loki() -> None:
     assert "http://loki:3100/otlp/v1/logs" in readme
     assert "start_at: end" in readme
     assert "at-least-once delivery" in readme
-    assert "telemetry.exporters.otlp_endpoint" in readme
+    assert "telemetry.exporter.otlp_endpoint" in readme
 
 
 def _require_collector_smoke() -> str:

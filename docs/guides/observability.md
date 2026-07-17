@@ -50,6 +50,111 @@ get_tool_schema(server_name="gobby-metrics", tool_name="get_usage_report")
 call_tool(server_name="gobby-metrics", tool_name="get_usage_report", ...)
 ```
 
+## Log Files
+
+Gobby writes logs under `logging.dir`, which defaults to `~/.gobby/logs`.
+Start with the file whose surface matches the failing operation:
+
+| File | Inspect it for |
+| --- | --- |
+| `daemon.log` | General daemon startup, storage, provider, HTTP, and subsystem records that do not belong to a specialized surface |
+| `errors.log` | Aggregate view of every Gobby `WARNING`, `ERROR`, and `CRITICAL` record |
+| `runtime.log` | Raw daemon process stdout/stderr, including failures before formatted logging is available |
+| `hooks.log` | Hook ingestion, dispatch, adapter, and lifecycle behavior |
+| `mcp.log` | MCP proxy, server, client, discovery, and MCP route behavior |
+| `automation.log` | Scheduler, dispatcher, build, system automation, and pipeline-heartbeat behavior |
+| `ui.log` | UI development-server stdout/stderr |
+| `*-parser-error.log` | Per-CLI transcript parser diagnostics, such as `codex-parser-error.log` |
+
+Each formatted record has exactly one primary file among `daemon.log`,
+`hooks.log`, `mcp.log`, and `automation.log`. Parser diagnostics use their
+per-CLI parser file. Gobby also writes every `WARNING` or higher record to
+`errors.log` intentionally, so the same source record appears in its primary
+file and the aggregate. This duplicate write is useful for incident scanning;
+`logging_records_total` still counts the source record once.
+
+### Rotation And Size Limits
+
+`daemon.log`, `hooks.log`, `mcp.log`, `automation.log`, `errors.log`, and the
+parser-error files rotate at `logging.max_size_mb`. Gobby keeps
+`logging.backup_count` numbered backups for each file. The defaults are 10 MiB
+and five backups. `ui.log` has an independent 5 MiB limit and three backups.
+
+`runtime.log` is an append-only capture owned by the process launcher or OS
+service. `logging.runtime_max_size_mb` is a health threshold: crossing it marks
+the daemon degraded and emits a warning; it does not delete, rotate, or truncate
+the file. `logging.growth_warn_mb_per_interval` warns when the whole log
+directory grows too quickly between resource-monitor samples. Truncating
+`runtime.log` remains an operator or service-manager action.
+
+See [Logging And Telemetry](configuration.md#logging-and-telemetry) for all
+`logging.*` fields and Windows path configuration.
+
+## Collect Logs With OpenTelemetry
+
+The tested [`otelcol-contrib` reference configuration](../examples/otel-collector/README.md)
+tails all eight default surfaces with `filelog` receivers and sends them to an
+operator-selected OTLP/HTTP backend. Gobby does not start or supervise the
+collector. Deploy it as a separate service with:
+
+- `GOBBY_LOG_DIR` pointing at the same directory as `logging.dir`.
+- `GOBBY_OTEL_STORAGE_DIR` on durable, access-controlled storage for checkpoints
+  and the persistent sending queue.
+- `GOBBY_OTLP_ENDPOINT` pointing at the collector's log backend.
+
+Every receiver uses `start_at: end`. On its first observation of a file, the
+collector starts with new records and leaves existing history on disk. This is
+the privacy-preserving first-start behavior, especially for parser payloads.
+Afterwards, the `file_storage` extension checkpoints offsets so collector
+restarts resume instead of rereading the whole file.
+
+Receiver retries and the persistent exporter queue provide at-least-once
+delivery, so backends must tolerate duplicates. The reference sets
+`on_truncate: read_whole_file`: when an operator or service truncates an
+included file in place, the collector rereads it to avoid losing new bytes.
+That recovery can replay records exported before truncation.
+
+Three endpoints have separate owners:
+
+- `telemetry.exporter.otlp_endpoint` is Gobby's in-process span destination.
+- The collector `filelog` receivers read paths under `GOBBY_LOG_DIR`.
+- Collector `GOBBY_OTLP_ENDPOINT` configures its backend log exporter.
+
+Changing one does not configure the other two.
+
+### Default Collector Exclusions
+
+The reference collector intentionally excludes these adjacent diagnostic
+surfaces:
+
+- `code-index-maintenance.log`, the code-index maintenance event log.
+- `recall_signal.jsonl`, which is structured recall data rather than a log.
+- Standalone `ghook` stderr outside the daemon-managed hook surface.
+- Gwiki vault `log.md` and `_meta/` dumps.
+- PostgreSQL `pgaudit` records.
+
+Add separate receivers only after choosing parsing, access, and retention rules
+for each format. They can contain different or more sensitive data than the
+default eight-file set.
+
+### Windows Collector Paths
+
+Set `logging.dir` and `GOBBY_LOG_DIR` to the same absolute directory. Use a
+quoted forward-slash path such as `"C:/Users/name/.gobby/logs"` so the reference
+receiver globs remain portable. Run `otelcol-contrib.exe` directly and give its
+service account read access to the log directory plus write access to the
+absolute `GOBBY_OTEL_STORAGE_DIR` checkpoint directory.
+
+### Privacy And Retention
+
+Logs can contain local paths, project and session identifiers, provider errors,
+tool context, and transcript-parser payloads. Restrict the log and checkpoint
+directories to the operator account, secure collector transport and backend
+credentials, and set backend retention deliberately. Local rotation controls
+disk retention only; it does not delete records already exported. The
+`errors.log` aggregate also duplicates `WARNING+` records in local and exported
+log volume.
+
 ## Dashboard
 
 The dashboard aggregates:
@@ -133,6 +238,30 @@ process state, background tasks, MCP servers, projects, sessions, tasks, memory,
 skills, pipelines, provider models, savings, agents, file descriptors, database
 state, and last shutdown information.
 
+When `telemetry.metrics_enabled` and
+`telemetry.exporter.prometheus_enabled` are enabled, the endpoint also exposes
+the bounded health counters:
+
+- `logging_records_total{surface,severity}` uses surfaces `daemon`, `hooks`,
+  `mcp`, `automation`, and `parser`, with severities `WARNING`, `ERROR`, and
+  `CRITICAL`. `errors.log` is an aggregate file and is not a metric surface.
+- `automation_events_total{component,outcome}` uses `cron` outcomes `fired`,
+  `succeeded`, and `failed`; `dispatcher` outcomes `succeeded`, `failed`, and
+  `skipped`; and `pipeline-heartbeat` outcomes `recovered` and `failed`.
+
+Useful PromQL queries:
+
+```promql
+sum by (surface, severity) (rate(logging_records_total[5m]))
+increase(logging_records_total{severity=~"ERROR|CRITICAL"}[15m])
+sum by (component, outcome) (rate(automation_events_total[5m]))
+increase(automation_events_total{component="pipeline-heartbeat",outcome="failed"}[15m])
+```
+
+`automation.log` explains individual scheduler and dispatcher decisions.
+Persisted `cron_runs` remains the source of truth for cron run history; use the
+`gobby-cron` run-history tools when exact run status and output matter.
+
 ## CLI
 
 Use the CLI for operator-level checks:
@@ -173,6 +302,8 @@ Follow progressive discovery before each new tool family.
 
 - `src/gobby/mcp_proxy/metrics.py`: MCP metrics collection.
 - `src/gobby/mcp_proxy/tools/metrics.py`: `gobby-metrics` MCP tools.
+- `src/gobby/telemetry/logging.py`: file routing, rotation, and the metrics handler.
+- `src/gobby/telemetry/health_metrics.py`: bounded logging and automation counters.
 - `src/gobby/telemetry/tracing.py`: `@traced` decorator and span helpers.
 - `src/gobby/telemetry/span_store.py`: `GobbySpanExporter` and persisted span storage.
 - `src/gobby/servers/routes/admin/_health.py`: health, status, Prometheus.
@@ -185,8 +316,10 @@ Follow progressive discovery before each new tool family.
 ## See Also
 
 - [web-ui.md](web-ui.md)
+- [configuration.md](configuration.md#logging-and-telemetry)
+- [OpenTelemetry log collector reference](../examples/otel-collector/README.md)
 - [cron-scheduler.md](cron-scheduler.md)
 - [mcp-tools.md](mcp-tools.md)
 - [testing.md](testing.md)
 
-_Last verified: 2026-06-11_
+_Last verified: 2026-07-17_

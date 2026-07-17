@@ -4,6 +4,8 @@
 `otel/opentelemetry-collector-contrib:0.156.0`. It tails Gobby's eight log
 surfaces and sends them to an OTLP/HTTP backend. The collector remains an
 operator-managed process; Gobby does not start or supervise it.
+See the [operator observability guide](../../guides/observability.md#collect-logs-with-opentelemetry)
+for the file taxonomy, metrics, exclusions, and retention guidance.
 
 ## Validate And Run
 
@@ -60,17 +62,18 @@ logs.
 
 Receiver retries and the exporter's persistent sending queue provide
 at-least-once delivery. Duplicates remain possible. In particular,
-`on_truncate: read_whole_file` protects Gobby's in-place `runtime.log`
-truncation path from losing newly written bytes by rereading the truncated file;
-that reread can replay records already exported. Backends should tolerate or
-deduplicate repeated records.
+`on_truncate: read_whole_file` protects `runtime.log` from losing newly written
+bytes when an operator or service truncates it in place by rereading the
+truncated file; that reread can replay records already exported. Backends
+should tolerate or deduplicate repeated records.
 
-Gobby's `telemetry.exporters.otlp_endpoint` configures the daemon's in-process
+Gobby's `telemetry.exporter.otlp_endpoint` configures the daemon's in-process
 span exporter. It does not configure these filelog receivers or the collector's
 backend exporter; the collector uses `GOBBY_OTLP_ENDPOINT` above.
 
 On Windows, run `otelcol-contrib.exe` directly and set the three environment
-variables to absolute Windows paths. Use forward slashes in `GOBBY_LOG_DIR`
-(for example, `C:/Users/name/.gobby/logs`) so the receiver glob suffixes remain
-portable. The checkpoint directory must already exist or be creatable by the
-collector service account.
+variables to absolute Windows paths. Set Gobby's `logging.dir` to the same path
+as `GOBBY_LOG_DIR`. Use forward slashes (for example,
+`C:/Users/name/.gobby/logs`) so the receiver glob suffixes remain portable. The
+checkpoint directory must already exist or be creatable by the collector
+service account.

@@ -226,6 +226,44 @@ ui:
 Ports must be between `1024` and `65535`. Timeouts and intervals must be
 positive unless the field explicitly documents `0` as a special value.
 
+### Logging And Telemetry
+
+```yaml
+logging:
+  level: info
+  format: text
+  dir: ~/.gobby/logs
+  max_size_mb: 10
+  backup_count: 5
+  runtime_max_size_mb: 50
+  growth_warn_mb_per_interval: 100
+
+telemetry:
+  traces_enabled: true
+  metrics_enabled: true
+  exporter:
+    otlp_endpoint: null
+    otlp_protocol: grpc
+    otlp_headers: {}
+    prometheus_enabled: true
+```
+
+`logging.max_size_mb` and `logging.backup_count` control formatted daemon and
+parser log rotation. `logging.runtime_max_size_mb` is a health threshold for
+the append-only `runtime.log`; it does not truncate the file.
+`logging.growth_warn_mb_per_interval` controls the warning threshold for total
+log-directory growth between resource-monitor samples.
+
+On Windows, quote `logging.dir` and use forward slashes, for example
+`"C:/Users/name/.gobby/logs"`. Point an external collector's `GOBBY_LOG_DIR` at
+the same absolute directory.
+
+`telemetry.exporter.otlp_endpoint` sends in-process spans from Gobby. External
+log collection uses independent `filelog` receiver paths and an independent
+collector backend exporter. See [Observability](observability.md#log-files) for
+the eight-file taxonomy, rotation behavior, Prometheus queries, privacy notes,
+and the tested collector deployment.
+
 ### MCP Proxy
 
 ```yaml
@@ -628,8 +666,9 @@ after changing server definitions.
 - [cli-commands.md](./cli-commands.md) - CLI command reference
 - [dispatch.md](./dispatch.md) - Build lifecycle and dispatcher behavior
 - [memory.md](./memory.md) - Memory configuration and operations
+- [observability.md](./observability.md) - Logs, metrics, traces, and collector deployment
 - [rules.md](./rules.md) - Rule engine configuration
 - [search.md](./search.md) - Search and embedding behavior
 - [webhooks-and-plugins.md](./webhooks-and-plugins.md) - Extension development
 
-_Last verified: 2026-07-10_
+_Last verified: 2026-07-17_
