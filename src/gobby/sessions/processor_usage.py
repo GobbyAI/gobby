@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 
 import psycopg
 
+from gobby.llm.context_windows import reconcile_model_context, reconcile_observed_model
 from gobby.sessions.processor_types import WINDOW_ONLY_CONTEXT_SOURCES, ProcessorHost
 from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.storage.token_events import (
@@ -29,7 +30,8 @@ class ProcessorUsageMixin:
             return
         has_usage = any(self._usage_has_tokens(msg) for msg in messages)
         has_window_metadata = any(self._message_context_window(msg) is not None for msg in messages)
-        if not has_usage and not has_window_metadata:
+        has_model = any(isinstance(msg.model, str) and bool(msg.model) for msg in messages)
+        if not has_usage and not has_window_metadata and not has_model:
             return
 
         try:
@@ -46,8 +48,16 @@ class ProcessorUsageMixin:
         source = getattr(session, "source", None)
         source = source if isinstance(source, str) and source else "unknown"
         context_window = self._coerce_context_window(getattr(session, "context_window", None))
-        last_model = getattr(session, "model", None)
-        last_model = last_model if isinstance(last_model, str) and last_model else None
+        session_model = getattr(session, "model", None)
+        session_model = session_model if isinstance(session_model, str) and session_model else None
+        last_model = session_model
+        if not has_usage and not has_window_metadata:
+            for msg in messages:
+                last_model = reconcile_observed_model(last_model, msg.model)
+            if last_model is not None and last_model != session_model:
+                self.session_manager.update_model(session_id, last_model)
+            return
+
         running_totals = store.get_session_totals(session_id)
         latest_context_snapshot = None
         latest_event_at: datetime | None = None
@@ -56,13 +66,15 @@ class ProcessorUsageMixin:
 
         for msg in messages:
             message_model = msg.model if isinstance(msg.model, str) and msg.model else None
-            if message_model:
-                last_model = message_model
-
             message_context_window = self._message_context_window(msg)
-            event_context_window = (
-                message_context_window if message_context_window is not None else context_window
+            reconciled_context = reconcile_model_context(
+                last_model,
+                message_model,
+                message_context_window if message_context_window is not None else context_window,
+                provider=source,
             )
+            last_model = reconciled_context.model
+            event_context_window = reconciled_context.context_window
             if event_context_window is not None:
                 context_window = event_context_window
             if not self._usage_has_tokens(msg) or msg.usage is None:
@@ -70,7 +82,7 @@ class ProcessorUsageMixin:
                     latest_context_snapshot = self._snapshot_from_window_metadata(
                         source=source,
                         context_window=event_context_window,
-                        model=message_model or last_model,
+                        model=last_model,
                     )
                 continue
 
@@ -91,7 +103,7 @@ class ProcessorUsageMixin:
                 message_id=message_id,
                 source=source,
                 origin="transcript",
-                model=message_model or last_model,
+                model=last_model,
                 input_tokens=usage.input_tokens,
                 output_tokens=usage.output_tokens,
                 cache_creation_tokens=usage.cache_creation_tokens,

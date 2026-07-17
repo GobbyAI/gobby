@@ -48,7 +48,11 @@ def snapshot_from_token_usage(
     snapshot_source = normalize_context_usage_source(source)
     if snapshot_source is None:
         return None
-    resolved_window = context_window or context_window_for_source_model(snapshot_source, model)
+    resolved_window = _resolve_context_window_for_source_model(
+        snapshot_source,
+        model,
+        provider_reported_context_window=context_window,
+    )
     return ContextUsageSnapshot.from_token_breakdown(
         source=snapshot_source,
         context_window=resolved_window,
@@ -70,7 +74,11 @@ def snapshot_from_window_metadata(
     snapshot_source = normalize_context_usage_source(source)
     if snapshot_source is None:
         return None
-    resolved_window = context_window or context_window_for_source_model(snapshot_source, model)
+    resolved_window = _resolve_context_window_for_source_model(
+        snapshot_source,
+        model,
+        provider_reported_context_window=context_window,
+    )
     if resolved_window is None:
         return None
     if snapshot_source == "agy":
@@ -96,13 +104,24 @@ def _resolve_context_window_for_source_model(
     model: str | None,
     *,
     catalog: Any | None = None,
+    provider_reported_context_window: Any | None = None,
 ) -> int | None:
     """Resolve context-window metadata for a provider/model pair."""
     snapshot_source = source
     if snapshot_source == "agy":
-        return _context_window_for_agy_model(model)
+        reported = _coerce_positive_int(provider_reported_context_window)
+        return reported if reported is not None else _context_window_for_agy_model(model)
     provider = snapshot_source
-    return resolve_context_window(model, provider=provider, catalog=catalog)
+    if provider_reported_context_window is None:
+        return resolve_context_window(model, provider=provider, catalog=catalog)
+    reported = _coerce_positive_int(provider_reported_context_window)
+    resolved = resolve_context_window(
+        model,
+        provider=provider,
+        catalog=catalog,
+        provider_reported_context_window=reported,
+    )
+    return resolved if resolved is not None else reported
 
 
 def _context_window_for_agy_model(model: str | None) -> int | None:

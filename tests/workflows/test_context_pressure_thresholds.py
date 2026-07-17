@@ -51,6 +51,18 @@ def test_threshold_boundaries(window: int | None, ratio: float, expected_kind: s
     assert variables["context_compact_guidance_kind"] == expected_kind
 
 
+def test_actual_one_million_opus_occupancy_keeps_compact_guidance_inactive() -> None:
+    variables = {"parent_turn_seq": 0, "chat_mode": "normal"}
+
+    detect_context_compact_guidance(
+        variables,
+        "session-1",
+        _SessionManager(125_071 / 1_000_000, 1_000_000),
+    )
+
+    assert variables["context_compact_guidance_kind"] == ""
+
+
 def test_soft_guidance_is_emitted_once() -> None:
     variables = {"parent_turn_seq": 0, "chat_mode": "normal"}
     manager = _SessionManager(0.50, 999_999)

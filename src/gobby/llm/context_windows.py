@@ -154,6 +154,14 @@ class ResolvedContextWindow:
     source: ContextWindowSource
 
 
+@dataclass(frozen=True)
+class ReconciledModelContext:
+    """Session model identity paired with its effective observed window."""
+
+    model: str | None
+    context_window: int | None
+
+
 def _apply_context_window_marker_floor(
     resolved: ResolvedContextWindow,
     has_one_million_marker: bool,
@@ -236,6 +244,24 @@ def normalize_model_lookup_id(value: str) -> str:
     ).lower()
 
 
+def reconcile_observed_model(
+    existing_model: str | None,
+    observed_model: str | None,
+) -> str | None:
+    """Preserve explicit context-tier metadata across equivalent observations."""
+    existing = existing_model.strip() if isinstance(existing_model, str) else ""
+    observed = observed_model.strip() if isinstance(observed_model, str) else ""
+    if not observed:
+        return existing or None
+    if not existing:
+        return observed
+    if _CONTEXT_WINDOW_MARKER_RE.search(existing) is not None and normalize_model_lookup_id(
+        existing
+    ) == normalize_model_lookup_id(observed):
+        return existing
+    return observed
+
+
 def context_key_allowed_for_provider(provider: str | None, key: str) -> bool:
     """Avoid letting family aliases leak across unrelated providers."""
     if key in {"opus", "sonnet", "haiku", "fable"} or key.startswith("claude-"):
@@ -308,6 +334,29 @@ def resolve_context_window(
         provider_reported_context_window=provider_reported_context_window,
     )
     return resolved.value if resolved else None
+
+
+def reconcile_model_context(
+    existing_model: str | None,
+    observed_model: str | None,
+    observed_context_window: Any = None,
+    *,
+    provider: str | None = None,
+    catalog: Any | None = None,
+) -> ReconciledModelContext:
+    """Reconcile a provider observation with authoritative session model metadata."""
+    model = reconcile_observed_model(existing_model, observed_model)
+    reported_window = coerce_context_length(observed_context_window)
+    resolved_window = resolve_context_window(
+        model,
+        provider=provider,
+        catalog=catalog,
+        provider_reported_context_window=reported_window,
+    )
+    return ReconciledModelContext(
+        model=model,
+        context_window=resolved_window if resolved_window is not None else reported_window,
+    )
 
 
 def resolve_context_window_with_source(

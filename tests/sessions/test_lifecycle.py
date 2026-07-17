@@ -1568,6 +1568,58 @@ class TestProcessSessionTranscriptTokenPreservation:
         assert call_kwargs.kwargs["input_tokens"] == 8000
         assert call_kwargs.kwargs["output_tokens"] == 3000
 
+    @pytest.mark.asyncio
+    async def test_final_claude_usage_preserves_one_million_session_model(
+        self, tmp_path, manager
+    ) -> None:
+        from gobby.sessions.transcripts.base import ParsedMessage, TokenUsage
+
+        transcript_path = tmp_path / "transcript.jsonl"
+        transcript_path.write_text('{"type": "message"}\n')
+        session = MagicMock()
+        session.source = "claude"
+        session.project_id = "project-id"
+        session.context_window = 200_000
+        session.model = "claude-opus-4-8[1m]"
+        session.usage_input_tokens = 0
+        session.usage_output_tokens = 0
+        session.usage_cache_creation_tokens = 0
+        session.usage_cache_read_tokens = 0
+        manager.session_manager.get.return_value = session
+        manager.token_event_store = MagicMock()
+        manager.token_event_store.get_session_totals.side_effect = [
+            {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_creation_tokens": 0,
+                "cache_read_tokens": 0,
+            },
+            {
+                "input_tokens": 125_071,
+                "output_tokens": 1,
+                "cache_creation_tokens": 0,
+                "cache_read_tokens": 0,
+            },
+        ]
+        manager.token_event_store.record.return_value = True
+        message = MagicMock(spec=ParsedMessage)
+        message.model = "claude-opus-4-8"
+        message.raw_json = {}
+        message.usage = TokenUsage(input_tokens=125_071, output_tokens=1)
+
+        with patch("gobby.sessions.lifecycle.ClaudeTranscriptParser") as parser:
+            parser.return_value.parse_lines.return_value = [message]
+            await manager._process_session_transcript("s1", str(transcript_path))
+
+        event = manager.token_event_store.record.call_args.args[0]
+        assert event.model == "claude-opus-4-8[1m]"
+        assert event.context_window == 1_000_000
+        update = manager.session_manager.update_usage.call_args
+        assert update.kwargs["model"] == "claude-opus-4-8[1m]"
+        assert update.kwargs["context_window"] == 1_000_000
+        snapshot = manager.session_manager.update_context_usage.call_args.args[1]
+        assert snapshot.context_usage_ratio == pytest.approx(0.125071)
+
 
 class TestProcessPendingTranscriptsArchive:
     """Tests for transcript archive and message purge logic."""

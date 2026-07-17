@@ -121,6 +121,31 @@ class TestStatuslineEndpoint:
             "statusline_posts_succeeded_total", attributes={"source": "claude"}
         )
 
+    def test_preserves_one_million_session_model_in_storage_and_broadcast(
+        self, client, mock_server
+    ) -> None:
+        session = _make_session(model="claude-opus-4-8[1m]")
+        mock_server.session_manager.find_active_by_external_id.return_value = session
+
+        response = client.post(
+            "/api/sessions/statusline",
+            json={
+                "session_id": "ext-123",
+                "model_id": "claude-opus-4-8",
+                "input_tokens": 125_071,
+                "context_window_size": 200_000,
+            },
+        )
+
+        assert response.status_code == 200
+        update_call = mock_server.session_manager.update_usage.call_args
+        assert update_call.kwargs["model"] == "claude-opus-4-8[1m]"
+        assert update_call.kwargs["context_window"] == 1_000_000
+        broadcast = mock_server.services.websocket_server.broadcast_session_usage_updated
+        payload = broadcast.call_args.args[0]
+        assert payload["model"] == "claude-opus-4-8[1m]"
+        assert payload["context_window"] == 1_000_000
+
     def test_prunes_statusline_trackers_once_without_changing_activity(
         self, client, mock_server
     ) -> None:

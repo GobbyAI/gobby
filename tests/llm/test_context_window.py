@@ -21,6 +21,7 @@ import pytest
 from gobby.llm.context_windows import (
     coerce_context_length,
     provider_catalog_context_length_for_model,
+    reconcile_model_context,
     resolve_context_window,
     resolve_context_window_with_source,
     static_context_length_for_model,
@@ -29,6 +30,42 @@ from gobby.servers.provider_models import ProviderModelCatalog
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    ("existing_model", "observed_model", "observed_window"),
+    [
+        ("claude-opus-4-8[1m]", "claude-opus-4-8", 200_000),
+        ("claude-sonnet-4-6[1m]", "anthropic/claude-sonnet-4-6", 0),
+        ("claude-haiku-4-5[1m]", "claude-haiku-4-5", 200_000),
+    ],
+)
+def test_equivalent_observation_preserves_one_million_context_tier(
+    existing_model: str,
+    observed_model: str,
+    observed_window: int,
+) -> None:
+    reconciled = reconcile_model_context(
+        existing_model,
+        observed_model,
+        observed_window,
+        provider="claude",
+    )
+
+    assert reconciled.model == existing_model
+    assert reconciled.context_window == 1_000_000
+
+
+def test_genuine_model_switch_accepts_observed_model_and_window() -> None:
+    reconciled = reconcile_model_context(
+        "claude-opus-4-8[1m]",
+        "claude-haiku-4-5",
+        200_000,
+        provider="claude",
+    )
+
+    assert reconciled.model == "claude-haiku-4-5"
+    assert reconciled.context_window == 200_000
 
 
 @pytest.mark.parametrize(

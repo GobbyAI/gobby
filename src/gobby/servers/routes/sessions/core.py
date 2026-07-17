@@ -21,6 +21,7 @@ from gobby.agents.sandbox import (
     web_chat_sandbox_config,
     web_chat_sandbox_policy_hash,
 )
+from gobby.llm.context_windows import reconcile_model_context
 from gobby.servers.models import (
     SessionRegisterRequest,
     StatuslineUpdateRequest,
@@ -381,6 +382,12 @@ def register_core_routes(
             # Session may not be registered yet (first ~1s of updates)
             return {"status": "ok", "warning": "session_not_found"}
 
+        reconciled_context = reconcile_model_context(
+            getattr(session, "model", None),
+            update.model_id,
+            update.context_window_size,
+            provider="claude",
+        )
         now = datetime.now(UTC)
         previous = record_statusline_seen(session.id, now)
         if previous is not None:
@@ -432,8 +439,8 @@ def register_core_routes(
             output_tokens=update.output_tokens,
             cache_creation_tokens=update.cache_creation_tokens,
             cache_read_tokens=update.cache_read_tokens,
-            context_window=update.context_window_size,
-            model=update.model_id,
+            context_window=reconciled_context.context_window,
+            model=reconciled_context.model,
         )
         inc_counter("statusline_posts_succeeded_total", attributes={"source": "claude"})
 
@@ -443,8 +450,8 @@ def register_core_routes(
                 build_session_usage_payload(
                     session_id=session.id,
                     project_id=session.project_id,
-                    model=update.model_id,
-                    context_window=update.context_window_size,
+                    model=reconciled_context.model,
+                    context_window=reconciled_context.context_window,
                     totals={
                         "input_tokens": update.input_tokens,
                         "output_tokens": update.output_tokens,

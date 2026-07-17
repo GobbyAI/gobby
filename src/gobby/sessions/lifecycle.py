@@ -22,6 +22,7 @@ import psycopg
 
 from gobby.app_context import get_app_context
 from gobby.config.sessions import SessionLifecycleConfig
+from gobby.llm.context_windows import reconcile_model_context
 from gobby.sessions.context_usage import (
     context_window_from_raw_message,
     snapshot_from_token_usage,
@@ -764,10 +765,19 @@ class SessionLifecycleManager:
 
         for msg in messages:
             message_model = msg.model if isinstance(msg.model, str) and msg.model else None
-            if message_model:
-                last_model = message_model
-
-            message_context_window = _message_context_window(msg) or session_context_window
+            observed_context_window = _message_context_window(msg)
+            reconciled_context = reconcile_model_context(
+                last_model,
+                message_model,
+                (
+                    observed_context_window
+                    if observed_context_window is not None
+                    else session_context_window
+                ),
+                provider=session_source,
+            )
+            last_model = reconciled_context.model
+            message_context_window = reconciled_context.context_window
             if message_context_window is not None:
                 session_context_window = message_context_window
             usage = msg.usage
@@ -814,7 +824,7 @@ class SessionLifecycleManager:
                 message_id = None
             content_type = getattr(msg, "content_type", None)
             metadata = {"content_type": content_type} if isinstance(content_type, str) else None
-            event_model = message_model or last_model
+            event_model = last_model
 
             event = TokenEvent(
                 session_id=session_id,

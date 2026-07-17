@@ -107,10 +107,6 @@ class ProcessorTranscriptMixin:
                     tool_call_count=stats.get("tool_call_count", 0),
                     last_assistant_content=stats.get("last_assistant_content"),
                 )
-                for msg in messages:
-                    if msg.model:
-                        self.session_manager.update_model(session_id, msg.model)
-                        break
             return stats
         except Exception:
             if had_stats:

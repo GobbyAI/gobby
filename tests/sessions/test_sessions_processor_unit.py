@@ -609,6 +609,7 @@ class TestProcessSession:
             )
         )
         processor.register_session("session-1", str(transcript), source="qwen")
+        processor._parsers["session-1"] = TypedJsonTranscriptParser(cli_name="typed-json")
         batch_entered = asyncio.Event()
         release_batch = asyncio.Event()
         second_batch_entered = asyncio.Event()
@@ -1213,6 +1214,78 @@ class TestModelExtraction:
         )
         assert mock_session_manager.update_model.call_count == 1
         assert mock_session_manager.update_model.call_args is not None
+
+    @pytest.mark.asyncio
+    async def test_live_claude_usage_preserves_one_million_session_model(
+        self, mock_db, monkeypatch
+    ) -> None:
+        class FakeTokenEventStore:
+            def __init__(self, _db: object) -> None:
+                self.records: list[object] = []
+
+            def get_session_totals(self, _session_id: str) -> dict[str, int]:
+                return {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cache_creation_tokens": 0,
+                    "cache_read_tokens": 0,
+                }
+
+            def record(self, event: object) -> bool:
+                self.records.append(event)
+                return True
+
+        store = FakeTokenEventStore(mock_db)
+        monkeypatch.setattr("gobby.sessions.processor.TokenEventStore", lambda _db: store)
+
+        session_manager = MagicMock()
+        session = MagicMock()
+        session.project_id = "proj-1"
+        session.source = "claude"
+        session.context_window = 200_000
+        session.model = "claude-opus-4-8[1m]"
+        session_manager.get.return_value = session
+        websocket_server = MagicMock()
+        websocket_server.broadcast_token_event = AsyncMock()
+        websocket_server.broadcast_session_usage_updated = AsyncMock()
+        processor = SessionMessageProcessor(
+            mock_db,
+            websocket_server=websocket_server,
+            session_manager=session_manager,
+        )
+        message = ParsedMessage(
+            index=0,
+            role="assistant",
+            content="done",
+            content_type="text",
+            tool_name=None,
+            tool_input=None,
+            tool_result=None,
+            timestamp=datetime.now(),
+            raw_json={},
+            usage=TokenUsage(
+                input_tokens=125_071,
+                output_tokens=1,
+                cache_creation_tokens=0,
+                cache_read_tokens=0,
+            ),
+            model="claude-opus-4-8",
+            message_id="message-1",
+        )
+
+        await processor._persist_usage_events("session-1", [message])
+
+        event = store.records[0]
+        assert event.model == "claude-opus-4-8[1m]"
+        assert event.context_window == 1_000_000
+        update = session_manager.update_usage.call_args
+        assert update.kwargs["model"] == "claude-opus-4-8[1m]"
+        assert update.kwargs["context_window"] == 1_000_000
+        snapshot = session_manager.update_context_usage.call_args.args[1]
+        assert snapshot.context_usage_ratio == pytest.approx(0.125071)
+        payload = websocket_server.broadcast_session_usage_updated.await_args.args[0]
+        assert payload["model"] == "claude-opus-4-8[1m]"
+        assert payload["context_window"] == 1_000_000
 
     @pytest.mark.asyncio
     async def test_process_session_persists_codex_token_usage(

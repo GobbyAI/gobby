@@ -11,10 +11,32 @@ from gobby.sessions.context_usage import (
     context_window_for_source_model,
     context_window_from_raw_message,
     effective_context_window_for_session,
+    snapshot_from_token_usage,
     snapshot_from_window_metadata,
 )
+from gobby.sessions.transcripts.base import TokenUsage
 
 pytestmark = pytest.mark.unit
+
+
+def test_snapshot_builders_resolve_one_million_context_marker() -> None:
+    token_snapshot = snapshot_from_token_usage(
+        source="claude",
+        context_window=200_000,
+        usage=TokenUsage(input_tokens=125_071, output_tokens=1),
+        model="claude-opus-4-8[1m]",
+    )
+    window_snapshot = snapshot_from_window_metadata(
+        source="claude",
+        context_window=200_000,
+        model="claude-sonnet-4-6[1m]",
+    )
+
+    assert token_snapshot is not None
+    assert token_snapshot.context_window == 1_000_000
+    assert token_snapshot.context_usage_ratio == pytest.approx(0.125071)
+    assert window_snapshot is not None
+    assert window_snapshot.context_window == 1_000_000
 
 
 @pytest.mark.parametrize(
