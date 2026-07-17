@@ -66,8 +66,7 @@ class TranscriptAnalyzer:
 
     @staticmethod
     def _get_user_text(turn: dict[str, Any]) -> str:
-        """Extract the user's text from a turn, handling Claude and typed-JSON formats."""
-        # Claude: nested under message
+        """Extract the user's visible text from a supported transcript turn."""
         msg = turn.get("message")
         if isinstance(msg, dict):
             content = msg.get("content", "")
@@ -79,59 +78,52 @@ class TranscriptAnalyzer:
                     elif isinstance(block, str):
                         parts.append(block)
                 return " ".join(parts).strip()
-            return str(content).strip()
-
-        # Typed JSON: content at top level — list of {"text": ...} or a string
-        content = turn.get("content")
-        if isinstance(content, list):
-            parts = []
-            for item in content:
-                if isinstance(item, dict) and "text" in item:
-                    parts.append(item["text"])
-                elif isinstance(item, str):
-                    parts.append(item)
-            return " ".join(parts).strip()
-        if isinstance(content, str):
-            return content.strip()
+            if isinstance(content, str) and content:
+                return content.strip()
+            if content not in (None, ""):
+                return str(content).strip()
+            return " ".join(
+                block["text"]
+                for block in TranscriptAnalyzer._iter_content_blocks(turn)
+                if block.get("type") == "text" and isinstance(block.get("text"), str)
+            ).strip()
         return ""
 
     @staticmethod
     def _iter_content_blocks(turn: dict[str, Any]) -> list[dict[str, Any]]:
-        """Return normalized content blocks from a turn (Claude or typed JSON).
+        """Return normalized content blocks from a Claude or Qwen turn.
 
         Every returned block has at least a ``type`` key (``"text"``,
         ``"tool_use"``, ``"tool_result"``).
         """
-        # Claude format: message.content is a list of typed blocks
         msg = turn.get("message")
-        if isinstance(msg, dict):
-            content = msg.get("content", [])
-            if isinstance(content, list):
-                return [b for b in content if isinstance(b, dict)]
+        if not isinstance(msg, dict):
             return []
 
-        # Typed-JSON session format — synthesize blocks from top-level fields
+        content = msg.get("content")
+        if isinstance(content, list):
+            return [block for block in content if isinstance(block, dict)]
+
         blocks: list[dict[str, Any]] = []
-
-        content = turn.get("content")
-        if isinstance(content, str) and content.strip():
-            blocks.append({"type": "text", "text": content})
-        elif isinstance(content, list):
-            for item in content:
-                if isinstance(item, dict) and "text" in item:
-                    blocks.append({"type": "text", "text": item["text"]})
-
-        for tc in turn.get("toolCalls", []):
-            if isinstance(tc, dict):
+        parts = msg.get("parts", [])
+        if not isinstance(parts, list):
+            return blocks
+        for part in parts:
+            if not isinstance(part, dict):
+                continue
+            text = part.get("text")
+            if isinstance(text, str) and text and part.get("thought") is not True:
+                blocks.append({"type": "text", "text": text})
+            function_call = part.get("functionCall")
+            if isinstance(function_call, dict):
                 block: dict[str, Any] = {
                     "type": "tool_use",
-                    "name": tc.get("name", "unknown"),
-                    "input": tc.get("args", {}),
+                    "name": function_call.get("name", "unknown"),
+                    "input": function_call.get("args", {}),
                 }
-                if tc.get("id"):
-                    block["id"] = tc["id"]
+                if function_call.get("id"):
+                    block["id"] = function_call["id"]
                 blocks.append(block)
-
         return blocks
 
     @staticmethod
@@ -158,7 +150,7 @@ class TranscriptAnalyzer:
         - The original user goal (first user message)
         - Recent tool activity summaries
 
-        Handles both Claude JSONL and Qwen typed-JSON session formats
+        Handles Claude and current Qwen JSONL envelope formats
         transparently via ``_iter_content_blocks`` / ``_get_user_text``.
 
         Args:

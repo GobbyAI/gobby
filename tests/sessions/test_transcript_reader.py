@@ -709,11 +709,17 @@ class TestTranscriptReaderRendered:
             [
                 {
                     "type": "user",
-                    "content": "hello from qwen",
+                    "message": {
+                        "role": "user",
+                        "parts": [{"text": "hello from qwen"}],
+                    },
                 },
                 {
-                    "type": "model",
-                    "content": "qwen reply",
+                    "type": "assistant",
+                    "message": {
+                        "role": "model",
+                        "parts": [{"text": "qwen reply"}],
+                    },
                 },
             ],
         )
@@ -802,117 +808,6 @@ class TestTranscriptReaderRendered:
         assert status["content_state"] == "unparseable"
         assert status["raw_record_count"] == 2
         assert status["parsed_message_count"] == 0
-
-
-def _qwen_json_reader(
-    tmp_path: Path,
-    filename: str,
-    messages: list[dict[str, object]],
-    *,
-    session_id: str = "qwen-session-uuid",
-) -> TranscriptReader:
-    json_path = tmp_path / filename
-    json_path.write_text(
-        json.dumps({"sessionId": session_id, "messages": messages}),
-        encoding="utf-8",
-    )
-
-    session = MagicMock()
-    session.source = "qwen"
-    session.transcript_path = str(json_path)
-    session.external_id = None
-
-    session_manager = MagicMock()
-    session_manager.get.return_value = session
-    return TranscriptReader(session_manager)
-
-
-class TestTranscriptReaderQwenJSON:
-    """TranscriptReader handles Qwen typed-JSON session files."""
-
-    @pytest.mark.asyncio
-    async def test_read_qwen_json_get_messages(self, tmp_path: Path):
-        """get_messages works with Qwen typed-JSON session files."""
-        reader = _qwen_json_reader(
-            tmp_path,
-            "session-2025-03-23T10-00-00-abc12345.json",
-            [
-                {"type": "user", "content": "hello qwen", "timestamp": "2025-03-23T10:00:00Z"},
-                {"type": "gemini", "content": "hi there!", "timestamp": "2025-03-23T10:00:01Z"},
-            ],
-            session_id="abc12345-full-uuid",
-        )
-        result = await reader.get_messages("sess-1", limit=50)
-
-        assert len(result) == 2
-        assert result[0]["role"] == "user"
-        assert result[0]["content"] == "hello qwen"
-        assert result[1]["role"] == "assistant"
-        assert result[1]["content"] == "hi there!"
-
-    @pytest.mark.asyncio
-    async def test_read_qwen_json_rendered(self, tmp_path: Path):
-        """get_rendered_messages works with Qwen typed-JSON session files."""
-        reader = _qwen_json_reader(
-            tmp_path,
-            "session-2025-03-23T10-00-00-abc12345.json",
-            [
-                {"type": "user", "content": "what is 2+2?", "timestamp": "2025-03-23T10:00:00Z"},
-                {"type": "gemini", "content": "4", "timestamp": "2025-03-23T10:00:01Z"},
-            ],
-            session_id="abc12345-full-uuid",
-        )
-        result = await reader.get_rendered_messages("sess-1")
-
-        assert len(result) == 2
-        assert isinstance(result[0], RenderedMessage)
-        assert result[0].role == "user"
-        assert "2+2" in result[0].content
-        assert result[1].role == "assistant"
-
-    @pytest.mark.asyncio
-    async def test_count_qwen_json_messages(self, tmp_path: Path):
-        """count_messages works with Qwen typed-JSON session files."""
-        reader = _qwen_json_reader(
-            tmp_path,
-            "session-test.json",
-            [
-                {"type": "user", "content": "msg1", "timestamp": "2025-03-23T10:00:00Z"},
-                {"type": "gemini", "content": "reply1", "timestamp": "2025-03-23T10:00:01Z"},
-                {"type": "user", "content": "msg2", "timestamp": "2025-03-23T10:00:02Z"},
-            ],
-            session_id="test-uuid",
-        )
-        count = await reader.count_messages("sess-1")
-
-        assert count == 3
-
-    @pytest.mark.asyncio
-    async def test_qwen_json_with_tool_calls(self, tmp_path: Path):
-        """Qwen typed JSON with embedded toolCalls parses correctly."""
-        reader = _qwen_json_reader(
-            tmp_path,
-            "session-tools.json",
-            [
-                {"type": "user", "content": "list files", "timestamp": "2025-03-23T10:00:00Z"},
-                {
-                    "type": "gemini",
-                    "content": "Let me check.",
-                    "timestamp": "2025-03-23T10:00:01Z",
-                    "toolCalls": [
-                        {"name": "ReadFile", "args": {"path": "/tmp/test.py"}},
-                    ],
-                },
-            ],
-            session_id="tools-uuid",
-        )
-        result = await reader.get_messages("sess-1", limit=50)
-
-        # user + assistant text + tool_use = at least 3 messages
-        assert len(result) >= 3
-        tool_msgs = [m for m in result if m["content_type"] == "tool_use"]
-        assert len(tool_msgs) >= 1
-        assert tool_msgs[0]["tool_name"] == "ReadFile"
 
 
 def _jsonl_reader_with_user_msgs(tmp_path: Path, count: int) -> TranscriptReader:

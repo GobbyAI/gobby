@@ -71,15 +71,6 @@ def _parse_json_session(
     transcript_path: str | Path | None = None,
 ) -> list[ParsedMessage]:
     """Parse a native JSON session file."""
-    from gobby.sessions.transcripts.qwen import QwenTranscriptParser
-
-    if source == "qwen":
-        qwen_parser = QwenTranscriptParser(session_id=session_id)
-        return [
-            r
-            for r in normalize_transcript_records(qwen_parser.parse_session_json(data), source)
-            if isinstance(r, ParsedMessage)
-        ]
     return _parse_lines(
         [json.dumps(data)],
         source,

@@ -23,9 +23,6 @@ _SESSION_MANAGER_PATCH = "gobby.sessions.lifecycle.SessionManager"
 DROID_FIXTURE_DIR = Path(__file__).parent / "transcripts" / "fixtures" / "droid"
 DROID_FIXTURE_JSONL = DROID_FIXTURE_DIR / "dbf95187-5fa4-43a0-b207-8c24f412baf7.jsonl"
 DROID_FIXTURE_SETTINGS = DROID_FIXTURE_DIR / "dbf95187-5fa4-43a0-b207-8c24f412baf7.settings.json"
-QWEN_FIXTURE_JSON = (
-    Path(__file__).parent.parent / "fixtures" / "transcripts" / "qwen" / "session.json"
-)
 
 
 class EmptyTokenEventStore:
@@ -311,7 +308,14 @@ class TestSessionLifecycleManager:
 
             processed = await manager._process_pending_transcripts()
 
-        manager.session_manager.update_stats.assert_called_once()
+        manager.session_manager.update_stats.assert_called_once_with(
+            "s1",
+            message_count=3,
+            turn_count=3,
+            tool_call_count=0,
+            last_assistant_content="Third",
+        )
+        assert session.turn_count == 3
         mock_generate.assert_awaited_once_with("s1")
         assert processed == 1
 
@@ -1418,17 +1422,20 @@ class TestProcessSessionTranscriptParsers:
 
 
 class TestProcessSessionTranscriptJsonDispatch:
-    """Tests for .json file dispatch to parse_session_json."""
+    """Tests for .json transcript dispatch."""
 
     @pytest.mark.asyncio
-    async def test_qwen_json_uses_parse_session_json(self, tmp_path, manager):
-        """Qwen .json transcript dispatches to parse_session_json, not parse_lines."""
+    async def test_qwen_json_uses_current_line_parser(self, tmp_path, manager):
+        """Qwen .json records use the current JSONL-envelope parser contract."""
         import json
 
         transcript_path = tmp_path / "session-abc.json"
         transcript_path.write_text(
             json.dumps(
-                {"sessionId": "abc", "messages": [{"type": "user", "content": [{"text": "hi"}]}]}
+                {
+                    "type": "user",
+                    "message": {"role": "user", "parts": [{"text": "hi"}]},
+                }
             )
         )
 
@@ -1437,12 +1444,10 @@ class TestProcessSessionTranscriptJsonDispatch:
         manager.session_manager.get.return_value = session
 
         with patch("gobby.sessions.lifecycle.QwenTranscriptParser") as MockParser:
-            MockParser.return_value.parse_session_json.return_value = []
-            # Ensure hasattr check passes
-            MockParser.return_value.parse_session_json.__name__ = "parse_session_json"
+            del MockParser.return_value.parse_session_json
+            MockParser.return_value.parse_lines.return_value = []
             await manager._process_session_transcript("s1", str(transcript_path))
-            MockParser.return_value.parse_session_json.assert_called_once()
-            MockParser.return_value.parse_lines.assert_not_called()
+            MockParser.return_value.parse_lines.assert_called_once()
             assert manager.session_manager.update_usage.call_count == 0
 
     @pytest.mark.asyncio
@@ -1475,77 +1480,6 @@ class TestProcessSessionTranscriptJsonDispatch:
         await manager._process_session_transcript("s1", str(transcript_path))
         manager.session_manager.update_usage.assert_not_called()
         assert manager.session_manager.update_usage.call_count == 0
-
-    @pytest.mark.asyncio
-    async def test_qwen_backfill_records_native_token_usage(self, tmp_path, manager):
-        transcript_path = tmp_path / "qwen-session.json"
-        transcript_path.write_text(QWEN_FIXTURE_JSON.read_text(encoding="utf-8"), encoding="utf-8")
-
-        session = MagicMock()
-        session.source = "qwen"
-        session.project_id = "project-id"
-        session.context_window = None
-        session.model = "qwen3-coder"
-        manager.session_manager.get.return_value = session
-
-        zero_totals = {
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "cache_creation_tokens": 0,
-            "cache_read_tokens": 0,
-        }
-        manager.token_event_store = MagicMock()
-        manager.token_event_store.get_session_totals.side_effect = [
-            dict(zero_totals),
-            dict(zero_totals),
-        ]
-        manager.token_event_store.record.return_value = True
-
-        await manager._process_session_transcript("s1", str(transcript_path))
-
-        event = manager.token_event_store.record.call_args.args[0]
-        assert event.source == "qwen"
-        assert event.origin == "transcript"
-        assert event.input_tokens == 750
-        assert event.output_tokens == 100
-        assert event.cache_read_tokens == 250
-        manager.session_manager.update_usage.assert_called_once_with(
-            session_id="s1",
-            input_tokens=750,
-            output_tokens=100,
-            cache_creation_tokens=0,
-            cache_read_tokens=250,
-            context_window=None,
-            model="qwen3-coder",
-        )
-
-    @pytest.mark.asyncio
-    async def test_json_messages_aggregate_tokens(self, tmp_path, manager):
-        """Token usage from parse_session_json messages is aggregated and saved."""
-        import json
-
-        from gobby.sessions.transcripts.base import ParsedMessage, TokenUsage
-
-        transcript_path = tmp_path / "session-tok.json"
-        transcript_path.write_text(json.dumps({"sessionId": "tok", "messages": []}))
-
-        session = MagicMock()
-        session.source = "qwen"
-        manager.session_manager.get.return_value = session
-
-        msg = MagicMock(spec=ParsedMessage)
-        msg.model = "qwen3-coder"
-        msg.usage = TokenUsage(input_tokens=100, output_tokens=50)
-
-        with patch("gobby.sessions.lifecycle.QwenTranscriptParser") as MockParser:
-            MockParser.return_value.parse_session_json.return_value = [msg]
-            MockParser.return_value.parse_session_json.__name__ = "parse_session_json"
-            await manager._process_session_transcript("s1", str(transcript_path))
-
-        manager.session_manager.update_usage.assert_called_once()
-        call_kwargs = manager.session_manager.update_usage.call_args
-        assert call_kwargs.kwargs["input_tokens"] == 100
-        assert call_kwargs.kwargs["output_tokens"] == 50
 
 
 class TestProcessSessionTranscriptTokenPreservation:

@@ -1557,45 +1557,62 @@ def test_initial_goal_handles_list_content() -> None:
 
 
 # ------------------------------------------------------------------
-# Qwen typed-JSON session format
+# Qwen current JSONL envelope format
 # ------------------------------------------------------------------
 
 
 @pytest.fixture
 def qwen_turns():
-    """Turns in Qwen typed-JSON format (type: user/gemini)."""
+    """Turns in Qwen's current nested message-parts format."""
     return [
         {
             "id": "msg-1",
             "type": "user",
             "timestamp": "2026-04-12T16:20:00Z",
-            "content": [{"text": "Fix the auth bug"}],
+            "message": {
+                "role": "user",
+                "parts": [{"text": "Fix the auth bug"}],
+            },
         },
         {
             "id": "msg-2",
-            "type": "gemini",
+            "type": "assistant",
             "timestamp": "2026-04-12T16:20:01Z",
-            "content": "I'll fix it now.",
-            "toolCalls": [
-                {
-                    "id": "replace_1",
-                    "name": "replace",
-                    "args": {"file_path": "auth.py", "old_string": "bad", "new_string": "good"},
-                },
-            ],
+            "message": {
+                "role": "model",
+                "parts": [
+                    {"text": "I'll fix it now."},
+                    {
+                        "functionCall": {
+                            "id": "replace_1",
+                            "name": "replace",
+                            "args": {
+                                "file_path": "auth.py",
+                                "old_string": "bad",
+                                "new_string": "good",
+                            },
+                        }
+                    },
+                ],
+            },
         },
         {
             "id": "msg-3",
-            "type": "gemini",
+            "type": "assistant",
             "timestamp": "2026-04-12T16:20:02Z",
-            "content": "I decided to use the new auth library because it's more secure.",
-            "toolCalls": [
-                {
-                    "id": "shell_1",
-                    "name": "shell",
-                    "args": {"command": "git commit -m 'fix auth'"},
-                },
-            ],
+            "message": {
+                "role": "model",
+                "parts": [
+                    {"text": "I decided to use the new auth library because it's more secure."},
+                    {
+                        "functionCall": {
+                            "id": "shell_1",
+                            "name": "shell",
+                            "args": {"command": "git commit -m 'fix auth'"},
+                        }
+                    },
+                ],
+            },
         },
     ]
 
@@ -1608,7 +1625,7 @@ def test_qwen_initial_goal(qwen_turns) -> None:
 
 
 def test_qwen_tool_calls_detected(qwen_turns) -> None:
-    """Qwen format: tool calls from toolCalls array are detected."""
+    """Qwen format: tool calls from functionCall parts are detected."""
     analyzer = TranscriptAnalyzer()
     ctx = analyzer.extract_handoff_context(qwen_turns)
     assert len(ctx.recent_activity) > 0
@@ -1628,14 +1645,3 @@ def test_qwen_empty_turns() -> None:
     ctx = analyzer.extract_handoff_context([])
     assert ctx.initial_goal == ""
     assert not ctx.active_gobby_task
-
-
-def test_qwen_user_content_as_string() -> None:
-    """Qwen format: user content can also be a plain string."""
-    turns = [
-        {"type": "user", "content": "Hello world"},
-        {"type": "gemini", "content": "Hi!"},
-    ]
-    analyzer = TranscriptAnalyzer()
-    ctx = analyzer.extract_handoff_context(turns)
-    assert ctx.initial_goal == "Hello world"

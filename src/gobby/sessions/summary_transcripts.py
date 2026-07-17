@@ -29,8 +29,7 @@ async def _read_transcript(
 ) -> list[dict[str, Any]]:
     """Read and parse a transcript file in its native format.
 
-    Claude, Codex, and Droid use JSONL (one JSON object per line).
-    Qwen stores sessions as a single JSON object with a ``messages`` array.
+    Claude, Codex, Droid, and Qwen use JSONL (one JSON object per line).
     The returned dicts are in the source's native format - callers that need
     to iterate content blocks should use format-aware helpers.
 
@@ -39,13 +38,6 @@ async def _read_transcript(
         source: Session source (``"claude"``, ``"qwen"``, ``"codex"``,
             ``"droid"``).
     """
-    # Typed JSON session files are a single JSON object, not JSONL. Legacy
-    # registrations may have source="unknown" even when the file shape is typed.
-    if path.suffix == ".json" and source in {"qwen", "unknown"}:
-        typed_turns = await _read_typed_json_transcript(path)
-        return typed_turns[-max_turns:] if max_turns is not None else typed_turns
-
-    # JSONL format (Claude, Codex, default)
     turns: list[dict[str, Any]] | deque[dict[str, Any]] = (
         deque(maxlen=max_turns) if max_turns is not None else []
     )
@@ -148,38 +140,6 @@ def _format_deterministic_summary(handoff_ctx: Any, digest_markdown: str) -> str
         f"## Current State\n\n{current_state}\n\n"
         "## Next Steps\n\nContinue from the captured session state."
     )
-
-
-async def _read_typed_json_transcript(path: Path) -> list[dict[str, Any]]:
-    """Read a typed-JSON session file and return its native message dicts.
-
-    Typed-JSON session files have the structure::
-
-        {"sessionId": "...", "messages": [{...}, ...], "kind": "main"}
-
-    We return the ``messages`` array as-is so callers get native dicts.
-    """
-    async with aiofiles.open(path, encoding="utf-8") as f:
-        raw = await f.read()
-
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as e:
-        logger.error(
-            "Invalid JSON in typed-JSON transcript",
-            extra={"path": str(path), "error": str(e)},
-        )
-        return []
-
-    if not isinstance(data, dict):
-        logger.error(
-            "Expected JSON object in typed-JSON transcript",
-            extra={"path": str(path), "actual_type": type(data).__name__},
-        )
-        return []
-
-    messages = data.get("messages", [])
-    return [m for m in messages if isinstance(m, dict)]
 
 
 async def async_enumerate[T](

@@ -1647,69 +1647,22 @@ class TestReadTranscript:
         assert all(isinstance(t, dict) for t in turns)
 
     @pytest.mark.asyncio
-    async def test_reads_qwen_json_session(self, tmp_path: Path) -> None:
-        """Qwen JSON session files are parsed and messages extracted."""
-        from gobby.sessions.summarize import _read_transcript
-
-        path = tmp_path / "session.json"
-        session_data = {
-            "sessionId": "test-session",
-            "messages": [
-                {
-                    "id": "msg-1",
-                    "type": "user",
-                    "timestamp": "2026-04-12T16:20:00Z",
-                    "content": [{"text": "Hello there"}],
-                },
-                {
-                    "id": "msg-2",
-                    "type": "gemini",
-                    "timestamp": "2026-04-12T16:20:01Z",
-                    "content": "Hi! How can I help?",
-                    "toolCalls": [],
-                },
-            ],
-            "kind": "main",
-        }
-        path.write_text(json.dumps(session_data))
-        turns = await _read_transcript(path, source="qwen")
-        assert len(turns) == 2
-        assert turns[0]["type"] == "user"
-        assert turns[1]["type"] == "gemini"
-        assert turns[1]["content"] == "Hi! How can I help?"
-
-    @pytest.mark.asyncio
-    async def test_qwen_json_invalid_json(self, tmp_path: Path) -> None:
-        """Invalid JSON in Qwen file returns empty list."""
-        from gobby.sessions.summarize import _read_transcript
-
-        path = tmp_path / "session.json"
-        path.write_text("not valid json{{{")
-        turns = await _read_transcript(path, source="qwen")
-        assert turns == []
-
-    @pytest.mark.asyncio
-    async def test_qwen_json_no_messages_key(self, tmp_path: Path) -> None:
-        """Qwen JSON without messages key returns empty list."""
-        from gobby.sessions.summarize import _read_transcript
-
-        path = tmp_path / "session.json"
-        path.write_text(json.dumps({"sessionId": "test", "kind": "main"}))
-        turns = await _read_transcript(path, source="qwen")
-        assert turns == []
-
-    @pytest.mark.asyncio
-    async def test_non_qwen_json_falls_through_to_jsonl(self, tmp_path: Path) -> None:
-        """A .json file with source='claude' is still treated as JSONL."""
+    async def test_json_extension_uses_line_oriented_reader(self, tmp_path: Path) -> None:
+        """A .json file still uses the source's line-oriented transcript format."""
         from gobby.sessions.summarize import _read_transcript
 
         path = tmp_path / "transcript.json"
         lines = [
-            json.dumps({"type": "user", "message": {"content": "hello"}}),
-            json.dumps({"type": "assistant", "message": {"content": "hi"}}),
+            json.dumps({"type": "user", "message": {"role": "user", "parts": [{"text": "hello"}]}}),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {"role": "model", "parts": [{"text": "hi"}]},
+                }
+            ),
         ]
         path.write_text("\n".join(lines))
-        turns = await _read_transcript(path, source="claude")
+        turns = await _read_transcript(path, source="qwen")
         assert len(turns) == 2
 
 

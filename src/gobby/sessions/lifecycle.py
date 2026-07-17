@@ -671,10 +671,8 @@ class SessionLifecycleManager:
             )
         # Default (claude or unknown) uses Claude transcript format
 
-        # Qwen stores sessions as single JSON files, not JSONL.
-        # Dispatch to parse_session_json() for .json files so the parser
-        # can iterate the messages array instead of treating the whole
-        # file as one malformed JSONL line.
+        # Structured JSON parsers can opt into whole-session parsing. Other
+        # parsers treat a .json file as a single line-oriented record.
         if transcript_path.endswith(".json") and hasattr(parser, "parse_session_json"):
             try:
                 data = json.loads(raw)

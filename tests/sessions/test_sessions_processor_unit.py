@@ -22,6 +22,7 @@ from gobby.sessions.transcript_index import (
     persist_index_sidecar,
 )
 from gobby.sessions.transcripts.base import ParsedMessage, TokenUsage
+from gobby.sessions.transcripts.typed_json import TypedJsonTranscriptParser
 from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
@@ -1736,6 +1737,7 @@ class TestProcessJsonSession:
         transcript.write_text(json.dumps(data))
 
         processor.register_session("session-1", str(transcript), source="qwen")
+        processor._parsers["session-1"] = TypedJsonTranscriptParser(cli_name="typed-json")
 
         await processor._process_json_session("session-1", str(transcript))
 
@@ -1774,6 +1776,7 @@ class TestProcessJsonSession:
             )
         )
         processor.register_session("session-1", str(transcript), source="qwen")
+        processor._parsers["session-1"] = TypedJsonTranscriptParser(cli_name="typed-json")
         processor._persist_usage_events = AsyncMock()
         processor._render_and_broadcast_messages = AsyncMock(
             side_effect=RuntimeError("render failed")
@@ -1819,6 +1822,7 @@ class TestProcessJsonSession:
             )
         )
         processor.register_session("session-1", str(transcript), source="qwen")
+        processor._parsers["session-1"] = TypedJsonTranscriptParser(cli_name="typed-json")
         seen_sources: list[str | None] = []
 
         def normalize(records: Iterable[object], source: str | None) -> list[object]:
@@ -1831,7 +1835,7 @@ class TestProcessJsonSession:
         ):
             await processor._process_json_session("session-1", str(transcript))
 
-        assert seen_sources == ["qwen"]
+        assert seen_sources == ["typed-json"]
 
     @pytest.mark.asyncio
     async def test_process_json_session_skips_unchanged(self, mock_db, tmp_path) -> None:
@@ -1900,6 +1904,7 @@ class TestProcessJsonSession:
         transcript.write_text(json.dumps(data))
 
         processor.register_session("session-1", str(transcript), source="qwen")
+        processor._parsers["session-1"] = TypedJsonTranscriptParser(cli_name="typed-json")
         # Pretend we already processed up to index 1
         processor._message_indices["session-1"] = 1
 
@@ -1972,6 +1977,7 @@ class TestProcessJsonSession:
         transcript.write_text(json.dumps(data))
 
         processor.register_session("session-1", str(transcript), source="qwen")
+        processor._parsers["session-1"] = TypedJsonTranscriptParser(cli_name="typed-json")
 
         await processor._process_session("session-1", str(transcript))
 
