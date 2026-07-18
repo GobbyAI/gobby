@@ -13,7 +13,13 @@ rules:
           You are in autonomous task execution mode.
 
           Auto-task: {{ variables.auto_task_ref or '(unknown)' }}
-
+          {% if variables.get('goal_file') %}
+          Goal doc: {{ variables.goal_file }} — this file defines the loop
+          procedure, budgets, and stop conditions. Read it before continuing
+          if it is not in context, and follow its procedure for this task
+          tree.
+          {% else %}
           Work on this task and its subtasks until completion.
           Use suggest_next_task() to find available work.
+          {% endif %}
           When {{ variables.auto_task_ref or '(unknown)' }} is completed, you may stop.
