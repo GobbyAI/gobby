@@ -5,7 +5,7 @@ use chrono::{SecondsFormat, Utc};
 
 use super::{
     CodewikiTruthDigest, CodewikiTruthStackEntry, CodewikiTruthSuperseded, DocPruneScope,
-    SystemModel, build::infra_descriptor, io::write_doc, structural_repo_summary,
+    SystemModel, build::infra_descriptor, doc_paths::write_doc, structural_repo_summary,
 };
 
 pub(crate) const TRUTH_DIGEST_META_PATH: &str = "_meta/truth_digest.json";

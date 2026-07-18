@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::graph::typed_query;
 use crate::index::hasher;
@@ -137,6 +137,8 @@ mod architecture_diagrams;
 mod build;
 mod cluster;
 mod diagram_compose;
+mod doc_paths;
+mod frontmatter;
 mod generation;
 mod graph;
 mod io;
@@ -282,9 +284,11 @@ pub(crate) use types::{
 #[cfg(test)]
 pub(crate) use types::FeatureBinarySection;
 
-pub(crate) use io::{DocPruneScope, DocSink, read_ownership_meta, write_ownership_meta};
 #[cfg(test)]
-pub(crate) use io::{page_frontmatter_blocks_reuse, write_incremental_doc_set_with_snapshot};
+pub(crate) use frontmatter::page_frontmatter_blocks_reuse;
+#[cfg(test)]
+pub(crate) use io::write_incremental_doc_set_with_snapshot;
+pub(crate) use io::{DocPruneScope, DocSink, read_ownership_meta, write_ownership_meta};
 pub use io::{write_doc_set, write_incremental_doc_set};
 #[cfg(test)]
 pub(crate) use truth_digest::TRUTH_DIGEST_META_PATH;

@@ -10,7 +10,8 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use super::io::{read_codewiki_meta, safe_doc_path, write_doc};
+use super::doc_paths::{safe_doc_path, write_doc};
+use super::io::read_codewiki_meta;
 use super::{CitationResolver, CodewikiIndexSnapshot, reanchor_citations};
 use crate::models::Symbol;
 

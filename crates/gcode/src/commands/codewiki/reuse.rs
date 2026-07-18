@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use super::io::{page_frontmatter_blocks_reuse, read_codewiki_meta, safe_doc_path};
+use super::doc_paths::safe_doc_path;
+use super::frontmatter::page_frontmatter_blocks_reuse;
+use super::io::read_codewiki_meta;
 use super::{
     AiGenerationSettings, BuiltDoc, CodewikiAiOutcome, CodewikiDocMeta, SourceSpan,
     render_version_for_path,

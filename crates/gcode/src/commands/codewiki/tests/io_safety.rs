@@ -53,7 +53,8 @@ fn generated_page_walker_never_visits_meta_dump_artifacts() {
     )
     .expect("dump");
 
-    let pages = super::io::collect_generated_doc_pages(&out_dir).expect("walk generated pages");
+    let pages =
+        super::doc_paths::collect_generated_doc_pages(&out_dir).expect("walk generated pages");
 
     assert_eq!(pages, vec!["code/files/a.md".to_string()]);
 }

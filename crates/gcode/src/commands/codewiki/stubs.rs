@@ -21,7 +21,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use super::io::{collect_generated_doc_pages, scoped_file_doc, scoped_module_doc};
+use super::doc_paths::{collect_generated_doc_pages, scoped_file_doc, scoped_module_doc};
 use super::render::cell_summary;
 use super::{
     BuiltDoc, CodewikiDocMeta, FileLink, ModuleDoc, ModuleLink, direct_child_modules,

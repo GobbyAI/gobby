@@ -45,7 +45,7 @@ use generation::{GENERATION_RETRY_BACKOFF, is_model_refusal, is_prompt_echo};
 
 #[cfg(test)]
 mod tests {
-    use super::super::{PromptTier, SourceSpan, TextGenerator, io, prompts};
+    use super::super::{PromptTier, SourceSpan, TextGenerator, prompts};
     use super::{
         GENERATION_RETRY_BACKOFF, GenerationContent, MAX_FALLBACK_CITATIONS,
         MAX_FRONTMATTER_PROVENANCE_FILES, citation_list, citation_markers, fallback_spans,
@@ -196,7 +196,7 @@ mod tests {
 
         let doc = frontmatter("Repository Overview", "code_repo", &spans);
 
-        let kept_files = io::source_files_from_frontmatter(&doc);
+        let kept_files = super::super::frontmatter::source_files_from_frontmatter(&doc);
         assert_eq!(kept_files.len(), MAX_FRONTMATTER_PROVENANCE_FILES, "{doc}");
         assert!(kept_files.contains(busiest), "{doc}");
         let truncated_marker = format!(

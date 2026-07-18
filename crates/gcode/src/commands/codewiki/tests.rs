@@ -1,7 +1,6 @@
-use super::io::{
-    read_codewiki_meta, source_files_from_frontmatter, source_hashes_for_doc, unquote_yaml_string,
-    write_doc, write_doc_before_persist,
-};
+use super::doc_paths::{write_doc, write_doc_before_persist};
+use super::frontmatter::{source_files_from_frontmatter, unquote_yaml_string};
+use super::io::{read_codewiki_meta, source_hashes_for_doc};
 use super::*;
 
 mod support;

@@ -6,10 +6,10 @@ use serde::Serialize;
 use crate::config::Context;
 use crate::output::{self, Format};
 
-use super::io::{
-    collect_generated_doc_pages, prune_empty_doc_dirs, read_codewiki_meta,
-    reject_symlinked_doc_path, safe_doc_path,
+use super::doc_paths::{
+    collect_generated_doc_pages, prune_empty_doc_dirs, reject_symlinked_doc_path, safe_doc_path,
 };
+use super::io::read_codewiki_meta;
 use super::truth_digest::TRUTH_DIGEST_META_PATH;
 use super::{CODEWIKI_META_PATH, DEFAULT_OUT_DIR, OWNERSHIP_META_PATH};
 
