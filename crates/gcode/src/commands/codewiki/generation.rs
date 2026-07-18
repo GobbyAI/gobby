@@ -15,12 +15,12 @@ use super::{
     TextVerifier, ToolLoopGenerator, VerifyScope, build_architecture_doc,
     build_curated_navigation_docs, build_deprecations_doc, build_file_doc, build_hotspots_doc,
     build_infrastructure_doc, build_module_docs_with_filter, build_onboarding_doc,
-    build_ownership_doc, build_repo_doc, cluster, cluster_file_modules, file_doc_path,
-    file_module_link_key, is_ai_generation_failure_code, is_core_file, module_child_links_key,
-    module_doc_path, module_for_file, relationship_facts_for_file, render_architecture_doc,
-    render_deprecations_doc, render_feature_catalog_doc, render_file_doc, render_hotspots_doc,
-    render_infrastructure_doc, render_module_doc, render_onboarding_doc, resolve_file_reuse,
-    span_files,
+    build_ownership_doc, build_repo_doc, cluster, cluster_file_modules,
+    content_sensitive_invalidation_key, file_doc_path, file_module_link_key,
+    is_ai_generation_failure_code, is_core_file, module_child_links_key, module_doc_path,
+    module_for_file, relationship_facts_for_file, render_architecture_doc, render_deprecations_doc,
+    render_feature_catalog_doc, render_file_doc, render_hotspots_doc, render_infrastructure_doc,
+    render_module_doc, render_onboarding_doc, resolve_file_reuse, span_files,
 };
 
 /// Options for [`generate_hierarchical_docs`], collapsing the former
@@ -554,37 +554,22 @@ pub(crate) fn generate_hierarchical_docs(
             .iter()
             .map(|module| module.module.clone())
             .collect::<BTreeSet<String>>();
-        // The page's provenance hashes cannot see every link-set change. A
-        // cluster re-partition can rename modules without changing source
-        // hashes, and a source deleted before a prior page was persisted is
-        // absent from that page's recorded source hashes even though its stale
-        // file link remains in the content. Key both emitted module and file
-        // links so either change rewrites ownership before publish validates
-        // targets (#18190, #18483). requires_sources still refreshes ownership
-        // when the underlying files change.
-        let ownership_key = format!(
-            "ownership-links:{}",
-            hasher::content_hash(
-                emitted_modules
-                    .iter()
-                    .map(String::as_str)
-                    .chain(std::iter::once("--files--"))
-                    .chain(ownership_files.iter().map(String::as_str))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-                    .as_bytes(),
-            )
-        );
+        let ownership_doc = build_ownership_doc(
+            project_root,
+            &ownership_files,
+            &file_modules,
+            &emitted_modules,
+            ownership_meta,
+            OwnershipOptions::default(),
+        )?;
+        // Ownership is deterministic, and its source hashes cannot detect a
+        // stale link to a file that disappeared before provenance was hashed.
+        // Key the actual rendered content and require the staged body to match
+        // it, repairing metadata/body skew before publication (#18190, #18483).
+        let ownership_key = content_sensitive_invalidation_key(&ownership_doc);
         emit(BuiltDoc {
             path: "code/_ownership.md".to_string(),
-            content: build_ownership_doc(
-                project_root,
-                &ownership_files,
-                &file_modules,
-                &emitted_modules,
-                ownership_meta,
-                OwnershipOptions::default(),
-            )?,
+            content: ownership_doc,
             degraded: false,
             summary: None,
             neighbors: BTreeSet::new(),

@@ -288,7 +288,10 @@ pub(crate) use types::FeatureBinarySection;
 pub(crate) use frontmatter::page_frontmatter_blocks_reuse;
 #[cfg(test)]
 pub(crate) use io::write_incremental_doc_set_with_snapshot;
-pub(crate) use io::{DocPruneScope, DocSink, read_ownership_meta, write_ownership_meta};
+pub(crate) use io::{
+    DocPruneScope, DocSink, content_sensitive_invalidation_key, read_ownership_meta,
+    write_ownership_meta,
+};
 pub use io::{write_doc_set, write_incremental_doc_set};
 #[cfg(test)]
 pub(crate) use truth_digest::TRUTH_DIGEST_META_PATH;

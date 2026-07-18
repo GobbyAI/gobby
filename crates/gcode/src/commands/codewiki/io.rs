@@ -8,6 +8,24 @@ use super::frontmatter::{
 };
 use super::*;
 
+const CONTENT_SENSITIVE_INVALIDATION_PREFIX: &str = "content-sensitive:";
+
+pub(crate) fn content_sensitive_invalidation_key(content: &str) -> String {
+    format!(
+        "{CONTENT_SENSITIVE_INVALIDATION_PREFIX}{}",
+        hasher::content_hash(content.as_bytes())
+    )
+}
+
+fn content_sensitive_target_matches(
+    invalidation_key: Option<&str>,
+    existing: Option<&str>,
+    generated: &str,
+) -> bool {
+    !invalidation_key.is_some_and(|key| key.starts_with(CONTENT_SENSITIVE_INVALIDATION_PREFIX))
+        || existing == Some(generated)
+}
+
 pub fn write_doc_set(out_dir: &Path, docs: &[(String, String)]) -> anyhow::Result<()> {
     std::fs::create_dir_all(out_dir)?;
     for (relative_path, content) in docs {
@@ -229,8 +247,18 @@ impl<'a> DocSink<'a> {
         // The on-disk page can also be degraded while the manifest claims it
         // is healthy (manifest/page skew, #18291); such a page never
         // satisfies any reuse gate below.
-        let target_blocks_reuse = std::fs::read_to_string(&target)
-            .is_ok_and(|existing| page_frontmatter_blocks_reuse(&existing));
+        let existing_target = std::fs::read_to_string(&target).ok();
+        let target_blocks_reuse = existing_target
+            .as_deref()
+            .is_some_and(page_frontmatter_blocks_reuse);
+        // Deterministic docs can explicitly key their generated content. Their
+        // metadata may still compare equal while a killed/resumed run leaves
+        // an older body on disk, so require byte equality before reusing them.
+        let content_sensitive_target_matches = content_sensitive_target_matches(
+            doc.invalidation_key.as_deref(),
+            existing_target.as_deref(),
+            &content,
+        );
         // Keyed docs take the fast path only while their key is unchanged: a
         // key move (aggregate digest, module link, child-link set) must fall
         // through to the full gate and rewrite even under `--since` (#17731).
@@ -238,6 +266,7 @@ impl<'a> DocSink<'a> {
             && doc.invalidation_key == meta.invalidation_key
             && target.exists()
             && !target_blocks_reuse
+            && content_sensitive_target_matches
             && !meta.degraded
             && meta.ai_mode == self.ai_mode
             && meta.ai_route == ai_outcome.route_label()
@@ -284,6 +313,7 @@ impl<'a> DocSink<'a> {
         //   invalidates content hashes cannot see.
         let unchanged = target.exists()
             && !target_blocks_reuse
+            && content_sensitive_target_matches
             && previous_meta.is_some_and(|meta| {
                 !meta.degraded
                     && meta.ai_mode == self.ai_mode
@@ -321,6 +351,7 @@ impl<'a> DocSink<'a> {
         let since_unchanged = !source_hashes.is_empty()
             && target.exists()
             && !target_blocks_reuse
+            && content_sensitive_target_matches
             && previous_meta.is_some_and(|meta| {
                 meta.invalidation_key == doc.invalidation_key
                     && !meta.degraded

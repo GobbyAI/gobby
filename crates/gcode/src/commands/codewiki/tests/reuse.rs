@@ -2017,6 +2017,25 @@ fn deleted_file_rewrites_stale_ownership_file_links() {
         !ownership_after.contains("code/files/src/group/two.rs|"),
         "stale ownership page retained a deleted file link"
     );
+
+    // Reproduce the production metadata/body skew: the metadata already has
+    // the filtered ownership key and provenance, but the staged body regresses
+    // to the older dangling-link version. A third identical persistence pass
+    // must compare deterministic content instead of retaining the stale body.
+    std::fs::write(out_dir.join("code/_ownership.md"), &ownership_before)
+        .expect("restore stale ownership body");
+    write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &second,
+        None,
+        "symbols",
+        DocPruneScope::unscoped(),
+    )
+    .expect("third write repairs metadata/body skew");
+    let ownership_repaired = std::fs::read_to_string(out_dir.join("code/_ownership.md"))
+        .expect("ownership page after skew repair");
+    assert_eq!(ownership_repaired, ownership_after);
 }
 
 /// Stamps a top-level `degraded: true` into a page's frontmatter without
