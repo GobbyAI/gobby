@@ -51,13 +51,21 @@ def _blocked_tools(agent: dict[str, Any]) -> set[str]:
 
 def test_build_smoke_agent_runtime_mappings() -> None:
     expected = {
-        "backend-developer": ("codex", "gpt-5.6-sol", "high"),
+        "analyst": ("codex", "gpt-5.6-sol", "xhigh"),
+        "architect": ("codex", "gpt-5.6-sol", "xhigh"),
+        "backend-developer": ("codex", "gpt-5.6-sol", "xhigh"),
         "fullstack-developer": ("codex", "gpt-5.6-sol", "xhigh"),
-        "frontend-developer": ("codex", "gpt-5.6-sol", "high"),
-        "tech-writer": ("codex", "gpt-5.6-sol", "high"),
+        "frontend-developer": ("codex", "gpt-5.6-sol", "xhigh"),
+        "tech-writer": ("codex", "gpt-5.6-sol", "xhigh"),
         "qa-reviewer": ("claude", "opus", "high"),
         "doc-reviewer": ("claude", "opus", "high"),
-        "holistic-reviewer": ("codex", "gpt-5.6-sol", "high"),
+        "holistic-reviewer": ("codex", "gpt-5.6-sol", "xhigh"),
+        "plan-adversary": ("codex", "gpt-5.6-sol", "xhigh"),
+        "plan-adversary-taskless": ("codex", "gpt-5.6-sol", "xhigh"),
+        "plan-enhancer": ("codex", "gpt-5.6-sol", "xhigh"),
+        "plan-enhancer-taskless": ("codex", "gpt-5.6-sol", "xhigh"),
+        "product-manager": ("codex", "gpt-5.6-sol", "xhigh"),
+        "researcher": ("codex", "gpt-5.6-sol", "xhigh"),
         "merge-orchestrator": ("claude", "opus", "high"),
         "merge-worker": ("claude", "sonnet", "high"),
     }
