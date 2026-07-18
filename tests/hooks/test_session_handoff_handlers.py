@@ -23,16 +23,17 @@ from gobby.sessions.compact_continuation import (
     mark_compact_self_continuation_pending,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
+from gobby.storage.session_models import Session
+from gobby.storage.sessions import SessionManager
 from gobby.workflows.state_manager import SessionVariableManager
 
 from ._event_handler_helpers import make_event
 
 pytestmark = pytest.mark.unit
 
-# sessions.id / session_variables.session_id are native uuid columns, so
-# pre-created session ids must be valid-format UUIDs.
-COMPACT_SESSION_ID = "cccccccc-0000-4000-8000-000000000001"
-CLI_SESSION_IDS = {
+COMPACT_EXTERNAL_ID = "cccccccc-0000-4000-8000-000000000001"
+CLI_EXTERNAL_IDS = {
     "codex": "cccccccc-0000-4000-8000-000000000002",
     "qwen": "cccccccc-0000-4000-8000-000000000003",
     "droid": "cccccccc-0000-4000-8000-000000000004",
@@ -45,16 +46,24 @@ class TestSessionStartHandoff:
     def _make_db(self, hub_db: HubDatabase) -> HubDatabase:
         return hub_db
 
-    def _make_precreated_session(self, session_id: str = COMPACT_SESSION_ID) -> MagicMock:
-        session = MagicMock()
-        session.id = session_id
-        session.seq_num = 45
-        session.project_id = "proj-1"
-        session.parent_session_id = None
-        session.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
-        session.agent_run_id = None
-        session.workflow_name = None
-        return session
+    def _make_precreated_session(
+        self,
+        db: HubDatabase,
+        *,
+        external_id: str = COMPACT_EXTERNAL_ID,
+        source: str = "claude",
+    ) -> Session:
+        project = LocalProjectManager(db).create(
+            name=f"handoff-{source}",
+            repo_path="/some/dir",
+        )
+        return SessionManager(db).register(
+            external_id=external_id,
+            machine_id="machine-1",
+            source=source,
+            project_id=project.id,
+            terminal_context={"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
+        )
 
     def _fake_compact_self_consumer(self, scheduled: list[tuple[object, str]]) -> Any:
         def _consume(
@@ -1021,7 +1030,7 @@ class TestSessionStartHandoff:
     ) -> None:
         """A self-initiated compact schedules one continuation when the pending flag is fresh."""
         db = self._make_db(hub_db)
-        session = self._make_precreated_session()
+        session = self._make_precreated_session(db)
         mark_compact_self_continuation_pending(db, session.id)
         mock_dependencies["session_storage"].db = db
         mock_dependencies["session_storage"].get.return_value = session
@@ -1057,7 +1066,11 @@ class TestSessionStartHandoff:
     ) -> None:
         """Providers that omit source='compact' still resume after compact_self."""
         db = self._make_db(hub_db)
-        session = self._make_precreated_session(session_id=CLI_SESSION_IDS[cli_source])
+        session = self._make_precreated_session(
+            db,
+            external_id=CLI_EXTERNAL_IDS[cli_source],
+            source=cli_source,
+        )
         mark_compact_self_continuation_pending(db, session.id)
         mock_dependencies["session_storage"].db = db
         mock_dependencies["session_storage"].get.return_value = session
@@ -1093,7 +1106,7 @@ class TestSessionStartHandoff:
     ) -> None:
         """A manual compact without the pending flag does not schedule continuation."""
         db = self._make_db(hub_db)
-        session = self._make_precreated_session()
+        session = self._make_precreated_session(db)
         mock_dependencies["session_storage"].db = db
         mock_dependencies["session_storage"].get.return_value = session
         mock_dependencies["task_manager"].list_tasks.return_value = []
@@ -1125,7 +1138,7 @@ class TestSessionStartHandoff:
     ) -> None:
         """A stale self-compact flag is cleared without scheduling a continuation."""
         db = self._make_db(hub_db)
-        session = self._make_precreated_session()
+        session = self._make_precreated_session(db)
         stale_time = datetime.now(UTC) - timedelta(seconds=601)
         mark_compact_self_continuation_pending(db, session.id, now=stale_time)
         mock_dependencies["session_storage"].db = db
