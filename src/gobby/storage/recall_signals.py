@@ -13,9 +13,19 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
+from gobby.storage.recall_shadow_claim_transitions import RecallShadowClaimTransitionMixin
+from gobby.storage.recall_shadow_gate import RecallShadowGateStoreMixin
+from gobby.storage.recall_shadow_sampling import RecallShadowSamplingMixin
+from gobby.storage.recall_shadow_signals import (
+    RecallShadowSignalStoreMixin,
+)
+from gobby.storage.recall_shadow_signals import (
+    ShadowCohortAmbiguityError as ShadowCohortAmbiguityError,
+)
 from gobby.utils.datetime import utc_now
+from gobby.utils.sql import render_internal_sql
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -45,7 +55,8 @@ INJECTION_DROP_REASONS = frozenset(
     }
 )
 
-LABEL_SOURCES = frozenset({"llm_judge", "ablation", "digest", "human"})
+LABEL_SOURCES = frozenset({"llm_judge", "ablation", "digest", "digest_shadow", "human"})
+PRODUCIBLE_LABEL_SOURCES = LABEL_SOURCES - {"digest"}
 
 
 def _parse_timestamp(value: Any) -> datetime:
@@ -76,7 +87,12 @@ def _json_value(value: Any) -> Any:
     return value
 
 
-class RecallSignalStore:
+class RecallSignalStore(
+    RecallShadowSignalStoreMixin,
+    RecallShadowSamplingMixin,
+    RecallShadowClaimTransitionMixin,
+    RecallShadowGateStoreMixin,
+):
     """CRUD for the recall-signal hub tables (#17196).
 
     All writes are idempotent (ON CONFLICT DO NOTHING) so JSONL backfills and
@@ -256,7 +272,7 @@ class RecallSignalStore:
             not row.get("session_id")
             or not row.get("recall_request_id")
             or not row.get("memory_id")
-            or label_source not in LABEL_SOURCES
+            or label_source not in PRODUCIBLE_LABEL_SOURCES
             or not isinstance(row.get("judge_useful"), bool)
             or not row.get("judge_protocol_version")
         ):
@@ -343,8 +359,8 @@ class RecallSignalStore:
             params.append(project_id)
         params.append(limit)
 
-        cursor = self.db.execute(
-            f"""
+        query = render_internal_sql(
+            """
             SELECT h.session_id, h.recall_request_id, h.memory_id, h.project_id,
                    h.rank, h.search_via, h.similarity, h.raw_semantic_score,
                    h.temporal_decay_factor, h.ranking_score, h.ranking_mode,
@@ -364,12 +380,13 @@ class RecallSignalStore:
             JOIN recall_signal_requests r
               ON r.session_id = h.session_id
              AND r.recall_request_id = h.recall_request_id
-            WHERE {" AND ".join(conditions)}
+            WHERE {where}
             ORDER BY h.recall_request_id, h.rank
             LIMIT %s
             """,
-            tuple(params),
+            where=" AND ".join(conditions),
         )
+        cursor = self.db.execute(query, tuple(params))
         rows = cursor.fetchall()
         return [{**dict(row), "weighting": _json_value(row["weighting"])} for row in rows]
 
@@ -380,6 +397,13 @@ class RecallSignalStore:
         project_id: str | None = None,
         limit: int = 5000,
         since: datetime | None = None,
+        candidate_scope: str | None = None,
+        judge_protocol_version: str | None = None,
+        weighting_regime_key: str | None = None,
+        judge_model_key: str | None = None,
+        judge_config_fingerprint: str | None = None,
+        data_cutoff: datetime | None = None,
+        completion_cutoff: datetime | None = None,
     ) -> list[dict[str, Any]]:
         """Return ALL injected hits with an optional label from one source.
 
@@ -396,6 +420,34 @@ class RecallSignalStore:
         ``since`` bounds the window by request ``created_at`` — the drift
         monitor (#17201) replays only the recent live window.
         """
+        if label_source == "digest_shadow":
+            required = {
+                "candidate_scope": candidate_scope,
+                "judge_protocol_version": judge_protocol_version,
+                "weighting_regime_key": weighting_regime_key,
+                "judge_model_key": judge_model_key,
+                "judge_config_fingerprint": judge_config_fingerprint,
+                "data_cutoff": data_cutoff,
+                "completion_cutoff": completion_cutoff,
+            }
+            missing = [name for name, value in required.items() if value is None]
+            if missing:
+                raise ValueError(f"missing digest_shadow replay fences: {', '.join(missing)}")
+            if since is not None:
+                raise ValueError("since is not part of a digest_shadow replay cohort")
+            return self.fetch_shadow_replay_rows(
+                label_source=label_source,
+                candidate_scope=cast(str, candidate_scope),
+                judge_protocol_version=cast(str, judge_protocol_version),
+                weighting_regime_key=cast(str, weighting_regime_key),
+                judge_model_key=cast(str, judge_model_key),
+                judge_config_fingerprint=cast(str, judge_config_fingerprint),
+                data_cutoff=cast(datetime, data_cutoff),
+                completion_cutoff=cast(datetime, completion_cutoff),
+                project_id=project_id,
+                limit=limit,
+            )
+
         conditions = ["o.outcome = 'injected'"]
         params: list[Any] = [label_source]
         if project_id is not None:
@@ -406,8 +458,8 @@ class RecallSignalStore:
             params.append(since)
         params.append(limit)
 
-        cursor = self.db.execute(
-            f"""
+        query = render_internal_sql(
+            """
             SELECT h.session_id, h.recall_request_id, h.memory_id, h.project_id,
                    h.rank, h.search_via, h.similarity, h.raw_semantic_score,
                    h.temporal_decay_factor, h.ranking_score, h.ranking_mode,
@@ -435,11 +487,12 @@ class RecallSignalStore:
                 ORDER BY u.labeled_at DESC, u.id DESC
                 LIMIT 1
             ) u ON TRUE
-            WHERE {" AND ".join(conditions)}
+            WHERE {where}
             ORDER BY h.recall_request_id, h.rank
             LIMIT %s
             """,
-            tuple(params),
+            where=" AND ".join(conditions),
         )
+        cursor = self.db.execute(query, tuple(params))
         rows = cursor.fetchall()
         return [{**dict(row), "weighting": _json_value(row["weighting"])} for row in rows]
