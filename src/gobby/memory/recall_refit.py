@@ -39,12 +39,15 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.config.persistence import MemoryConfig
 from gobby.memory.recall_fit import (
+    REQUEST_SPLIT_VERSION,
     LabeledFitReport,
     PairwiseEvalResult,
     ReplayParams,
     ReplayRow,
+    WeightingMode,
     estimate_position_propensities,
     evaluate_pairwise,
+    evaluation_protocol_identity,
     fit_and_evaluate,
     replay_row_from_signal_row,
     split_requests_per_project,
@@ -260,6 +263,8 @@ class GateDecision:
     """One recorded fit + gate outcome; ``ship`` is the whole verdict."""
 
     label_source: str
+    weighting_mode: WeightingMode
+    split_version: str
     report: LabeledFitReport
     static_params: ReplayParams
     static_eval: PairwiseEvalResult
@@ -285,6 +290,7 @@ class GateDecision:
         def eval_dict(result: PairwiseEvalResult) -> dict[str, Any]:
             return {
                 "pair_count": result.pair_count,
+                "mixed_request_count": result.mixed_request_count,
                 "weighted_pair_count": result.weighted_pair_count,
                 "accuracy": result.accuracy,
                 "per_project": dict(result.per_project),
@@ -293,11 +299,17 @@ class GateDecision:
         return {
             "task": "#17198",
             "label_source": self.label_source,
+            "cohort_identity": {
+                "label_source": self.label_source,
+                "weighting_mode": self.weighting_mode,
+                **evaluation_protocol_identity(split_version=self.split_version),
+            },
             "rows_total": self.report.rows_total,
             "rows_labeled": self.report.rows_labeled,
             "train_requests": self.report.train_requests,
             "eval_requests": self.report.eval_requests,
             "train_pairs": self.report.fitted.pooled_pairs,
+            "train_mixed_requests": self.report.fitted.pooled_mixed_requests,
             "fitted_params": params_dict(self.report.fitted.pooled),
             "static_params": params_dict(self.static_params),
             "fitted_eval": eval_dict(self.report.fitted_eval),
@@ -323,7 +335,9 @@ def run_ship_gate(
     eval_stride: int = 2,
     smoothing: float = 1.0,
     clip: float = 10.0,
-    shrinkage_pairs: float = 50.0,
+    shrinkage_requests: float = 50.0,
+    weighting_mode: WeightingMode = "full",
+    split_version: str = REQUEST_SPLIT_VERSION,
     min_train_pairs: int = MIN_TRAIN_PAIRS,
     min_eval_pairs: int = MIN_EVAL_PAIRS,
 ) -> GateDecision:
@@ -347,15 +361,26 @@ def run_ship_gate(
         eval_stride=eval_stride,
         smoothing=smoothing,
         clip=clip,
-        shrinkage_pairs=shrinkage_pairs,
+        shrinkage_requests=shrinkage_requests,
+        weighting_mode=weighting_mode,
+        split_version=split_version,
     )
 
     # Re-derive the identical deterministic split/propensities so the static
     # arm is scored on exactly the holdout the fitted arm was scored on.
-    train, evaluation = split_requests_per_project(rows, eval_stride=eval_stride)
+    train, evaluation = split_requests_per_project(
+        rows, eval_stride=eval_stride, split_version=split_version
+    )
     propensities = estimate_position_propensities(train, smoothing=smoothing)
     static = static_replay_params()
-    static_eval = evaluate_pairwise(evaluation, {}, propensities, default_params=static, clip=clip)
+    static_eval = evaluate_pairwise(
+        evaluation,
+        {},
+        propensities,
+        default_params=static,
+        clip=clip,
+        weighting_mode=weighting_mode,
+    )
 
     guard_static = guard_accuracy(static)
     guard_fitted = guard_accuracy(report.fitted.pooled)
@@ -392,6 +417,8 @@ def run_ship_gate(
 
     return GateDecision(
         label_source=label_source,
+        weighting_mode=weighting_mode,
+        split_version=split_version,
         report=report,
         static_params=static,
         static_eval=static_eval,

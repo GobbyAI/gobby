@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from gobby.memory.recall_fit import (
+    SHRINKAGE_REQUEST_CANDIDATES,
     FittedParams,
     ReplayParams,
     ReplayRow,
@@ -23,6 +24,7 @@ from gobby.memory.recall_fit import (
     replay_row_from_signal_row,
     replayed_similarity,
     replayed_sort_key,
+    select_shrinkage_requests,
     split_requests_per_project,
 )
 
@@ -223,6 +225,158 @@ class TestPropensities:
 
 
 class TestPairwiseObjective:
+    def test_full_weighting_normalizes_each_mixed_request(self) -> None:
+        rows = [
+            *[
+                _semantic_row(
+                    raw=0.9,
+                    decay=1.0,
+                    request_id="wide",
+                    memory_id=f"positive-{index}",
+                    judge_useful=True,
+                )
+                for index in range(2)
+            ],
+            *[
+                _semantic_row(
+                    raw=0.1,
+                    decay=1.0,
+                    request_id="wide",
+                    memory_id=f"negative-{index}",
+                    judge_useful=False,
+                )
+                for index in range(3)
+            ],
+            _semantic_row(
+                raw=0.9,
+                decay=1.0,
+                request_id="narrow",
+                memory_id="positive",
+                judge_useful=True,
+            ),
+            _semantic_row(
+                raw=0.1,
+                decay=1.0,
+                request_id="narrow",
+                memory_id="negative",
+                judge_useful=False,
+            ),
+        ]
+
+        result = evaluate_pairwise(
+            rows,
+            {},
+            {},
+            default_params=ReplayParams(),
+            weighting_mode="full",
+        )
+
+        assert result.pair_count == 7
+        assert result.mixed_request_count == 2
+        assert result.weighted_pair_count == 2.0
+        assert result.accuracy == 1.0
+
+    def test_injected_weighting_preserves_relative_ips_within_request(self) -> None:
+        rows = [
+            _semantic_row(
+                raw=0.9,
+                decay=1.0,
+                request_id="request",
+                memory_id="rare-positive",
+                injection_position=0,
+                judge_useful=True,
+            ),
+            _semantic_row(
+                raw=0.1,
+                decay=1.0,
+                request_id="request",
+                memory_id="common-positive",
+                injection_position=1,
+                judge_useful=True,
+            ),
+            _semantic_row(
+                raw=0.5,
+                decay=1.0,
+                request_id="request",
+                memory_id="negative",
+                injection_position=2,
+                judge_useful=False,
+            ),
+        ]
+        propensities = {("context", 0): 0.25, ("context", 1): 1.0}
+
+        result = evaluate_pairwise(
+            rows,
+            {},
+            propensities,
+            default_params=ReplayParams(),
+            weighting_mode="injected",
+        )
+
+        assert result.pair_count == 2
+        assert result.mixed_request_count == 1
+        assert result.weighted_pair_count == 1.0
+        assert result.accuracy == pytest.approx(0.8)
+
+    def test_one_wide_request_cannot_dominate_ten_narrow_requests(self) -> None:
+        rows: list[ReplayRow] = []
+        for index in range(10):
+            rows.extend(
+                [
+                    _semantic_row(
+                        raw=0.9,
+                        decay=1.0,
+                        request_id=f"narrow-{index}",
+                        memory_id="positive",
+                        judge_useful=True,
+                    ),
+                    _semantic_row(
+                        raw=0.1,
+                        decay=1.0,
+                        request_id=f"narrow-{index}",
+                        memory_id="negative",
+                        judge_useful=False,
+                    ),
+                ]
+            )
+        rows.extend(
+            [
+                *[
+                    _semantic_row(
+                        raw=0.1,
+                        decay=1.0,
+                        request_id="wide",
+                        memory_id=f"positive-{index}",
+                        judge_useful=True,
+                    )
+                    for index in range(4)
+                ],
+                *[
+                    _semantic_row(
+                        raw=0.9,
+                        decay=1.0,
+                        request_id="wide",
+                        memory_id=f"negative-{index}",
+                        judge_useful=False,
+                    )
+                    for index in range(4)
+                ],
+            ]
+        )
+
+        result = evaluate_pairwise(
+            rows,
+            {},
+            {},
+            default_params=ReplayParams(),
+            weighting_mode="full",
+        )
+
+        assert result.pair_count == 26
+        assert result.mixed_request_count == 11
+        assert result.weighted_pair_count == 11.0
+        assert result.accuracy == pytest.approx(10 / 11)
+
     def test_unlabeled_rows_form_no_pairs(self) -> None:
         rows = [
             _semantic_row(
@@ -310,8 +464,8 @@ class TestSplitAndPartialPooling:
 
         train, evaluation = split_requests_per_project(rows)
 
-        assert {r.recall_request_id for r in train} == {"a1", "a3", "b1"}
-        assert {r.recall_request_id for r in evaluation} == {"a2", "b2"}
+        assert {r.recall_request_id for r in train} == {"a2", "a3", "b1"}
+        assert {r.recall_request_id for r in evaluation} == {"a1", "b2"}
         # Both projects appear on both sides — the partial-pooling contract.
         assert {r.project_id for r in train} == {"proj-a", "proj-b"}
         assert {r.project_id for r in evaluation} == {"proj-a", "proj-b"}
@@ -319,6 +473,25 @@ class TestSplitAndPartialPooling:
     def test_split_rejects_stride_below_two(self) -> None:
         with pytest.raises(ValueError, match="eval_stride"):
             split_requests_per_project([_row()], eval_stride=1)
+
+    def test_split_is_request_seeded_and_versioned(self) -> None:
+        rows = [_row(f"request-{index}", "memory", project_id="project") for index in range(20)]
+
+        train_v1, holdout_v1 = split_requests_per_project(rows, split_version="split-v1")
+        reverse_train_v1, reverse_holdout_v1 = split_requests_per_project(
+            list(reversed(rows)), split_version="split-v1"
+        )
+        _, holdout_v2 = split_requests_per_project(rows, split_version="split-v2")
+
+        assert {row.recall_request_id for row in train_v1} == {
+            row.recall_request_id for row in reverse_train_v1
+        }
+        assert {row.recall_request_id for row in holdout_v1} == {
+            row.recall_request_id for row in reverse_holdout_v1
+        }
+        assert {row.recall_request_id for row in holdout_v1} != {
+            row.recall_request_id for row in holdout_v2
+        }
 
     def test_small_project_shrinks_toward_pooled(self) -> None:
         # proj-big: many pairs preferring h=7; proj-tiny: one pair preferring
@@ -343,32 +516,40 @@ class TestSplitAndPartialPooling:
                     judge_useful=False,
                 ),
             ]
-        # Tiny project prefers the long half-life: useful is OLD there, so
-        # shortening decay hurts and lengthening helps.
+        # Tiny project has one 4x4 request preferring the long half-life.
+        # Its 16 raw pairs remain one independent shrinkage unit.
         rows += [
-            _semantic_row(
-                raw=0.8,
-                decay=0.7,
-                request_id="tiny-1",
-                memory_id="useful",
-                project_id="proj-tiny",
-                judge_useful=True,
-            ),
-            _semantic_row(
-                raw=0.6,
-                decay=0.9,
-                request_id="tiny-1",
-                memory_id="bad",
-                project_id="proj-tiny",
-                judge_useful=False,
-            ),
+            *[
+                _semantic_row(
+                    raw=0.8,
+                    decay=0.7,
+                    request_id="tiny-1",
+                    memory_id=f"useful-{index}",
+                    project_id="proj-tiny",
+                    judge_useful=True,
+                )
+                for index in range(4)
+            ],
+            *[
+                _semantic_row(
+                    raw=0.6,
+                    decay=0.9,
+                    request_id="tiny-1",
+                    memory_id=f"bad-{index}",
+                    project_id="proj-tiny",
+                    judge_useful=False,
+                )
+                for index in range(4)
+            ],
         ]
         grid = [ReplayParams(half_life_days=7.0), ReplayParams(half_life_days=120.0)]
 
-        fitted = fit_partial_pooled(rows, grid, {}, shrinkage_pairs=50.0)
+        fitted = fit_partial_pooled(rows, grid, {}, shrinkage_requests=50.0)
 
         assert isinstance(fitted, FittedParams)
         assert fitted.pooled.half_life_days == 7.0
+        assert fitted.project_pairs["proj-tiny"] == 16
+        assert fitted.project_mixed_requests["proj-tiny"] == 1
         tiny = fitted.per_project["proj-tiny"]
         assert tiny.half_life_days is not None
         # lam = 1/51 -> 7 + (120-7)/51 ≈ 9.2: pinned to pooled, not to 120.
@@ -447,7 +628,9 @@ class TestFitAndEvaluate:
         return rows
 
     def test_recovers_planted_half_life_and_beats_baseline_on_holdout(self) -> None:
-        report = fit_and_evaluate(self._planted_rows(), default_replay_grid())
+        report = fit_and_evaluate(
+            self._planted_rows(), default_replay_grid(), weighting_mode="injected"
+        )
 
         assert report.rows_total == 24
         assert report.rows_labeled == 16
@@ -459,6 +642,37 @@ class TestFitAndEvaluate:
         assert set(report.fitted_eval.per_project) == {"proj-a", "proj-b"}
         for accuracy in report.fitted_eval.per_project.values():
             assert 0.0 <= accuracy <= 1.0
+
+    def test_selects_shrinkage_on_synthetic_and_nested_training_rows(self) -> None:
+        outer_train, _ = split_requests_per_project(self._planted_rows())
+        synthetic_rows = [
+            _semantic_row(
+                raw=0.9,
+                decay=1.0,
+                request_id="synthetic",
+                memory_id="positive",
+                judge_useful=True,
+            ),
+            _semantic_row(
+                raw=0.1,
+                decay=1.0,
+                request_id="synthetic",
+                memory_id="negative",
+                judge_useful=False,
+            ),
+        ]
+
+        selection = select_shrinkage_requests(
+            training_rows=outer_train,
+            synthetic_rows=synthetic_rows,
+            grid=default_replay_grid(),
+        )
+
+        assert tuple(selection.candidate_scores) == SHRINKAGE_REQUEST_CANDIDATES
+        assert selection.selected_requests in SHRINKAGE_REQUEST_CANDIDATES
+        assert selection.selection_method == "synthetic+nested-training-v1"
+        assert selection.nested_train_requests + selection.nested_validation_requests == 4
+        assert selection.synthetic_requests == 1
 
 
 class TestReplayParamsValidation:

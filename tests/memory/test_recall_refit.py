@@ -206,6 +206,13 @@ class TestShipGate:
         parsed = json.loads(json.dumps(record))
         assert parsed["task"] == "#17198"
         assert parsed["label_source"] == "digest"
+        assert parsed["cohort_identity"] == {
+            "label_source": "digest",
+            "weighting_mode": "full",
+            "split_version": "recall-request-hash-split-v1",
+            "evaluator_version": "recall-request-normalized-pairwise-v1",
+            "audit_sampler_version": "recall-training-request-sampler-v1",
+        }
         assert parsed["ship"] is True
         assert parsed["fitted_params"]["half_life_days"] == 60.0
         assert parsed["static_params"]["half_life_days"] == 30.0
@@ -215,6 +222,8 @@ class TestShipGate:
             "guard_ok": True,
         }
         assert parsed["fitted_eval"]["accuracy"] == 1.0
+        assert parsed["train_pairs"] == parsed["train_mixed_requests"]
+        assert parsed["fitted_eval"]["pair_count"] == parsed["fitted_eval"]["mixed_request_count"]
         assert parsed["static_eval"]["accuracy"] == 0.0
         assert parsed["reasons"]
 

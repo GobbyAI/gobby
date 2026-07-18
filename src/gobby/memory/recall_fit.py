@@ -1,9 +1,8 @@
 """Offline fit/eval over logged recall-signal rows (#17197, epic #17099).
 
 This module generalizes the offline recall benchmark harness to real labeled
-data. It consumes injected per-hit feature rows from the promoted hub tables
-(``RecallSignalStore.fetch_replay_rows``: hits ⋈ injected outcomes ⋈ request
-context, LEFT JOIN usefulness labels) and replays the FULL ranking path —
+data. It consumes request-aligned per-hit feature rows from the promoted hub
+tables and replays the FULL ranking path —
 the ``SearchService`` blend ordering from ``build_results`` (semantic-first on
 the similarity axis with temporal decay and ``ranking_mode`` semantics, RRF
 ``ranking_score`` as tiebreak) — under counterfactual parameters, without
@@ -11,20 +10,14 @@ re-running retrieval.
 
 Scope and semantics (contract: docs/contracts/memory-usefulness-label.md):
 
-- **Precision-side only.** Labels exist only for memories that were actually
-  injected, so this data can say "what we injected was (not) useful" — it can
-  never say what we *failed* to retrieve. Recall-side (false-negative)
-  evaluation stays with the synthetic corpus arms in
-  ``tests/memory/test_recall_benchmark.py``.
+- **Request-balanced evaluation.** Every request containing both relevance
+  classes contributes one effective unit regardless of its pair cardinality.
 - **Never-retrieved memories are unlabeled, not negative.** The pairwise
   objective forms pairs only between explicitly labeled rows within the same
   recall request. Rows without a label contribute to propensity estimation
   (denominators) only.
-- **IPS position-propensity weighting** (arXiv:1608.04468): pairs are weighted
-  by the inverse examination propensity of the *positive* row, estimated from
-  label coverage per ``(injection_group, injection_position)`` — position is
-  the rendered ordinal, never recall rank. Weights are clipped for variance
-  control (arXiv:2008.10242).
+- **Scope-specific weighting.** Full shadow cohorts weight pairs uniformly.
+  Injected cohorts preserve relative clipped IPS weights within each request.
 - **Per-project partial pooling, not naive full pooling.** Requests are split
   train/eval within each project; per-project fits are shrunk toward the
   pooled fit in proportion to per-project pair support.
@@ -50,7 +43,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Any
+from hashlib import sha256
+from typing import Any, Literal
 
 from gobby.memory.services.knowledge_graph.writer import (
     COOCCUR_ALPHA,
@@ -62,6 +56,22 @@ _SORT_NONE_SIM = float("-inf")
 # Propensity keys are (injection_group, injection_position); position is the
 # rendered ordinal within the injection block, per the label contract §5.
 PropensityKey = tuple[str | None, int]
+WeightingMode = Literal["full", "injected"]
+
+REQUEST_SPLIT_VERSION = "recall-request-hash-split-v1"
+PAIRWISE_EVALUATOR_VERSION = "recall-request-normalized-pairwise-v1"
+AUDIT_SAMPLER_VERSION = "recall-training-request-sampler-v1"
+SHRINKAGE_SELECTION_METHOD = "synthetic+nested-training-v1"
+SHRINKAGE_REQUEST_CANDIDATES: tuple[float, ...] = (2.0, 5.0, 10.0, 20.0, 50.0)
+
+
+def evaluation_protocol_identity(*, split_version: str = REQUEST_SPLIT_VERSION) -> dict[str, str]:
+    """Version fields that bind fitting, audit sampling, and holdout evaluation."""
+    return {
+        "split_version": split_version,
+        "evaluator_version": PAIRWISE_EVALUATOR_VERSION,
+        "audit_sampler_version": AUDIT_SAMPLER_VERSION,
+    }
 
 
 @dataclass(frozen=True)
@@ -291,9 +301,10 @@ def ips_weight(
 
 @dataclass(frozen=True)
 class PairwiseEvalResult:
-    """IPS-weighted pairwise ordering accuracy over labeled preference pairs."""
+    """Request-normalized ordering accuracy over labeled preference pairs."""
 
     pair_count: int
+    mixed_request_count: int
     weighted_pair_count: float
     accuracy: float
     per_project: dict[str, float]
@@ -306,19 +317,25 @@ def evaluate_pairwise(
     *,
     default_params: ReplayParams,
     clip: float = 10.0,
+    weighting_mode: WeightingMode = "full",
 ) -> PairwiseEvalResult:
     """Score (useful, not-useful) pairs within each request under replay.
 
     A pair is correct when the useful row sorts strictly above the not-useful
     row under the ``build_results`` key; exact key ties earn half credit.
-    Pairs are weighted by the positive row's clipped IPS weight. Unlabeled
-    rows never form pairs (never-retrieved / unlabeled ≠ negative).
+    Every mixed request has total weight 1. Full-candidate cohorts weight each
+    pair uniformly; injected cohorts preserve relative positive-row IPS weights
+    within that request. Unlabeled rows never form preference pairs.
     """
+    if weighting_mode not in ("full", "injected"):
+        raise ValueError(f"unsupported weighting_mode: {weighting_mode}")
+
     by_request: dict[str, list[ReplayRow]] = {}
     for row in rows:
         by_request.setdefault(row.recall_request_id, []).append(row)
 
     pair_count = 0
+    mixed_request_count = 0
     weighted_total = 0.0
     weighted_correct = 0.0
     project_totals: dict[str, float] = {}
@@ -330,16 +347,26 @@ def evaluate_pairwise(
         keys = {row.memory_id: replayed_sort_key(row, params) for row in request_rows}
         positives = [r for r in request_rows if r.judge_useful is True]
         negatives = [r for r in request_rows if r.judge_useful is False]
-        for pos in positives:
-            weight = ips_weight(pos, propensities, clip=clip)
+        if not positives or not negatives:
+            continue
+
+        mixed_request_count += 1
+        if weighting_mode == "full":
+            positive_weights = [1.0] * len(positives)
+        else:
+            positive_weights = [ips_weight(pos, propensities, clip=clip) for pos in positives]
+        request_denominator = len(negatives) * sum(positive_weights)
+
+        bucket = project_id or ""
+        for pos, positive_weight in zip(positives, positive_weights, strict=True):
+            pair_weight = positive_weight / request_denominator
             for neg in negatives:
                 pair_count += 1
                 credit = _pair_credit(keys[pos.memory_id], keys[neg.memory_id])
-                weighted_total += weight
-                weighted_correct += weight * credit
-                bucket = project_id or ""
-                project_totals[bucket] = project_totals.get(bucket, 0.0) + weight
-                project_correct[bucket] = project_correct.get(bucket, 0.0) + weight * credit
+                weighted_correct += pair_weight * credit
+                project_correct[bucket] = project_correct.get(bucket, 0.0) + pair_weight * credit
+        weighted_total += 1.0
+        project_totals[bucket] = project_totals.get(bucket, 0.0) + 1.0
 
     accuracy = weighted_correct / weighted_total if weighted_total > 0 else 0.0
     per_project = {
@@ -349,6 +376,7 @@ def evaluate_pairwise(
     }
     return PairwiseEvalResult(
         pair_count=pair_count,
+        mixed_request_count=mixed_request_count,
         weighted_pair_count=weighted_total,
         accuracy=accuracy,
         per_project=per_project,
@@ -371,26 +399,35 @@ def _pair_credit(
 
 
 def split_requests_per_project(
-    rows: Sequence[ReplayRow], *, eval_stride: int = 2
+    rows: Sequence[ReplayRow],
+    *,
+    eval_stride: int = 2,
+    split_version: str = REQUEST_SPLIT_VERSION,
 ) -> tuple[list[ReplayRow], list[ReplayRow]]:
     """Deterministic train/eval split of requests *within* each project.
 
-    Distinct request IDs are sorted per project and every ``eval_stride``-th
-    request goes to eval. Splitting inside each project (rather than pooling
-    all requests) keeps every project represented on both sides, which the
-    partial-pooled fit and its evaluation both rely on.
+    Request IDs seed a versioned hash ordering within each project; every
+    ``eval_stride``-th request goes to holdout. Input ordering cannot affect
+    the frozen partition.
     """
     if eval_stride < 2:
         raise ValueError(f"eval_stride must be >= 2, got {eval_stride}")
-    requests_by_project: dict[str | None, list[str]] = {}
+    if not split_version.strip():
+        raise ValueError("split_version must be non-empty")
+    requests_by_project: dict[str | None, set[str]] = {}
     for row in rows:
-        bucket = requests_by_project.setdefault(row.project_id, [])
-        if row.recall_request_id not in bucket:
-            bucket.append(row.recall_request_id)
+        requests_by_project.setdefault(row.project_id, set()).add(row.recall_request_id)
 
     eval_requests: set[str] = set()
     for request_ids in requests_by_project.values():
-        for index, request_id in enumerate(sorted(request_ids)):
+        seeded_request_ids = sorted(
+            request_ids,
+            key=lambda request_id: (
+                sha256(f"{split_version}\0{request_id}".encode()).digest(),
+                request_id,
+            ),
+        )
+        for index, request_id in enumerate(seeded_request_ids):
             if index % eval_stride == eval_stride - 1:
                 eval_requests.add(request_id)
 
@@ -407,6 +444,20 @@ class FittedParams:
     per_project: dict[str | None, ReplayParams]
     pooled_pairs: int
     project_pairs: dict[str | None, int]
+    pooled_mixed_requests: int
+    project_mixed_requests: dict[str | None, int]
+
+
+@dataclass(frozen=True)
+class ShrinkageSelection:
+    """Frozen request-unit prior chosen without evaluating outer holdout rows."""
+
+    selected_requests: float
+    candidate_scores: dict[float, float]
+    selection_method: str
+    nested_train_requests: int
+    nested_validation_requests: int
+    synthetic_requests: int
 
 
 def _labeled_pair_count(rows: Sequence[ReplayRow]) -> int:
@@ -421,17 +472,37 @@ def _labeled_pair_count(rows: Sequence[ReplayRow]) -> int:
     return sum(pos * neg for pos, neg in by_request.values())
 
 
+def _mixed_request_count(rows: Sequence[ReplayRow]) -> int:
+    by_request: dict[str, tuple[bool, bool]] = {}
+    for row in rows:
+        has_positive, has_negative = by_request.get(row.recall_request_id, (False, False))
+        if row.judge_useful is True:
+            has_positive = True
+        elif row.judge_useful is False:
+            has_negative = True
+        by_request[row.recall_request_id] = (has_positive, has_negative)
+    return sum(has_positive and has_negative for has_positive, has_negative in by_request.values())
+
+
 def _grid_best(
     rows: Sequence[ReplayRow],
     grid: Sequence[ReplayParams],
     propensities: Mapping[PropensityKey, float],
     *,
     clip: float,
+    weighting_mode: WeightingMode,
 ) -> ReplayParams:
     best = grid[0]
     best_accuracy = -1.0
     for candidate in grid:
-        result = evaluate_pairwise(rows, {}, propensities, default_params=candidate, clip=clip)
+        result = evaluate_pairwise(
+            rows,
+            {},
+            propensities,
+            default_params=candidate,
+            clip=clip,
+            weighting_mode=weighting_mode,
+        )
         if result.accuracy > best_accuracy:
             best = candidate
             best_accuracy = result.accuracy
@@ -468,20 +539,23 @@ def fit_partial_pooled(
     grid: Sequence[ReplayParams],
     propensities: Mapping[PropensityKey, float],
     *,
-    shrinkage_pairs: float = 50.0,
+    shrinkage_requests: float = 50.0,
     clip: float = 10.0,
+    weighting_mode: WeightingMode = "full",
 ) -> FittedParams:
     """Grid-fit pooled params, then per-project params shrunk toward pooled.
 
-    Shrinkage weight ``lam = n_p / (n_p + shrinkage_pairs)`` where ``n_p`` is
-    the project's labeled pair count: small projects ride the pooled fit,
+    Shrinkage weight ``lam = n_p / (n_p + shrinkage_requests)`` where ``n_p``
+    is the project's mixed-request count: small projects ride the pooled fit,
     well-supported projects keep their own optimum. This is the
     partial-pooling contract of #17197 — no naive full pooling, no
     unregularized per-project fits.
     """
     if not grid:
         raise ValueError("grid must contain at least one ReplayParams candidate")
-    pooled = _grid_best(rows, grid, propensities, clip=clip)
+    if shrinkage_requests < 0.0:
+        raise ValueError("shrinkage_requests must be non-negative")
+    pooled = _grid_best(rows, grid, propensities, clip=clip, weighting_mode=weighting_mode)
 
     rows_by_project: dict[str | None, list[ReplayRow]] = {}
     for row in rows:
@@ -489,14 +563,23 @@ def fit_partial_pooled(
 
     per_project: dict[str | None, ReplayParams] = {}
     project_pairs: dict[str | None, int] = {}
+    project_mixed_requests: dict[str | None, int] = {}
     for project_id, project_rows in rows_by_project.items():
         pairs = _labeled_pair_count(project_rows)
+        mixed_requests = _mixed_request_count(project_rows)
         project_pairs[project_id] = pairs
-        if pairs == 0:
+        project_mixed_requests[project_id] = mixed_requests
+        if mixed_requests == 0:
             per_project[project_id] = pooled
             continue
-        project_best = _grid_best(project_rows, grid, propensities, clip=clip)
-        lam = pairs / (pairs + shrinkage_pairs)
+        project_best = _grid_best(
+            project_rows,
+            grid,
+            propensities,
+            clip=clip,
+            weighting_mode=weighting_mode,
+        )
+        lam = mixed_requests / (mixed_requests + shrinkage_requests)
         per_project[project_id] = _shrink_params(project_best, pooled, lam)
 
     return FittedParams(
@@ -504,6 +587,79 @@ def fit_partial_pooled(
         per_project=per_project,
         pooled_pairs=_labeled_pair_count(rows),
         project_pairs=project_pairs,
+        pooled_mixed_requests=_mixed_request_count(rows),
+        project_mixed_requests=project_mixed_requests,
+    )
+
+
+def select_shrinkage_requests(
+    *,
+    training_rows: Sequence[ReplayRow],
+    synthetic_rows: Sequence[ReplayRow],
+    grid: Sequence[ReplayParams],
+    candidates: Sequence[float] = SHRINKAGE_REQUEST_CANDIDATES,
+    eval_stride: int = 2,
+    split_version: str = REQUEST_SPLIT_VERSION,
+    smoothing: float = 1.0,
+    clip: float = 10.0,
+    weighting_mode: WeightingMode = "full",
+) -> ShrinkageSelection:
+    """Choose shrinkage on planted data plus validation nested inside training."""
+    if not candidates:
+        raise ValueError("candidates must contain at least one request-unit prior")
+    if any(candidate <= 0.0 for candidate in candidates):
+        raise ValueError("shrinkage request candidates must be positive")
+
+    nested_train, nested_validation = split_requests_per_project(
+        training_rows,
+        eval_stride=eval_stride,
+        split_version=f"{split_version}:{SHRINKAGE_SELECTION_METHOD}",
+    )
+    propensities = estimate_position_propensities(nested_train, smoothing=smoothing)
+    candidate_scores: dict[float, float] = {}
+    for candidate in candidates:
+        fitted = fit_partial_pooled(
+            nested_train,
+            grid,
+            propensities,
+            shrinkage_requests=candidate,
+            clip=clip,
+            weighting_mode=weighting_mode,
+        )
+        nested_result = evaluate_pairwise(
+            nested_validation,
+            fitted.per_project,
+            propensities,
+            default_params=fitted.pooled,
+            clip=clip,
+            weighting_mode=weighting_mode,
+        )
+        synthetic_result = evaluate_pairwise(
+            synthetic_rows,
+            fitted.per_project,
+            propensities,
+            default_params=fitted.pooled,
+            clip=clip,
+            weighting_mode=weighting_mode,
+        )
+        evaluated_requests = (
+            nested_result.mixed_request_count + synthetic_result.mixed_request_count
+        )
+        if evaluated_requests == 0:
+            raise ValueError("shrinkage selection requires mixed validation requests")
+        candidate_scores[float(candidate)] = (
+            nested_result.accuracy * nested_result.mixed_request_count
+            + synthetic_result.accuracy * synthetic_result.mixed_request_count
+        ) / evaluated_requests
+
+    selected = max(candidate_scores, key=candidate_scores.__getitem__)
+    return ShrinkageSelection(
+        selected_requests=selected,
+        candidate_scores=candidate_scores,
+        selection_method=SHRINKAGE_SELECTION_METHOD,
+        nested_train_requests=len({row.recall_request_id for row in nested_train}),
+        nested_validation_requests=len({row.recall_request_id for row in nested_validation}),
+        synthetic_requests=len({row.recall_request_id for row in synthetic_rows}),
     )
 
 
@@ -532,7 +688,9 @@ def fit_and_evaluate(
     eval_stride: int = 2,
     smoothing: float = 1.0,
     clip: float = 10.0,
-    shrinkage_pairs: float = 50.0,
+    shrinkage_requests: float = 50.0,
+    weighting_mode: WeightingMode = "full",
+    split_version: str = REQUEST_SPLIT_VERSION,
 ) -> LabeledFitReport:
     """Split per project, fit with partial pooling, evaluate on the holdout.
 
@@ -542,14 +700,26 @@ def fit_and_evaluate(
     estimated on the training split only, then reused for the holdout so the
     two arms are weighted identically.
     """
-    train, evaluation = split_requests_per_project(rows, eval_stride=eval_stride)
+    train, evaluation = split_requests_per_project(
+        rows, eval_stride=eval_stride, split_version=split_version
+    )
     propensities = estimate_position_propensities(train, smoothing=smoothing)
     fitted = fit_partial_pooled(
-        train, grid, propensities, shrinkage_pairs=shrinkage_pairs, clip=clip
+        train,
+        grid,
+        propensities,
+        shrinkage_requests=shrinkage_requests,
+        clip=clip,
+        weighting_mode=weighting_mode,
     )
     baseline = ReplayParams()
     baseline_eval = evaluate_pairwise(
-        evaluation, {}, propensities, default_params=baseline, clip=clip
+        evaluation,
+        {},
+        propensities,
+        default_params=baseline,
+        clip=clip,
+        weighting_mode=weighting_mode,
     )
     fitted_eval = evaluate_pairwise(
         evaluation,
@@ -557,6 +727,7 @@ def fit_and_evaluate(
         propensities,
         default_params=fitted.pooled,
         clip=clip,
+        weighting_mode=weighting_mode,
     )
     return LabeledFitReport(
         rows_total=len(rows),

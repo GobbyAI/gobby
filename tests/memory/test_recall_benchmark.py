@@ -275,9 +275,9 @@ def _seed_labeled_signal_rows(store: RecallSignalStore) -> None:
                         "recall_request_id": request_id,
                         "memory_id": memory_id,
                         "project_id": project,
-                        "label_source": "digest",
+                        "label_source": "ablation",
                         "judge_useful": useful,
-                        "judge_protocol_version": "17195-digest-v1",
+                        "judge_protocol_version": "benchmark-ablation-v1",
                         "position_randomized": False,
                         "length_controlled": False,
                         "labeled_at": _LABEL_TS,
@@ -486,7 +486,7 @@ def test_recall_benchmark_labeled_fit(temp_db: HubDatabase) -> None:
     """Precision-side benchmark: fit/eval on real labeled rows from hub tables.
 
     Exercises the full labeled pipeline against the REAL promoted tables
-    (hits ⋈ injected outcomes ⋈ requests, LEFT JOIN digest labels): planted
+    (hits ⋈ injected outcomes ⋈ requests, LEFT JOIN ablation labels): planted
     rows where the logged ranking inverts usefulness, a per-project
     partial-pooling split, IPS position-propensity weighting with unlabeled
     rows in the denominators, and replay over the SearchService blend
@@ -495,7 +495,7 @@ def test_recall_benchmark_labeled_fit(temp_db: HubDatabase) -> None:
     store = RecallSignalStore(temp_db)
     _seed_labeled_signal_rows(store)
 
-    report = _run_labeled_fit(store, label_source="digest")
+    report = _run_labeled_fit(store, label_source="ablation")
 
     print("\n=== Labeled recall fit (gobby #17197) ===")
     print(
@@ -527,7 +527,7 @@ def test_recall_benchmark_labeled_fit(temp_db: HubDatabase) -> None:
         assert 0.0 <= accuracy <= 1.0
 
     # Label streams stay separable: asking for judge labels finds the same
-    # feature rows but zero labels — digest labels never leak into that fit.
+    # feature rows but zero labels — ablation labels never leak into that fit.
     judge_rows = [
         replay_row_from_signal_row(row) for row in store.fetch_replay_rows(label_source="llm_judge")
     ]
@@ -536,7 +536,7 @@ def test_recall_benchmark_labeled_fit(temp_db: HubDatabase) -> None:
 
     # Full-ranking-path features drove the replay (not graph traversal).
     fit_rows = [
-        replay_row_from_signal_row(row) for row in store.fetch_replay_rows(label_source="digest")
+        replay_row_from_signal_row(row) for row in store.fetch_replay_rows(label_source="ablation")
     ]
     assert all(row.ranking_mode == "semantic_only" for row in fit_rows)
     assert all(row.temporal_decay_factor is not None for row in fit_rows)
@@ -545,7 +545,7 @@ def test_recall_benchmark_labeled_fit(temp_db: HubDatabase) -> None:
     # tiny AND its judge-label optimum (h=7) sits outside the constructed
     # judge-independent envelope, so the gate must refuse to ship on BOTH
     # counts even though the fitted arm crushes static on the holdout.
-    decision = run_ship_gate_from_store(store, label_source="digest")
+    decision = run_ship_gate_from_store(store, label_source="ablation")
     print(f"ship gate: ship={decision.ship} reasons={list(decision.reasons)}")
     assert decision.report.fitted.pooled == replace(static_replay_params(), half_life_days=7.0)
     assert decision.beats_static is True
