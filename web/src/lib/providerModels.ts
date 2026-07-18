@@ -225,6 +225,33 @@ export function getModelsForProvider(
   return resolveVisibleModels(provider, rawModels);
 }
 
+export function getModelsForSelection(
+  catalog: ProviderModelEntry[],
+  executionProvider: string | null | undefined,
+  model: string | null | undefined,
+): ProviderModelOption[] {
+  const normalizedExecutionProvider = normalizeProvider(executionProvider);
+  const selectedModel = model?.trim();
+  if (normalizedExecutionProvider && selectedModel) {
+    const owner = catalog.find((entry) => {
+      const entryExecutionProvider = normalizeProvider(
+        entry.execution_provider?.trim() || entry.provider,
+      );
+      return (
+        entryExecutionProvider === normalizedExecutionProvider &&
+        entry.models.some((candidate) => candidate.value === selectedModel)
+      );
+    });
+    if (owner) {
+      return resolveVisibleModels(owner.provider, owner.models);
+    }
+  }
+
+  return normalizedExecutionProvider
+    ? getModelsForProvider(catalog, normalizedExecutionProvider)
+    : [];
+}
+
 export function getModelLabel(
   catalog: ProviderModelEntry[],
   provider: string | null | undefined,
@@ -237,7 +264,7 @@ export function getModelLabel(
   }
 
   const matched = findMatchingModelOption(
-    getModelsForProvider(catalog, normalizedProvider),
+    getModelsForSelection(catalog, normalizedProvider, normalizedModel),
     normalizedModel,
   );
   return matched?.label ?? humanizeFallbackModelLabel(model);
@@ -255,7 +282,7 @@ export function resolveModelValueForProvider(
 
   return (
     findMatchingModelOption(
-      getModelsForProvider(catalog, normalizedProvider),
+      getModelsForSelection(catalog, normalizedProvider, model),
       model,
     )?.value ?? null
   );
@@ -267,7 +294,7 @@ export function getReasoningOptionsForModel(
   model: string | null | undefined,
 ): ReasoningOption[] {
   const matchedModel = findMatchingModelOption(
-    getModelsForProvider(catalog, provider?.trim() || ""),
+    getModelsForSelection(catalog, provider, model),
     model,
   );
   const supported = Array.from(
@@ -355,7 +382,7 @@ export function getPreferredModelForProvider(
     return preferredModel?.trim() || null;
   }
 
-  const models = getModelsForProvider(catalog, normalizedProvider);
+  const models = getModelsForSelection(catalog, normalizedProvider, preferredModel);
   if (models.length === 0) {
     return preferredModel?.trim() || null;
   }

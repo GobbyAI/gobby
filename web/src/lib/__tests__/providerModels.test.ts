@@ -5,6 +5,7 @@ import {
   fetchProviderModelCatalog,
   getModelLabel,
   getModelsForProvider,
+  getModelsForSelection,
   getOrderedProviders,
   getPreferredModelForProvider,
   getProviderDisplayName,
@@ -549,5 +550,44 @@ describe("providerModels", () => {
       { provider: "codex", available: true, source: "live", models: [] },
     ]);
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves a separately cataloged local selector for Codex execution", () => {
+    const localSelector = "local:lm-studio/qwen3-coder";
+    const localCatalog: ProviderModelEntry[] = [
+      {
+        provider: "codex",
+        available: true,
+        source: "static",
+        models: [{ value: "gpt-5.4", label: "GPT 5.4", is_default: true }],
+      },
+      {
+        provider: "local:lm-studio",
+        display_name: "LM Studio",
+        execution_provider: "codex",
+        available: true,
+        source: "live",
+        supports_web_chat: true,
+        models: [
+          { value: localSelector, label: "Qwen3 Coder", is_default: true },
+        ],
+      },
+    ];
+
+    expect(getModelsForSelection(localCatalog, "codex", localSelector)).toEqual([
+      expect.objectContaining({ value: localSelector, label: "Qwen3 Coder" }),
+    ]);
+    expect(
+      getPreferredModelForProvider(localCatalog, "codex", localSelector),
+    ).toBe(localSelector);
+    expect(getModelLabel(localCatalog, "codex", localSelector)).toBe(
+      "Qwen3 Coder",
+    );
+    expect(
+      resolveProviderModelPair(localCatalog, {
+        provider: "codex",
+        model: localSelector,
+      }),
+    ).toEqual({ provider: "codex", model: localSelector });
   });
 });

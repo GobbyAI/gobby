@@ -115,46 +115,26 @@ export function ProviderPicker({
     ),
   );
 
-  const handleSelect = useCallback(
+  const applySelection = useCallback(
     (provider: string, model: string) => {
       if (onSelect) {
         onSelect(provider, model);
-        onClose();
-        setConfirmSwitch(null);
-        return;
-      }
-
-      const isSameProvider =
+      } else if (
         provider === effectiveProvider ||
-        (!currentProvider && provider === "claude");
-      const requiresFreshConversation =
-        hasMessages &&
-        isSameProvider &&
-        model !== currentModel &&
-        (model === "local" || currentModel === "local");
-
-      if (isSameProvider && !requiresFreshConversation) {
-        // Same provider — just switch model, no new chat needed
+        (!currentProvider && provider === "claude")
+      ) {
         onModelChange(model);
-        onClose();
-        setConfirmSwitch(null);
-      } else if (hasMessages) {
-        // Different provider with existing messages — confirm first
-        setConfirmSwitch({ provider, model });
       } else {
-        // Different provider but no messages — switch directly
         onProviderChange(provider);
         onModelChange(model);
         onSwitchProvider?.(provider);
-        onClose();
-        setConfirmSwitch(null);
       }
+      onClose();
+      setConfirmSwitch(null);
     },
     [
       effectiveProvider,
       currentProvider,
-      currentModel,
-      hasMessages,
       onModelChange,
       onProviderChange,
       onSwitchProvider,
@@ -163,14 +143,24 @@ export function ProviderPicker({
     ],
   );
 
+  const handleSelect = useCallback(
+    (provider: string, model: string) => {
+      const isSameExecutionProvider =
+        provider === effectiveProvider ||
+        (!currentProvider && provider === "claude");
+      if (hasMessages && !isSameExecutionProvider) {
+        setConfirmSwitch({ provider, model });
+        return;
+      }
+      applySelection(provider, model);
+    },
+    [applySelection, currentProvider, effectiveProvider, hasMessages],
+  );
+
   const handleConfirm = useCallback(() => {
     if (!confirmSwitch) return;
-    onProviderChange(confirmSwitch.provider);
-    onModelChange(confirmSwitch.model);
-    onSwitchProvider?.(confirmSwitch.provider);
-    onClose();
-    setConfirmSwitch(null);
-  }, [confirmSwitch, onModelChange, onProviderChange, onSwitchProvider, onClose]);
+    applySelection(confirmSwitch.provider, confirmSwitch.model);
+  }, [applySelection, confirmSwitch]);
 
   const handleCancel = useCallback(() => {
     setConfirmSwitch(null);

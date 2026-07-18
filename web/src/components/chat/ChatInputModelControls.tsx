@@ -1,3 +1,5 @@
+import { useState } from 'react'
+
 import {
   formatModelDisplayLabel,
   getProviderDisplayName,
@@ -7,6 +9,7 @@ import {
 import { SourceIcon } from '../shared/SourceIcon'
 import { BranchIndicator } from './BranchIndicator'
 import { BrainIcon } from './ChatInputIcons'
+import { ProviderPicker } from './ProviderPicker'
 import {
   Select,
   SelectContent,
@@ -17,17 +20,19 @@ import {
 } from './ui/Select'
 
 interface ChatInputModelControlsProps {
+  availableProviders: string[]
   compact?: boolean
   currentBranch?: string | null
   disabled?: boolean
   effectiveProvider: string
+  hasMessages: boolean
   hideBranch?: boolean
   modelOptions: ProviderModelOption[]
+  onCatalogSelect: (provider: string, model: string) => void
   onModelSelect: (model: string) => void
   onProviderSelect: (provider: string) => void
   onReasoningSelect: (effort: string) => void
   onWorktreeChange?: (worktreePath: string, worktreeId?: string) => void
-  orderedProviders: string[]
   projectId?: string | null
   providerPickerDisabledReason?: string | null
   reasoningOptions: ReasoningOption[]
@@ -40,17 +45,19 @@ interface ChatInputModelControlsProps {
 }
 
 export function ChatInputModelControls({
+  availableProviders,
   compact = false,
   currentBranch,
   disabled = false,
   effectiveProvider,
+  hasMessages,
   hideBranch = false,
   modelOptions,
+  onCatalogSelect,
   onModelSelect,
   onProviderSelect,
   onReasoningSelect,
   onWorktreeChange,
-  orderedProviders,
   projectId,
   providerPickerDisabledReason = null,
   reasoningOptions,
@@ -61,6 +68,7 @@ export function ChatInputModelControls({
   worktreePath,
   worktreePickerDisabled = false,
 }: ChatInputModelControlsProps) {
+  const [providerPickerOpen, setProviderPickerOpen] = useState(false)
   const reasoningOnlyDisabled =
     reasoningOptions.length === 1 && Boolean(reasoningOptions[0]?.disabled)
   const formattedModelLabel = formatModelDisplayLabel(resolvedModelLabel)
@@ -70,34 +78,29 @@ export function ChatInputModelControls({
   return (
     <div className="chat-input-controls">
       <div className="chat-input-model-controls">
-        <Select
-          value={effectiveProvider}
-          onValueChange={onProviderSelect}
+        <button
+          type="button"
+          className="chat-input-select chat-input-select--provider chat-input-select--provider-icon !w-auto"
           disabled={selectionDisabled}
+          aria-label="Select provider"
+          title={providerPickerDisabledReason ?? getProviderDisplayName(effectiveProvider)}
+          onClick={() => setProviderPickerOpen(true)}
         >
-          <SelectTrigger
-            className="chat-input-select chat-input-select--provider chat-input-select--provider-icon !w-auto"
-            aria-label="Select provider"
-            title={providerPickerDisabledReason ?? getProviderDisplayName(effectiveProvider)}
-          >
-            <div className="chat-input-select__value">
-              <SourceIcon source={effectiveProvider} size={14} />
-            </div>
-          </SelectTrigger>
-          <SelectContent side="top" className="chat-input-select__content">
-            <SelectGroup>
-              <SelectLabel className="chat-input-select__label">Provider</SelectLabel>
-              {orderedProviders.map((candidateProvider) => (
-                <SelectItem key={candidateProvider} value={candidateProvider}>
-                  <span className="chat-input-select__item">
-                    <SourceIcon source={candidateProvider} size={14} />
-                    <span>{getProviderDisplayName(candidateProvider)}</span>
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
+          <div className="chat-input-select__value">
+            <SourceIcon source={effectiveProvider} size={14} />
+          </div>
+        </button>
+        <ProviderPicker
+          open={providerPickerOpen}
+          onClose={() => setProviderPickerOpen(false)}
+          currentProvider={effectiveProvider}
+          currentModel={resolvedModelValue}
+          availableProviders={availableProviders}
+          onModelChange={onModelSelect}
+          onProviderChange={onProviderSelect}
+          onSelect={onCatalogSelect}
+          hasMessages={hasMessages}
+        />
 
         <Select
           value={resolvedModelValue}

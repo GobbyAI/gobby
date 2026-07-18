@@ -2,8 +2,7 @@ import { useCallback } from 'react'
 
 import {
   getModelLabel,
-  getModelsForProvider,
-  getOrderedProviders,
+  getModelsForSelection,
   getPreferredModelForProvider,
   getPreferredReasoningEffort,
   getReasoningOptionsForModel,
@@ -13,7 +12,6 @@ import {
 } from '../../lib/providerModels'
 
 interface UseChatInputProviderSelectionOptions {
-  availableProviders: string[]
   currentModel: string
   currentReasoning: string
   disabled: boolean
@@ -37,11 +35,11 @@ interface UseChatInputProviderSelectionOptions {
 interface ChatInputProviderSelection {
   canSelectModel: boolean
   effectiveProvider: string
+  handleCatalogSelect: (nextProvider: string, nextModel: string) => void
   handleModelSelect: (nextModel: string) => void
   handleProviderSelect: (nextProvider: string) => void
   handleReasoningSelect: (nextReasoning: string) => void
   modelOptions: ProviderModelOption[]
-  orderedProviders: string[]
   reasoningOptions: ReasoningOption[]
   resolvedModelLabel: string
   resolvedModelValue: string
@@ -50,7 +48,6 @@ interface ChatInputProviderSelection {
 }
 
 export function useChatInputProviderSelection({
-  availableProviders,
   currentModel,
   currentReasoning,
   disabled,
@@ -64,10 +61,11 @@ export function useChatInputProviderSelection({
   providerPickerDisabledReason,
 }: UseChatInputProviderSelectionOptions): ChatInputProviderSelection {
   const effectiveProvider = provider ?? 'claude'
-  const pickerProviders =
-    availableProviders.length > 0 ? availableProviders : [effectiveProvider]
-  const orderedProviders = getOrderedProviders(pickerProviders)
-  const visibleModels = getModelsForProvider(providerModelCatalog, effectiveProvider)
+  const visibleModels = getModelsForSelection(
+    providerModelCatalog,
+    effectiveProvider,
+    currentModel,
+  )
   const modelOptions =
     visibleModels.length > 0
       ? visibleModels
@@ -150,6 +148,19 @@ export function useChatInputProviderSelection({
     [applySelection, providerModelCatalog, resolvedModelValue],
   )
 
+  const handleCatalogSelect = useCallback(
+    (nextProvider: string, nextModel: string) => {
+      const nextReasoning = getPreferredReasoningEffort(
+        providerModelCatalog,
+        nextProvider,
+        nextModel,
+        null,
+      )
+      applySelection(nextProvider, nextModel, nextReasoning)
+    },
+    [applySelection, providerModelCatalog],
+  )
+
   const handleModelSelect = useCallback(
     (nextModel: string) => {
       const nextReasoning = getPreferredReasoningEffort(
@@ -173,11 +184,11 @@ export function useChatInputProviderSelection({
   return {
     canSelectModel,
     effectiveProvider,
+    handleCatalogSelect,
     handleModelSelect,
     handleProviderSelect,
     handleReasoningSelect,
     modelOptions,
-    orderedProviders,
     reasoningOptions,
     resolvedModelLabel,
     resolvedModelValue,

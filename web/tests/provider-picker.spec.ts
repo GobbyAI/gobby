@@ -2,7 +2,14 @@ import { expect, test } from "@playwright/test";
 
 const CURRENT_CONVERSATION_ID = "web-provider-picker-conv";
 
-function mockApiRoutes(page: Parameters<typeof test>[0]["page"]) {
+interface MockApiOptions {
+  onWebChatSessionCreate?: (body: Record<string, unknown>) => void;
+}
+
+function mockApiRoutes(
+  page: Parameters<typeof test>[0]["page"],
+  options: MockApiOptions = {},
+) {
   return page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname;
@@ -88,7 +95,58 @@ function mockApiRoutes(page: Parameters<typeof test>[0]["page"]) {
               ],
               source: "static",
             },
+            {
+              provider: "local:lm-studio",
+              display_name: "LM Studio",
+              available: true,
+              models: [
+                {
+                  value: "local:lm-studio/qwen3-coder",
+                  label: "Qwen3 Coder",
+                },
+              ],
+              source: "live",
+              execution_provider: "codex",
+              supports_web_chat: true,
+            },
+            {
+              provider: "local:generic",
+              display_name: "OpenAI Compatible",
+              available: false,
+              models: [
+                {
+                  value: "local:generic/fallback-model",
+                  label: "Generic Fallback",
+                },
+              ],
+              source: "config",
+              supports_web_chat: false,
+              unavailable_reason:
+                "Generic OpenAI-compatible endpoints are unavailable for web chat",
+            },
           ],
+        }),
+      });
+      return;
+    }
+
+    if (path === "/api/sessions/web-chat" && method === "POST") {
+      const body = route.request().postDataJSON() as Record<string, unknown>;
+      options.onWebChatSessionCreate?.(body);
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          session: {
+            id: "local-provider-session",
+            source: body.provider,
+            model: body.model,
+            chat_mode: body.chat_mode ?? "plan",
+            seq_num: 1,
+            title: null,
+            status: "active",
+            session_type: "web_chat",
+          },
         }),
       });
       return;
@@ -324,18 +382,16 @@ test("Codex picker shows friendly labels and no Default placeholder", async ({
   await expect(page.getByRole("textbox", { name: /message input/i })).toBeVisible();
 
   await page.getByLabel("Select provider").click();
-  await expect(page.getByRole("option", { name: "Codex", exact: true })).toBeVisible();
-  await page.getByRole("option", { name: "Codex", exact: true }).click();
-  await expect(page.getByLabel("Select provider")).toHaveAttribute("title", "Codex");
+  await expect(page.getByText("Codex", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "GPT 5.4", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "GPT 5.4 Mini", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "GPT 5.3 Codex", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "GPT 5.3 Codex Spark", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Default", exact: true })).toHaveCount(0);
 
-  await page.getByLabel("Select model").click();
-  await expect(page.getByRole("option", { name: "GPT 5.4", exact: true })).toBeVisible();
-  await expect(page.getByRole("option", { name: "GPT 5.4 Mini", exact: true })).toBeVisible();
-  await expect(page.getByRole("option", { name: "GPT 5.3 Codex", exact: true })).toBeVisible();
-  await expect(page.getByRole("option", { name: "GPT 5.3 Codex Spark", exact: true })).toBeVisible();
-  await expect(page.getByRole("option", { name: "Default", exact: true })).toHaveCount(0);
-
-  await page.getByRole("option", { name: "GPT 5.4", exact: true }).click();
+  await page.getByRole("button", { name: "GPT 5.4", exact: true }).click();
 
   await expect(page.getByLabel("Select provider")).toHaveAttribute("title", "Codex");
   await expect(page.getByLabel("Select model")).toContainText("GPT 5.4");
@@ -344,4 +400,82 @@ test("Codex picker shows friendly labels and no Default placeholder", async ({
     path: "tests/screenshots/provider-picker-codex-selected.png",
     fullPage: true,
   });
+});
+
+test("local catalog selection routes through Codex and restores its catalog owner", async ({
+  page,
+}) => {
+  const createdSessions: Array<Record<string, unknown>> = [];
+  await page.addInitScript(({ conversationId }: { conversationId: string }) => {
+    localStorage.setItem("gobby-conversation-id", conversationId);
+    localStorage.removeItem("gobby-db-session-id");
+    localStorage.removeItem("gobby-selected-provider");
+    localStorage.setItem(
+      "gobby-settings",
+      JSON.stringify({
+        model: "opus",
+        fontSize: 16,
+        theme: "dark",
+        defaultChatMode: "plan",
+      }),
+    );
+  }, { conversationId: CURRENT_CONVERSATION_ID });
+  await mockApiRoutes(page, {
+    onWebChatSessionCreate: (body) => createdSessions.push(body),
+  });
+  await page.routeWebSocket("**/ws", (ws) => {
+    ws.onMessage((raw) => {
+      const msg = JSON.parse(String(raw)) as Record<string, unknown>;
+      if (msg.type === "subscribe") {
+        ws.send(
+          JSON.stringify({
+            type: "connection_established",
+            conversation_ids: [CURRENT_CONVERSATION_ID],
+          }),
+        );
+        ws.send(
+          JSON.stringify({
+            type: "subscribe_success",
+            events: msg.events ?? [],
+          }),
+        );
+      }
+    });
+  });
+
+  await page.goto("/#chat");
+  const messageInput = page.getByRole("textbox", { name: /message input/i });
+  await expect(messageInput).toBeVisible();
+
+  await page.getByLabel("Select provider").click();
+  await expect(page.getByText("LM Studio", { exact: true })).toBeVisible();
+  await expect(page.getByText("OpenAI Compatible", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText(
+      "Generic OpenAI-compatible endpoints are unavailable for web chat",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Generic Fallback", exact: true }),
+  ).toBeDisabled();
+
+  await page.getByRole("button", { name: "Qwen3 Coder", exact: true }).click();
+  await expect(page.getByLabel("Select provider")).toHaveAttribute("title", "Codex");
+  await expect(page.getByLabel("Select model")).toContainText("Qwen3 Coder");
+
+  await messageInput.fill("Exercise the local provider contract");
+  await messageInput.press("Enter");
+  await expect.poll(() => createdSessions).toHaveLength(1);
+  expect(createdSessions[0]).toMatchObject({
+    provider: "codex",
+    model: "local:lm-studio/qwen3-coder",
+  });
+
+  await page.getByLabel("Select provider").click();
+  const lmStudioHeader = page.getByText("LM Studio", { exact: true }).locator("..");
+  await expect(lmStudioHeader.getByText("active", { exact: true })).toBeVisible();
+  await expect(page.getByText("Codex", { exact: true }).locator("..").getByText("active", {
+    exact: true,
+  })).toHaveCount(0);
 });

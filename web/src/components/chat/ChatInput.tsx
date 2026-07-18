@@ -186,6 +186,7 @@ export function ChatInput({
   onReasoningChange,
   onProviderChange,
   onSwitchProvider,
+  hasMessages = false,
   onProviderSelectionChange,
   providerPickerDisabledReason = null,
   proxySlashMode = false,
@@ -366,18 +367,17 @@ export function ChatInput({
   const {
     canSelectModel,
     effectiveProvider,
+    handleCatalogSelect,
     handleModelSelect,
     handleProviderSelect,
     handleReasoningSelect,
     modelOptions,
-    orderedProviders,
     reasoningOptions,
     resolvedModelLabel,
     resolvedModelValue,
     resolvedReasoning,
     selectionDisabled,
   } = useChatInputProviderSelection({
-    availableProviders,
     currentModel,
     currentReasoning,
     disabled,
@@ -575,26 +575,28 @@ export function ChatInput({
 
           {canSelectModel && (
             <ChatInputModelControls
-                compact={isNarrow}
-                currentBranch={currentBranch}
-                disabled={disabled}
-                effectiveProvider={effectiveProvider}
-                hideBranch={false}
-                modelOptions={modelOptions}
-                onModelSelect={handleModelSelect}
-                onProviderSelect={handleProviderSelect}
-                onReasoningSelect={handleReasoningSelect}
-                onWorktreeChange={onWorktreeChange}
-                orderedProviders={orderedProviders}
-                projectId={projectId}
-                providerPickerDisabledReason={providerPickerDisabledReason}
-                reasoningOptions={reasoningOptions}
-                resolvedModelLabel={resolvedModelLabel}
-                resolvedModelValue={resolvedModelValue}
-                resolvedReasoning={resolvedReasoning}
-                selectionDisabled={selectionDisabled}
-                worktreePath={worktreePath}
-                worktreePickerDisabled={worktreePickerDisabled}
+              compact={isNarrow}
+              availableProviders={availableProviders}
+              currentBranch={currentBranch}
+              disabled={disabled}
+              effectiveProvider={effectiveProvider}
+              hideBranch={false}
+              hasMessages={hasMessages}
+              modelOptions={modelOptions}
+              onCatalogSelect={handleCatalogSelect}
+              onModelSelect={handleModelSelect}
+              onProviderSelect={handleProviderSelect}
+              onReasoningSelect={handleReasoningSelect}
+              onWorktreeChange={onWorktreeChange}
+              projectId={projectId}
+              providerPickerDisabledReason={providerPickerDisabledReason}
+              reasoningOptions={reasoningOptions}
+              resolvedModelLabel={resolvedModelLabel}
+              resolvedModelValue={resolvedModelValue}
+              resolvedReasoning={resolvedReasoning}
+              selectionDisabled={selectionDisabled}
+              worktreePath={worktreePath}
+              worktreePickerDisabled={worktreePickerDisabled}
               />
           )}
           {showObserveOverlay && (

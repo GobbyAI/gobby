@@ -410,6 +410,41 @@ describe("ProviderPicker", () => {
     expect(onSwitchProvider).toHaveBeenCalledWith("codex");
   });
 
+  it("confirms execution-provider changes before invoking the integrated selection callback", async () => {
+    const onSelect = vi.fn();
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => buildLocalCatalog(),
+    }) as typeof fetch;
+
+    render(
+      <ProviderPicker
+        open={true}
+        onClose={vi.fn()}
+        currentProvider="claude"
+        currentModel="opus"
+        availableProviders={["claude", "codex"]}
+        onModelChange={vi.fn()}
+        onProviderChange={vi.fn()}
+        onSelect={onSelect}
+        hasMessages={true}
+      />,
+    );
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Qwen3 Coder" }),
+    );
+    expect(screen.getByText("Switch provider?")).toBeTruthy();
+    expect(onSelect).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Switch" }));
+
+    expect(onSelect).toHaveBeenCalledWith(
+      "codex",
+      "local:lm-studio/qwen3-coder",
+    );
+  });
+
   it("falls back to a default model entry for Qwen when the catalog is empty", async () => {
     const onModelChange = vi.fn();
     const onProviderChange = vi.fn();
