@@ -172,11 +172,10 @@ class AgentEventHandlerMixin(EventHandlersBase):
                     if suggestion:
                         context_parts.append(suggestion)
             except Exception as e:
-                self.logger.error(
+                self.logger.exception(
                     "Failed skill interception for %s: %s",
                     skill_identifier,
                     e,
-                    exc_info=True,
                 )
 
         response = HookResponse(
@@ -190,7 +189,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
             try:
                 self._inject_agent_instructions_if_needed(event, session_id, response)
             except Exception as e:
-                self.logger.error("Failed to inject agent instructions: %s", e, exc_info=True)
+                self.logger.exception("Failed to inject agent instructions: %s", e)
 
         self._apply_debug_echo(response)
         return response

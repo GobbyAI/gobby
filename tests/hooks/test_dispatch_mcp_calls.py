@@ -234,14 +234,14 @@ class TestDispatchMcpCallsBackgroundMode:
         # Should not raise
         stub._dispatch_mcp_calls(calls, event)
         await wait_for_async_condition(
-            lambda: stub.logger.error.called,
+            lambda: stub.logger.exception.called,
             description="background MCP error log",
         )
 
         # Error was logged
-        stub.logger.error.assert_called()
-        assert stub.logger.error.call_count >= 1
-        assert stub.logger.error.call_args is not None
+        stub.logger.exception.assert_called()
+        assert stub.logger.exception.call_count >= 1
+        assert stub.logger.exception.call_args is not None
 
 
 class TestDispatchMcpCallsNoEventLoop:
@@ -348,10 +348,10 @@ class TestDispatchMcpCallsNoEventLoop:
 
         # Should not raise
         stub._dispatch_mcp_calls(calls, event)
-        stub.logger.error.assert_called()
-        assert stub.logger.error.call_count >= 1
-        assert stub.logger.error.call_args is not None
-        log_args = stub.logger.error.call_args.args
+        stub.logger.exception.assert_called()
+        assert stub.logger.exception.call_count >= 1
+        assert stub.logger.exception.call_args is not None
+        log_args = stub.logger.exception.call_args.args
         assert log_args[:4] == (
             "dispatch_mcp_calls: %s/%s failed: %s: %s",
             "gobby-sessions",
@@ -359,7 +359,7 @@ class TestDispatchMcpCallsNoEventLoop:
             "RuntimeError",
         )
         assert str(log_args[4]) == "connection refused"
-        assert stub.logger.error.call_args.kwargs["exc_info"] is True
+        assert stub.logger.exception.call_args.kwargs == {}
 
     def test_multiple_calls_all_execute(self) -> None:
         """Multiple MCP calls in sequence all execute via asyncio.run()."""

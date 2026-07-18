@@ -51,12 +51,11 @@ class SessionSummaryDispatcher:
                     set_handoff_ready=set_handoff_ready,
                 )
             except Exception as exc:
-                self.logger.error(
+                self.logger.exception(
                     "_dispatch_session_summaries: failed for session %s: %s: %s",
                     session_id,
                     type(exc).__name__,
                     exc,
-                    exc_info=True,
                 )
             finally:
                 if done_event:

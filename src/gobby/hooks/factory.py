@@ -169,10 +169,9 @@ class HookManagerFactory:
 
                 config = load_config()
             except Exception as e:
-                hook_logger.error(
+                hook_logger.exception(
                     "Failed to load config in HookManager, using defaults: %s",
                     e,
-                    exc_info=True,
                 )
 
         # Initialize core components

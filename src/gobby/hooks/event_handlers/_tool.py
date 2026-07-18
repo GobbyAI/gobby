@@ -370,9 +370,8 @@ class ToolEventHandlerMixin(EventHandlersBase):
                             VERIFICATION_EVIDENCE_RESET_UPDATES,
                         )
                     except Exception:
-                        logger.error(
+                        logger.exception(
                             "Failed to reset verification evidence after edit-tracking failure",
-                            exc_info=True,
                         )
         except Exception as e:
             logger.warning("Failed to track session edited file: %s", e, exc_info=True)

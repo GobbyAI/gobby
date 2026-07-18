@@ -61,22 +61,20 @@ def run_coro_blocking(
         except concurrent.futures.TimeoutError as e:
             if future is not None:
                 future.cancel()
-            logger.error(
+            logger.exception(
                 "run_coro_blocking%s: threadsafe failed after %ss: %s: %s",
                 label_suffix,
                 timeout_seconds,
                 type(e).__name__,
                 e,
-                exc_info=True,
             )
             return None
         except Exception as e:
-            logger.error(
+            logger.exception(
                 "run_coro_blocking%s: threadsafe failed: %s: %s",
                 label_suffix,
                 type(e).__name__,
                 e,
-                exc_info=True,
             )
             return None
     else:
@@ -87,12 +85,11 @@ def run_coro_blocking(
 
             return asyncio.run(run_with_timeout())
         except Exception as e:
-            logger.error(
+            logger.exception(
                 "run_coro_blocking%s: asyncio.run failed: %s: %s",
                 label_suffix,
                 type(e).__name__,
                 e,
-                exc_info=True,
             )
             return None
 
@@ -544,13 +541,12 @@ def dispatch_mcp_calls(
                     )
                 return result
             except Exception as exc:
-                logger.error(
+                logger.exception(
                     "dispatch_mcp_calls: %s/%s failed: %s: %s",
                     s,
                     t,
                     type(exc).__name__,
                     exc,
-                    exc_info=True,
                 )
                 return {"success": False, "error": str(exc)}
             finally:

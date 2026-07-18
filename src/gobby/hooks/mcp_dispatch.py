@@ -147,7 +147,7 @@ async def _safe_call(
             )
         return result
     except Exception as exc:
-        logger.error("dispatch_mcp_calls: %s/%s failed: %s", server, tool, exc, exc_info=True)
+        logger.exception("dispatch_mcp_calls: %s/%s failed: %s", server, tool, exc)
         return {"success": False, "error": str(exc)}
     finally:
         if session_token is not None:

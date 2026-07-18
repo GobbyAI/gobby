@@ -376,9 +376,7 @@ class HookManager:
                 try:
                     response = handler(event)
                 except Exception as e:
-                    self.logger.error(
-                        "Event handler %s failed: %s", event.event_type, e, exc_info=True
-                    )
+                    self.logger.exception("Event handler %s failed: %s", event.event_type, e)
                     return HookResponse(decision="allow", reason=f"Handler error: {e}")
 
             self._record_session_activity_pulse(event)
@@ -422,7 +420,7 @@ class HookManager:
             try:
                 response = handler(event)
             except Exception as e:
-                self.logger.error("Event handler %s failed: %s", event.event_type, e, exc_info=True)
+                self.logger.exception("Event handler %s failed: %s", event.event_type, e)
                 return HookResponse(decision="allow", reason=f"Handler error: {e}")
 
         return self._complete_response(event, response, workflow_context)
@@ -458,7 +456,7 @@ class HookManager:
             try:
                 self._enricher.enrich(event, observer_response, workflow_context=workflow_context)
             except Exception as e:
-                self.logger.error("Response enrichment failed: %s", e, exc_info=True)
+                self.logger.exception("Response enrichment failed: %s", e)
 
         if preserve_original:
             observer_response.decision = original_decision

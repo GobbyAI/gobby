@@ -139,7 +139,7 @@ class WorkflowRuleEvaluator:
         except WorkflowEvaluationTimeout:
             raise
         except Exception as exc:
-            self.logger.error("Workflow evaluation failed: %s", exc, exc_info=True)
+            self.logger.exception("Workflow evaluation failed: %s", exc)
             if event.event_type in {HookEventType.STOP, HookEventType.STOP_FAILURE}:
                 return None, HookResponse(
                     decision="block",

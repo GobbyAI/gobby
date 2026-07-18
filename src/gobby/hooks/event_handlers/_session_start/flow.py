@@ -575,7 +575,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
                 agent_name_override=agent_override,
             )
         except Exception as e:
-            handler.logger.error("Failed to activate default agent: %s", e, exc_info=True)
+            handler.logger.exception("Failed to activate default agent: %s", e)
 
     if session_id and handler._session_manager is not None:
         try:
@@ -588,7 +588,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         try:
             handler._session_coordinator.register_session(external_id)
         except Exception as e:
-            handler.logger.error("Failed to setup session tracking: %s", e, exc_info=True)
+            handler.logger.exception("Failed to setup session tracking: %s", e)
 
     if session_id:
         event.metadata["_platform_session_id"] = session_id
@@ -803,10 +803,9 @@ def handle_pre_created_session(
                 agent_name_override=agent_override,
             )
         except Exception as e:
-            handler.logger.error(
+            handler.logger.exception(
                 "Failed to activate default agent for pre-created session: %s",
                 e,
-                exc_info=True,
             )
 
     if handler._session_manager is not None:

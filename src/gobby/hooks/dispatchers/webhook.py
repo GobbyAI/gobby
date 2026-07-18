@@ -80,7 +80,7 @@ def evaluate_blocking_webhooks(
             )
             return HookResponse(decision="block", reason=resolved_reason)
     except Exception as e:
-        logger.error("Blocking webhook dispatch failed: %s", e, exc_info=True)
+        logger.exception("Blocking webhook dispatch failed: %s", e)
         # Fail-open for webhook errors
     return None
 

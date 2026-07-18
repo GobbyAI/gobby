@@ -75,13 +75,12 @@ def _quarantine_file(path: Path, *, reason: str, detail: str) -> bool:
         )
         return True
     except Exception as exc:
-        logger.error(
+        logger.exception(
             "Failed to quarantine hook inbox file %s (reason=%s, detail=%s): %s",
             path,
             reason,
             detail,
             exc,
-            exc_info=True,
         )
         return False
     return True

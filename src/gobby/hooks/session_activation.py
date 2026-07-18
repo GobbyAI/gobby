@@ -354,12 +354,11 @@ def _resolve_active_rule_names(
         # json.loads plus Pydantic validation should report data issues through
         # JSONDecodeError/ValidationError. TypeError here signals an unexpected
         # programming or schema regression, so keep it visible while failing open.
-        logger.error(
+        logger.exception(
             "Unexpected TypeError refreshing active rules for agent %s via "
             "json.loads/AgentDefinitionBody.model_validate: %s",
             agent_name,
             exc,
-            exc_info=True,
         )
         return None
     except (json.JSONDecodeError, KeyError, ValidationError) as exc:
