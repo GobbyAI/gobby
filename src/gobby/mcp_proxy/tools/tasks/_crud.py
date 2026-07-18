@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.tasks._claim_activity import confirm_claiming_session_activity
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._formatters import (
     dependency_payload,
@@ -192,7 +193,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             )
 
         # Auto-claim if requested.
-        claim_skipped_cross_project = False
+        claim_warning: str | None = None
         if claim:
             # Block cross-project claiming
             try:
@@ -207,7 +208,19 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     claim_session.project_id,
                 )
                 claim = False
-                claim_skipped_cross_project = True
+                claim_warning = "claim=true ignored: cannot claim a task in a different project"
+            elif not confirm_claiming_session_activity(
+                ctx,
+                resolved_session_id,
+                claim_session,
+            ):
+                logger.warning(
+                    "Skipping auto-claim for task %s: session %s could not be marked active",
+                    task.id,
+                    resolved_session_id,
+                )
+                claim = False
+                claim_warning = "claim=true ignored: current session could not be marked active"
 
         if claim:
             updated_task = ctx.task_manager.claim_task(task.id, resolved_session_id)
@@ -279,9 +292,8 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "ref": f"#{task.seq_num}",
             }
 
-        # Include cross-project claim warning
-        if claim_skipped_cross_project:
-            result["warning"] = "claim=true ignored: cannot claim a task in a different project"
+        if claim_warning:
+            result["warning"] = claim_warning
 
         # Include dependency errors if any
         if dependency_errors:

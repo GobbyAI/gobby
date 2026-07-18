@@ -8,6 +8,7 @@ import logging
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.tasks._claim_activity import confirm_claiming_session_activity
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
@@ -110,6 +111,13 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 "task_project": task.project_id,
                 "session_project": session.project_id,
             }
+
+        if not confirm_claiming_session_activity(ctx, resolved_session_id, session):
+            return task_error(
+                "Current session could not be marked active; task was not claimed",
+                TaskToolErrorCode.SESSION_INACTIVE,
+                session_id=resolved_session_id,
+            )
 
         # Check if already claimed by another session
         if is_task_closed(task):

@@ -126,8 +126,10 @@ class TestClaimTaskTool:
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "my-session-id"
             mock_session_manager.get.return_value = MagicMock(
-                project_id="11111111-1111-4111-8111-111111110001"
+                project_id="11111111-1111-4111-8111-111111110001",
+                status="handoff_ready",
             )
+            mock_session_manager.update_session_status.return_value = True
             MockSessionManager.return_value = mock_session_manager
 
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
@@ -136,7 +138,16 @@ class TestClaimTaskTool:
             updated_task = MagicMock()
             updated_task.id = sample_task.id
             updated_task.claimed_by_session_id = "my-session-id"
-            mock_task_manager.claim_task.return_value = updated_task
+
+            def claim_after_activity(*args, **kwargs):
+                mock_session_manager.update_session_status.assert_called_once_with(
+                    "my-session-id",
+                    "active",
+                    activity_confirmed=True,
+                )
+                return updated_task
+
+            mock_task_manager.claim_task.side_effect = claim_after_activity
 
             result = await registry.call(
                 "claim_task",
@@ -160,6 +171,35 @@ class TestClaimTaskTool:
             )
             assert mock_st_instance.link_task.call_count == 1
             assert mock_st_instance.link_task.call_args is not None
+
+    @pytest.mark.asyncio
+    async def test_claim_task_rejects_present_session_that_cannot_reactivate(
+        self, mock_task_manager, mock_sync_manager, sample_task
+    ):
+        """A non-live current session must not receive a sweepable task claim."""
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
+            ) as MockSessionTaskManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
+        ):
+            MockSessionTaskManager.return_value = MagicMock()
+            mock_session_manager = MagicMock()
+            mock_session_manager.resolve_session_reference.return_value = "my-session-id"
+            mock_session_manager.get.return_value = MagicMock(
+                project_id="11111111-1111-4111-8111-111111110001",
+                status="handoff_ready",
+            )
+            mock_session_manager.update_session_status.return_value = False
+            MockSessionManager.return_value = mock_session_manager
+
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+            mock_task_manager.get_task.return_value = sample_task
+
+            result = await registry.call("claim_task", {"task_id": sample_task.id})
+
+            assert result["error_code"] == "SESSION_INACTIVE"
+            mock_task_manager.claim_task.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_claim_task_already_claimed_by_another_session(
@@ -748,6 +788,7 @@ class TestClaimTaskCrossProjectBlocking:
             assert result["session_project"] == "proj-OTHER"
             # Should NOT have attempted the update
             mock_task_manager.claim_task.assert_not_called()
+            mock_session_manager.update_session_status.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_claim_task_allowed_when_session_lookup_returns_none(

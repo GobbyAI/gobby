@@ -830,8 +830,10 @@ class TestCreateTaskCrossProjectClaimBlocking:
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "test-session"
             mock_session_manager.get.return_value = MagicMock(
-                project_id="11111111-1111-4111-8111-111111110001"
+                project_id="11111111-1111-4111-8111-111111110001",
+                status="handoff_ready",
             )
+            mock_session_manager.update_session_status.return_value = True
             MockSessionManager.return_value = mock_session_manager
 
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
@@ -845,7 +847,16 @@ class TestCreateTaskCrossProjectClaimBlocking:
                 "task": {"id": mock_task.id},
             }
             mock_task_manager.get_task.return_value = mock_task
-            mock_task_manager.claim_task.return_value = mock_task
+
+            def claim_after_activity(*args, **kwargs):
+                mock_session_manager.update_session_status.assert_called_once_with(
+                    "test-session",
+                    "active",
+                    activity_confirmed=True,
+                )
+                return mock_task
+
+            mock_task_manager.claim_task.side_effect = claim_after_activity
 
             with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
                 mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
@@ -866,6 +877,45 @@ class TestCreateTaskCrossProjectClaimBlocking:
                     mock_task.id,
                     "test-session",
                 )
+
+    @pytest.mark.asyncio
+    async def test_create_task_claim_skipped_when_session_cannot_reactivate(
+        self, mock_task_manager: MagicMock, mock_sync_manager: MagicMock
+    ) -> None:
+        """Creation succeeds without a claim when confirmed activity cannot be stored."""
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
+            ) as MockSessionTaskManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
+        ):
+            MockSessionTaskManager.return_value = MagicMock()
+            mock_session_manager = MagicMock()
+            mock_session_manager.resolve_session_reference.return_value = "test-session"
+            mock_session_manager.get.return_value = MagicMock(
+                project_id="11111111-1111-4111-8111-111111110001",
+                status="handoff_ready",
+            )
+            mock_session_manager.update_session_status.return_value = False
+            MockSessionManager.return_value = mock_session_manager
+
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+            mock_task = MagicMock()
+            mock_task.id = "550e8400-e29b-41d4-a716-446655440100"
+            mock_task.seq_num = 501
+            mock_task_manager.create_task_with_decomposition.return_value = {
+                "task": {"id": mock_task.id},
+            }
+            mock_task_manager.get_task.return_value = mock_task
+
+            result = await registry.call(
+                "create_task",
+                {"title": "Unclaimed task", "category": "research", "claim": True},
+            )
+
+            assert result["id"] == mock_task.id
+            assert "could not be marked active" in result["warning"]
+            mock_task_manager.claim_task.assert_not_called()
 
 
 # =============================================================================
