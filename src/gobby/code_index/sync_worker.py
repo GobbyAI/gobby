@@ -164,7 +164,7 @@ async def sync_worker_loop(
                 breaker=breaker,
             )
         except Exception as e:
-            logger.error("Sync worker pass error: %s", e, exc_info=True)
+            logger.exception("Sync worker pass error: %s", e)
 
         try:
             await asyncio.wait_for(shutdown_flag.wait(), timeout=interval)
@@ -227,11 +227,10 @@ async def _sync_pass(
                 if did_sync:
                     synced_count += 1
             except Exception as e:
-                logger.error(
+                logger.exception(
                     "Sync worker: failed to sync %s: %s",
                     file.file_path,
                     e,
-                    exc_info=True,
                 )
 
         if synced_count > 0:
@@ -315,11 +314,10 @@ async def _sync_file(
                     e,
                 )
             except Exception as e:
-                logger.error(
+                logger.exception(
                     "Sync worker: vector sync failed for %s: %s",
                     current.file_path,
                     e,
-                    exc_info=True,
                 )
 
     # Graph sync
@@ -394,11 +392,10 @@ async def _sync_file(
                     e,
                 )
             except Exception as e:
-                logger.error(
+                logger.exception(
                     "Sync worker: graph sync failed for %s: %s",
                     current.file_path,
                     e,
-                    exc_info=True,
                 )
 
     return did_work

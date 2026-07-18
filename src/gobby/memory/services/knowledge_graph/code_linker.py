@@ -89,7 +89,7 @@ class KnowledgeGraphCodeLinker:
                         e,
                     )
                 else:
-                    logger.error(
+                    logger.exception(
                         "Unexpected code symbol search failure",
                         extra={
                             "entity_key": entity.entity_key,
@@ -97,7 +97,6 @@ class KnowledgeGraphCodeLinker:
                             "collection": collection,
                             "project_id": project_id,
                         },
-                        exc_info=True,
                     )
                 continue
 

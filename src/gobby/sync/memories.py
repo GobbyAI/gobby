@@ -341,7 +341,7 @@ class MemoryBackupManager:
         except MemoryExportError:
             raise
         except Exception as e:
-            logger.error("Failed to backup memories: %s", e, exc_info=True)
+            logger.exception("Failed to backup memories: %s", e)
             raise MemoryExportError(f"Failed to backup memories: {e}") from e
 
     # Backward compatibility alias
@@ -783,5 +783,5 @@ class MemoryBackupManager:
         except MemoryExportError:
             raise
         except Exception as e:
-            logger.error("Failed to export memories: %s", e, exc_info=True)
+            logger.exception("Failed to export memories: %s", e)
             raise MemoryExportError(f"Failed to export memories: {e}") from e

@@ -147,7 +147,7 @@ def create_linear_sync_handler(
                 f"pushed {push['pushed']} (errors {push_errors}, deferred {push_deferred})"
             )
         except Exception as e:
-            logger.error("Linear sync cron failed: %s", e, exc_info=True)
+            logger.exception("Linear sync cron failed: %s", e)
             raise
 
     return linear_sync_handler

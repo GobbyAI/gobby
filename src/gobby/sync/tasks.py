@@ -338,7 +338,7 @@ class TaskSyncManager(GitHubTaskSyncMixin):
             logger.info("Exported %s tasks to %s", len(merged_records), target_path)
 
         except Exception as e:
-            logger.error("Failed to export tasks: %s", e, exc_info=True)
+            logger.exception("Failed to export tasks: %s", e)
             raise
 
     def import_from_jsonl(self, project_id: str | None = None) -> None:
@@ -735,7 +735,7 @@ class TaskSyncManager(GitHubTaskSyncMixin):
                     logger.warning("Failed to rebuild search index: %s", e)
 
         except Exception as e:
-            logger.error("Failed to import tasks: %s", e, exc_info=True)
+            logger.exception("Failed to import tasks: %s", e)
             raise
 
     def get_sync_status(self) -> dict[str, Any]:

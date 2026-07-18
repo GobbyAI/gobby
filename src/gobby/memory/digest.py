@@ -897,10 +897,9 @@ async def build_turn_and_digest(
     except LLMProviderCancellation as e:
         return await _provider_cancelled_fallback(session_manager, session_id, e)
     except Exception as e:
-        logger.error(
+        logger.exception(
             "build_turn_and_digest: Failed for session %s: %s",
             session_id,
             e,
-            exc_info=True,
         )
         return {"error": str(e)}

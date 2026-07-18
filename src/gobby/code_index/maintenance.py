@@ -58,7 +58,7 @@ async def code_index_maintenance_loop(
                 missing_root_observations=missing_root_observations,
             )
         except Exception as e:
-            logger.error("Code index maintenance error: %s", e, exc_info=True)
+            logger.exception("Code index maintenance error: %s", e)
 
         # Wait for interval or shutdown
         if shutdown_flag is not None:

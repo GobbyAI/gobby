@@ -210,7 +210,7 @@ def _verify_manifest_integrity(install_dir: Path, result: IntegrityResult) -> In
         try:
             actual_hash = hash_file_bytes(path)
         except OSError as exc:
-            logger.error("Failed to read bundled manifest file %s", path, exc_info=True)
+            logger.exception("Failed to read bundled manifest file %s", path)
             result.errors.append(f"Failed to read {display_path}: {exc}")
             dirty.append(display_path)
             continue
