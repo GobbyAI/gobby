@@ -151,6 +151,7 @@ def register_codewiki_nightly_cron(
         "out_dir": str(out_dir),
         "ai": CODEWIKI_NIGHTLY_AI,
         "scopes": scopes,
+        "timeout_seconds": CODEWIKI_NIGHTLY_GCODE_TIMEOUT_SECONDS,
     }
 
     cron_executor.register_handler(

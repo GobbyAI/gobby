@@ -27,7 +27,9 @@ from gobby.code_index.codewiki_refresh import (
     CodewikiRefreshService,
 )
 from gobby.code_index.gcode_gateway import GcodeCommandError, GcodeGatewayError
+from gobby.config.cron import CronConfig
 from gobby.config.wiki import WikiConfig
+from gobby.scheduler.executor import CronExecutor
 from gobby.shutdown_intent import ShutdownIntent, ShutdownIntentRecord
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
@@ -150,6 +152,7 @@ def test_register_codewiki_nightly_cron_reconciles_single_utc_system_job(
         "out_dir": str((tmp_path / "wiki").resolve(strict=False)),
         "ai": CODEWIKI_NIGHTLY_AI,
         "scopes": ["crates", "web", "src"],
+        "timeout_seconds": CODEWIKI_NIGHTLY_GCODE_TIMEOUT_SECONDS,
     }
     assert job.next_run_at is not None
     assert job.next_run_at.utcoffset() == timedelta(0)
@@ -176,6 +179,14 @@ def test_register_codewiki_nightly_cron_reconciles_single_utc_system_job(
     assert len(jobs) == 1
     updated = jobs[0]
     assert updated.cron_expr == "0 4 * * *"
+    assert updated.action_config["timeout_seconds"] == CODEWIKI_NIGHTLY_GCODE_TIMEOUT_SECONDS
+    bounded_executor = CronExecutor(
+        storage,
+        config=CronConfig(running_timeout_seconds=1_440),
+    )
+    assert (
+        bounded_executor._action_timeout_seconds(updated) == CODEWIKI_NIGHTLY_GCODE_TIMEOUT_SECONDS
+    )
     assert updated.next_run_at is not None
     assert updated.next_run_at.utcoffset() == timedelta(0)
 
