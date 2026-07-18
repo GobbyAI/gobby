@@ -17,6 +17,7 @@ from gobby.code_index.nightly_reindex import (
     CodeIndexNightlyFullReindexer,
     register_code_index_nightly_reindex_cron,
 )
+from gobby.config.code_index import CodeIndexConfig
 
 pytestmark = pytest.mark.unit
 
@@ -117,10 +118,10 @@ class NightlyContext:
         return func(*args, **kwargs)
 
 
-def _project(project_id: str, root_path: Path | None) -> IndexedProject:
+def _project(project_id: str, root_path: Path) -> IndexedProject:
     return IndexedProject(
         id=project_id,
-        root_path=str(root_path) if root_path is not None else None,
+        root_path=str(root_path),
         total_files=1,
         total_symbols=1,
     )
@@ -260,23 +261,18 @@ def test_register_nightly_reindex_cron_creates_global_system_job() -> None:
 
     storage = CronStorage()
     executor = CronExecutor()
-    config = SimpleNamespace(
-        nightly_full_reindex_enabled=True,
-        nightly_full_reindex_cron="0 2 * * *",
-        nightly_full_reindex_timezone=None,
-        nightly_full_reindex_timeout_seconds=7200,
-        nightly_full_reindex_concurrency=1,
-        maintenance_log_file="~/.gobby/logs/code-index-maintenance.log",
-    )
+    config = CodeIndexConfig()
     reindexer = CodeIndexNightlyFullReindexer(
-        NightlyContext(projects=[], gateway=NightlyGateway(), log_file=Path("/tmp/log"))
-    )  # type: ignore[arg-type]
+        NightlyContext(  # type: ignore[arg-type]
+            projects=[], gateway=NightlyGateway(), log_file=Path("/tmp/log")
+        )
+    )
 
     register_code_index_nightly_reindex_cron(
         cron_storage=storage,  # type: ignore[arg-type]
         cron_executor=executor,
         reindexer=reindexer,
-        config=config,  # type: ignore[arg-type]
+        config=config,
         project_id="personal",
     )
 
@@ -289,3 +285,40 @@ def test_register_nightly_reindex_cron_creates_global_system_job() -> None:
     assert storage.created["enabled"] is True
     assert storage.created["is_system"] is True
     assert storage.created["action_config"]["handler"] == CODE_INDEX_NIGHTLY_REINDEX_HANDLER
+    assert storage.created["action_config"]["timeout_seconds"] == 8 * 60 * 60
+
+
+def test_register_nightly_reindex_cron_reconciles_timeout() -> None:
+    class CronStorage:
+        def __init__(self) -> None:
+            self.reconciled: dict[str, Any] | None = None
+
+        def get_job_by_name(self, name: str) -> SimpleNamespace:
+            assert name == CODE_INDEX_NIGHTLY_REINDEX_JOB_NAME
+            return SimpleNamespace(id="existing-job", is_system=True)
+
+        def reconcile_system_job_definition(self, job_id: str, **kwargs: Any) -> None:
+            assert job_id == "existing-job"
+            self.reconciled = kwargs
+
+    class CronExecutor:
+        def register_handler(self, _name: str, _handler: Any) -> None:
+            pass
+
+    storage = CronStorage()
+    reindexer = CodeIndexNightlyFullReindexer(
+        NightlyContext(  # type: ignore[arg-type]
+            projects=[], gateway=NightlyGateway(), log_file=Path("/tmp/log")
+        )
+    )
+
+    register_code_index_nightly_reindex_cron(
+        cron_storage=storage,  # type: ignore[arg-type]
+        cron_executor=CronExecutor(),
+        reindexer=reindexer,
+        config=CodeIndexConfig(),
+        project_id="personal",
+    )
+
+    assert storage.reconciled is not None
+    assert storage.reconciled["action_config"]["timeout_seconds"] == 8 * 60 * 60

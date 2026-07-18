@@ -1,5 +1,6 @@
 """Shared helpers for runner tests."""
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -8,7 +9,7 @@ from gobby.config.logging import LoggingSettings
 RUNNER_INIT_SESSION_MANAGER_PATCH = "gobby.runner_init.storage.SessionManager"
 
 
-def set_mock_default(obj: MagicMock, name: str, default):
+def set_mock_default(obj: MagicMock, name: str, default: Any) -> None:
     """Assign a default only when a MagicMock placeholder has not been made concrete."""
     value = getattr(obj, name, None)
     if isinstance(value, AsyncMock):
@@ -75,7 +76,7 @@ def apply_safe_runner_config_defaults(config: MagicMock) -> MagicMock:
     set_mock_default(config.code_index, "nightly_full_reindex_enabled", True)
     set_mock_default(config.code_index, "nightly_full_reindex_cron", "0 2 * * *")
     set_mock_default(config.code_index, "nightly_full_reindex_timezone", None)
-    set_mock_default(config.code_index, "nightly_full_reindex_timeout_seconds", 7200)
+    set_mock_default(config.code_index, "nightly_full_reindex_timeout_seconds", 8 * 60 * 60)
     set_mock_default(config.code_index, "nightly_full_reindex_concurrency", 1)
     set_mock_default(
         config.code_index,
@@ -89,11 +90,11 @@ def apply_safe_runner_config_defaults(config: MagicMock) -> MagicMock:
 
 
 def create_base_patches(
-    mock_config=None,
-    mock_mcp_manager=None,
-    mock_http=None,
-    mock_ws_server=None,
-):
+    mock_config: Any = None,
+    mock_mcp_manager: Any = None,
+    mock_http: Any = None,
+    mock_ws_server: Any = None,
+) -> list[Any]:
     """Create all standard patches needed for GobbyRunner tests."""
     if mock_config is not None:
         apply_safe_runner_config_defaults(mock_config)

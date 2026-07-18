@@ -81,7 +81,7 @@ def test_code_index_config_maintenance_defaults() -> None:
     assert config.nightly_full_reindex_enabled is True
     assert config.nightly_full_reindex_cron == "0 2 * * *"
     assert config.nightly_full_reindex_timezone is None
-    assert config.nightly_full_reindex_timeout_seconds == 7200
+    assert config.nightly_full_reindex_timeout_seconds == 8 * 60 * 60
     assert config.nightly_full_reindex_concurrency == 1
     assert config.maintenance_log_file == "~/.gobby/logs/code-index-maintenance.log"
 
@@ -1007,7 +1007,7 @@ class TestLoadConfig:
         }
         expected_deleted = sorted(values)
         deleted: list[str] = []
-        rows = [
+        rows: list[dict[str, object]] = [
             {
                 "key": key,
                 "value": value if key == "gobby_tasks.expansion.candidates" else json.dumps(value),

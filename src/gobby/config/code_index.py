@@ -76,7 +76,7 @@ class CodeIndexConfig(BaseModel):
         description="Timezone for nightly full code-index reindex; UTC when unset",
     )
     nightly_full_reindex_timeout_seconds: int = Field(
-        default=7200,
+        default=8 * 60 * 60,
         ge=1,
         description="Timeout for each nightly full gcode reindex command",
     )
