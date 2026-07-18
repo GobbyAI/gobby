@@ -9,7 +9,7 @@ rules:
     when: >
       event.data.get('canonical_tool_kind') == 'write'
       and claimed_task_source_code_write(tool_input, event.data)
-      and first_unloaded_claimed_task_required_skill() != ''
+      and first_unloaded_claimed_task_required_skill(tool_input, event.data) != ''
     effects:
       - type: block
-        reason: '{{ skill_fetch_directive(first_unloaded_claimed_task_required_skill()) }}'
+        reason: '{{ skill_fetch_directive(first_unloaded_claimed_task_required_skill(tool_input, event.data)) }}'

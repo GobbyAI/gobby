@@ -634,13 +634,20 @@ def build_condition_helpers(
         loaded_skills = variables.get("loaded_skills", [])
         return isinstance(loaded_skills, list) and name in loaded_skills
 
-    def _first_unloaded_claimed_task_required_skill() -> str:
+    def _first_unloaded_claimed_task_required_skill(
+        tool_input: Any = None,
+        event_data: dict[str, Any] | None = None,
+    ) -> str:
         """Return the first claimed-task skill missing from the canonical skill ledger."""
         from gobby.workflows.claimed_task_skills import (
             first_unloaded_claimed_task_required_skill,
         )
 
-        return first_unloaded_claimed_task_required_skill(_get_variables(ctx))
+        return first_unloaded_claimed_task_required_skill(
+            _get_variables(ctx),
+            tool_input,
+            event_data,
+        )
 
     def _assistant_response_matches_any(
         patterns: list[str],

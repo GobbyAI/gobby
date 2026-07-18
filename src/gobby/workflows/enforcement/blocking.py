@@ -384,6 +384,21 @@ def get_touched_file_paths(tool_input: Any) -> list[str]:
     return []
 
 
+def get_write_file_paths(
+    tool_input: Any,
+    event_data: dict[str, Any] | None = None,
+) -> list[str]:
+    """Return write paths, falling back to the adapter's canonical path."""
+    touched_paths = get_touched_file_paths(tool_input)
+    if touched_paths or not isinstance(event_data, dict):
+        return touched_paths
+
+    canonical_path = event_data.get("canonical_file_path")
+    if isinstance(canonical_path, str) and canonical_path.strip():
+        return [canonical_path.strip()]
+    return []
+
+
 def requires_task_for_any_touched_file(
     tool_input: Any,
     source: str | None = None,
@@ -416,11 +431,7 @@ def claimed_task_source_code_write(
     This intentionally fails closed for write events with no parseable path; the
     claimed-task skill gate should fire before an opaque source mutation.
     """
-    touched_paths = get_touched_file_paths(tool_input)
-    if not touched_paths and isinstance(event_data, dict):
-        canonical_path = event_data.get("canonical_file_path")
-        if isinstance(canonical_path, str) and canonical_path.strip():
-            touched_paths = [canonical_path.strip()]
+    touched_paths = get_write_file_paths(tool_input, event_data)
 
     if not touched_paths:
         return True

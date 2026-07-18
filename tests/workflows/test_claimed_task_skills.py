@@ -264,3 +264,70 @@ def test_first_unloaded_required_skill_skips_unresolvable_names() -> None:
 
     variables["unresolvable_required_skills"].append("python")
     assert first_unloaded_claimed_task_required_skill(variables) == ""
+
+
+@pytest.mark.parametrize(
+    ("file_path", "loaded_skills", "expected"),
+    [
+        ("/project/src/app.py", ["development-discipline"], "python"),
+        ("/project/web/app.tsx", ["development-discipline"], "typescript"),
+        ("/project/src/app.py", ["python"], "development-discipline"),
+    ],
+)
+def test_first_unloaded_required_skill_scopes_languages_to_touched_file(
+    file_path: str,
+    loaded_skills: list[str],
+    expected: str,
+) -> None:
+    variables = {
+        "claimed_task_required_skills": [
+            "python",
+            "typescript",
+            "development-discipline",
+        ],
+        "claimed_task_language_skills": ["python", "typescript"],
+        "loaded_skills": loaded_skills,
+    }
+
+    assert (
+        first_unloaded_claimed_task_required_skill(
+            variables,
+            {"file_path": file_path},
+            {"canonical_file_path": file_path},
+        )
+        == expected
+    )
+
+
+def test_first_unloaded_required_skill_includes_each_touched_language() -> None:
+    variables = {
+        "claimed_task_required_skills": [
+            "python",
+            "typescript",
+            "development-discipline",
+        ],
+        "claimed_task_language_skills": ["python", "typescript"],
+        "loaded_skills": ["python", "development-discipline"],
+    }
+
+    assert (
+        first_unloaded_claimed_task_required_skill(
+            variables,
+            {"file_paths": ["/project/src/app.py", "/project/web/app.ts"]},
+        )
+        == "typescript"
+    )
+
+
+def test_first_unloaded_required_skill_fails_closed_for_opaque_write() -> None:
+    variables = {
+        "claimed_task_required_skills": [
+            "python",
+            "typescript",
+            "development-discipline",
+        ],
+        "claimed_task_language_skills": ["python", "typescript"],
+        "loaded_skills": [],
+    }
+
+    assert first_unloaded_claimed_task_required_skill(variables, {}, {}) == "python"

@@ -12,7 +12,7 @@ import psycopg
 from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.commits import extract_mentioned_files
-from gobby.workflows.enforcement.blocking import is_source_code_path
+from gobby.workflows.enforcement.blocking import get_write_file_paths, is_source_code_path
 
 if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
@@ -184,11 +184,15 @@ def refresh_claimed_task_skill_metadata(
     return merge
 
 
-def first_unloaded_claimed_task_required_skill(variables: dict[str, Any]) -> str:
-    """Return the first required claimed-task skill not present in loaded_skills."""
-    required = variables.get("claimed_task_required_skills") or []
+def first_unloaded_claimed_task_required_skill(
+    variables: dict[str, Any],
+    tool_input: Any = None,
+    event_data: dict[str, Any] | None = None,
+) -> str:
+    """Return the first required skill for the files touched by this write."""
+    required = _required_skills_for_write(variables, tool_input, event_data)
     loaded = variables.get("loaded_skills") or []
-    if not isinstance(required, list) or not isinstance(loaded, list):
+    if not isinstance(loaded, list):
         return ""
 
     loaded_set = {skill for skill in loaded if isinstance(skill, str)}
@@ -207,6 +211,32 @@ def first_unloaded_claimed_task_required_skill(variables: dict[str, Any]) -> str
         ):
             return skill
     return ""
+
+
+def _required_skills_for_write(
+    variables: dict[str, Any],
+    tool_input: Any,
+    event_data: dict[str, Any] | None,
+) -> list[str]:
+    """Scope task-inferred language skills to the current write's file types."""
+    required = _string_list(variables.get("claimed_task_required_skills"))
+    language_skills = set(_string_list(variables.get("claimed_task_language_skills")))
+    if not language_skills:
+        return required
+
+    touched_files = get_write_file_paths(tool_input, event_data)
+    if not touched_files:
+        return required
+
+    touched_language_skills = set(_language_skills_for_files(touched_files))
+    additional_skills = set(_string_list(variables.get("claimed_task_additional_skills")))
+    return [
+        skill
+        for skill in required
+        if skill not in language_skills
+        or skill in touched_language_skills
+        or skill in additional_skills
+    ]
 
 
 def _empty_state() -> dict[str, list[str]]:

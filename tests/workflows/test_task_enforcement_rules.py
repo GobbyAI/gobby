@@ -479,7 +479,7 @@ class TestRequireClaimedTaskRequiredSkills:
     CONDITION = (
         "event.data.get('canonical_tool_kind') == 'write' "
         "and claimed_task_source_code_write(tool_input, event.data) "
-        "and first_unloaded_claimed_task_required_skill() != ''"
+        "and first_unloaded_claimed_task_required_skill(tool_input, event.data) != ''"
     )
 
     def _eval(
@@ -487,6 +487,7 @@ class TestRequireClaimedTaskRequiredSkills:
         *,
         file_path: str = "/project/src/main.py",
         required_skills: list[str] | None = None,
+        language_skills: list[str] | None = None,
         loaded_skills: list[str] | None = None,
         canonical_tool_kind: str = "write",
     ) -> bool:
@@ -498,6 +499,7 @@ class TestRequireClaimedTaskRequiredSkills:
         context = {
             "variables": {
                 "claimed_task_required_skills": required_skills or [],
+                "claimed_task_language_skills": language_skills or [],
                 "loaded_skills": loaded_skills or [],
             },
             "event": SimpleNamespace(
@@ -523,11 +525,38 @@ class TestRequireClaimedTaskRequiredSkills:
 
         assert body.event.value == "before_tool"
         assert body.effects[0].type == "block"
-        assert "first_unloaded_claimed_task_required_skill" in body.when
+        assert "first_unloaded_claimed_task_required_skill(tool_input, event.data)" in body.when
         assert "skill_fetch_directive" in body.effects[0].reason
 
     def test_condition_blocks_inferred_python_from_task_metadata(self) -> None:
-        assert self._eval(required_skills=["python", "development-discipline"]) is True
+        assert (
+            self._eval(
+                required_skills=["python", "typescript", "development-discipline"],
+                language_skills=["python", "typescript"],
+            )
+            is True
+        )
+
+    def test_condition_allows_python_edit_without_typescript_skill(self) -> None:
+        assert (
+            self._eval(
+                required_skills=["python", "typescript", "development-discipline"],
+                language_skills=["python", "typescript"],
+                loaded_skills=["python", "development-discipline"],
+            )
+            is False
+        )
+
+    def test_condition_requires_typescript_for_tsx_edit(self) -> None:
+        assert (
+            self._eval(
+                file_path="/project/web/app.tsx",
+                required_skills=["python", "typescript", "development-discipline"],
+                language_skills=["python", "typescript"],
+                loaded_skills=["development-discipline"],
+            )
+            is True
+        )
 
     def test_condition_blocks_tdd_required_metadata(self) -> None:
         assert (
@@ -589,7 +618,7 @@ class TestRequireClaimedTaskRequiredSkills:
         assert skill_fetch_directive("python") in response.reason
 
     @pytest.mark.asyncio
-    async def test_rule_allows_when_all_required_skills_loaded(self, db: HubDatabase) -> None:
+    async def test_rule_allows_when_all_relevant_skills_loaded(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         engine = RuleEngine(db)
         event = HookEvent(
@@ -612,8 +641,18 @@ class TestRequireClaimedTaskRequiredSkills:
             variables={
                 "task_claimed": True,
                 "enforce_tdd": False,
-                "claimed_task_required_skills": ["python", "development-discipline"],
-                "loaded_skills": ["python", "development-discipline", "context7", "restraint"],
+                "claimed_task_required_skills": [
+                    "python",
+                    "typescript",
+                    "development-discipline",
+                ],
+                "claimed_task_language_skills": ["python", "typescript"],
+                "loaded_skills": [
+                    "python",
+                    "development-discipline",
+                    "context7",
+                    "restraint",
+                ],
             },
         )
 
