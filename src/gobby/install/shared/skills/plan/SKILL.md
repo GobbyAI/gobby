@@ -53,19 +53,25 @@ which runs after approval and before the unchanged adversary gate.
       `isolation="none"`. Pass `artifact_path`, `round_number`,
       `max_enhancement_rounds`, and the parent session id in the prompt or
       variables.
-   2. Wait for the run completion message, then surface the ranked suggestions
+   2. Immediately after every enhancer launch, call
+      `gobby-sessions:compact_self` for the parent session before waiting or
+      doing any other work. This is mandatory on every enhancement round.
+   3. Wait for the run completion message, then surface the ranked suggestions
       to the user — highest impact-vs-effort first — for accept/decline. The
       human is the scope gate (present-and-stop): you present, the user decides
       what ships.
-   3. Apply only the **accepted** suggestions to the plan artifact, re-run
+   4. Apply only the **accepted** suggestions to the plan artifact, re-run
       `uv run gobby plans validate <plan-file>`, and append a `## V1 Plan
       Changelog` entry with `kind: enhancement`.
-   4. Stop on `converged: true`, all suggestions declined, or the
+   5. Stop on `converged: true`, all suggestions declined, or the
       `max_enhancement_rounds` cap. The enhancer never gates; control then
       proceeds to the unchanged adversary gate in step 5.
 5. After the enhancement phase, spawn `plan-adversary-taskless` without
    `task_id` and with `isolation="none"`. Pass `artifact_path`, `round_number`,
    `max_review_rounds`, and the parent session id in the prompt or variables.
+   Immediately after every adversary launch, call
+   `gobby-sessions:compact_self` for the parent session before waiting or doing
+   any other work. This is mandatory on every adversarial review round.
 6. Wait for the adversary run completion message. Read the run result and
    append a `## V1 Plan Changelog` entry with `kind: verification`.
 7. If the verdict is `needs_review`, revise the plan with the user, rerun

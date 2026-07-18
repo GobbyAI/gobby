@@ -40,6 +40,20 @@ def test_review_spawn_uses_taskless_adversary_without_task_id(body: str) -> None
     assert "max_review_rounds" in body
 
 
+def test_plan_compacts_after_every_review_agent_launch(body: str) -> None:
+    enhancer_launch = body.index("Spawn `plan-enhancer-taskless`")
+    enhancer_wait = body.index("Wait for the run completion message", enhancer_launch)
+    enhancer_handoff = body[enhancer_launch:enhancer_wait]
+    assert "gobby-sessions:compact_self" in enhancer_handoff
+    assert "every enhancement round" in enhancer_handoff
+
+    adversary_launch = body.index("spawn `plan-adversary-taskless`")
+    adversary_wait = body.index("Wait for the adversary run completion message", adversary_launch)
+    adversary_handoff = body[adversary_launch:adversary_wait]
+    assert "gobby-sessions:compact_self" in adversary_handoff
+    assert "every adversarial review round" in adversary_handoff
+
+
 def test_review_history_uses_v1_changelog_verification_entries(body: str) -> None:
     assert "## V1 Plan Changelog" in body
     assert "`kind: verification`" in body
