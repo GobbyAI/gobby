@@ -291,6 +291,7 @@ async def test_codewiki_nightly_handler_returns_success_output(tmp_path: Path) -
             out_dir=str(tmp_path / "wiki"),
             ai=CODEWIKI_NIGHTLY_AI,
             scopes=["crates", "web", "src"],
+            complete_scope=True,
         )
     ]
 

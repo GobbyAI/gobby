@@ -100,6 +100,7 @@ def create_codewiki_nightly_handler(
                     out_dir=str(out_dir),
                     ai=normalized_ai,
                     scopes=scopes,
+                    complete_scope=bool(scopes),
                 )
             )
         except GcodeCommandError as exc:

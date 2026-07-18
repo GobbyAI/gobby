@@ -386,6 +386,7 @@ pub(crate) enum Command {
             long,
             conflicts_with_all = [
                 "scope",
+                "complete_scope",
                 "ai",
                 "ai_depth",
                 "ai_aggregate_profile",
@@ -408,6 +409,11 @@ pub(crate) enum Command {
         /// Limit docs to indexed files under one or more paths
         #[arg(long, num_args = 1.., value_name = "PATH")]
         scope: Vec<String>,
+        /// Treat --scope paths as the complete CodeWiki publication boundary:
+        /// generate global/curated pages and prune docs outside those roots.
+        /// Ordinary --scope remains a non-destructive partial update.
+        #[arg(long, requires = "scope")]
+        complete_scope: bool,
         /// Override AI routing for generated summaries
         #[arg(long, value_enum)]
         ai: Option<AiRouteArg>,

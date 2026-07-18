@@ -31,6 +31,7 @@ pub fn run(
     ctx: &Context,
     out: Option<String>,
     scope_args: Vec<String>,
+    complete_scope: bool,
     ai: CodewikiAiOptions,
     edge_limit: usize,
     include_docs: bool,
@@ -40,6 +41,9 @@ pub fn run(
     verbose: bool,
 ) -> anyhow::Result<()> {
     validate_edge_limit(edge_limit)?;
+    if complete_scope && scope_args.is_empty() {
+        anyhow::bail!("--complete-scope requires at least one --scope path");
+    }
     let ai_depth = ai.depth;
     let verify_scope = ai.verify_scope;
 
@@ -175,7 +179,11 @@ pub fn run(
             );
         }
     }
-    let doc_scope = DocPruneScope::from_scopes(&scopes);
+    // Scheduled generation can declare configured roots as the complete vault
+    // boundary. Input remains filtered to those roots, while unscoped pruning
+    // and generation refresh every global/curated page and remove stale docs
+    // outside the boundary. Ordinary `--scope` keeps its partial-write contract.
+    let doc_scope = codewiki_doc_scope(&scopes, complete_scope);
     // `--since <ref>` scopes regeneration to the files git reports changed since
     // the ref plus their dependents, instead of a full content-hash scan of
     // every page (Leaf H, #893). A source page whose own sources and neighbors
@@ -389,6 +397,33 @@ pub fn run(
     }?;
 
     Ok(())
+}
+
+fn codewiki_doc_scope(scopes: &[String], complete_scope: bool) -> DocPruneScope {
+    if complete_scope {
+        DocPruneScope::unscoped()
+    } else {
+        DocPruneScope::from_scopes(scopes)
+    }
+}
+
+#[cfg(test)]
+mod scope_tests {
+    use super::*;
+
+    #[test]
+    fn complete_scope_switches_to_global_generation_and_pruning() {
+        let scopes = vec!["src".to_string()];
+
+        let partial = codewiki_doc_scope(&scopes, false);
+        assert!(!partial.is_unscoped());
+        assert!(partial.includes_file("src/lib.rs"));
+        assert!(!partial.includes_file("tools/helper.rs"));
+
+        let complete = codewiki_doc_scope(&scopes, true);
+        assert!(complete.is_unscoped());
+        assert!(complete.includes_file("tools/helper.rs"));
+    }
 }
 
 fn ai_outcome_for_doc(

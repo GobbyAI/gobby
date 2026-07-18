@@ -357,7 +357,13 @@ async def test_gateway_builds_codewiki_args(
     calls = _patch_subprocess(monkeypatch, processes)
     gateway = GcodeGateway(binary="/tmp/gcode")
 
-    result = await gateway.codewiki(tmp_path, out_dir, ai="auto", scopes=["crates", "web", "src"])
+    result = await gateway.codewiki(
+        tmp_path,
+        out_dir,
+        ai="auto",
+        scopes=["crates", "web", "src"],
+        complete_scope=True,
+    )
 
     assert result == {"changed_paths": ["repo.md"]}
     assert calls[1] == (
@@ -371,6 +377,7 @@ async def test_gateway_builds_codewiki_args(
         "crates",
         "web",
         "src",
+        "--complete-scope",
         "--ai",
         "auto",
         "--format",

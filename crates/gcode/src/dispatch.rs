@@ -553,6 +553,7 @@ fn run() -> anyhow::Result<()> {
             purge,
             force,
             scope,
+            complete_scope,
             ai,
             ai_depth,
             ai_aggregate_profile,
@@ -578,6 +579,7 @@ fn run() -> anyhow::Result<()> {
                 &ctx,
                 out,
                 scope,
+                complete_scope,
                 codewiki_ai_options(
                     ai,
                     ai_depth,

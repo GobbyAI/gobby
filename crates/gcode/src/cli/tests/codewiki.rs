@@ -18,6 +18,36 @@ fn parse_codewiki_ai_flag() {
 }
 
 #[test]
+fn parse_codewiki_complete_scope_requires_scope() {
+    let cli = Cli::try_parse_from([
+        "gcode",
+        "codewiki",
+        "--scope",
+        "crates",
+        "src",
+        "--complete-scope",
+    ])
+    .expect("complete scope parses with scope roots");
+    match cli.command {
+        Command::Codewiki {
+            scope,
+            complete_scope,
+            ..
+        } => {
+            assert_eq!(scope, vec!["crates", "src"]);
+            assert!(complete_scope);
+        }
+        _ => panic!("expected codewiki command"),
+    }
+
+    let error = match Cli::try_parse_from(["gcode", "codewiki", "--complete-scope"]) {
+        Ok(_) => panic!("complete scope without roots must fail"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("--scope"));
+}
+
+#[test]
 fn parse_codewiki_ai_verify_profile_flag() {
     let cli = Cli::try_parse_from(["gcode", "codewiki", "--ai-verify-profile", "feature_mid"])
         .expect("codewiki --ai-verify-profile parses");

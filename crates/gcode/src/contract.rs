@@ -310,6 +310,7 @@ pub fn contract() -> CliContract {
                 flags: vec![
                     FlagContract::value("--out", "DIR"),
                     FlagContract::repeatable_value("--scope", "PATH"),
+                    FlagContract::switch("--complete-scope"),
                     FlagContract::value("--since", "GIT_REF"),
                     ai_flag(),
                     ai_depth_flag(),

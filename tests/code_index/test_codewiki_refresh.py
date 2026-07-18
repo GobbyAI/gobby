@@ -21,7 +21,7 @@ pytestmark = pytest.mark.unit
 class FakeGcodeGateway:
     def __init__(self, result: dict[str, Any]) -> None:
         self.result = result
-        self.calls: list[tuple[Path, Path, str | None, list[str] | None]] = []
+        self.calls: list[tuple[Path, Path, str | None, list[str] | None, bool]] = []
 
     async def codewiki(
         self,
@@ -30,8 +30,9 @@ class FakeGcodeGateway:
         *,
         ai: str | None = None,
         scopes: list[str] | None = None,
+        complete_scope: bool = False,
     ) -> dict[str, Any]:
-        self.calls.append((project_root, out_dir, ai, scopes))
+        self.calls.append((project_root, out_dir, ai, scopes, complete_scope))
         return self.result
 
 
@@ -43,8 +44,9 @@ class FailingGcodeGateway:
         *,
         ai: str | None = None,
         scopes: list[str] | None = None,
+        complete_scope: bool = False,
     ) -> dict[str, Any]:
-        _ = ai, scopes
+        _ = ai, scopes, complete_scope
         raise GcodeGatewayError("gcode failed")
 
 
@@ -75,7 +77,7 @@ async def test_refresh_runs_codewiki_indexes_changed_vault_docs(tmp_path: Path) 
         CodewikiRefreshRequest(root_path=str(tmp_path), project_id="proj-1", ai="daemon")
     )
 
-    assert gcode.calls == [(tmp_path, tmp_path / "wiki", "daemon", None)]
+    assert gcode.calls == [(tmp_path, tmp_path / "wiki", "daemon", None, False)]
     assert gwiki.ingested == []
     assert gwiki.index_count == 1
     assert result.changed_count == 2
@@ -100,7 +102,7 @@ async def test_refresh_default_out_dir_honors_fallback_vault(tmp_path: Path) -> 
         CodewikiRefreshRequest(root_path=str(tmp_path), project_id="proj-1", ai="daemon")
     )
 
-    assert gcode.calls == [(tmp_path, fallback, "daemon", None)]
+    assert gcode.calls == [(tmp_path, fallback, "daemon", None, False)]
     assert result.out_dir == fallback.resolve()
 
 
@@ -123,7 +125,7 @@ async def test_refresh_with_external_out_dir_ingests_changed_docs(tmp_path: Path
         )
     )
 
-    assert gcode.calls == [(tmp_path, out_dir, "auto", None)]
+    assert gcode.calls == [(tmp_path, out_dir, "auto", None, False)]
     assert gwiki.ingested == [
         out_dir / "repo.md",
         out_dir / "files/src/lib.rs.md",
@@ -145,10 +147,11 @@ async def test_refresh_passes_scopes_to_gcode_gateway(tmp_path: Path) -> None:
             project_id="proj-1",
             ai="daemon",
             scopes=["crates", "web", "src"],
+            complete_scope=True,
         )
     )
 
-    assert gcode.calls == [(tmp_path, tmp_path / "wiki", "daemon", ["crates", "web", "src"])]
+    assert gcode.calls == [(tmp_path, tmp_path / "wiki", "daemon", ["crates", "web", "src"], True)]
     assert result.indexed is False
 
 

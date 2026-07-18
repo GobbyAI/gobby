@@ -23,6 +23,7 @@ class CodewikiGenerator(Protocol):
         *,
         ai: str | None = None,
         scopes: list[str] | None = None,
+        complete_scope: bool = False,
     ) -> dict[str, Any]: ...
 
 
@@ -39,6 +40,7 @@ class CodewikiRefreshRequest:
     out_dir: str | None = None
     ai: str = "auto"
     scopes: list[str] | None = None
+    complete_scope: bool = False
 
 
 @dataclass(frozen=True)
@@ -100,6 +102,7 @@ class CodewikiRefreshService:
             out_dir,
             ai=normalize_codewiki_ai(request.ai),
             scopes=request.scopes,
+            complete_scope=request.complete_scope,
         )
         changed_paths = tuple(changed_doc_paths(out_dir, result))
         ingested_paths: list[Path] = []
