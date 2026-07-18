@@ -1166,7 +1166,7 @@ class TestHookManagerSessionLookup:
         mock_register.assert_not_called()
         assert event.metadata["_platform_session_id"] == precreated.id
 
-    def test_resumed_codex_ignores_stale_wrapper_metadata_for_session_context(
+    async def test_resumed_codex_ignores_stale_wrapper_metadata_for_session_context(
         self,
         hook_manager_with_mocks: HookManager,
         temp_dir: Path,
@@ -1219,7 +1219,7 @@ class TestHookManagerSessionLookup:
         assert response.decision == "allow"
         assert resumed_event.metadata["_platform_session_id"] == canonical_id
 
-        tokens = resolve_and_seed_contexts(
+        tokens = await resolve_and_seed_contexts(
             session_ref=resumed_event.metadata["_platform_session_id"],
             session_manager=manager.session_manager,
             db=manager._database,
