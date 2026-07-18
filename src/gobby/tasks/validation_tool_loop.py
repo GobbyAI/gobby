@@ -6,7 +6,7 @@ import asyncio
 import json
 import os
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -82,12 +82,38 @@ class ValidationVerdictSink:
     """Single-assignment sink for the model's schema-validated terminal verdict."""
 
     payload: dict[str, object] | None = None
+    issued_evidence_refs: set[str] = field(default_factory=set)
+
+    def record_evidence_ref(self, evidence_ref: str) -> None:
+        """Record a successful runtime-issued evidence reference."""
+        self.issued_evidence_refs.add(evidence_ref)
 
     def submit(self, arguments: Mapping[str, object]) -> BuiltinToolResult:
         if self.payload is not None:
             return BuiltinToolResult(
                 error_code="verdict_already_submitted",
                 error="validation verdict was already submitted",
+            )
+        raw_refs = arguments.get("evidence_refs")
+        invalid_refs = (
+            tuple(
+                dict.fromkeys(
+                    ref
+                    for ref in raw_refs
+                    if isinstance(ref, str) and ref not in self.issued_evidence_refs
+                )
+            )
+            if isinstance(raw_refs, list)
+            else ()
+        )
+        if invalid_refs:
+            return BuiltinToolResult(
+                error_code="invalid_evidence_reference",
+                error="validation verdict cited non-runtime-issued evidence refs",
+                details={
+                    "evidence_refs": list(invalid_refs),
+                    "issued_evidence_refs": sorted(self.issued_evidence_refs),
+                },
             )
         self.payload = dict(arguments)
         return BuiltinToolResult(
@@ -303,7 +329,7 @@ def build_validation_builtins(
             subprocess_deadline=context.subprocess_deadline,
         )
         manifest = page["manifest"]
-        return BuiltinToolResult(
+        result = BuiltinToolResult(
             payload={
                 "manifest": manifest,
                 "snapshot_hash": page["snapshot_hash"],
@@ -318,6 +344,9 @@ def build_validation_builtins(
             complete=manifest["complete"],
             content_hash=page["snapshot_hash"],
         )
+        if verdict_sink is not None:
+            verdict_sink.record_evidence_ref(context.evidence_ref)
+        return result
 
     async def read_task_diff_handler(
         arguments: dict[str, Any], context: BuiltinExecutionContext
@@ -348,6 +377,8 @@ def build_validation_builtins(
         if path_selector is not None:
             selector["path_selector"] = path_selector
         result = _diff_result(page, selector)
+        if result.ok and verdict_sink is not None:
+            verdict_sink.record_evidence_ref(context.evidence_ref)
         if commit is None and path_selector is None and result.complete:
             aggregate_diff_complete = True
         return result
@@ -379,7 +410,7 @@ def build_validation_builtins(
             max_payload_bytes=context.max_payload_bytes,
             subprocess_deadline=context.subprocess_deadline,
         )
-        return _diff_result(
+        result = _diff_result(
             page,
             {
                 "kind": "file_at_commit",
@@ -388,6 +419,9 @@ def build_validation_builtins(
                 "path_selector": path_selector,
             },
         )
+        if result.ok and verdict_sink is not None:
+            verdict_sink.record_evidence_ref(context.evidence_ref)
+        return result
 
     async def submit_verdict_handler(
         arguments: dict[str, Any], context: BuiltinExecutionContext

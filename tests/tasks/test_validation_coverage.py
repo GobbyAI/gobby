@@ -414,8 +414,8 @@ async def test_builtin_rejects_whole_file_after_complete_aggregate_diff() -> Non
 @pytest.mark.asyncio
 async def test_verdict_submission_builtin_is_single_assignment() -> None:
     sink = ValidationVerdictSink()
-    submit = next(
-        spec
+    specs = {
+        spec.name: spec
         for spec in build_validation_builtins(
             task_id="task-1",
             repo_path="/repo",
@@ -423,24 +423,46 @@ async def test_verdict_submission_builtin_is_single_assignment() -> None:
             preview_bytes=16_384,
             verdict_sink=sink,
         )
-        if spec.name == "submit_validation_verdict"
-    )
-    context = BuiltinExecutionContext(
+    }
+    issued_ref = "1ed14cbd80f6c42cbf130e61f5e26b43"
+    typo_ref = "1ed14cbd80f6c42cb130e61f5e26b43"
+    evidence_context = BuiltinExecutionContext(
         max_payload_bytes=16_000,
-        evidence_ref="ev_submit",
+        evidence_ref=issued_ref,
         subprocess_deadline=None,
     )
+    submit_context = replace(evidence_context, evidence_ref="ev_submit")
+    page = {
+        "content": {"encoding": "utf-8", "text": "diff"},
+        "byte_start": 0,
+        "byte_end": 4,
+        "total_bytes": 4,
+        "complete": True,
+        "snapshot_hash": "snapshot",
+        "view_hash": "view",
+    }
     payload = {
         "status": "valid",
         "feedback": "Grounded.",
         "blocking_reasons": [],
-        "evidence_refs": ["ev_diff"],
+        "evidence_refs": [issued_ref],
         "evidence_complete": True,
     }
 
-    first = await submit.handler(payload, context)
-    second = await submit.handler(payload, context)
+    with patch("gobby.tasks.validation_tool_loop.get_task_diff_page", return_value=page):
+        evidence = await specs["read_task_diff"].handler({}, evidence_context)
+    invalid = await specs["submit_validation_verdict"].handler(
+        {**payload, "evidence_refs": [typo_ref]}, submit_context
+    )
+    corrected = await specs["submit_validation_verdict"].handler(payload, submit_context)
+    duplicate = await specs["submit_validation_verdict"].handler(payload, submit_context)
 
-    assert first.ok is True
+    assert evidence.ok is True
+    assert invalid.error_code == "invalid_evidence_reference"
+    assert invalid.details == {
+        "evidence_refs": [typo_ref],
+        "issued_evidence_refs": [issued_ref],
+    }
+    assert corrected.ok is True
     assert sink.payload == payload
-    assert second.error_code == "verdict_already_submitted"
+    assert duplicate.error_code == "verdict_already_submitted"

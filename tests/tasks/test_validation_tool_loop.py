@@ -97,12 +97,46 @@ def _validator(
     else:
 
         async def submit_verdict(request: ToolChatRequest) -> ToolChatResult:
-            submit = next(
-                spec for spec in request.builtins if spec.name == "submit_validation_verdict"
-            )
+            specs = {spec.name: spec for spec in request.builtins}
+            evidence_page = {
+                "manifest": {
+                    "items": [{"path_selector": "opaque"}],
+                    "cursor_offset": 0,
+                    "cursor_end": 1,
+                    "total": 1,
+                    "complete": True,
+                },
+                "content": {"encoding": "utf-8", "text": "diff"},
+                "byte_start": 0,
+                "byte_end": 4,
+                "total_bytes": 4,
+                "complete": True,
+                "snapshot_hash": "snapshot-hash",
+                "view_hash": "view-hash",
+            }
+            with patch(
+                "gobby.tasks.validation_tool_loop.get_task_diff_page",
+                return_value=evidence_page,
+            ):
+                await specs["list_changed_files"].handler(
+                    {"offset": 0},
+                    BuiltinExecutionContext(
+                        max_payload_bytes=16_000,
+                        evidence_ref="ev_manifest",
+                        subprocess_deadline=None,
+                    ),
+                )
+                await specs["read_task_diff"].handler(
+                    {"offset_bytes": 0},
+                    BuiltinExecutionContext(
+                        max_payload_bytes=16_000,
+                        evidence_ref="ev_runtime",
+                        subprocess_deadline=None,
+                    ),
+                )
             payload = json.loads(tool_result.text)
             if isinstance(payload, dict):
-                await submit.handler(
+                await specs["submit_validation_verdict"].handler(
                     payload,
                     BuiltinExecutionContext(
                         max_payload_bytes=16_000,
@@ -238,7 +272,7 @@ async def test_tool_loop_missing_evidence_fields_is_pending() -> None:
 
 
 @pytest.mark.asyncio
-async def test_fabricated_ref_is_dropped_and_flags_verdict() -> None:
+async def test_fabricated_ref_is_rejected_before_terminal_verdict() -> None:
     validator, _, _ = _validator(
         _tool_result(
             payload={
@@ -254,9 +288,8 @@ async def test_fabricated_ref_is_dropped_and_flags_verdict() -> None:
     result = await _validate_linked(validator)
 
     assert result.status == "pending"
-    assert result.evidence_refs == ()
-    assert "ev_fabricated" in (result.feedback or "")
-    assert "runtime-issued" in (result.feedback or "")
+    assert result.evidence_refs == ("ev_manifest", "ev_runtime")
+    assert "submit_validation_verdict was not called" in (result.feedback or "")
 
 
 @pytest.mark.asyncio
