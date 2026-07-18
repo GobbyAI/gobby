@@ -7,14 +7,15 @@ LocalWorkflowDefinitionManager rather than written to YAML files.
 import json
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 import yaml
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.projects import LocalProjectManager, Project
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import PipelineDefinition, WorkflowDefinition
+from gobby.workflows.definitions import AgentDefinitionBody, PipelineDefinition, WorkflowDefinition
 from gobby.workflows.loader import WorkflowLoader
 from gobby.workflows.loader_validation import (
     _validate_fail_pipeline_completion_order,
@@ -37,7 +38,7 @@ def _clean_bundled_workflows(db: HubDatabase) -> None:
 
 
 @pytest.fixture
-def project(db: HubDatabase):
+def project(db: HubDatabase) -> Project:
     """Create a test project for FK-safe project-scoped workflow tests."""
     pm = LocalProjectManager(db)
     return pm.create(name="test-project", repo_path="/test/project")
@@ -58,7 +59,10 @@ def bundled_workflow_payload() -> Callable[[Path], dict[str, object]]:
     def load(path: Path) -> dict[str, object]:
         if not path.exists():
             pytest.skip(f"Bundled workflow not found: {path}")
-        return json.loads(json.dumps(yaml.safe_load(path.read_text())))
+        payload = yaml.safe_load(path.read_text())
+        if not isinstance(payload, dict):
+            raise AssertionError(f"Expected workflow mapping in {path}")
+        return cast(dict[str, object], payload)
 
     return load
 
@@ -67,7 +71,11 @@ class TestLoadPipeline:
     """Tests for load_pipeline method."""
 
     @pytest.mark.asyncio
-    async def test_load_valid_pipeline(self, loader, def_manager) -> None:
+    async def test_load_valid_pipeline(
+        self,
+        loader: WorkflowLoader,
+        def_manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         """Test loading a valid pipeline from DB returns PipelineDefinition."""
         def_manager.create(
             name="test-pipeline",
@@ -93,7 +101,11 @@ class TestLoadPipeline:
         assert result.type == "pipeline"
         assert len(result.steps) == 2
 
-    async def test_load_pipeline_uses_database_enabled_state(self, loader, def_manager) -> None:
+    async def test_load_pipeline_uses_database_enabled_state(
+        self,
+        loader: WorkflowLoader,
+        def_manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         """Mutable row metadata overrides a stale enabled value in definition JSON."""
         row = def_manager.create(
             name="toggle-pipeline",
@@ -143,6 +155,7 @@ class TestLoadPipeline:
 
         assert pipeline.inputs["agent"]["default"] == "backend-developer"
         assert step.mcp is not None
+        assert step.mcp.arguments is not None
         assert step.mcp.arguments["agent"] == "${{ inputs.agent }}"
 
     def test_qa_dispatch_targets_enabled_reviewer_agent(
@@ -155,16 +168,21 @@ class TestLoadPipeline:
         step = next(item for item in pipeline.steps if item.id == "spawn_qa_reviewer")
 
         assert step.mcp is not None
+        assert step.mcp.arguments is not None
         assert step.mcp.arguments["agent"] == "qa-reviewer"
 
     @pytest.mark.asyncio
-    async def test_load_pipeline_not_found(self, loader) -> None:
+    async def test_load_pipeline_not_found(self, loader: WorkflowLoader) -> None:
         """Test loading non-existent pipeline returns None."""
         result = await loader.load_pipeline("nonexistent")
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_load_pipeline_wrong_type(self, loader, def_manager) -> None:
+    async def test_load_pipeline_wrong_type(
+        self,
+        loader: WorkflowLoader,
+        def_manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         """Test loading a step workflow via load_pipeline returns None."""
         def_manager.create(
             name="step-workflow",
@@ -182,7 +200,12 @@ class TestLoadPipeline:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_load_pipeline_project_path_priority(self, loader, def_manager, project) -> None:
+    async def test_load_pipeline_project_path_priority(
+        self,
+        loader: WorkflowLoader,
+        def_manager: LocalWorkflowDefinitionManager,
+        project: Project,
+    ) -> None:
         """Test that project-scoped pipelines take priority over global."""
         # Global pipeline
         def_manager.create(
@@ -218,7 +241,11 @@ class TestLoadPipeline:
         assert result.description == "Project-specific deploy"
 
     @pytest.mark.asyncio
-    async def test_load_pipeline_with_inputs_outputs(self, loader, def_manager) -> None:
+    async def test_load_pipeline_with_inputs_outputs(
+        self,
+        loader: WorkflowLoader,
+        def_manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         """Test loading pipeline with inputs and outputs schema."""
         def_manager.create(
             name="parameterized",
@@ -246,7 +273,11 @@ class TestLoadPipeline:
         assert result.outputs["result"] == "$final.output"
 
     @pytest.mark.asyncio
-    async def test_load_pipeline_with_approval(self, loader, def_manager) -> None:
+    async def test_load_pipeline_with_approval(
+        self,
+        loader: WorkflowLoader,
+        def_manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         """Test loading pipeline with approval gates."""
         def_manager.create(
             name="approval-pipeline",
@@ -281,7 +312,11 @@ class TestLoadPipeline:
         assert deploy_step.approval.message == "Approve deployment?"
 
     @pytest.mark.asyncio
-    async def test_load_pipeline_with_webhooks(self, loader, def_manager) -> None:
+    async def test_load_pipeline_with_webhooks(
+        self,
+        loader: WorkflowLoader,
+        def_manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         """Test loading pipeline with webhook configuration."""
         def_manager.create(
             name="webhook-pipeline",
@@ -309,7 +344,11 @@ class TestLoadPipeline:
         assert result.webhooks.on_complete.url == "https://example.com/done"
 
     @pytest.mark.asyncio
-    async def test_load_pipeline_inheritance(self, loader, def_manager) -> None:
+    async def test_load_pipeline_inheritance(
+        self,
+        loader: WorkflowLoader,
+        def_manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         """Test pipeline inheritance via extends field."""
         # Base pipeline
         def_manager.create(
@@ -348,7 +387,11 @@ class TestLoadPipeline:
         assert result.inputs["env"]["default"] == "production"
 
     @pytest.mark.asyncio
-    async def test_load_pipeline_caching(self, loader, def_manager) -> None:
+    async def test_load_pipeline_caching(
+        self,
+        loader: WorkflowLoader,
+        def_manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         """Test that pipelines are cached after first load."""
         def_manager.create(
             name="cached-pipeline",
@@ -370,7 +413,11 @@ class TestLoadPipeline:
         assert result1 is result2  # Same object from cache
 
     @pytest.mark.asyncio
-    async def test_load_pipeline_cache_invalidation(self, loader, def_manager) -> None:
+    async def test_load_pipeline_cache_invalidation(
+        self,
+        loader: WorkflowLoader,
+        def_manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         """Test that clear_cache forces a fresh reload from DB."""
         row = def_manager.create(
             name="cached-pipeline",
@@ -413,7 +460,11 @@ class TestLoadPipeline:
         assert result1 is not result2
 
     @pytest.mark.asyncio
-    async def test_load_pipeline_invalid_json(self, loader, db) -> None:
+    async def test_load_pipeline_invalid_json(
+        self,
+        loader: WorkflowLoader,
+        db: HubDatabase,
+    ) -> None:
         """Test that an invalid pipeline definition raises a load error."""
         with db.transaction() as conn:
             conn.execute(
@@ -439,7 +490,11 @@ class TestLoadPipeline:
             await loader.load_pipeline("invalid")
 
     @pytest.mark.asyncio
-    async def test_load_pipeline_missing_type(self, loader, def_manager) -> None:
+    async def test_load_pipeline_missing_type(
+        self,
+        loader: WorkflowLoader,
+        def_manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         """Test that a workflow without type=pipeline returns None from load_pipeline."""
         def_manager.create(
             name="no-type",
@@ -455,6 +510,16 @@ class TestLoadPipeline:
         result = await loader.load_pipeline("no-type")
         # Should return None because it's not type: pipeline
         assert result is None
+
+
+def _pipeline_references_are_valid(data: dict[str, Any]) -> bool:
+    _validate_pipeline_references(data)
+    return True
+
+
+def _completion_order_is_valid(steps: list[dict[str, Any]]) -> bool:
+    _validate_fail_pipeline_completion_order(steps)
+    return True
 
 
 class TestValidatePipelineReferences:
@@ -474,7 +539,7 @@ class TestValidatePipelineReferences:
                 {"id": "step2", "prompt": "Process the output from $step1.output"},
             ],
         }
-        assert _validate_pipeline_references(data) is None
+        assert _pipeline_references_are_valid(data)
 
     def test_valid_back_reference_after_step_without_id(self) -> None:
         """An ID-less step does not shift physical reference positions."""
@@ -487,7 +552,7 @@ class TestValidatePipelineReferences:
                 {"id": "step2", "prompt": "Process $step1.output"},
             ],
         }
-        assert _validate_pipeline_references(data) is None
+        assert _pipeline_references_are_valid(data)
 
     def test_rejects_forward_reference(self) -> None:
         """Test that $later_step.output (forward ref) is rejected."""
@@ -534,7 +599,7 @@ class TestValidatePipelineReferences:
                 },
             ],
         }
-        assert _validate_pipeline_references(data) is None
+        assert _pipeline_references_are_valid(data)
 
     def test_validates_condition_references(self) -> None:
         """Test that references in condition fields are validated."""
@@ -550,7 +615,7 @@ class TestValidatePipelineReferences:
                 },
             ],
         }
-        assert _validate_pipeline_references(data) is None
+        assert _pipeline_references_are_valid(data)
 
     def test_validates_input_references(self) -> None:
         """Test that references in input fields are validated."""
@@ -562,7 +627,7 @@ class TestValidatePipelineReferences:
                 {"id": "step2", "exec": "process", "input": "$step1.output"},
             ],
         }
-        assert _validate_pipeline_references(data) is None
+        assert _pipeline_references_are_valid(data)
 
     def test_validates_output_references(self) -> None:
         """Test that references in pipeline outputs are validated."""
@@ -578,7 +643,7 @@ class TestValidatePipelineReferences:
                 {"id": "final", "exec": "./finish.sh"},
             ],
         }
-        assert _validate_pipeline_references(data) is None
+        assert _pipeline_references_are_valid(data)
 
     def test_rejects_invalid_output_reference(self) -> None:
         """Test that invalid references in outputs are rejected."""
@@ -604,7 +669,7 @@ class TestValidatePipelineReferences:
                 {"id": "step1", "exec": "echo $inputs.target"},
             ],
         }
-        assert _validate_pipeline_references(data) is None
+        assert _pipeline_references_are_valid(data)
 
     def test_multiple_refs_all_valid(self) -> None:
         """Test pipeline with multiple valid references."""
@@ -617,7 +682,7 @@ class TestValidatePipelineReferences:
                 {"id": "step3", "prompt": "Combine $step1.output and $step2.output"},
             ],
         }
-        assert _validate_pipeline_references(data) is None
+        assert _pipeline_references_are_valid(data)
 
     def test_multiple_refs_one_invalid(self) -> None:
         """Test that one invalid ref among valid ones is caught."""
@@ -691,11 +756,11 @@ class TestValidatePipelineReferences:
             ],
         }
 
-        assert _validate_pipeline_references(data) is None
+        assert _pipeline_references_are_valid(data)
 
     def test_fail_pipeline_completion_order_helper_rejects_matching_prior_success(self) -> None:
         """Direct helper rejects fail_pipeline after the matching completed branch."""
-        steps = [
+        steps: list[dict[str, Any]] = [
             {"id": "wait_run", "exec": "echo wait"},
             {
                 "id": "completed-path",
@@ -718,7 +783,7 @@ class TestValidatePipelineReferences:
 
     def test_fail_pipeline_completion_order_helper_ignores_unmatched_output(self) -> None:
         """Direct helper allows fail_pipeline for a different output field."""
-        steps = [
+        steps: list[dict[str, Any]] = [
             {
                 "id": "completed-path",
                 "condition": "${{ steps.wait_run.output.status == 'completed' }}",
@@ -735,14 +800,18 @@ class TestValidatePipelineReferences:
             },
         ]
 
-        assert _validate_fail_pipeline_completion_order(steps) is None
+        assert _completion_order_is_valid(steps)
 
 
 class TestLoadWorkflowPipelineIntegration:
     """Tests for load_workflow() auto-detecting and handling pipelines."""
 
     @pytest.mark.asyncio
-    async def test_load_workflow_auto_detects_pipeline(self, loader, def_manager) -> None:
+    async def test_load_workflow_auto_detects_pipeline(
+        self,
+        loader: WorkflowLoader,
+        def_manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         """Test that load_workflow() auto-detects type=pipeline."""
         def_manager.create(
             name="auto-detect",
@@ -763,7 +832,28 @@ class TestLoadWorkflowPipelineIntegration:
         assert result.type == "pipeline"
 
     @pytest.mark.asyncio
-    async def test_load_workflow_validates_pipeline_references(self, loader, def_manager) -> None:
+    async def test_load_workflow_treats_agent_definition_as_missing(
+        self,
+        loader: WorkflowLoader,
+        def_manager: LocalWorkflowDefinitionManager,
+    ) -> None:
+        agent = AgentDefinitionBody(name="agent-only")
+        def_manager.create(
+            name=agent.name,
+            definition_json=agent.model_dump_json(),
+            workflow_type="agent",
+        )
+
+        result = await loader.load_workflow(agent.name)
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_load_workflow_validates_pipeline_references(
+        self,
+        loader: WorkflowLoader,
+        def_manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         """Test that load_workflow() reports invalid pipeline references."""
         def_manager.create(
             name="validate-refs",
@@ -785,7 +875,9 @@ class TestLoadWorkflowPipelineIntegration:
 
     @pytest.mark.asyncio
     async def test_load_workflow_returns_workflow_definition_for_step(
-        self, loader, def_manager
+        self,
+        loader: WorkflowLoader,
+        def_manager: LocalWorkflowDefinitionManager,
     ) -> None:
         """Test that load_workflow() returns WorkflowDefinition for step type."""
         def_manager.create(
@@ -808,7 +900,9 @@ class TestLoadWorkflowPipelineIntegration:
 
     @pytest.mark.asyncio
     async def test_load_workflow_returns_workflow_definition_for_lifecycle(
-        self, loader, def_manager
+        self,
+        loader: WorkflowLoader,
+        def_manager: LocalWorkflowDefinitionManager,
     ) -> None:
         """Test that load_workflow() returns WorkflowDefinition for lifecycle type."""
         def_manager.create(
@@ -830,7 +924,11 @@ class TestLoadWorkflowPipelineIntegration:
         assert result.type == "lifecycle"
 
     @pytest.mark.asyncio
-    async def test_load_workflow_pipeline_with_valid_refs(self, loader, def_manager) -> None:
+    async def test_load_workflow_pipeline_with_valid_refs(
+        self,
+        loader: WorkflowLoader,
+        def_manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         """Test load_workflow() succeeds for pipeline with valid references."""
         def_manager.create(
             name="valid-pipeline",
@@ -858,7 +956,11 @@ class TestDiscoverPipelineWorkflows:
     """Tests for discover_pipeline_workflows() method."""
 
     @pytest.mark.asyncio
-    async def test_discovers_pipelines_in_global_dir(self, loader, def_manager) -> None:
+    async def test_discovers_pipelines_in_global_dir(
+        self,
+        loader: WorkflowLoader,
+        def_manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         """Test that global pipelines (no project_id) are discovered."""
         def_manager.create(
             name="global-pipeline",
@@ -880,7 +982,11 @@ class TestDiscoverPipelineWorkflows:
         assert isinstance(result[0].definition, PipelineDefinition)
         assert result[0].definition.type == "pipeline"
 
-    async def test_discovery_excludes_disabled_pipelines(self, loader, def_manager) -> None:
+    async def test_discovery_excludes_disabled_pipelines(
+        self,
+        loader: WorkflowLoader,
+        def_manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         for name, enabled in (("enabled-pipeline", True), ("disabled-pipeline", False)):
             def_manager.create(
                 name=name,
@@ -899,7 +1005,11 @@ class TestDiscoverPipelineWorkflows:
 
         assert [pipeline.name for pipeline in result] == ["enabled-pipeline"]
 
-    async def test_discovery_uses_database_enabled_state(self, loader, def_manager) -> None:
+    async def test_discovery_uses_database_enabled_state(
+        self,
+        loader: WorkflowLoader,
+        def_manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         """An enabled row must override stale disabled JSON during discovery."""
         def_manager.create(
             name="toggled-enabled-pipeline",
@@ -919,11 +1029,17 @@ class TestDiscoverPipelineWorkflows:
         result = await loader.discover_pipeline_workflows()
 
         assert len(result) == 1
+        assert isinstance(result[0].definition, PipelineDefinition)
         assert result[0].definition.enabled is True
         assert result[0].definition.expose_as_tool is True
 
     @pytest.mark.asyncio
-    async def test_discovers_pipelines_in_project_dir(self, loader, def_manager, project) -> None:
+    async def test_discovers_pipelines_in_project_dir(
+        self,
+        loader: WorkflowLoader,
+        def_manager: LocalWorkflowDefinitionManager,
+        project: Project,
+    ) -> None:
         """Test that project-scoped pipelines are discovered."""
         def_manager.create(
             name="project-pipeline",
@@ -948,7 +1064,12 @@ class TestDiscoverPipelineWorkflows:
     @pytest.mark.parametrize("project_first", [False, True])
     @pytest.mark.asyncio
     async def test_project_shadows_global_pipeline(
-        self, loader, def_manager, project, monkeypatch, project_first
+        self,
+        loader: WorkflowLoader,
+        def_manager: LocalWorkflowDefinitionManager,
+        project: Project,
+        monkeypatch: pytest.MonkeyPatch,
+        project_first: bool,
     ) -> None:
         """Test that project pipelines shadow global pipelines with same name."""
         # Global pipeline
@@ -994,7 +1115,11 @@ class TestDiscoverPipelineWorkflows:
         assert deploy_pipelines[0].definition.description == "Project deploy"
 
     @pytest.mark.asyncio
-    async def test_ignores_non_pipeline_workflows(self, loader, def_manager) -> None:
+    async def test_ignores_non_pipeline_workflows(
+        self,
+        loader: WorkflowLoader,
+        def_manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         """Test that step/lifecycle workflows are not returned by discover_pipeline_workflows."""
         # Pipeline workflow
         def_manager.create(
@@ -1031,7 +1156,11 @@ class TestDiscoverPipelineWorkflows:
         assert result[0].definition.type == "pipeline"
 
     @pytest.mark.asyncio
-    async def test_returns_discovered_workflow_structure(self, loader, def_manager) -> None:
+    async def test_returns_discovered_workflow_structure(
+        self,
+        loader: WorkflowLoader,
+        def_manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         """Test that result has correct DiscoveredWorkflow structure."""
         def_manager.create(
             name="structured-pipeline",
@@ -1057,7 +1186,11 @@ class TestDiscoverPipelineWorkflows:
         assert isinstance(discovered.definition, PipelineDefinition)
 
     @pytest.mark.asyncio
-    async def test_discovers_multiple_pipelines(self, loader, def_manager) -> None:
+    async def test_discovers_multiple_pipelines(
+        self,
+        loader: WorkflowLoader,
+        def_manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         """Test discovering multiple pipelines."""
         for i in range(3):
             def_manager.create(

@@ -305,7 +305,12 @@ async def test_recall_review_lessons_for_files_ignores_unrelated_path() -> None:
 
 
 @pytest.mark.asyncio
-async def test_recall_review_lessons_for_files_matches_legacy_evidence_paths() -> None:
+async def test_recall_review_lessons_for_files_matches_legacy_evidence_paths(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "gobby-cli"
+    (project_root / ".gobby").mkdir(parents=True)
+    (project_root / ".gobby" / "project.json").write_text("{}", encoding="utf-8")
     memory_manager = FakeMemoryManager()
     await memory_manager.create_memory(
         LEGACY_SERVICE_CONFIG_LESSON,
@@ -317,7 +322,7 @@ async def test_recall_review_lessons_for_files_matches_legacy_evidence_paths() -
     result = await registry.call(
         "recall_review_lessons_for_files",
         {
-            "file_paths": ["/Users/josh/Projects/gobby-cli/crates/gcode/src/config/services.rs"],
+            "file_paths": [str(project_root / "crates/gcode/src/config/services.rs")],
             "project_id": "_personal",
         },
     )
@@ -369,7 +374,12 @@ async def test_recall_uses_anchored_evidence_and_renders_avoid_only_guidance() -
 
 
 @pytest.mark.asyncio
-async def test_recall_review_lessons_for_files_excludes_global_review_lessons() -> None:
+async def test_recall_review_lessons_for_files_excludes_global_review_lessons(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "gobby-cli"
+    (project_root / ".gobby").mkdir(parents=True)
+    (project_root / ".gobby" / "project.json").write_text("{}", encoding="utf-8")
     memory_manager = FakeMemoryManager()
     await memory_manager.create_memory(
         LEGACY_SERVICE_CONFIG_LESSON.replace(
@@ -393,7 +403,7 @@ async def test_recall_review_lessons_for_files_excludes_global_review_lessons() 
     result = await registry.call(
         "recall_review_lessons_for_files",
         {
-            "file_paths": ["/Users/josh/Projects/gobby-cli/crates/gcode/src/config/services.rs"],
+            "file_paths": [str(project_root / "crates/gcode/src/config/services.rs")],
             "project_id": "_personal",
         },
     )

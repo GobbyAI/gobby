@@ -142,6 +142,8 @@ class WorkflowLoader(WorkflowLoaderSyncMixin):
         row = mgr.get_by_name(name, project_id=project_id)
         if row is None:
             return None
+        if row.workflow_type == "agent":
+            return None
         if project_id is not None and row.project_id is not None:
             bundled_row = mgr.get_by_name(name, project_id=None)
             detect_override_conflict(row, bundled_row)

@@ -127,7 +127,13 @@ class TestSpawnAgentPipelineInjection:
             workflows=AgentWorkflows(pipeline="my-pipeline"),
         )
 
-        mock_pipeline_def = MagicMock(spec=PipelineDefinition)
+        pipeline_def = PipelineDefinition.model_validate(
+            {
+                "name": "my-pipeline",
+                "type": "pipeline",
+                "steps": [{"id": "run", "exec": "echo pipeline"}],
+            }
+        )
 
         registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
 
@@ -137,27 +143,23 @@ class TestSpawnAgentPipelineInjection:
                 return_value=agent_body,
             ),
             patch("gobby.workflows.loader.WorkflowLoader") as mock_wf_loader_cls,
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
-            ) as mock_ctx,
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
-            ) as mock_execute,
+            patch("gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context") as mock_ctx,
+            patch("gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl") as mock_spawn_impl,
         ):
             mock_loader_instance = MagicMock()
-            mock_loader_instance.load_workflow_sync.return_value = mock_pipeline_def
+            mock_loader_instance.load_workflow = AsyncMock(return_value=pipeline_def)
             mock_wf_loader_cls.return_value = mock_loader_instance
 
             mock_ctx.return_value = {
                 "id": "11111111-1111-4111-8111-111111110123",
                 "project_path": "/path/to/project",
             }
-            mock_execute.return_value = MagicMock(
-                success=True,
-                run_id="run-123",
-                child_session_id="child-456",
-                status="pending",
-            )
+            mock_spawn_impl.return_value = {
+                "success": True,
+                "run_id": "run-123",
+                "child_session_id": "child-456",
+                "status": "pending",
+            }
 
             result = await registry.call(
                 "spawn_agent",
@@ -168,8 +170,12 @@ class TestSpawnAgentPipelineInjection:
             )
 
             assert result["success"] is True
-            spawn_request = mock_execute.call_args[0][0]
-            assert spawn_request.initial_variables["_assigned_pipeline"] == "my-pipeline"
+            mock_loader_instance.load_workflow.assert_awaited_once_with(
+                "my-pipeline",
+                project_path="/path/to/project",
+            )
+            initial_variables = mock_spawn_impl.call_args.kwargs["initial_variables"]
+            assert initial_variables["_assigned_pipeline"] == "my-pipeline"
 
     @pytest.mark.asyncio
     async def test_assigned_pipeline_not_set_for_non_pipeline_workflow(
@@ -183,7 +189,13 @@ class TestSpawnAgentPipelineInjection:
             workflows=AgentWorkflows(pipeline="my-workflow"),
         )
 
-        mock_workflow_def = MagicMock(spec=WorkflowDefinition)
+        workflow_def = WorkflowDefinition.model_validate(
+            {
+                "name": "my-workflow",
+                "type": "step",
+                "steps": [{"name": "work", "allowed_tools": "all"}],
+            }
+        )
 
         registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
 
@@ -193,27 +205,23 @@ class TestSpawnAgentPipelineInjection:
                 return_value=agent_body,
             ),
             patch("gobby.workflows.loader.WorkflowLoader") as mock_wf_loader_cls,
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
-            ) as mock_ctx,
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
-            ) as mock_execute,
+            patch("gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context") as mock_ctx,
+            patch("gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl") as mock_spawn_impl,
         ):
             mock_loader_instance = MagicMock()
-            mock_loader_instance.load_workflow_sync.return_value = mock_workflow_def
+            mock_loader_instance.load_workflow = AsyncMock(return_value=workflow_def)
             mock_wf_loader_cls.return_value = mock_loader_instance
 
             mock_ctx.return_value = {
                 "id": "11111111-1111-4111-8111-111111110123",
                 "project_path": "/path/to/project",
             }
-            mock_execute.return_value = MagicMock(
-                success=True,
-                run_id="run-123",
-                child_session_id="child-456",
-                status="pending",
-            )
+            mock_spawn_impl.return_value = {
+                "success": True,
+                "run_id": "run-123",
+                "child_session_id": "child-456",
+                "status": "pending",
+            }
 
             result = await registry.call(
                 "spawn_agent",
@@ -224,8 +232,12 @@ class TestSpawnAgentPipelineInjection:
             )
 
             assert result["success"] is True
-            spawn_request = mock_execute.call_args[0][0]
-            assert "_assigned_pipeline" not in spawn_request.initial_variables
+            mock_loader_instance.load_workflow.assert_awaited_once_with(
+                "my-workflow",
+                project_path="/path/to/project",
+            )
+            initial_variables = mock_spawn_impl.call_args.kwargs["initial_variables"]
+            assert "_assigned_pipeline" not in initial_variables
 
 
 class TestSpawnAgentStepVariables:
