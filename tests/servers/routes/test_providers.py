@@ -417,8 +417,7 @@ class TestProviderModelsRoute:
         assert "gemini-3.1-pro-preview" in droid_values
         assert "gemini-3-flash-preview" in droid_values
 
-    def test_includes_named_local_generation_provider_when_configured(self) -> None:
-        """Provider model catalog exposes named local generation endpoints."""
+    def test_generic_local_generation_provider_is_disabled_for_web_chat(self) -> None:
         app = FastAPI()
         config = DaemonConfig(
             ai=AIConfig(
@@ -438,15 +437,40 @@ class TestProviderModelsRoute:
         app.include_router(create_providers_router(server))
         client = TestClient(app)
 
-        response = client.get("/api/providers/models")
+        async def fake_discover(_name: str, _endpoint: object) -> LocalEndpointModelGroup:
+            return LocalEndpointModelGroup(
+                endpoint_name="lm-studio",
+                provider_type="openai-compatible",
+                provider_label="OpenAI Compatible",
+                source="config",
+                models=[
+                    {
+                        "value": "local:lm-studio",
+                        "label": "Default (qwen-coder-32b)",
+                        "canonical_id": "qwen-coder-32b",
+                        "is_default": True,
+                    }
+                ],
+            )
+
+        with patch(
+            "gobby.servers.routes.providers.discover_local_endpoint_model_group",
+            side_effect=fake_discover,
+        ):
+            response = client.get("/api/providers/models")
+
         providers = {p["provider"]: p for p in response.json()["providers"]}
         local = providers["local:lm-studio"]
 
         assert "local" not in providers
-        assert local["available"] is True
-        assert local["display_name"] == "Local: OpenAI Compatible"
+        assert local["available"] is False
+        assert local["display_name"] == "OpenAI Compatible"
         assert local["source"] == "config"
         assert local["supports_web_chat"] is False
+        assert local["unavailable_reason"] == (
+            "Generic OpenAI-compatible endpoints are unavailable for web chat"
+        )
+        assert "execution_provider" not in local
         assert local["models"] == [
             {
                 "value": "local:lm-studio",
@@ -456,7 +480,9 @@ class TestProviderModelsRoute:
             }
         ]
 
-    def test_local_generation_entries_are_mirrored_under_codex(self) -> None:
+    def test_eligible_local_provider_executes_through_codex_without_native_mirrors(
+        self,
+    ) -> None:
         app = FastAPI()
         config = DaemonConfig(
             ai=AIConfig(
@@ -480,6 +506,7 @@ class TestProviderModelsRoute:
         async def fake_discover(_name: str, _endpoint: object) -> LocalEndpointModelGroup:
             return LocalEndpointModelGroup(
                 endpoint_name="ollama-cloud",
+                provider_type="ollama",
                 provider_label="Ollama",
                 source="live",
                 models=[
@@ -507,19 +534,128 @@ class TestProviderModelsRoute:
 
         providers = {p["provider"]: p for p in response.json()["providers"]}
         local = providers["local:ollama-cloud"]
-        codex_models = {m["value"]: m for m in providers["codex"]["models"]}
+        codex_model_values = {m["value"] for m in providers["codex"]["models"]}
 
-        assert local["display_name"] == "Local: Ollama"
+        assert local["available"] is True
+        assert local["display_name"] == "Ollama"
+        assert local["execution_provider"] == "codex"
         assert local["source"] == "live"
-        assert local["supports_web_chat"] is False
+        assert local["supports_web_chat"] is True
+        assert local["unavailable_reason"] is None
         assert local["models"][1]["value"] == "local:ollama-cloud/ollama/qwen3-coder"
-        assert codex_models["local:ollama-cloud"]["label"] == ("Ollama: Default (llama3.2:latest)")
-        assert codex_models["local:ollama-cloud/ollama/qwen3-coder"]["label"] == (
-            "Ollama: Qwen3 Coder"
+        assert "local:ollama-cloud" not in codex_model_values
+        assert "local:ollama-cloud/ollama/qwen3-coder" not in codex_model_values
+
+    def test_local_provider_discovery_failures_and_empty_results_are_disabled(
+        self,
+    ) -> None:
+        app = FastAPI()
+        config = DaemonConfig(
+            ai=AIConfig(
+                generation=GenerationConfig(
+                    local=LocalGenerationConfig(
+                        endpoints={
+                            "studio-error": {
+                                "provider": "lmstudio",
+                                "api_base": "http://localhost:1234/v1",
+                                "model": "qwen-coder-32b",
+                            },
+                            "studio-empty": {
+                                "provider": "lmstudio",
+                                "api_base": "http://localhost:1235/v1",
+                                "model": "qwen-coder-7b",
+                            },
+                        }
+                    )
+                )
+            ),
         )
-        assert codex_models["local:ollama-cloud/ollama/qwen3-coder"]["local_provider"] == (
-            "local:ollama-cloud"
+        server = SimpleNamespace(services=SimpleNamespace(config=config))
+        app.include_router(create_providers_router(server))
+        client = TestClient(app)
+
+        async def fake_discover(name: str, _endpoint: object) -> LocalEndpointModelGroup:
+            return LocalEndpointModelGroup(
+                endpoint_name=name,
+                provider_type="lmstudio",
+                provider_label="LM Studio",
+                source="live",
+                models=[],
+                error="connection refused" if name == "studio-error" else None,
+            )
+
+        with patch(
+            "gobby.servers.routes.providers.discover_local_endpoint_model_group",
+            side_effect=fake_discover,
+        ):
+            response = client.get("/api/providers/models")
+
+        providers = {p["provider"]: p for p in response.json()["providers"]}
+        failed = providers["local:studio-error"]
+        empty = providers["local:studio-empty"]
+
+        assert failed["available"] is False
+        assert failed["supports_web_chat"] is False
+        assert failed["execution_provider"] == "codex"
+        assert failed["startup_error"] == "connection refused"
+        assert failed["unavailable_reason"] == "connection refused"
+        assert empty["available"] is False
+        assert empty["supports_web_chat"] is False
+        assert empty["execution_provider"] == "codex"
+        assert empty["unavailable_reason"] == "No completion-capable models discovered"
+
+    def test_duplicate_local_provider_types_append_endpoint_names(self) -> None:
+        app = FastAPI()
+        config = DaemonConfig(
+            ai=AIConfig(
+                generation=GenerationConfig(
+                    local=LocalGenerationConfig(
+                        endpoints={
+                            "studio-east": {
+                                "provider": "lmstudio",
+                                "api_base": "http://localhost:1234/v1",
+                                "model": "model-east",
+                            },
+                            "studio-west": {
+                                "provider": "lmstudio",
+                                "api_base": "http://localhost:1235/v1",
+                                "model": "model-west",
+                            },
+                        }
+                    )
+                )
+            ),
         )
+        server = SimpleNamespace(services=SimpleNamespace(config=config))
+        app.include_router(create_providers_router(server))
+        client = TestClient(app)
+
+        async def fake_discover(name: str, _endpoint: object) -> LocalEndpointModelGroup:
+            return LocalEndpointModelGroup(
+                endpoint_name=name,
+                provider_type="lmstudio",
+                provider_label="LM Studio",
+                source="live",
+                models=[
+                    {
+                        "value": f"local:{name}",
+                        "label": f"Default ({name})",
+                        "canonical_id": name,
+                        "is_default": True,
+                    }
+                ],
+            )
+
+        with patch(
+            "gobby.servers.routes.providers.discover_local_endpoint_model_group",
+            side_effect=fake_discover,
+        ):
+            response = client.get("/api/providers/models")
+
+        providers = {p["provider"]: p for p in response.json()["providers"]}
+
+        assert providers["local:studio-east"]["display_name"] == "LM Studio (studio-east)"
+        assert providers["local:studio-west"]["display_name"] == "LM Studio (studio-west)"
 
     def test_current_catalog_uses_static_catalog_without_provider_config(self) -> None:
         """Provider model lists come from the catalog without daemon provider config."""

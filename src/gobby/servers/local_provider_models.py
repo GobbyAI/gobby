@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 
 from gobby.ai.local_endpoints import LOCAL_ENDPOINT_PROVIDER_PREFIX
-from gobby.config.ai import LocalGenerationEndpointConfig
+from gobby.config.ai import LocalGenerationEndpointConfig, LocalGenerationProvider
 
 LOCAL_PROVIDER_LABELS: dict[str, str] = {
     "lmstudio": "LM Studio",
@@ -23,6 +23,7 @@ class LocalEndpointModelGroup:
     """Discovered model rows for one configured local endpoint."""
 
     endpoint_name: str
+    provider_type: LocalGenerationProvider
     provider_label: str
     models: list[dict[str, Any]]
     source: str
@@ -56,6 +57,7 @@ async def discover_local_endpoint_model_group(
         source = "live" if discovered or capability_checked else "config"
         return LocalEndpointModelGroup(
             endpoint_name=endpoint_name,
+            provider_type=endpoint.provider,
             provider_label=provider_label,
             models=models,
             source=source,
@@ -64,6 +66,7 @@ async def discover_local_endpoint_model_group(
     except Exception as exc:
         return LocalEndpointModelGroup(
             endpoint_name=endpoint_name,
+            provider_type=endpoint.provider,
             provider_label=provider_label,
             models=_merge_default_model(endpoint_name, endpoint, []),
             source="config",
@@ -74,17 +77,6 @@ async def discover_local_endpoint_model_group(
 def local_provider_display_label(provider: str) -> str:
     normalized = provider.strip().lower()
     return LOCAL_PROVIDER_LABELS.get(normalized, provider.strip() or "Local")
-
-
-def codex_mirror_models(group: LocalEndpointModelGroup) -> list[dict[str, Any]]:
-    """Return local model rows mirrored into the Codex provider group."""
-    mirrored: list[dict[str, Any]] = []
-    for model in group.models:
-        entry = dict(model)
-        entry["label"] = f"{group.provider_label}: {model.get('label') or model['value']}"
-        entry["local_provider"] = group.provider
-        mirrored.append(entry)
-    return mirrored
 
 
 def _merge_default_model(

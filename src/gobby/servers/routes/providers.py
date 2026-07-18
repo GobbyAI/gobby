@@ -5,14 +5,15 @@ from __future__ import annotations
 import asyncio
 import copy
 import shutil
+from collections import Counter
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter
 
 from gobby.providers import provider_metadata
 from gobby.servers.local_provider_models import (
+    NO_COMPLETION_MODELS_ERROR,
     LocalEndpointModelGroup,
-    codex_mirror_models,
     discover_local_endpoint_model_group,
 )
 from gobby.servers.provider_models import (
@@ -99,6 +100,10 @@ _BASE_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
 _PROVIDER_DEFS = [(entry.provider, entry.binary) for entry in provider_metadata()]
 _PROVIDER_META = {entry.provider: entry for entry in provider_metadata()}
 _LAZY_ACP_PROVIDERS = frozenset({"grok", "qwen"})
+_CODEX_LOCAL_PROVIDER_TYPES = frozenset({"lmstudio", "ollama"})
+_GENERIC_LOCAL_UNAVAILABLE_REASON = (
+    "Generic OpenAI-compatible endpoints are unavailable for web chat"
+)
 
 
 def _merge_static_model_metadata(
@@ -194,23 +199,40 @@ async def _local_generation_model_groups(
 def _local_generation_provider_entries(
     groups: list[LocalEndpointModelGroup],
 ) -> list[dict[str, Any]]:
-    return [
-        {
+    provider_type_counts = Counter(group.provider_type for group in groups)
+    entries: list[dict[str, Any]] = []
+    for group in groups:
+        codex_backed = group.provider_type in _CODEX_LOCAL_PROVIDER_TYPES
+        if group.error:
+            unavailable_reason = group.error
+        elif not codex_backed:
+            unavailable_reason = _GENERIC_LOCAL_UNAVAILABLE_REASON
+        elif not group.models:
+            unavailable_reason = NO_COMPLETION_MODELS_ERROR
+        else:
+            unavailable_reason = None
+        supports_web_chat = unavailable_reason is None
+        display_name = group.provider_label
+        if provider_type_counts[group.provider_type] > 1:
+            display_name = f"{display_name} ({group.endpoint_name})"
+        entry: dict[str, Any] = {
             "provider": group.provider,
-            "available": True,
+            "available": supports_web_chat,
             "models": group.models,
             "source": group.source,
             "startup_error": group.error,
-            "display_name": group.display_name,
+            "display_name": display_name,
             "installed": True,
             "deprecated": False,
             "deprecation_message": None,
-            "supports_web_chat": False,
+            "supports_web_chat": supports_web_chat,
             "supports_agent_spawn": False,
-            "unavailable_reason": None,
+            "unavailable_reason": unavailable_reason,
         }
-        for group in groups
-    ]
+        if codex_backed:
+            entry["execution_provider"] = "codex"
+        entries.append(entry)
+    return entries
 
 
 def _provider_health(
@@ -307,9 +329,6 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
         probed = await _probe_providers()
         model_catalog = _build_model_catalog(server)
         local_model_groups = await _local_generation_model_groups(server)
-        codex_local_models = [
-            model for group in local_model_groups for model in codex_mirror_models(group)
-        ]
         fallback_entry: tuple[list[dict[str, Any]], str] = (
             [{"value": "default", "label": "Default"}],
             "static",
@@ -319,8 +338,6 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
             available, startup_error = _provider_health(server, name, path)
             models, source = model_catalog.get(name, fallback_entry)
             filtered_models = _filter_models_for_web_chat(name, models)
-            if name == "codex" and codex_local_models:
-                filtered_models = [*filtered_models, *codex_local_models]
             result.append(
                 {
                     "provider": name,
