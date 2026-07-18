@@ -503,7 +503,7 @@ class CronExecutor:
             except ApprovalRequired:
                 return
             except Exception as e:
-                logger.error("Background pipeline '%s' failed: %s", pipeline_name, e, exc_info=True)
+                logger.exception("Background pipeline '%s' failed: %s", pipeline_name, e)
                 try:
                     await self._run_db(
                         self._record_pipeline_execution_failure,
@@ -512,7 +512,7 @@ class CronExecutor:
                         str(e),
                     )
                 except Exception:
-                    logger.error("Failed to mark background pipeline as failed", exc_info=True)
+                    logger.exception("Failed to mark background pipeline as failed")
                 await self._run_db(
                     self._record_pipeline_run_failure,
                     cron_run_id,

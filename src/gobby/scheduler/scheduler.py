@@ -210,7 +210,7 @@ class CronScheduler:
             try:
                 await self._check_due_jobs()
             except Exception as e:
-                logger.error("Cron check loop error: %s", e, exc_info=True)
+                logger.exception("Cron check loop error: %s", e)
             try:
                 await asyncio.sleep(self.config.check_interval_seconds)
             except asyncio.CancelledError:
@@ -232,7 +232,7 @@ class CronScheduler:
                 if deleted > 0:
                     logger.info("Cleaned up %s old cron runs", deleted)
             except Exception as e:
-                logger.error("Cron cleanup error: %s", e, exc_info=True)
+                logger.exception("Cron cleanup error: %s", e)
 
     async def _check_due_jobs(self) -> None:
         """Check for due jobs and dispatch them."""
@@ -313,7 +313,7 @@ class CronScheduler:
                 self._track_run_task(task, run.id)
                 dispatched += 1
             except Exception as e:
-                logger.error("Failed to dispatch cron job %s: %s", job.id, e, exc_info=True)
+                logger.exception("Failed to dispatch cron job %s: %s", job.id, e)
 
     async def _execute_and_update(self, job: CronJob, run: CronRun | None) -> None:
         """Execute a job and update its status afterward."""
@@ -366,7 +366,7 @@ class CronScheduler:
                 now = datetime.now(UTC).isoformat()
                 failures = job.consecutive_failures + 1
                 backoff = self._get_backoff_seconds(failures)
-                logger.error(
+                logger.exception(
                     "Unexpected error executing cron job %s: %s; applying %ss backoff after "
                     "%s consecutive failure%s",
                     job.id,
@@ -374,7 +374,6 @@ class CronScheduler:
                     backoff,
                     failures,
                     "" if failures == 1 else "s",
-                    exc_info=True,
                 )
                 await self._run_db(
                     self._update_job_bookkeeping,
