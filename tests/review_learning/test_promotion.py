@@ -50,7 +50,7 @@ async def test_high_risk_weak_lesson_records_memory_without_task(
     service = ReviewLearningService(fake_memory_manager, fake_task_manager)
 
     result = await service.record(
-        source_kind="agent_review",
+        source_kind="test_failure",
         source="code-reviewer",
         source_review="review-1",
         decision="confirmed",
@@ -74,7 +74,7 @@ async def test_guardrail_signal_ignores_dict_keys(
     service = ReviewLearningService(fake_memory_manager, fake_task_manager)
 
     result = await service.record(
-        source_kind="agent_review",
+        source_kind="test_failure",
         source="code-reviewer",
         source_review="review-1",
         decision="confirmed",
@@ -87,7 +87,7 @@ async def test_guardrail_signal_ignores_dict_keys(
             "prevention": {"another_key": "  "},
             "path": {"src/gobby/example.py": ""},
         },
-        evidence={"changed_files": {"src/gobby/example.py": ""}},
+        evidence={"commit": "abc", "changed_files": {"src/gobby/example.py": ""}},
         risk="high",
     )
 
@@ -110,7 +110,7 @@ async def test_high_risk_actionable_first_occurrence_creates_test_by_default(
     service = ReviewLearningService(fake_memory_manager, fake_task_manager)
 
     result = await service.record(
-        source_kind="agent_review",
+        source_kind="test_failure",
         source="code-reviewer",
         source_review="review-1",
         decision="confirmed",
@@ -128,7 +128,7 @@ async def test_high_risk_actionable_first_occurrence_creates_test_by_default(
 
 
 @pytest.mark.asyncio
-async def test_high_risk_actionable_explicit_rule_target_creates_rule_task(
+async def test_high_risk_reviewer_sourced_first_occurrence_stays_lesson_only(
     fake_memory_manager,
     fake_task_manager,
 ) -> None:
@@ -136,6 +136,30 @@ async def test_high_risk_actionable_explicit_rule_target_creates_rule_task(
 
     result = await service.record(
         source_kind="agent_review",
+        source="plan-reviewer",
+        source_review="review-1",
+        decision="confirmed",
+        finding=_finding(),
+        evidence={"commit": "abc"},
+        risk="high",
+    )
+
+    assert result["tier"] == "lesson"
+    assert result["guardrail_target"] is None
+    assert "task_ref" not in result
+    assert len(fake_memory_manager.memories) == 1
+    assert fake_task_manager.created == []
+
+
+@pytest.mark.asyncio
+async def test_high_risk_actionable_explicit_rule_target_creates_rule_task(
+    fake_memory_manager,
+    fake_task_manager,
+) -> None:
+    service = ReviewLearningService(fake_memory_manager, fake_task_manager)
+
+    result = await service.record(
+        source_kind="test_failure",
         source="code-reviewer",
         source_review="review-1",
         decision="confirmed",
@@ -160,7 +184,7 @@ async def test_high_risk_actionable_preserves_explicit_valid_targets(
     service = ReviewLearningService(fake_memory_manager, fake_task_manager)
 
     result = await service.record(
-        source_kind="agent_review",
+        source_kind="test_failure",
         source="code-reviewer",
         source_review="review-1",
         decision="confirmed",

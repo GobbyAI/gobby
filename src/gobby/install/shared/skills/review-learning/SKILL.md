@@ -95,7 +95,11 @@ guardrail signal: non-empty `prevention`, at least one of `principle` or
 - `confirmed`, first occurrence: memory only.
 - `confirmed`, second occurrence: `test` target by default.
 - `confirmed`, third or later occurrence: `validation` target by default.
-- `confirmed`, high risk with actionable signal: `test` target by default.
+- `confirmed`, high risk with actionable signal **and** a CI-corroborated
+  source kind (`ci_check`, `static_analysis`, `test_failure`): `test` target by
+  default at first occurrence. Reviewer-sourced lessons (`review_comment`,
+  `agent_review`, `qa_rejection`) promote only at two or more occurrences —
+  reviewer-asserted risk alone does not mint a task.
 - `no-fix-policy`, first occurrence: memory only.
 - `no-fix-policy`, second or later occurrence: only `checklist` or `tool-config`.
 - `stale` or `invalid`: no-op.

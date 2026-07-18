@@ -187,7 +187,7 @@ Producer may recommend one in `finding`; otherwise the ladder assigns the defaul
 | confirmed | 1 | lesson memory only (no task) |
 | confirmed | 2 | `test` (or producer-recommended `helper`/`checklist`) |
 | confirmed | 3+ | `validation` (or `rule`/`workflow`/`pipeline`) |
-| confirmed | `risk=high` | `rule` — immediate, regardless of count |
+| confirmed | `risk=high` + CI source kind (`ci_check`/`static_analysis`/`test_failure`) | `test` — immediate, regardless of count; reviewer-sourced high risk waits for 2+ |
 | no-fix-policy | 1 | policy lesson memory only |
 | no-fix-policy | 2+ | `checklist` or `tool-config` **only** (tune rule/profile) |
 | stale / invalid | — | skipped (no-op) |

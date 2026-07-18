@@ -6,7 +6,13 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from gobby.review_learning.lessons import Decision, GuardrailTarget, NormalizedLesson, slugify
+from gobby.review_learning.lessons import (
+    CI_SOURCE_KINDS,
+    Decision,
+    GuardrailTarget,
+    NormalizedLesson,
+    slugify,
+)
 
 TARGET_CATEGORY: dict[str, str] = {
     "helper": "code",
@@ -181,7 +187,10 @@ def _confirmed_target(
 ) -> GuardrailTarget | None:
     explicit_target = lesson.guardrail_target
     if occurrence_count < 2:
-        if lesson.risk != "high":
+        # Single-occurrence promotion needs machine corroboration: reviewer-asserted
+        # risk alone (agent/human review of code that may not exist yet) waits for a
+        # second occurrence.
+        if lesson.risk != "high" or lesson.source_kind not in CI_SOURCE_KINDS:
             return None
         if explicit_target is not None and explicit_target in VALID_GUARDRAIL_TARGETS:
             return explicit_target
