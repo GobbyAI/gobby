@@ -595,6 +595,28 @@ class TestShadowReplay:
         assert rows[0]["outcome"] == "injected"
         assert rows[1]["outcome"] is None
 
+    def test_exact_request_ids_limit_feature_reads_to_reserved_partition(
+        self, store: RecallSignalStore
+    ) -> None:
+        _complete_shadow_request(store, "req-reserved-a")
+        _complete_shadow_request(store, "req-reserved-b")
+
+        rows = store.fetch_shadow_replay_rows(
+            label_source="digest_shadow",
+            candidate_scope="full",
+            judge_protocol_version="shadow-v1",
+            weighting_regime_key="[true,false,false,false]",
+            judge_model_key="judge-model",
+            judge_config_fingerprint="judge-fingerprint",
+            data_cutoff=datetime(2026, 7, 17, 12, 10, tzinfo=UTC),
+            completion_cutoff=datetime(2026, 7, 17, 12, 40, tzinfo=UTC),
+            project_id=None,
+            limit=10,
+            request_ids=["req-reserved-b"],
+        )
+
+        assert {row["recall_request_id"] for row in rows} == {"req-reserved-b"}
+
 
 class TestShadowSampling:
     def test_ship_samples_one_candidate_per_request_and_rejects_since(

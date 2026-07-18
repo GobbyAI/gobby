@@ -398,6 +398,38 @@ def _pair_credit(
 # --------------------------------------------------------------------------- #
 
 
+def split_request_ids_per_project(
+    requests: Sequence[tuple[str | None, str]],
+    *,
+    eval_stride: int = 2,
+    split_version: str = REQUEST_SPLIT_VERSION,
+) -> tuple[set[str], set[str]]:
+    """Return deterministic train/holdout request IDs within each project."""
+    if eval_stride < 2:
+        raise ValueError(f"eval_stride must be >= 2, got {eval_stride}")
+    if not split_version.strip():
+        raise ValueError("split_version must be non-empty")
+    requests_by_project: dict[str | None, set[str]] = {}
+    for project_id, request_id in requests:
+        requests_by_project.setdefault(project_id, set()).add(request_id)
+
+    eval_requests: set[str] = set()
+    all_requests: set[str] = set()
+    for request_ids in requests_by_project.values():
+        all_requests.update(request_ids)
+        seeded_request_ids = sorted(
+            request_ids,
+            key=lambda request_id: (
+                sha256(f"{split_version}\0{request_id}".encode()).digest(),
+                request_id,
+            ),
+        )
+        for index, request_id in enumerate(seeded_request_ids):
+            if index % eval_stride == eval_stride - 1:
+                eval_requests.add(request_id)
+    return all_requests - eval_requests, eval_requests
+
+
 def split_requests_per_project(
     rows: Sequence[ReplayRow],
     *,
@@ -410,26 +442,11 @@ def split_requests_per_project(
     ``eval_stride``-th request goes to holdout. Input ordering cannot affect
     the frozen partition.
     """
-    if eval_stride < 2:
-        raise ValueError(f"eval_stride must be >= 2, got {eval_stride}")
-    if not split_version.strip():
-        raise ValueError("split_version must be non-empty")
-    requests_by_project: dict[str | None, set[str]] = {}
-    for row in rows:
-        requests_by_project.setdefault(row.project_id, set()).add(row.recall_request_id)
-
-    eval_requests: set[str] = set()
-    for request_ids in requests_by_project.values():
-        seeded_request_ids = sorted(
-            request_ids,
-            key=lambda request_id: (
-                sha256(f"{split_version}\0{request_id}".encode()).digest(),
-                request_id,
-            ),
-        )
-        for index, request_id in enumerate(seeded_request_ids):
-            if index % eval_stride == eval_stride - 1:
-                eval_requests.add(request_id)
+    _train_requests, eval_requests = split_request_ids_per_project(
+        [(row.project_id, row.recall_request_id) for row in rows],
+        eval_stride=eval_stride,
+        split_version=split_version,
+    )
 
     train = [row for row in rows if row.recall_request_id not in eval_requests]
     evaluation = [row for row in rows if row.recall_request_id in eval_requests]
@@ -681,28 +698,17 @@ class LabeledFitReport:
     fitted_eval: PairwiseEvalResult
 
 
-def fit_and_evaluate(
-    rows: Sequence[ReplayRow],
+def fit_and_evaluate_partitioned(
+    train: Sequence[ReplayRow],
+    evaluation: Sequence[ReplayRow],
     grid: Sequence[ReplayParams],
     *,
-    eval_stride: int = 2,
     smoothing: float = 1.0,
     clip: float = 10.0,
     shrinkage_requests: float = 50.0,
     weighting_mode: WeightingMode = "full",
-    split_version: str = REQUEST_SPLIT_VERSION,
 ) -> LabeledFitReport:
-    """Split per project, fit with partial pooling, evaluate on the holdout.
-
-    The baseline arm replays the *logged* parameters (``ReplayParams()`` with
-    every field ``None``) on the same holdout — the fitted-vs-static
-    comparison #17198's must-beat-static gate consumes. Propensities are
-    estimated on the training split only, then reused for the holdout so the
-    two arms are weighted identically.
-    """
-    train, evaluation = split_requests_per_project(
-        rows, eval_stride=eval_stride, split_version=split_version
-    )
+    """Fit on an already-frozen training partition and evaluate its holdout."""
     propensities = estimate_position_propensities(train, smoothing=smoothing)
     fitted = fit_partial_pooled(
         train,
@@ -730,13 +736,48 @@ def fit_and_evaluate(
         weighting_mode=weighting_mode,
     )
     return LabeledFitReport(
-        rows_total=len(rows),
-        rows_labeled=sum(1 for row in rows if row.judge_useful is not None),
+        rows_total=len(train) + len(evaluation),
+        rows_labeled=sum(
+            1 for row in (*train, *evaluation) if row.judge_useful is not None
+        ),
         train_requests=len({row.recall_request_id for row in train}),
         eval_requests=len({row.recall_request_id for row in evaluation}),
         fitted=fitted,
         baseline_eval=baseline_eval,
         fitted_eval=fitted_eval,
+    )
+
+
+def fit_and_evaluate(
+    rows: Sequence[ReplayRow],
+    grid: Sequence[ReplayParams],
+    *,
+    eval_stride: int = 2,
+    smoothing: float = 1.0,
+    clip: float = 10.0,
+    shrinkage_requests: float = 50.0,
+    weighting_mode: WeightingMode = "full",
+    split_version: str = REQUEST_SPLIT_VERSION,
+) -> LabeledFitReport:
+    """Split per project, fit with partial pooling, evaluate on the holdout.
+
+    The baseline arm replays the *logged* parameters (``ReplayParams()`` with
+    every field ``None``) on the same holdout — the fitted-vs-static
+    comparison #17198's must-beat-static gate consumes. Propensities are
+    estimated on the training split only, then reused for the holdout so the
+    two arms are weighted identically.
+    """
+    train, evaluation = split_requests_per_project(
+        rows, eval_stride=eval_stride, split_version=split_version
+    )
+    return fit_and_evaluate_partitioned(
+        train,
+        evaluation,
+        grid,
+        smoothing=smoothing,
+        shrinkage_requests=shrinkage_requests,
+        clip=clip,
+        weighting_mode=weighting_mode,
     )
 
 

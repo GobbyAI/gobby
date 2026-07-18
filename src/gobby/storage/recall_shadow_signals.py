@@ -315,6 +315,7 @@ class RecallShadowSignalStoreMixin:
         completion_cutoff: datetime,
         project_id: str | None,
         limit: int,
+        request_ids: Sequence[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Project request-aligned replay rows from an admitted shadow cohort."""
         if candidate_scope not in {"full", "injected"}:
@@ -331,10 +332,13 @@ class RecallShadowSignalStoreMixin:
             completion_cutoff=completion_cutoff,
             limit=limit,
         )
-        request_ids = [str(row["recall_request_id"]) for row in cohort]
-        if not request_ids:
+        admitted_ids = [str(row["recall_request_id"]) for row in cohort]
+        if request_ids is not None:
+            requested = set(request_ids)
+            admitted_ids = [request_id for request_id in admitted_ids if request_id in requested]
+        if not admitted_ids:
             return []
-        placeholders = ", ".join("%s" for _ in request_ids)
+        placeholders = ", ".join("%s" for _ in admitted_ids)
         scope_condition = "AND o.outcome = 'injected'" if candidate_scope == "injected" else ""
         query = render_internal_sql(
             """
@@ -383,7 +387,7 @@ class RecallShadowSignalStoreMixin:
                 judge_protocol_version,
                 label_source,
                 judge_protocol_version,
-                *request_ids,
+                *admitted_ids,
             ),
         )
         return self._normalize_cohort_rows(rows)

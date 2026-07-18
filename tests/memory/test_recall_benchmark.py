@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -62,10 +63,17 @@ from gobby.memory.recall_fit import (
     default_replay_grid,
     fit_and_evaluate,
     replay_row_from_signal_row,
+    split_request_ids_per_project,
 )
-from gobby.memory.recall_refit import run_ship_gate_from_store, static_replay_params
+from gobby.memory.recall_refit import (
+    GateCohort,
+    build_ship_audit_sample,
+    run_ship_gate_from_store,
+    static_replay_params,
+)
 from gobby.memory.services.knowledge_graph import writer as writer_mod
 from gobby.memory.services.knowledge_graph.service import KnowledgeGraphService
+from gobby.memory.shadow_relevance import SHADOW_PROTOCOL_VERSION
 from gobby.storage.recall_signals import RecallSignalStore
 from tests.memory._recall_corpus import (
     DIM,
@@ -283,6 +291,171 @@ def _seed_labeled_signal_rows(store: RecallSignalStore) -> None:
                         "labeled_at": _LABEL_TS,
                     }
                 )
+
+
+_SHADOW_LABEL_SOURCE = "digest_shadow"
+_SHADOW_JUDGE_MODEL = "benchmark-shadow-judge"
+_SHADOW_JUDGE_CONFIG = "benchmark-shadow-config-v1"
+_SHADOW_REGIME = "[false,false,false,false]"
+_SHADOW_DATA_CUTOFF = datetime(2026, 7, 10, 12, tzinfo=UTC)
+_SHADOW_COMPLETION_CUTOFF = datetime(2026, 7, 10, 13, tzinfo=UTC)
+
+
+def _shadow_hit(
+    memory_id: str,
+    *,
+    rank: int,
+    raw: float,
+    decay: float,
+) -> dict[str, object]:
+    hit = _labeled_hit(memory_id, rank=rank, raw=raw, decay=decay)
+    hit["content_hash"] = f"content-{memory_id}"
+    return hit
+
+
+def _seed_shadow_gate_rows(store: RecallSignalStore) -> GateCohort:
+    """Seed a complete fenced shadow cohort plus its bound 50-unit audit."""
+    for index in range(120):
+        project = f"proj-shadow-{index % 2}"
+        request_id = f"shadow-request-{index:03d}"
+        session_id = f"shadow-session-{index % 2}"
+        hits = [
+            _shadow_hit("mem-bad", rank=0, raw=0.5, decay=0.95),
+            _shadow_hit("mem-useful", rank=1, raw=0.75, decay=0.6),
+        ]
+        store.insert_signal_event(
+            {
+                "schema_version": 4,
+                "timestamp": _LABEL_TS,
+                "session_id": session_id,
+                "recall_request_id": request_id,
+                "project_id": project,
+                "caller": "memory.recall",
+                "query": f"shadow benchmark query {index}",
+                "merged_ids": ["mem-bad", "mem-useful"],
+                "returned_ids": ["mem-bad", "mem-useful"],
+                "rrf_applied": False,
+                "graph_synthetic_similarity_discount": None,
+                "ranking_score_map": {},
+                "graph_score_map": {},
+                "weighting": {"temporal_decay_half_life_days": _LOGGED_HALF_LIFE},
+                "hits": hits,
+            }
+        )
+        claim_token = store.claim_shadow_request(
+            session_id,
+            request_id,
+            label_source=_SHADOW_LABEL_SOURCE,
+            judge_protocol_version=SHADOW_PROTOCOL_VERSION,
+        )
+        assert claim_token is not None
+        presented = [
+            {
+                "neutral_key": f"M{position + 1}",
+                "memory_id": str(hit["memory_id"]),
+                "order_index": position,
+                "excerpt": str(hit["memory_id"]),
+                "content_hash": str(hit["content_hash"]),
+            }
+            for position, hit in enumerate(hits)
+        ]
+        labels = [
+            {
+                "session_id": session_id,
+                "recall_request_id": request_id,
+                "memory_id": memory_id,
+                "project_id": project,
+                "label_source": _SHADOW_LABEL_SOURCE,
+                "judge_useful": useful,
+                "judge_confidence": 0.99,
+                "judge_model": _SHADOW_JUDGE_MODEL,
+                "judge_protocol_version": SHADOW_PROTOCOL_VERSION,
+                "position_randomized": True,
+                "length_controlled": True,
+                "labeled_at": _LABEL_TS,
+            }
+            for memory_id, useful in (("mem-bad", False), ("mem-useful", True))
+        ]
+        snapshot = {
+            "recall_request_id": request_id,
+            "label_source": _SHADOW_LABEL_SOURCE,
+            "judge_protocol_version": SHADOW_PROTOCOL_VERSION,
+            "system_prompt": "benchmark shadow rubric",
+            "query_text": f"shadow benchmark query {index}",
+            "presented": presented,
+            "prompt_hash": f"prompt-{request_id}",
+            "judge_model": _SHADOW_JUDGE_MODEL,
+            "judge_config_fingerprint": _SHADOW_JUDGE_CONFIG,
+            "created_at": _LABEL_TS,
+        }
+        assert store.insert_usefulness_labels_atomic(labels, snapshot, claim_token) is True
+
+    cohort = GateCohort(
+        label_source=_SHADOW_LABEL_SOURCE,
+        candidate_scope="full",
+        judge_protocol_version=SHADOW_PROTOCOL_VERSION,
+        weighting_regime_key=_SHADOW_REGIME,
+        judge_model_key=_SHADOW_JUDGE_MODEL,
+        judge_config_fingerprint=_SHADOW_JUDGE_CONFIG,
+        data_cutoff=_SHADOW_DATA_CUTOFF,
+        completion_cutoff=_SHADOW_COMPLETION_CUTOFF,
+    )
+    request_rows = store.shadow_cohort_query(
+        "fitting",
+        label_source=cohort.label_source,
+        judge_protocol_version=cohort.judge_protocol_version,
+        judge_model_key=cohort.judge_model_key,
+        judge_config_fingerprint=cohort.judge_config_fingerprint,
+        weighting_regime_key=cohort.weighting_regime_key,
+        data_cutoff=cohort.data_cutoff,
+        completion_cutoff=cohort.completion_cutoff,
+        limit=1_000,
+    )
+    train_request_ids, _holdout_request_ids = split_request_ids_per_project(
+        [
+            (
+                str(row["project_id"]) if row.get("project_id") is not None else None,
+                str(row["recall_request_id"]),
+            )
+            for row in request_rows
+        ]
+    )
+    training_rows = store.fetch_shadow_replay_rows(
+        label_source=cohort.label_source,
+        candidate_scope=cohort.candidate_scope,
+        judge_protocol_version=cohort.judge_protocol_version,
+        weighting_regime_key=cohort.weighting_regime_key,
+        judge_model_key=cohort.judge_model_key,
+        judge_config_fingerprint=cohort.judge_config_fingerprint,
+        data_cutoff=cohort.data_cutoff,
+        completion_cutoff=cohort.completion_cutoff,
+        project_id=None,
+        limit=1_000,
+        request_ids=sorted(train_request_ids),
+    )
+    sample = build_ship_audit_sample(
+        training_rows,
+        cohort=cohort,
+        train_request_ids=train_request_ids,
+    )
+    verdicts = [
+        {
+            "request_id": target.request_id,
+            "memory_id": target.memory_id,
+            "prompt_hash": target.prompt_hash,
+            "human_verdict": target.judge_useful,
+            "reviewer": "benchmark-reviewer",
+            "created_at": _LABEL_TS,
+        }
+        for target in sample.targets
+    ]
+    assert len(verdicts) == 50
+    assert store.insert_audit_verdicts(
+        verdicts,
+        cohort_digest=sample.cohort_digest,
+        sample_digest=sample.sample_digest,
+    ) == 50
+    return cohort
 
 
 def _run_labeled_fit(store: RecallSignalStore, *, label_source: str) -> LabeledFitReport:
@@ -541,18 +714,30 @@ def test_recall_benchmark_labeled_fit(temp_db: HubDatabase) -> None:
     assert all(row.ranking_mode == "semantic_only" for row in fit_rows)
     assert all(row.temporal_decay_factor is not None for row in fit_rows)
 
-    # #17198 ship gate end-to-end over the same store: the planted stream is
-    # tiny AND its judge-label optimum (h=7) sits outside the constructed
-    # judge-independent envelope, so the gate must refuse to ship on BOTH
-    # counts even though the fitted arm crushes static on the holdout.
-    decision = run_ship_gate_from_store(store, label_source="ablation")
+    # Production ship-gate path over complete shadow labels, immutable prompt
+    # snapshots, bound audit verdicts, and one atomic holdout reservation.
+    cohort = _seed_shadow_gate_rows(store)
+    gate_args = {
+        "label_source": cohort.label_source,
+        "candidate_scope": cohort.candidate_scope,
+        "judge_protocol_version": cohort.judge_protocol_version,
+        "weighting_regime_key": cohort.weighting_regime_key,
+        "judge_model_key": cohort.judge_model_key,
+        "judge_config_fingerprint": cohort.judge_config_fingerprint,
+        "data_cutoff": cohort.data_cutoff,
+        "completion_cutoff": cohort.completion_cutoff,
+    }
+
+    decision = run_ship_gate_from_store(store, **gate_args)
+    repeated = run_ship_gate_from_store(store, **gate_args)
+
     print(f"ship gate: ship={decision.ship} reasons={list(decision.reasons)}")
-    assert decision.report.fitted.pooled == replace(static_replay_params(), half_life_days=7.0)
+    assert decision.report.fitted.pooled == replace(static_replay_params(), half_life_days=60.0)
+    assert decision.audit_ok is True
+    assert decision.sufficient_data is True
     assert decision.beats_static is True
-    assert decision.sufficient_data is False
-    assert decision.guard_fitted < decision.guard_static == 1.0
-    assert decision.guard_ok is False
-    assert decision.ship is False
-    assert any("insufficient labeled data" in reason for reason in decision.reasons)
-    assert any("judge-independent guard regression" in reason for reason in decision.reasons)
-    assert decision.to_record()["gates"]["beats_static"] is True
+    assert decision.guard_ok is True
+    assert decision.ship is True
+    assert repeated.to_record() == decision.to_record()
+    with pytest.raises(ValueError, match="fit_settings_digest"):
+        run_ship_gate_from_store(store, **gate_args, shrinkage_requests=20.0)
