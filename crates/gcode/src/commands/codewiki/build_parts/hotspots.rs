@@ -7,13 +7,14 @@ pub(crate) fn build_hotspots_doc(
     graph_edges: &[CodewikiGraphEdge],
     graph_availability: CodewikiGraphAvailability,
 ) -> HotspotsDoc {
+    let nodes = hotspot_nodes(files);
     // Graph availability is informational only and never degrades the hotspots
     // page. When the graph is unavailable the centrality analytics simply
     // cannot run, so the page omits its findings (the renderer prints a plain
     // "no hotspots" note) without setting `degraded`.
     if graph_availability != CodewikiGraphAvailability::Available {
         return HotspotsDoc {
-            source_spans: Vec::new(),
+            source_spans: hotspot_source_spans(&nodes),
             hotspots: Vec::new(),
             god_nodes: Vec::new(),
             bridges: Vec::new(),
@@ -21,7 +22,6 @@ pub(crate) fn build_hotspots_doc(
         };
     }
 
-    let nodes = hotspot_nodes(files);
     let graph = AnalyticsGraph {
         nodes: nodes
             .values()
@@ -111,7 +111,7 @@ pub(crate) fn build_hotspots_doc(
             })
         })
         .collect::<Vec<_>>();
-    let source_spans = hotspots
+    let mut source_spans = hotspots
         .iter()
         .chain(god_nodes.iter())
         .chain(bridges.iter())
@@ -119,6 +119,9 @@ pub(crate) fn build_hotspots_doc(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
+    if source_spans.is_empty() {
+        source_spans = hotspot_source_spans(&nodes);
+    }
 
     HotspotsDoc {
         source_spans,
@@ -127,6 +130,15 @@ pub(crate) fn build_hotspots_doc(
         bridges,
         degraded_sources: Vec::new(),
     }
+}
+
+fn hotspot_source_spans(nodes: &BTreeMap<String, HotspotNode>) -> Vec<SourceSpan> {
+    nodes
+        .values()
+        .filter_map(|node| node.source_span.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 fn hotspot_nodes(files: &[FileDoc]) -> BTreeMap<String, HotspotNode> {

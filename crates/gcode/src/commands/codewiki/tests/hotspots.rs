@@ -59,6 +59,44 @@ fn codewiki_hotspots_page_surfaces_analytics_rankings() {
 }
 
 #[test]
+fn codewiki_hotspots_page_records_provenance_when_analytics_find_nothing() {
+    let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
+        files: vec!["src/lib.rs".to_string()],
+        graph_edges: Vec::new(),
+        graph_availability: CodewikiGraphAvailability::Available,
+        symbols: vec![test_symbol(
+            "src/lib.rs",
+            "Client",
+            "class",
+            1,
+            "pub struct Client;",
+        )],
+    };
+
+    let docs = collect_doc_pairs(&input, GenerateDocsOptions::default());
+    let hotspots = docs
+        .iter()
+        .find(|(path, _)| path == "code/_hotspots.md")
+        .map(|(_, content)| content)
+        .expect("hotspots doc");
+    let frontmatter = hotspots_frontmatter(hotspots);
+    let provenance = frontmatter
+        .get("provenance")
+        .and_then(serde_yaml::Value::as_sequence)
+        .expect("hotspots provenance");
+
+    assert_eq!(
+        provenance
+            .first()
+            .and_then(|entry| entry.get("file"))
+            .and_then(serde_yaml::Value::as_str),
+        Some("src/lib.rs")
+    );
+    assert!(hotspots.contains("No graph hotspots were identified from the current code index."));
+}
+
+#[test]
 fn codewiki_hotspots_page_does_not_degrade_when_analytics_unavailable() {
     let input = CodewikiInput {
         leading_chunks: std::collections::BTreeMap::new(),
@@ -91,6 +129,17 @@ fn codewiki_hotspots_page_does_not_degrade_when_analytics_unavailable() {
         None
     );
     assert!(frontmatter.get("degraded_sources").is_none());
+    let provenance = frontmatter
+        .get("provenance")
+        .and_then(serde_yaml::Value::as_sequence)
+        .expect("hotspots provenance");
+    assert_eq!(
+        provenance
+            .first()
+            .and_then(|entry| entry.get("file"))
+            .and_then(serde_yaml::Value::as_str),
+        Some("src/lib.rs")
+    );
     assert!(!hotspots.contains("graph-analytics-unavailable"));
     assert!(hotspots.contains("No graph hotspots were identified from the current code index."));
     assert!(!hotspots.contains("frequency 3"));
