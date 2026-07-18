@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import importlib
 import uuid
+from collections.abc import Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from threading import Barrier, Lock
 from types import MethodType
+from typing import Any
 
 import pytest
 
@@ -15,7 +17,7 @@ from gobby.storage.migrations import Migration, MigrationUnsupportedError
 pytestmark = pytest.mark.unit
 
 
-def _migration_module():
+def _migration_module() -> Any:
     return importlib.import_module("gobby.storage.migrations")
 
 
@@ -29,13 +31,13 @@ def _split(sql: str) -> list[str]:
 
 
 class _Result:
-    def __init__(self, rows=()) -> None:
+    def __init__(self, rows: Iterable[dict[str, Any]] = ()) -> None:
         self._rows = list(rows)
 
-    def fetchone(self):
+    def fetchone(self) -> dict[str, Any] | None:
         return self._rows[0] if self._rows else None
 
-    def fetchall(self):
+    def fetchall(self) -> list[dict[str, Any]]:
         return list(self._rows)
 
 
@@ -47,10 +49,10 @@ class _PostgresMigrationHub:
         self.applied: list[int] = []
 
     @contextmanager
-    def transaction(self):
+    def transaction(self) -> Iterator[_PostgresMigrationHub]:
         yield self
 
-    def execute(self, sql: str, params=()):
+    def execute(self, sql: str, params: tuple[Any, ...] = ()) -> _Result:
         if "to_regclass" in sql:
             return _Result([{"table_exists": params[0] in self.tables}])
         if "pg_advisory_xact_lock" in sql:
@@ -71,20 +73,20 @@ def test_postgres_pending_migration_logs_info(caplog: pytest.LogCaptureFixture) 
         path=Path("unused.sql"),
     )
 
-    def ensure_schema_migrations_table(self) -> None:
+    def ensure_schema_migrations_table(self: Any) -> None:
         return None
 
-    def read_applied_versions(self) -> set[int]:
+    def read_applied_versions(self: Any) -> set[int]:
         return set()
 
-    def discover_migrations(self) -> list[Migration]:
+    def discover_migrations(self: Any) -> list[Migration]:
         return [migration]
 
-    def run_migration(self, txn, discovered: Migration) -> None:
+    def run_migration(self: Any, txn: _PostgresMigrationHub, discovered: Migration) -> None:
         assert txn is hub
         assert discovered is migration
 
-    def record_applied_version(self, txn, version: int) -> None:
+    def record_applied_version(self: Any, txn: _PostgresMigrationHub, version: int) -> None:
         assert txn is hub
         hub.applied.append(version)
 
@@ -112,7 +114,7 @@ class _ConcurrentMigrationTransaction:
         self._hub = hub
         self._locked = False
 
-    def execute(self, sql: str, params=()):
+    def execute(self, sql: str, params: tuple[Any, ...] = ()) -> _Result:
         if "SELECT version FROM schema_migrations WHERE" in sql:
             assert self._locked
             version = params[0]
@@ -149,7 +151,7 @@ class _ConcurrentMigrationHub:
         self.migration_runs = 0
 
     @contextmanager
-    def transaction(self):
+    def transaction(self) -> Iterator[_ConcurrentMigrationTransaction]:
         txn = _ConcurrentMigrationTransaction(self)
         try:
             yield txn
@@ -167,7 +169,9 @@ def test_apply_pending_serializes_concurrent_migrators_and_rechecks_version() ->
         runner._ensure_schema_migrations_table = MethodType(lambda self: None, runner)
         runner._discover_migrations = MethodType(lambda self: [migration], runner)
 
-        def run_migration(self, txn, discovered: Migration) -> None:
+        def run_migration(
+            self: Any, txn: _ConcurrentMigrationTransaction, discovered: Migration
+        ) -> None:
             assert discovered is migration
             assert hub.advisory_lock.locked()
             hub.migration_runs += 1
@@ -264,10 +268,11 @@ def test_postgres_migration_discovery_finds_all_post_baseline_migrations() -> No
         (320, "projects_active_name_unique"),
         (321, "session_variables_session_cascade"),
         (322, "agent_run_capture_termination"),
+        (323, "recall_usefulness_digest_shadow"),
     ]
 
 
-def test_memory_source_session_upgrade_preserves_memory(postgres_db) -> None:
+def test_memory_source_session_upgrade_preserves_memory(postgres_db: Any) -> None:
     """Migration 313 replaces a legacy restrictive FK with SET NULL."""
     schema = f"migration_313_{uuid.uuid4().hex}"
     migration_path = (
@@ -318,7 +323,9 @@ def test_memory_source_session_upgrade_preserves_memory(postgres_db) -> None:
         )
 
 
-def test_memory_graph_retry_state_upgrade_backfills_pending_and_completed(postgres_db) -> None:
+def test_memory_graph_retry_state_upgrade_backfills_pending_and_completed(
+    postgres_db: Any,
+) -> None:
     """Migration 314 backfills explicit graph queue state from the legacy boolean."""
     schema = f"migration_314_{uuid.uuid4().hex}"
     migration_path = (
