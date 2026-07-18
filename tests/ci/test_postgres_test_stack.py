@@ -268,6 +268,23 @@ def test_pre_push_supports_local_all_extras_uv_run_opt_in(repo_root: Path) -> No
     assert "uv_run gobby test-quality audit" in script
 
 
+def test_pre_push_runs_rust_workspace_tests(repo_root: Path) -> None:
+    script = _load_pre_push_script(repo_root)
+
+    assert 'CARGO_REPORT="$REPORTS_DIR/cargo-$TIMESTAMP.txt"' in script
+    assert "cargo nextest run --profile ci --workspace --no-default-features" in script
+    assert "cargo test --doc --workspace --no-default-features" in script
+    assert '} 2>&1 | tee "$CARGO_REPORT"; then' in script
+
+    cargo_section = script[script.index("# Cargo -") : script.index("# Bandit -")]
+    assert "FAILED=1" in cargo_section
+    _assert_before(
+        cargo_section,
+        "cargo nextest run --profile ci --workspace --no-default-features",
+        "cargo test --doc --workspace --no-default-features",
+    )
+
+
 def test_pre_push_short_supports_local_all_extras_uv_run_opt_in(repo_root: Path) -> None:
     script = _load_pre_push_short_script(repo_root)
 

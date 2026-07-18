@@ -71,6 +71,7 @@ uv_run() {
     fi
 }
 
+# shellcheck disable=SC2329  # Invoked indirectly by the EXIT trap below.
 cleanup() {
     if [ -n "${PYTEST_ISOLATION_DIR:-}" ] && [ -d "$PYTEST_ISOLATION_DIR" ]; then
         rm -rf "$PYTEST_ISOLATION_DIR"
@@ -235,6 +236,20 @@ if (cd web && npx vitest run --coverage) 2>&1 | tee "$REPORTS_DIR/vitest-$TIMEST
     echo "✓ Vitest passed"
 else
     echo "✗ Vitest failed"
+    FAILED=1
+fi
+echo ""
+
+# Cargo - Rust workspace tests matching the canonical CI feature set
+echo ">>> Running Cargo workspace tests..."
+CARGO_REPORT="$REPORTS_DIR/cargo-$TIMESTAMP.txt"
+if {
+    cargo nextest run --profile ci --workspace --no-default-features &&
+        cargo test --doc --workspace --no-default-features
+} 2>&1 | tee "$CARGO_REPORT"; then
+    echo "✓ Cargo tests passed"
+else
+    echo "✗ Cargo tests failed"
     FAILED=1
 fi
 echo ""
