@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.config.app import DaemonConfig
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
 from gobby.storage.projects import GLOBAL_PROJECT_ID, ORPHANED_PROJECT_ID, PERSONAL_PROJECT_ID
@@ -94,29 +95,31 @@ def test_hook_manager_integration() -> None:
         mock_session_manager_instance = MockSessionManagerClass.return_value
         mock_session_manager_instance.get_session_id.return_value = MOCK_SESSION_ID
 
-        manager = HookManager(database=MagicMock())
+        manager = HookManager(database=MagicMock(), config=DaemonConfig())
+        try:
+            event = HookEvent(
+                event_type=HookEventType.BEFORE_TOOL,
+                session_id=MOCK_EXTERNAL_ID,
+                source=SessionSource.CLAUDE,
+                timestamp=MOCK_TIMESTAMP,
+                data={},
+                metadata={"_platform_session_id": MOCK_SESSION_ID},
+            )
 
-        event = HookEvent(
-            event_type=HookEventType.BEFORE_TOOL,
-            session_id=MOCK_EXTERNAL_ID,
-            source=SessionSource.CLAUDE,
-            timestamp=MOCK_TIMESTAMP,
-            data={},
-            metadata={"_platform_session_id": MOCK_SESSION_ID},
-        )
+            with patch.object(
+                manager._health_monitor,
+                "get_cached_status",
+                return_value=(True, "OK", "healthy", None),
+            ):
+                response = manager.handle(event)
 
-        with patch.object(
-            manager._health_monitor,
-            "get_cached_status",
-            return_value=(True, "OK", "healthy", None),
-        ):
-            response = manager.handle(event)
-
-        assert MockHandlerClass.call_args.kwargs["timeout"] == 15.0
-        mock_handler_instance.handle.assert_called_once()
-        assert mock_handler_instance.handle.call_count == 1
-        assert mock_handler_instance.handle.call_args is not None
-        assert response.decision == "allow"
+            assert MockHandlerClass.call_args.kwargs["timeout"] == 15.0
+            mock_handler_instance.handle.assert_called_once()
+            assert mock_handler_instance.handle.call_count == 1
+            assert mock_handler_instance.handle.call_args is not None
+            assert response.decision == "allow"
+        finally:
+            manager.shutdown()
 
 
 def test_hook_manager_blocks_on_workflow() -> None:
@@ -139,26 +142,28 @@ def test_hook_manager_blocks_on_workflow() -> None:
         mock_session_manager_instance = MockSessionManagerClass.return_value
         mock_session_manager_instance.get_session_id.return_value = MOCK_SESSION_ID
 
-        manager = HookManager(database=MagicMock())
+        manager = HookManager(database=MagicMock(), config=DaemonConfig())
+        try:
+            event = HookEvent(
+                event_type=HookEventType.BEFORE_TOOL,
+                session_id=MOCK_EXTERNAL_ID,
+                source=SessionSource.CLAUDE,
+                timestamp=MOCK_TIMESTAMP,
+                data={},
+                metadata={"_platform_session_id": MOCK_SESSION_ID},
+            )
 
-        event = HookEvent(
-            event_type=HookEventType.BEFORE_TOOL,
-            session_id=MOCK_EXTERNAL_ID,
-            source=SessionSource.CLAUDE,
-            timestamp=MOCK_TIMESTAMP,
-            data={},
-            metadata={"_platform_session_id": MOCK_SESSION_ID},
-        )
+            with patch.object(
+                manager._health_monitor,
+                "get_cached_status",
+                return_value=(True, "OK", "healthy", None),
+            ):
+                response = manager.handle(event)
 
-        with patch.object(
-            manager._health_monitor,
-            "get_cached_status",
-            return_value=(True, "OK", "healthy", None),
-        ):
-            response = manager.handle(event)
-
-        assert response.decision == "block"
-        assert response.reason == "Workflow denied"
+            assert response.decision == "block"
+            assert response.reason == "Workflow denied"
+        finally:
+            manager.shutdown()
 
 
 class TestWorkflowHookHandlerDisabled:
