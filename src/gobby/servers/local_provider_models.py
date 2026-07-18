@@ -15,6 +15,7 @@ LOCAL_PROVIDER_LABELS: dict[str, str] = {
     "ollama": "Ollama",
     "openai-compatible": "OpenAI Compatible",
 }
+NO_COMPLETION_MODELS_ERROR = "No completion-capable models discovered"
 
 
 @dataclass(frozen=True)
@@ -50,13 +51,15 @@ async def discover_local_endpoint_model_group(
         else:
             async with httpx.AsyncClient() as client:
                 discovered = await _openai_compatible_models(client, endpoint_name, endpoint)
-        source = "live" if discovered else "config"
         models = _merge_default_model(endpoint_name, endpoint, discovered)
+        capability_checked = endpoint.provider in {"lmstudio", "ollama"}
+        source = "live" if discovered or capability_checked else "config"
         return LocalEndpointModelGroup(
             endpoint_name=endpoint_name,
             provider_label=provider_label,
             models=models,
             source=source,
+            error=NO_COMPLETION_MODELS_ERROR if capability_checked and not models else None,
         )
     except Exception as exc:
         return LocalEndpointModelGroup(
@@ -89,14 +92,19 @@ def _merge_default_model(
     endpoint: LocalGenerationEndpointConfig,
     discovered: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    entries = [
-        {
-            "value": f"{LOCAL_ENDPOINT_PROVIDER_PREFIX}{endpoint_name}",
-            "label": f"Default ({endpoint.model})",
-            "canonical_id": endpoint.model,
-            "is_default": True,
-        }
-    ]
+    default_is_verified = endpoint.provider == "openai-compatible" or any(
+        entry.get("canonical_id") == endpoint.model for entry in discovered
+    )
+    entries: list[dict[str, Any]] = []
+    if default_is_verified:
+        entries.append(
+            {
+                "value": f"{LOCAL_ENDPOINT_PROVIDER_PREFIX}{endpoint_name}",
+                "label": f"Default ({endpoint.model})",
+                "canonical_id": endpoint.model,
+                "is_default": True,
+            }
+        )
     entries.extend(discovered)
     deduped: dict[str, dict[str, Any]] = {}
     for entry in entries:
@@ -143,7 +151,7 @@ async def _discover_ollama_models(
     endpoint: LocalGenerationEndpointConfig,
 ) -> list[dict[str, Any]]:
     async with httpx.AsyncClient() as client:
-        native_models = await _ollama_native_models(client, endpoint)
+        native_available, native_models = await _ollama_native_models(client, endpoint)
         if native_models:
             return [
                 _local_model_entry(
@@ -155,14 +163,21 @@ async def _discover_ollama_models(
                 )
                 for model, model_id in native_models
             ]
-        return await _openai_compatible_models(client, endpoint_name, endpoint)
+        try:
+            fallback_models = await _openai_compatible_models(client, endpoint_name, endpoint)
+        except httpx.HTTPError:
+            if native_available:
+                return []
+            raise
+        return await _validated_ollama_fallback_models(client, endpoint, fallback_models)
 
 
 async def _ollama_native_models(
     client: httpx.AsyncClient,
     endpoint: LocalGenerationEndpointConfig,
-) -> list[tuple[dict[str, Any], str]]:
+) -> tuple[bool, list[tuple[dict[str, Any], str]]]:
     models_by_id: dict[str, dict[str, Any]] = {}
+    native_available = False
     for path in ("/api/tags", "/api/ps"):
         try:
             response = await client.get(
@@ -173,11 +188,64 @@ async def _ollama_native_models(
             response.raise_for_status()
         except httpx.HTTPError:
             continue
+        native_available = True
         for model in _model_list(response.json()):
             model_id = _first_string(model, "model", "name")
             if model_id:
                 models_by_id.setdefault(model_id, model)
-    return [(model, model_id) for model_id, model in models_by_id.items()]
+    models_by_id.setdefault(endpoint.model, {"name": endpoint.model})
+
+    eligible: list[tuple[dict[str, Any], str]] = []
+    for model_id, model in models_by_id.items():
+        show_available, details = await _ollama_model_details(client, endpoint, model_id)
+        native_available = native_available or show_available
+        if not _supports_ollama_completion(details):
+            continue
+        eligible.append(({**model, **details}, model_id))
+    return native_available, eligible
+
+
+async def _validated_ollama_fallback_models(
+    client: httpx.AsyncClient,
+    endpoint: LocalGenerationEndpointConfig,
+    models: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    eligible: list[dict[str, Any]] = []
+    for model in models:
+        model_id = _first_string(model, "canonical_id")
+        if model_id is None:
+            continue
+        _, details = await _ollama_model_details(client, endpoint, model_id)
+        if _supports_ollama_completion(details):
+            eligible.append(model)
+    return eligible
+
+
+async def _ollama_model_details(
+    client: httpx.AsyncClient,
+    endpoint: LocalGenerationEndpointConfig,
+    model_id: str,
+) -> tuple[bool, dict[str, Any]]:
+    try:
+        response = await client.post(
+            f"{_origin(endpoint.api_base)}/api/show",
+            headers=_headers(endpoint.api_key),
+            json={"model": model_id},
+            timeout=10.0,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError:
+        return False, {}
+    payload = response.json()
+    return True, payload if isinstance(payload, dict) else {}
+
+
+def _supports_ollama_completion(model: dict[str, Any]) -> bool:
+    capabilities = model.get("capabilities")
+    return isinstance(capabilities, list) and any(
+        isinstance(capability, str) and capability.lower() == "completion"
+        for capability in capabilities
+    )
 
 
 async def _openai_compatible_models(
@@ -242,7 +310,7 @@ def _model_list(payload: Any) -> list[dict[str, Any]]:
 def _is_lmstudio_llm(model: dict[str, Any]) -> bool:
     kind = _first_string(model, "type", "model_type", "compatibility_type")
     if kind is None:
-        return True
+        return False
     normalized = kind.lower()
     if any(token in normalized for token in ("embedding", "rerank", "tts", "vision")):
         return False
