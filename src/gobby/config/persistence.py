@@ -13,7 +13,7 @@ Extracted from app.py using Strangler Fig pattern for code decomposition.
 import logging
 from pathlib import Path
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from gobby.config.feature_base import FeatureDefaultConfig, FeatureProfile
 from gobby.config.url_validation import validate_optional_endpoint_url
@@ -562,14 +562,12 @@ class MemoryConfig(BaseModel):
             "Purely observational; independent of recall_signal_logging (#17196)."
         ),
     )
-    digest_memory_usefulness: bool = Field(
+    digest_shadow_usefulness: bool = Field(
         default=False,
         description=(
-            "Judge injected-memory usefulness during the digest pass and append "
-            "label_source='digest' rows to recall_usefulness (#17195). Requires "
-            "recall_signal_hub: the delivery chain queues judgments only when "
-            "injection outcomes are recorded. Judge routing lives in the "
-            "top-level memory_usefulness feature config."
+            "Judge the complete returned recall candidate set during the digest pass "
+            "and persist label_source='digest_shadow' evidence. Requires "
+            "recall_signal_hub so every judged request and candidate is durable."
         ),
     )
 
@@ -610,18 +608,17 @@ class MemoryConfig(BaseModel):
             "holdout baseline accuracy raises the drift alarm."
         ),
     )
-    recall_drift_window_days: float = Field(
-        default=14.0,
-        description="Rolling live window (days) of recall signals the drift check replays.",
-    )
+    @model_validator(mode="after")
+    def validate_digest_shadow_signal_hub(self) -> "MemoryConfig":
+        """Require the durable signal hub whenever shadow judging is enabled."""
+        if self.digest_shadow_usefulness and not self.recall_signal_hub:
+            raise ValueError("digest_shadow_usefulness requires recall_signal_hub=true")
+        return self
 
-    @field_validator(
-        "recall_drift_interval_hours",
-        "recall_drift_window_days",
-    )
+    @field_validator("recall_drift_interval_hours")
     @classmethod
     def validate_drift_positive(cls, v: float) -> float:
-        """Validate drift monitor cadence/window values are positive."""
+        """Validate the drift-monitor cadence is positive."""
         if v <= 0:
             raise ValueError("Value must be > 0")
         return v

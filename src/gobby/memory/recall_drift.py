@@ -1,19 +1,18 @@
 """Recall-quality drift detection with a regression alarm.
 
 #17201 (epic #17099 Phase 3b) — the guardrail against silent degradation.
-The monitor recomputes the SAME IPS-weighted pairwise ordering accuracy the
-#17198 ship gate scored its holdout with (:mod:`gobby.memory.recall_fit`),
-over a rolling window of recent live labeled recall signals, replayed under
-the currently-effective constants (#17200,
-:mod:`gobby.memory.recall_constants`). It compares that live accuracy against
+The monitor recomputes the SAME request-normalized pairwise ordering accuracy
+the ship gate scored its holdout with (:mod:`gobby.memory.recall_fit`) over
+the labeled requests whose ``constants_provenance`` is the active shipped
+decision digest. It compares that live accuracy against
 the holdout accuracy recorded in the gate decision record for the active
 regime and raises an alarm when the live value falls more than a configured
 threshold below the baseline.
 
 Two floors keep the alarm honest:
 
-1. live floor — a window with fewer labeled pairs than ``min_pairs`` cannot
-   alarm; a starved window is noise, not drift.
+1. live floor — a cohort below either the pair or mixed-request floor cannot
+   alarm; a starved cohort is noise, not drift.
 2. baseline floor — a decision record whose holdout had fewer pairs than
    ``min_pairs`` provides no baseline (the current data-starved reject record
    reports ``no_baseline`` rather than comparing against vapor).
@@ -33,8 +32,7 @@ import logging
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.memory.recall_constants import (
     RecallConstants,
@@ -43,13 +41,15 @@ from gobby.memory.recall_constants import (
     resolve_recall_constants,
 )
 from gobby.memory.recall_fit import (
+    PAIRWISE_EVALUATOR_VERSION,
     ReplayParams,
     ReplayRow,
+    WeightingMode,
     estimate_position_propensities,
     evaluate_pairwise,
     replay_row_from_signal_row,
 )
-from gobby.memory.recall_refit import MIN_EVAL_PAIRS
+from gobby.memory.recall_refit import MIN_EVAL_MIXED_REQUESTS, MIN_EVAL_PAIRS
 from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
@@ -70,23 +70,102 @@ class DriftThresholds:
 
 
 @dataclass(frozen=True)
+class DriftCohort:
+    """Shipped cohort fields that must remain frozen during drift evaluation."""
+
+    label_source: str
+    candidate_scope: str
+    judge_protocol_version: str
+    weighting_regime_key: str
+    judge_model_key: str
+    judge_config_fingerprint: str
+    project_id: str | None
+    weighting_mode: WeightingMode
+    evaluator_version: str
+    decision_digest: str
+
+    @classmethod
+    def from_record(cls, record: Mapping[str, Any]) -> DriftCohort:
+        """Validate and extract the immutable drift admission contract."""
+        if record.get("ship") is not True:
+            raise ValueError("gate decision did not ship")
+        identity = record.get("cohort_identity")
+        if not isinstance(identity, Mapping):
+            raise ValueError("shipped decision has no cohort_identity")
+
+        def required_text(source: Mapping[str, Any], key: str) -> str:
+            value = source.get(key)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"shipped decision has no {key}")
+            return value
+
+        label_source = required_text(identity, "label_source")
+        if record.get("label_source") != label_source:
+            raise ValueError("shipped decision label_source disagrees with cohort_identity")
+        candidate_scope = required_text(identity, "candidate_scope")
+        if candidate_scope not in {"full", "injected"}:
+            raise ValueError("shipped decision has invalid candidate_scope")
+        weighting_mode = required_text(identity, "weighting_mode")
+        if weighting_mode not in {"full", "injected"}:
+            raise ValueError("shipped decision has invalid weighting_mode")
+        evaluator_version = required_text(identity, "evaluator_version")
+        if evaluator_version != PAIRWISE_EVALUATOR_VERSION:
+            raise ValueError(
+                "shipped evaluator version "
+                f"{evaluator_version!r} does not match current {PAIRWISE_EVALUATOR_VERSION!r}"
+            )
+        project_value = identity.get("project_id")
+        if project_value is not None and not isinstance(project_value, str):
+            raise ValueError("shipped decision has invalid project_id")
+        return cls(
+            label_source=label_source,
+            candidate_scope=candidate_scope,
+            judge_protocol_version=required_text(identity, "judge_protocol_version"),
+            weighting_regime_key=required_text(identity, "weighting_regime_key"),
+            judge_model_key=required_text(identity, "judge_model_key"),
+            judge_config_fingerprint=required_text(identity, "judge_config_fingerprint"),
+            project_id=project_value,
+            weighting_mode=cast("WeightingMode", weighting_mode),
+            evaluator_version=evaluator_version,
+            decision_digest=required_text(record, "decision_digest"),
+        )
+
+    def identity(self) -> dict[str, Any]:
+        """Return the frozen fields used by this drift evaluation."""
+        return {
+            "label_source": self.label_source,
+            "candidate_scope": self.candidate_scope,
+            "judge_protocol_version": self.judge_protocol_version,
+            "weighting_regime_key": self.weighting_regime_key,
+            "judge_model_key": self.judge_model_key,
+            "judge_config_fingerprint": self.judge_config_fingerprint,
+            "project_id": self.project_id,
+            "weighting_mode": self.weighting_mode,
+            "evaluator_version": self.evaluator_version,
+            "constants_provenance": self.decision_digest,
+        }
+
+
+@dataclass(frozen=True)
 class DriftReport:
     """One drift check outcome; ``alarm`` is the regression alarm."""
 
-    status: str  # "ok" | "regressed" | "insufficient_live_data" | "no_baseline"
+    status: str  # "idle" | "ok" | "regressed" | "insufficient_data" | "no_baseline"
     alarm: bool
     constants_source: str
     constants_reason: str | None
     baseline_accuracy: float | None
     live_accuracy: float | None
     live_pair_count: int
+    live_mixed_request_count: int
     live_weighted_pair_count: float
     accuracy_drop: float
     min_pairs: int
+    min_mixed_requests: int
     response: str
     reasons: tuple[str, ...]
     label_source: str | None = None
-    window_days: float | None = None
+    cohort_identity: dict[str, Any] = field(default_factory=dict)
     per_project: dict[str, float] = field(default_factory=dict)
 
     def to_record(self) -> dict[str, Any]:
@@ -100,11 +179,13 @@ class DriftReport:
             "baseline_accuracy": self.baseline_accuracy,
             "live_accuracy": self.live_accuracy,
             "live_pair_count": self.live_pair_count,
+            "live_mixed_request_count": self.live_mixed_request_count,
             "live_weighted_pair_count": self.live_weighted_pair_count,
             "accuracy_drop": self.accuracy_drop,
             "min_pairs": self.min_pairs,
+            "min_mixed_requests": self.min_mixed_requests,
             "label_source": self.label_source,
-            "window_days": self.window_days,
+            "cohort_identity": dict(self.cohort_identity),
             "per_project": dict(self.per_project),
             "response": self.response,
             "reasons": list(self.reasons),
@@ -112,7 +193,7 @@ class DriftReport:
 
 
 def replay_params_from_constants(constants: RecallConstants) -> ReplayParams:
-    """Replay the live window under exactly the effective constants."""
+    """Replay the admitted live cohort under exactly the effective constants."""
     return ReplayParams(
         half_life_days=constants.half_life_days,
         graph_synthetic_discount=constants.graph_synthetic_discount,
@@ -185,17 +266,25 @@ def evaluate_recall_drift(
     clip: float = 10.0,
     record_load_error: str | None = None,
     label_source: str | None = None,
-    window_days: float | None = None,
+    weighting_mode: WeightingMode = "full",
+    cohort_identity: Mapping[str, Any] | None = None,
 ) -> DriftReport:
-    """Pure drift check: live-window replay accuracy vs the holdout baseline.
+    """Pure drift check: live-cohort replay accuracy vs the holdout baseline.
 
-    Propensities are estimated from the window itself (labeled and unlabeled
+    Propensities are estimated from the cohort itself (labeled and unlabeled
     rows), mirroring how the ship gate estimated them from its train split.
     """
     thresholds = thresholds if thresholds is not None else DriftThresholds()
     params = replay_params_from_constants(constants)
     propensities = estimate_position_propensities(rows, smoothing=smoothing)
-    live = evaluate_pairwise(rows, {}, propensities, default_params=params, clip=clip)
+    live = evaluate_pairwise(
+        rows,
+        {},
+        propensities,
+        default_params=params,
+        clip=clip,
+        weighting_mode=weighting_mode,
+    )
     baseline, baseline_reason = _baseline_accuracy(
         record,
         constants.source,
@@ -209,14 +298,22 @@ def evaluate_recall_drift(
         reasons.append(baseline_reason)
     if live.pair_count < thresholds.min_pairs:
         reasons.append(
-            f"live window has {live.pair_count} labeled pairs "
+            f"live cohort has {live.pair_count} labeled pairs "
             f"(need {thresholds.min_pairs}); not enough signal to compare"
+        )
+    if live.mixed_request_count < MIN_EVAL_MIXED_REQUESTS:
+        reasons.append(
+            f"live cohort has {live.mixed_request_count} mixed requests "
+            f"(need {MIN_EVAL_MIXED_REQUESTS}); not enough signal to compare"
         )
 
     if baseline is None:
         status = "no_baseline"
-    elif live.pair_count < thresholds.min_pairs:
-        status = "insufficient_live_data"
+    elif (
+        live.pair_count < thresholds.min_pairs
+        or live.mixed_request_count < MIN_EVAL_MIXED_REQUESTS
+    ):
+        status = "insufficient_data"
     else:
         drop = baseline - live.accuracy
         if drop > thresholds.accuracy_drop:
@@ -241,14 +338,40 @@ def evaluate_recall_drift(
         baseline_accuracy=baseline,
         live_accuracy=live_accuracy,
         live_pair_count=live.pair_count,
+        live_mixed_request_count=live.mixed_request_count,
         live_weighted_pair_count=live.weighted_pair_count,
         accuracy_drop=thresholds.accuracy_drop,
         min_pairs=thresholds.min_pairs,
+        min_mixed_requests=MIN_EVAL_MIXED_REQUESTS,
         response=_response_path(constants.source),
         reasons=tuple(reasons),
         label_source=label_source,
-        window_days=window_days,
+        cohort_identity=dict(cohort_identity or {}),
         per_project=dict(live.per_project),
+    )
+
+
+def _idle_drift_report(
+    constants: RecallConstants,
+    thresholds: DriftThresholds,
+    reason: str,
+) -> DriftReport:
+    """Return a fail-closed report without reading any recall evidence."""
+    return DriftReport(
+        status="idle",
+        alarm=False,
+        constants_source=constants.source,
+        constants_reason=constants.reason,
+        baseline_accuracy=None,
+        live_accuracy=None,
+        live_pair_count=0,
+        live_mixed_request_count=0,
+        live_weighted_pair_count=0.0,
+        accuracy_drop=thresholds.accuracy_drop,
+        min_pairs=thresholds.min_pairs,
+        min_mixed_requests=MIN_EVAL_MIXED_REQUESTS,
+        response=_response_path(constants.source),
+        reasons=(reason,),
     )
 
 
@@ -256,27 +379,51 @@ def run_drift_check_from_store(
     store: RecallSignalStore,
     config: MemoryConfig,
     *,
-    label_source: str = "digest",
-    project_id: str | None = None,
-    window_days: float | None = None,
     limit: int = 5000,
     thresholds: DriftThresholds | None = None,
     smoothing: float = 1.0,
     clip: float = 10.0,
 ) -> DriftReport:
-    """Load the recent live window and run the drift check, logging any alarm."""
+    """Evaluate only evidence produced under the currently shipped fitted constants."""
     constants = resolve_recall_constants(config)
     record, load_error = _load_decision_record(decision_record_path(config))
-    window = window_days if window_days is not None else config.recall_drift_window_days
-    since = utc_now() - timedelta(days=window)
-    rows = [
-        replay_row_from_signal_row(row)
-        for row in store.fetch_replay_rows(
-            label_source=label_source, project_id=project_id, limit=limit, since=since
-        )
-    ]
     if thresholds is None:
         thresholds = DriftThresholds(accuracy_drop=config.recall_drift_accuracy_drop)
+    if record is None:
+        return _idle_drift_report(
+            constants,
+            thresholds,
+            load_error or "no shipped recall decision record",
+        )
+    try:
+        cohort = DriftCohort.from_record(record)
+    except ValueError as exc:
+        return _idle_drift_report(constants, thresholds, str(exc))
+    if constants.source != "fitted" or constants.provenance != cohort.decision_digest:
+        return _idle_drift_report(
+            constants,
+            thresholds,
+            "the shipped fitted constants are not currently active",
+        )
+
+    cutoff = utc_now()
+    rows = [
+        replay_row_from_signal_row(row)
+        for row in store.fetch_shadow_replay_rows(
+            phase="drift",
+            label_source=cohort.label_source,
+            candidate_scope=cohort.candidate_scope,
+            judge_protocol_version=cohort.judge_protocol_version,
+            weighting_regime_key=cohort.weighting_regime_key,
+            judge_model_key=cohort.judge_model_key,
+            judge_config_fingerprint=cohort.judge_config_fingerprint,
+            data_cutoff=cutoff,
+            completion_cutoff=cutoff,
+            project_id=cohort.project_id,
+            limit=limit,
+            constants_provenance=cohort.decision_digest,
+        )
+    ]
     report = evaluate_recall_drift(
         rows,
         record=record,
@@ -284,9 +431,9 @@ def run_drift_check_from_store(
         thresholds=thresholds,
         smoothing=smoothing,
         clip=clip,
-        record_load_error=load_error,
-        label_source=label_source,
-        window_days=window,
+        label_source=cohort.label_source,
+        weighting_mode=cohort.weighting_mode,
+        cohort_identity=cohort.identity(),
     )
     if report.alarm:
         logger.warning(

@@ -65,14 +65,6 @@ def backfill_labels(path_: Path) -> None:
 
 
 @recall_signals.command("drift")
-@click.option("--label-source", default="digest", show_default=True, help="Label stream to replay.")
-@click.option("--project", "project_id", default=None, help="Scope the window to one project id.")
-@click.option(
-    "--window-days",
-    type=float,
-    default=None,
-    help="Live window size in days (defaults to memory.recall_drift_window_days).",
-)
 @click.option(
     "--threshold",
     type=float,
@@ -83,14 +75,11 @@ def backfill_labels(path_: Path) -> None:
     "--min-pairs",
     type=int,
     default=None,
-    help="Pair floor for both the live window and the recorded holdout baseline.",
+    help="Pair floor for both the live provenance cohort and recorded holdout baseline.",
 )
 @click.pass_context
 def drift(
     ctx: click.Context,
-    label_source: str,
-    project_id: str | None,
-    window_days: float | None,
     threshold: float | None,
     min_pairs: int | None,
 ) -> None:
@@ -120,9 +109,6 @@ def drift(
     report = run_drift_check_from_store(
         RecallSignalStore(db),
         memory_config,
-        label_source=label_source,
-        project_id=project_id,
-        window_days=window_days,
         thresholds=thresholds,
     )
     click.echo(json.dumps(report.to_record(), indent=2))

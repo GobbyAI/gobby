@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
@@ -24,9 +23,8 @@ from gobby.memory.recall_drift import (
     replay_params_from_constants,
     run_drift_check_from_store,
 )
-from gobby.memory.recall_fit import ReplayRow
+from gobby.memory.recall_fit import ReplayRow, evaluation_protocol_identity
 from gobby.runner_maintenance import recall_drift_monitor_loop
-from gobby.utils.datetime import utc_now
 
 FITTED_PARAMS: dict[str, Any] = {
     "half_life_days": 21.0,
@@ -105,6 +103,8 @@ def gate_record(
     fitted_accuracy: float = 0.9,
     static_accuracy: float = 0.85,
     holdout_pairs: int = 40,
+    decision_digest: str = "decision-digest-123",
+    evaluator_version: str | None = None,
 ) -> dict[str, Any]:
     """A minimal GateDecision.to_record() shape with both holdout eval blocks."""
 
@@ -116,9 +116,26 @@ def gate_record(
             "per_project": {},
         }
 
+    evaluation_identity = evaluation_protocol_identity()
+    if evaluator_version is not None:
+        evaluation_identity["evaluator_version"] = evaluator_version
     return {
-        "task": "#17198",
-        "label_source": "digest",
+        "task": "#18426",
+        "decision_schema_version": "recall-ship-decision-v2",
+        "label_source": "digest_shadow",
+        "cohort_identity": {
+            "label_source": "digest_shadow",
+            "candidate_scope": "full",
+            "judge_protocol_version": "shadow-protocol-v1",
+            "weighting_regime_key": "rrf:1|graph:1",
+            "judge_model_key": "judge/model-v1",
+            "judge_config_fingerprint": "judge-config-v1",
+            "data_cutoff": "2026-07-01T00:00:00+00:00",
+            "completion_cutoff": "2026-07-02T00:00:00+00:00",
+            "project_id": None,
+            "weighting_mode": "full",
+            **evaluation_identity,
+        },
         "fitted_params": dict(FITTED_PARAMS),
         "static_params": {
             "half_life_days": 30.0,
@@ -131,7 +148,7 @@ def gate_record(
         "gates": {"sufficient_data": ship, "beats_static": ship, "guard_ok": True},
         "ship": ship,
         "reasons": [],
-        "decision_digest": "decision-digest-123",
+        "decision_digest": decision_digest,
     }
 
 
@@ -207,9 +224,10 @@ class TestFloors:
 
         report = evaluate_recall_drift(rows, record=gate_record(), constants=FITTED)
 
-        assert report.status == "insufficient_live_data"
+        assert report.status == "insufficient_data"
         assert report.alarm is False
         assert report.live_pair_count == 5
+        assert report.live_mixed_request_count == 5
         assert any("not enough signal" in reason for reason in report.reasons)
 
     def test_missing_record_reports_no_baseline(self) -> None:
@@ -265,16 +283,16 @@ class TestReportShape:
             rows,
             record=gate_record(),
             constants=FITTED,
-            label_source="digest",
-            window_days=14.0,
+            label_source="digest_shadow",
         ).to_record()
 
         parsed = json.loads(json.dumps(record))
         assert parsed["task"] == "#17201"
         assert parsed["alarm"] is True
         assert parsed["constants_source"] == "fitted"
-        assert parsed["label_source"] == "digest"
-        assert parsed["window_days"] == 14.0
+        assert parsed["label_source"] == "digest_shadow"
+        assert parsed["live_mixed_request_count"] == 25
+        assert parsed["min_mixed_requests"] == 10
         assert parsed["response"]
         assert parsed["reasons"]
 
@@ -291,7 +309,7 @@ class TestReportShape:
 
         assert report.live_accuracy is None
         assert report.live_pair_count == 0
-        assert report.status == "insufficient_live_data"
+        assert report.status == "insufficient_data"
 
 
 def _signal_row(
@@ -340,22 +358,8 @@ class FakeStore:
         self.rows = rows
         self.calls: list[dict[str, Any]] = []
 
-    def fetch_replay_rows(
-        self,
-        *,
-        label_source: str,
-        project_id: str | None = None,
-        limit: int = 5000,
-        since: datetime | None = None,
-    ) -> list[dict[str, Any]]:
-        self.calls.append(
-            {
-                "label_source": label_source,
-                "project_id": project_id,
-                "limit": limit,
-                "since": since,
-            }
-        )
+    def fetch_shadow_replay_rows(self, **kwargs: Any) -> list[dict[str, Any]]:
+        self.calls.append(kwargs)
         return self.rows
 
 
@@ -383,26 +387,58 @@ class TestRunFromStore:
         assert alarm_logs
         assert "use_fitted_recall_constants=false" in alarm_logs[0].getMessage()
 
-    def test_window_and_thresholds_come_from_config(self, tmp_path: Any) -> None:
+    def test_cohort_and_provenance_come_from_shipped_record(self, tmp_path: Any) -> None:
         store = FakeStore([])
         record_path = tmp_path / "decision.json"
         record_path.write_text(json.dumps(gate_record()), encoding="utf-8")
         config = MemoryConfig(
             use_fitted_recall_constants=True,
             fitted_recall_decision_path=str(record_path),
-            recall_drift_window_days=7.0,
             recall_drift_accuracy_drop=0.2,
         )
 
         report = run_drift_check_from_store(store, config)
 
         call = store.calls[0]
-        assert call["label_source"] == "digest"
-        expected_since = utc_now() - timedelta(days=7.0)
-        assert abs((call["since"] - expected_since).total_seconds()) < 60
-        assert report.window_days == 7.0
+        assert call["phase"] == "drift"
+        assert call["label_source"] == "digest_shadow"
+        assert call["candidate_scope"] == "full"
+        assert call["judge_protocol_version"] == "shadow-protocol-v1"
+        assert call["weighting_regime_key"] == "rrf:1|graph:1"
+        assert call["judge_model_key"] == "judge/model-v1"
+        assert call["judge_config_fingerprint"] == "judge-config-v1"
+        assert call["constants_provenance"] == "decision-digest-123"
+        assert call["project_id"] is None
+        assert "since" not in call
         assert report.accuracy_drop == 0.2
-        assert report.status == "insufficient_live_data"
+        assert report.status == "insufficient_data"
+
+    def test_below_mixed_request_floor_is_insufficient_data(self, tmp_path: Any) -> None:
+        store = FakeStore(_regressed_signal_rows(9))
+        report = run_drift_check_from_store(store, self._config(tmp_path))
+
+        assert report.status == "insufficient_data"
+        assert report.live_mixed_request_count == 9
+        assert report.alarm is False
+
+    def test_mismatched_evaluator_version_is_idle(self, tmp_path: Any) -> None:
+        store = FakeStore(_regressed_signal_rows())
+        record_path = tmp_path / "decision.json"
+        record_path.write_text(
+            json.dumps(gate_record(evaluator_version="obsolete-evaluator")),
+            encoding="utf-8",
+        )
+        config = MemoryConfig(
+            use_fitted_recall_constants=True,
+            fitted_recall_decision_path=str(record_path),
+        )
+
+        report = run_drift_check_from_store(store, config)
+
+        assert report.status == "idle"
+        assert report.alarm is False
+        assert store.calls == []
+        assert any("evaluator" in reason for reason in report.reasons)
 
     def test_static_regime_without_record_reports_no_baseline(self, tmp_path: Any) -> None:
         store = FakeStore(_regressed_signal_rows())
@@ -414,8 +450,9 @@ class TestRunFromStore:
         report = run_drift_check_from_store(store, config)
 
         assert report.constants_source == "static"
-        assert report.status == "no_baseline"
+        assert report.status == "idle"
         assert report.alarm is False
+        assert store.calls == []
 
 
 @pytest.mark.asyncio

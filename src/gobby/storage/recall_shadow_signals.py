@@ -305,6 +305,7 @@ class RecallShadowSignalStoreMixin:
     def fetch_shadow_replay_rows(
         self,
         *,
+        phase: ShadowCohortPhase = "fitting",
         label_source: str,
         candidate_scope: str,
         judge_protocol_version: str,
@@ -315,16 +316,20 @@ class RecallShadowSignalStoreMixin:
         completion_cutoff: datetime,
         project_id: str | None,
         limit: int,
+        constants_provenance: str | None = None,
         request_ids: Sequence[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Project request-aligned replay rows from an admitted shadow cohort."""
+        if phase not in {"fitting", "drift"}:
+            raise ValueError("shadow replay rows support only fitting or drift cohorts")
         if candidate_scope not in {"full", "injected"}:
             raise ValueError("candidate_scope must be 'full' or 'injected'")
         cohort = self.shadow_cohort_query(
-            "fitting",
+            phase,
             label_source=label_source,
             judge_protocol_version=judge_protocol_version,
             project_id=project_id,
+            constants_provenance=constants_provenance,
             judge_model_key=judge_model_key,
             judge_config_fingerprint=judge_config_fingerprint,
             weighting_regime_key=weighting_regime_key,

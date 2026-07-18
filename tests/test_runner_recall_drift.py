@@ -19,6 +19,7 @@ def _runner(*, memory_manager: object | None, memory_config: MemoryConfig | None
     config = SimpleNamespace(
         telemetry=SimpleNamespace(trace_retention_days=7),
         bin_freshness=BinFreshnessConfig(enabled=False),
+        logging=object(),
         chat=None,
     )
     if memory_config is not None:
@@ -30,6 +31,7 @@ def _runner(*, memory_manager: object | None, memory_config: MemoryConfig | None
         memory_manager=memory_manager,
         http_server=SimpleNamespace(app=object()),
         pipeline_execution_manager=None,
+        degraded_services=set(),
         _shutdown_requested=False,
         config=config,
     )
@@ -61,6 +63,7 @@ def _start(runner: Any, **loop_overrides: Any) -> None:
             "expire_approval_timeouts_loop",
             "memory_reconcile_loop",
             "recall_drift_monitor_loop",
+            "resource_monitor_loop",
         ),
         noop,
     )

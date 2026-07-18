@@ -24,7 +24,7 @@ def _content_hash(content: str) -> str:
 
 class FakeMemoryManager:
     def __init__(self, contents: dict[str, str], *, enabled: bool = True) -> None:
-        self.config = SimpleNamespace(digest_memory_usefulness=enabled)
+        self.config = SimpleNamespace(digest_shadow_usefulness=enabled)
         self.contents = contents
 
     async def aget_memory(
@@ -392,7 +392,7 @@ async def test_digest_drives_shadow_poll_without_legacy_result_payload(
 
     monkeypatch.setattr(digest_mod, "judge_shadow_candidate_relevance", fake_judge)
     memory_manager = SimpleNamespace(
-        config=SimpleNamespace(enabled=True, digest_memory_usefulness=True),
+        config=SimpleNamespace(enabled=True, digest_shadow_usefulness=True),
         db=temp_db,
     )
     session_manager = _FakeDigestSessionManager()
