@@ -304,10 +304,9 @@ class SessionManager(
                 )
                 return recovered_session_id
 
-            self.logger.error(
+            self.logger.exception(
                 "Failed to register session and no persisted session could be recovered: %s",
                 e,
-                exc_info=True,
             )
             return ""
 
@@ -341,5 +340,5 @@ class SessionManager(
             return False
 
         except Exception as e:
-            self.logger.error("Failed to update session status: %s", e, exc_info=True)
+            self.logger.exception("Failed to update session status: %s", e)
             return False

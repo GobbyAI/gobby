@@ -95,11 +95,10 @@ class SkillChangeNotifier:
             try:
                 listener(event)
             except Exception as e:
-                logger.error(
+                logger.exception(
                     "Error in skill change listener %s: %s",
                     listener,
                     e,
-                    exc_info=True,
                 )
 
     def clear_listeners(self) -> None:

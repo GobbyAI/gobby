@@ -880,10 +880,9 @@ class SessionLifecycleManager:
                             )
                         )
                     except Exception:
-                        logger.error(
+                        logger.exception(
                             "Failed to broadcast transcript token event for session %s",
                             session_id,
-                            exc_info=True,
                         )
 
         if not saw_usage and (

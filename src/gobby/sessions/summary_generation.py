@@ -140,10 +140,9 @@ async def _generate_full_summary(
         )
         raise asyncio.CancelledError(str(e)) from e
     except Exception as e:
-        logger.error(
+        logger.exception(
             "Failed to generate full summary",
             extra={"session_id": session.id, "error": str(e)},
-            exc_info=True,
         )
         return None, str(e)
 
@@ -204,10 +203,9 @@ async def _generate_delta_summary(
             return None, f"Generated delta session summary was invalid: {validation_error}"
         return merged_markdown, None
     except Exception as e:
-        logger.error(
+        logger.exception(
             "Failed to merge summary delta",
             extra={"session_id": session.id, "error": str(e)},
-            exc_info=True,
         )
         return None, str(e)
 

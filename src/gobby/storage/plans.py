@@ -290,9 +290,8 @@ class LocalPlanManager:
                 try:
                     shutil.move(str(completed_path), str(previous_path))
                 except Exception:
-                    logger.error(
+                    logger.exception(
                         "Failed to roll back archived plan file move",
-                        exc_info=True,
                         extra={
                             "plan_id": record.plan_id,
                             "moved": moved,

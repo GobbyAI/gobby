@@ -216,7 +216,7 @@ class ProcessorLifecycleMixin:
             try:
                 await self._process_session(session_id, transcript_path)
             except Exception as e:
-                logger.error("Failed to process session %s: %s", session_id, e, exc_info=True)
+                logger.exception("Failed to process session %s: %s", session_id, e)
 
     def _hydrate_registration_from_sidecar(
         self: ProcessorHost,

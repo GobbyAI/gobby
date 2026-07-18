@@ -196,7 +196,7 @@ class _RegistrationCacheMixin(_RegistrationRecoveryMixin):
             return False
 
         except Exception as e:
-            self.logger.error("Failed to update session status: %s", e, exc_info=True)
+            self.logger.exception("Failed to update session status: %s", e)
             return False
 
     def lookup_session_id(
