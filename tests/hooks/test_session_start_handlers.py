@@ -19,6 +19,9 @@ from gobby.hooks.event_handlers._session_start.flow import (
     _log_session_start_timing,
 )
 from gobby.hooks.events import HookEventType
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
+from gobby.storage.sessions import SessionManager
 from gobby.workflows.state_manager import SessionVariableManager
 
 from ._event_handler_helpers import make_event
@@ -49,6 +52,20 @@ def _session_variable_handler(db: Any) -> MagicMock:
     handler._session_manager = SimpleNamespace(db=db)
     handler.logger = MagicMock()
     return handler
+
+
+def _register_context_claim_session(db: HubDatabase, *, external_id: str) -> str:
+    project = LocalProjectManager(db).create(
+        name=external_id,
+        repo_path="/context-claim-tests",
+    )
+    session = SessionManager(db).register(
+        external_id=external_id,
+        machine_id="machine-1",
+        source="claude",
+        project_id=project.id,
+    )
+    return session.id
 
 
 def test_log_session_start_timing_tolerates_missing_total() -> None:
@@ -189,8 +206,10 @@ class TestSessionStartContextClaim:
 
     def test_duplicate_session_start_claims_full_context_once(self, temp_db: Any) -> None:
         handler = _session_variable_handler(temp_db)
-        # session_variables.session_id is a native uuid column.
-        session_id = "dddddddd-0000-4000-8000-000000000001"
+        session_id = _register_context_claim_session(
+            temp_db,
+            external_id="context-claim-sequential",
+        )
 
         first = classify_session_start_context(
             handler,
@@ -216,7 +235,10 @@ class TestSessionStartContextClaim:
         self, temp_db: Any
     ) -> None:
         handler = _session_variable_handler(temp_db)
-        session_id = "dddddddd-0000-4000-8000-000000000002"
+        session_id = _register_context_claim_session(
+            temp_db,
+            external_id="context-claim-concurrent",
+        )
         barrier = Barrier(8)
 
         def classify_once(_: int) -> str:
@@ -239,7 +261,10 @@ class TestSessionStartContextClaim:
 
     def test_explicit_context_loss_bypasses_existing_startup_claim(self, temp_db: Any) -> None:
         handler = _session_variable_handler(temp_db)
-        session_id = "dddddddd-0000-4000-8000-000000000003"
+        session_id = _register_context_claim_session(
+            temp_db,
+            external_id="context-claim-explicit-loss",
+        )
         SessionVariableManager(temp_db).merge_variables(
             session_id,
             {"_startup_context_injected": True},
@@ -255,6 +280,8 @@ class TestSessionStartContextClaim:
 
         assert decision.mode == "full"
         assert decision.explicit_context_loss is True
+        variables = SessionVariableManager(temp_db).get_variables(session_id)
+        assert variables["_startup_context_injected"] is True
 
 
 class TestSessionStartPreCreatedSession:
