@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 
 import {
   clearProviderModelCache,
@@ -273,7 +273,38 @@ describe("providerModels", () => {
     );
   });
 
-  it("preserves Codex local selector mirror labels", () => {
+  it("labels and orders Codex flavor families deterministically", () => {
+    const flavorCatalog: ProviderModelEntry[] = [
+      {
+        provider: "codex",
+        available: true,
+        source: "live",
+        models: [
+          { value: "gpt-5.6-terra", label: "gpt-5.6-terra" },
+          { value: "gpt-5.6-mini", label: "gpt-5.6-mini" },
+          { value: "gpt-5.6-luna", label: "gpt-5.6-luna" },
+          { value: "gpt-5.6-codex-spark", label: "gpt-5.6-codex-spark" },
+          { value: "gpt-5.6-sol", label: "gpt-5.6-sol" },
+          { value: "gpt-5.6-codex", label: "gpt-5.6-codex" },
+          { value: "gpt-5.6", label: "gpt-5.6" },
+        ],
+      },
+    ];
+
+    expect(
+      getModelsForProvider(flavorCatalog, "codex").map((model) => model.label),
+    ).toEqual([
+      "GPT 5.6",
+      "GPT 5.6 Luna",
+      "GPT 5.6 Sol",
+      "GPT 5.6 Terra",
+      "GPT 5.6 Codex",
+      "GPT 5.6 Mini",
+      "GPT 5.6 Codex Spark",
+    ]);
+  });
+
+  it("preserves labels for local selectors routed through Codex", () => {
     const localCatalog: ProviderModelEntry[] = [
       {
         provider: "codex",
@@ -281,8 +312,8 @@ describe("providerModels", () => {
         source: "live",
         models: [
           {
-            value: "local:ollama-cloud/ollama/qwen3-coder",
-            label: "Ollama: Qwen3 Coder",
+            value: "local:lm-studio/gpt-5.6-sol",
+            label: "LM Studio: Sol Dev",
           },
         ],
       },
@@ -290,11 +321,11 @@ describe("providerModels", () => {
 
     expect(getModelsForProvider(localCatalog, "codex")).toEqual([
       {
-        value: "local:ollama-cloud/ollama/qwen3-coder",
-        label: "Ollama: Qwen3 Coder",
-        match_identifiers: ["local:ollama-cloud/ollama/qwen3-coder"],
+        value: "local:lm-studio/gpt-5.6-sol",
+        label: "LM Studio: Sol Dev",
+        match_identifiers: ["local:lm-studio/gpt-5.6-sol"],
         _parsed: {
-          displayLabel: "Ollama: Qwen3 Coder",
+          displayLabel: "LM Studio: Sol Dev",
           strengthRank: 0,
           versionParts: [],
           releaseDate: null,
@@ -302,8 +333,8 @@ describe("providerModels", () => {
       },
     ]);
     expect(
-      getModelLabel(localCatalog, "codex", "local:ollama-cloud/ollama/qwen3-coder"),
-    ).toBe("Ollama: Qwen3 Coder");
+      getModelLabel(localCatalog, "codex", "local:lm-studio/gpt-5.6-sol"),
+    ).toBe("LM Studio: Sol Dev");
   });
 
   it("labels and sorts known providers alphabetically by display name", () => {
@@ -455,6 +486,33 @@ describe("providerModels", () => {
     await expect(fetchProviderModelCatalog()).resolves.toEqual([validEntry]);
     await expect(fetchProviderModelCatalog()).resolves.toEqual([validEntry]);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves nonblank execution-provider metadata and catalog identity", async () => {
+    const validEntry: ProviderModelEntry = {
+      provider: "local:lm-studio",
+      execution_provider: "codex",
+      available: true,
+      source: "live",
+      models: [{ value: "local:lm-studio/qwen3", label: "Qwen3" }],
+    };
+    expectTypeOf(validEntry.execution_provider).toEqualTypeOf<string | undefined>();
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        providers: [
+          validEntry,
+          { ...validEntry, provider: "local:blank", execution_provider: "" },
+          { ...validEntry, provider: "local:whitespace", execution_provider: "   " },
+          { ...validEntry, provider: "local:null", execution_provider: null },
+          { ...validEntry, provider: "local:number", execution_provider: 1 },
+        ],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await expect(fetchProviderModelCatalog()).resolves.toEqual([validEntry]);
+    expect(validEntry.provider).toBe("local:lm-studio");
   });
 
   it("clearProviderModelCache resets the cached catalog", async () => {

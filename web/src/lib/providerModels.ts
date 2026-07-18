@@ -14,6 +14,7 @@ export interface ProviderModelOption {
 
 export interface ProviderModelEntry {
   provider: string;
+  execution_provider?: string;
   available: boolean;
   models: ProviderModelOption[];
   source: "static" | "live" | "cache" | "config" | "failed" | "unsupported";
@@ -53,6 +54,15 @@ const PROVIDER_LABELS: Record<string, string> = {
   qwen: "Qwen",
   openai: "OpenAI",
 };
+
+const CODEX_FLAVORS = [
+  { token: "codex", label: "Codex", tierScore: 300 },
+  { token: "mini", label: "Mini", tierScore: 200 },
+  { token: "spark", label: "Spark", tierScore: 100 },
+  { token: "sol", label: "Sol", tierScore: 400 },
+  { token: "terra", label: "Terra", tierScore: 400 },
+  { token: "luna", label: "Luna", tierScore: 400 },
+] as const;
 
 const MODELS_CACHE_TTL_MS = 5 * 60 * 1000;
 export const AUTO_REASONING_EFFORT = "auto";
@@ -96,6 +106,9 @@ function isProviderModelEntry(value: unknown): value is ProviderModelEntry {
   return (
     isRecord(value) &&
     typeof value.provider === "string" &&
+    (value.execution_provider === undefined ||
+      (typeof value.execution_provider === "string" &&
+        value.execution_provider.trim().length > 0)) &&
     typeof value.available === "boolean" &&
     Array.isArray(value.models) &&
     value.models.every(isProviderModelOption) &&
@@ -476,20 +489,13 @@ function parseCodexModelInfo(model: ProviderModelOption): ParsedModelInfo {
   }
   const tokens = tokenizeModel(normalized);
   const versionParts = extractVersionParts(tokens, "gpt");
-  const isMini = tokens.includes("mini");
-  const isSpark = tokens.includes("spark");
-  const isCodex = tokens.includes("codex");
-  const tierScore = isSpark ? 100 : isMini ? 200 : isCodex ? 300 : 400;
+  const flavors = CODEX_FLAVORS.filter((flavor) => tokens.includes(flavor.token));
+  const tierScore = flavors.reduce(
+    (score, flavor) => Math.min(score, flavor.tierScore),
+    400,
+  );
   const parts = [`GPT ${versionParts.join(".") || "?"}`];
-  if (isCodex) {
-    parts.push("Codex");
-  }
-  if (isMini) {
-    parts.push("Mini");
-  }
-  if (isSpark) {
-    parts.push("Spark");
-  }
+  parts.push(...flavors.map((flavor) => flavor.label));
 
   return {
     displayLabel: parts.join(" ").trim(),
