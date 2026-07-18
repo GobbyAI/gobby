@@ -8,7 +8,7 @@ enabled: true
 priority: 20
 surfaces: [spawn, persona]
 provider: claude
-model: opus
+model: fable
 reasoning_effort: high
 isolation: none
 blocked_mcp_tools:

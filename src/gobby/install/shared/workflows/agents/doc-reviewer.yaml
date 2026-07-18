@@ -7,7 +7,7 @@ version: "1.0"
 enabled: true
 surfaces: [spawn, persona]
 provider: claude
-model: opus
+model: fable
 reasoning_effort: high
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
