@@ -13,6 +13,7 @@ from claude_agent_sdk import ClaudeAgentOptions, CLINotFoundError
 
 from gobby.llm.base import LLMProviderCancellation
 from gobby.llm.claude_errors import ClaudeSDKProviderFailure, classify_result_message
+from gobby.shutdown_intent import read_active_shutdown_intent
 
 _HEADLESS_SETTINGS = Path.home() / ".gobby" / "settings" / "headless.json"
 _STDERR_MAX_LINES = 200
@@ -72,6 +73,16 @@ def is_max_turns_error(error: BaseException) -> bool:
 def is_sdk_sigterm_shutdown(error: BaseException) -> bool:
     """Return whether the Claude SDK/process was terminated by SIGTERM."""
     return extract_exit_code(error) == 143
+
+
+def _is_planned_shutdown_execution_error(error: BaseException) -> bool:
+    """Return whether child reaping interrupted an SDK query during planned shutdown."""
+    if not isinstance(error, ClaudeSDKProviderFailure) or error.subtype != "error_during_execution":
+        return False
+    shutdown_record = read_active_shutdown_intent()
+    return (
+        shutdown_record is not None and not shutdown_record.stale and shutdown_record.error is None
+    )
 
 
 def _iter_exception_tree(error: BaseException) -> Iterator[BaseException]:
@@ -205,7 +216,7 @@ async def execute_sdk_query[T](
             query_fn, max_retries=max_retries, delay=retry_delay, on_retry=_on_retry
         )
     except Exception as error:
-        if is_sdk_sigterm_shutdown(error):
+        if is_sdk_sigterm_shutdown(error) or _is_planned_shutdown_execution_error(error):
             raise _shutdown_cancellation(error) from error
 
         if isinstance(error, ClaudeSDKProviderFailure):

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from gobby.llm.claude_runtime import ClaudeSDKShutdownCancellation
 from gobby.sessions.summary_validity import (
     summary_markdown_validation_error,
     summary_prompt_validation_error,
@@ -131,6 +133,12 @@ async def _generate_full_summary(
             return None, f"Generated session summary was invalid: {validation_error}"
         return full_markdown, None
 
+    except ClaudeSDKShutdownCancellation as e:
+        logger.info(
+            "Session summary generation cancelled during daemon shutdown",
+            extra={"session_id": session.id},
+        )
+        raise asyncio.CancelledError(str(e)) from e
     except Exception as e:
         logger.error(
             "Failed to generate full summary",

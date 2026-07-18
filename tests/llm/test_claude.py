@@ -9,6 +9,7 @@ import logging
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -386,6 +387,100 @@ class TestExecuteSdkQuery:
             record.name == "gobby.llm.claude" and record.levelno >= logging.WARNING
             for record in caplog.records
         )
+
+    @pytest.mark.asyncio
+    async def test_planned_shutdown_error_result_does_not_retry_or_warn(
+        self, claude_config: DaemonConfig, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A reaped SDK child reports cancellation without provider warning noise."""
+        from gobby.llm.claude_errors import ClaudeSDKProviderFailure
+        from gobby.llm.claude_runtime import (
+            ClaudeSDKShutdownCancellation,
+            execute_sdk_query,
+        )
+
+        options = MockClaudeAgentOptions()
+        call_count = 0
+        caplog.clear()
+
+        async def interrupted() -> str:
+            nonlocal call_count
+            call_count += 1
+            raise ClaudeSDKProviderFailure(
+                "generate_text[sessions.summary] provider degraded",
+                classification="error_result",
+                subtype="error_during_execution",
+            )
+
+        with (
+            patch(
+                "gobby.llm.claude_runtime.read_active_shutdown_intent",
+                return_value=SimpleNamespace(stale=False, error=None),
+            ),
+            patch("gobby.llm.claude_runtime.asyncio.sleep", new_callable=AsyncMock) as sleep,
+            caplog.at_level(logging.INFO, logger="gobby.llm.claude"),
+            pytest.raises(
+                ClaudeSDKShutdownCancellation,
+                match=r"generate_text\[sessions\.summary\] cancelled",
+            ),
+        ):
+            await execute_sdk_query(
+                "generate_text[sessions.summary]",
+                interrupted,
+                options,
+                logging.getLogger("gobby.llm.claude"),
+                max_retries=3,
+                retry_delay=0.01,
+            )
+
+        sleep.assert_not_awaited()
+        assert call_count == 1
+        assert "provider degraded" not in caplog.text
+        assert not any(
+            record.name == "gobby.llm.claude" and record.levelno >= logging.WARNING
+            for record in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_execution_error_without_shutdown_marker_warns_once(
+        self, claude_config: DaemonConfig, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from gobby.llm.claude_errors import ClaudeSDKProviderFailure
+        from gobby.llm.claude_runtime import execute_sdk_query
+
+        options = MockClaudeAgentOptions()
+
+        async def failed() -> str:
+            raise ClaudeSDKProviderFailure(
+                "generate_text[sessions.summary] provider degraded",
+                classification="error_result",
+                subtype="error_during_execution",
+            )
+
+        with (
+            patch(
+                "gobby.llm.claude_runtime.read_active_shutdown_intent",
+                return_value=None,
+            ),
+            caplog.at_level(logging.WARNING, logger="gobby.llm.claude"),
+            pytest.raises(ClaudeSDKProviderFailure),
+        ):
+            await execute_sdk_query(
+                "generate_text[sessions.summary]",
+                failed,
+                options,
+                logging.getLogger("gobby.llm.claude"),
+                max_retries=3,
+                retry_delay=0.01,
+            )
+
+        warnings = [
+            record
+            for record in caplog.records
+            if record.name == "gobby.llm.claude" and record.levelno == logging.WARNING
+        ]
+        assert len(warnings) == 1
+        assert "provider degraded" in warnings[0].message
 
     @pytest.mark.asyncio
     async def test_non_sigterm_exception_group_gets_diagnostics(
@@ -1174,6 +1269,7 @@ class TestClassifyResultMessage:
         assert isinstance(failure, ClaudeSDKProviderFailure)
         assert not isinstance(failure, ClaudeSDKRateLimited)
         assert failure.classification == "error_result"
+        assert failure.subtype == "success"
         assert "context deadline exceeded" in str(failure)
 
     def test_max_turns_subtype_is_budget_exhaustion(self) -> None:

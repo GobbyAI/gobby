@@ -16,17 +16,19 @@ class ClaudeSDKProviderFailure(RuntimeError):
         *,
         classification: str = "provider_degraded",
         retry_after: float | None = None,
+        subtype: str | None = None,
     ) -> None:
         super().__init__(message)
         self.classification = classification
         self.retry_after = retry_after
+        self.subtype = subtype
 
 
 class ClaudeSDKMaxTurns(ClaudeSDKProviderFailure):
     """Bounded agentic completion caused by the configured turn limit."""
 
     def __init__(self, message: str) -> None:
-        super().__init__(message, classification="max_turns")
+        super().__init__(message, classification="max_turns", subtype="error_max_turns")
 
 
 class ClaudeSDKRateLimited(ClaudeSDKProviderFailure):
@@ -38,8 +40,14 @@ class ClaudeSDKRateLimited(ClaudeSDKProviderFailure):
         *,
         retry_after: float | None = None,
         reset_at: float | None = None,
+        subtype: str | None = None,
     ) -> None:
-        super().__init__(message, classification="rate_limited", retry_after=retry_after)
+        super().__init__(
+            message,
+            classification="rate_limited",
+            retry_after=retry_after,
+            subtype=subtype,
+        )
         self.reset_at = reset_at
 
 
@@ -107,7 +115,12 @@ def classify_result_message(
             parts.append(f"[api_error_status={api_status}]")
         if retry_after:
             parts.append(f"[retry_after={retry_after:.0f}s]")
-        return ClaudeSDKRateLimited(" ".join(parts), retry_after=retry_after, reset_at=reset_at)
+        return ClaudeSDKRateLimited(
+            " ".join(parts),
+            retry_after=retry_after,
+            reset_at=reset_at,
+            subtype=subtype,
+        )
 
     parts = [
         f"{operation} provider degraded: Claude SDK returned error result "
@@ -115,4 +128,8 @@ def classify_result_message(
     ]
     if api_status:
         parts.append(f"[api_error_status={api_status}]")
-    return ClaudeSDKProviderFailure(" ".join(parts), classification="error_result")
+    return ClaudeSDKProviderFailure(
+        " ".join(parts),
+        classification="error_result",
+        subtype=subtype,
+    )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1249,6 +1250,39 @@ class TestGenerateSessionSummaries:
         assert full_error == (
             "Generated session summary was invalid: summary begins with a provider failure sentinel"
         )
+
+    @pytest.mark.asyncio
+    async def test_shutdown_cancellation_propagates_as_task_cancellation(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from gobby.llm.claude_runtime import ClaudeSDKShutdownCancellation
+
+        session = _make_session(session_id="sess-shutdown")
+        session_manager = MagicMock()
+        llm_service = MagicMock()
+        llm_service.call_feature = AsyncMock(
+            side_effect=ClaudeSDKShutdownCancellation("summary cancelled")
+        )
+
+        with (
+            caplog.at_level(logging.INFO, logger="gobby.sessions.summarize"),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await _generate_full_summary(
+                session=session,
+                turns=[],
+                handoff_ctx=MagicMock(),
+                llm_service=llm_service,
+                session_summary_config=_summary_config(),
+                db=None,
+                session_manager=session_manager,
+                summary_context={},
+                prompt_template=_valid_summary_prompt("Summary"),
+            )
+
+        llm_service.call_feature.assert_awaited_once()
+        assert "cancelled during daemon shutdown" in caplog.text
+        assert not any(record.levelno >= logging.WARNING for record in caplog.records)
 
     @pytest.mark.asyncio
     async def test_provider_failure_string_is_not_persisted(self, tmp_path: Path) -> None:
