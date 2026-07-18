@@ -573,31 +573,30 @@ mod tests {
         fn standalone_command_installs_public_code_index_subset() {
             let database_url = crate::test_env::postgres_test_database_url("setup command tests");
             let home = tempfile::tempdir().expect("temp home");
-            unsafe { std::env::set_var("GOBBY_HOME", home.path()) };
-            let request = StandaloneSetupRequest::new(true, Some(database_url.clone()), None);
-            let mut client =
-                gobby_core::postgres::connect_readwrite(&database_url).expect("connect test db");
-            let forbidden_before: bool = client
-                .query_one("SELECT to_regclass('public.config_store') IS NOT NULL", &[])
-                .expect("check config_store before setup")
-                .get(0);
+            temp_env::with_var("GOBBY_HOME", Some(home.path()), || {
+                let request = StandaloneSetupRequest::new(true, Some(database_url.clone()), None);
+                let mut client = gobby_core::postgres::connect_readwrite(&database_url)
+                    .expect("connect test db");
+                let forbidden_before: bool = client
+                    .query_one("SELECT to_regclass('public.config_store') IS NOT NULL", &[])
+                    .expect("check config_store before setup")
+                    .get(0);
 
-            run(request, Format::Json, true).expect("standalone setup runs");
+                run(request, Format::Json, true).expect("standalone setup runs");
 
-            let exists: bool = client
-                .query_one("SELECT to_regclass('public.code_symbols') IS NOT NULL", &[])
-                .expect("check code_symbols")
-                .get(0);
-            assert!(exists);
+                let exists: bool = client
+                    .query_one("SELECT to_regclass('public.code_symbols') IS NOT NULL", &[])
+                    .expect("check code_symbols")
+                    .get(0);
+                assert!(exists);
 
-            let forbidden_exists: bool = client
-                .query_one("SELECT to_regclass('public.config_store') IS NOT NULL", &[])
-                .expect("check config_store")
-                .get(0);
-            assert_eq!(forbidden_exists, forbidden_before);
-            assert!(home.path().join("gcore.yaml").exists());
-
-            unsafe { std::env::remove_var("GOBBY_HOME") };
+                let forbidden_exists: bool = client
+                    .query_one("SELECT to_regclass('public.config_store') IS NOT NULL", &[])
+                    .expect("check config_store")
+                    .get(0);
+                assert_eq!(forbidden_exists, forbidden_before);
+                assert!(home.path().join("gcore.yaml").exists());
+            });
         }
     }
 }

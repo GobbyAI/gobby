@@ -25,6 +25,7 @@ fn test_context(falkordb: Option<crate::config::FalkorConfig>) -> Context {
 }
 
 #[test]
+#[serial_test::serial(serial_db)]
 fn lifecycle_post_includes_bearer() {
     let home = tempfile::tempdir().expect("create temporary Gobby home");
     std::fs::write(home.path().join("local_cli_token"), "gcode-test-token\n")

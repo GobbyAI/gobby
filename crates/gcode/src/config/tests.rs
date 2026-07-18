@@ -148,7 +148,7 @@ fn project_name_lookup_suffixes_cover_unix_and_windows_paths() {
 }
 
 #[test]
-#[serial_test::serial]
+#[serial_test::serial(serial_db)]
 fn daemon_url_falls_back_when_bootstrap_path_is_unavailable() {
     temp_env::with_vars(
         [
@@ -166,7 +166,7 @@ fn daemon_url_falls_back_when_bootstrap_path_is_unavailable() {
 }
 
 #[test]
-#[serial_test::serial]
+#[serial_test::serial(serial_db)]
 fn daemon_url_normalizes_wildcard_bootstrap_bind_host() {
     let temp = tempfile::tempdir().expect("tempdir");
     std::fs::write(
