@@ -320,8 +320,10 @@ class RecallShadowSignalStoreMixin:
         request_ids: Sequence[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Project request-aligned replay rows from an admitted shadow cohort."""
-        if phase not in {"fitting", "drift"}:
-            raise ValueError("shadow replay rows support only fitting or drift cohorts")
+        if phase not in {"fitting", "drift", "audit_scored"}:
+            raise ValueError(
+                "shadow replay rows support only fitting, drift, or audit_scored cohorts"
+            )
         if candidate_scope not in {"full", "injected"}:
             raise ValueError("candidate_scope must be 'full' or 'injected'")
         cohort = self.shadow_cohort_query(
@@ -359,6 +361,7 @@ class RecallShadowSignalStoreMixin:
                    r.rrf_applied, r.weighting, r.caller,
                    r.graph_synthetic_similarity_discount,
                    r.constants_provenance, r.created_at AS request_created_at,
+                   snapshot.system_prompt, snapshot.query_text,
                    snapshot.prompt_hash, snapshot.presented,
                    snapshot.created_at AS snapshot_created_at,
                    snapshot.judge_config_fingerprint

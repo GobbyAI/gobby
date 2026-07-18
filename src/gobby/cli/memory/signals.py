@@ -2,16 +2,32 @@
 
 from __future__ import annotations
 
+import getpass
 import json
+from collections.abc import Mapping, Sequence
+from datetime import datetime
 from pathlib import Path
+from typing import Any, cast
 
 import click
 
+from gobby.memory.recall_fit import WeightingMode, split_request_ids_per_project
+from gobby.memory.recall_refit import run_ship_gate_from_store
+from gobby.memory.recall_ship_gate import (
+    AUDIT_SAMPLE_REQUESTS,
+    GateCohort,
+    ShipAuditSample,
+    build_ship_audit_sample,
+    canonical_digest,
+    evaluate_ship_audit,
+)
 from gobby.memory.recall_signal_log import (
     resolve_recall_signal_path,
     rotated_recall_signal_paths,
 )
+from gobby.memory.shadow_relevance import SHADOW_PROTOCOL_VERSION
 from gobby.storage.hub.runtime import open_runtime_hub_database
+from gobby.storage.recall_shadow_signals import ShadowCohortAmbiguityError
 from gobby.storage.recall_signals import RecallSignalStore
 
 
@@ -62,6 +78,347 @@ def backfill_labels(path_: Path) -> None:
     db = open_runtime_hub_database(apply_migrations=False)
     inserted = RecallSignalStore(db).backfill_usefulness_labels_jsonl(path_)
     click.echo(f"Inserted {inserted} usefulness-label rows from {path_}")
+
+
+class _AwareDateTime(click.ParamType):
+    name = "timezone-aware ISO-8601 timestamp"
+
+    def convert(
+        self,
+        value: Any,
+        param: click.Parameter | None,
+        ctx: click.Context | None,
+    ) -> datetime:
+        if isinstance(value, datetime):
+            parsed = value
+        elif isinstance(value, str):
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                self.fail(f"{value!r} is not a valid ISO-8601 timestamp", param, ctx)
+        else:
+            self.fail(f"{value!r} is not a timestamp", param, ctx)
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            self.fail("timestamp must include a UTC offset", param, ctx)
+        return parsed
+
+
+_AWARE_DATETIME = _AwareDateTime()
+
+
+def _ambiguity_message(error: ShadowCohortAmbiguityError) -> str:
+    counts = "\n".join(f"  {value}: {count}" for value, count in sorted(error.counts.items()))
+    return f"Ambiguous {error.dimension} cohorts:\n{counts}"
+
+
+def _presentation_payload(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "system_prompt": row.get("system_prompt"),
+        "query_text": row.get("query_text"),
+        "presented": row.get("presented"),
+        "prompt_hash": row.get("prompt_hash"),
+    }
+
+
+def _ship_sample_payload(
+    sample: ShipAuditSample,
+    rows: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    row_by_target = {
+        (str(row.get("recall_request_id") or ""), str(row.get("memory_id") or "")): row
+        for row in rows
+    }
+    return [
+        {
+            "request_id": target.request_id,
+            "memory_id": target.memory_id,
+            "prompt_hash": target.prompt_hash,
+            "judge_useful": target.judge_useful,
+            "presentation": _presentation_payload(
+                row_by_target[(target.request_id, target.memory_id)]
+            ),
+        }
+        for target in sample.targets
+    ]
+
+
+def _diagnostic_sample(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    train_request_ids: set[str],
+    cohort_digest: str,
+    n_requests: int,
+) -> list[dict[str, Any]]:
+    cells: dict[tuple[str, bool], list[Mapping[str, Any]]] = {}
+    for row in rows:
+        request_id = str(row.get("recall_request_id") or "")
+        useful = row.get("judge_useful")
+        rank = row.get("rank")
+        if request_id not in train_request_ids or not isinstance(useful, bool):
+            continue
+        if not isinstance(rank, int):
+            continue
+        band = "ranks_1_4" if rank <= 4 else "ranks_5_8"
+        cells.setdefault((band, useful), []).append(row)
+    for candidates in cells.values():
+        candidates.sort(
+            key=lambda row: canonical_digest(
+                {
+                    "cohort_digest": cohort_digest,
+                    "request_id": row.get("recall_request_id"),
+                    "memory_id": row.get("memory_id"),
+                }
+            )
+        )
+
+    selected: list[dict[str, Any]] = []
+    selected_requests: set[str] = set()
+    ordered_cells = sorted(cells, key=lambda cell: (len(cells[cell]), cell))
+    while len(selected) < n_requests:
+        progressed = False
+        for cell in ordered_cells:
+            while cells[cell]:
+                row = cells[cell].pop(0)
+                request_id = str(row.get("recall_request_id") or "")
+                if request_id in selected_requests:
+                    continue
+                selected.append(
+                    {
+                        "request_id": request_id,
+                        "memory_id": str(row.get("memory_id") or ""),
+                        "prompt_hash": str(row.get("prompt_hash") or ""),
+                        "judge_useful": row.get("judge_useful"),
+                        "diagnostic_cell": {"rank_band": cell[0], "judge_useful": cell[1]},
+                        "presentation": _presentation_payload(row),
+                    }
+                )
+                selected_requests.add(request_id)
+                progressed = True
+                break
+            if len(selected) >= n_requests:
+                break
+        if not progressed:
+            break
+    return selected
+
+
+@recall_signals.command("gate")
+@click.option("--label-source", required=True)
+@click.option(
+    "--protocol-version",
+    required=True,
+    help=f"Judge protocol fence (current: {SHADOW_PROTOCOL_VERSION}).",
+)
+@click.option("--regime-key", required=True)
+@click.option("--judge-model-key", required=True)
+@click.option("--judge-config-fingerprint", required=True)
+@click.option("--data-cutoff", required=True, type=_AWARE_DATETIME)
+@click.option("--completion-cutoff", required=True, type=_AWARE_DATETIME)
+@click.option("--candidate-scope", type=click.Choice(["injected", "full"]), default=None)
+@click.option(
+    "--write-decision",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Write the complete decision record to PATH.",
+)
+def gate(
+    label_source: str,
+    protocol_version: str,
+    regime_key: str,
+    judge_model_key: str,
+    judge_config_fingerprint: str,
+    data_cutoff: datetime,
+    completion_cutoff: datetime,
+    candidate_scope: str | None,
+    write_decision: Path | None,
+) -> None:
+    """Run the one-shot fitted-constants ship gate over an exact cohort."""
+    store = RecallSignalStore(open_runtime_hub_database(apply_migrations=False))
+    try:
+        decision = run_ship_gate_from_store(
+            store,
+            label_source=label_source,
+            judge_protocol_version=protocol_version,
+            weighting_regime_key=regime_key,
+            judge_model_key=judge_model_key,
+            judge_config_fingerprint=judge_config_fingerprint,
+            data_cutoff=data_cutoff,
+            completion_cutoff=completion_cutoff,
+            candidate_scope=candidate_scope,
+        )
+    except ShadowCohortAmbiguityError as error:
+        raise click.ClickException(_ambiguity_message(error)) from error
+
+    record = decision.to_record()
+    serialized = json.dumps(record, indent=2, sort_keys=True)
+    click.echo(serialized)
+    if write_decision is not None:
+        write_decision.write_text(f"{serialized}\n", encoding="utf-8")
+    if not decision.ship:
+        raise click.exceptions.Exit(1)
+
+
+@recall_signals.command("audit-labels")
+@click.option("--label-source", required=True)
+@click.option(
+    "--protocol-version",
+    required=True,
+    help=f"Judge protocol fence (current: {SHADOW_PROTOCOL_VERSION}).",
+)
+@click.option("--regime-key", required=True)
+@click.option("--judge-model-key", required=True)
+@click.option("--judge-config-fingerprint", required=True)
+@click.option("--data-cutoff", required=True, type=_AWARE_DATETIME)
+@click.option("--completion-cutoff", required=True, type=_AWARE_DATETIME)
+@click.option(
+    "--candidate-scope",
+    type=click.Choice(["injected", "full"]),
+    default="full",
+    show_default=True,
+)
+@click.option("--n-requests", type=click.IntRange(min=1), default=AUDIT_SAMPLE_REQUESTS)
+@click.option("--record-agreement", is_flag=True)
+@click.option("--diagnostic", is_flag=True)
+@click.option("--reviewer", default=None, help="Reviewer identity stored with human verdicts.")
+def audit_labels(
+    label_source: str,
+    protocol_version: str,
+    regime_key: str,
+    judge_model_key: str,
+    judge_config_fingerprint: str,
+    data_cutoff: datetime,
+    completion_cutoff: datetime,
+    candidate_scope: str,
+    n_requests: int,
+    record_agreement: bool,
+    diagnostic: bool,
+    reviewer: str | None,
+) -> None:
+    """Print or score a deterministic snapshot-bound shadow-label audit."""
+    if record_agreement and diagnostic:
+        raise click.UsageError("--record-agreement and --diagnostic are mutually exclusive")
+    if not diagnostic and n_requests != AUDIT_SAMPLE_REQUESTS:
+        raise click.UsageError(f"ship audit requires --n-requests {AUDIT_SAMPLE_REQUESTS}")
+    weighting_mode = cast(WeightingMode, candidate_scope)
+    cohort = GateCohort(
+        label_source=label_source,
+        candidate_scope=candidate_scope,
+        judge_protocol_version=protocol_version,
+        weighting_regime_key=regime_key,
+        judge_model_key=judge_model_key,
+        judge_config_fingerprint=judge_config_fingerprint,
+        data_cutoff=data_cutoff,
+        completion_cutoff=completion_cutoff,
+        weighting_mode=weighting_mode,
+    )
+    store = RecallSignalStore(open_runtime_hub_database(apply_migrations=False))
+    try:
+        cohort_rows = store.shadow_cohort_query(
+            "audit_scored",
+            label_source=label_source,
+            judge_protocol_version=protocol_version,
+            judge_model_key=judge_model_key,
+            judge_config_fingerprint=judge_config_fingerprint,
+            weighting_regime_key=regime_key,
+            data_cutoff=data_cutoff,
+            completion_cutoff=completion_cutoff,
+            limit=100_000,
+        )
+        train_request_ids, _ = split_request_ids_per_project(
+            [
+                (
+                    str(row["project_id"]) if row.get("project_id") is not None else None,
+                    str(row["recall_request_id"]),
+                )
+                for row in cohort_rows
+            ]
+        )
+        rows = store.fetch_shadow_replay_rows(
+            phase="audit_scored",
+            label_source=label_source,
+            candidate_scope=candidate_scope,
+            judge_protocol_version=protocol_version,
+            weighting_regime_key=regime_key,
+            judge_model_key=judge_model_key,
+            judge_config_fingerprint=judge_config_fingerprint,
+            data_cutoff=data_cutoff,
+            completion_cutoff=completion_cutoff,
+            project_id=None,
+            limit=100_000,
+            request_ids=sorted(train_request_ids),
+        )
+    except ShadowCohortAmbiguityError as error:
+        raise click.ClickException(_ambiguity_message(error)) from error
+
+    if diagnostic:
+        diagnostic_payload = {
+            "mode": "diagnostic",
+            "cohort": cohort.identity(),
+            "cohort_digest": cohort.digest,
+            "sample": _diagnostic_sample(
+                rows,
+                train_request_ids=train_request_ids,
+                cohort_digest=cohort.digest,
+                n_requests=n_requests,
+            ),
+        }
+        click.echo(json.dumps(diagnostic_payload, indent=2, sort_keys=True))
+        return
+
+    sample = build_ship_audit_sample(
+        rows,
+        cohort=cohort,
+        train_request_ids=train_request_ids,
+    )
+    sample_payload = _ship_sample_payload(sample, rows)
+    ship_payload: dict[str, Any] = {
+        "mode": "ship",
+        "cohort": cohort.identity(),
+        "cohort_digest": sample.cohort_digest,
+        "sample_digest": sample.sample_digest,
+        "sample": sample_payload,
+    }
+    if len(sample.targets) != AUDIT_SAMPLE_REQUESTS:
+        ship_payload["status"] = "insufficient_training_sample"
+        click.echo(json.dumps(ship_payload, indent=2, sort_keys=True))
+        raise click.exceptions.Exit(1)
+
+    if record_agreement:
+        reviewer_name = reviewer or getpass.getuser()
+        verdict_rows = [
+            {
+                "request_id": target["request_id"],
+                "memory_id": target["memory_id"],
+                "prompt_hash": target["prompt_hash"],
+                "human_verdict": click.confirm(
+                    f"{json.dumps(target['presentation'], sort_keys=True)}\nHuman verdict: relevant",
+                    default=None,
+                ),
+                "reviewer": reviewer_name,
+            }
+            for target in sample_payload
+        ]
+        ship_payload["inserted_verdicts"] = store.insert_audit_verdicts(
+            verdict_rows,
+            cohort_digest=sample.cohort_digest,
+            sample_digest=sample.sample_digest,
+        )
+        expected_hashes = {
+            (target.request_id, target.memory_id): target.prompt_hash for target in sample.targets
+        }
+        verdicts = store.fetch_audit_verdicts(
+            sample.cohort_digest,
+            sample.sample_digest,
+            expected_prompt_hashes=expected_hashes,
+        )
+        agreement = evaluate_ship_audit(sample, verdicts)
+        ship_payload["agreement"] = {
+            "status": agreement.status,
+            "unit_count": agreement.unit_count,
+            "agreement": agreement.agreement,
+            "wilson_lower_bound": agreement.wilson_lower_bound,
+        }
+    click.echo(json.dumps(ship_payload, indent=2, sort_keys=True))
 
 
 @recall_signals.command("drift")

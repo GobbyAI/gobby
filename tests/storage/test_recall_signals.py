@@ -654,6 +654,30 @@ class TestShadowSampling:
         )
         assert diagnostic == []
 
+    def test_audit_scored_replay_rows_include_presentation_snapshot(
+        self, store: RecallSignalStore
+    ) -> None:
+        _complete_shadow_request(store, "req-audit-scored")
+
+        rows = store.fetch_shadow_replay_rows(
+            phase="audit_scored",
+            label_source="digest_shadow",
+            candidate_scope="full",
+            judge_protocol_version="shadow-v1",
+            weighting_regime_key="[true,false,false,false]",
+            judge_model_key="judge-model",
+            judge_config_fingerprint="judge-fingerprint",
+            data_cutoff=datetime(2026, 7, 17, 12, 10, tzinfo=UTC),
+            completion_cutoff=datetime(2026, 7, 17, 12, 40, tzinfo=UTC),
+            project_id=None,
+            limit=10,
+        )
+
+        assert rows
+        assert rows[0]["system_prompt"] == "score query relevance"
+        assert rows[0]["query_text"] == "how does dispatch work"
+        assert rows[0]["presented"]
+
 
 class TestShadowAuditVerdicts:
     def test_round_trip_is_bound_to_sample_and_prompt_hash(self, store: RecallSignalStore) -> None:
