@@ -191,10 +191,9 @@ async def cleanup_unattached_spawned_run(
 
         result = await kill_agent(run, db, close_terminal=True)
     except Exception:
-        logger.error(
+        logger.exception(
             "Failed to terminate unattached spawned agent run %s",
             run_id,
-            exc_info=True,
         )
         return False
     if not bool(result.get("success")):
@@ -208,10 +207,9 @@ async def cleanup_unattached_spawned_run(
     try:
         failed = run_storage.fail(run_id, error=f"dispatch spawn cleanup: {error}")
     except Exception:
-        logger.error(
+        logger.exception(
             "Terminated unattached spawned agent run %s but failed to persist terminal status",
             run_id,
-            exc_info=True,
         )
         return False
     if failed is None:
@@ -240,11 +238,10 @@ async def quarantine_unterminated_spawned_run(
             await run_db(mutex.attach, run_id)
         except Exception as exc:
             attach_error = str(exc) or type(exc).__name__
-            logger.error(
+            logger.exception(
                 "Could not attach unterminated spawned run %s to task mutex %s",
                 run_id,
                 action.task_id,
-                exc_info=True,
             )
     detail = f"{error}; spawned run {run_id} could not be confirmed terminated"
     if attach_error:
@@ -258,10 +255,9 @@ async def quarantine_unterminated_spawned_run(
     try:
         await append_audit_marker(db, action.task_id, "Dispatch spawn quarantined", detail)
     except Exception:
-        logger.error(
+        logger.exception(
             "Failed to append quarantine audit marker for spawned run %s",
             run_id,
-            exc_info=True,
         )
 
 

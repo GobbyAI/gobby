@@ -702,10 +702,9 @@ def _persist_spawn_artifacts(
         if fields:
             _set_artifacts_atomic(db, task_id, **fields)
     except Exception as exc:
-        logger.error(
+        logger.exception(
             "Failed to persist dispatcher spawn artifacts",
             extra={"task_id": task_id, "fields": fields},
-            exc_info=True,
         )
         raise DispatchSpawnFailed("artifact_persistence_failed") from exc
 

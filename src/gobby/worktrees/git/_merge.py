@@ -159,8 +159,7 @@ def merge_branch(
                     timeout=30,
                 )
             except Exception:
-                logger.error(
+                logger.exception(
                     "Failed to restore original branch %s after merge attempt",
                     original_branch,
-                    exc_info=True,
                 )
