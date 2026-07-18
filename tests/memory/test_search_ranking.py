@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from gobby.config.persistence import MemoryConfig
+from gobby.memory.recall_constants import RecallConstants
 from gobby.memory.services._search_graph import GraphScoredResult
 from gobby.memory.services._search_keyword import KeywordSearch
 from gobby.memory.services.search import SearchDebugHit, SearchDebugSnapshot, SearchService
@@ -120,6 +121,7 @@ def _service(
     keyword_search: KeywordSearch | None = None,
     search_debug_sink: Callable[[SearchDebugSnapshot], None] | None = None,
     falkordb_graph_search: bool = False,
+    recall_constants: RecallConstants | None = None,
 ) -> SearchService:
     async def _embed(text: str, is_query: bool = False) -> list[float]:
         return [1.0, 0.0]
@@ -139,6 +141,7 @@ def _service(
         vector_store_failure_logger=lambda message, error: None,
         run_db=None,
         search_debug_sink=search_debug_sink,
+        recall_constants=recall_constants,
     )
 
 
@@ -363,10 +366,19 @@ def test_build_results_preserves_semantic_primary_order_without_rrf() -> None:
 
 async def test_qdrant_keyword_path_emits_debug_snapshot() -> None:
     snapshots: list[SearchDebugSnapshot] = []
+    recall_constants = RecallConstants(
+        half_life_days=30.0,
+        graph_synthetic_discount=0.9,
+        cooccur_alpha=0.5,
+        cooccur_support_cap=5,
+        source="fitted",
+        provenance="decision-digest-123",
+    )
     service = _service(
         ["semantic"],
         vector_results=[("semantic", 0.9)],
         search_debug_sink=snapshots.append,
+        recall_constants=recall_constants,
     )
 
     results = await service._search_qdrant_keyword(
@@ -397,6 +409,7 @@ async def test_qdrant_keyword_path_emits_debug_snapshot() -> None:
             session_id="session-1",
             recall_request_id="request-1",
             caller="memory.recall",
+            constants_provenance="decision-digest-123",
             returned_hits=[
                 SearchDebugHit(
                     memory_id="semantic",
@@ -408,6 +421,7 @@ async def test_qdrant_keyword_path_emits_debug_snapshot() -> None:
                     ranking_score=0.9,
                     ranking_mode="semantic_only",
                     graph_score=None,
+                    content_hash="3784070fe3e7e3de5f0ec08eadfa10acbaa0f543916b1ab2c68f371924ff7db3",
                 )
             ],
         )
@@ -612,6 +626,7 @@ async def test_keyword_fallback_emits_debug_snapshot_with_join_keys() -> None:
                     ranking_score=None,
                     ranking_mode=None,
                     graph_score=None,
+                    content_hash="103c54b6c5b1ad282520a33d86320b77259e797cabe194b9200fb23d965561a3",
                 )
             ],
         )

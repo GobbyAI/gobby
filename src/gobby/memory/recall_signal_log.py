@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-RECALL_SIGNAL_SCHEMA_VERSION = 3
+RECALL_SIGNAL_SCHEMA_VERSION = 4
 
 _WRITE_LOCK = threading.Lock()
 
@@ -121,6 +121,7 @@ def build_recall_signal_event(
         "session_id": snapshot.session_id,
         "recall_request_id": snapshot.recall_request_id,
         "caller": snapshot.caller,
+        "constants_provenance": snapshot.constants_provenance,
         "query": snapshot.query,
         "merged_ids": list(snapshot.merged_ids),
         "returned_ids": list(snapshot.returned_ids),
@@ -233,6 +234,7 @@ def _hit_to_event(
     components = (graph_component_map or {}).get(hit.memory_id) or {}
     return {
         "memory_id": hit.memory_id,
+        "content_hash": hit.content_hash,
         "rank": hit.rank,
         "search_via": hit.search_via,
         "similarity": _finite_or_none(hit.similarity),

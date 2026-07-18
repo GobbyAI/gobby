@@ -246,7 +246,44 @@ def test_postgres_migrations_limited_to_known_post_baseline() -> None:
         "320_projects_active_name_unique.sql",
         "321_session_variables_session_cascade.sql",
         "322_agent_run_capture_termination.sql",
+        "323_recall_usefulness_digest_shadow.sql",
     ]
+
+
+def test_recall_shadow_migration_defines_capture_and_gate_contract() -> None:
+    migration_path = SRC_ROOT / "storage" / "migrations" / "323_recall_usefulness_digest_shadow.sql"
+    migration = migration_path.read_text(encoding="utf-8")
+    normalized = _normalize_sql_whitespace(migration)
+
+    _assert_contains_all(
+        "recall shadow migration",
+        normalized,
+        (
+            "ADD COLUMN content_hash TEXT",
+            "ADD COLUMN constants_provenance TEXT",
+            "label_source IN ('llm_judge', 'ablation', 'digest', 'digest_shadow', 'human')",
+            "CREATE TABLE recall_shadow_judge_state",
+            "PRIMARY KEY (recall_request_id, label_source, judge_protocol_version)",
+            "status IN ('claimed', 'retryable', 'terminal', 'complete')",
+            "CREATE TABLE recall_shadow_prompt_snapshot",
+            "presented JSONB NOT NULL",
+            "judge_config_fingerprint TEXT NOT NULL",
+            "prompt_hash TEXT NOT NULL",
+            "CREATE TABLE recall_shadow_audit_verdicts",
+            "UNIQUE (cohort_digest, request_id, memory_id)",
+            "sample_digest TEXT NOT NULL",
+            "human_verdict BOOLEAN NOT NULL",
+            "CREATE TABLE recall_gate_runs",
+            "holdout_consumption_key TEXT PRIMARY KEY",
+            "status TEXT NOT NULL CHECK (status IN ('reserved', 'complete'))",
+            "fit_settings_digest TEXT NOT NULL",
+            "CREATE TABLE recall_holdout_consumed",
+            "request_id TEXT UNIQUE NOT NULL",
+            "CREATE INDEX idx_recall_usefulness_request_source_protocol",
+            "ON recall_usefulness(recall_request_id, label_source, judge_protocol_version)",
+        ),
+    )
+    assert "DELETE FROM RECALL_USEFULNESS" not in migration.upper()
 
 
 def test_worktree_last_activity_is_consistent_across_schema_and_migration() -> None:
@@ -299,7 +336,7 @@ def test_postgres_baseline_version_is_flattened_to_305() -> None:
     # The 0.5.0 pre-release flatten folded 295-305 into the baseline. Hubs below
     # 305 take the corrupt_partial backup/recreate path; later migrations replay.
     assert module.BASELINE_VERSION == 305
-    assert module.latest_known_version() == 322
+    assert module.latest_known_version() == 323
 
 
 def test_postgres_baseline_uses_uuid_for_internal_identity_columns() -> None:

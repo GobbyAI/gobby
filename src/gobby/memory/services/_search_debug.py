@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections.abc import Callable
 
@@ -24,6 +25,7 @@ def emit_search_debug(
     returned: list[Memory],
     ranking_score_map: dict[str, float],
     rrf_applied: bool,
+    constants_provenance: str,
     graph_score_map: dict[str, float] | None = None,
     graph_component_map: dict[str, dict[str, float | None]] | None = None,
     graph_synthetic_similarity_discount: float | None = None,
@@ -51,6 +53,7 @@ def emit_search_debug(
         session_id=session_id,
         recall_request_id=recall_request_id,
         caller=caller,
+        constants_provenance=constants_provenance,
         graph_score_map=graph_scores,
         graph_component_map=dict(graph_component_map or {}),
         returned_hits=[
@@ -64,6 +67,7 @@ def emit_search_debug(
                 ranking_score=mem.ranking_score,
                 ranking_mode=mem.ranking_mode,
                 graph_score=graph_scores.get(mem.id),
+                content_hash=hashlib.sha256(mem.content.encode("utf-8")).hexdigest(),
             )
             for rank, mem in enumerate(returned)
         ],

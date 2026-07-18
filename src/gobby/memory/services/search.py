@@ -322,6 +322,7 @@ class SearchService:
             graph_score_map=graph_score_map,
             graph_component_map=graph_component_map,
             graph_synthetic_similarity_discount=(self._recall_constants.graph_synthetic_discount),
+            constants_provenance=self._recall_constants.provenance,
         )
 
     def _build_results(

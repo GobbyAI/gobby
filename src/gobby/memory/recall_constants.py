@@ -42,6 +42,7 @@ class RecallConstants:
     cooccur_alpha: float
     cooccur_support_cap: int
     source: str  # "static" | "fitted"
+    provenance: str  # "static" | shipped decision_digest
     reason: str | None = None
 
 
@@ -66,6 +67,7 @@ def static_recall_constants(
         cooccur_alpha=COOCCUR_ALPHA,
         cooccur_support_cap=COOCCUR_SUPPORT_CAP,
         source="static",
+        provenance="static",
         reason=reason,
     )
 
@@ -154,6 +156,12 @@ def resolve_recall_constants(config: MemoryConfig) -> RecallConstants:
         logger.warning("%s; keeping static constants", reason)
         return static_recall_constants(config, reason=reason)
 
+    decision_digest = record.get("decision_digest")
+    if not isinstance(decision_digest, str) or not decision_digest.strip():
+        reason = f"shipped gate decision at {path} has no decision_digest"
+        logger.warning("%s; keeping static constants", reason)
+        return static_recall_constants(config, reason=reason)
+
     logger.info(
         "Applying fitted recall constants from %s (label_source=%s)",
         path,
@@ -165,5 +173,6 @@ def resolve_recall_constants(config: MemoryConfig) -> RecallConstants:
         cooccur_alpha=fitted["cooccur_alpha"],
         cooccur_support_cap=int(fitted["cooccur_support_cap"]),
         source="fitted",
+        provenance=decision_digest,
         reason=None,
     )

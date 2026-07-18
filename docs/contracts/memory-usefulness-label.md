@@ -146,8 +146,9 @@ without corrupting old rows.
 
 ## 4. Label definition: de-biased judge, ablation-calibrated
 
-The PRIMARY label is **judge-based**, not overlap-based, with these
-non-negotiable protocol requirements:
+Labels are **judge-based**, not overlap-based. Transcript/response usefulness
+labels use these non-negotiable protocol requirements; §4.1 defines the
+production shadow ranking-label variant:
 
 1. **Different model family** from the generator whose transcript is judged
    (preference-leakage guard, arXiv:2502.01534; self-preference guard,
@@ -162,25 +163,52 @@ non-negotiable protocol requirements:
    `length_controlled` are recorded on every label row (§6). Rows produced
    under a protocol that violates 1–3 are invalid for fitting.
 
+### 4.1 Shadow query-relevance labels
+
+`label_source = 'digest_shadow'` is the production ranking-label stream. During
+the digest pass, it judges the full scored candidate list (the top
+`min(n_hits, 8)` hits) against the stored recall query. The assistant response
+is never shown. Each comparative prompt uses deterministically shuffled neutral
+keys, fixed excerpt budgets, and one verdict per presented candidate. Because
+there is no generator response or comparator model in this protocol, the
+different-model-family requirement above does not apply; position and length
+controls remain mandatory.
+
+Admission is fail-closed. Every top-k hit must carry
+`content_hash = sha256(memory.content.encode("utf-8"))`, and the exact stored
+content must still match that hash at judge time. A missing, hidden, or changed
+candidate makes the whole request ineligible rather than allowing labels over a
+different representation. The immutable `recall_shadow_prompt_snapshot` is the
+sole audit-of-record: it stores the exact system prompt, query, presentation
+order, neutral keys, excerpts, content hashes, judge model and configuration
+fingerprint, and exact prompt hash. Reviewers never reconstruct a shadow prompt
+from live memory rows.
+
+Every fit, drift evaluation, and scored audit is fenced by label source,
+protocol version, judge-model key, judge-config fingerprint, weighting regime,
+candidate scope, request-creation cutoff, and snapshot-completion cutoff.
+Requests must have a complete exact-protocol label set and a committed prompt
+snapshot. Cohort ambiguity or an incomplete fence fails closed.
+
 **Calibration (the reason the judge is trustworthy):** on a subsample, run a
 controlled ablation/leave-one-out — regenerate the turn with and without the
 memory and measure the quality/log-prob delta (`ablation_delta`). ContextCite
 (arXiv:2409.00729) treats ablation as the gold standard for "did this context
 matter"; AttriBoT (arXiv:2411.15102) makes LOO tractable. #17193 owns the
 calibration run and its GO/NO-GO decision matrix (judge↔ablation agreement is
-one of its gates). Digest-sourced labels (#17195, `label_source = 'digest'`)
-are a secondary stream under the same de-biasing requirements and must never
-be mixed into a fit as if judge-sourced — `label_source` keeps the streams
-separable.
+one of its gates). Legacy `label_source = 'digest'` rows are preserved as
+read-only historical evidence for the retired response-usage judge. No producer
+may write new `digest` rows; they never enter the shadow fit.
 
 **Semi-supervision rules:**
 
 - Never-retrieved memories are **unlabeled, not negative**.
-- Returned-but-filtered memories (§5 `outcome = 'filtered'`) have features
-  but no label; they inform propensity estimation only.
-- "Model referenced A over available-but-unused B" forms skip-above
-  preference pairs for the LTR objective (#17198/#17199), IPS-weighted by
-  injection-position propensity (arXiv:1608.04468).
+- Returned-but-filtered memories (§5 `outcome = 'filtered'`) may receive
+  `digest_shadow` query-relevance labels because the shadow protocol judges the
+  full scored list, independently of injection.
+- Skip-above pairs are not fit-eligible because recall does not yet capture a
+  durable exposure/reference signal. Adding that signal is separate follow-up
+  work; candidate availability alone must not be treated as exposure.
 
 ## 5. Injection-outcome record (implemented by #17196)
 
@@ -239,10 +267,10 @@ new row), never destructive.
 | `session_id` | text | not null |
 | `recall_request_id` | text | not null |
 | `memory_id` | text | not null |
-| `label_source` | text | not null; `llm_judge` \| `ablation` \| `digest` \| `human` |
+| `label_source` | text | not null; `llm_judge` \| `ablation` \| `digest` (historical, read-only) \| `digest_shadow` \| `human` |
 | `judge_useful` | boolean | not null |
 | `judge_confidence` | real | nullable |
-| `judge_model` | text | not null for `llm_judge`/`digest` (family + version) |
+| `judge_model` | text | not null for `llm_judge`/`digest`/`digest_shadow` (provider + model) |
 | `judge_protocol_version` | text | not null |
 | `position_randomized` | boolean | not null (false allowed only for `ablation`/`human`) |
 | `length_controlled` | boolean | not null (same exception) |
@@ -255,10 +283,19 @@ new row), never destructive.
 Uniqueness: `(recall_request_id, memory_id, label_source,
 judge_protocol_version)`.
 
-Join contract: a **fit-eligible labeled row** exists iff the label row joins
-an injection-outcome row with `outcome = 'injected'` and a promoted
-recall-signal hit row on the §2 key. Labels without features (e.g.
-retrospective rows predating signal logging) are calibration-only.
+Join contract: a legacy **injection fit-eligible labeled row** exists iff the
+label row joins an injection-outcome row with `outcome = 'injected'` and a
+promoted recall-signal hit row on the §2 key. A `digest_shadow` fit instead
+admits a complete request under §4.1, then projects either all candidates or
+the injected subset according to the fenced candidate scope. Labels without
+features (e.g. retrospective rows predating signal logging) are
+calibration-only.
+
+Human ship-audit verdicts do not belong in `recall_usefulness`. Their
+authoritative store is `recall_shadow_audit_verdicts`, unique on
+`(cohort_digest, request_id, memory_id)` and carrying the deterministic
+`sample_digest` and bound `prompt_hash`. A verdict is valid only for that exact
+cohort, sample, and immutable presentation.
 
 Backfill: the #17193 retrospective harness backfills this table from
 transcripts (parsing rendered `(memory_id: …, score: …, via: …)` suffixes).
@@ -267,10 +304,8 @@ Backfilled rows lacking a `recall_request_id` use the synthetic id
 `judge_protocol_version`; they never join the signal table and are excluded
 from IPS-weighted fits (usable for judge calibration and volume checks only).
 
-Migration numbering: next free `src/gobby/storage/migrations/` number at
-implementation time (head was `307_*.sql` when this contract was written —
-do not trust stale numbers in older plans). Follow the
-`274_memory_dream.sql` hub-table pattern.
+Migration 323 adds `digest_shadow`, content identity, constants provenance,
+shadow claim/snapshot/audit state, and holdout gate reservation tables.
 
 ## 7. Weighting-regime fencing (non-negotiable)
 

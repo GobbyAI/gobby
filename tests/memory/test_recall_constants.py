@@ -43,6 +43,7 @@ def shipped_record(**overrides: Any) -> dict[str, Any]:
         "gates": {"sufficient_data": True, "beats_static": True, "guard_ok": True},
         "ship": True,
         "reasons": [],
+        "decision_digest": "decision-digest-123",
     }
     record.update(overrides)
     return record
@@ -74,6 +75,7 @@ class TestStaticFloor:
         constants = static_recall_constants()
 
         assert constants.source == "static"
+        assert constants.provenance == "static"
         assert constants.half_life_days == 30.0
         assert constants.graph_synthetic_discount == _GRAPH_SYNTHETIC_SIM_DISCOUNT
         assert constants.cooccur_alpha == COOCCUR_ALPHA
@@ -121,6 +123,7 @@ class TestFlagFlip:
         constants = resolve_recall_constants(config_with(record_path, enabled=True))
 
         assert constants.source == "fitted"
+        assert constants.provenance == "decision-digest-123"
         assert constants.half_life_days == FITTED_PARAMS["half_life_days"]
         assert constants.graph_synthetic_discount == FITTED_PARAMS["graph_synthetic_discount"]
         assert constants.cooccur_alpha == FITTED_PARAMS["cooccur_alpha"]
@@ -244,6 +247,7 @@ class TestSignalLogProvenance:
             cooccur_alpha=0.6,
             cooccur_support_cap=4,
             source="fitted",
+            provenance="decision-digest-123",
         )
 
         snapshot = _weighting_snapshot(config, constants)

@@ -20,6 +20,7 @@ class SearchDebugHit:
     ranking_score: float | None
     ranking_mode: str | None
     graph_score: float | None
+    content_hash: str
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,7 @@ class SearchDebugSnapshot:
     session_id: str | None = None
     recall_request_id: str | None = None
     caller: str = "memory.search"
+    constants_provenance: str = "static"
     graph_score_map: dict[str, float] = field(default_factory=dict)
     # Edge-weight component breakdown per memory_id (contract §3.2):
     # edge_cosine, edge_support_norm, edge_weight_blend, edge_decay_factor.

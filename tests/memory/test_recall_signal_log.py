@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +21,9 @@ from gobby.memory.recall_signal_log import (
     make_recall_signal_sink,
     resolve_recall_signal_path,
 )
+from gobby.memory.services._search_debug import emit_search_debug
 from gobby.memory.services.search import SearchDebugHit, SearchDebugSnapshot
+from gobby.storage.memories_models import Memory
 
 
 class _FakeCursor:
@@ -61,6 +65,7 @@ def _snapshot() -> SearchDebugSnapshot:
         session_id="session-1",
         recall_request_id="request-1",
         caller="memory.recall",
+        constants_provenance="static",
         graph_score_map={"graph": 0.8, "bad": float("nan")},
         graph_component_map={
             "graph": {
@@ -81,6 +86,7 @@ def _snapshot() -> SearchDebugSnapshot:
                 ranking_score=0.9,
                 ranking_mode="rrf",
                 graph_score=None,
+                content_hash="semantic-hash",
             ),
             SearchDebugHit(
                 memory_id="graph",
@@ -92,6 +98,7 @@ def _snapshot() -> SearchDebugSnapshot:
                 ranking_score=float("inf"),
                 ranking_mode="graph_synthetic",
                 graph_score=0.8,
+                content_hash="graph-hash",
             ),
         ],
     )
@@ -125,12 +132,13 @@ def test_build_recall_signal_event_records_search_features_and_sanitizes_floats(
         },
     )
 
-    assert event["schema_version"] == 3
+    assert event["schema_version"] == 4
     assert event["timestamp"] == "2026-06-15T00:00:00+00:00"
     assert event["project_id"] == "project-1"
     assert event["session_id"] == "session-1"
     assert event["recall_request_id"] == "request-1"
     assert event["caller"] == "memory.recall"
+    assert event["constants_provenance"] == "static"
     assert event["query"] == "raw user query"
     assert event["merged_ids"] == ["semantic", "graph"]
     assert event["returned_ids"] == ["semantic", "graph"]
@@ -141,6 +149,8 @@ def test_build_recall_signal_event_records_search_features_and_sanitizes_floats(
     assert event["hits"][1]["ranking_mode"] == "graph_synthetic"
     assert event["hits"][1]["graph_score"] == 0.8
     assert event["hits"][1]["ranking_score"] is None
+    assert event["hits"][0]["content_hash"] == "semantic-hash"
+    assert event["hits"][1]["content_hash"] == "graph-hash"
     # §3.2 edge-component breakdown: present for the traversal-admitted hit,
     # None for hits that entered through other paths.
     assert event["hits"][1]["edge_cosine"] == 0.8
@@ -152,6 +162,61 @@ def test_build_recall_signal_event_records_search_features_and_sanitizes_floats(
     assert event["hits"][0]["edge_weight_blend"] is None
     assert event["hits"][0]["edge_decay_factor"] is None
     json.dumps(event, allow_nan=False)
+
+
+def test_emit_search_debug_stamps_exact_content_identity_through_hub_write(
+    tmp_path: Path,
+) -> None:
+    db = _FakeHubDb()
+    hub_sink = make_recall_signal_sink(
+        MemoryConfig(recall_signal_hub=True, recall_signal_log_path=str(tmp_path / "signals")),
+        db,
+    )
+    assert hub_sink is not None
+    snapshots: list[SearchDebugSnapshot] = []
+
+    def capture(snapshot: SearchDebugSnapshot) -> None:
+        snapshots.append(snapshot)
+        hub_sink(snapshot)
+
+    now = datetime.now(UTC)
+    content = "café\n未尾"
+    emit_search_debug(
+        search_debug_sink=capture,
+        query="unicode identity",
+        project_id="project-1",
+        session_id="session-1",
+        recall_request_id="request-content-hash",
+        caller="memory.recall",
+        merged_ids=["memory-1"],
+        returned=[
+            Memory(
+                id="memory-1",
+                memory_type="fact",
+                content=content,
+                created_at=now,
+                updated_at=now,
+            )
+        ],
+        ranking_score_map={"memory-1": 0.7},
+        rrf_applied=False,
+        constants_provenance="decision-digest-123",
+    )
+
+    expected_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    assert snapshots[0].constants_provenance == "decision-digest-123"
+    assert snapshots[0].returned_hits[0].content_hash == expected_hash
+
+    request_sql, request_params = next(
+        call for call in db.calls if "INSERT INTO recall_signal_requests" in call[0]
+    )
+    hit_sql, hit_params = next(
+        call for call in db.calls if "INSERT INTO recall_signal_hits" in call[0]
+    )
+    assert "constants_provenance" in request_sql
+    assert "decision-digest-123" in request_params
+    assert "content_hash" in hit_sql
+    assert expected_hash in hit_params
 
 
 def test_build_recall_signal_event_includes_join_metadata_when_present() -> None:

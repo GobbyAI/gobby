@@ -111,9 +111,10 @@ class RecallSignalStore:
                 (session_id, recall_request_id, project_id, caller, query,
                  merged_ids, returned_ids, rrf_applied,
                  graph_synthetic_similarity_discount, ranking_score_map,
-                 graph_score_map, weighting, schema_version, created_at)
+                 graph_score_map, weighting, constants_provenance,
+                 schema_version, created_at)
                 VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s::jsonb,
-                        %s::jsonb, %s::jsonb, %s, %s)
+                        %s::jsonb, %s::jsonb, %s, %s, %s)
                 ON CONFLICT (session_id, recall_request_id) DO NOTHING
                 """,
                 (
@@ -129,6 +130,7 @@ class RecallSignalStore:
                     json.dumps(event.get("ranking_score_map") or {}),
                     json.dumps(event.get("graph_score_map") or {}),
                     json.dumps(event.get("weighting") or {}),
+                    event.get("constants_provenance") or "static",
                     int(event.get("schema_version") or 0),
                     created_at,
                 ),
@@ -145,9 +147,9 @@ class RecallSignalStore:
                      search_via, similarity, raw_semantic_score,
                      temporal_decay_factor, ranking_score, ranking_mode,
                      graph_score, edge_cosine, edge_support_norm,
-                     edge_weight_blend, edge_decay_factor, created_at)
+                     edge_weight_blend, edge_decay_factor, content_hash, created_at)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                            %s, %s, %s, %s)
+                            %s, %s, %s, %s, %s)
                     ON CONFLICT (recall_request_id, memory_id) DO NOTHING
                     """,
                     (
@@ -167,6 +169,7 @@ class RecallSignalStore:
                         floats["edge_support_norm"],
                         floats["edge_weight_blend"],
                         floats["edge_decay_factor"],
+                        hit.get("content_hash"),
                         created_at,
                     ),
                 )

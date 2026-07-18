@@ -41,6 +41,7 @@ FITTED = RecallConstants(
     cooccur_alpha=0.6,
     cooccur_support_cap=4,
     source="fitted",
+    provenance="decision-digest-123",
 )
 
 STATIC = RecallConstants(
@@ -49,6 +50,7 @@ STATIC = RecallConstants(
     cooccur_alpha=0.5,
     cooccur_support_cap=5,
     source="static",
+    provenance="static",
     reason="use_fitted_recall_constants disabled",
 )
 
@@ -129,6 +131,7 @@ def gate_record(
         "gates": {"sufficient_data": ship, "beats_static": ship, "guard_ok": True},
         "ship": ship,
         "reasons": [],
+        "decision_digest": "decision-digest-123",
     }
 
 
