@@ -390,7 +390,7 @@ class CodexAdapter(BaseAdapter):
 
                 task.add_done_callback(_log_notification_result)
         except Exception as e:
-            logger.error("Error handling Codex notification %s: %s", method, e, exc_info=True)
+            logger.exception("Error handling Codex notification %s: %s", method, e)
 
     async def handle_approval_request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         """Handle an incoming approval request from Codex.
@@ -419,7 +419,7 @@ class CodexAdapter(BaseAdapter):
         try:
             hook_response = await self._dispatch_hook_event(hook_event)
         except Exception as e:
-            logger.error("Error processing approval request %s: %s", method, e, exc_info=True)
+            logger.exception("Error processing approval request %s: %s", method, e)
             if is_safe_auto_approved:
                 if method == "mcpServer/elicitation/request":
                     return self._translate_mcp_elicitation_response()

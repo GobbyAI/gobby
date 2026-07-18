@@ -239,13 +239,12 @@ async def execute_sdk_query[T](
         exit_code = extract_exit_code(error)
         stderr_text = "\n".join(stderr_lines)
         stderr_suffix = f"\nCLI stderr:\n{stderr_text}" if stderr_text else " (no stderr captured)"
-        logger.error(
+        logger.exception(
             "%s failed: %s%s%s",
             operation,
             error,
             f" [exit_code={exit_code}]" if exit_code else "",
             stderr_suffix,
-            exc_info=True,
         )
         raise RuntimeError(
             f"{operation} failed: {error}"

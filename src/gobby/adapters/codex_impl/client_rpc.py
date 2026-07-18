@@ -288,6 +288,6 @@ async def read_loop(client: CodexAppServerClient) -> None:
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.error("Error in read loop: %s", e, exc_info=True)
+            logger.exception("Error in read loop: %s", e)
             if client._shutdown_event.is_set():
                 break

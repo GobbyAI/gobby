@@ -485,7 +485,7 @@ class ChatterboxTurboProvider(BaseTTSProvider):
             logger.debug("Chatterbox TTS synthesis cancelled")
             raise
         except Exception as exc:
-            logger.error("Chatterbox TTS synthesis failed", exc_info=True)
+            logger.exception("Chatterbox TTS synthesis failed")
             raise RuntimeError(self._format_synthesis_error(exc)) from exc
 
     @property
