@@ -545,19 +545,22 @@ pub(crate) fn generate_hierarchical_docs(
             .iter()
             .map(|module| module.module.clone())
             .collect::<BTreeSet<String>>();
-        // The page's provenance hashes cannot see a cluster re-partition: the
-        // same source files re-cluster under new module names, so an unkeyed
-        // page would be retained stale and its module links would dangle,
-        // failing publish closed (#18190). Key it on the emitted module set —
-        // the rename guard _architecture.md carries (#17731) — while
-        // requires_sources keeps ownership content refreshing when the
-        // underlying files change.
+        // The page's provenance hashes cannot see every link-set change. A
+        // cluster re-partition can rename modules without changing source
+        // hashes, and a source deleted before a prior page was persisted is
+        // absent from that page's recorded source hashes even though its stale
+        // file link remains in the content. Key both emitted module and file
+        // links so either change rewrites ownership before publish validates
+        // targets (#18190, #18483). requires_sources still refreshes ownership
+        // when the underlying files change.
         let ownership_key = format!(
             "ownership-links:{}",
             hasher::content_hash(
                 emitted_modules
                     .iter()
                     .map(String::as_str)
+                    .chain(std::iter::once("--files--"))
+                    .chain(files.iter().map(String::as_str))
                     .collect::<Vec<_>>()
                     .join("\n")
                     .as_bytes(),

@@ -1921,6 +1921,106 @@ fn cluster_rename_rewrites_stale_ownership_module_links() {
     );
 }
 
+#[test]
+fn deleted_file_rewrites_stale_ownership_file_links() {
+    let project = tempfile::tempdir().expect("project tempdir");
+    std::fs::create_dir_all(project.path().join("src/group")).expect("source dir");
+    for (path, content) in [
+        ("src/group/one.rs", "pub fn one() {}\n"),
+        ("src/group/two.rs", "pub fn two() {}\n"),
+    ] {
+        std::fs::write(project.path().join(path), content).expect("write source");
+    }
+    std::fs::write(project.path().join("CODEOWNERS"), "* @gobby-owners\n").expect("codeowners");
+    let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
+        files: vec![
+            "src/group/one.rs".to_string(),
+            "src/group/two.rs".to_string(),
+        ],
+        graph_edges: Vec::new(),
+        graph_availability: CodewikiGraphAvailability::Available,
+        symbols: vec![
+            test_symbol("src/group/one.rs", "one", "function", 1, "pub fn one()"),
+            test_symbol("src/group/two.rs", "two", "function", 1, "pub fn two()"),
+        ],
+    };
+    let out_dir = project.path().join("codewiki");
+
+    let mut first_generator =
+        |_prompt: &str, _system: &str, _tier: PromptTier| Some("First prose.".to_string());
+    let mut progress = CodewikiProgress::silent();
+    let mut first_meta = OwnershipMeta::default();
+    let first = collect_docs(
+        &input,
+        GenerateDocsOptions {
+            ownership: Some((project.path(), &mut first_meta)),
+            generate: Some(&mut first_generator),
+            ai_depth: AiDepth::Symbols,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
+    );
+
+    // Reproduce the race that created the latent production state: ownership
+    // content was already built with two.rs, then the source disappeared
+    // before persistence hashed its provenance. The page keeps the link while
+    // metadata correctly omits the deleted source.
+    std::fs::remove_file(project.path().join("src/group/two.rs")).expect("delete source");
+    write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &first,
+        None,
+        "symbols",
+        DocPruneScope::unscoped(),
+    )
+    .expect("first write");
+    let ownership_before = std::fs::read_to_string(out_dir.join("code/_ownership.md"))
+        .expect("ownership page on disk");
+    assert!(ownership_before.contains("code/files/src/group/two.rs|"));
+
+    let mut second_input = input;
+    second_input.files.retain(|file| file != "src/group/two.rs");
+    second_input
+        .symbols
+        .retain(|symbol| symbol.file_path != "src/group/two.rs");
+    let mut second_generator =
+        |_prompt: &str, _system: &str, _tier: PromptTier| Some("Second prose.".to_string());
+    let mut plan = ReusePlan::load(project.path(), &out_dir, "symbols").expect("reuse plan loads");
+    let reuse = Some(&mut plan);
+    let mut progress = CodewikiProgress::silent();
+    let mut second_meta = OwnershipMeta::default();
+    let second = collect_docs(
+        &second_input,
+        GenerateDocsOptions {
+            ownership: Some((project.path(), &mut second_meta)),
+            generate: Some(&mut second_generator),
+            ai_depth: AiDepth::Symbols,
+            reuse,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
+    );
+    write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &second,
+        None,
+        "symbols",
+        DocPruneScope::unscoped(),
+    )
+    .expect("second write");
+
+    let ownership_after = std::fs::read_to_string(out_dir.join("code/_ownership.md"))
+        .expect("ownership page after deletion");
+    assert!(ownership_after.contains("code/files/src/group/one.rs|"));
+    assert!(
+        !ownership_after.contains("code/files/src/group/two.rs|"),
+        "stale ownership page retained a deleted file link"
+    );
+}
+
 /// Stamps a top-level `degraded: true` into a page's frontmatter without
 /// touching `_meta/codewiki.json`, simulating manifest/page skew (#18291).
 fn stamp_page_degraded(path: &std::path::Path) {
