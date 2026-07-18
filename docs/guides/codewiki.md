@@ -16,7 +16,7 @@ gcode codewiki
 Write directly into a project's gwiki vault and index that same project scope:
 
 ```bash
-gcode codewiki --out /path/to/project/.gobby/wiki
+gcode codewiki --out /path/to/project/wiki
 gwiki --project /path/to/project index
 ```
 
@@ -43,7 +43,7 @@ gcode codewiki --repair-citations
 Remove generated CodeWiki Markdown and metadata before a clean rebuild:
 
 ```bash
-gcode codewiki --purge --out /path/to/project/.gobby/wiki --force
+gcode codewiki --purge --out /path/to/project/wiki --force
 ```
 
 ## Output Tree
@@ -303,8 +303,8 @@ knowledge pages, PostgreSQL index rows, FalkorDB graph data, or Qdrant vectors.
 generated files before a full rebuild:
 
 ```bash
-gcode codewiki --purge --out /path/to/project/.gobby/wiki --force
-gcode codewiki --out /path/to/project/.gobby/wiki
+gcode codewiki --purge --out /path/to/project/wiki --force
+gcode codewiki --out /path/to/project/wiki
 gwiki --project /path/to/project index
 ```
 
@@ -376,7 +376,7 @@ PostgreSQL code-index data but no graph service.
 
 The intended handoff is a file workflow, not a crate dependency:
 
-1. Run `gcode codewiki --out <project-root>/.gobby/wiki`.
+1. Run `gcode codewiki --out <project-root>/wiki`.
 2. Run `gwiki --project <project-root> index`.
 3. gwiki's vault index walk discovers `code/**/*.md`, preserves
 `provenance:` frontmatter, extracts `[[wikilinks]]`, and indexes changed
