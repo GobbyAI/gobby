@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import json
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent
+from gobby.hooks.tool_outcomes import tool_outcome_from_data
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_audit import WorkflowAuditManager
@@ -218,11 +218,6 @@ class EnforcementCompletionMixin:
         if step is None or instance is None or definition is None:
             return None
 
-        # Only process successful MCP tool completions
-        is_failure = event.metadata.get("is_failure", False) or event.data.get("is_error", False)
-        if is_failure:
-            return None
-
         tool_name = event.data.get("tool_name", "")
         tool_input = event.data.get("tool_input") or {}
         if not isinstance(tool_input, dict):
@@ -242,23 +237,12 @@ class EnforcementCompletionMixin:
         else:
             return None
 
-        # Check application-level failure in tool output
         tool_output = event.data.get("tool_output")
-        if isinstance(tool_output, str):
-            try:
-                tool_output = json.loads(tool_output)
-            except (json.JSONDecodeError, TypeError):
-                tool_output = None
-
-        is_app_failure = False
-        if isinstance(tool_output, dict):
-            if tool_output.get("success") is False or bool(tool_output.get("error")):
-                is_app_failure = True
-            elif isinstance(tool_output.get("result"), dict):
-                result_dict = tool_output["result"]
-                if result_dict.get("success") is False or bool(result_dict.get("error")):
-                    is_app_failure = True
-        if not is_app_failure:
+        tool_failed = (
+            bool(event.metadata.get("is_failure", False))
+            or tool_outcome_from_data(event.data).succeeded is False
+        )
+        if not tool_failed:
             await asyncio.to_thread(
                 self._audit_step_tool_call,
                 session_id,
@@ -270,13 +254,13 @@ class EnforcementCompletionMixin:
                 mcp_key=mcp_key,
             )
 
-        handlers = step.on_mcp_error if is_app_failure else step.on_mcp_success
+        handlers = step.on_mcp_error if tool_failed else step.on_mcp_success
         handler_tool_input = self._step_handler_tool_input(tool_input)
 
         instance_mgr = self.instance_manager
         vars_changed = False
 
-        if is_native_set_variable and not is_app_failure:
+        if is_native_set_variable and not tool_failed:
             var_name, var_value = self._successful_set_variable_value(
                 handler_tool_input,
                 tool_output,
@@ -337,7 +321,7 @@ class EnforcementCompletionMixin:
                         )
 
         # Skip transitions when tool failed and no error handlers modified state
-        if is_app_failure and not vars_changed:
+        if tool_failed and not vars_changed:
             return None
 
         transition_steps: list[tuple[str, str]] = []
