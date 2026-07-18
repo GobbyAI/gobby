@@ -51,7 +51,6 @@ steps:
         task_type: "task"
         category: "code"
         validation_criteria: "All ruff, mypy, and bandit errors from reports are fixed. No new lint/type errors introduced."
-        session_id: "${{ session_id }}"
 
   - id: spawn_linter
     mcp:
@@ -89,7 +88,6 @@ steps:
         task_type: "task"
         category: "code"
         validation_criteria: "All pytest failures from reports are fixed. No new test failures introduced."
-        session_id: "${{ session_id }}"
 
   - id: spawn_tester
     mcp:

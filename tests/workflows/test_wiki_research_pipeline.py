@@ -31,6 +31,7 @@ from gobby.workflows.loader_cache import DiscoveredWorkflow
 pytestmark = pytest.mark.unit
 
 PIPELINE_PATH = Path("src/gobby/install/shared/workflows/pipelines/wiki-research.yaml")
+PIPELINES_DIR = PIPELINE_PATH.parent
 
 EXPECTED_STEP_ORDER = [
     "reentry_check",
@@ -53,6 +54,17 @@ def _step(pipeline: PipelineDefinition, step_id: str) -> PipelineStep:
     step = pipeline.get_step(step_id)
     assert step is not None, f"missing step {step_id}"
     return step
+
+
+def test_task_steps_leave_session_context_to_proxy_wrapper() -> None:
+    for path in PIPELINES_DIR.glob("*.yaml"):
+        with path.open() as f:
+            pipeline = PipelineDefinition.model_validate(yaml.safe_load(f))
+
+        for step in pipeline.steps:
+            if step.mcp is None or step.mcp.server != "gobby-tasks":
+                continue
+            assert "session_id" not in (step.mcp.arguments or {}), path
 
 
 class TestWikiResearchDefinition:
@@ -82,7 +94,7 @@ class TestWikiResearchDefinition:
             "max_items": 8,
             "create_tasks": "true",
             "provider": "claude",
-            "model": "",
+            "model": "sonnet",
         }
 
     def test_outputs_surface_task_run_and_status(self, pipeline: PipelineDefinition) -> None:
@@ -117,7 +129,7 @@ class TestWikiResearchSteps:
 
         assert args["category"] == "research"
         assert args["labels"] == ["wiki-research"]
-        assert args["session_id"] == "${{ session_id }}"
+        assert "session_id" not in args
 
         description = args["description"]
         for reference in (
@@ -167,7 +179,7 @@ class TestWikiResearchDynamicTool:
         assert properties["max_items"]["default"] == 8
         assert properties["create_tasks"]["default"] == "true"
         assert properties["provider"]["default"] == "claude"
-        assert properties["model"]["default"] == ""
+        assert properties["model"]["default"] == "sonnet"
         assert properties["topic_slug"]["default"] == ""
         # Meta-parameter added for every exposed pipeline.
         assert "continuation_prompt" in properties

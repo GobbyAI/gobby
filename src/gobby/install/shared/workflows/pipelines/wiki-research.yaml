@@ -46,8 +46,8 @@ inputs:
     description: "Agent provider passthrough for the researcher (claude, codex, ...)."
   model:
     type: string
-    default: ""
-    description: "Model override passthrough. Empty uses the wiki-researcher agent's default."
+    default: "sonnet"
+    description: "Agent model passthrough; defaults to the wiki-researcher agent's model."
 
 outputs:
   research_task_id: "${{ steps.create_research_task.output.id }}"
@@ -101,7 +101,6 @@ steps:
           Cited topic page compiled with an explicit topic and the full
           source list; run report written; budgets respected.
         labels: ["wiki-research"]
-        session_id: "${{ session_id }}"
 
   # --- RESEARCHER AGENT ---
   - id: spawn_researcher
