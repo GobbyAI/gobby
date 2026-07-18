@@ -94,7 +94,7 @@ def register_message_routes(
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Get messages error: %s", e, exc_info=True)
+            logger.exception("Get messages error: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     # --- Transcript Archive Endpoints ---
@@ -157,7 +157,7 @@ def register_message_routes(
                 result["archive_path"] = str(archive_path)
             return result
         except Exception as e:
-            logger.error("Error getting transcript status: %s", e, exc_info=True)
+            logger.exception("Error getting transcript status: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/{session_id}/transcript")
@@ -209,7 +209,7 @@ def register_message_routes(
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Error getting transcript: %s", e, exc_info=True)
+            logger.exception("Error getting transcript: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/{session_id}/restore-transcript")
@@ -247,5 +247,5 @@ def register_message_routes(
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Error restoring transcript: %s", e, exc_info=True)
+            logger.exception("Error restoring transcript: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e

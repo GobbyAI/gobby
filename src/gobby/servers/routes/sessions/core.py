@@ -268,7 +268,7 @@ def register_core_routes(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
-            logger.error("Error creating web chat session: %s", e, exc_info=True)
+            logger.exception("Error creating web chat session: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/register")
@@ -332,7 +332,7 @@ def register_core_routes(
             raise HTTPException(status_code=400, detail=str(e)) from e
 
         except Exception as e:
-            logger.error("Error registering session: %s", e, exc_info=True)
+            logger.exception("Error registering session: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/usage")
@@ -673,7 +673,7 @@ def register_core_routes(
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Error listing sessions: %s", e, exc_info=True)
+            logger.exception("Error listing sessions: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     # Remaining routes (bulk-move, get, find_current, find_parent,

@@ -145,7 +145,7 @@ def register_lifecycle_routes(
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Bulk move sessions error: %s", e, exc_info=True)
+            logger.exception("Bulk move sessions error: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/{session_id}")
@@ -213,7 +213,7 @@ def register_lifecycle_routes(
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Sessions get error: %s", e, exc_info=True)
+            logger.exception("Sessions get error: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/find_current")
@@ -267,7 +267,7 @@ def register_lifecycle_routes(
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Find current session error: %s", e, exc_info=True)
+            logger.exception("Find current session error: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/find_parent")
@@ -319,7 +319,7 @@ def register_lifecycle_routes(
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Find parent session error: %s", e, exc_info=True)
+            logger.exception("Find parent session error: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/find_by_terminal_context")
@@ -359,7 +359,7 @@ def register_lifecycle_routes(
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Find session by terminal context error: %s", e, exc_info=True)
+            logger.exception("Find session by terminal context error: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/update_status")
@@ -388,7 +388,7 @@ def register_lifecycle_routes(
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Update session status error: %s", e, exc_info=True)
+            logger.exception("Update session status error: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/{session_id}/expire")
@@ -424,7 +424,7 @@ def register_lifecycle_routes(
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Expire session error: %s", e, exc_info=True)
+            logger.exception("Expire session error: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/{session_id}/rename")
@@ -469,5 +469,5 @@ def register_lifecycle_routes(
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Rename session error: %s", e, exc_info=True)
+            logger.exception("Rename session error: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e

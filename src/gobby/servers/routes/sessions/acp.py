@@ -98,7 +98,7 @@ def register_acp_routes(
         except HTTPException:
             raise
         except Exception as exc:
-            logger.error("ACP discover failed: %s", exc, exc_info=True)
+            logger.exception("ACP discover failed: %s", exc)
             raise HTTPException(status_code=500, detail="Internal server error") from exc
 
     @router.post("/{session_id}/acp/close")
@@ -111,7 +111,7 @@ def register_acp_routes(
         except HTTPException:
             raise
         except Exception as exc:
-            logger.error("ACP close failed for %s: %s", session_id, exc, exc_info=True)
+            logger.exception("ACP close failed for %s: %s", session_id, exc)
             raise HTTPException(status_code=500, detail="Internal server error") from exc
 
     @router.post("/{session_id}/acp/delete")
@@ -124,7 +124,7 @@ def register_acp_routes(
         except HTTPException:
             raise
         except Exception as exc:
-            logger.error("ACP delete failed for %s: %s", session_id, exc, exc_info=True)
+            logger.exception("ACP delete failed for %s: %s", session_id, exc)
             raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
